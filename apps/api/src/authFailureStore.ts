@@ -38,6 +38,9 @@ interface RedisModule {
   }): RedisClient;
 }
 
+const REDIS_CONNECT_ATTEMPTS = 6;
+const REDIS_CONNECT_RETRY_DELAY_MS = 1_000;
+
 export type RedisModuleLoader = () => Promise<RedisModule>;
 
 export interface CreateAuthFailureStoreOptions {
@@ -114,20 +117,39 @@ class RedisAuthFailureStore implements AuthFailureStore {
     private readonly prefix = 'commander:auth-failures:',
   ) {
     this.clientPromise = this.connect(url, loadRedis);
+    // Startup awaits readiness, but keep a failed lazy connection from
+    // becoming an unhandled rejection if the caller has not reached that
+    // gate yet.
+    void this.clientPromise.catch(() => undefined);
   }
 
   private async connect(url: string, loadRedis: RedisModuleLoader): Promise<RedisClient> {
     const redis = await loadRedis();
-    const client = redis.createClient({
-      url,
-      disableOfflineQueue: true,
-      socket: { connectTimeout: 5_000, reconnectStrategy: false },
-    });
-    client.on?.('error', (error) => {
-      process.stderr.write(`[Auth] Redis auth failure store error: ${error.message}\n`);
-    });
-    await client.connect();
-    return client;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= REDIS_CONNECT_ATTEMPTS; attempt += 1) {
+      const client = redis.createClient({
+        url,
+        disableOfflineQueue: true,
+        socket: { connectTimeout: 5_000, reconnectStrategy: false },
+      });
+      client.on?.('error', (error) => {
+        process.stderr.write(`[Auth] Redis auth failure store error: ${error.message}\n`);
+      });
+      try {
+        await client.connect();
+        return client;
+      } catch (error) {
+        lastError = error;
+        if (attempt < REDIS_CONNECT_ATTEMPTS) {
+          await new Promise((resolve) => setTimeout(resolve, REDIS_CONNECT_RETRY_DELAY_MS));
+        }
+      }
+    }
+    throw lastError instanceof Error ? lastError : new Error('Redis connection unavailable');
+  }
+
+  async ready(): Promise<void> {
+    await this.clientPromise;
   }
 
   private key(ip: string): string {
@@ -166,6 +188,11 @@ export function getAuthFailureStore(): AuthFailureStore {
     sharedStore = createAuthFailureStore();
   }
   return sharedStore;
+}
+
+export async function ensureAuthFailureStoreReady(): Promise<void> {
+  const store = getAuthFailureStore();
+  if (store instanceof RedisAuthFailureStore) await store.ready();
 }
 
 export function createAuthFailureStore(

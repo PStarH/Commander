@@ -104,6 +104,30 @@ describe('AuthFailureStore authority selection', () => {
     await assert.rejects(() => store.get('127.0.0.1'), /redis connection unavailable/);
   });
 
+  it('retries the initial Redis connection until the authority is available', async () => {
+    let attempts = 0;
+    const store = createAuthFailureStore({
+      environment: {
+        NODE_ENV: 'production',
+        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
+      },
+      loadRedis: async () => ({
+        createClient: () => ({
+          connect: async () => {
+            attempts += 1;
+            if (attempts < 3) throw new Error('redis connection unavailable');
+          },
+          get: async () => null,
+          set: async () => 'OK',
+          del: async () => 0,
+        }),
+      }),
+    });
+
+    assert.equal(await store.get('127.0.0.1'), undefined);
+    assert.equal(attempts, 3);
+  });
+
   it('configures Redis to fail requests promptly while unavailable', async () => {
     let receivedOptions: unknown;
     const store = createAuthFailureStore({
