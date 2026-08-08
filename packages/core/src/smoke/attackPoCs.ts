@@ -1,6 +1,6 @@
 /**
  * Attack PoCs — Demonstrating real exploitable issues in the
- * production-grade sub-projects we just shipped.
+ * recently added security sub-projects.
  *
  * This is a red team exercise, not a tool. Each function returns
  * { vulnerability, severity, evidence } and the script aggregates
@@ -516,7 +516,7 @@ async function attackSlaEnforcer(): Promise<void> {
         'sanitize title (strip @here, @channel, @everyone, URLs) before forwarding to Slack/PagerDuty',
       );
     }
-    if (pdTitle.includes('evil.com')) {
+    if (/https?:\/\/\S+/u.test(pdTitle)) {
       report(
         'SlaEnforcer forwards attacker URL into PagerDuty incident',
         'high',
@@ -782,7 +782,7 @@ async function attackShadowProxy(): Promise<void> {
 // ═══════════════════════════════════════════════════════════════════
 
 async function main(): Promise<void> {
-  console.log('\n🥷 Commander Production-Grade Attack PoCs\n');
+  console.log('\n🥷 Commander Security Attack PoCs\n');
   console.log('═══════════════════════════════════════════════════════════════════\n');
 
   attackPiiScrubber();

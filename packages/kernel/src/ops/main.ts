@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { PostgresKernelRepository } from '../postgres.js';
 import { KernelOutboxPublisher } from './outbox/kernelOutboxPublisher.js';
 import { PostgresOutboxDeliveryPort } from './outbox/postgresOutboxDeliveryPort.js';
@@ -19,7 +19,7 @@ const positiveInteger = (name: string, fallback: number): number => {
 export async function main(): Promise<void> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) throw new Error('DATABASE_URL is required for kernel ops');
-  const pool = new Pool({ connectionString });
+  const pool = createVerifiedPostgresPool({ connectionString });
   const repository = new PostgresKernelRepository(pool, { schedulerMode: true });
   const delivery = new PostgresOutboxDeliveryPort(pool, {
     maxAttempts: positiveInteger('COMMANDER_OUTBOX_MAX_ATTEMPTS', 10),

@@ -19,8 +19,7 @@ interface POCStudy {
   useCase: string;
   scope: string[];
   outcomes: { label: string; value: string; detail: string }[];
-  status: 'live' | 'completed' | 'pilot';
-  quote?: string;
+  status: 'illustrative';
 }
 
 const POC_STUDIES: POCStudy[] = [
@@ -32,12 +31,23 @@ const POC_STUDIES: POCStudy[] = [
     useCase: t('poc.useCase.finance'),
     scope: [t('poc.scope.finance.1'), t('poc.scope.finance.2'), t('poc.scope.finance.3')],
     outcomes: [
-      { label: t('poc.metric.compliance'), value: '99.97%', detail: t('poc.detail.compliance') },
-      { label: t('poc.metric.review'), value: '-78%', detail: t('poc.detail.review') },
-      { label: t('poc.metric.latency'), value: '<1.2s', detail: t('poc.detail.latency') },
+      {
+        label: t('poc.metric.compliance'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.compliance'),
+      },
+      {
+        label: t('poc.metric.review'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.review'),
+      },
+      {
+        label: t('poc.metric.latency'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.latency'),
+      },
     ],
-    status: 'live',
-    quote: t('poc.quote.finance'),
+    status: 'illustrative',
   },
   {
     id: 'poc-manufacturing',
@@ -51,16 +61,23 @@ const POC_STUDIES: POCStudy[] = [
       t('poc.scope.manufacturing.3'),
     ],
     outcomes: [
-      { label: t('poc.metric.downtime'), value: '-34%', detail: t('poc.detail.downtime') },
+      {
+        label: t('poc.metric.downtime'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.downtime'),
+      },
       {
         label: t('poc.metric.falsePositive'),
-        value: '-62%',
+        value: t('poc.value.illustrative'),
         detail: t('poc.detail.falsePositive'),
       },
-      { label: t('poc.metric.rca'), value: '4.5x', detail: t('poc.detail.rca') },
+      {
+        label: t('poc.metric.rca'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.rca'),
+      },
     ],
-    status: 'completed',
-    quote: t('poc.quote.manufacturing'),
+    status: 'illustrative',
   },
   {
     id: 'poc-healthcare',
@@ -70,27 +87,32 @@ const POC_STUDIES: POCStudy[] = [
     useCase: t('poc.useCase.healthcare'),
     scope: [t('poc.scope.healthcare.1'), t('poc.scope.healthcare.2'), t('poc.scope.healthcare.3')],
     outcomes: [
-      { label: t('poc.metric.pii'), value: '0', detail: t('poc.detail.pii') },
-      { label: t('poc.metric.document'), value: '+3x', detail: t('poc.detail.document') },
-      { label: t('poc.metric.audit'), value: '100%', detail: t('poc.detail.audit') },
+      {
+        label: t('poc.metric.pii'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.pii'),
+      },
+      {
+        label: t('poc.metric.document'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.document'),
+      },
+      {
+        label: t('poc.metric.audit'),
+        value: t('poc.value.illustrative'),
+        detail: t('poc.detail.audit'),
+      },
     ],
-    status: 'pilot',
-    quote: t('poc.quote.healthcare'),
+    status: 'illustrative',
   },
 ];
 
 const STATUS_META: Record<POCStudy['status'], { label: string; className: string }> = {
-  live: { label: t('poc.status.live'), className: 'status-live' },
-  completed: { label: t('poc.status.completed'), className: 'status-completed' },
-  pilot: { label: t('poc.status.pilot'), className: 'status-pilot' },
+  illustrative: { label: t('poc.status.illustrative'), className: 'status-illustrative' },
 };
 
 export function POCPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const completedCount = POC_STUDIES.filter(
-    (s) => s.status === 'completed' || s.status === 'live',
-  ).length;
-
   return (
     <div className="page">
       <div className="page-head">
@@ -116,11 +138,9 @@ export function POCPage() {
             <span className="metric-icon" style={{ color: 'var(--accent-green)' }}>
               <CheckCircle2 size={14} />
             </span>
-            <span className="metric-label">{t('poc.metric.completed')}</span>
+            <span className="metric-label">{t('poc.metric.scenarios')}</span>
           </div>
-          <span className="metric-value">
-            {completedCount}/{POC_STUDIES.length}
-          </span>
+          <span className="metric-value">{POC_STUDIES.length}</span>
         </div>
         <div className="card metric" style={{ borderLeft: '2px solid var(--accent-blue)' }}>
           <div className="metric-head">
@@ -177,7 +197,6 @@ export function POCPage() {
                       <li key={idx}>{item}</li>
                     ))}
                   </ul>
-                  {study.quote && <blockquote className="poc-quote">“{study.quote}”</blockquote>}
                 </div>
               )}
 
@@ -262,17 +281,7 @@ export function POCPage() {
           border: 1px solid var(--border-default);
           font-family: var(--font-mono);
         }
-        .status-live {
-          color: var(--accent-green);
-          border-color: var(--accent-green);
-          background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-card));
-        }
-        .status-completed {
-          color: var(--accent-blue);
-          border-color: var(--accent-blue);
-          background: color-mix(in srgb, var(--accent-blue) 8%, var(--bg-card));
-        }
-        .status-pilot {
+        .status-illustrative {
           color: var(--accent-amber);
           border-color: var(--accent-amber);
           background: color-mix(in srgb, var(--accent-amber) 8%, var(--bg-card));
@@ -335,15 +344,6 @@ export function POCPage() {
           font-size: 0.8rem;
           color: var(--text-secondary);
           line-height: 1.6;
-        }
-        .poc-quote {
-          margin: 4px 0 0;
-          padding: 10px 12px;
-          border-left: 2px solid var(--accent-amber);
-          background: var(--bg-deep);
-          font-size: 0.8rem;
-          color: var(--text-secondary);
-          font-style: italic;
         }
         .poc-toggle {
           align-self: flex-start;

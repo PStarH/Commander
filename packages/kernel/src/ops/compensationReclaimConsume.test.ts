@@ -1,19 +1,15 @@
-/**
- * Proves reclaim → kernel compensation outbox → consumeCompensationBatch
- * end-to-end (closes the topic/payload/lease gap from the reliability audit).
- */
+/** Proves automatic reclaim cannot manufacture executable compensation authority. */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ReclaimDaemon } from './reclaimDaemon.js';
+import { KERNEL_COMPENSATION_TOPIC, normalizeCompensationPayload } from './compensationConsumer.js';
 import {
-  consumeCompensationBatch,
-  KERNEL_COMPENSATION_TOPIC,
-  normalizeCompensationPayload,
-} from './compensationConsumer.js';
-import { InMemoryKernelRepository } from '../testing/inMemoryRepository.js';
+  InMemoryKernelRepository,
+  seedFreshOperationsDrains,
+} from '../testing/inMemoryRepository.js';
 
 describe('normalizeCompensationPayload', () => {
-  it('maps kernel reclaim payloads to compensate.rollback', () => {
+  it('rejects legacy reclaim payloads instead of synthesizing compensate.rollback', () => {
     const normalized = normalizeCompensationPayload({
       eventId: 'e1',
       type: 'kernel.compensation.requested',
@@ -23,14 +19,12 @@ describe('normalizeCompensationPayload', () => {
       effectIds: ['effect-a'],
       fencingEpoch: 1,
     });
-    assert.ok(normalized);
-    assert.equal(normalized!.compensationAction, 'compensate.rollback');
-    assert.deepEqual(normalized!.compensationPayload?.effectIds, ['effect-a']);
+    assert.equal(normalized, null);
   });
 });
 
-describe('reclaim → compensation consume (integration)', () => {
-  it('drains commander.kernel.compensation.requested through the consumer', async () => {
+describe('reclaim → compensation authority boundary', () => {
+  it('leaves automatic reclaim non-executable and invokes zero adapters', async () => {
     const repository = new InMemoryKernelRepository();
     const base = new Date();
     await repository.createRun(
@@ -59,25 +53,27 @@ describe('reclaim → compensation consume (integration)', () => {
       now: base,
     });
     assert.ok(claimed?.lease);
-    assert.equal(
-      (
-        await repository.admitEffect({
-          id: 'effect-a',
-          runId: 'run-a',
-          stepId: 'step-a',
-          tenantId: 'tenant-a',
-          type: 'tool.write',
-          idempotencyKey: 'effect-key',
-          request: { tool: 'write' },
-          policyDecisionId: 'decision-a',
-          policySnapshotId: 'policy-v1',
-          actionDigest: 'a'.repeat(64),
-          lease: claimed.lease,
-          actor: 'worker-a',
-        })
-      ).admitted,
-      true,
+    const effectRequest = {
+      id: 'effect-a',
+      runId: 'run-a',
+      stepId: 'step-a',
+      tenantId: 'tenant-a',
+      type: 'tool.write',
+      idempotencyKey: 'effect-key',
+      request: { tool: 'write' },
+      policyDecisionId: 'decision-a',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
+      lease: claimed.lease,
+      actor: 'worker-a',
+    };
+    assert.deepEqual(
+      await repository.admitEffect(effectRequest),
+      { admitted: false, reason: 'OPERATIONS_NOT_READY' },
+      'the old fixture must not bypass Class A admission readiness',
     );
+    seedFreshOperationsDrains(repository, 'tenant-a');
+    assert.equal((await repository.admitEffect(effectRequest)).admitted, true);
     assert.ok(
       await repository.completeEffect(
         'effect-a',
@@ -89,68 +85,14 @@ describe('reclaim → compensation consume (integration)', () => {
     );
 
     await new ReclaimDaemon(repository).tick(new Date(base.getTime() + 2_000));
-    assert.equal((await repository.getRun('run-a', 'tenant-a'))?.state, 'COMPENSATING');
+    assert.equal((await repository.getRun('run-a', 'tenant-a'))?.state, 'RUNNING');
 
-    // Legacy topic must stay empty — reclaim writes the kernel topic.
+    // Reclaim is not an authorization authority and emits no executable compensation work.
     assert.equal((await repository.claimOutboxByTopic('commander.compensation', 10)).length, 0);
 
-    let executed = 0;
-    const result = await consumeCompensationBatch(
-      repository,
-      {
-        async admit(input) {
-          assert.equal(input.type, 'compensate.rollback');
-          const admitted = await repository.admitEffect({
-            id: input.effectId,
-            runId: 'run-a',
-            stepId: 'step-a',
-            tenantId: 'tenant-a',
-            type: input.type,
-            idempotencyKey: input.idempotencyKey,
-            request: input.request,
-            policyDecisionId: 'cmp-decision',
-            policySnapshotId: 'policy-v1',
-            actionDigest: 'a'.repeat(64),
-            lease: {
-              workerId: input.lease.workerId,
-              workerGeneration: input.lease.workerGeneration,
-              token: input.lease.token,
-              fencingEpoch: input.lease.fencingEpoch,
-            },
-            actor: input.actor,
-          });
-          return {
-            admitted: admitted.admitted,
-            effectId: input.effectId,
-            replayed: !!admitted.replayed,
-            reason: admitted.reason,
-          };
-        },
-        async executeAdmitted(input) {
-          executed += 1;
-          const completed = await repository.completeEffect(
-            input.effectId,
-            'tenant-a',
-            { workerId: 'cmp-worker', token: 'cmp-lease', fencingEpoch: 1 },
-            { rolledBack: true },
-            'compensation-consumer:cmp-worker',
-          );
-          assert.ok(completed);
-          return { effectId: input.effectId, replayed: false, response: { rolledBack: true } };
-        },
-      },
-      async () => 'cmp-token',
-      { workerId: 'cmp-worker', topic: KERNEL_COMPENSATION_TOPIC },
-    );
-
-    assert.equal(result.consumed, 1);
-    assert.equal(result.succeeded, 1);
-    assert.equal(result.failed, 0);
-    assert.equal(executed, 1);
-    assert.equal(
-      (await repository.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10)).length,
-      0,
-      'acked compensation message must not be reclaimed',
-    );
+    const messages = await repository.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10);
+    assert.equal(messages.length, 0);
+    const events = await repository.listEvents('run-a', 'tenant-a');
+    assert.equal(events.some((event) => event.type === 'compensation.authorization_required'), true);
   });
 });

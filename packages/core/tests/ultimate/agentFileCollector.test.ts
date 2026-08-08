@@ -10,7 +10,10 @@ import {
 import type { TaskTreeNode } from '../../src/ultimate/types';
 import type { ArtifactReference } from '../../src/shared/types';
 import type { AgentRuntimeInterface } from '../../src/runtime';
-import { OrchestratorOutputCollector } from '../../src/ultimate/orchestratorOutput';
+import {
+  OrchestratorOutputCollector,
+  extractOutputFilePath as extractLegacyOutputFilePath,
+} from '../../src/ultimate/orchestratorOutput';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -109,6 +112,21 @@ describe('extractOutputFilePath', () => {
     const result = extractOutputFilePath('The output is at /var/log/output.md.');
     expect(result).toBe('/var/log/output.md');
   });
+
+  it('extracts absolute Windows drive, UNC, and namespace paths', () => {
+    const paths = [
+      String.raw`C:\workspace\reports\result.md`,
+      String.raw`\\server\share\reports\result.md`,
+      String.raw`\\?\C:\workspace\reports\result.md`,
+      String.raw`\\?\UNC\server\share\reports\result.md`,
+    ];
+
+    for (const outputPath of paths) {
+      const goal = `Write the report to ${outputPath}`;
+      expect(extractOutputFilePath(goal)).toBe(outputPath);
+      expect(extractLegacyOutputFilePath(goal)).toBe(outputPath);
+    }
+  });
 });
 
 describe('writeSynthesisOutput', () => {
@@ -131,6 +149,26 @@ describe('writeSynthesisOutput', () => {
 
     expect(writtenPath).toBe(path.join(workspace, 'reports', 'result.md'));
     expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
+  });
+
+  it('writes beneath a workspace reached through a symlink or junction', async () => {
+    const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-output-link-'));
+    const linkedWorkspace = path.join(linkRoot, 'workspace');
+    fs.symlinkSync(workspace, linkedWorkspace, process.platform === 'win32' ? 'junction' : 'dir');
+    process.env.COMMANDER_WORKSPACE = linkedWorkspace;
+
+    try {
+      const writtenPath = await writeSynthesisOutput(
+        'Write the report to ./reports/result.md',
+        'ok',
+      );
+
+      expect(writtenPath).toBe(path.join(linkedWorkspace, 'reports', 'result.md'));
+      expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
+    } finally {
+      process.env.COMMANDER_WORKSPACE = workspace;
+      fs.rmSync(linkRoot, { recursive: true, force: true });
+    }
   });
 
   it('rejects traversal and absolute output paths outside the workspace', async () => {

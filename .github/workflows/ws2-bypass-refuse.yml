@@ -24,10 +24,6 @@ jobs:
           node-version: '22'
 
       - name: Run WS2 build gate
-        run: node scripts/ws2-build-gate.mjs
-
-      - name: Verify gate exit code is clean
         run: |
-          # Re-run and assert exit 0. The previous step already fails on non-zero,
-          # but this makes the invariant explicit in the job log.
-          node scripts/ws2-build-gate.mjs && echo "WS2 build gate: 0 bypass patterns confirmed"
+          node scripts/ws2-build-gate.mjs
+          echo "WS2 build gate: 0 bypass patterns confirmed"

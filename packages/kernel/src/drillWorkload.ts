@@ -6,7 +6,7 @@
  */
 
 import { createHash, randomUUID } from 'node:crypto';
-import { Pool } from 'pg';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { PostgresKernelRepository } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
 
@@ -16,21 +16,24 @@ export interface CreatedRun {
 }
 
 export async function createDrillRun(databaseUrl: string): Promise<CreatedRun> {
-  const pool = new Pool({ connectionString: databaseUrl });
+  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
   try {
     await runKernelMigrations(pool);
     const repo = new PostgresKernelRepository(pool);
     const tenantId = `tenant-drill-${Date.now()}`;
     const id = `run_${randomUUID().slice(0, 8)}`;
-    const run = await repo.createRun({
-      id,
-      tenantId,
-      intentHash: createHash('sha256').update(id).digest('hex'),
-      workGraphHash: createHash('sha256').update('[]').digest('hex'),
-      workGraphVersion: 'v1',
-      policySnapshotId: 'drill-policy',
-      steps: [{ id: `${id}-step-0`, kind: 'agent', maxAttempts: 3, priority: 0 }],
-    }, 'drill');
+    const run = await repo.createRun(
+      {
+        id,
+        tenantId,
+        intentHash: createHash('sha256').update(id).digest('hex'),
+        workGraphHash: createHash('sha256').update('[]').digest('hex'),
+        workGraphVersion: 'v1',
+        policySnapshotId: 'drill-policy',
+        steps: [{ id: `${id}-step-0`, kind: 'agent', maxAttempts: 3, priority: 0 }],
+      },
+      'drill',
+    );
     return { id: run.id, tenantId: run.tenantId };
   } finally {
     await pool.end();

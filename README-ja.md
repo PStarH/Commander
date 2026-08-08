@@ -1,18 +1,16 @@
 <p align="center">
   <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
-  <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
-  <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
   <img src="https://img.shields.io/badge/providers-25-purple?style=flat-square" />
   <img src="https://img.shields.io/badge/topologies-5-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>AI が何をしているか見えるように。結果を信頼して。コストを削減。</strong></p>
+<p align="center"><strong>AI が何をしているか見えるように。結果を確認。コストを削減。</strong></p>
 
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
-  <sub>インストール不要。ワンコマンド。マルチエージェントの推論ストリームをリアルタイムでターミナルに表示。</sub>
+  <sub>インストール不要。ワンコマンド。マルチエージェントのイベントとツール呼び出しをリアルタイムでターミナルに表示。</sub>
 </p>
 
 <p align="center">
@@ -25,15 +23,15 @@
 
 ## Commander の独自性
 
-**透明性——すべてが見える。** 各エージェントの思考、ツール呼び出し、決定が SSE を介してリアルタイムでストリーミングされます。ブラックボックスなし。エージェントの作業をステップバイステップで確認できます。
+**透明性——実行イベントを確認。** 各エージェントのイベント、ツール呼び出し、利用可能なゲート決定が SSE を介してリアルタイムでストリーミングされます。出力された作業トレースを段階的に確認できます。
 
-**信頼性——検証済みの出力。** 品質ゲートが結果を返す前にすべてチェックします。ハルシネーション検出、整合性、完全性、正確性、安全性の検証。信頼できる結果が得られます。
+**信頼性——設定可能な出力チェック。** 検証パイプラインを有効にした経路では、品質ゲートが結果を返す前に設定済みのチェックを実行します。ハルシネーション検出、整合性、完全性、正確性、安全性を含み、失敗時は再試行または失敗を報告します。
 
-**コスト効率——スマートな支出。** 推論エンジンがトークンを消費する前にタスクを分析します。適切なトポロジを自動選択——単純なタスクには 1 エージェント、複雑なタスクには並列エージェント。実際のコスト：タスクあたり約 $0.10（品質検証込み）。
+**コスト効率——スマートな支出。** 推論エンジンがトークンを消費する前にタスクを分析します。適切なトポロジを自動選択——単純なタスクには 1 エージェント、複雑なタスクには並列エージェント。実際のコストはプロバイダー、モデル、タスク、設定した検証によって異なります。
 
 **25 の LLM プロバイダー。** OpenAI、Anthropic、Google、Azure、DeepSeek、GLM、MiMo、Xiaomi、Groq、Together、Perplexity、Fireworks、Replicate、Mistral、Cohere、OpenRouter、xAI、Anyscale、DeepInfra、Agnes、Ollama、vLLM、AWS Bedrock、StepFun、MiniMax——環境変数を 1 つ設定するだけで、Commander が残りを処理します。フォールバックチェーン付き。
 
-**自己改善。** Meta-learner は Thompson Sampling + Reflexion を使用して、実行間でエージェント設定を調整します。使用するほど向上します。
+**自己改善。** Meta-learner は Thompson Sampling + Reflexion を使用して、記録された実行に基づきエージェント設定を調整します。効果はタスク、モデル、データに依存します。
 
 ---
 
@@ -44,7 +42,7 @@
 pnpm exec tsx packages/core/src/cliEntry.ts watch "find the bug in src/server.ts and fix it"
 ```
 
-これはモックアップではありません——実際のエージェント実行からのライブ SSE ストリームの実録画です。すべてのツール呼び出し、すべての決定、すべての検証がリアルタイムでターミナルにストリーミングされます。エージェントの思考を**観察**できます。
+これは UI を示す録画デモで、CLI の SSE ストリーミング操作を紹介します。プロダクション実行や顧客環境の証拠を示すものではありません。
 
 ---
 
@@ -60,7 +58,7 @@ export OPENAI_API_KEY=sk-...
 # 3. 何でも実行
 pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 pnpm exec tsx packages/core/src/cliEntry.ts plan "implement authentication"    # 実行前に計画を確認
-pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # エージェントの推論をリアルタイム表示
+pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # エージェントのイベントをリアルタイム表示
 ```
 
 ---
@@ -84,7 +82,7 @@ pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     #
 
 ## トポロジ
 
-Commander は 5 つの標準トポロジから最適なものを自動選択します：
+Commander は 5 つの標準トポロジから適切な構成を自動選択します：
 
 - **SINGLE** — 単一エージェント、単純なクエリ、迅速な回答
 - **CHAIN** — 順次パイプライン、段階的な精緻化
@@ -116,10 +114,10 @@ packages/core/src/
 
 ## 品質ゲート
 
-すべての結果は返却前に検証されます：
+検証パイプラインを有効にした経路では、結果は返却前に設定済みのチェックを通ります：
 
 ```
-タスク入力 → エージェント実行 → [品質ゲート] → 検証済み出力
+タスク入力 → エージェント実行 → [品質ゲート] → 設定済みチェック後の出力
                             │
                             ├─ ハルシネーション検出（hallucination）
                             ├─ 整合性（consistency）
@@ -175,25 +173,25 @@ docker compose up -d
 
 ## ベンチマーク
 
+> 以下のベンチマークはシミュレーション/スクリプト化 harness または CI ベースラインで実行されます。プロダクション SLA や SOC 証拠を測るものではありません。
+
 ```bash
 pnpm benchmark:gaia        # GAIA ベンチマークを実行（詳細なスクリプトは package.json の scripts を参照）
 ```
 
 ---
 
-| ベンチマーク                                           |   Commander   | ベア LLM (MiMo) | OpenClaw |      Δ      |
-| ------------------------------------------------------ | :-----------: | :-------------: | :------: | :---------: |
-| **GAIA**（165 の多段階推論タスク）                     | ⏳ 再実行待ち |      21.2%      |    —     |      —      |
-| **BFCL** ツール選択（35 シナリオ非公式サブセット）     |   **77.1%**   |        —        |    —     |      —      |
-| **BFCL** パラメータ予測（35 シナリオ非公式サブセット） |   **77.1%**   |        —        |    —     |      —      |
-| **PinchBench**（43 のエージェントタスク）              |  **100.0%**   |        —        |  89.5%   | **+10.5pp** |
-| **HumanEval+**（164 の Python 問題）                   |   **96.3%**   |        —        |    —     |      —      |
-
-BFCL は本リポジトリで複数の非公式サブセットを使用しています：35 シナリオ汎用サブセット（`benchmarks/bfcl/results_full.json`、77.1% ツール / 77.1% パラメータ）、30 タスク Commander 再実行（`docs/benchmark-results/bfcl/results.json`、80.0% / 80.0%）、および 12 コアサブセット（`benchmarks/bfcl/results.json`、91.7% / 91.7%）。これらはいずれも公式 BFCL リーダーボードの実行結果ではありません。
+| スイート | カバレッジ | 結果 |
+| -------- | ---------- | ---- |
+| Chaos Engineering | 合成 255 ケース + mutation 55 ケース | harness の入口；結果は基準マトリクスを参照 |
+| Red Team | 47 シナリオ、8 攻撃カテゴリ | 掲載ケースはすべて blocked（シミュレーション harness） |
+| AgentDojo | 12 セキュリティテストケース | 掲載ケースはすべて blocked（シミュレーション harness） |
+| GAIA Spine | コア機能ベンチマーク | quick/offline 回帰をスケジュール；完全な fixture は保留 |
+| SLO | API 成功率 99.5%、P95 レイテンシ <2s | CI ベースライン、プロダクション SLA ではない |
 
 ```bash
 # 任意のベンチマークを再現
-pnpm --filter @commander/core benchmark:verify  # 提出済み BFCL スコア主張を再計算
+pnpm test:core                   # コアスイートとローカルベースラインを検証
 pnpm test:core                   # 完全なコアスイート：node:test + vitest
 pnpm benchmark:chaos:full        # カオスエンジニアリングベンチマーク（255 シナリオ）
 ```
@@ -207,7 +205,7 @@ pnpm benchmark:chaos:full        # カオスエンジニアリングベンチマ
 | `commander run <task>`             | 完全なマルチエージェント実行（`--dry-run` で計画表示、`--stream` でリアルタイム SSE、`--tui` で端末ダッシュボード） |
 | `commander fix`                    | lint・フォーマット・型エラーを自動修正                      |
 | `commander init`                   | ゼロ設定環境スキャン + プロバイダー接続テスト               |
-| `commander company <task>`         | マルチエージェント企業モード：計画 → 構築 → レビュー → 改善 |
+| `commander company <task>`         | ローカル company モード：計画 → 構築 → レビュー → 改善 |
 | `commander swarm <task>`           | 再帰的分解 + 並列実行                                       |
 | `commander drive <task>`           | 自律的な段階的実行                                          |
 | `commander goal <task>`            | 多輪収束ループ                                              |

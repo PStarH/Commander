@@ -2,6 +2,7 @@
 # Commander — Services
 # =============================================================================
 
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -16,6 +17,25 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+  selector:
+    {{- include "commander.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "commander.fullname" . }}-api-proof
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  type: ClusterIP
+  ports:
+    - name: tenant-proof
+      port: {{ .Values.tenantAuthority.apiProof.port }}
+      targetPort: {{ .Values.tenantAuthority.apiProof.port }}
+      protocol: TCP
   selector:
     {{- include "commander.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: api
@@ -60,6 +80,7 @@ spec:
   selector:
     {{- include "commander.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: redis
+{{- end }}
 {{- end }}
 
 ---

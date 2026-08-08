@@ -10,11 +10,6 @@ import {
   fetchWarRoomSnapshot,
   fetchMemoryItems,
   fetchMemoryOverview,
-  createMission,
-  updateMissionStatus,
-  approveMission,
-  createLog,
-  ApprovalRequiredError,
   API_BASE,
   PROJECT_ID,
   getAuthToken,
@@ -105,50 +100,6 @@ export function useWarRoom() {
     };
   }, [loadAll]);
 
-  const handleCreateMission = async (payload: Parameters<typeof createMission>[0]) => {
-    try {
-      setError(null);
-      await createMission(payload);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleUpdateMissionStatus = async (missionId: string, status: string) => {
-    try {
-      setError(null);
-      await updateMissionStatus(missionId, status);
-      await loadAll();
-    } catch (err) {
-      if (err instanceof ApprovalRequiredError) {
-        setError(err.message);
-        return;
-      }
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleApproveMission = async (missionId: string) => {
-    try {
-      setError(null);
-      await approveMission(missionId);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleCreateLog = async (missionId: string, payload: Parameters<typeof createLog>[1]) => {
-    try {
-      setError(null);
-      await createLog(missionId, payload);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
   const handleSearchMemory = async (filters?: {
     query?: string;
     kind?: MemoryKindFilter;
@@ -174,10 +125,6 @@ export function useWarRoom() {
     connectionStatus,
     dismissError,
     reload: loadAll,
-    createMission: handleCreateMission,
-    updateMissionStatus: handleUpdateMissionStatus,
-    approveMission: handleApproveMission,
-    createLog: handleCreateLog,
     searchMemory: handleSearchMemory,
   };
 }

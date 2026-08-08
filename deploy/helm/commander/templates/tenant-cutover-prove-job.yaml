@@ -1,0 +1,108 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
+{{- if include "commander.postgresBackend" . }}
+{{- include "commander.requireLifecycleValues" . }}
+{{- if not (include "commander.databaseTlsCaSecretName" .) }}{{- fail "tenant authority proof requires database TLS CA Secret" }}{{- end }}
+{{- if not .Values.tenantAuthority.apiProof.publicSecret }}{{- fail "tenant authority proof requires tenantAuthority.apiProof.publicSecret" }}{{- end }}
+{{- if not .Values.tenantAuthority.proofOwnerSecret }}{{- fail "tenant authority proof requires controller-created tenantAuthority.proofOwnerSecret" }}{{- end }}
+{{- if not .Values.tenantAuthority.releaseProjectionConfigMap }}{{- fail "tenant authority proof requires controller-created tenantAuthority.releaseProjectionConfigMap" }}{{- end }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "commander.tenantCutoverProofJobName" . }}
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+    commander.io/tenant-authority-proof-reader: "true"
+    commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
+  annotations:
+    helm.sh/hook: post-install,post-upgrade
+    helm.sh/hook-weight: "10"
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ .Values.migration.activeDeadlineSeconds }}
+  ttlSecondsAfterFinished: {{ .Values.migration.ttlSecondsAfterFinished }}
+  template:
+    metadata:
+      labels:
+        {{- include "commander.proofReaderLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "commander.tenantAuthorityProofReaderName" . }}
+      automountServiceAccountToken: false
+      restartPolicy: Never
+      terminationGracePeriodSeconds: {{ .Values.migration.terminationGracePeriodSeconds }}
+      securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: tenant-cutover-prove
+          image: {{ include "commander.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "packages/kernel/dist/migrate.js", "tenant-cutover-prove"]
+          env:
+            - name: COMMANDER_KUBERNETES_PROOF_RUNTIME
+              value: "1"
+            - name: COMMANDER_OWNER_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.tenantAuthority.proofOwnerSecret | quote }}
+                  key: {{ include "commander.databaseOwnerSecretKey" . | quote }}
+            - name: COMMANDER_DATABASE_TLS_CA_FILE
+              value: /run/commander/database-tls/ca.crt
+            - name: COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256
+              value: {{ .Values.databaseTls.expectedServerSpkiSha256 | quote }}
+            - name: COMMANDER_TENANT_AUTHORITY_PROOF_CA_FILE
+              value: /run/commander/api-proof-public/ca.crt
+          securityContext:
+            {{- include "commander.cellSecurityContext" . | nindent 12 }}
+          volumeMounts:
+            - name: proof-api-token
+              mountPath: /var/run/secrets/commander.io/proof-api
+              readOnly: true
+            - name: database-public-ca
+              mountPath: /run/commander/database-tls
+              readOnly: true
+            - name: api-proof-public
+              mountPath: /run/commander/api-proof-public
+              readOnly: true
+            - name: release-projection
+              mountPath: /run/commander/release-projection
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: proof-api-token
+          projected:
+            defaultMode: 256
+            sources:
+              - serviceAccountToken:
+                  audience: commander-tenant-cutover-proof/v1
+                  expirationSeconds: 600
+                  path: token
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+        - name: database-public-ca
+          secret:
+            secretName: {{ include "commander.databaseTlsCaSecretName" . | quote }}
+            items:
+              - key: {{ .Values.databaseTls.caKey | quote }}
+                path: ca.crt
+        - name: api-proof-public
+          secret:
+            secretName: {{ .Values.tenantAuthority.apiProof.publicSecret | quote }}
+            items:
+              - key: {{ .Values.tenantAuthority.apiProof.caKey | quote }}
+                path: ca.crt
+              - key: {{ .Values.tenantAuthority.apiProof.certKey | quote }}
+                path: tls.crt
+        - name: release-projection
+          configMap:
+            name: {{ .Values.tenantAuthority.releaseProjectionConfigMap | quote }}
+            defaultMode: 292
+            items:
+              - key: projection.json
+                path: projection.json
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+{{- end }}

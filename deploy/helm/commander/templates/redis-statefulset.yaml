@@ -1,3 +1,4 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander Redis — StatefulSet (Enterprise tier)
 # =============================================================================
@@ -66,4 +67,5 @@ spec:
         storageClassName: {{ .Values.redis.persistence.storageClass }}
         {{- end }}
   {{- end }}
+{{- end }}
 {{- end }}

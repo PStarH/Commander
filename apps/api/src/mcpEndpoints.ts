@@ -166,15 +166,35 @@ function requireMcpAdmin(req: Request, res: Response, next: NextFunction): void 
   res.status(401).json({ error: 'Authentication required' });
 }
 
-export function createMCPRouter(): Router {
+export interface McpActionGatewayRequest {
+  method: 'GET' | 'POST';
+  path: string;
+  body?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
+export interface McpActionGatewayExecutor {
+  request(input: McpActionGatewayRequest): Promise<unknown>;
+}
+
+export interface McpRouterOptions {
+  actionGatewayExecutor?: McpActionGatewayExecutor;
+  actionGatewayUrl?: string;
+  actionGatewayApiKey?: string;
+  localRuntime?: boolean;
+}
+
+export function createMCPRouter(options: McpRouterOptions = {}): Router {
   const router = express.Router();
   // Security: express.json() with limit is applied globally in index.ts.
 
   const server = new MCPServer('telos-mcp', '1.0.0');
-
-  // Register TELOS runtime tools as MCP tools
-  // These are the tools that agents can call through MCP
-  registerCoreTools(server);
+  const localRuntime = isLocalRuntimeEnabled(options.localRuntime);
+  if (localRuntime) {
+    registerCoreTools(server);
+  } else {
+    registerActionGatewayTools(server, resolveActionGatewayExecutor(options));
+  }
 
   // POST /mcp — JSON-RPC 2.0 endpoint for all MCP methods
   router.post('/', async (req, res) => {
@@ -188,6 +208,7 @@ export function createMCPRouter(): Router {
       name: 'telos-mcp',
       version: '1.0.0',
       capabilities: server.getCapabilities(),
+      enterpriseWrites: !localRuntime,
     });
   });
 
@@ -197,6 +218,8 @@ export function createMCPRouter(): Router {
     res.json({
       status: status.initialized ? 'initialized' : 'ready',
       ...status,
+      tools: server.listTools(),
+      enterpriseWrites: !localRuntime,
       timestamp: new Date().toISOString(),
     });
   });
@@ -292,6 +315,283 @@ export function createMCPRouter(): Router {
   });
 
   return router;
+}
+
+function registerActionGatewayTools(
+  server: MCPServer,
+  executor: McpActionGatewayExecutor | undefined,
+): void {
+  const actionEnvelopeSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      source: { type: 'string' },
+      package: { type: 'string' },
+      model: { type: 'string' },
+      tool: { type: 'string' },
+      destination: { type: 'string' },
+      effectType: { type: 'string' },
+      args: { type: 'object' },
+      idempotencyKey: { type: 'string' },
+    },
+    required: [
+      'source',
+      'package',
+      'model',
+      'tool',
+      'destination',
+      'effectType',
+      'args',
+      'idempotencyKey',
+    ],
+  };
+  const runIdSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: { runId: { type: 'string' } },
+    required: ['runId'],
+  };
+  const idempotentRunIdSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+    },
+    required: ['runId', 'idempotencyKey'],
+  };
+  const compensationRequestSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      originalEffectId: { type: 'string' },
+      adapterVersion: { type: 'string' },
+      compensationEffectType: { type: 'string' },
+      compensationPatch: { type: 'object' },
+      forwardReceiptHash: { type: 'string' },
+    },
+    required: [
+      'runId',
+      'idempotencyKey',
+      'originalEffectId',
+      'adapterVersion',
+      'compensationEffectType',
+      'compensationPatch',
+      'forwardReceiptHash',
+    ],
+  };
+  const compensationApprovalSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      authorizationId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      actionDigest: { type: 'string' },
+      policySnapshotId: { type: 'string' },
+    },
+    required: ['runId', 'authorizationId', 'idempotencyKey', 'actionDigest', 'policySnapshotId'],
+  };
+
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_simulate',
+    'Simulate a governed action through the Commander Action Gateway.',
+    actionEnvelopeSchema,
+    (args) => actionRequest('POST', '/v1/actions/simulate', args),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_propose',
+    'Propose a governed action through the Commander Action Gateway.',
+    actionEnvelopeSchema,
+    (args) => actionRequest('POST', '/v1/actions', args),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_get',
+    'Get a governed action from the Commander Action Gateway.',
+    runIdSchema,
+    (args) => ({ method: 'GET', path: actionPath(args.runId) }),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_approve',
+    'Approve an action using its exact simulation binding.',
+    {
+      type: 'object',
+      properties: {
+        runId: { type: 'string' },
+        idempotencyKey: { type: 'string' },
+        actionDigest: { type: 'string' },
+        simulationId: { type: 'string' },
+        policySnapshotId: { type: 'string' },
+      },
+      required: ['runId', 'idempotencyKey', 'actionDigest', 'simulationId', 'policySnapshotId'],
+    },
+    (args) => {
+      const { runId, idempotencyKey, actionDigest, simulationId, policySnapshotId } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/approve`,
+        body: { actionDigest, simulationId, policySnapshotId },
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_request',
+    'Request governed compensation for a completed forward effect.',
+    compensationRequestSchema,
+    (args) => {
+      const { runId, idempotencyKey, ...body } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations`,
+        body,
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_approve',
+    'Approve a bound compensation authorization.',
+    compensationApprovalSchema,
+    (args) => {
+      const { runId, authorizationId, idempotencyKey, actionDigest, policySnapshotId } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations/${encodeURIComponent(requiredString(authorizationId, 'authorizationId'))}/approve`,
+        body: { actionDigest, policySnapshotId },
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_reconcile',
+    'Request reconciliation for a completion-unknown action.',
+    idempotentRunIdSchema,
+    (args) => ({
+      method: 'POST',
+      path: `${actionPath(args.runId)}/reconcile`,
+      headers: idempotencyHeaders(args.idempotencyKey),
+    }),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_evidence',
+    'Get the evidence bundle for a governed action.',
+    runIdSchema,
+    (args) => ({ method: 'GET', path: `${actionPath(args.runId)}/evidence` }),
+  );
+}
+
+function registerGatewayTool(
+  server: MCPServer,
+  executor: McpActionGatewayExecutor | undefined,
+  name: string,
+  description: string,
+  inputSchema: MCPTool['inputSchema'],
+  buildRequest: (args: Record<string, unknown>) => McpActionGatewayRequest,
+): void {
+  server.registerTool({ name, description, inputSchema }, async (args) => {
+    if (!executor) {
+      throw new Error(
+        'ACTION_GATEWAY_REQUIRED: configure COMMANDER_ACTION_GATEWAY_URL for enterprise MCP actions.',
+      );
+    }
+    const result = await executor.request(buildRequest(args));
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  });
+}
+
+function actionRequest(
+  method: 'POST',
+  path: string,
+  body: Record<string, unknown>,
+): McpActionGatewayRequest {
+  return { method, path, body, headers: idempotencyHeaders(body.idempotencyKey) };
+}
+
+function idempotencyHeaders(value: unknown): Record<string, string> {
+  return { 'Idempotency-Key': requiredString(value, 'idempotencyKey') };
+}
+
+function actionPath(runId: unknown): string {
+  return `/v1/actions/${encodeURIComponent(requiredString(runId, 'runId'))}`;
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+  return value;
+}
+
+function isEnterpriseOrProductionMcpMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  const profile = env.COMMANDER_PROFILE?.trim().toLowerCase();
+  if (profile === 'enterprise') return true;
+  const commanderEnv = env.COMMANDER_ENV?.trim().toLowerCase();
+  if (commanderEnv === 'production' || commanderEnv === 'prod') return true;
+  return env.NODE_ENV === 'production';
+}
+
+function isLocalRuntimeEnabled(
+  configured?: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (isEnterpriseOrProductionMcpMode(env)) return false;
+  return configured ?? env.COMMANDER_MCP_LOCAL_RUNTIME?.trim() === '1';
+}
+
+function resolveActionGatewayExecutor(
+  options: McpRouterOptions,
+): McpActionGatewayExecutor | undefined {
+  if (options.actionGatewayExecutor) return options.actionGatewayExecutor;
+  const baseUrl =
+    options.actionGatewayUrl?.trim() || process.env.COMMANDER_ACTION_GATEWAY_URL?.trim();
+  if (!baseUrl) return undefined;
+  return createFetchActionGatewayExecutor({
+    baseUrl,
+    apiKey: options.actionGatewayApiKey ?? process.env.COMMANDER_API_KEY,
+  });
+}
+
+export function createFetchActionGatewayExecutor(options: {
+  baseUrl: string;
+  apiKey?: string;
+  fetch?: typeof globalThis.fetch;
+}): McpActionGatewayExecutor {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) throw new Error('A fetch implementation is required for the Action Gateway');
+  const baseUrl = options.baseUrl.replace(/\/$/, '');
+  return {
+    async request(input) {
+      const headers = new Headers(input.headers);
+      headers.set('accept', 'application/json');
+      if (input.body) headers.set('content-type', 'application/json');
+      if (options.apiKey) headers.set('authorization', `Bearer ${options.apiKey}`);
+      const response = await fetchImpl(`${baseUrl}${input.path}`, {
+        method: input.method,
+        headers,
+        ...(input.body ? { body: JSON.stringify(input.body) } : {}),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Action Gateway request failed (${response.status}): ${text}`);
+      }
+      if (!text) return {};
+      return JSON.parse(text) as unknown;
+    },
+  };
 }
 
 function registerCoreTools(server: MCPServer): void {

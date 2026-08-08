@@ -4,7 +4,30 @@
  * These types are the public contract. Do not leak core internals here.
  */
 
-import type { RunState, StepState } from '@commander/contracts';
+import type {
+  ActionApprovalRequestV1,
+  ActionCompensationApprovalRequestV1,
+  ActionCompensationApprovalResponseV1,
+  ActionCompensationRequestResponseV1,
+  ActionCompensationRequestV1,
+  ActionDecisionV1,
+  ActionEffectV1,
+  ActionErrorDetailV1,
+  ActionErrorV1,
+  ActionEvidenceV1,
+  ActionKillSwitchScopeV1,
+  ActionKillSwitchUpdateV1,
+  ActionKillSwitchV1,
+  ActionProposeRequestV1,
+  ActionProposeResponseV1,
+  ActionReconcileAcceptedV1,
+  ActionSimulationResponseV1,
+  ActionSimulationV1,
+  ActionStateV1,
+  GovernedActionV1,
+  RunState,
+  StepState,
+} from '@commander/contracts';
 
 export const SDK_API_VERSION = 'v1' as const;
 
@@ -77,6 +100,46 @@ export interface PolicyBundleV1 {
   name: string;
   version: number;
   effectDefaults: { allow: boolean; requireApproval: boolean };
+}
+
+export type ActionEffect = ActionEffectV1;
+export type ActionDecision = ActionDecisionV1;
+export type ActionSimulation = ActionSimulationV1;
+export type GovernedActionState = ActionStateV1;
+export type GovernedAction = GovernedActionV1;
+export type ProposeActionInput = ActionProposeRequestV1;
+export type ActionApprovalInput = ActionApprovalRequestV1;
+export type ActionCompensationInput = ActionCompensationRequestV1;
+export type ActionCompensationApprovalInput = ActionCompensationApprovalRequestV1;
+export type ActionCompensationResult = ActionCompensationRequestResponseV1;
+export type ActionCompensationApprovalResult = ActionCompensationApprovalResponseV1;
+export type SimulateActionResult = ActionSimulationResponseV1;
+export type ProposeActionResult = ActionProposeResponseV1 & { accepted: boolean };
+export type RequestReconcileResult = ActionReconcileAcceptedV1;
+export type ActionEvidenceBundle = ActionEvidenceV1;
+export type GatewayErrorDetail = ActionErrorDetailV1;
+export type GatewayErrorResponse = ActionErrorV1;
+export type KillSwitchScope = ActionKillSwitchScopeV1;
+export type KillSwitch = ActionKillSwitchV1;
+export type KillSwitchUpdateInput = ActionKillSwitchUpdateV1;
+
+export interface ActionEvidenceJwk {
+  kty: 'OKP';
+  crv: 'Ed25519';
+  x: string;
+  kid: string;
+  alg?: 'EdDSA';
+  use?: 'sig';
+}
+
+export interface ActionEvidenceJwks {
+  keys: ActionEvidenceJwk[];
+}
+
+export interface ActionEvidenceVerification {
+  valid: boolean;
+  payload?: Record<string, unknown>;
+  error?: GatewayErrorDetail;
 }
 
 /** Resources exposed by the Gateway under /api/v1/... */

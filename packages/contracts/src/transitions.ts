@@ -5,7 +5,14 @@
  * tests, SDK clients, and Gateway validation without importing the kernel.
  */
 
-import { isTerminalRunState, isTerminalStepState, isValidRunTransition, isValidStepTransition, type RunState, type StepState } from './states.js';
+import {
+  isTerminalRunState,
+  isTerminalStepState,
+  isValidRunTransition,
+  isValidStepTransition,
+  type RunState,
+  type StepState,
+} from './states.js';
 
 export interface TransitionResult {
   ok: boolean;
@@ -15,10 +22,11 @@ export interface TransitionResult {
 }
 
 export function validateRunTransition(from: RunState, to: RunState): TransitionResult {
-  if (isTerminalRunState(from) && from !== to) {
+  const valid = isValidRunTransition(from, to);
+  if (isTerminalRunState(from) && from !== to && !valid) {
     return { ok: false, from, to, reason: `Run state ${from} is terminal` };
   }
-  if (!isValidRunTransition(from, to)) {
+  if (!valid) {
     return { ok: false, from, to, reason: `Invalid run transition ${from} -> ${to}` };
   }
   return { ok: true, from, to };

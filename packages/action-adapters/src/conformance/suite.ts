@@ -36,6 +36,7 @@ export interface ConformanceAdapterContext {
   executeArgs: Record<string, unknown>;
   queryRequest: Record<string, unknown>;
   compensationPatch: Record<string, unknown>;
+  prepareTimeout?: () => void;
 }
 
 export interface ConformanceAdapterFactory {
@@ -81,11 +82,15 @@ function adapterExecutor(adapter: ActionAdapter): EffectExecutor {
           idempotencyKey: input.request.idempotencyKey,
           destination,
           forwardResponse:
-            ((input.request as Record<string, unknown>).forwardResponse as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).forwardResponse as Record<
+              string,
+              unknown
+            >) ?? {},
           compensationPatch:
-            ((input.request as Record<string, unknown>).compensationPatch as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).compensationPatch as Record<
+              string,
+              unknown
+            >) ?? {},
           signal: input.signal,
         });
       }
@@ -170,6 +175,7 @@ function createChaosKernel(): {
 }
 
 async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Promise<void> {
+  ctx.prepareTimeout?.();
   const registry = new ActionAdapterRegistry([ctx.adapter]);
   const executor = adapterExecutor(ctx.adapter);
   const { kernel, getState } = createChaosKernel();
@@ -202,7 +208,7 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
     executor,
     { append: async () => {} },
     // 保持默认 requireRequestBinding=true；token 已绑定 canonicalRequestHash
-    { localWorkerId: 'worker-1' },
+    { localWorkerId: 'worker-1', localWorkerGeneration: 1 },
   );
   const token = issuer.issue(
     buildConformanceIssueInput({
@@ -213,6 +219,9 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
       effectTypes: [ctx.adapter.descriptor.effectType],
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       requestHash: canonicalRequestHash(request),
+      actionDigest: canonicalRequestHash(request),
+      workerId: 'worker-1',
+      workerGeneration: 1,
     }),
   );
   await assert.rejects(
@@ -223,24 +232,36 @@ async function runTimeoutReconcileScenario(ctx: ConformanceAdapterContext): Prom
         type: ctx.adapter.descriptor.effectType,
         request,
         idempotencyKey,
-        lease: { workerId: 'worker-1', token: 'lease', fencingEpoch: 1 },
+        lease: {
+          workerId: 'worker-1',
+          workerGeneration: 1,
+          token: 'lease',
+          fencingEpoch: 1,
+        },
         actor: 'worker-1',
       }),
     (error: unknown) =>
-      error instanceof EffectBrokerError && error.code === 'COMPLETION_UNCONFIRMED',
+      error instanceof EffectBrokerError &&
+      (error.code === 'COMPLETION_UNCONFIRMED' || error.code === 'COMPLETION_UNKNOWN'),
   );
   assert.equal(getState(), 'COMPLETION_UNKNOWN');
   const querier = registry.outcomeQuerierFor(ctx.adapter.descriptor.effectType);
   assert.ok(querier);
   const reconciled = await broker.reconcileUnknown({
-    effectId: 'eff-conformance-chaos',
-    tenantId,
-    actor: 'conformance-reconciler',
+    effect: {
+      id: 'eff-conformance-chaos',
+      state: 'COMPLETION_UNKNOWN',
+      type: ctx.adapter.descriptor.effectType,
+      idempotencyKey,
+      request,
+      runId: 'run-conformance',
+      stepId: 'step-conformance',
+      tenantId,
+    },
     querier,
   });
-  assert.equal(reconciled.status, 'COMPLETED');
-  assert.equal(reconciled.invokedExecutor, false);
-  assert.equal(getState(), 'COMPLETED');
+  assert.equal(reconciled.status, 'APPLIED');
+  assert.equal(getState(), 'COMPLETION_UNKNOWN');
 }
 
 export function registerConformanceSuite(options: ConformanceSuiteOptions): void {
@@ -274,7 +295,9 @@ export function registerConformanceSuite(options: ConformanceSuiteOptions): void
       const mismatched =
         descriptor.adapterId === 'github.pull-request.create'
           ? 'github://octo/repo/issues'
-          : 'servicenow://dev12345/change_request';
+          : descriptor.adapterId === 'servicenow.incident.create'
+            ? 'servicenow://dev12345/change_request'
+            : 'k8s://kind/commander/services/api';
       assert.equal(
         findAdapterManifest({
           effectType: descriptor.effectType,
@@ -295,7 +318,9 @@ export function registerConformanceSuite(options: ConformanceSuiteOptions): void
           destination:
             descriptor.adapterId === 'github.pull-request.create'
               ? 'github://octo/repo/pulls'
-              : 'servicenow://dev12345/incident',
+              : descriptor.adapterId === 'servicenow.incident.create'
+                ? 'servicenow://dev12345/incident'
+                : 'k8s://kind/commander/deployments/api',
         }),
         null,
       );

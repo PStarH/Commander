@@ -3,8 +3,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { AgentRuntimeInterface } from '../runtime';
 import type { ArtifactReference, TaskTreeNode } from './types';
+import { extractOutputFilePath } from './agentFileCollector';
 import { collectCompletedNodes, flattenTree } from './taskTreeUtils';
 import { safePath } from '../tools/fileSystemTool';
+
+export { extractOutputFilePath } from './agentFileCollector';
 
 /** Minimum ratio of agent-written content to synthesis to prefer agent output */
 const AGENT_CONTENT_PREF_RATIO = 1.2;
@@ -248,34 +251,6 @@ export class OrchestratorOutputCollector {
 
     return currentOutput;
   }
-}
-
-/**
- * Extract the output file path from a goal string, if the goal asks to
- * write/create a file. Returns the file path or null.
- */
-export function extractOutputFilePath(goal: string): string | null {
-  const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
-
-  const toPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+([\\/\\.][\\S]+\\.${extRe})`,
-    'i',
-  );
-  const toMatch = goal.match(toPattern);
-  if (toMatch) return toMatch[1];
-
-  const directPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\s+([\\/\\.][\\S]+\\.${extRe})`,
-    'i',
-  );
-  const directMatch = goal.match(directPattern);
-  if (directMatch) return directMatch[1];
-
-  const pathPattern = new RegExp(`([\\/][\\S]+\\.${extRe})(?:\\s|$|[.])`, 'i');
-  const pathMatch = goal.match(pathPattern);
-  if (pathMatch) return pathMatch[1];
-
-  return null;
 }
 
 export function resolveOutputPath(filePath: string, workspace = process.cwd()): string {

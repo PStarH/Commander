@@ -32,7 +32,10 @@ export class KernelOutboxPublisher {
 
   async publish(limit = 100, now = new Date()): Promise<KernelOutboxPublishResult> {
     const result: KernelOutboxPublishResult = {
-      published: 0, duplicates: 0, retried: 0, failed: 0,
+      published: 0,
+      duplicates: 0,
+      retried: 0,
+      failed: 0,
     };
     for (const source of await this.repository.claimOutbox(limit, now)) {
       if (!source.claimToken) {
@@ -42,10 +45,14 @@ export class KernelOutboxPublisher {
       try {
         const delivery = await this.delivery.publish(toEnvelope(source));
         delivery.duplicate ? result.duplicates++ : result.published++;
-        if (!await this.repository.markOutboxPublished(source.id, source.claimToken)) result.failed++;
+        if (!(await this.repository.markOutboxPublished(source.id, source.claimToken)))
+          result.failed++;
       } catch (error) {
         const retried = await this.repository.retryOutbox(
-          source.id, source.claimToken, normalizeError(error), now,
+          source.id,
+          source.claimToken,
+          normalizeError(error),
+          now,
         );
         retried ? result.retried++ : result.failed++;
       }

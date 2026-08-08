@@ -21,7 +21,7 @@ const EXPECTED_DSN_KEYS = {
   api: 'app-url',
   worker: 'worker-url',
   'kernel-ops': 'scheduler-url',
-  'adapter-ops': 'worker-url',
+  'adapter-ops': 'adapter-ops-url',
   migration: 'owner-url',
 } as const;
 
@@ -88,6 +88,21 @@ function indexDeploymentsByComponent(docs: K8sDoc[]): Map<string, string> {
   return byComponent;
 }
 
+export function assertEnterpriseAdapterOpsTiming(docs: K8sDoc[]): void {
+  const adapterOps = indexDeploymentsByComponent(docs).get('adapter-ops') ?? '';
+  assert.ok(adapterOps, 'enterprise adapter-ops Deployment missing');
+  assert.equal(
+    extractInlineEnvValue(adapterOps, 'COMMANDER_RECONCILE_INTERVAL_MS'),
+    '10000',
+    'COMMANDER_RECONCILE_INTERVAL_MS must equal 10000 on the adapter-ops Deployment',
+  );
+  assert.equal(
+    extractInlineEnvValue(adapterOps, 'COMMANDER_COMPENSATION_INTERVAL_MS'),
+    '10000',
+    'COMMANDER_COMPENSATION_INTERVAL_MS must equal 10000 on the adapter-ops Deployment',
+  );
+}
+
 /** Extract secretKeyRef key for COMMANDER_KERNEL_DATABASE_URL (or DATABASE_URL). */
 export function extractKernelDatabaseSecretKey(raw: string): string | null {
   const kernelBlock = raw.match(
@@ -98,6 +113,16 @@ export function extractKernelDatabaseSecretKey(raw: string): string | null {
     /- name:\s*DATABASE_URL\s*\n\s*valueFrom:\s*\n\s*secretKeyRef:\s*\n\s*name:\s*\S+\s*\n\s*key:\s*(\S+)/,
   );
   return dbBlock ? dbBlock[1].replace(/['"]/g, '') : null;
+}
+
+function extractSecretKeyForEnvironment(raw: string, environmentName: string): string | null {
+  const escaped = environmentName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = raw.match(
+    new RegExp(
+      `- name:\\s*${escaped}\\s*\\n\\s*valueFrom:\\s*\\n\\s*secretKeyRef:\\s*\\n\\s*name:\\s*\\S+\\s*\\n\\s*key:\\s*(\\S+)`,
+    ),
+  );
+  return match?.[1]?.replace(/['"]/g, '') ?? null;
 }
 
 function extractWorkerTenants(raw: string): string | null {
@@ -147,6 +172,7 @@ function findDatabaseSecretRaw(docs: K8sDoc[]): string {
       && /app-url:/.test(doc._raw)
       && /scheduler-url:/.test(doc._raw)
       && /worker-url:/.test(doc._raw)
+      && /adapter-ops-url:/.test(doc._raw)
     ) {
       return doc._raw;
     }
@@ -284,6 +310,11 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
 
   const apiRaw = deployByComponent.get('api') ?? '';
   assert.equal(
+    extractSecretKeyForEnvironment(apiRaw, 'COMMANDER_TENANT_AUTHORITY_DATABASE_URL'),
+    'tenant-authority-url',
+    'H12: API tenant authority pool must use the dedicated tenant-authority-url',
+  );
+  assert.equal(
     extractInlineEnvValue(apiRaw, 'API_STORE_BACKEND'),
     'memory',
     'H19: app-role API must use API_STORE_BACKEND=memory for non-authoritative legacy state',
@@ -302,20 +333,20 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
     assert.ok(componentRaw, `H12: ${component} manifest missing for DSN key check`);
     const key = extractKernelDatabaseSecretKey(componentRaw);
     assert.equal(key, expectedKey, `H12: ${component} must use secret key ${expectedKey}, got ${key}`);
-    const prior = seenKeys.get(key);
-    if (prior && prior !== component && !(key === 'worker-url' && (component === 'worker' || component === 'adapter-ops'))) {
-      // worker and adapter-ops intentionally share worker-url
-    }
+    assert.ok(!seenKeys.has(key), `H12: ${component} must not share DSN key ${key}`);
     seenKeys.set(key, component);
   }
 
-  // Four distinct keys across the authority map (worker+adapter share worker-url → 4 keys)
-  const uniqueKeys = new Set(Object.values(EXPECTED_DSN_KEYS));
-  assert.equal(uniqueKeys.size, 4, 'H12: expected four distinct DSN secret keys');
+  // Six distinct keys across the authority map, including the API issuer pool.
+  const uniqueKeys = new Set([
+    ...Object.values(EXPECTED_DSN_KEYS),
+    'tenant-authority-url',
+  ]);
+  assert.equal(uniqueKeys.size, 6, 'H12: expected six distinct DSN secret keys');
   assert.deepEqual(
     [...uniqueKeys].sort(),
-    ['app-url', 'owner-url', 'scheduler-url', 'worker-url'],
-    'H12: DSN secret keys must be owner/app/scheduler/worker-url',
+    ['adapter-ops-url', 'app-url', 'owner-url', 'scheduler-url', 'tenant-authority-url', 'worker-url'],
+    'H12: DSN secret keys must include dedicated adapter-ops and tenant-authority URLs',
   );
 
   // No runtime workload uses owner-url
@@ -363,6 +394,14 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
     tenants,
     'H14: adapter-ops COMMANDER_WORKER_TENANTS must match worker',
   );
+  const claimSecretDir = extractInlineEnvValue(adapterOpsRaw, 'COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR');
+  assert.ok(claimSecretDir, 'H20: adapter-ops claim secret dir must be configured');
+  assert.match(
+    adapterOpsRaw,
+    new RegExp(`mountPath:\\s*["']?${claimSecretDir!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}["']?`),
+    'H20: adapter-ops claim secret dir must be volume-mounted',
+  );
+  assert.match(adapterOpsRaw, /name:\s*COMMANDER_ADAPTER_OPS_INSTANCE_ID/, 'H20: adapter-ops instance id required');
 
   // COMMANDER_CELL_TENANT_ID — explicit inject (no silent local fallback on enterprise).
   const workerCellTenant = extractCellTenantId(workerRaw);
@@ -416,12 +455,12 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
   }
 
   if (profile === 'demo') {
-    // Init ConfigMap: CREATE ROLE LOGIN × 4
+    // Init ConfigMap: CREATE ROLE LOGIN x 6
     const initCm = findDatabaseInitConfigMapRaw(docs);
     assert.ok(initCm, 'H15: demo must render database-init ConfigMap');
     const createRoleLogin = initCm.match(/CREATE ROLE \w+ WITH LOGIN/g) ?? [];
-    assert.equal(createRoleLogin.length, 4, `H15: expected 4 CREATE ROLE ... LOGIN, got ${createRoleLogin.length}`);
-    for (const role of ['commander_owner', 'commander_app', 'commander_scheduler', 'commander_worker']) {
+    assert.equal(createRoleLogin.length, 6, `H15: expected 6 CREATE ROLE ... LOGIN, got ${createRoleLogin.length}`);
+    for (const role of ['commander_owner', 'commander_app', 'commander_tenant_authority', 'commander_scheduler', 'commander_worker', 'commander_adapter_ops']) {
       assert.match(initCm, new RegExp(`CREATE ROLE ${role} WITH LOGIN`), `H15: missing CREATE ROLE ${role} LOGIN`);
     }
 
@@ -433,36 +472,45 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
     for (const env of [
       'COMMANDER_OWNER_PASSWORD',
       'COMMANDER_APP_PASSWORD',
+      'COMMANDER_TENANT_AUTHORITY_PASSWORD',
       'COMMANDER_SCHEDULER_PASSWORD',
       'COMMANDER_WORKER_PASSWORD',
+      'COMMANDER_ADAPTER_OPS_PASSWORD',
     ]) {
       assert.match(sts, new RegExp(`name:\\s*${env}`), `H15: StatefulSet must inject ${env}`);
     }
-    for (const key of ['owner-password', 'app-password', 'scheduler-password', 'worker-password']) {
+    for (const key of ['owner-password', 'app-password', 'tenant-authority-password', 'scheduler-password', 'worker-password', 'adapter-ops-password']) {
       assert.match(sts, new RegExp(`key:\\s*${key}`), `H15: StatefulSet must ref secret key ${key}`);
     }
 
-    // Generated Secret has four DSN keys + passwords
+    // Ephemeral bundled mode generates the Secret. Persistent bundled mode
+    // intentionally references a pre-created stable Secret, which is not
+    // present in `helm template` output.
     const secret = findDatabaseSecretRaw(docs);
-    assert.ok(secret, 'H15: demo database Secret with four DSN keys required');
-    for (const key of ['owner-url', 'app-url', 'scheduler-url', 'worker-url']) {
-      assert.match(secret, new RegExp(`${key}:`), `H15: Secret missing ${key}`);
-    }
-    for (const key of ['owner-password', 'app-password', 'scheduler-password', 'worker-password']) {
-      assert.match(secret, new RegExp(`${key}:`), `H15: Secret missing ${key}`);
+    if (secret) {
+      for (const key of ['owner-url', 'app-url', 'tenant-authority-url', 'scheduler-url', 'worker-url', 'adapter-ops-url']) {
+        assert.match(secret, new RegExp(`${key}:`), `H15: Secret missing ${key}`);
+      }
+      for (const key of ['owner-password', 'app-password', 'tenant-authority-password', 'scheduler-password', 'worker-password', 'adapter-ops-password']) {
+        assert.match(secret, new RegExp(`${key}:`), `H15: Secret missing ${key}`);
+      }
+    } else {
+      assert.match(sts, /secretKeyRef:/, 'H15: persistent bundled mode must reference its stable Secret');
     }
 
     // Init script references password env vars (sourced from Secret via STS)
     assert.match(initCm, /COMMANDER_OWNER_PASSWORD/, 'H15: init must reference COMMANDER_OWNER_PASSWORD');
     assert.match(initCm, /COMMANDER_APP_PASSWORD/, 'H15: init must reference COMMANDER_APP_PASSWORD');
+    assert.match(initCm, /COMMANDER_TENANT_AUTHORITY_PASSWORD/, 'H15: init must reference COMMANDER_TENANT_AUTHORITY_PASSWORD');
     assert.match(initCm, /COMMANDER_SCHEDULER_PASSWORD/, 'H15: init must reference COMMANDER_SCHEDULER_PASSWORD');
     assert.match(initCm, /COMMANDER_WORKER_PASSWORD/, 'H15: init must reference COMMANDER_WORKER_PASSWORD');
+    assert.match(initCm, /COMMANDER_ADAPTER_OPS_PASSWORD/, 'H15: init must reference COMMANDER_ADAPTER_OPS_PASSWORD');
   } else {
-    // Enterprise: no bundled init / no generated four-DSN secret from chart
+    // Enterprise: no bundled init / no generated six-DSN secret from chart
     assert.ok(!findDatabaseInitConfigMapRaw(docs), 'H15: enterprise must not render database-init ConfigMap');
     assert.ok(!findPostgresStatefulSetRaw(docs), 'H15: enterprise must not render Postgres StatefulSet');
-    // Operator-supplied Secret is external — rendered workloads must still pin all four DSN keys.
-    for (const key of ['owner-url', 'app-url', 'scheduler-url', 'worker-url']) {
+    // Operator-supplied Secret is external; rendered workloads must still pin all six DSN keys.
+    for (const key of ['owner-url', 'app-url', 'tenant-authority-url', 'scheduler-url', 'worker-url', 'adapter-ops-url']) {
       assert.match(
         raw,
         new RegExp(`key:\\s*["']?${key}["']?`),
@@ -508,8 +556,16 @@ export function assertHelmCellTopology(docs: K8sDoc[], profile: HelmCellProfile,
   // H6
   assert.ok(/automountServiceAccountToken:\s*false/.test(raw), 'H6: automountServiceAccountToken false');
 
-  // H7
-  assert.ok(/post-install,post-upgrade/.test(raw), 'H7: migration post-install/post-upgrade hook');
+  // H7: fresh bundled installs have no migration hook; external and upgrades
+  // use only the lifecycle pre-hook tuple. The separate post-rollout proof Job
+  // is intentionally not part of this migration invariant.
+  const migrationRaw = findMigrationRaw(docs);
+  assert.ok(!/post-install|post-upgrade/.test(migrationRaw), 'H7: migration must not use post hooks');
+  const hook = migrationRaw.match(/helm\.sh\/hook:\s*([^\n]+)/)?.[1]?.trim();
+  if (hook) {
+    assert.equal(hook, 'pre-install,pre-upgrade,pre-rollback', 'H7: lifecycle hook tuple');
+    assert.match(raw, /helm\.sh\/hook-weight:\s*["']?-10["']?/, 'H7: lifecycle hook weight');
+  }
 
   // H8
   assert.ok(!/password:\s*commander/.test(raw), 'H8: no default password commander');
@@ -528,8 +584,10 @@ export function assertHelmCellTopology(docs: K8sDoc[], profile: HelmCellProfile,
     const adapterOpsReplicas = deploymentSpecReplicas(deployByComponent.get('adapter-ops') ?? '');
     assert.equal(apiReplicas, 2, 'H10: API replicas=2');
     assert.equal(workerReplicas, 2, 'H10: worker replicas=2');
-    // Fixed daemon ids stomp under multi-replica; keep adapter-ops at 1 until POD_NAME suffix.
-    assert.equal(adapterOpsReplicas, 1, 'H10: adapter-ops replicas=1 (daemon id stomping)');
+    assert.equal(adapterOpsReplicas, 1, 'H10: demo adapter-ops replicas=1');
+  } else {
+    const adapterOpsReplicas = deploymentSpecReplicas(deployByComponent.get('adapter-ops') ?? '');
+    assert.equal(adapterOpsReplicas, 2, 'H10: enterprise adapter-ops replicas=2');
   }
 
   // H11 — kernel backend env on all cell workloads (catches C1)
@@ -544,6 +602,7 @@ export function assertHelmCellTopology(docs: K8sDoc[], profile: HelmCellProfile,
 
   assertRoleDsnSeparation(docs, profile, raw);
   assertCapabilityAuthorityMounts(docs, profile, raw);
+  if (profile === 'enterprise') assertEnterpriseAdapterOpsTiming(docs);
 }
 
 async function main(): Promise<void> {

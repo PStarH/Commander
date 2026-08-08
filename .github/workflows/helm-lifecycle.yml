@@ -1,0 +1,75 @@
+name: Helm Lifecycle
+
+on:
+  pull_request:
+    paths:
+      - 'apps/api/**'
+      - 'deploy/helm/commander/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - '.dockerignore'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - '.github/workflows/helm-lifecycle.yml'
+  push:
+    branches: [main, master]
+    paths:
+      - 'apps/api/**'
+      - 'deploy/helm/commander/**'
+      - 'packages/**'
+      - 'scripts/**'
+      - '.dockerignore'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - 'tsconfig*.json'
+      - '.github/workflows/helm-lifecycle.yml'
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec node --import tsx --test scripts/chart-content-digest.test.ts scripts/helm-cell-assert.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts
+      - run: pnpm exec tsx scripts/chart-content-digest.ts verify deploy/helm/commander
+      - run: helm lint deploy/helm/commander -f deploy/helm/commander/values-demo.yaml
+      - run: pnpm exec tsx scripts/helm-lifecycle-static.ts
+
+  kind:
+    needs: static
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.17.3
+      - uses: helm/kind-action@v1
+        with:
+          cluster_name: commander-helm-lifecycle
+          node_image: kindest/node:v1.33.2@sha256:18e6c8f260d51cda4bc32d9f1a4852f9e693c7b667aa14321996ed7c411fc121
+          config: scripts/fixtures/helm-lifecycle/kind-config.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Run Kind lifecycle harness
+        run: pnpm exec tsx scripts/helm-lifecycle-kind.ts run
+      - name: Upload sanitized evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: kind-lifecycle-evidence
+          path: kind-lifecycle-evidence.json

@@ -10,15 +10,7 @@ import { join } from 'path';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import {
   CheckpointManager as SagaCheckpointManager,
-  ApprovalManager,
   FileSagaStore,
-  FileApprovalStore,
-  InProcessWorkerPool,
-  CompensationScheduler,
-  defaultCompensationRetryPolicy,
-  SagaCoordinator,
-  getSagaExample,
-  type SagaGraph,
   type SagaStateSnapshot,
   type SagaEvent,
 } from '@commander/core/saga';
@@ -36,15 +28,8 @@ function isValidRunId(runId: unknown): runId is string {
   );
 }
 
-function buildSagaRuntime() {
-  const store = new FileSagaStore({ baseDir: DATA_DIR });
-  const approvalStore = new FileApprovalStore({ baseDir: DATA_DIR });
-  return {
-    checkpoint: new SagaCheckpointManager(store),
-    approval: new ApprovalManager({ store: approvalStore }),
-    compensation: new CompensationScheduler({ retryPolicy: defaultCompensationRetryPolicy() }),
-    workerPool: new InProcessWorkerPool(8),
-  };
+function buildSagaProjection(): SagaCheckpointManager {
+  return new SagaCheckpointManager(new FileSagaStore({ baseDir: DATA_DIR }));
 }
 
 function readSnapshot(runId: string): SagaStateSnapshot | undefined {
@@ -58,17 +43,10 @@ function readSnapshot(runId: string): SagaStateSnapshot | undefined {
   }
 }
 
-function lookupSagaGraph(sagaName: string): SagaGraph | undefined {
-  const example = getSagaExample(sagaName);
-  if (!example) return undefined;
-  return example.build();
-}
-
 interface SagaPrincipal {
   id: string;
   tenantId: string;
   isAdmin: boolean;
-  canOperate: boolean;
 }
 
 type OwnedSagaSnapshot = SagaStateSnapshot & { ownerId?: string };
@@ -99,54 +77,31 @@ function requireSagaPrincipal(req: Request, res: Response): SagaPrincipal | null
   try {
     if (active && requested) assertSameTenant(requested);
     const role = req.user?.role;
-    const scopes = [...(req.apiScopes ?? []), ...(req.user?.scopes ?? [])];
-    const isAdmin = !!role && hasRole(role, 'admin');
-    return {
-      id,
-      tenantId,
-      isAdmin,
-      canOperate:
-        isAdmin ||
-        scopes.includes('saga:operate') ||
-        scopes.includes('saga:admin') ||
-        scopes.includes('admin') ||
-        scopes.includes('*'),
-    };
+    return { id, tenantId, isAdmin: !!role && hasRole(role, 'admin') };
   } catch {
     res.status(403).json({ error: 'Tenant context mismatch' });
     return null;
   }
 }
 
-function isSameTenant(snapshot: SagaStateSnapshot, tenantId: string): boolean {
-  if (snapshot.tenantId !== tenantId) return false;
+function canReadSnapshot(snapshot: OwnedSagaSnapshot, principal: SagaPrincipal): boolean {
+  if (snapshot.tenantId !== principal.tenantId) return false;
   try {
     if (getCurrentTenantId()) assertSameTenant(snapshot.tenantId);
-    return true;
+    return principal.isAdmin || (!!snapshot.ownerId && snapshot.ownerId === principal.id);
   } catch {
     return false;
   }
 }
 
-function canReadSnapshot(snapshot: OwnedSagaSnapshot, principal: SagaPrincipal): boolean {
-  return (
-    isSameTenant(snapshot, principal.tenantId) &&
-    (principal.isAdmin || (!!snapshot.ownerId && snapshot.ownerId === principal.id))
-  );
-}
-
-function authorizeMutation(
-  snapshot: OwnedSagaSnapshot,
-  principal: SagaPrincipal,
-  res: Response,
-): boolean {
-  if (!isSameTenant(snapshot, principal.tenantId)) {
-    res.status(404).json({ error: 'Run not found' });
-    return false;
-  }
-  if (snapshot.ownerId === principal.id || principal.canOperate) return true;
-  res.status(403).json({ error: 'Saga owner or operator authority required' });
-  return false;
+function executionRemoved(res: import('express').Response): void {
+  res.status(410).json({
+    error: {
+      code: 'LEGACY_EXECUTION_DISABLED',
+      message: 'Process-local saga execution has been removed from the API.',
+      replacement: 'POST /v1/runs',
+    },
+  });
 }
 
 function buildTimeline(snapshot: SagaStateSnapshot, events: SagaEvent[]) {
@@ -196,8 +151,7 @@ export function createSagaRouter(): Router {
     if (!principal) return;
     const { runId } = req.params;
     if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
-    const runtime = buildSagaRuntime();
-    const recovered = await runtime.checkpoint.recover(runId);
+    const recovered = await buildSagaProjection().recover(runId);
     if (!recovered || !canReadSnapshot(recovered.snapshot, principal)) {
       return res.status(404).json({ error: 'Run not found' });
     }
@@ -214,8 +168,7 @@ export function createSagaRouter(): Router {
     if (!principal) return;
     const { runId } = req.params;
     if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
-    const runtime = buildSagaRuntime();
-    const recovered = await runtime.checkpoint.recover(runId);
+    const recovered = await buildSagaProjection().recover(runId);
     if (!recovered || !canReadSnapshot(recovered.snapshot, principal)) {
       return res.status(404).json({ error: 'Run not found' });
     }
@@ -226,102 +179,12 @@ export function createSagaRouter(): Router {
     });
   });
 
-  router.post('/api/saga/runs/:runId/resume', async (req, res) => {
-    const principal = requireSagaPrincipal(req, res);
-    if (!principal) return;
-    const { runId } = req.params;
-    if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
-    const runtime = buildSagaRuntime();
-    const recovered = await runtime.checkpoint.recover(runId);
-    if (!recovered) {
-      return res.status(404).json({ error: 'Run not found' });
-    }
-    if (!authorizeMutation(recovered.snapshot, principal, res)) return;
-
-    const sagaName = (recovered.snapshot as { sagaName?: string }).sagaName;
-    if (!sagaName) return res.status(400).json({ error: 'Snapshot missing sagaName' });
-
-    const graph = lookupSagaGraph(sagaName);
-    if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
-
-    const coordinator = SagaCoordinator.resumeFrom(
-      graph,
-      recovered,
-      runtime.checkpoint,
-      runtime.approval,
-      { ...runtime, ownerId: recovered.snapshot.ownerId ?? principal.id },
-    );
-
-    const resultPromise = coordinator.resume();
-    res.json({ runId, status: 'resuming', state: coordinator.state });
-
-    const bus = getMessageBus();
-    resultPromise
-      .then((result: { status: string }) => {
-        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', {
-          runId,
-          status: result.status,
-        });
-      })
-      .catch((err: unknown) => {
-        // Security: Log full error server-side; publish sanitized message to bus.
-        console.error('[sagaEndpoints] Saga failed:', err);
-        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', {
-          runId,
-          error: 'Saga execution failed',
-        });
-      });
+  router.use('/api/saga/runs/:runId/resume', (_req, res) => {
+    executionRemoved(res);
   });
 
-  router.post('/api/saga/runs/:runId/fork', async (req, res) => {
-    const principal = requireSagaPrincipal(req, res);
-    if (!principal) return;
-    const { runId } = req.params;
-    if (!isValidRunId(runId)) return res.status(400).json({ error: 'Invalid runId format' });
-    const { nodeId, input } = req.body as { nodeId?: string; input?: Record<string, unknown> };
-    if (!nodeId) return res.status(400).json({ error: 'nodeId required' });
-
-    const runtime = buildSagaRuntime();
-    const recovered = await runtime.checkpoint.recover(runId);
-    if (!recovered) {
-      return res.status(404).json({ error: 'Run not found' });
-    }
-    if (!authorizeMutation(recovered.snapshot, principal, res)) return;
-
-    const sagaName = (recovered.snapshot as { sagaName?: string }).sagaName;
-    if (!sagaName) return res.status(400).json({ error: 'Snapshot missing sagaName' });
-
-    const graph = lookupSagaGraph(sagaName);
-    if (!graph) return res.status(400).json({ error: `Unknown saga: ${sagaName}` });
-
-    const { coordinator: forked, newRunId } = await SagaCoordinator.forkFrom(
-      graph,
-      runId,
-      nodeId,
-      runtime.checkpoint,
-      runtime.approval,
-      { ...runtime, input, ownerId: recovered.snapshot.ownerId ?? principal.id },
-    );
-
-    const resultPromise = forked.runFrom(nodeId);
-    res.json({ parentRunId: runId, newRunId, forkNodeId: nodeId, status: 'forked' });
-
-    const bus = getMessageBus();
-    resultPromise
-      .then((result: { status: string }) => {
-        bus.publish('saga.completed' as MessageBusTopic, 'saga-api', {
-          runId: newRunId,
-          status: result.status,
-        });
-      })
-      .catch((err: unknown) => {
-        // Security: Log full error server-side; publish sanitized message to bus.
-        console.error('[sagaEndpoints] Saga failed:', err);
-        bus.publish('saga.failed' as MessageBusTopic, 'saga-api', {
-          runId: newRunId,
-          error: 'Saga execution failed',
-        });
-      });
+  router.use('/api/saga/runs/:runId/fork', (_req, res) => {
+    executionRemoved(res);
   });
 
   router.get('/api/saga/stream/:runId', async (req, res) => {

@@ -41,12 +41,12 @@ function mockResponse() {
   return { res, result };
 }
 
-function runAuth(path: string, headers: Record<string, string | string[]> = {}) {
+async function runAuth(path: string, headers: Record<string, string | string[]> = {}) {
   const req = mockRequest(path, headers);
   const { res, result } = mockResponse();
   let nextCalled = false;
 
-  authMiddleware(req, res, () => {
+  await authMiddleware(req, res, () => {
     nextCalled = true;
   });
 
@@ -99,23 +99,23 @@ describe('authMiddleware', () => {
     }
   });
 
-  it('allows public paths without credentials', () => {
-    const result = runAuth('/health');
+  it('allows public paths without credentials', async () => {
+    const result = await runAuth('/health');
 
     assert.equal(result.nextCalled, true);
     assert.equal(result.result.statusCode, 200);
   });
 
-  it('allows /api/auth/refresh and /api/auth/logout without credentials', () => {
+  it('allows /api/auth/refresh and /api/auth/logout without credentials', async () => {
     for (const p of ['/api/auth/refresh', '/api/auth/logout']) {
-      const result = runAuth(p);
+      const result = await runAuth(p);
       assert.equal(result.nextCalled, true, `${p} should be public`);
       assert.equal(result.result.statusCode, 200);
     }
   });
 
-  it('requires credentials for protected routes when API_KEYS is configured', () => {
-    const result = runAuth('/api/orchestrator/status');
+  it('requires credentials for protected routes when API_KEYS is configured', async () => {
+    const result = await runAuth('/api/orchestrator/status');
 
     assert.equal(result.nextCalled, false);
     assert.equal(result.result.statusCode, 401);
@@ -125,17 +125,17 @@ describe('authMiddleware', () => {
     });
   });
 
-  it('rejects unauthenticated access when no API keys are configured (no fall-open)', () => {
+  it('rejects unauthenticated access when no API keys are configured (no fall-open)', async () => {
     delete process.env.API_KEYS;
     delete process.env.COMMANDER_ALLOW_ANON;
 
-    const result = runAuth('/api/orchestrator/status');
+    const result = await runAuth('/api/orchestrator/status');
 
     assert.equal(result.nextCalled, false);
     assert.equal(result.result.statusCode, 401);
   });
 
-  it('allows anonymous access only when COMMANDER_ALLOW_ANON=1 and no keys', () => {
+  it('allows anonymous access only when COMMANDER_ALLOW_ANON=1 and no keys', async () => {
     // ApiKeyStore resolves KEYS_FILE at module load (process.cwd then), so
     // chdir cannot empty it — temporarily move the on-disk store aside.
     const keysPath = path.join(process.cwd(), '.commander', 'api_keys.json');
@@ -151,10 +151,15 @@ describe('authMiddleware', () => {
       process.env.COMMANDER_ALLOW_ANON = '1';
       resetApiKeyStore();
 
-      const result = runAuth('/api/orchestrator/status');
+      const result = await runAuth('/api/orchestrator/status');
+      const resultWithHeader = await runAuth('/api/orchestrator/status', {
+        'x-api-key': 'ignored-in-explicit-anonymous-mode',
+      });
 
       assert.equal(result.nextCalled, true);
       assert.equal(result.result.statusCode, 200);
+      assert.equal(resultWithHeader.nextCalled, true);
+      assert.equal(resultWithHeader.result.statusCode, 200);
     } finally {
       resetApiKeyStore();
       if (moved) {
@@ -163,24 +168,24 @@ describe('authMiddleware', () => {
     }
   });
 
-  it('rejects invalid API keys', () => {
-    const result = runAuth('/api/orchestrator/status', { 'x-api-key': 'wrong-key' });
+  it('rejects invalid API keys', async () => {
+    const result = await runAuth('/api/orchestrator/status', { 'x-api-key': 'wrong-key' });
 
     assert.equal(result.nextCalled, false);
     assert.equal(result.result.statusCode, 401);
     assert.deepEqual(result.result.body, { error: 'Invalid API key' });
   });
 
-  it('accepts X-API-Key credentials', () => {
-    const result = runAuth('/api/orchestrator/status', { 'x-api-key': 'secret-key' });
+  it('accepts X-API-Key credentials', async () => {
+    const result = await runAuth('/api/orchestrator/status', { 'x-api-key': 'secret-key' });
 
     assert.equal(result.nextCalled, true);
     assert.equal(result.result.statusCode, 200);
     assert.equal(result.req.apiKeyId, 'ci-key');
   });
 
-  it('accepts bearer token credentials', () => {
-    const result = runAuth('/api/orchestrator/status', {
+  it('accepts bearer token credentials', async () => {
+    const result = await runAuth('/api/orchestrator/status', {
       authorization: 'Bearer secret-key',
     });
 
@@ -189,21 +194,21 @@ describe('authMiddleware', () => {
     assert.equal(result.req.apiKeyId, 'ci-key');
   });
 
-  it('can be disabled explicitly for integration tests with ALLOW_ANON', () => {
+  it('can be disabled explicitly for integration tests with ALLOW_ANON', async () => {
     process.env.AUTH_DISABLED = 'true';
     process.env.COMMANDER_ALLOW_ANON = '1';
 
-    const result = runAuth('/api/orchestrator/status');
+    const result = await runAuth('/api/orchestrator/status');
 
     assert.equal(result.nextCalled, true);
     assert.equal(result.result.statusCode, 200);
   });
 
-  it('rejects AUTH_DISABLED without COMMANDER_ALLOW_ANON outside production', () => {
+  it('rejects AUTH_DISABLED without COMMANDER_ALLOW_ANON outside production', async () => {
     process.env.AUTH_DISABLED = 'true';
     delete process.env.COMMANDER_ALLOW_ANON;
 
-    const result = runAuth('/api/orchestrator/status');
+    const result = await runAuth('/api/orchestrator/status');
 
     assert.equal(result.nextCalled, false);
     assert.equal(result.result.statusCode, 401);

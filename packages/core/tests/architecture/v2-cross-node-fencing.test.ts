@@ -1,5 +1,5 @@
 /**
- * V2 Cross-Node Fencing Tests — Fencing token behavior across lease transfers.
+ * V2 Cross-Node Fencing Tests — in-memory fencing-token behavior across lease transfers.
  *
  * These tests prove the kernel's fencing token mechanism prevents zombie workers
  * from corrupting state after their lease has been transferred to a new worker:
@@ -14,7 +14,9 @@
  *   7. Effect idempotency keys survive lease transfers (replay vs. conflict)
  *
  * These tests are CI-blocking architecture invariants: they prove the system
- * maintains exactly-once execution semantics even when workers crash mid-flight.
+ * preserves single in-memory claim ownership and rejects stale completion
+ * attempts when workers crash mid-flight. External side effects require a
+ * separate adapter-specific idempotency and outcome-query proof.
  */
 
 import { describe, it, beforeEach } from 'node:test';
@@ -53,12 +55,26 @@ function createRunCommand(
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-describe('V2 Cross-Node Fencing — Lease Transfer & Zombie Rejection', () => {
+describe('V2 Cross-Node Fencing — In-Memory Lease Transfer & Zombie Rejection', () => {
   let kernel: InMemoryKernelRepository;
   const tenantId = 'tenant-fencing';
 
   beforeEach(() => {
     kernel = new InMemoryKernelRepository();
+    const registeredAt = new Date(Date.now() - 1_000);
+    const heartbeat = new Date();
+    kernel.seedTestWorker('ops-reconcile', [tenantId], 1, {
+      capabilities: ['effect.reconcile'],
+      identitySubject: 'db:commander_adapter_ops',
+      registeredAt,
+      lastHeartbeatAt: heartbeat,
+    });
+    kernel.seedTestWorker('ops-compensate', [tenantId], 1, {
+      capabilities: ['effect.compensate'],
+      identitySubject: 'db:commander_adapter_ops',
+      registeredAt,
+      lastHeartbeatAt: heartbeat,
+    });
   });
 
   // ─── 1. Epoch strictly increases across 3 consecutive crash→reclaim cycles ───

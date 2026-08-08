@@ -1,7 +1,7 @@
 /**
  * Enterprise Security Enhancement Test Suite
  *
- * Tests for the new enterprise-grade security modules:
+ * Tests for the security modules used in enterprise deployment profiles:
  * - ZeroTrustValidator: HMAC 签名验证 + 防重放
  * - BillExplosionGuard: 账单爆炸防护
  * - DataLossPrevention: 数据泄露防护
@@ -698,23 +698,22 @@ describe('EnterpriseSecurityGateway', () => {
 // Auth Middleware 时序安全测试
 // ============================================================================
 describe('Auth Middleware timing safety', () => {
-  it('should use SHA-256 hashing for API keys (not plaintext storage)', () => {
-    // This test verifies that the auth middleware code uses crypto.timingSafeEqual
-    // and SHA-256 hashing, which we can check by importing the module
+  it('should use scrypt derivation for API keys (not plaintext storage)', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const authPath = path.resolve(
-      process.cwd(),
-      process.cwd().endsWith(`${path.sep}packages${path.sep}core`)
-        ? '../../apps/api/src/authMiddleware.ts'
-        : 'apps/api/src/authMiddleware.ts',
-    );
+    const repositoryRoot = process.cwd().endsWith(`${path.sep}packages${path.sep}core`)
+      ? path.resolve(process.cwd(), '../..')
+      : process.cwd();
+    const authPath = path.resolve(repositoryRoot, 'apps/api/src/authMiddleware.ts');
+    const hashPath = path.resolve(repositoryRoot, 'apps/api/src/apiKeyHash.ts');
     const authCode = fs.readFileSync(authPath, 'utf8');
+    const hashCode = fs.readFileSync(hashPath, 'utf8');
 
     // Verify timing-safe comparison is used
     assert.ok(authCode.includes('timingSafeEqual'), 'Should use timingSafeEqual');
-    // Verify SHA-256 hashing is used
-    assert.ok(authCode.includes('createHash') || authCode.includes('sha256'), 'Should use SHA-256');
+    // Verify authentication and storage share a memory-hard key derivation.
+    assert.ok(authCode.includes('deriveApiKeyHash'), 'Should use shared API key derivation');
+    assert.ok(hashCode.includes('scryptSync'), 'Should use scrypt');
     // Verify auth failure lockout is implemented
     assert.ok(
       authCode.includes('lockedOut') || authCode.includes('LOCKOUT'),

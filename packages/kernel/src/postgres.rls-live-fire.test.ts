@@ -37,7 +37,9 @@ function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string):
 
 const workerDatabaseUrl =
   process.env.COMMANDER_WORKER_DATABASE_URL ??
-  (databaseUrl ? deriveRoleDatabaseUrl(databaseUrl, 'commander_worker', workerPassword) : undefined);
+  (databaseUrl
+    ? deriveRoleDatabaseUrl(databaseUrl, 'commander_worker', workerPassword)
+    : undefined);
 const appDatabaseUrl = databaseUrl
   ? deriveRoleDatabaseUrl(databaseUrl, 'commander_app', appPassword)
   : undefined;
@@ -111,7 +113,9 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
 
     // Apply migrations as owner, then verify roles exist.
     await runKernelMigrations(ownerPool);
-    const roles = await ownerPool.query<{ rolname: string }>("SELECT rolname FROM pg_roles WHERE rolname IN ('commander_owner','commander_app','commander_scheduler','commander_worker')");
+    const roles = await ownerPool.query<{ rolname: string }>(
+      "SELECT rolname FROM pg_roles WHERE rolname IN ('commander_owner','commander_app','commander_scheduler','commander_worker')",
+    );
     const names = roles.rows.map((r) => r.rolname);
     assert.ok(names.includes('commander_app'), 'commander_app role must exist');
     assert.ok(names.includes('commander_scheduler'), 'commander_scheduler role must exist');
@@ -143,10 +147,13 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
     const raceWorkers = Array.from({ length: 8 }, (_, i) => `${workerA}-race-${i}`);
     const workerIds = [workerA, workerB, schedulerA, schedulerB, ...raceWorkers];
     const values = workerIds
-      .map((id) => `('${id}','agent','v1','["agent"]',4,'ACTIVE',1,'${id}','[${JSON.stringify(tenantA)},${JSON.stringify(tenantB)}]'::jsonb)`)
+      .map(
+        (id) =>
+          `('${id}','agent','v1','["agent"]',4,'ACTIVE',1,'${id}','[${JSON.stringify(tenantA)},${JSON.stringify(tenantB)}]'::jsonb)`,
+      )
       .join(',');
     await ownerPool.query(
-      `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids) VALUES ${values}`
+      `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids) VALUES ${values}`,
     );
     for (const id of workerIds) {
       claimSecrets.set(id, await seedWorkerClaimSecret(ownerPool, id, 1));
@@ -157,12 +164,20 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
     if (!databaseUrl) return;
     const raceWorkers = Array.from({ length: 8 }, (_, i) => `${workerA}-race-${i}`);
     const suiteWorkerIds = [workerA, workerB, schedulerA, schedulerB, ...raceWorkers];
-    await ownerPool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [[tenantA, tenantB]]);
-    await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])', [suiteWorkerIds]);
-    await ownerPool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [suiteWorkerIds]);
-    await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id = ANY($1::text[])', [
+    await ownerPool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [
       [tenantA, tenantB],
     ]);
+    await ownerPool.query(
+      'DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])',
+      [suiteWorkerIds],
+    );
+    await ownerPool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
+      suiteWorkerIds,
+    ]);
+    await ownerPool.query(
+      'DELETE FROM commander_worker_allowed_tenants WHERE tenant_id = ANY($1::text[])',
+      [[tenantA, tenantB]],
+    );
     await appPoolA?.end();
     await appPoolB?.end();
     await schedulerPool?.end();
@@ -195,10 +210,9 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
     const client = await appPoolA.connect();
     try {
       await client.query(`SELECT set_config('app.tenant_scope', $1, false)`, [tenantA]);
-      const leaked = await client.query(
-        `SELECT id FROM commander_runs WHERE tenant_id=$1`,
-        [tenantB],
-      );
+      const leaked = await client.query(`SELECT id FROM commander_runs WHERE tenant_id=$1`, [
+        tenantB,
+      ]);
       assert.deepEqual(leaked.rows, [], 'app role scoped to A must not read B rows');
       await assert.rejects(
         client.query(
@@ -215,13 +229,25 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
   });
 
   it('runtime roles have no BYPASSRLS/superuser except commander_scheduler', async () => {
-    const rows = await ownerPool.query<{ rolname: string; rolbypassrls: boolean; rolsuper: boolean }>(
+    const rows = await ownerPool.query<{
+      rolname: string;
+      rolbypassrls: boolean;
+      rolsuper: boolean;
+    }>(
       `SELECT rolname, rolbypassrls, rolsuper FROM pg_roles
        WHERE rolname IN ('commander_app','commander_worker','commander_scheduler')`,
     );
     const byName = new Map(rows.rows.map((r) => [r.rolname, r]));
-    assert.equal(byName.get('commander_app')?.rolbypassrls, false, 'commander_app must NOT bypass RLS');
-    assert.equal(byName.get('commander_worker')?.rolbypassrls, false, 'commander_worker must NOT bypass RLS');
+    assert.equal(
+      byName.get('commander_app')?.rolbypassrls,
+      false,
+      'commander_app must NOT bypass RLS',
+    );
+    assert.equal(
+      byName.get('commander_worker')?.rolbypassrls,
+      false,
+      'commander_worker must NOT bypass RLS',
+    );
     // Every runtime role must be a non-superuser.
     for (const name of ['commander_app', 'commander_worker', 'commander_scheduler']) {
       assert.equal(byName.get(name)?.rolsuper, false, `${name} must not be a superuser`);
@@ -271,8 +297,16 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
         const identity = await identityClient.query<{ session_user: string; current_user: string }>(
           'SELECT session_user::text AS session_user, current_user::text AS current_user',
         );
-        assert.equal(identity.rows[0]?.session_user, 'commander_worker', 'session_user must be commander_worker LOGIN');
-        assert.equal(identity.rows[0]?.current_user, 'commander_worker', 'current_user must be commander_worker before repo wrap');
+        assert.equal(
+          identity.rows[0]?.session_user,
+          'commander_worker',
+          'session_user must be commander_worker LOGIN',
+        );
+        assert.equal(
+          identity.rows[0]?.current_user,
+          'commander_worker',
+          'current_user must be commander_worker before repo wrap',
+        );
         // No membership: worker must not be able to SET ROLE commander_app.
         await assert.rejects(
           identityClient.query('SET ROLE commander_app'),
@@ -281,7 +315,10 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
         );
         // Worker LOGIN must not SELECT claim-secret hashes.
         await assert.rejects(
-          identityClient.query('SELECT secret_hash FROM commander_worker_claim_secrets WHERE worker_id=$1', [workerId]),
+          identityClient.query(
+            'SELECT secret_hash FROM commander_worker_claim_secrets WHERE worker_id=$1',
+            [workerId],
+          ),
           /permission denied/i,
           'commander_worker must not SELECT commander_worker_claim_secrets',
         );
@@ -295,7 +332,10 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
       await repoB.createRun(runOutside, 'live-fire');
 
       // Read isolation under the worker's explicit allowed tenant list.
-      assert.ok(await workerRepo.getRun(runAllowed.id, tenantA), 'worker must read an allowed-tenant run');
+      assert.ok(
+        await workerRepo.getRun(runAllowed.id, tenantA),
+        'worker must read an allowed-tenant run',
+      );
       assert.equal(
         await workerRepo.getRun(runOutside.id, tenantA),
         null,
@@ -304,13 +344,14 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
 
       // App role must not EXECUTE claim_next_step (worker-only privilege).
       await assert.rejects(
-        () => repoA.claimNextStep({
-          workerId,
-          workerGeneration: 1,
-          capabilities: ['agent'],
-          leaseTtlMs: 30_000,
-          claimSecret,
-        }),
+        () =>
+          repoA.claimNextStep({
+            workerId,
+            workerGeneration: 1,
+            capabilities: ['agent'],
+            leaseTtlMs: 30_000,
+            claimSecret,
+          }),
         /permission denied/i,
         'commander_app must not EXECUTE claim_next_step',
       );
@@ -322,7 +363,10 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
         leaseTtlMs: 30_000,
         claimSecret,
       });
-      assert.ok(claimAllowed, 'worker LOGIN must claim via claim_next_step without caller tenantIds');
+      assert.ok(
+        claimAllowed,
+        'worker LOGIN must claim via claim_next_step without caller tenantIds',
+      );
       assert.equal(claimAllowed!.tenantId, tenantA);
 
       // Passing tenantIds must not widen durable authz (ignored on worker path).
@@ -334,13 +378,19 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
         leaseTtlMs: 30_000,
         claimSecret,
       });
-      assert.equal(claimOutside, null, 'worker must not claim outside durable tenant_ids even if tenantIds passed');
+      assert.equal(
+        claimOutside,
+        null,
+        'worker must not claim outside durable tenant_ids even if tenantIds passed',
+      );
 
       // Outside step remains claimable only for a worker authorized to tenantB.
       const outsideStep = await schedulerRepo.getStep(runOutside.steps[0]!.id, tenantB);
       assert.equal(outsideStep?.state, 'PENDING', 'outside tenant step must remain unclaimed');
     } finally {
-      await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [workerId]);
+      await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+        workerId,
+      ]);
       await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
     }
   });
@@ -404,17 +454,17 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
         effectId,
         tenantId: allowTenant,
         actor: 'live-fire',
-        reconcileAfter: new Date(Date.now() - 1_000).toISOString(),
       });
 
       await assert.rejects(
-        () => repoA.claimReconcileEffects({
-          limit: 5,
-          now: new Date(),
-          workerId: reconWorker,
-          workerGeneration: 1,
-          claimSecret,
-        }),
+        () =>
+          repoA.claimReconcileEffects({
+            limit: 5,
+            now: new Date(),
+            workerId: reconWorker,
+            workerGeneration: 1,
+            claimSecret,
+          }),
         /permission denied/i,
         'commander_app must not EXECUTE claim_reconcile_effects',
       );
@@ -443,11 +493,17 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
       assert.equal(effects[0]!.effect.tenantId, allowTenant);
     } finally {
       await ownerPool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [allowTenant]);
-      await ownerPool.query('DELETE FROM commander_effect_allowlist WHERE tenant_id=$1', [allowTenant]);
+      await ownerPool.query('DELETE FROM commander_effect_allowlist WHERE tenant_id=$1', [
+        allowTenant,
+      ]);
       await ownerPool.query('DELETE FROM commander_effect_quota WHERE tenant_id=$1', [allowTenant]);
-      await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [reconWorker]);
+      await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+        reconWorker,
+      ]);
       await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [reconWorker]);
-      await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [allowTenant]);
+      await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
+        allowTenant,
+      ]);
     }
   });
 
@@ -469,7 +525,16 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
        ($4,'agent','v1','["agent"]',2,'ACTIVE',1,$4,$6::jsonb),
        ($7,'agent','v1','["agent"]',2,'ACTIVE',1,$7,'["*"]'::jsonb),
        ($8,'agent','v1','["agent"]',2,'ACTIVE',1,$8,$5::jsonb)`,
-      [emptyId, staleId, inactiveId, multiId, JSON.stringify([tenantX]), JSON.stringify([tenantX, tenantY]), starId, peerId],
+      [
+        emptyId,
+        staleId,
+        inactiveId,
+        multiId,
+        JSON.stringify([tenantX]),
+        JSON.stringify([tenantX, tenantY]),
+        starId,
+        peerId,
+      ],
     );
     const emptySecret = await seedWorkerClaimSecret(ownerPool, emptyId, 1);
     const staleSecret = await seedWorkerClaimSecret(ownerPool, staleId, 2);
@@ -484,22 +549,46 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
       await repoB.createRun(runY, 'live-fire');
 
       assert.equal(
-        await workerRepo.claimNextStep({ workerId: emptyId, workerGeneration: 1, capabilities: ['agent'], leaseTtlMs: 30_000, claimSecret: emptySecret }),
+        await workerRepo.claimNextStep({
+          workerId: emptyId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: emptySecret,
+        }),
         null,
         'empty durable tenant_ids must claim nothing',
       );
       assert.equal(
-        await workerRepo.claimNextStep({ workerId: staleId, workerGeneration: 1, capabilities: ['agent'], leaseTtlMs: 30_000, claimSecret: staleSecret }),
+        await workerRepo.claimNextStep({
+          workerId: staleId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: staleSecret,
+        }),
         null,
         'stale workerGeneration must claim nothing',
       );
       assert.equal(
-        await workerRepo.claimNextStep({ workerId: inactiveId, workerGeneration: 1, capabilities: ['agent'], leaseTtlMs: 30_000, claimSecret: inactiveSecret }),
+        await workerRepo.claimNextStep({
+          workerId: inactiveId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: inactiveSecret,
+        }),
         null,
         'inactive worker must claim nothing',
       );
       assert.equal(
-        await workerRepo.claimNextStep({ workerId: starId, workerGeneration: 1, capabilities: ['agent'], leaseTtlMs: 30_000, claimSecret: starSecret }),
+        await workerRepo.claimNextStep({
+          workerId: starId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: starSecret,
+        }),
         null,
         "durable tenant_ids=['*'] must fail closed (not expand)",
       );
@@ -558,9 +647,14 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
       assert.ok([tenantX, tenantY].includes(second!.tenantId));
       assert.notEqual(first!.tenantId, second!.tenantId);
     } finally {
-      await ownerPool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [[tenantX, tenantY]]);
+      await ownerPool.query('DELETE FROM commander_runs WHERE tenant_id = ANY($1::text[])', [
+        [tenantX, tenantY],
+      ]);
       const ids = [emptyId, staleId, inactiveId, multiId, starId, peerId];
-      await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])', [ids]);
+      await ownerPool.query(
+        'DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])',
+        [ids],
+      );
       await ownerPool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [ids]);
     }
   });
@@ -583,15 +677,43 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
 
     // Cancellation scoped to tenant: A can cancel A, but not B (even if A knows B's id).
     assert.ok(await repoA.cancelRun(runA.id, tenantA, 'live-fire'));
-    assert.equal(await repoA.cancelRun(runB.id, tenantA, 'live-fire'), null, 'A cannot cancel B run');
+    assert.equal(
+      await repoA.cancelRun(runB.id, tenantA, 'live-fire'),
+      null,
+      'A cannot cancel B run',
+    );
 
     // Timer creation and read scoped to tenant.
-    const timerA = await repoA.createTimer({ runId: runA.id, stepId: runA.steps[0]!.id, tenantId: tenantA, firesAt: new Date(Date.now() + 60_000), timerType: 'RETRY_DELAY', payload: {} }, 'live-fire');
+    const timerA = await repoA.createTimer(
+      {
+        runId: runA.id,
+        stepId: runA.steps[0]!.id,
+        tenantId: tenantA,
+        firesAt: new Date(Date.now() + 60_000),
+        timerType: 'RETRY_DELAY',
+        payload: {},
+      },
+      'live-fire',
+    );
     assert.ok(timerA);
     assert.ok(await repoA.cancelTimer(timerA.id, tenantA), 'A can cancel A timer');
-    const timerB = await repoB.createTimer({ runId: runB.id, stepId: runB.steps[0]!.id, tenantId: tenantB, firesAt: new Date(Date.now() + 60_000), timerType: 'RETRY_DELAY', payload: {} }, 'live-fire');
+    const timerB = await repoB.createTimer(
+      {
+        runId: runB.id,
+        stepId: runB.steps[0]!.id,
+        tenantId: tenantB,
+        firesAt: new Date(Date.now() + 60_000),
+        timerType: 'RETRY_DELAY',
+        payload: {},
+      },
+      'live-fire',
+    );
     assert.ok(timerB);
-    assert.equal(await repoA.cancelTimer(timerB.id, tenantA), false, 'A cannot cancel B timer scoped as A');
+    assert.equal(
+      await repoA.cancelTimer(timerB.id, tenantA),
+      false,
+      'A cannot cancel B timer scoped as A',
+    );
 
     // Outbox: scheduler can see both; app only sees its own tenant when scoped.
     // Dirty shared DBs may have a large claimable backlog ahead of this suite's
@@ -624,8 +746,20 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
 
     const claims = await Promise.all([
       // Two scheduler-mode repos race for the same step.
-      schedulerRepo.claimNextStep({ workerId: schedulerA, workerGeneration: 1, tenantIds: [tenantA], capabilities: ['agent'], leaseTtlMs: 30_000 }),
-      schedulerRepo.claimNextStep({ workerId: schedulerB, workerGeneration: 1, tenantIds: [tenantA], capabilities: ['agent'], leaseTtlMs: 30_000 }),
+      schedulerRepo.claimNextStep({
+        workerId: schedulerA,
+        workerGeneration: 1,
+        tenantIds: [tenantA],
+        capabilities: ['agent'],
+        leaseTtlMs: 30_000,
+      }),
+      schedulerRepo.claimNextStep({
+        workerId: schedulerB,
+        workerGeneration: 1,
+        tenantIds: [tenantA],
+        capabilities: ['agent'],
+        leaseTtlMs: 30_000,
+      }),
       // Eight worker-mode racers (RPC claim; durable authz + claimSecret, no caller tenantIds).
       ...Array.from({ length: 8 }, (_, i) => {
         const id = `${workerA}-race-${i}`;
@@ -677,10 +811,32 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
     );
 
     // Old generation heartbeat/complete/fail rejected.
-    assert.equal(await repoA.heartbeatStep(claimed!.id, claimed!.tenantId, claimed!.lease!, 30_000), null, 'stale generation heartbeat must fail');
-    assert.equal(await repoA.completeStep({ stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!, expectedVersion: claimed!.version, output: {}, actor: workerA }), null, 'stale generation complete must fail');
     assert.equal(
-      await repoA.failStep({ stepId: claimed!.id, tenantId: claimed!.tenantId, lease: claimed!.lease!, expectedVersion: claimed!.version, error: { code: 'TEST', message: 'test', retryable: false }, actor: workerA }),
+      await repoA.heartbeatStep(claimed!.id, claimed!.tenantId, claimed!.lease!, 30_000),
+      null,
+      'stale generation heartbeat must fail',
+    );
+    assert.equal(
+      await repoA.completeStep({
+        stepId: claimed!.id,
+        tenantId: claimed!.tenantId,
+        lease: claimed!.lease!,
+        expectedVersion: claimed!.version,
+        output: {},
+        actor: workerA,
+      }),
+      null,
+      'stale generation complete must fail',
+    );
+    assert.equal(
+      await repoA.failStep({
+        stepId: claimed!.id,
+        tenantId: claimed!.tenantId,
+        lease: claimed!.lease!,
+        expectedVersion: claimed!.version,
+        error: { code: 'TEST', message: 'test', retryable: false },
+        actor: workerA,
+      }),
       null,
       'stale generation fail must fail',
     );
@@ -700,12 +856,17 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
 
     const effect = await repoA.admitEffect({
       id: `effect-${Date.now()}`,
-      runId: effectRun.id, stepId: effectClaim!.id, tenantId: tenantA,
-      type: 'http', idempotencyKey: 'rls-test-1', policyDecisionId: 'allow',
+      runId: effectRun.id,
+      stepId: effectClaim!.id,
+      tenantId: tenantA,
+      type: 'http',
+      idempotencyKey: 'rls-test-1',
+      policyDecisionId: 'allow',
       policySnapshotId: 'rls-live-fire-policy',
       actionDigest: 'a'.repeat(64),
       request: { url: 'https://example.com' },
-      lease: effectClaim!.lease!, actor: workerA,
+      lease: effectClaim!.lease!,
+      actor: workerA,
     });
     assert.ok(effect.admitted);
 
@@ -714,7 +875,13 @@ describe('Postgres RLS live-fire', { skip: !databaseUrl || !workerDatabaseUrl },
     claimSecrets.set(workerA, await seedWorkerClaimSecret(ownerPool, workerA, 3));
     const staleEffectLease = effectClaim!.lease!;
     assert.equal(
-      await repoA.completeEffect(effect.effect!.id, tenantA, staleEffectLease, { status: 'ok' }, workerA),
+      await repoA.completeEffect(
+        effect.effect!.id,
+        tenantA,
+        staleEffectLease,
+        { status: 'ok' },
+        workerA,
+      ),
       null,
       'stale generation effect completion must fail',
     );

@@ -51,10 +51,13 @@ export interface CollectAgentFilesParams {
  */
 export function extractOutputFilePath(goal: string): string | null {
   const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
+  const absolutePathRe = String.raw`(?:[A-Za-z]:[\\/]|\\\\|/)\S+?\.${extRe}`;
+  const relativePathRe = String.raw`\.[\\/]\S+?\.${extRe}`;
+  const outputPathRe = `(?:${absolutePathRe}|${relativePathRe})`;
 
   // Pattern 1: verb + any words + "to" + path
   const toPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+([\\/\\.][\\S]+\\.${extRe})`,
+    `(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+(${outputPathRe})`,
     'i',
   );
   const toMatch = goal.match(toPattern);
@@ -62,14 +65,14 @@ export function extractOutputFilePath(goal: string): string | null {
 
   // Pattern 2: verb + path directly (e.g., "write /tmp/file.md")
   const directPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\s+([\\/\\.][\\S]+\\.${extRe})`,
+    `(?:write|create|generate|output|produce|save)\\s+(${outputPathRe})`,
     'i',
   );
   const directMatch = goal.match(directPattern);
   if (directMatch) return directMatch[1];
 
   // Pattern 3: any absolute path with known extension at end of sentence/line
-  const pathPattern = new RegExp(`([\\/][\\S]+\\.${extRe})(?:\\s|$|[.])`, 'i');
+  const pathPattern = new RegExp(`(${absolutePathRe})(?:\\s|$|[.])`, 'i');
   const pathMatch = goal.match(pathPattern);
   if (pathMatch) return pathMatch[1];
 
@@ -164,9 +167,13 @@ export class AgentFileCollector {
       const goalFilePath = extractOutputFilePath(params.goal);
       if (goalFilePath) {
         const resolvedGoal =
-          goalFilePath.startsWith('/') || goalFilePath.startsWith('~')
-            ? goalFilePath.replace(/^~/, process.env.HOME || '')
-            : path.join(workspace, goalFilePath);
+          path.isAbsolute(goalFilePath) ||
+          /^[A-Za-z]:[\\/]/.test(goalFilePath) ||
+          goalFilePath.startsWith('\\\\')
+            ? goalFilePath
+            : goalFilePath.startsWith('~')
+              ? goalFilePath.replace(/^~/, process.env.HOME || '')
+              : path.join(workspace, goalFilePath);
         tryAddFile(resolvedGoal);
       }
 

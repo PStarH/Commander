@@ -1,8 +1,16 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander — Adapter Operations Deployment
 # =============================================================================
 {{- if .Values.adapterOps.enabled }}
 {{- include "commander.requireEnterpriseSecrets" . }}
+{{- if .Values.adapterOps.kubernetes.cluster }}
+{{- $_ := required "adapterOps.kubernetes.server is required when Kubernetes is configured" .Values.adapterOps.kubernetes.server }}
+{{- if not .Values.adapterOps.kubernetes.namespaces }}{{- fail "adapterOps.kubernetes.namespaces is required when Kubernetes is configured" }}{{- end }}
+{{- $_ := required "adapterOps.kubernetes.tokenEnv is required when Kubernetes is configured" .Values.adapterOps.kubernetes.tokenEnv }}
+{{- $_ := required "adapterOps.kubernetes.tokenSecretKey is required when Kubernetes is configured" .Values.adapterOps.kubernetes.tokenSecretKey }}
+{{- $_ := required "adapterOps Kubernetes credentials require adapterOps.secrets.existingSecret" .Values.adapterOps.secrets.existingSecret }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -26,6 +34,10 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.adapterOps.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "commander.postgresBackend" . }}
+      initContainers:
+        {{- include "commander.runtimeMigrationGate" (dict "root" . "key" (include "commander.databaseAdapterOpsSecretKey" .)) | nindent 8 }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
@@ -47,21 +59,47 @@ spec:
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
+                  key: {{ include "commander.databaseAdapterOpsSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
+                  key: {{ include "commander.databaseAdapterOpsSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
+            - name: COMMANDER_ADAPTER_OPS_INSTANCE_ID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR
+              value: {{ .Values.adapterOps.claimSecretDir | quote }}
+            - name: COMMANDER_RECONCILE_INTERVAL_MS
+              value: {{ .Values.adapterOps.reconcileIntervalMs | quote }}
+            - name: COMMANDER_COMPENSATION_INTERVAL_MS
+              value: {{ .Values.adapterOps.compensationIntervalMs | quote }}
             # Same tenant scope as worker — postgres path calls resolveWorkerTenantScope.
             - name: COMMANDER_WORKER_TENANTS
               value: {{ .Values.worker.tenants | quote }}
             # Explicit cell tenant — avoid silent "local" fallback on enterprise.
             - name: COMMANDER_CELL_TENANT_ID
               value: {{ include "commander.cellTenantId" . | quote }}
+            {{- if .Values.adapterOps.kubernetes.cluster }}
+            - name: COMMANDER_KUBERNETES_CLUSTER
+              value: {{ .Values.adapterOps.kubernetes.cluster | quote }}
+            - name: COMMANDER_KUBERNETES_SERVER
+              value: {{ .Values.adapterOps.kubernetes.server | quote }}
+            - name: COMMANDER_KUBERNETES_NAMESPACES
+              value: {{ join "," .Values.adapterOps.kubernetes.namespaces | quote }}
+            - name: COMMANDER_KUBERNETES_TOKEN_ENV
+              value: {{ .Values.adapterOps.kubernetes.tokenEnv | quote }}
+            - name: {{ .Values.adapterOps.kubernetes.tokenEnv }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adapterOps.secrets.existingSecret | quote }}
+                  key: {{ .Values.adapterOps.kubernetes.tokenSecretKey | quote }}
+            {{- end }}
             {{- if .Values.adapterOps.secrets.existingSecret }}
             - name: GITHUB_TOKEN
               valueFrom:
@@ -103,6 +141,7 @@ spec:
               value: {{ join "," .Values.networkPolicy.egress.adapterCidrs | quote }}
             {{- end }}
             {{- include "commander.capabilityEnv" . | nindent 12 }}
+            {{- include "commander.evidenceSigningEnv" . | nindent 12 }}
           resources: {{ toYaml .Values.adapterOps.resources | nindent 12 }}
           securityContext:
             {{- include "commander.cellSecurityContext" . | nindent 12 }}
@@ -119,9 +158,20 @@ spec:
             initialDelaySeconds: {{ .Values.adapterOps.health.readinessInitialDelaySeconds }}
             periodSeconds: {{ .Values.adapterOps.health.readinessPeriodSeconds }}
           volumeMounts:
+            - name: claim-secrets
+              mountPath: {{ .Values.adapterOps.claimSecretDir | quote }}
             - name: tmp
               mountPath: /tmp
+            {{- if include "commander.postgresBackend" . }}
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
+            {{- end }}
       volumes:
+        - name: claim-secrets
+          emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if include "commander.postgresBackend" . }}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
+        {{- end }}
+{{- end }}
 {{- end }}

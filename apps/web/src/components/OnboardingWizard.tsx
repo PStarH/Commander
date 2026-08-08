@@ -878,7 +878,7 @@ function CompleteStep() {
     {
       icon: <MessageSquare size={16} />,
       title: '对话',
-      desc: '与 Agent 流式对话，实时查看思考与工具调用。',
+      desc: '与 Agent 流式对话，实时查看运行事件与工具调用。',
       to: '/chat',
     },
     {

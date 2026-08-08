@@ -6,7 +6,7 @@
  * when no specialized harness matches the execution context.
  *
  * Capabilities: minimal (no sub-agents, no Guardian, no hashline edits)
- * but 100% backward compatible with existing Commander behavior.
+ * and is intended to preserve compatibility with existing Commander behavior.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {

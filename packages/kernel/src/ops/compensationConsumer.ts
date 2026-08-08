@@ -1,56 +1,76 @@
-/**
- * WS2 Compensation Consumer — drains `commander.compensation` outbox messages
- * and executes each as a unified EffectEnvelope through the EffectBroker.
- *
- * Why a separate consumer (vs. the generic OutboxPublisher):
- *   - Compensation effects MUST go through EffectBroker.admit().execute() so
- *     they share the same audit ledger, idempotency, and capability checks
- *     as forward effects (WS2 §8.3: "补偿不得走特权通道").
- *   - The generic publisher hands payloads to an EventPublisher (Kafka/etc.);
- *     compensation needs actual side-effect execution, not event publication.
- *
- * The consumer is fail-closed: if no token provider or EffectBroker is wired,
- * it rejects the message (leaving it for retry / DLQ) rather than executing
- * without authorization.
- */
-
-import { randomUUID } from 'node:crypto';
 import type { EffectEnvelope } from '@commander/contracts';
+import {
+  canonicalCompensationHash,
+  validateGovernedCompensationAuthorization,
+  type CompensationAuthorizationErrorCode,
+  type GovernedCompensationAuthorization,
+} from './compensationAuthority.js';
+import type {
+  ClaimedCompensationRequest,
+  CompensationAuthorizationRecord,
+  CompensationMutationResult,
+  FinalizeCompensationInput,
+  KernelCompensationRequest,
+  ParkCompensationUnknownInput,
+} from '../types.js';
+import type { KernelEvidenceRecord } from '../evidenceRepository.js';
 
-/** Outbox port scoped to a single topic (WS2 adds claimOutboxByTopic). */
-export interface CompensationOutboxPort {
-  claimOutboxByTopic(
-    topic: string,
-    limit: number,
-    now?: Date,
-    authz?: { workerId: string; workerGeneration: number; claimSecret: string },
-  ): Promise<CompensationOutboxMessage[]>;
-  markOutboxPublished(messageId: string, claimToken: string, tenantId?: string): Promise<boolean>;
-  /** Release a failed claim immediately with exponential backoff + recorded
-   *  error, instead of waiting for the 60s claim expiry. Messages whose
-   *  attempts reach max_attempts are moved to the DLQ by sweepOutboxDlq
-   *  (scheduled every kernel-ops timer cycle) — no infinite retry. */
-  retryOutbox(
-    messageId: string,
-    claimToken: string,
-    error: { code: string; message: string },
-    now?: Date,
-    tenantId?: string,
-  ): Promise<boolean>;
+export const KERNEL_COMPENSATION_TOPIC = 'commander.kernel.compensation.requested';
+export const LEGACY_COMPENSATION_TOPIC = 'commander.compensation';
+
+export interface CompensationClaimAuth {
+  workerId: string;
+  workerGeneration: number;
+  claimSecret: string;
 }
 
-export interface CompensationOutboxMessage {
-  id: string;
-  /** Authoritative tenant from the outbox row — never trust payload.tenantId alone. */
+export interface LegacyClaimedCompensationWork {
+  messageId: string;
   tenantId: string;
-  topic: string;
-  key: string;
-  payload: Record<string, unknown>;
-  claimToken?: string;
-  attempts: number;
+  claimToken: string;
+  authorization: GovernedCompensationAuthorization;
+  lease: {
+    workerId: string;
+    workerGeneration: number;
+    token: string;
+    fencingEpoch: number;
+  };
 }
 
-/** Minimal EffectBroker surface the consumer depends on. */
+export type ClaimedCompensationWork = LegacyClaimedCompensationWork | ClaimedCompensationRequest;
+
+export type CompensationWorkDispositionResult =
+  | {
+      applied: true;
+      disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'ESCALATED';
+      replayed?: boolean;
+    }
+  | { applied: false; reason: string };
+
+interface CompensationWorkMutationAuth extends CompensationClaimAuth {
+  tenantId: string;
+  messageId: string;
+  outboxClaimToken: string;
+  compensationEffectId: string;
+}
+
+export interface CompensationOutboxPort {
+  claimCompensationWork(
+    input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
+  ): Promise<ClaimedCompensationWork[]>;
+  completeCompensationWork(
+    input: CompensationWorkMutationAuth & { response: Record<string, unknown> },
+  ): Promise<CompensationWorkDispositionResult>;
+  handoffCompensationUnknown(
+    input: CompensationWorkMutationAuth & { error: { code: string; message: string } },
+  ): Promise<CompensationWorkDispositionResult>;
+  escalateCompensationWork(
+    input: CompensationWorkMutationAuth & { reason: string },
+  ): Promise<CompensationWorkDispositionResult>;
+  parkCompensationUnknown(input: ParkCompensationUnknownInput): Promise<CompensationMutationResult>;
+  finalizeCompensation(input: FinalizeCompensationInput): Promise<CompensationMutationResult>;
+}
+
 export interface CompensationEffectBroker {
   admit(input: {
     effectId: string;
@@ -58,57 +78,57 @@ export interface CompensationEffectBroker {
     type: string;
     request: Record<string, unknown>;
     idempotencyKey: string;
-    lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
+    lease: ClaimedCompensationWork['lease'];
     actor: string;
-    workloadBinding?: {
+    workloadBinding: {
       tenantId: string;
       runId: string;
       stepId: string;
-      workloadId?: string;
+      workloadId: string;
+    };
+    compensationClaim?: {
+      requestId: string;
+      requestClaimToken: string;
+      outboxMessageId: string;
+      outboxClaimToken: string;
     };
   }): Promise<{ admitted: boolean; effectId: string; replayed: boolean; reason?: string }>;
-  executeAdmitted(input: { effectId: string; timeoutMs?: number }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }>;
+  executeAdmitted(input: { effectId: string; timeoutMs?: number }): Promise<{
+    effectId: string;
+    replayed: boolean;
+    response?: Record<string, unknown>;
+  }>;
 }
 
-/**
- * Mints a short-lived compensation capability token for a single effect.
- * In production this calls the Gateway; the port keeps the consumer decoupled
- * from HTTP. Returns null if the token cannot be minted (consumer then leaves
- * the message for retry).
- */
+export type CompensationTokenContext =
+  | GovernedCompensationAuthorization
+  | {
+      authorization: ClaimedCompensationRequest['authorization'];
+      request: KernelCompensationRequest;
+      forwardResponse: Record<string, unknown>;
+    };
+
 export interface CompensationTokenProvider {
-  (input: {
+  (authorization: CompensationTokenContext): Promise<string | null>;
+}
+
+export interface CompensationConsumerOptions extends CompensationClaimAuth {
+  topic?: typeof KERNEL_COMPENSATION_TOPIC;
+  limit?: number;
+  timeoutMs?: number;
+  registry: {
+    resolve(action: string): { descriptor?: { adapterVersion?: string } } | null;
+  };
+  terminalEvidence?: (input: {
     tenantId: string;
     runId: string;
-    stepId: string;
-    action: string;
-    payload: Record<string, unknown>;
-  }): Promise<string | null>;
-}
-
-export interface CompensationConsumerOptions {
-  /** Outbox topic to drain. Defaults to `commander.compensation`. */
-  topic?: string;
-  /** Max messages per poll. Defaults to 50. */
-  limit?: number;
-  /** Per-effect execution timeout. Defaults to 30000ms. */
-  timeoutMs?: number;
-  /** Worker identity for the lease field. */
-  workerId: string;
-  /** Durable registry generation for lease / broker affinity. Defaults to 1. */
-  workerGeneration?: number;
-  /** Register-time claim secret — required for worker LOGIN outbox claim RPC. */
-  claimSecret?: string;
-  /**
-   * Fallback fencing epoch used only when a message's payload does not carry
-   * one (e.g. explicit compensationAction messages, not kernel-reclaim ones).
-   * Kernel-reclaim messages always carry the originating lease's fencingEpoch
-   * in payload.compensationPayload.fencingEpoch and that value always wins —
-   * this option must never be used to invent an epoch for those.
-   */
-  fencingEpoch?: number;
-  /** Optional adapter registry — unregistered `compensate.*` actions are retried, not executed. */
-  registry?: { resolve(action: string): unknown };
+    effectId: string;
+    projectedState: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'COMPLETION_UNKNOWN';
+    response: Record<string, unknown>;
+    eventType: string;
+    disposition: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'ESCALATED';
+    claimToken: string;
+  }) => Promise<KernelEvidenceRecord>;
   onAdapterUnregistered?: (input: {
     tenantId: string;
     runId: string;
@@ -121,264 +141,374 @@ export interface CompensationConsumerOptions {
 export interface CompensationConsumeResult {
   consumed: number;
   succeeded: number;
-  failed: number;
+  handedOff: number;
+  escalated: number;
   replayed: number;
 }
 
-/** Payload shape expected on each compensation outbox message. */
-interface CompensationPayload {
-  tenantId?: string;
-  runId?: string;
-  stepId?: string;
-  originalEffectId?: string;
-  compensationAction?: string;
-  compensationPayload?: Record<string, unknown>;
-  idempotencyKey?: string;
-  /** Kernel reclaim shape: list of completed forward effect ids. */
-  effectIds?: string[];
-  fencingEpoch?: number;
-  type?: string;
-}
-
-/** Topic emitted by reclaim when a run enters COMPENSATING (appendEvent). */
-export const KERNEL_COMPENSATION_TOPIC = 'commander.kernel.compensation.requested';
-/** Legacy / seed topic used by older tests and synthetic drains. */
-export const LEGACY_COMPENSATION_TOPIC = 'commander.compensation';
-const DEFAULT_TOPIC = KERNEL_COMPENSATION_TOPIC;
-
-/**
- * Map kernel reclaim outbox payloads (effectIds + event envelope) onto the
- * consumer's compensationAction shape. Explicit compensationAction wins.
- */
-export function normalizeCompensationPayload(
-  raw: Record<string, unknown>,
-): CompensationPayload | null {
-  const base = raw as CompensationPayload;
-  if (base.compensationAction && base.tenantId && base.runId && base.stepId) {
-    return base;
-  }
-  const effectIds = Array.isArray(base.effectIds)
-    ? base.effectIds.filter((id): id is string => typeof id === 'string')
-    : [];
-  const isKernelRequest =
-    base.type === 'kernel.compensation.requested' || effectIds.length > 0;
-  if (!isKernelRequest || !base.tenantId || !base.runId || !base.stepId) {
-    return null;
-  }
+function mutationAuth(
+  work: LegacyClaimedCompensationWork,
+  options: CompensationConsumerOptions,
+): CompensationWorkMutationAuth {
   return {
-    tenantId: base.tenantId,
-    runId: base.runId,
-    stepId: base.stepId,
-    compensationAction: 'compensate.rollback',
-    compensationPayload: {
-      effectIds,
-      fencingEpoch: base.fencingEpoch,
-      originalType: base.type,
-    },
-    idempotencyKey: base.idempotencyKey,
+    workerId: options.workerId,
+    workerGeneration: options.workerGeneration,
+    claimSecret: options.claimSecret,
+    tenantId: work.tenantId,
+    messageId: work.messageId,
+    outboxClaimToken: work.claimToken,
+    compensationEffectId: work.authorization.compensationEffectId,
   };
 }
 
-/**
- * Claim and execute one batch of compensation effects. Returns counts so a
- * caller can poll in a loop. Failures leave the message claimed-but-unacked
- * so the outbox retry/DLQ machinery (attempts++, backoff, DLQ sweep) handles
- * them — the consumer never silently swallows a compensation failure.
- */
+function isDurableClaim(work: ClaimedCompensationWork): work is ClaimedCompensationRequest {
+  return 'request' in work;
+}
+
+function durableExecution(work: ClaimedCompensationRequest) {
+  const { authorization, request, forwardResponse } = work;
+  const effectId = request.compensationEffectId;
+  if (!effectId) throw mutationRejected('CLAIM_EFFECT_ID_MISSING');
+  return {
+    authorization,
+    effectId,
+    runId: request.compensationRunId,
+    stepId: request.compensationStepId,
+    requestPayload: {
+      originalEffectId: request.originalEffectId,
+      forwardResponse,
+      compensationPatch: authorization.compensationPatch,
+    },
+    idempotencyKey: `cmp:${request.originalEffectId}:${request.adapterVersion}`,
+  };
+}
+
+function validateDurableClaim(work: ClaimedCompensationRequest): boolean {
+  const { authorization, request, forwardResponse } = work;
+  return (
+    authorization.id === request.authorizationId &&
+    authorization.tenantId === request.tenantId &&
+    authorization.originalRunId === request.originalRunId &&
+    authorization.originalEffectId === request.originalEffectId &&
+    authorization.adapterVersion === request.adapterVersion &&
+    authorization.compensationEffectType === request.compensationEffectType &&
+    authorization.decision !== 'deny' &&
+    Date.parse(authorization.expiresAt) > Date.now() &&
+    canonicalCompensationHash(forwardResponse) === authorization.forwardReceiptHash &&
+    canonicalCompensationHash({
+      type: authorization.compensationEffectType,
+      originalEffectId: authorization.originalEffectId,
+      adapterVersion: authorization.adapterVersion,
+      forwardResponse,
+      compensationPatch: authorization.compensationPatch,
+    }) === authorization.actionDigest
+  );
+}
+
+function mutationRejected(reason: string): Error & { code: string } {
+  return Object.assign(new Error(`compensation mutation rejected: ${reason}`), {
+    code: `COMPENSATION_${reason}`,
+  });
+}
+
+function requireDisposition(
+  result: CompensationWorkDispositionResult | CompensationMutationResult,
+  disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'COMPLETION_UNKNOWN' | 'ESCALATED',
+): void {
+  if (!result.applied) throw mutationRejected(result.reason);
+  if (result.disposition !== disposition) {
+    throw Object.assign(new Error('compensation mutation returned an invalid disposition'), {
+      code: 'COMPENSATION_DISPOSITION_INVALID',
+    });
+  }
+}
+
+function uncertaintyCode(error: unknown): 'COMPLETION_UNKNOWN' | 'COMPLETION_UNCONFIRMED' | null {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return null;
+  return error.code === 'COMPLETION_UNKNOWN' || error.code === 'COMPLETION_UNCONFIRMED'
+    ? error.code
+    : null;
+}
+
+function assertClaimBinding(
+  work: ClaimedCompensationWork,
+  options: CompensationConsumerOptions,
+): void {
+  const tenantId = isDurableClaim(work) ? work.request.tenantId : work.tenantId;
+  const authorizationTenantId = isDurableClaim(work)
+    ? work.authorization.tenantId
+    : work.authorization.tenantId;
+  const claimToken = isDurableClaim(work) ? work.outboxClaimToken : work.claimToken;
+  if (
+    tenantId !== authorizationTenantId ||
+    !claimToken ||
+    work.lease.workerId !== options.workerId ||
+    work.lease.workerGeneration !== options.workerGeneration ||
+    !work.lease.token ||
+    !Number.isSafeInteger(work.lease.fencingEpoch) ||
+    work.lease.fencingEpoch < 0
+  ) {
+    throw Object.assign(new Error('governed compensation claim binding is invalid'), {
+      code: 'COMPENSATION_WORKER_FENCED',
+    });
+  }
+}
+
+async function escalate(
+  outbox: CompensationOutboxPort,
+  work: ClaimedCompensationWork,
+  options: CompensationConsumerOptions,
+  reason:
+    | CompensationAuthorizationErrorCode
+    | 'COMPENSATION_ADAPTER_UNREGISTERED'
+    | 'COMPENSATION_ADAPTER_VERSION_MISMATCH'
+    | 'COMPENSATION_TOKEN_REFUSED'
+    | 'COMPENSATION_ADMIT_REJECTED',
+): Promise<void> {
+  if (isDurableClaim(work)) {
+    const effectId = work.request.compensationEffectId;
+    if (!effectId) throw mutationRejected('CLAIM_EFFECT_ID_MISSING');
+    const response = { reason };
+    const finalized = await outbox.finalizeCompensation({
+      workerId: options.workerId,
+      workerGeneration: options.workerGeneration,
+      claimSecret: options.claimSecret,
+      tenantId: work.request.tenantId,
+      requestId: work.request.id,
+      effectId,
+      disposition: 'ESCALATED',
+      actor: options.workerId,
+      outboxMessageId: work.outboxMessageId,
+      outboxClaimToken: work.outboxClaimToken,
+      response,
+    });
+    if (!finalized.applied) throw mutationRejected(finalized.reason);
+    return;
+  }
+  requireDisposition(
+    await outbox.escalateCompensationWork({
+      ...mutationAuth(work, options),
+      reason,
+    }),
+    'ESCALATED',
+  );
+}
+
 export async function consumeCompensationBatch(
   outbox: CompensationOutboxPort,
   broker: CompensationEffectBroker,
   tokenProvider: CompensationTokenProvider,
   options: CompensationConsumerOptions,
 ): Promise<CompensationConsumeResult> {
-  const topic = options.topic ?? DEFAULT_TOPIC;
-  const limit = options.limit ?? 50;
-  const timeoutMs = options.timeoutMs ?? 30_000;
-  const workerGeneration = options.workerGeneration ?? 1;
-
-  const messages = await outbox.claimOutboxByTopic(topic, limit, undefined, {
+  const works = await outbox.claimCompensationWork({
     workerId: options.workerId,
-    workerGeneration,
-    claimSecret: options.claimSecret ?? '',
+    workerGeneration: options.workerGeneration,
+    claimSecret: options.claimSecret,
+    topic: options.topic ?? KERNEL_COMPENSATION_TOPIC,
+    limit: options.limit ?? 50,
   });
-  let succeeded = 0;
-  let failed = 0;
-  let replayed = 0;
+  const result: CompensationConsumeResult = {
+    consumed: works.length,
+    succeeded: 0,
+    handedOff: 0,
+    escalated: 0,
+    replayed: 0,
+  };
 
-  for (const message of messages) {
-    if (!message.claimToken) { failed++; continue; }
-    const payload = normalizeCompensationPayload(message.payload);
-    if (!payload?.tenantId || !payload.runId || !payload.stepId || !payload.compensationAction) {
-      // Malformed — retry/DLQ (never silent-ack; audit must see the failure).
-      try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_PAYLOAD_MALFORMED',
-          message: 'compensation outbox payload missing tenantId/runId/stepId/action',
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
-      failed++;
-      continue;
+  for (const work of works) {
+    assertClaimBinding(work, options);
+    let authorization: GovernedCompensationAuthorization | CompensationAuthorizationRecord;
+    let effectId: string;
+    let runId: string;
+    let stepId: string;
+    let requestPayload: Record<string, unknown>;
+    let idempotencyKey: string;
+    if (isDurableClaim(work)) {
+      if (!validateDurableClaim(work)) {
+        await escalate(outbox, work, options, 'COMPENSATION_ACTION_DIGEST_MISMATCH');
+        result.escalated += 1;
+        continue;
+      }
+      const projected = durableExecution(work);
+      authorization = projected.authorization;
+      effectId = projected.effectId;
+      runId = projected.runId;
+      stepId = projected.stepId;
+      requestPayload = projected.requestPayload;
+      idempotencyKey = projected.idempotencyKey;
+    } else {
+      const validation = validateGovernedCompensationAuthorization(work.authorization);
+      if (!validation.valid) {
+        await escalate(outbox, work, options, validation.code);
+        result.escalated += 1;
+        continue;
+      }
+      authorization = validation.authorization;
+      effectId = authorization.compensationEffectId;
+      runId = authorization.compensationRunId;
+      stepId = authorization.compensationStepId;
+      requestPayload = authorization.compensationRequest;
+      idempotencyKey = authorization.idempotencyKey;
     }
-    // Outbox row tenant_id is authoritative — never trust a spoofed payload.tenantId.
-    if (payload.tenantId !== message.tenantId) {
-      try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_TENANT_MISMATCH',
-          message: 'compensation payload.tenantId diverged from outbox tenant_id',
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
-      failed++;
-      continue;
-    }
-
-    const compensationAction = payload.compensationAction;
-    if (
-      compensationAction.startsWith('compensate.') &&
-      options.registry &&
-      !options.registry.resolve(compensationAction)
-    ) {
-      try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_ADAPTER_UNREGISTERED',
-          message: `No adapter registered for ${compensationAction}`,
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
+    const adapter = options.registry.resolve(authorization.compensationEffectType);
+    if (!adapter) {
       await options.onAdapterUnregistered?.({
-        tenantId: message.tenantId,
-        runId: payload.runId!,
-        stepId: payload.stepId!,
-        compensationAction,
-        messageId: message.id,
+        tenantId: authorization.tenantId,
+        runId,
+        stepId,
+        compensationAction: authorization.compensationEffectType,
+        messageId: isDurableClaim(work) ? work.outboxMessageId : work.messageId,
       });
-      failed++;
+      await escalate(outbox, work, options, 'COMPENSATION_ADAPTER_UNREGISTERED');
+      result.escalated += 1;
+      continue;
+    }
+    if (adapter.descriptor?.adapterVersion !== authorization.adapterVersion) {
+      await escalate(outbox, work, options, 'COMPENSATION_ADAPTER_VERSION_MISMATCH');
+      result.escalated += 1;
       continue;
     }
 
-    const effectId = `cmp_${randomUUID()}`;
-    const idempotencyKey = payload.idempotencyKey ?? `cmp:${message.id}`;
-
-    // Fail-closed: never invent a fencing epoch. Prefer the epoch the reclaim
-    // daemon stamped on the outbox payload from the actual failed lease; only
-    // fall back to the caller-supplied default for non-reclaim (explicit
-    // compensationAction) messages that have no such lease to derive from.
-    const payloadFencingEpoch = payload.compensationPayload?.fencingEpoch;
-    const fencingEpoch =
-      typeof payloadFencingEpoch === 'number' && Number.isFinite(payloadFencingEpoch)
-        ? payloadFencingEpoch
-        : options.fencingEpoch;
-    if (typeof fencingEpoch !== 'number' || !Number.isFinite(fencingEpoch)) {
-      try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_FENCING_EPOCH_MISSING',
-          message: 'no fencingEpoch on payload and no caller-supplied default',
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
-      failed++;
+    const token = await tokenProvider(
+      isDurableClaim(work)
+        ? {
+            authorization: work.authorization,
+            request: work.request,
+            forwardResponse: work.forwardResponse,
+          }
+        : (authorization as GovernedCompensationAuthorization),
+    );
+    if (!token) {
+      await escalate(outbox, work, options, 'COMPENSATION_TOKEN_REFUSED');
+      result.escalated += 1;
       continue;
     }
+    const admission = await broker.admit({
+      effectId,
+      token,
+      type: authorization.compensationEffectType,
+      request: requestPayload,
+      idempotencyKey,
+      lease: work.lease,
+      actor: options.workerId,
+      workloadBinding: {
+        tenantId: authorization.tenantId,
+        runId,
+        stepId,
+        workloadId: options.workerId,
+      },
+      ...(isDurableClaim(work)
+        ? {
+            compensationClaim: {
+              requestId: work.request.id,
+              requestClaimToken: work.request.claimToken ?? '',
+              outboxMessageId: work.outboxMessageId,
+              outboxClaimToken: work.outboxClaimToken,
+            },
+          }
+        : {}),
+    });
+    if (!admission.admitted || admission.effectId !== effectId) {
+      await escalate(outbox, work, options, 'COMPENSATION_ADMIT_REJECTED');
+      result.escalated += 1;
+      continue;
+    }
+    if (admission.replayed) result.replayed += 1;
 
+    let execution: Awaited<ReturnType<CompensationEffectBroker['executeAdmitted']>>;
     try {
-      const token = await tokenProvider({
-        tenantId: message.tenantId,
-        runId: payload.runId,
-        stepId: payload.stepId,
-        action: payload.compensationAction,
-        payload: payload.compensationPayload ?? {},
-      });
-      if (!token) {
-        // Token provider refused — record and back off (DLQ once max_attempts).
-        await outbox.retryOutbox(
-          message.id,
-          message.claimToken!,
-          { code: 'COMPENSATION_TOKEN_REFUSED', message: 'token provider returned null' },
-          undefined,
-          message.tenantId,
-        );
-        failed++;
-        continue;
-      }
-
-      const compensationRequest = payload.compensationPayload ?? {};
-      const admission = await broker.admit({
+      execution = await broker.executeAdmitted({
         effectId,
-        token,
-        type: payload.compensationAction,
-        request: compensationRequest,
-        idempotencyKey,
-        lease: {
-          workerId: options.workerId,
-          workerGeneration,
-          token: `cmp-lease:${message.id}`,
-          fencingEpoch,
-        },
-        actor: `compensation-consumer:${options.workerId}`,
-        workloadBinding: {
-          tenantId: message.tenantId,
-          runId: payload.runId!,
-          stepId: payload.stepId!,
-          workloadId: options.workerId,
-        },
+        timeoutMs: options.timeoutMs ?? 30_000,
       });
-      if (!admission.admitted) {
-        await outbox.retryOutbox(
-          message.id,
-          message.claimToken!,
-          { code: 'COMPENSATION_ADMIT_REJECTED', message: admission.reason ?? 'unknown' },
-          undefined,
-          message.tenantId,
-        );
-        failed++;
-        continue;
-      }
-      if (admission.replayed) replayed++;
-
-      const result = await broker.executeAdmitted({ effectId, timeoutMs });
-      // Ack the outbox message only after the effect committed in the kernel.
-      const acked = await outbox.markOutboxPublished(
-        message.id,
-        message.claimToken!,
-        message.tenantId,
-      );
-      if (acked) succeeded++;
-      else failed++;
-      // Reference result so unused-var lint stays quiet; the audit trail lives
-      // in the kernel effect ledger (commander_effects) and AuditSink.
-      void result;
     } catch (error) {
-      // Executor threw or completion unconfirmed — record + back off; the
-      // sweeper moves the message to DLQ once attempts >= max_attempts.
-      try {
-        await outbox.retryOutbox(
-          message.id,
-          message.claimToken!,
-          {
-            code: 'COMPENSATION_EXECUTE_FAILED',
-            message: error instanceof Error ? error.message : String(error),
-          },
-          undefined,
-          message.tenantId,
-        );
-      } catch { /* claim may have expired; sweeper backoff still applies */ }
-      failed++;
+      const code = uncertaintyCode(error);
+      if (!code) throw error;
+      requireDisposition(
+        isDurableClaim(work)
+          ? await outbox.parkCompensationUnknown({
+              workerId: options.workerId,
+              workerGeneration: options.workerGeneration,
+              claimSecret: options.claimSecret,
+              tenantId: work.request.tenantId,
+              requestId: work.request.id,
+              effectId,
+              actor: options.workerId,
+              outboxMessageId: work.outboxMessageId,
+              outboxClaimToken: work.outboxClaimToken,
+              error: { code, message: 'Compensation completion is uncertain' },
+            })
+          : await outbox.handoffCompensationUnknown({
+              ...mutationAuth(work, options),
+              error: { code, message: 'Compensation completion is uncertain' },
+            }),
+        isDurableClaim(work) ? 'COMPLETION_UNKNOWN' : 'HANDOFF_UNKNOWN',
+      );
+      result.handedOff += 1;
+      continue;
     }
+
+    if (execution.effectId !== effectId || !execution.response) {
+      throw Object.assign(new Error('compensation execution receipt is invalid'), {
+        code: 'COMPENSATION_EXECUTION_RECEIPT_INVALID',
+      });
+    }
+    if (execution.replayed) result.replayed += 1;
+    requireDisposition(
+      isDurableClaim(work)
+        ? await outbox.finalizeCompensation({
+            workerId: options.workerId,
+            workerGeneration: options.workerGeneration,
+            claimSecret: options.claimSecret,
+            tenantId: work.request.tenantId,
+            requestId: work.request.id,
+            effectId,
+            disposition: 'COMPLETED',
+            actor: options.workerId,
+            outboxMessageId: work.outboxMessageId,
+            outboxClaimToken: work.outboxClaimToken,
+            response: execution.response,
+            evidence: await options.terminalEvidence?.({
+              tenantId: work.request.tenantId,
+              runId: work.request.compensationRunId,
+              effectId,
+              projectedState: 'COMPLETED',
+              response: execution.response,
+              eventType: 'compensation.completed',
+              disposition: 'COMPLETED',
+              claimToken: work.outboxClaimToken,
+            }),
+          })
+        : await outbox.completeCompensationWork({
+            ...mutationAuth(work, options),
+            response: execution.response,
+          }),
+      'COMPLETED',
+    );
+    result.succeeded += 1;
   }
 
-  return { consumed: messages.length, succeeded, failed, replayed };
+  return result;
 }
 
-/**
- * Helper to construct an EffectEnvelope from a compensation outbox payload.
- * Exported so tests and the token provider can share the exact envelope shape.
- */
-export function envelopeFromCompensationPayload(payload: CompensationPayload): EffectEnvelope {
+export function normalizeCompensationPayload(
+  raw: Record<string, unknown>,
+): GovernedCompensationAuthorization | null {
+  const validation = validateGovernedCompensationAuthorization(raw);
+  return validation.valid ? validation.authorization : null;
+}
+
+export function envelopeFromCompensationPayload(
+  authorization: GovernedCompensationAuthorization,
+): EffectEnvelope {
   return {
-    effect_id: `cmp_${randomUUID()}`,
-    tenant_id: payload.tenantId ?? '',
-    run_id: payload.runId ?? '',
-    step_id: payload.stepId ?? '',
-    action: payload.compensationAction ?? '',
-    payload: payload.compensationPayload ?? {},
-    idempotency_key: payload.idempotencyKey ?? '',
+    effect_id: authorization.compensationEffectId,
+    tenant_id: authorization.tenantId,
+    run_id: authorization.compensationRunId,
+    step_id: authorization.compensationStepId,
+    action: authorization.compensationEffectType,
+    payload: authorization.compensationRequest,
+    idempotency_key: authorization.idempotencyKey,
     status: 'admitted',
   };
 }

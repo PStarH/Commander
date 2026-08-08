@@ -1,32 +1,40 @@
 {
   "paths": [
     {
-      "id": "llm-broker-bridge-readonly",
-      "path": "packages/worker-plane/src/llmBrokerBridge.ts",
-      "owner": "@commander/worker-plane",
-      "reason": "LLM provider read via EffectBroker-minted grant only",
-      "patterns": ["fetch("]
-    },
-    {
-      "id": "kernel-ops-health-server",
-      "path": "packages/kernel/src/ops/healthServer.ts",
+      "id": "kernel-task1-readiness-challenge-client",
+      "path": "packages/kernel/src/task1ReadinessChallengeClient.ts",
+      "sourceSha256": "bbd14098d629b1af6c694a1a6c8e161f172e07314826e68bfbf871cc56725bc8",
       "owner": "@commander/kernel",
-      "reason": "K8s liveness/readiness probe HTTP listener only",
+      "reason": "TLS-pinned challenged readiness proof client; no effect execution",
+      "expiresAt": "2027-07-29",
+      "patterns": ["node:https"]
+    },
+    {
+      "id": "kernel-task1-compose-proof-relay-client",
+      "path": "packages/kernel/src/task1ComposeProofRuntime.ts",
+      "sourceSha256": "6e0b7a71ecb3b5a73b302ef8201fb8b63cfcc01428f85e4a2e37fbe0b773fe77",
+      "owner": "@commander/kernel",
+      "reason": "Attempt-authenticated local Unix relay client for closed Compose topology DTOs",
+      "expiresAt": "2027-07-29",
       "patterns": ["node:http"]
     },
     {
-      "id": "worker-health-server",
-      "path": "packages/worker-plane/src/healthServer.ts",
-      "owner": "@commander/worker-plane",
-      "reason": "K8s liveness/readiness probe HTTP listener only",
-      "patterns": ["node:http"]
+      "id": "kernel-task1-kubernetes-proof-api-client",
+      "path": "packages/kernel/src/task1KubernetesProofRuntime.ts",
+      "sourceSha256": "6d8010ef3b09a5d89b15a2ae8a2161206bda6add5522ae2bcad2d2ebd037a20c",
+      "owner": "@commander/kernel",
+      "reason": "Projected-token and cluster-CA client for the proof-reader Kubernetes API allowlist",
+      "expiresAt": "2027-07-29",
+      "patterns": ["node:https"]
     },
     {
-      "id": "adapter-ops-health-server",
-      "path": "packages/adapter-ops/src/healthServer.ts",
-      "owner": "@commander/adapter-ops",
-      "reason": "K8s liveness/readiness probe HTTP listener only",
-      "patterns": ["node:http"]
+      "id": "core-sandbox-network-proxy",
+      "path": "packages/core/src/sandbox/networkProxy.ts",
+      "sourceSha256": "f04a069add19d13157a0c772bd4f1eb66fa44298e2842e73ac82f7af8cefb8c6",
+      "owner": "@commander/core/sandbox-security",
+      "reason": "Sandbox security infrastructure CONNECT proxy enforcing the container egress domain allowlist",
+      "expiresAt": "2027-07-29",
+      "patterns": ["net"]
     }
   ]
 }

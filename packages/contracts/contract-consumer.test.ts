@@ -79,6 +79,34 @@ const INTERNAL_RESOURCES = new Set([
 
 const ISO = '2026-01-01T00:00:00Z';
 const HASH_64 = 'a'.repeat(64);
+const ACTION_FIXTURE_DIR = join(__dirname, 'fixtures', 'actions', 'v1');
+
+function actionFixture(name: string): Record<string, unknown> {
+  return JSON.parse(readFileSync(join(ACTION_FIXTURE_DIR, `${name}.json`), 'utf8')) as Record<
+    string,
+    unknown
+  >;
+}
+
+const ACTION_PROPOSE_FIXTURE = actionFixture('propose');
+const ACTION_APPROVAL_FIXTURE = actionFixture('approval');
+const ACTION_COMPENSATION_FIXTURE = actionFixture('compensation');
+const ACTION_COMPENSATION_APPROVAL_FIXTURE = actionFixture('compensation-approval');
+const ACTION_RECONCILE_FIXTURE = actionFixture('reconcile');
+const ACTION_EVIDENCE_FIXTURE = actionFixture('evidence');
+const ACTION_ERROR_FIXTURE = actionFixture('error');
+const ACTION_FIXTURE = ACTION_PROPOSE_FIXTURE.action as Record<string, unknown>;
+const ACTION_DECISION_FIXTURE = ACTION_FIXTURE.decision as Record<string, unknown>;
+const ACTION_SIMULATION_FIXTURE = ACTION_FIXTURE.simulation as Record<string, unknown>;
+const ACTION_KILL_SWITCH_FIXTURE = {
+  tenantId: 'tenant-1',
+  scope: 'tool',
+  value: 'ticket.create',
+  enabled: true,
+  reason: 'Incident response',
+  actor: 'admin-1',
+  updatedAt: ISO,
+};
 
 const RESOURCE_EXAMPLES: Record<ContractSchemaName, Record<string, unknown>> = {
   organization: {
@@ -251,6 +279,37 @@ const RESOURCE_EXAMPLES: Record<ContractSchemaName, Record<string, unknown>> = {
     message: 'Worker lease expired',
     retryable: false,
   },
+  actionProposeRequest: {
+    source: 'sdk',
+    package: '@commander/sdk',
+    model: 'gpt-5',
+    tool: 'ticket.create',
+    destination: 'demo://tickets/approval',
+    effectType: 'demo.ticket.create',
+    args: { title: 'Investigate incident' },
+    idempotencyKey: 'action-key-0001',
+  },
+  actionDecision: ACTION_DECISION_FIXTURE,
+  actionSimulation: ACTION_SIMULATION_FIXTURE,
+  governedAction: ACTION_FIXTURE,
+  actionApprovalRequest: {
+    actionDigest: ACTION_SIMULATION_FIXTURE.actionDigest,
+    simulationId: ACTION_SIMULATION_FIXTURE.simulationId,
+    policySnapshotId: ACTION_SIMULATION_FIXTURE.policySnapshotId,
+  },
+  actionCompensationRequest: ACTION_COMPENSATION_FIXTURE,
+  actionCompensationApprovalRequest: ACTION_COMPENSATION_APPROVAL_FIXTURE,
+  actionRejectionRequest: {},
+  actionSimulationResponse: { simulation: ACTION_SIMULATION_FIXTURE },
+  actionResponse: ACTION_APPROVAL_FIXTURE,
+  actionProposeResponse: ACTION_PROPOSE_FIXTURE,
+  actionReconcileAccepted: ACTION_RECONCILE_FIXTURE,
+  actionEvidence: ACTION_EVIDENCE_FIXTURE,
+  actionError: ACTION_ERROR_FIXTURE,
+  actionKillSwitch: ACTION_KILL_SWITCH_FIXTURE,
+  actionKillSwitchUpdate: { enabled: true, reason: 'Incident response' },
+  actionKillSwitchListResponse: { killSwitches: [ACTION_KILL_SWITCH_FIXTURE] },
+  actionKillSwitchResponse: { killSwitch: ACTION_KILL_SWITCH_FIXTURE },
 };
 
 // ---------------------------------------------------------------------------
@@ -325,6 +384,7 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
         'PENDING',
         'RUNNING',
         'WAITING_FOR_HUMAN',
+        'WAITING_FOR_RECONCILIATION',
         'RETRY_WAIT',
         'SUCCEEDED',
         'FAILED',
@@ -483,6 +543,18 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
       });
       assert.equal(result.ok, false, 'Should reject invalid enum');
       assert.ok(result.errors.some((e) => e.includes('state')), 'Should report enum error for state');
+    });
+
+    it('validates governed actions with an optional terminal forward receipt hash', () => {
+      const nonTerminal = validateResource('governedAction', ACTION_FIXTURE);
+      assert.equal(nonTerminal.ok, true, nonTerminal.errors.join('; '));
+
+      const terminal = validateResource('governedAction', {
+        ...ACTION_FIXTURE,
+        state: 'SUCCEEDED',
+        forwardReceiptHash: HASH_64,
+      });
+      assert.equal(terminal.ok, true, terminal.errors.join('; '));
     });
   });
 });

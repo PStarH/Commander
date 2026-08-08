@@ -17,7 +17,7 @@ export OPENAI_API_KEY=sk-...
 | Example               | Description                                                          | Run                                       |
 | --------------------- | -------------------------------------------------------------------- | ----------------------------------------- |
 | `basic.ts`            | Single-agent task — ask Commander a question                        | `npx tsx examples/basic.ts`               |
-| `streaming.ts`        | Streaming mode — see agent reasoning in real-time                   | `npx tsx examples/streaming.ts`           |
+| `streaming.ts`        | Streaming mode — inspect agent events in real-time                   | `npx tsx examples/streaming.ts`           |
 | `multi-agent.ts`      | Debate topology — two agents debate a topic                         | `npx tsx examples/multi-agent.ts`         |
 | `approval-flow.ts`    | Tool approval flow — high-risk tool calls trigger human approval    | `npx tsx examples/approval-flow.ts`      |
 | `dlq-replay.ts`       | Dead-letter queue — record a failed task then replay it             | `npx tsx examples/dlq-replay.ts`          |

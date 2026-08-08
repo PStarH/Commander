@@ -5,6 +5,6 @@
   "breach": false,
   "details": "All three tamper methods detected: rewrite→invalid_hmac, delete→ok=false, tail-truncate→gap=tail_truncated. startVerifyTimer alerted=true. tamperProof derived=false on all tampered states. L2 sig: InMemoryKeyProvider (ci-worm-sim).",
   "artifacts": [],
-  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
-  "ranAt": "2026-07-16T10:24:18.749Z"
+  "gitSha": "258767cd75d990ce64ff861484187b5d6b7ce828",
+  "ranAt": "2026-07-30T08:48:34.228Z"
 }

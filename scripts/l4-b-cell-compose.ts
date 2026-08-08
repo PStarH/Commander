@@ -3,8 +3,10 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { generateKeyPairSync } from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { createHash, generateKeyPairSync, X509Certificate } from 'node:crypto';
+import { execFileSync, execSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 export const CELL_E2E_TENANT = 'cell-smoke-tenant';
 
@@ -27,9 +29,115 @@ export function generateCellCapabilityMaterials(): {
   };
 }
 
-const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
+/** Ephemeral Ed25519 material for the worker's retained-evidence signer. */
+export function generateCellEvidenceSigningMaterials(): {
+  COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: string;
+  COMMANDER_EVIDENCE_SIGNING_KEY_ID: string;
+} {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  return {
+    COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: privateKey
+      .export({ type: 'pkcs8', format: 'pem' })
+      .toString(),
+    COMMANDER_EVIDENCE_SIGNING_KEY_ID: `cell-evidence-${Date.now().toString(36)}`,
+  };
+}
 
-export const COMPOSE_CONFIG_ENV: Record<string, string> = {
+export function generateCellDatabaseTlsMaterials(): {
+  COMMANDER_CELL_DATABASE_TLS_CA_HOST_FILE: string;
+  COMMANDER_CELL_DATABASE_TLS_CERT_HOST_FILE: string;
+  COMMANDER_CELL_DATABASE_TLS_KEY_HOST_FILE: string;
+  COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: string;
+} {
+  const directory = mkdtempSync(join(process.cwd(), '.commander_cell_database_tls_'));
+  process.once('exit', () => rmSync(directory, { recursive: true, force: true }));
+  const caKey = join(directory, 'ca.key');
+  const caCert = join(directory, 'ca.crt');
+  const serverKey = join(directory, 'tls.key');
+  const serverCsr = join(directory, 'tls.csr');
+  const serverCert = join(directory, 'tls.crt');
+  const extensions = join(directory, 'server.ext');
+
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-days',
+      '2',
+      '-keyout',
+      caKey,
+      '-out',
+      caCert,
+      '-subj',
+      '/CN=Commander Cell Database CA',
+    ],
+    { stdio: 'ignore' },
+  );
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      serverKey,
+      '-out',
+      serverCsr,
+      '-subj',
+      '/CN=postgres',
+    ],
+    { stdio: 'ignore' },
+  );
+  writeFileSync(
+    extensions,
+    'subjectAltName=DNS:postgres\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n',
+    { mode: 0o600 },
+  );
+  execFileSync(
+    'openssl',
+    [
+      'x509',
+      '-req',
+      '-days',
+      '2',
+      '-in',
+      serverCsr,
+      '-CA',
+      caCert,
+      '-CAkey',
+      caKey,
+      '-CAcreateserial',
+      '-out',
+      serverCert,
+      '-extfile',
+      extensions,
+    ],
+    { stdio: 'ignore' },
+  );
+  chmodSync(serverKey, 0o600);
+
+  const certificate = new X509Certificate(readFileSync(serverCert));
+  const spki = certificate.publicKey.export({ format: 'der', type: 'spki' });
+  return {
+    COMMANDER_CELL_DATABASE_TLS_CA_HOST_FILE: caCert,
+    COMMANDER_CELL_DATABASE_TLS_CERT_HOST_FILE: serverCert,
+    COMMANDER_CELL_DATABASE_TLS_KEY_HOST_FILE: serverKey,
+    COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: createHash('sha256')
+      .update(spki)
+      .digest('hex'),
+  };
+}
+
+const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
+const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
+const CELL_DATABASE_TLS_MATERIALS = generateCellDatabaseTlsMaterials();
+
+const COMPOSE_SECRET_DEFAULTS = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
   COMMANDER_API_KEY: 'ci-cell-smoke-api-key',
   COMMANDER_MASTER_KEY: 'ci-cell-smoke-master-key-32chars!!',
@@ -38,27 +146,75 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
   COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',
   COMMANDER_WORKER_AUTH_TOKEN: 'ci-cell-smoke-worker-token',
-  COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
-  COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
-  ...CELL_CAPABILITY_MATERIALS,
-};
+} as const;
+
+type CellComposeSecretName = keyof typeof COMPOSE_SECRET_DEFAULTS;
+
+function resolveCellComposeSecret(env: NodeJS.ProcessEnv, name: CellComposeSecretName): string {
+  const value = env[name];
+  if (value === undefined || value === '') return COMPOSE_SECRET_DEFAULTS[name];
+  if (value.length < 16 || value.trim() !== value || /[\0\r\n]/.test(value)) {
+    throw new Error(`INVALID_CELL_COMPOSE_SECRET:${name}`);
+  }
+  if (name === 'COMMANDER_API_KEY' && /[:;]/.test(value)) {
+    throw new Error(`INVALID_CELL_COMPOSE_SECRET:${name}`);
+  }
+  return value;
+}
+
+export function createCellComposeConfigEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): Record<string, string> {
+  const secrets = Object.fromEntries(
+    (Object.keys(COMPOSE_SECRET_DEFAULTS) as CellComposeSecretName[]).map((name) => [
+      name,
+      resolveCellComposeSecret(env, name),
+    ]),
+  ) as Record<CellComposeSecretName, string>;
+  return {
+    ...secrets,
+    COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
+    COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
+    ...CELL_CAPABILITY_MATERIALS,
+    ...CELL_EVIDENCE_SIGNING_MATERIALS,
+    ...CELL_DATABASE_TLS_MATERIALS,
+  };
+}
+
+export const COMPOSE_CONFIG_ENV: Record<string, string> = createCellComposeConfigEnv();
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */
-export function resolveDockerGid(): string {
-  if (process.env.DOCKER_GID && /^\d+$/.test(process.env.DOCKER_GID)) {
-    return process.env.DOCKER_GID;
+export function resolveDockerGid(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    execute?: (command: string) => string;
+  } = {},
+): string {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const execute =
+    options.execute ??
+    ((command: string) =>
+      execSync(command, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim());
+  if (env.DOCKER_GID && /^\d+$/.test(env.DOCKER_GID)) {
+    return env.DOCKER_GID;
   }
   try {
-    const out = execSync(
+    const out = execute(
       'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock',
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
     if (/^\d+$/.test(out)) return out;
   } catch {
     /* fall through */
   }
+  const statCommand =
+    platform === 'darwin' ? 'stat -f %g /var/run/docker.sock' : 'stat -c %g /var/run/docker.sock';
   try {
-    const out = execSync('stat -c %g /var/run/docker.sock', { encoding: 'utf-8' }).trim();
+    const out = execute(statCommand).trim();
     if (/^\d+$/.test(out)) return out;
   } catch {
     /* fall through */
@@ -66,24 +222,26 @@ export function resolveDockerGid(): string {
   return '0';
 }
 
-/** In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG). */
-const CELL_POSTGRES_URL = `postgres://commander:${COMPOSE_CONFIG_ENV.POSTGRES_PASSWORD}@postgres:5432/commander`;
+export function createCellComposeEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const config = createCellComposeConfigEnv(env);
+  // In-compose Postgres DSN must override any host DATABASE_URL (e.g. :5433 test PG).
+  const postgresUrl = `postgres://commander:${encodeURIComponent(config.POSTGRES_PASSWORD)}@postgres:5432/commander?sslmode=verify-full`;
+  return {
+    ...config,
+    DATABASE_URL: postgresUrl,
+    COMMANDER_KERNEL_DATABASE_URL: postgresUrl,
+    COMMANDER_ENABLE_DEMO_TICKET: '1',
+    COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
+    // Single-tenant cell escape hatch for v1TenantGuard (NullTenantProvider).
+    COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,
+    API_KEYS: `${config.COMMANDER_API_KEY}:cell-e2e:admin;actions:approve`,
+    TENANT_API_KEYS: `${CELL_E2E_TENANT}:${config.COMMANDER_API_KEY}`,
+    GITHUB_TOKEN: env.CELL_E2E_GITHUB_TOKEN ?? 'cell-e2e-github-token',
+    DOCKER_GID: resolveDockerGid({ env }),
+  };
+}
 
-export const CELL_COMPOSE_ENV: Record<string, string> = {
-  ...COMPOSE_CONFIG_ENV,
-  // Fail-closed vs host leakage: compose ${DATABASE_URL:-…} otherwise picks up
-  // a local probe URL (127.0.0.1:5433) and kernel-migrate gets ECONNREFUSED.
-  DATABASE_URL: CELL_POSTGRES_URL,
-  COMMANDER_KERNEL_DATABASE_URL: CELL_POSTGRES_URL,
-  COMMANDER_ENABLE_DEMO_TICKET: '1',
-  COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
-  // Single-tenant cell escape hatch for v1TenantGuard (NullTenantProvider).
-  COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,
-  API_KEYS: `${COMPOSE_CONFIG_ENV.COMMANDER_API_KEY}:cell-e2e:admin;actions:approve`,
-  TENANT_API_KEYS: `${CELL_E2E_TENANT}:${COMPOSE_CONFIG_ENV.COMMANDER_API_KEY}`,
-  GITHUB_TOKEN: process.env.CELL_E2E_GITHUB_TOKEN ?? 'cell-e2e-github-token',
-  DOCKER_GID: resolveDockerGid(),
-};
+export const CELL_COMPOSE_ENV: Record<string, string> = createCellComposeEnv();
 
 export const COMPOSE_CMD =
   'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell';
@@ -156,6 +314,25 @@ export function tryComposeCellUp(): { ok: boolean; error?: string } {
   }
 }
 
+export function tryComposeCellDown(
+  options: {
+    execute?: (command: string, env: NodeJS.ProcessEnv) => void;
+  } = {},
+): { ok: boolean; error?: string } {
+  const env = { ...process.env, ...CELL_COMPOSE_ENV };
+  const execute =
+    options.execute ??
+    ((command: string, runtimeEnv: NodeJS.ProcessEnv) => {
+      execSync(command, { cwd: process.cwd(), env: runtimeEnv, stdio: 'pipe' });
+    });
+  try {
+    execute(`${COMPOSE_CMD} down -v --remove-orphans`, env);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 async function probeOnce(baseUrl: string): Promise<Record<string, boolean>> {
   // /ready and /health are public probe paths (no Bearer — API keys as Bearer
   // are not JWTs and unauthenticated hammering used to lock out the client IP).
@@ -173,12 +350,17 @@ async function probeOnce(baseUrl: string): Promise<Record<string, boolean>> {
     "fetch('http://127.0.0.1:8082/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
     'adapter-ops',
   );
+  const adapterOpsReady = composeExec(
+    "fetch('http://127.0.0.1:8082/ready').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
+    'adapter-ops',
+  );
   return {
     apiReady: ready?.ok === true,
     apiHealth: health?.ok === true,
     workerHealth: worker,
     kernelOpsHealth: kernelOps,
     adapterOpsHealth: adapterOps,
+    adapterOpsReady,
   };
 }
 

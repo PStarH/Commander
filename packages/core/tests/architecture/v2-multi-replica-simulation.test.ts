@@ -128,7 +128,7 @@ describe('V2 Multi-Replica Simulation — Distributed Kernel Coordination', () =
 
     const allClaimed = [...claimedByA, ...claimedByB];
 
-    // All 10 steps claimed exactly once (no duplicates).
+    // All 10 steps have one in-memory claim owner (no duplicates).
     assert.equal(allClaimed.length, 10, 'All 10 steps should be claimed');
     assert.equal(new Set(allClaimed).size, 10, 'No step should be claimed twice');
 
@@ -136,7 +136,7 @@ describe('V2 Multi-Replica Simulation — Distributed Kernel Coordination', () =
     const overlap = claimedByA.filter((id) => claimedByB.includes(id));
     assert.equal(overlap.length, 0, 'No step should be claimed by both workers');
 
-    // Each step has exactly one owning workerId drawn from the scheduler set.
+    // Each step has one owning workerId drawn from the scheduler set.
     assert.equal(ownerForStep.size, 10, 'Each step should have exactly one owning worker');
     for (const [stepId, workerId] of ownerForStep) {
       assert.ok(

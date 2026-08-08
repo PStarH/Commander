@@ -1,12 +1,17 @@
 import type { Request, Response, NextFunction } from 'express';
 import * as crypto from 'node:crypto';
+import { getGlobalLogger } from '@commander/core';
 import { isProductionEnv, describeProdSignal } from './envSignal';
+import { deriveApiKeyHash } from './apiKeyHash';
 import { getApiKeyStore } from './apiKeyStore';
+import { getAuthFailureStore } from './authFailureStore';
 
 declare global {
   namespace Express {
     interface Request {
       apiKeyId?: string;
+      /** Stable non-secret principal identifier used for action bindings and audit actors. */
+      principalRef?: string;
       apiScopes?: string[];
       /** Tenant associated with the authenticated API key or static key mapping. */
       tenantId?: string;
@@ -39,7 +44,7 @@ const PUBLIC_PATHS = new Set([
 // the comparison path leaked timing information through early-exit branching.
 //
 // New approach:
-// 1. Keys are SHA-256 hashed at parse time; plaintext is never retained.
+// 1. Keys are scrypt-derived at parse time; plaintext is never retained.
 // 2. Lookup uses timingSafeEqual on hashes — constant-time comparison.
 // 3. Auth-failure lockout: after MAX_AUTH_FAILURES within the window, the
 //    source IP is locked out for LOCKOUT_DURATION_MS, preventing brute-force.
@@ -56,24 +61,14 @@ const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
 const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
-const authFailureTracker = new Map<
-  string,
-  { count: number; firstFailureAt: number; lockedUntil: number }
->();
+const startupAuthFailureStore = getAuthFailureStore();
 
 // Cleanup old entries every 5 minutes
 setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of authFailureTracker) {
-    if (entry.lockedUntil < now && entry.firstFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-      authFailureTracker.delete(ip);
-    }
-  }
+  startupAuthFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
+    process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
+  });
 }, 300_000).unref();
-
-function sha256(input: string): Buffer {
-  return crypto.createHash('sha256').update(input).digest();
-}
 
 function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
   const keys = new Map<string, StoredKey>();
@@ -85,7 +80,8 @@ function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
       const scopeSpec = scopeParts.join(':');
       const scopes = scopeSpec ? scopeSpec.split(';').filter(Boolean) : ['read', 'write'];
       // Store only the hash — plaintext key is discarded after hashing
-      keys.set(sha256(rawKey).toString('hex'), { hash: sha256(rawKey), name, scopes });
+      const hash = deriveApiKeyHash(rawKey);
+      keys.set(hash.toString('hex'), { hash, name, scopes });
     }
   }
   return keys;
@@ -108,8 +104,9 @@ function parseTenantApiKeys(raw: string | undefined): Map<string, StoredKey> {
     for (const rawKey of rawKeys) {
       const key = rawKey.trim();
       if (!key) continue;
-      keys.set(sha256(key).toString('hex'), {
-        hash: sha256(key),
+      const hash = deriveApiKeyHash(key);
+      keys.set(hash.toString('hex'), {
+        hash,
         name: `${tenantId}:${key.slice(0, 8)}`,
         scopes: ['read', 'write'],
         tenantId,
@@ -149,40 +146,37 @@ function getCachedKeys(): Map<string, StoredKey> {
 }
 
 /**
- * Timing-safe key lookup. Hashes the provided token and compares against
- * all stored hashes using crypto.timingSafeEqual. The loop always iterates
- * over ALL entries (no early exit) to prevent timing side-channels.
+ * Timing-safe key lookup. Hashes the provided token once, then performs an
+ * O(1) Map lookup by hex digest. The matched candidate is verified with
+ * crypto.timingSafeEqual to guard against timing side-channels.
  */
 function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
-  const tokenHash = sha256(token);
-  let match: StoredKey | null = null;
-  // Iterate over ALL keys — no early exit to maintain constant time
-  for (const stored of storedKeys.values()) {
+  const tokenHash = deriveApiKeyHash(token);
+  // O(1) lookup by hex digest; timing of Map.get is independent of token content.
+  const stored = storedKeys.get(tokenHash.toString('hex'));
+  if (stored) {
     try {
       if (
         stored.hash.length === tokenHash.length &&
         crypto.timingSafeEqual(stored.hash, tokenHash)
       ) {
-        match = stored;
-        // Do NOT break — continue iterating to prevent timing leak
+        return stored;
       }
     } catch {
-      // Length mismatch or other error — continue
+      // Length mismatch or other error — fall through
     }
   }
   // Fallback to the persistent API key store (created via /api/admin/api-keys).
-  if (!match) {
-    const storeRecord = getApiKeyStore().findByHash(tokenHash.toString('hex'));
-    if (storeRecord) {
-      match = {
-        hash: Buffer.from(storeRecord.hash, 'hex'),
-        name: storeRecord.name,
-        scopes: storeRecord.scopes,
-        tenantId: storeRecord.tenantId,
-      };
-    }
+  const storeRecord = getApiKeyStore().findByHash(tokenHash.toString('hex'));
+  if (storeRecord) {
+    return {
+      hash: Buffer.from(storeRecord.hash, 'hex'),
+      name: storeRecord.name,
+      scopes: storeRecord.scopes,
+      tenantId: storeRecord.tenantId,
+    };
   }
-  return match;
+  return null;
 }
 
 function isPublicPath(path: string): boolean {
@@ -197,24 +191,39 @@ function getClientIp(req: Request): string {
   return req.ip ?? req.socket.remoteAddress ?? 'unknown';
 }
 
-function recordAuthFailure(ip: string): void {
+async function recordAuthFailure(ip: string): Promise<void> {
+  const authFailureStore = getAuthFailureStore();
   const now = Date.now();
-  let entry = authFailureTracker.get(ip);
-  if (!entry || entry.firstFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-    entry = { count: 0, firstFailureAt: now, lockedUntil: 0 };
+  let entry = await authFailureStore.get(ip);
+  if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
+    entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
   }
   entry.count++;
-  if (entry.count >= MAX_AUTH_FAILURES) {
+  entry.lastFailureAt = now;
+  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
     entry.lockedUntil = now + LOCKOUT_DURATION_MS;
-    process.stderr.write(
-      `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
-    );
+    try {
+      getGlobalLogger().warn(
+        'AuthMiddleware',
+        `IP ${ip} locked out after ${entry.count} failures`,
+        {
+          ip,
+          count: entry.count,
+          lockoutDurationSeconds: LOCKOUT_DURATION_MS / 1000,
+        },
+      );
+    } catch {
+      process.stderr.write(
+        `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
+      );
+    }
   }
-  authFailureTracker.set(ip, entry);
+  await authFailureStore.set(ip, entry);
 }
 
-function isLockedOut(ip: string): boolean {
-  const entry = authFailureTracker.get(ip);
+async function isLockedOut(ip: string): Promise<boolean> {
+  const authFailureStore = getAuthFailureStore();
+  const entry = await authFailureStore.get(ip);
   if (!entry) return false;
   return entry.lockedUntil > Date.now();
 }
@@ -227,13 +236,32 @@ function isLockedOut(ip: string): boolean {
 let _warnedAuthDisabledInProd = false;
 if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDisabledInProd) {
   _warnedAuthDisabledInProd = true;
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[authMiddleware] AUTH_DISABLED=true in production (signal=${describeProdSignal()}) — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.`,
-  );
+  try {
+    getGlobalLogger().warn(
+      'AuthMiddleware',
+      'AUTH_DISABLED=true in production — admin endpoints are publicly accessible. This is a security risk; remove the env var before deployment.',
+      { signal: describeProdSignal() },
+    );
+  } catch {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[authMiddleware] AUTH_DISABLED=true in production (signal=${describeProdSignal()}) — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.`,
+    );
+  }
 }
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  try {
+    await authMiddlewareInternal(req, res, next);
+  } catch (err) {
+    process.stderr.write(`[Auth] Unhandled error in auth middleware: ${String(err)}\n`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+}
+
+async function authMiddlewareInternal(req: Request, res: Response, next: NextFunction) {
   // Security: In production, AUTH_DISABLED must never be honored.
   // Per security best practice: authentication bypass is a critical risk;
   // fail hard rather than silently allowing unauthenticated access.
@@ -290,60 +318,46 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   const clientIp = getClientIp(req);
 
   // Check lockout BEFORE processing auth — fail fast for locked IPs
-  if (isLockedOut(clientIp)) {
-    const entry = authFailureTracker.get(clientIp)!;
-    const retryAfter = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-    res.setHeader('Retry-After', String(retryAfter));
-    res.status(429).json({
-      error: 'Too many authentication failures. Try again later.',
-      retryAfter,
-    });
-    return;
+  if (await isLockedOut(clientIp)) {
+    try {
+      const authFailureStore = getAuthFailureStore();
+      const entry = await authFailureStore.get(clientIp);
+      const lockedUntil = entry?.lockedUntil ?? 0;
+      const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({
+        error: 'Too many authentication failures. Try again later.',
+        retryAfter,
+      });
+      return;
+    } catch (err) {
+      process.stderr.write(`[Auth] Failed to read lockout entry: ${String(err)}\n`);
+      res.status(429).json({
+        error: 'Too many authentication failures. Try again later.',
+      });
+      return;
+    }
   }
 
   const apiKeys = getCachedKeys();
+  const anonymousAccessEnabled =
+    apiKeys.size === 0 &&
+    !isProductionEnv() &&
+    getApiKeyStore().list().length === 0 &&
+    process.env.COMMANDER_ALLOW_ANON === '1';
+  if (anonymousAccessEnabled) {
+    req.tenantId ||= process.env.COMMANDER_DEFAULT_TENANT_ID || 'local';
+    return next();
+  }
+
   const authHeader = readHeader(req.headers.authorization);
   const apiKeyHeader = readHeader(req.headers['x-api-key']);
-
-  let keyId: string | null = null;
-  let matchedScopes: string[] = [];
-  let matchedKey: StoredKey | null = null;
-
-  if (apiKeyHeader) {
-    const matched = findKey(apiKeyHeader, apiKeys);
-    if (!matched) {
-      recordAuthFailure(clientIp);
-      process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
-      res.status(401).json({ error: 'Invalid API key' });
-      return;
-    }
-    keyId = matched.name;
-    matchedScopes = matched.scopes;
-    matchedKey = matched;
-  } else if (authHeader?.startsWith('Bearer ')) {
-    const token = authHeader.slice(7);
-    const matched = findKey(token, apiKeys);
-    if (!matched) {
-      recordAuthFailure(clientIp);
-      process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
-      res.status(401).json({ error: 'Invalid bearer token' });
-      return;
-    }
-    keyId = matched.name;
-    matchedScopes = matched.scopes;
-    matchedKey = matched;
-  } else if (
-    apiKeys.size > 0 ||
-    isProductionEnv() ||
-    getApiKeyStore().list().length > 0 ||
-    // Non-production with no keys previously fell open. Require an explicit
-    // opt-in so local/dev deploys are not anonymously writable by default.
-    process.env.COMMANDER_ALLOW_ANON !== '1'
-  ) {
-    // Default-deny: require authentication whenever any API key is configured —
-    // in the env cache OR the persistent store — or whenever we are in
-    // production. Outside production, anonymous access is only allowed when
-    // COMMANDER_ALLOW_ANON=1 is set explicitly (dev escape hatch).
+  const credential = apiKeyHeader
+    ? { token: apiKeyHeader, name: 'API key' as const }
+    : authHeader?.startsWith('Bearer ')
+      ? { token: authHeader.slice(7), name: 'bearer token' as const }
+      : null;
+  if (!credential) {
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',
@@ -351,16 +365,26 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     return;
   }
 
-  if (keyId) {
-    req.apiKeyId = keyId;
-    req.apiScopes = matchedScopes;
-    if (matchedKey?.tenantId) {
-      req.tenantId = matchedKey.tenantId;
+  const matchedKey = findKey(credential.token, apiKeys);
+  if (!matchedKey) {
+    await recordAuthFailure(clientIp);
+    try {
+      getGlobalLogger().warn('AuthMiddleware', `Invalid ${credential.name}`, {
+        ip: clientIp,
+        path,
+      });
+    } catch {
+      process.stderr.write(`[Auth] Invalid ${credential.name} from IP=${clientIp} path=${path}\n`);
     }
-  } else if (!req.tenantId) {
-    // COMMANDER_ALLOW_ANON fall-through: bind a default tenant so downstream
-    // tenant-scoped stores (memory, etc.) have an ALS context.
-    req.tenantId = process.env.COMMANDER_DEFAULT_TENANT_ID || 'local';
+    res.status(401).json({ error: `Invalid ${credential.name}` });
+    return;
+  }
+
+  req.apiKeyId = matchedKey.name;
+  req.principalRef = matchedKey.name;
+  req.apiScopes = matchedKey.scopes;
+  if (matchedKey.tenantId) {
+    req.tenantId = matchedKey.tenantId;
   }
 
   next();

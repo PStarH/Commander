@@ -13,6 +13,9 @@ cell:
 image:
   repository: commander
   tag: latest
+  # Task 1 lifecycle operations require a digest-pinned image. Development-only
+  # profiles may still use tag rendering outside the tenant-authority path.
+  digest: ''
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -32,6 +35,8 @@ api:
     livenessPath: /health
     readinessPath: /ready
     metricsPath: /metrics
+    startupFailureThreshold: 90
+    startupPeriodSeconds: 2
     initialDelaySeconds: 10
     periodSeconds: 15
   autoscaling:
@@ -132,10 +137,15 @@ kernelOps:
     COMMANDER_OUTBOX_MAX_ATTEMPTS: '10'
 
 adapterOps:
+  claimSecretDir: /var/run/commander/adapter-ops
+  reconcileIntervalMs: 10000
+  compensationIntervalMs: 10000
   enabled: false
-  # Single replica: fixed daemon worker ids (reconciliation-daemon / compensation-daemon)
-  # stomping under multi-replica. Multi-replica needs POD_NAME-suffixed ids (follow-up).
+  # Each Pod derives unique reconcile/compensation identities from metadata.name.
   replicas: 1
+  pdb:
+    enabled: false
+    minAvailable: 1
   terminationGracePeriodSeconds: 60
   image:
     repository: ''
@@ -159,6 +169,13 @@ adapterOps:
   secrets:
     existingSecret: ''
     create: false
+  kubernetes:
+    cluster: ''
+    namespaces: []
+    server: ''
+    tokenEnv: COMMANDER_KUBERNETES_BEARER_TOKEN
+    tokenSecretKey: kubernetes-bearer-token
+    apiPort: 443
   egress:
     allowlist: []
 
@@ -172,11 +189,24 @@ capability:
   keyIdKey: key-id
   jwksJsonKey: jwks-json
 
+# Detached evidence signatures use a dedicated Ed25519 authority. Only worker
+# and adapter-ops receive the private key; API and migration workloads do not.
+evidenceSigning:
+  existingSecret: ''
+  # Demo only: chart may create a fixed development keypair.
+  create: false
+  privateKeyPemKey: private-key-pem
+  keyIdKey: key-id
+  jwksJsonKey: jwks-json
+
 sandboxd:
   enabled: false
 
 migration:
   terminationGracePeriodSeconds: 30
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 300
+  databaseWaitTimeoutSeconds: 300
   resources:
     requests:
       cpu: 100m
@@ -219,18 +249,20 @@ database:
       repository: postgres
       tag: '16-alpine'
     port: 5432
-    user: commander
+    user: postgres
     # Schema requires empty inline password — supply via existingSecret.
     password: ''
     database: commander
     existingSecret: ''
     # Legacy single-key name (unused by role-separated workloads).
     existingSecretKey: url
-    # Four distinct DSN secret keys (enterprise existingSecret must include all).
+    # Six distinct DSN secret keys (enterprise existingSecret must include all).
     ownerSecretKey: owner-url
     appSecretKey: app-url
+    tenantAuthoritySecretKey: tenant-authority-url
     schedulerSecretKey: scheduler-url
     workerSecretKey: worker-url
+    adapterOpsSecretKey: adapter-ops-url
     resources:
       requests:
         cpu: 100m
@@ -243,6 +275,17 @@ database:
       size: 10Gi
       storageClass: ''
   connectionString: ''
+
+# PostgreSQL transport identity is separate from database credentials. Bundled
+# PostgreSQL uses existingSecret (CA, certificate, and key); external databases
+# use caSecret and keep their private key outside Commander.
+databaseTls:
+  existingSecret: ''
+  caSecret: ''
+  caKey: ca.crt
+  certKey: tls.crt
+  keyKey: tls.key
+  expectedServerSpkiSha256: ''
 
 persistence:
   enabled: true
@@ -291,9 +334,46 @@ serviceAccount:
 networkPolicy:
   enabled: false
   ingressControllerNamespace: ''
+  # Explicit node CIDRs for kubelet health probes when ingress is isolated.
+  # Keep this list narrow; an empty list preserves deny-by-default behavior.
+  ingressCidrs: []
+  clusterDns:
+    namespace: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  # Every entry is either an exact Service tuple or one literal /32 or /128.
+  # Across the list, all six lifecycle database roles must be covered.
+  databaseEndpoints: []
   egress:
     adapterCidrs: []
+    kubernetesApiCidrs: []
     databaseCidrs: []
+  migrationOperator:
+    subject: ''
+
+# Render input supplied by the owner lifecycle orchestrator. Owner-observed
+# database peer data is deliberately not a chart value.
+tenantAuthority:
+  # Controller-only first revision for fresh bundled PostgreSQL. Never set manually.
+  transportBootstrap: false
+  cutoverPhase: enforce
+  configurationSha256: ''
+  chartContentSha256: ''
+  # Ephemeral owner-only Secret created and deleted by helm:tenant-cutover.
+  proofOwnerSecret: ''
+  # Ephemeral immutable ConfigMap created and deleted by helm:tenant-cutover.
+  releaseProjectionConfigMap: ''
+  # Fresh external installs only; bundled installs derive this URL in migration memory.
+  bootstrapAuthoritySecret: ''
+  allowedTenants: []
+  expectedMigrationDescriptors: '{}'
+  apiProof:
+    publicSecret: ''
+    privateSecret: ''
+    caKey: ca.crt
+    certKey: tls.crt
+    keyKey: tls.key
+    port: 9443
 
 podSecurityContext:
   runAsNonRoot: true

@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from typing import Protocol, runtime_checkable
+
+import pytest
 import respx
 
 from commander import (
@@ -35,6 +38,17 @@ from commander import (
     ConfidenceReport,
     ConfidenceThresholdInfo,
 )
+from commander._gateway_client import CommanderGatewayClient, verify_action_evidence
+from commander._types import KillSwitchUpdateInput, ProposeActionInput
+
+
+@runtime_checkable
+class GatewayError(Protocol):
+    @property
+    def status(self) -> int: ...
+
+    @property
+    def code(self) -> str: ...
 
 
 class TestCostDashboard:
@@ -139,8 +153,9 @@ class TestOIDC:
             settings = OIDCSettingsUpdate(
                 enabled=True,
                 issuer="https://example.com",
-                client_id="client-1",
-                redirect_uri="http://localhost:5173/login",
+                clientId="client-1",
+                roleClaim="roles",
+                redirectUri="http://localhost:5173/login",
             )
             async with mock_api:
                 result = await client.update_oidc_settings(settings)
@@ -377,8 +392,9 @@ class TestApprovalConfig:
             policy = ToolPolicy(
                 pattern="custom_tool",
                 level="manual",
-                risk_level="high",
+                riskLevel="high",
                 description="Custom tool",
+                autoApproveIf=None,
             )
             async with mock_api:
                 result = await client.add_approval_policy(policy)
@@ -444,7 +460,9 @@ class TestOutgoingWebhooks:
             from commander import OutgoingWebhookCreate
 
             webhook = OutgoingWebhookCreate(
-                url="https://example.com/webhook", events=["run.completed"]
+                url="https://example.com/webhook",
+                events=["run.completed"],
+                retryMax=None,
             )
             async with mock_api:
                 result = await client.create_outgoing_webhook(webhook)
@@ -574,3 +592,180 @@ class TestObservability:
                 result = await client.replay_run("run_001")
             assert isinstance(result, ReplayResult)
             assert result.run_id == "run_001"
+
+
+ACTION_INPUT = {
+    "source": "sdk-test",
+    "package": "demo.package",
+    "model": "demo-model",
+    "tool": "ticket.create",
+    "destination": "demo://tickets",
+    "effectType": "demo.ticket.create",
+    "args": {"title": "Reset password"},
+    "idempotencyKey": "action-key-0001",
+}
+
+
+class TestCanonicalActionGatewaySurface:
+    async def test_reconcile_action_preserves_canonical_202_result(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        fixture = {
+            "scheduled": True,
+            "effectId": "effect-1",
+            "state": "COMPLETION_UNKNOWN",
+            "reconcileAfter": "2026-07-29T08:30:00.000Z",
+            "alreadyScheduled": True,
+        }
+        mock_api.post("/v1/actions/run-action-1/reconcile").respond(202, json=fixture)
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                result = await client.reconcile_action(
+                    "run-action-1", idempotency_key="reconcile-action-0001"
+                )
+
+        assert result.model_dump(by_alias=True) == fixture
+
+    @pytest.mark.parametrize(
+        ("status", "code"),
+        [(409, "NO_RECONCILABLE_EFFECT"), (503, "KERNEL_UNAVAILABLE")],
+    )
+    async def test_preserves_http_status_and_error_code(
+        self, mock_api: respx.MockRouter, status: int, code: str
+    ) -> None:
+        mock_api.post("/v1/actions/run-action-1/reconcile").respond(
+            status,
+            json={"error": {"code": code, "message": "Gateway failure."}},
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                with pytest.raises(Exception) as caught:
+                    await client.reconcile_action(
+                        "run-action-1", idempotency_key="reconcile-action-0002"
+                    )
+
+        error = caught.value
+        assert isinstance(error, GatewayError)
+        assert error.status == status
+        assert error.code == code
+
+    async def test_propose_action_sends_explicit_idempotency_header(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        action = {
+            "runId": "run-action-1",
+            "stepId": "step-1",
+            "effectId": "effect-1",
+            "state": "PROPOSED",
+            "decision": {
+                "effect": "allow",
+                "decisionId": "decision-1",
+                "reason": "allowed",
+                "policySnapshotId": "policy-1",
+            },
+            "simulation": {
+                "effect": "allow",
+                "decisionId": "decision-1",
+                "reason": "allowed",
+                "policySnapshotId": "policy-1",
+                "simulationId": "simulation-1",
+                "actionDigest": "a" * 64,
+            },
+            "actionDigest": "a" * 64,
+            "policySnapshotId": "policy-1",
+            "createdAt": "2026-07-29T08:00:00.000Z",
+            "updatedAt": "2026-07-29T08:00:00.000Z",
+        }
+        route = mock_api.post("/v1/actions").respond(
+            202, json={"action": action, "idempotentReplay": False}
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                await client.propose_action(ProposeActionInput(**ACTION_INPUT))
+                assert (
+                    route.calls.last.request.headers["Idempotency-Key"]
+                    == "action-key-0001"
+                )
+
+    async def test_kill_switch_methods_use_canonical_paths(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        fixture = {
+            "tenantId": "tenant-a",
+            "scope": "tool",
+            "value": "ticket.create",
+            "enabled": True,
+            "reason": "incident response",
+            "actor": "operator-1",
+            "updatedAt": "2026-07-29T08:00:00.000Z",
+        }
+        list_route = mock_api.get("/v1/actions/kill-switches").respond(
+            200, json={"killSwitches": [fixture]}
+        )
+        put_route = mock_api.put(
+            "/v1/actions/kill-switches/tool/ticket.create"
+        ).respond(200, json={"killSwitch": fixture})
+        delete_route = mock_api.delete(
+            "/v1/actions/kill-switches/tool/ticket.create"
+        ).respond(204)
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client:
+            async with mock_api:
+                listed = await client.list_kill_switches()
+                updated = await client.put_kill_switch(
+                    "tool",
+                    "ticket.create",
+                    KillSwitchUpdateInput(enabled=True, reason="incident response"),
+                    idempotency_key="kill-put-0001",
+                )
+                await client.remove_kill_switch(
+                    "tool", "ticket.create", idempotency_key="kill-delete-0001"
+                )
+                assert list_route.called and put_route.called and delete_route.called
+                assert (
+                    put_route.calls.last.request.headers["Idempotency-Key"]
+                    == "kill-put-0001"
+                )
+                assert (
+                    delete_route.calls.last.request.headers["Idempotency-Key"]
+                    == "kill-delete-0001"
+                )
+        assert listed[0].model_dump(by_alias=True) == fixture
+        assert updated.model_dump(by_alias=True) == fixture
+
+    def test_verify_action_evidence_uses_supplied_jwks(self) -> None:
+        receipt = (
+            "eyJhbGciOiJFZERTQSIsImtpZCI6ImV2aWRlbmNlLWtleS0xIiwidHlwIjoiSldUIn0."
+            "eyJydW5JZCI6InJ1bi1hY3Rpb24tMSIsImNvbnRlbnRIYXNoIjoiYWFhYWFhYWFhYWFhYWFhYWFh"
+            "YWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYSJ9."
+            "PMG0lLsjDz8LCcfI7-Mq9ksepOBdujc5uwmCh3xhDOTzOtcpPzVsoGY8fwYS_UI_znzHTxPvK"
+            "LlQglhCcrXLCA"
+        )
+        jwks = {
+            "keys": [
+                {
+                    "crv": "Ed25519",
+                    "x": "11qYAYKxCrfVS_7TyWQHOg7hcvPapiMlrwIaaPcHURo",
+                    "kty": "OKP",
+                    "kid": "evidence-key-1",
+                    "alg": "EdDSA",
+                    "use": "sig",
+                }
+            ]
+        }
+
+        result = verify_action_evidence(receipt, jwks)
+        assert result.model_dump(by_alias=True, exclude_none=True) == {
+            "valid": True,
+            "payload": {"runId": "run-action-1", "contentHash": "a" * 64},
+        }
+        signing_input, signature = receipt.rsplit(".", 1)
+        forged = f"{signing_input}.A{signature[1:]}"
+        assert not verify_action_evidence(forged, jwks).valid

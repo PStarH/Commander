@@ -659,6 +659,7 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
       'interaction-postgres-approval',
       'run-postgres-approval',
       'tenant-postgres',
+      false,
     ]);
     const releasedStep = pool.queries.find(({ sql }) => sql.includes('UPDATE commander_steps'));
     assert.ok(releasedStep);
@@ -673,6 +674,63 @@ describe('PostgresKernelRepository — Kernel-native approval release', () => {
       response: { approved: true },
     });
     assert.equal(pool.queries[0]?.sql, 'BEGIN');
+    assert.equal(pool.queries.at(-1)?.sql, 'COMMIT');
+  });
+
+  it('answers a non-releasing interaction without requiring a waiting step', async () => {
+    const createdAt = '2026-08-05T00:00:00.000Z';
+    const interactionRow = {
+      id: 'interaction-postgres-compensation',
+      run_id: 'run-postgres-compensation',
+      step_id: 'step-postgres-terminal',
+      tenant_id: 'tenant-postgres',
+      status: 'pending',
+      prompt: 'Approve compensation?',
+      response: null,
+      created_at: createdAt,
+      answered_at: null,
+      expires_at: null,
+      step_state: 'SUCCEEDED',
+    };
+    const pool = new RecordingSqlPool((sql) => {
+      if (sql.includes('SELECT i.*') && sql.includes('commander_interactions')) {
+        return { rows: [interactionRow], rowCount: 1 };
+      }
+      if (sql.includes('UPDATE commander_interactions')) {
+        return {
+          rows: [
+            {
+              ...interactionRow,
+              status: 'answered',
+              response: { approved: true },
+              answered_at: createdAt,
+            },
+          ],
+          rowCount: 1,
+        };
+      }
+      return emptyResult();
+    });
+    const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
+
+    const answered = await repo.answerInteraction({
+      interactionId: interactionRow.id,
+      runId: interactionRow.run_id,
+      tenantId: interactionRow.tenant_id,
+      response: { approved: true },
+      actor: 'compensation-reviewer',
+      releaseStep: false,
+    });
+
+    assert.equal(answered.status, 'answered');
+    assert.equal(
+      pool.queries.some(({ sql }) => sql.includes('UPDATE commander_steps')),
+      false,
+    );
+    assert.equal(
+      pool.queries.some(({ sql }) => sql.includes('SELECT * FROM commander_steps')),
+      false,
+    );
     assert.equal(pool.queries.at(-1)?.sql, 'COMMIT');
   });
 });

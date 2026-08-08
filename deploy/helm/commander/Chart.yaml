@@ -1,9 +1,11 @@
 apiVersion: v2
 name: commander
-description: Commander Multi-Agent Orchestration System — production-grade Helm chart
+description: Commander Multi-Agent Orchestration System Helm chart
 type: application
 version: 0.4.0
 appVersion: '0.4.0'
+annotations:
+  commander.io/content-sha256: 83377b1521adad4c66350159467428e6b53088c90cb3c1db909677941b7f2421
 keywords:
   - agent
   - orchestration

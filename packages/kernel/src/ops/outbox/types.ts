@@ -24,7 +24,12 @@ export interface OutboxDeliveryPort {
   publish(envelope: OutboxEnvelope): Promise<{ deliveryId: string; duplicate: boolean }>;
   claim(consumerId: string, limit: number, now?: Date): Promise<ClaimedOutboxDelivery[]>;
   acknowledge(deliveryId: string, claimToken: string): Promise<boolean>;
-  retry(deliveryId: string, claimToken: string, error: OutboxDeliveryError, now?: Date): Promise<boolean>;
+  retry(
+    deliveryId: string,
+    claimToken: string,
+    error: OutboxDeliveryError,
+    now?: Date,
+  ): Promise<boolean>;
 }
 
 export interface OutboxDeliveryOptions {
