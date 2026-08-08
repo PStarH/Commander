@@ -1938,9 +1938,8 @@ async function runNetworkPolicyCanaries(
   const service = await kubectlJson(['get', 'service', `${release}-api-proof`, '-n', NAMESPACE]);
   const clusterIp = (service.spec as { clusterIP?: unknown } | undefined)?.clusterIP;
   if (typeof clusterIp !== 'string' || !clusterIp) throw new Error('API_PROOF_SERVICE_INVALID');
-  const script = `const net=require('node:net');let done=false;const finish=(code)=>{if(done)return;done=true;process.exit(code)};const socket=net.connect({host:${JSON.stringify(
-    clusterIp,
-  )},port:9443},()=>finish(0));socket.setTimeout(5000,()=>finish(42));socket.on('error',()=>finish(43));`;
+  const script =
+    "const net=require('node:net');let done=false;const finish=(code)=>{if(done)return;done=true;process.exit(code)};const socket=net.connect({host:process.argv[1],port:9443},()=>finish(0));socket.setTimeout(5000,()=>finish(42));socket.on('error',()=>finish(43));";
   const applyCanary = async (name: string, labelled: boolean) => {
     const labels = labelled
       ? `app.kubernetes.io/name=${release},app.kubernetes.io/instance=${release},commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`
@@ -1962,6 +1961,7 @@ async function runNetworkPolicyCanaries(
         'node',
         '-e',
         script,
+        clusterIp,
       ]),
       'NETWORK_POLICY_CANARY_CREATE_FAILED',
     );
