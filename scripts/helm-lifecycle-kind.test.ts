@@ -23,6 +23,8 @@ import {
   reusableProductionImageDigest,
   controlPlaneReadinessSelectors,
   extractLifecycleFailureDiagnostics,
+  projectLifecycleJobDiagnostics,
+  projectLifecyclePodDiagnostics,
   proofReaderName,
   selectLifecycleScenarios,
   sanitizeEvidence,
@@ -667,6 +669,88 @@ Migration failed: COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUT
         'COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_PROOF_INVALID',
         'COMMANDER_API_FAILED stage=readiness-self-check code=TENANT_CONTEXT_INVALID',
         'COMMANDER_API_FAILED stage=startup code=TASK1_READINESS_DATABASE_IDENTITY_INVALID',
+      ],
+    );
+  });
+
+  it('projects restart and termination evidence without copying pod specs or secrets', () => {
+    assert.deepEqual(
+      projectLifecyclePodDiagnostics({
+        items: [
+          {
+            metadata: { namespace: 'commander-lifecycle', name: 'api-0', uid: 'secret-like-uid' },
+            spec: { containers: [{ env: [{ name: 'DATABASE_URL', value: 'postgres://secret' }] }] },
+            status: {
+              phase: 'Completed',
+              conditions: [
+                { type: 'Ready', status: 'False', reason: 'ProbeFailed', message: 'not included' },
+              ],
+              containerStatuses: [
+                {
+                  name: 'api',
+                  ready: false,
+                  restartCount: 2,
+                  image: 'commander@sha256:abc',
+                  state: { terminated: { reason: 'Error', exitCode: 1, signal: 0 } },
+                  lastState: { terminated: { reason: 'Error', exitCode: 1 } },
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      [
+        {
+          namespace: 'commander-lifecycle',
+          name: 'api-0',
+          phase: 'Completed',
+          conditions: [{ type: 'Ready', status: 'False', reason: 'ProbeFailed' }],
+          containerStatuses: [
+            {
+              name: 'api',
+              ready: false,
+              restartCount: 2,
+              image: 'commander@sha256:abc',
+              state: { terminated: { reason: 'Error', exitCode: 1, signal: 0 } },
+              lastState: { terminated: { reason: 'Error', exitCode: 1 } },
+            },
+          ],
+        },
+      ],
+    );
+  });
+
+  it('projects proof Job terminal conditions and counts', () => {
+    assert.deepEqual(
+      projectLifecycleJobDiagnostics({
+        items: [
+          {
+            metadata: { namespace: 'commander-lifecycle', name: 'proof' },
+            status: {
+              failed: 1,
+              succeeded: 0,
+              conditions: [
+                {
+                  type: 'Failed',
+                  status: 'True',
+                  reason: 'BackoffLimitExceeded',
+                  message: 'failed',
+                },
+              ],
+            },
+          },
+        ],
+      }),
+      [
+        {
+          namespace: 'commander-lifecycle',
+          name: 'proof',
+          conditions: [
+            { type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded', message: 'failed' },
+          ],
+          failed: 1,
+          succeeded: 0,
+        },
       ],
     );
   });
