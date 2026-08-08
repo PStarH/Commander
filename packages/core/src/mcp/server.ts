@@ -75,7 +75,7 @@ export function buildMcpActionEnvelope(
   let effectType = `mcp.tool.${toolName}`;
   if (toolName === 'ticket.create') {
     effectType = 'demo.ticket.create';
-    destination = args.requireApproval === true ? 'demo://tickets/approval' : 'demo://tickets';
+    destination = 'demo://tickets';
   } else if (toolName === 'ticket.compensate') {
     effectType = 'compensate.demo.ticket.create';
     destination = 'demo://tickets';

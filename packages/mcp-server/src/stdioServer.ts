@@ -11,6 +11,36 @@ import {
   type MCPServerCapabilities,
   type ActionGatewayExecutor,
 } from '@commander/core';
+import { createHash } from 'node:crypto';
+
+export interface McpActionGatewayRequest {
+  method: 'GET' | 'POST';
+  path: string;
+  body?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
+export interface McpActionGatewayExecutor {
+  request(input: McpActionGatewayRequest): Promise<unknown>;
+}
+
+const MCP_ACTION_PROVENANCE = {
+  source: 'mcp',
+  package: 'commander.mcp',
+} as const;
+
+const MCP_GOVERNED_ACTIONS = {
+  'ticket.create': {
+    tool: 'ticket.create',
+    destination: 'demo://tickets',
+    effectType: 'demo.ticket.create',
+  },
+  'ticket.compensate': {
+    tool: 'ticket.compensate',
+    destination: 'demo://tickets',
+    effectType: 'compensate.demo.ticket.create',
+  },
+} as const;
 
 export interface StdioMcpServerOptions {
   /** Server name advertised during MCP initialization. */
@@ -21,12 +51,17 @@ export interface StdioMcpServerOptions {
   modelRouterOnly?: boolean;
   /** If true, expose dangerous built-in tools such as shell_execute (default: false). */
   allowDangerousTools?: boolean;
+  /** Enable the local Commander runtime surface (defaults to COMMANDER_MCP_LOCAL_RUNTIME=1). */
+  localRuntime?: boolean;
   /** Override Action Gateway base URL (defaults to COMMANDER_ACTION_GATEWAY_URL). */
   actionGatewayUrl?: string;
   /** Override Action Gateway API key (defaults to COMMANDER_API_KEY). */
   actionGatewayApiKey?: string;
-  /** Inject a custom Action Gateway executor (used by tests). */
-  actionGatewayExecutor?: ActionGatewayExecutor;
+  /**
+   * Inject an MCP executor with request() for the governed default surface, or
+   * a Commander executor with proposeAction() when localRuntime is enabled.
+   */
+  actionGatewayExecutor?: ActionGatewayExecutor | McpActionGatewayExecutor;
 }
 
 export interface StdioMcpServerStatus {
@@ -39,30 +74,33 @@ export interface StdioMcpServerStatus {
   resources: MCPResource[];
   prompts: MCPPrompt[];
   uptimeSeconds: number;
+  enterpriseWrites: boolean;
 }
 
 /**
  * Create an MCP server wired to Commander services.
  *
- * By default it registers:
- *   - The model-router tools (execute_agent, list_models, route_task)
- *   - All built-in Commander tools returned by createAllTools(),
- *     with dangerous tools filtered out unless allowDangerousTools is set.
+ * The default surface exposes only governed Action Gateway operations. The
+ * local Commander runtime must be explicitly enabled for development.
  */
 export function createStdioMcpServer(options: StdioMcpServerOptions = {}): {
   server: MCPServer;
   status: StdioMcpServerStatus;
 } {
-  currentStdioOptions = options;
   const name = options.name ?? 'commander-mcp-server';
   const version = options.version ?? '0.2.0';
   const startTime = Date.now();
 
   const server = new MCPServer(name, version);
 
-  registerModelRouterTools(server);
-  if (!options.modelRouterOnly) {
-    registerCommanderTools(server, options.allowDangerousTools === true);
+  const localRuntime = isLocalRuntimeEnabled(options.localRuntime);
+  if (localRuntime) {
+    registerModelRouterTools(server);
+    if (!options.modelRouterOnly) {
+      registerCommanderTools(server, options);
+    }
+  } else {
+    registerActionGatewayTools(server, resolveMcpActionGatewayExecutor(options));
   }
 
   // `version` mirrors packages/mcp-server/package.json. Update both together
@@ -78,6 +116,7 @@ export function createStdioMcpServer(options: StdioMcpServerOptions = {}): {
     resources: [],
     prompts: [],
     uptimeSeconds: 0,
+    enterpriseWrites: !localRuntime,
   };
 
   return {
@@ -251,12 +290,14 @@ function registerModelRouterTools(server: MCPServer): void {
   );
 }
 
-function registerCommanderTools(server: MCPServer, allowDangerousTools: boolean): void {
+function registerCommanderTools(server: MCPServer, options: StdioMcpServerOptions): void {
   try {
     const tools = createAllTools();
-    const executor = resolveActionGatewayExecutor();
+    const executor = isCoreActionGatewayExecutor(options.actionGatewayExecutor)
+      ? options.actionGatewayExecutor
+      : resolveCoreActionGatewayExecutor(options);
     server.registerCommanderTools(tools, undefined, {
-      allowDangerousTools,
+      allowDangerousTools: options.allowDangerousTools === true,
       actionGatewayExecutor: executor,
     });
   } catch (err) {
@@ -266,12 +307,151 @@ function registerCommanderTools(server: MCPServer, allowDangerousTools: boolean)
   }
 }
 
+function registerActionGatewayTools(
+  server: MCPServer,
+  executor: McpActionGatewayExecutor | undefined,
+): void {
+  const actionEnvelopeSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      action: {
+        type: 'string',
+        enum: Object.keys(MCP_GOVERNED_ACTIONS),
+        description: 'Registered governed action to submit.',
+      },
+      args: { type: 'object' },
+    },
+    required: ['action', 'args'],
+  };
+  const runIdSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: { runId: { type: 'string' } },
+    required: ['runId'],
+  };
+
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_simulate',
+    'Simulate a governed action through the Commander Action Gateway.',
+    actionEnvelopeSchema,
+    (args) => actionRequest('POST', '/v1/actions/simulate', args),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_propose',
+    'Propose a governed action through the Commander Action Gateway.',
+    actionEnvelopeSchema,
+    (args) => actionRequest('POST', '/v1/actions', args),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_get',
+    'Get a governed action from the Commander Action Gateway.',
+    runIdSchema,
+    (args) => ({ method: 'GET', path: actionPath(args.runId) }),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_evidence',
+    'Get the evidence bundle for a governed action.',
+    runIdSchema,
+    (args) => ({ method: 'GET', path: `${actionPath(args.runId)}/evidence` }),
+  );
+}
+
+function registerGatewayTool(
+  server: MCPServer,
+  executor: McpActionGatewayExecutor | undefined,
+  name: string,
+  description: string,
+  inputSchema: MCPTool['inputSchema'],
+  buildRequest: (args: Record<string, unknown>) => McpActionGatewayRequest,
+): void {
+  server.registerTool({ name, description, inputSchema }, async (args) => {
+    if (!executor) {
+      throw new Error(
+        'ACTION_GATEWAY_REQUIRED: configure COMMANDER_ACTION_GATEWAY_URL for governed MCP actions.',
+      );
+    }
+    const result = await executor.request(buildRequest(args));
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  });
+}
+
+function actionRequest(
+  method: 'POST',
+  path: string,
+  args: Record<string, unknown>,
+): McpActionGatewayRequest {
+  const action =
+    MCP_GOVERNED_ACTIONS[
+      requiredString(args.action, 'action') as keyof typeof MCP_GOVERNED_ACTIONS
+    ];
+  if (!action) throw new Error('action must name a registered governed action');
+  const body: Record<string, unknown> = {
+    ...action,
+    args: requiredRecord(args.args, 'args'),
+    ...MCP_ACTION_PROVENANCE,
+    model: process.env.COMMANDER_MCP_MODEL ?? 'mcp-default',
+  };
+  body.idempotencyKey = deriveMcpIdempotencyKey(body);
+  return { method, path, body, headers: idempotencyHeaders(body.idempotencyKey) };
+}
+
+function deriveMcpIdempotencyKey(action: Record<string, unknown>): string {
+  return `mcp-${createHash('sha256').update(canonicalJson(action)).digest('hex').slice(0, 32)}`;
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(',')}}`;
+}
+
+function idempotencyHeaders(idempotencyKey: unknown): Record<string, string> {
+  return { 'Idempotency-Key': requiredString(idempotencyKey, 'idempotencyKey') };
+}
+
+function actionPath(runId: unknown): string {
+  return `/v1/actions/${encodeURIComponent(requiredString(runId, 'runId'))}`;
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+  return value;
+}
+
+function requiredRecord(value: unknown, name: string): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${name} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
 export function isEnterpriseOrProductionMcpMode(env: NodeJS.ProcessEnv = process.env): boolean {
   const profile = env.COMMANDER_PROFILE?.trim().toLowerCase();
   if (profile === 'enterprise') return true;
   const commanderEnv = env.COMMANDER_ENV?.trim().toLowerCase();
   if (commanderEnv === 'production' || commanderEnv === 'prod') return true;
   return env.NODE_ENV === 'production';
+}
+
+export function isLocalRuntimeEnabled(
+  configured?: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (isEnterpriseOrProductionMcpMode(env)) return false;
+  return configured ?? env.COMMANDER_MCP_LOCAL_RUNTIME?.trim() === '1';
 }
 
 export function assertActionGatewayConfigured(
@@ -290,16 +470,74 @@ export function assertActionGatewayConfigured(
   }
 }
 
-function resolveActionGatewayExecutor(): ActionGatewayExecutor | undefined {
-  const options = currentStdioOptions;
-  if (options?.actionGatewayExecutor) return options.actionGatewayExecutor;
+function resolveCoreActionGatewayExecutor(
+  options: StdioMcpServerOptions,
+): ActionGatewayExecutor | undefined {
   const actionGatewayUrl =
-    options?.actionGatewayUrl?.trim() || process.env.COMMANDER_ACTION_GATEWAY_URL?.trim();
+    options.actionGatewayUrl?.trim() || process.env.COMMANDER_ACTION_GATEWAY_URL?.trim();
   if (!actionGatewayUrl) return undefined;
   return createFetchActionGatewayExecutor({
     baseUrl: actionGatewayUrl,
-    apiKey: options?.actionGatewayApiKey ?? process.env.COMMANDER_API_KEY,
+    apiKey: options.actionGatewayApiKey ?? process.env.COMMANDER_API_KEY,
   });
 }
 
-let currentStdioOptions: StdioMcpServerOptions | undefined;
+function resolveMcpActionGatewayExecutor(
+  options: StdioMcpServerOptions,
+): McpActionGatewayExecutor | undefined {
+  if (isMcpActionGatewayExecutor(options.actionGatewayExecutor)) {
+    return options.actionGatewayExecutor;
+  }
+  if (isCoreActionGatewayExecutor(options.actionGatewayExecutor)) {
+    throw new Error(
+      'actionGatewayExecutor with proposeAction requires localRuntime; provide an MCP action gateway executor with request instead.',
+    );
+  }
+  const baseUrl =
+    options.actionGatewayUrl?.trim() || process.env.COMMANDER_ACTION_GATEWAY_URL?.trim();
+  if (!baseUrl) return undefined;
+  return createFetchMcpActionGatewayExecutor({
+    baseUrl,
+    apiKey: options.actionGatewayApiKey ?? process.env.COMMANDER_API_KEY,
+  });
+}
+
+function isMcpActionGatewayExecutor(
+  executor: StdioMcpServerOptions['actionGatewayExecutor'],
+): executor is McpActionGatewayExecutor {
+  return typeof (executor as McpActionGatewayExecutor | undefined)?.request === 'function';
+}
+
+function isCoreActionGatewayExecutor(
+  executor: StdioMcpServerOptions['actionGatewayExecutor'],
+): executor is ActionGatewayExecutor {
+  return typeof (executor as ActionGatewayExecutor | undefined)?.proposeAction === 'function';
+}
+
+export function createFetchMcpActionGatewayExecutor(options: {
+  baseUrl: string;
+  apiKey?: string;
+  fetch?: typeof globalThis.fetch;
+}): McpActionGatewayExecutor {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) throw new Error('A fetch implementation is required for the Action Gateway');
+  const baseUrl = options.baseUrl.replace(/\/$/, '');
+  return {
+    async request(input) {
+      const headers = new Headers(input.headers);
+      headers.set('accept', 'application/json');
+      if (input.body) headers.set('content-type', 'application/json');
+      if (options.apiKey) headers.set('authorization', `Bearer ${options.apiKey}`);
+      const response = await fetchImpl(`${baseUrl}${input.path}`, {
+        method: input.method,
+        headers,
+        ...(input.body ? { body: JSON.stringify(input.body) } : {}),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Action Gateway request failed (${response.status}): ${text}`);
+      }
+      return text ? (JSON.parse(text) as unknown) : {};
+    },
+  };
+}

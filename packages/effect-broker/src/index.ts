@@ -110,11 +110,16 @@ export interface CapabilityReplayStore {
 
 export class InMemoryCapabilityRevocationStore implements CapabilityRevocationStore {
   private readonly revoked = new Map<string, number>();
-  revoke(jti: string, expiresAt: string): void { this.revoked.set(jti, Date.parse(expiresAt)); }
+  revoke(jti: string, expiresAt: string): void {
+    this.revoked.set(jti, Date.parse(expiresAt));
+  }
   isRevoked(jti: string, _tenantId: string): boolean {
     const expiry = this.revoked.get(jti);
     if (!expiry) return false;
-    if (expiry <= Date.now()) { this.revoked.delete(jti); return false; }
+    if (expiry <= Date.now()) {
+      this.revoked.delete(jti);
+      return false;
+    }
     return true;
   }
 }
@@ -162,7 +167,12 @@ export interface EffectKernelPort {
     request: Record<string, unknown>;
     lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
     actor: string;
-  }): Promise<{ admitted: boolean; replayed?: boolean; reason?: string; effect?: { id: string; response?: Record<string, unknown>; state: string } }>;
+  }): Promise<{
+    admitted: boolean;
+    replayed?: boolean;
+    reason?: string;
+    effect?: { id: string; response?: Record<string, unknown>; state: string };
+  }>;
   completeEffect(
     effectId: string,
     tenantId: string,
@@ -170,7 +180,12 @@ export interface EffectKernelPort {
     response: Record<string, unknown>,
     actor: string,
   ): Promise<unknown | null>;
-  markEffectCompletionUnknown?(input: { effectId: string; tenantId: string; reason: string; actor: string }): Promise<unknown | null>;
+  markEffectCompletionUnknown?(input: {
+    effectId: string;
+    tenantId: string;
+    reason: string;
+    actor: string;
+  }): Promise<unknown | null>;
   /**
    * Terminal fail for effects that never committed remotely (AdapterCommitState NOT_COMMITTED).
    * Distinct from markEffectCompletionUnknown (QUERY_FIRST / UNKNOWN).
@@ -213,8 +228,15 @@ export interface EffectKernelPort {
    *  them, but enforced fail-closed by admit() whenever present — the kernel
    *  repository implements all three. */
   isActionAllowed?(tenantId: string, action: string): Promise<boolean>;
-  incrementQuota?(input: { tenantId: string; actionClass: string; tokensUsed?: number }): Promise<{ countUsed: number; tokensUsed: number }>;
-  getQuota?(tenantId: string, actionClass: string): Promise<{ countUsed: number; tokensUsed: number }>;
+  incrementQuota?(input: {
+    tenantId: string;
+    actionClass: string;
+    tokensUsed?: number;
+  }): Promise<{ countUsed: number; tokensUsed: number }>;
+  getQuota?(
+    tenantId: string,
+    actionClass: string,
+  ): Promise<{ countUsed: number; tokensUsed: number }>;
 }
 
 /** Remote query result for L3-08a query-after-timeout. Never performs a write. */
@@ -235,8 +257,18 @@ export interface EffectOutcomeQuerier {
 }
 
 export type ReconcileUnknownResult =
-  | { status: 'COMPLETED'; effectId: string; response: Record<string, unknown>; invokedExecutor: false }
-  | { status: 'FAILED'; effectId: string; response: Record<string, unknown>; invokedExecutor: false }
+  | {
+      status: 'COMPLETED';
+      effectId: string;
+      response: Record<string, unknown>;
+      invokedExecutor: false;
+    }
+  | {
+      status: 'FAILED';
+      effectId: string;
+      response: Record<string, unknown>;
+      invokedExecutor: false;
+    }
   | { status: 'ESCALATED'; effectId: string; reason: string; invokedExecutor: false };
 
 export interface ApprovalInteractionPort {
@@ -300,10 +332,15 @@ export interface CapabilityTokenVerifierOptions {
   clock?: () => Date;
 }
 
-interface CapabilityTokenHeader { alg: 'EdDSA'; typ: 'CAP'; kid: string; }
+interface CapabilityTokenHeader {
+  alg: 'EdDSA';
+  typ: 'CAP';
+  kid: string;
+}
 
 const encode = (value: unknown): string => Buffer.from(JSON.stringify(value)).toString('base64url');
-const decode = <T>(value: string): T => JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as T;
+const decode = <T>(value: string): T =>
+  JSON.parse(Buffer.from(value, 'base64url').toString('utf8')) as T;
 const nowIso = (clock: () => Date): string => clock().toISOString();
 
 /** Stable hash used by both the issuer and verifier for exact request binding. */
@@ -311,7 +348,10 @@ export function canonicalRequestHash(value: Record<string, unknown>): string {
   const canonical = (input: unknown): string => {
     if (input === null || typeof input !== 'object') return JSON.stringify(input);
     if (Array.isArray(input)) return `[${input.map(canonical).join(',')}]`;
-    return `{${Object.keys(input as Record<string, unknown>).sort().map((key) => `${JSON.stringify(key)}:${canonical((input as Record<string, unknown>)[key])}`).join(',')}}`;
+    return `{${Object.keys(input as Record<string, unknown>)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical((input as Record<string, unknown>)[key])}`)
+      .join(',')}}`;
   };
   return createHash('sha256').update(canonical(value)).digest('hex');
 }
@@ -338,7 +378,10 @@ export class CapabilityTokenIssuer {
     return createPublicKey(this.privateKey.export({ type: 'pkcs8', format: 'pem' }));
   }
 
-  issue(grant: Omit<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'> & Partial<Pick<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'>>): string {
+  issue(
+    grant: Omit<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'> &
+      Partial<Pick<CapabilityGrant, 'issuer' | 'audience' | 'issuedAt' | 'notBefore' | 'keyId'>>,
+  ): string {
     const issuedAt = grant.issuedAt ?? nowIso(this.clock);
     const notBefore = grant.notBefore ?? issuedAt;
     const payload: CapabilityGrant = {
@@ -355,9 +398,15 @@ export class CapabilityTokenIssuer {
     return `${signingInput}.${sign(null, Buffer.from(signingInput), this.privateKey).toString('base64url')}`;
   }
 
-  static generate(options: Omit<CapabilityTokenIssuerOptions, 'privateKey' | 'keyId'> & { keyId?: string }): CapabilityTokenIssuer {
+  static generate(
+    options: Omit<CapabilityTokenIssuerOptions, 'privateKey' | 'keyId'> & { keyId?: string },
+  ): CapabilityTokenIssuer {
     const { privateKey } = generateKeyPairSync('ed25519');
-    return new CapabilityTokenIssuer({ ...options, keyId: options.keyId ?? 'generated', privateKey });
+    return new CapabilityTokenIssuer({
+      ...options,
+      keyId: options.keyId ?? 'generated',
+      privateKey,
+    });
   }
 }
 
@@ -373,21 +422,54 @@ export class CapabilityTokenVerifier {
 
   async verify(token: string, at = this.clock()): Promise<CapabilityGrant> {
     const [encodedHeader, encodedPayload, encodedSignature, extra] = token.split('.');
-    if (!encodedHeader || !encodedPayload || !encodedSignature || extra) throw new Error('Malformed capability token');
+    if (!encodedHeader || !encodedPayload || !encodedSignature || extra)
+      throw new Error('Malformed capability token');
     const header = decode<CapabilityTokenHeader>(encodedHeader);
-    if (header.alg !== 'EdDSA' || header.typ !== 'CAP' || !header.kid) throw new Error('Unsupported capability token');
+    if (header.alg !== 'EdDSA' || header.typ !== 'CAP' || !header.kid)
+      throw new Error('Unsupported capability token');
     const key = this.getPublicKey(header.kid);
-    if (!verify(null, Buffer.from(`${encodedHeader}.${encodedPayload}`), key, Buffer.from(encodedSignature, 'base64url'))) throw new Error('Invalid capability token signature');
+    if (
+      !verify(
+        null,
+        Buffer.from(`${encodedHeader}.${encodedPayload}`),
+        key,
+        Buffer.from(encodedSignature, 'base64url'),
+      )
+    )
+      throw new Error('Invalid capability token signature');
     const grant = decode<CapabilityGrant>(encodedPayload);
-    if (!grant.jti || !grant.tenantId || !grant.runId || !grant.stepId || !Array.isArray(grant.effectTypes)) throw new Error('Malformed capability grant');
-    if (grant.issuer !== this.options.issuer || grant.audience !== this.options.audience || grant.keyId !== header.kid) throw new Error('Capability token issuer/audience mismatch');
+    if (
+      !grant.jti ||
+      !grant.tenantId ||
+      !grant.runId ||
+      !grant.stepId ||
+      !Array.isArray(grant.effectTypes)
+    )
+      throw new Error('Malformed capability grant');
+    if (
+      grant.issuer !== this.options.issuer ||
+      grant.audience !== this.options.audience ||
+      grant.keyId !== header.kid
+    )
+      throw new Error('Capability token issuer/audience mismatch');
     const time = at.getTime();
     const issuedAt = Date.parse(grant.issuedAt ?? '');
     const notBefore = Date.parse(grant.notBefore ?? grant.issuedAt ?? '');
     const expiresAt = Date.parse(grant.expiresAt);
-    if (![issuedAt, notBefore, expiresAt].every(Number.isFinite) || issuedAt - this.clockSkewMs > time || notBefore - this.clockSkewMs > time || expiresAt + this.clockSkewMs <= time) throw new Error('Expired or not-yet-valid capability grant');
-    if (await this.options.revocations?.isRevoked(grant.jti, grant.tenantId)) throw new Error('Capability grant revoked');
-    if (grant.nonce && await this.options.replay?.consume(`${grant.jti}:${grant.nonce}`, grant.expiresAt)) throw new Error('Capability grant replayed');
+    if (
+      ![issuedAt, notBefore, expiresAt].every(Number.isFinite) ||
+      issuedAt - this.clockSkewMs > time ||
+      notBefore - this.clockSkewMs > time ||
+      expiresAt + this.clockSkewMs <= time
+    )
+      throw new Error('Expired or not-yet-valid capability grant');
+    if (await this.options.revocations?.isRevoked(grant.jti, grant.tenantId))
+      throw new Error('Capability grant revoked');
+    if (
+      grant.nonce &&
+      (await this.options.replay?.consume(`${grant.jti}:${grant.nonce}`, grant.expiresAt))
+    )
+      throw new Error('Capability grant replayed');
     return grant;
   }
 
@@ -417,8 +499,7 @@ export interface CapabilityTokenPort {
  *   (no fixed tenant — durable consume stays on the verifier via grant.tenantId).
  */
 export type EffectBrokerReplayOption =
-  | CapabilityReplayStore
-  | ((tenantId: string) => CapabilityReplayStore);
+  CapabilityReplayStore | ((tenantId: string) => CapabilityReplayStore);
 
 export interface EffectBrokerOptions {
   audience?: string;
@@ -525,9 +606,15 @@ export interface AdmittedEffect {
 
 class InMemoryAdmissionStore implements AdmissionStore {
   private readonly map = new Map<string, AdmittedEffect>();
-  put(effectId: string, entry: AdmittedEffect): void { this.map.set(effectId, entry); }
-  get(effectId: string): AdmittedEffect | null { return this.map.get(effectId) ?? null; }
-  delete(effectId: string): void { this.map.delete(effectId); }
+  put(effectId: string, entry: AdmittedEffect): void {
+    this.map.set(effectId, entry);
+  }
+  get(effectId: string): AdmittedEffect | null {
+    return this.map.get(effectId) ?? null;
+  }
+  delete(effectId: string): void {
+    this.map.delete(effectId);
+  }
 }
 
 /**
@@ -551,10 +638,7 @@ function isProductionProfile(): boolean {
   );
 }
 
-function bindingMismatch(
-  grant: CapabilityGrant,
-  binding: WorkloadBinding,
-): string | null {
+function bindingMismatch(grant: CapabilityGrant, binding: WorkloadBinding): string | null {
   if (grant.tenantId !== binding.tenantId) return 'TENANT_MISMATCH';
   if (grant.runId !== binding.runId) return 'RUN_MISMATCH';
   if (grant.stepId !== binding.stepId) return 'STEP_MISMATCH';
@@ -600,7 +684,19 @@ function workerFenceMismatch(
 
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
-  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits' | 'localWorkerId' | 'localWorkerGeneration' | 'replay' | 'revocations' | 'requireDurableCapabilityStores'>;
+  private readonly options: Required<
+    Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>
+  > &
+    Pick<
+      EffectBrokerOptions,
+      | 'approval'
+      | 'quotaLimits'
+      | 'localWorkerId'
+      | 'localWorkerGeneration'
+      | 'replay'
+      | 'revocations'
+      | 'requireDurableCapabilityStores'
+    >;
   private readonly admissionStore: AdmissionStore;
 
   constructor(
@@ -625,7 +721,8 @@ export class EffectBroker {
     // they previously diverged (affinity only checked NODE_ENV/COMMANDER_PROFILE,
     // durable stores also checked COMMANDER_REQUIRE_WORKLOAD_BINDING), which let
     // that env var require durable stores while silently skipping affinity.
-    const localWorkerId = typeof options.localWorkerId === 'string' ? options.localWorkerId.trim() : '';
+    const localWorkerId =
+      typeof options.localWorkerId === 'string' ? options.localWorkerId.trim() : '';
     if (productionProfile && !localWorkerId) {
       throw new EffectBrokerError('WORKER_AFFINITY_REQUIRED_IN_PROD');
     }
@@ -634,8 +731,7 @@ export class EffectBroker {
     // options. Durable verify/consume remains on the token port
     // (createCapabilityAuthority); options.replay/revocations only prove
     // wiring cannot forget or silently downgrade to in-memory stores.
-    const requireDurable =
-      options.requireDurableCapabilityStores === true || productionProfile;
+    const requireDurable = options.requireDurableCapabilityStores === true || productionProfile;
     if (requireDurable) {
       assertEffectBrokerDurableStores(options);
     }
@@ -692,25 +788,63 @@ export class EffectBroker {
         leaseWorkerGeneration: input.lease.workerGeneration,
       });
     }
-    if (grant.audience !== this.options.audience) return this.rejectAdmit(grant, 'AUDIENCE_MISMATCH', {});
-    if (!grant.effectTypes.includes(input.type)) return this.rejectAdmit(grant, 'CAPABILITY_DENIED', { type: input.type });
-    if (this.options.requireRequestBinding && grant.requestHash !== canonicalRequestHash(input.request)) return this.rejectAdmit(grant, 'REQUEST_HASH_MISMATCH', {});
-    const decision = await this.policy.evaluate({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, type: input.type, request: input.request, token: grant });
+    if (grant.audience !== this.options.audience)
+      return this.rejectAdmit(grant, 'AUDIENCE_MISMATCH', {});
+    if (!grant.effectTypes.includes(input.type))
+      return this.rejectAdmit(grant, 'CAPABILITY_DENIED', { type: input.type });
+    if (
+      this.options.requireRequestBinding &&
+      grant.requestHash !== canonicalRequestHash(input.request)
+    )
+      return this.rejectAdmit(grant, 'REQUEST_HASH_MISMATCH', {});
+    const decision = await this.policy.evaluate({
+      tenantId: grant.tenantId,
+      runId: grant.runId,
+      stepId: grant.stepId,
+      type: input.type,
+      request: input.request,
+      token: grant,
+    });
     // WS2 §4 runtime gate: permit-all PolicyEvaluator is forbidden.
-    if (decision.decisionId === PERMIT_DEFAULT_DECISION_ID) return this.rejectAdmit(grant, 'PERMIT_ALL_FORBIDDEN', { decisionId: decision.decisionId });
-    if (grant.policySnapshotId && grant.policySnapshotId !== decision.policySnapshotId) return this.rejectAdmit(grant, 'POLICY_SNAPSHOT_MISMATCH', { expected: grant.policySnapshotId, actual: decision.policySnapshotId });
+    if (decision.decisionId === PERMIT_DEFAULT_DECISION_ID)
+      return this.rejectAdmit(grant, 'PERMIT_ALL_FORBIDDEN', { decisionId: decision.decisionId });
+    if (grant.policySnapshotId && grant.policySnapshotId !== decision.policySnapshotId)
+      return this.rejectAdmit(grant, 'POLICY_SNAPSHOT_MISMATCH', {
+        expected: grant.policySnapshotId,
+        actual: decision.policySnapshotId,
+      });
     if (decision.effect === 'require_approval') {
-      if (!this.options.approval) return this.rejectAdmit(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId });
-      const interaction = await this.options.approval.createApprovalInteraction({ tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, effectType: input.type, request: input.request, policyDecisionId: decision.decisionId, actor: input.actor });
-      return this.rejectAdmit(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId, interactionId: interaction.interactionId });
+      if (!this.options.approval)
+        return this.rejectAdmit(grant, 'APPROVAL_REQUIRED', { decisionId: decision.decisionId });
+      const interaction = await this.options.approval.createApprovalInteraction({
+        tenantId: grant.tenantId,
+        runId: grant.runId,
+        stepId: grant.stepId,
+        effectType: input.type,
+        request: input.request,
+        policyDecisionId: decision.decisionId,
+        actor: input.actor,
+      });
+      return this.rejectAdmit(grant, 'APPROVAL_REQUIRED', {
+        decisionId: decision.decisionId,
+        interactionId: interaction.interactionId,
+      });
     }
-    if (decision.effect !== 'allow') return this.rejectAdmit(grant, 'POLICY_DENIED', { decisionId: decision.decisionId, reason: decision.reason });
+    if (decision.effect !== 'allow')
+      return this.rejectAdmit(grant, 'POLICY_DENIED', {
+        decisionId: decision.decisionId,
+        reason: decision.reason,
+      });
     // WS2 §5: three-layer policy engine — tenant allowlist + daily quota.
     // Enforced fail-closed whenever the kernel port provides the methods
     // (the kernel repository always does; narrow test doubles may omit them).
     if (this.kernel.isActionAllowed) {
       const allowed = await this.kernel.isActionAllowed(grant.tenantId, input.type);
-      if (!allowed) return this.rejectAdmit(grant, 'ACTION_NOT_ALLOWLISTED', { type: input.type, decisionId: decision.decisionId });
+      if (!allowed)
+        return this.rejectAdmit(grant, 'ACTION_NOT_ALLOWLISTED', {
+          type: input.type,
+          decisionId: decision.decisionId,
+        });
     }
     const actionClass = input.type.split('.')[0] || input.type;
     const maxCount = this.options.quotaLimits?.maxCountPerDay;
@@ -718,7 +852,11 @@ export class EffectBroker {
     if (maxCount !== undefined && this.kernel.getQuota) {
       const current = await this.kernel.getQuota(grant.tenantId, actionClass);
       if (current.countUsed >= maxCount) {
-        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', { actionClass, countUsed: current.countUsed, limit: maxCount });
+        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', {
+          actionClass,
+          countUsed: current.countUsed,
+          limit: maxCount,
+        });
       }
     }
     // Class A: actionDigest is mandatory on the grant before kernel admission.
@@ -744,7 +882,10 @@ export class EffectBroker {
       lease: input.lease,
       actor: input.actor,
     });
-    if (!admitted.admitted || !admitted.effect) return this.rejectAdmit(grant, 'EFFECT_ADMISSION_REJECTED', { reason: admitted.reason ?? 'unknown' });
+    if (!admitted.admitted || !admitted.effect)
+      return this.rejectAdmit(grant, 'EFFECT_ADMISSION_REJECTED', {
+        reason: admitted.reason ?? 'unknown',
+      });
     // Charge only successful new admissions. LEASE_LOST / conflict never reach here;
     // idempotent replays must not double-count.
     if (this.kernel.incrementQuota && !admitted.replayed) {
@@ -759,7 +900,11 @@ export class EffectBroker {
           reason: 'QUOTA_EXCEEDED after admission (concurrent race)',
           actor: input.actor,
         });
-        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', { actionClass, countUsed: usage.countUsed, limit: maxCount });
+        return this.rejectAdmit(grant, 'QUOTA_EXCEEDED', {
+          actionClass,
+          countUsed: usage.countUsed,
+          limit: maxCount,
+        });
       }
     }
     const effectState = admitted.effect.state;
@@ -800,7 +945,8 @@ export class EffectBroker {
     timeoutMs?: number;
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
     const admission = this.admissionStore.get(input.effectId);
-    if (!admission) throw new EffectBrokerError('ADMISSION_NOT_FOUND', { effectId: input.effectId });
+    if (!admission)
+      throw new EffectBrokerError('ADMISSION_NOT_FOUND', { effectId: input.effectId });
     // Affinity must run inside try/finally so fail-closed consume clears the
     // process-local admission (grant/request) instead of leaking forever.
     let finished = false;
@@ -810,7 +956,11 @@ export class EffectBroker {
       if (admission.replayed) {
         if (admission.effectState === 'COMPLETED') {
           finished = true;
-          return { effectId: admission.kernelEffectId, replayed: true, response: admission.cachedResponse };
+          return {
+            effectId: admission.kernelEffectId,
+            replayed: true,
+            response: admission.cachedResponse,
+          };
         }
         if (admission.effectState === 'COMPLETION_UNKNOWN') {
           throw new EffectBrokerError('COMPLETION_UNKNOWN', {
@@ -833,7 +983,10 @@ export class EffectBroker {
         });
       }
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(new Error('Effect timeout')), input.timeoutMs ?? 30_000);
+      const timer = setTimeout(
+        () => controller.abort(new Error('Effect timeout')),
+        input.timeoutMs ?? 30_000,
+      );
       try {
         const response = await this.executor.execute({
           type: admission.type,
@@ -842,22 +995,46 @@ export class EffectBroker {
           executionContext: {
             tenantId: admission.grant.tenantId,
             workerId: admission.lease.workerId,
-            ...(admission.lease.workerGeneration !== undefined ? { workerGeneration: admission.lease.workerGeneration } : {}),
+            ...(admission.lease.workerGeneration !== undefined
+              ? { workerGeneration: admission.lease.workerGeneration }
+              : {}),
             fencingEpoch: admission.lease.fencingEpoch,
             leaseToken: admission.lease.token,
             effectId: admission.effectId,
           },
         });
-        const committed = await this.kernel.completeEffect(admission.kernelEffectId, admission.grant.tenantId, admission.lease, response, admission.actor);
+        const committed = await this.kernel.completeEffect(
+          admission.kernelEffectId,
+          admission.grant.tenantId,
+          admission.lease,
+          response,
+          admission.actor,
+        );
         if (!committed) {
-          await this.parkUnfinishedAdmission(admission, 'Kernel rejected completion after external executor returned');
+          await this.parkUnfinishedAdmission(
+            admission,
+            'Kernel rejected completion after external executor returned',
+          );
           parked = true;
           throw new EffectBrokerError('COMPLETION_UNCONFIRMED');
         }
-        await this.audit.append({ type: 'effect.completed', severity: 'low', tenantId: admission.grant.tenantId, runId: admission.grant.runId, stepId: admission.grant.stepId, at: new Date().toISOString(), details: { effectId: admission.kernelEffectId, policyDecisionId: admission.decision.decisionId } });
+        await this.audit.append({
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: admission.grant.tenantId,
+          runId: admission.grant.runId,
+          stepId: admission.grant.stepId,
+          at: new Date().toISOString(),
+          details: {
+            effectId: admission.kernelEffectId,
+            policyDecisionId: admission.decision.decisionId,
+          },
+        });
         finished = true;
         return { effectId: admission.kernelEffectId, replayed: false, response };
-      } finally { clearTimeout(timer); }
+      } finally {
+        clearTimeout(timer);
+      }
     } catch (error) {
       if (!finished && !parked && admission.effectState === 'ADMITTED') {
         // L4-02: adapter taxonomy — NOT_COMMITTED → failEffect (terminal);
@@ -941,7 +1118,10 @@ export class EffectBroker {
     }
     const effect = await this.kernel.getEffect(input.effectId, input.tenantId);
     if (!effect) {
-      throw new EffectBrokerError('EFFECT_NOT_FOUND', { effectId: input.effectId, tenantId: input.tenantId });
+      throw new EffectBrokerError('EFFECT_NOT_FOUND', {
+        effectId: input.effectId,
+        tenantId: input.tenantId,
+      });
     }
     if (effect.state !== 'COMPLETION_UNKNOWN') {
       throw new EffectBrokerError('EFFECT_NOT_UNKNOWN', {
@@ -1035,7 +1215,10 @@ export class EffectBroker {
   }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }> {
     const admission = await this.admit(input);
     if (!admission.admitted) {
-      throw new EffectBrokerError(admission.reason ?? 'ADMIT_REJECTED', admission.details ?? { reason: admission.reason });
+      throw new EffectBrokerError(
+        admission.reason ?? 'ADMIT_REJECTED',
+        admission.details ?? { reason: admission.reason },
+      );
     }
     return this.executeAdmitted({ effectId: input.effectId, timeoutMs: input.timeoutMs });
   }
@@ -1078,9 +1261,29 @@ export class EffectBroker {
     }
   }
 
-  private async rejectAdmit(grant: CapabilityGrant, code: string, details: Record<string, unknown>): Promise<AdmissionResult> {
-    await this.audit.append({ type: 'effect.rejected', severity: 'high', tenantId: grant.tenantId, runId: grant.runId, stepId: grant.stepId, at: new Date().toISOString(), details: { code, ...details } });
-    return { admitted: false, effectId: '', replayed: false, decisionId: '', policySnapshotId: '', reason: code, details: { code, ...details } };
+  private async rejectAdmit(
+    grant: CapabilityGrant,
+    code: string,
+    details: Record<string, unknown>,
+  ): Promise<AdmissionResult> {
+    await this.audit.append({
+      type: 'effect.rejected',
+      severity: 'high',
+      tenantId: grant.tenantId,
+      runId: grant.runId,
+      stepId: grant.stepId,
+      at: new Date().toISOString(),
+      details: { code, ...details },
+    });
+    return {
+      admitted: false,
+      effectId: '',
+      replayed: false,
+      decisionId: '',
+      policySnapshotId: '',
+      reason: code,
+      details: { code, ...details },
+    };
   }
 }
 
@@ -1096,16 +1299,26 @@ export interface AdmissionResult {
 }
 
 export class EffectBrokerError extends Error {
-  constructor(readonly code: string, readonly details: Record<string, unknown> = {}) { super(code); this.name = 'EffectBrokerError'; }
+  constructor(
+    readonly code: string,
+    readonly details: Record<string, unknown> = {},
+  ) {
+    super(code);
+    this.name = 'EffectBrokerError';
+  }
 }
 
 export {
+  EVIDENCE_BODY_VERSION,
   EVIDENCE_BUNDLE_SCHEMA,
   EVIDENCE_DLP_EXCLUDED_KEYS,
   EVIDENCE_GENESIS_HASH,
   EVIDENCE_RESPONSE_SUMMARY_KEYS,
+  assertTerminalEvidence,
   buildEffectEvidenceBundle,
   buildRunEvidenceBundle,
+  canonicalEvidenceBody,
+  canonicalEvidenceJson,
   findDlpViolation,
   sanitizeForEvidence,
   verifyEvidenceBundle,
@@ -1120,8 +1333,13 @@ export type {
   EvidenceBundleScope,
   EvidenceBundleVersions,
   EvidenceEffectSource,
+  EvidenceSignature,
+  EvidenceSigner,
+  EvidenceTerminalDisposition,
   VerifyEvidenceBundleResult,
 } from './evidenceBundle.js';
+export { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
+export type { ConfiguredEvidenceSigner, EvidenceJwks } from './evidenceSigner.js';
 
 export {
   AdapterExecutionError,

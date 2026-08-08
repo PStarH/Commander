@@ -20,14 +20,8 @@ const result = (await server.handleRequest({
   params: {
     name: 'commander_action_propose',
     arguments: {
-      source: 'example-agent',
-      package: 'governed-ticket-lifecycle',
-      model: 'demo-model',
-      tool: 'ticket.create',
-      destination: 'demo://tickets/approval',
-      effectType: 'demo.ticket.create',
-      args: { title: 'Reset password', requireApproval: true },
-      idempotencyKey: `example-${Date.now()}`,
+      action: 'ticket.create',
+      args: { title: 'Reset password' },
     },
   },
 })) as { result?: { content?: Array<{ text?: string }> }; error?: { message?: string } };

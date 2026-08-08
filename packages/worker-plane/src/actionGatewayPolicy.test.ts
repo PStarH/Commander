@@ -53,12 +53,7 @@ async function createActionRun(
   const interactionId = `${runId}-interaction`;
   const effect = options.effect ?? 'allow';
   const destination =
-    options.destination ??
-    (effect === 'require_approval'
-      ? 'demo://tickets/approval'
-      : effect === 'deny'
-        ? 'demo://tickets/denied'
-        : envelope.destination);
+    options.destination ?? (effect === 'deny' ? 'demo://tickets/denied' : envelope.destination);
   const actionEnvelope = {
     ...envelope,
     tenantId,
@@ -149,7 +144,7 @@ function evaluate(
 }
 
 describe('L4-01 Action Gateway worker policy', () => {
-  it('allows only a trusted persisted Action Gateway envelope', async () => {
+  it('rejects an unapproved ticket create even with a trusted persisted Action Gateway envelope', async () => {
     const repository = new InMemoryKernelRepository();
     const action = await createActionRun(repository);
     const decision = await evaluate(repository, {
@@ -158,8 +153,8 @@ describe('L4-01 Action Gateway worker policy', () => {
       stepId: action.stepId,
       request: action.actionEnvelope,
     });
-    assert.equal(decision.effect, 'allow');
-    assert.equal(decision.decisionId, 'action-gateway-allow');
+    assert.equal(decision.effect, 'deny');
+    assert.equal(decision.reason, 'ACTION_GATEWAY_DECISION_REVALIDATION_FAILED');
     assert.equal(decision.policySnapshotId, 'action-gateway-mvp-v1');
   });
 
@@ -263,6 +258,7 @@ describe('L4-01 Action Gateway worker policy', () => {
     const action = await createActionRun(repository, {
       runId: 'run-approval',
       effect: 'require_approval',
+      destination: 'demo://tickets',
     });
 
     assert.equal(
@@ -577,7 +573,7 @@ describe('L4-04 kill switch worker policy', () => {
     await repository.putKillSwitch({
       tenantId: 'tenant-a',
       scope: 'destination',
-      value: 'demo://tickets/approval',
+      value: 'demo://tickets',
       enabled: true,
       actor: 'ops-a',
     });

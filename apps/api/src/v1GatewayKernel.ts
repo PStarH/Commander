@@ -18,6 +18,7 @@ import {
   type PutKillSwitchInput,
   type RemoveKillSwitchInput,
 } from '@commander/kernel';
+import type { EvidenceBundle, EvidenceSignature } from '@commander/effect-broker';
 
 export type {
   KillSwitch,
@@ -26,6 +27,29 @@ export type {
   PutKillSwitchInput,
   RemoveKillSwitchInput,
 } from '@commander/kernel';
+
+export type ActionReconcileRequestResult =
+  | { scheduled: false; reason: 'NOT_FOUND' | 'NOT_UNKNOWN' | 'ESCALATED' | 'DEADLINE_EXPIRED' }
+  | {
+      scheduled: true;
+      effectId: string;
+      state: 'COMPLETION_UNKNOWN';
+      reconcileAfter: string;
+      alreadyScheduled: boolean;
+    };
+
+export interface GatewayEvidenceRecord {
+  tenantId: string;
+  runId: string;
+  bundleId: string;
+  actionDigest: string;
+  body: EvidenceBundle;
+  contentHash: string;
+  signature: EvidenceSignature | null;
+  createdAt: string;
+  anchoredAt: string | null;
+  retentionUntil: string;
+}
 
 export interface V1KernelGateway {
   submit(input: {
@@ -45,6 +69,7 @@ export interface V1KernelGateway {
   answerInteraction(input: AnswerInteractionRequest): Promise<KernelInteraction>;
   listEffects(runId: string, tenantId: string): Promise<KernelEffect[]>;
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
+  getEvidence(runId: string, tenantId: string): Promise<GatewayEvidenceRecord | null>;
   /**
    * Pause a run, releasing any active worker leases but keeping scheduled work.
    * Returns null when the run was not found or is not in a pausable state.
@@ -230,6 +255,10 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   }
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
     return this.repository.getEffect(effectId, tenantId);
+  }
+  getEvidence(_runId: string, _tenantId: string): Promise<GatewayEvidenceRecord | null> {
+    // Kernel has no evidence persistence; null degrades the route to EVIDENCE_NOT_READY.
+    return Promise.resolve(null);
   }
   pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     return this.repository.pauseRun(runId, tenantId, actor);
