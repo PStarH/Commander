@@ -133,13 +133,13 @@ export interface V1KernelGateway {
 
 export type { KernelRun } from '@commander/kernel';
 
-// lgtm[js/insufficient-password-hash]
-// codeql[js/insufficient-password-hash]: canonicalValueHash is not a password hash.
 function sha256(value: string): string {
+  // codeql[js/insufficient-password-hash] This hashes canonical request data, not passwords.
   return createHash('sha256').update(value).digest('hex');
 }
 
 export function canonicalActionRequestHash(value: unknown): string {
+  // codeql[js/insufficient-password-hash] This authenticates a canonical request digest.
   return createHmac('sha256', process.env.COMMANDER_INTEGRITY_KEY ?? 'commander-canonical-digest')
     .update(canonicalStringify(value))
     .digest('hex');
