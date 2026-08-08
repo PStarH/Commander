@@ -663,6 +663,7 @@ connection failed for postgres://owner:secret@database/commander
 Migration failed: COMMANDER_MIGRATION_FAILED stage=closure-migrations code=TASK1_CATALOG_COLLECTION_FAILED
 password=still-secret
 Migration failed: COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_PROOF_INVALID
+Migration failed: COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID detail=task1KubernetesProofObserver.ts:761:7
 [readiness] COMMANDER_API_FAILED stage=readiness-self-check code=TENANT_CONTEXT_INVALID
 [startup] Failed to start API server: TASK1_READINESS_DATABASE_IDENTITY_INVALID
 [startup] Failed to start API server: raw error contains secret
@@ -670,6 +671,7 @@ Migration failed: COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUT
       [
         'COMMANDER_MIGRATION_FAILED stage=closure-migrations code=TASK1_CATALOG_COLLECTION_FAILED',
         'COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_PROOF_INVALID',
+        'COMMANDER_MIGRATION_FAILED stage=owner-command code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID detail=task1KubernetesProofObserver.ts:761:7',
         'COMMANDER_API_FAILED stage=readiness-self-check code=TENANT_CONTEXT_INVALID',
         'COMMANDER_API_FAILED stage=startup code=TASK1_READINESS_DATABASE_IDENTITY_INVALID',
       ],
