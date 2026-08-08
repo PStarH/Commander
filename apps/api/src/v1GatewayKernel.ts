@@ -140,12 +140,9 @@ function sha256(value: string): string {
 
 export function canonicalActionRequestHash(value: unknown): string {
   // lgtm[js/insufficient-password-hash] This authenticates a canonical request digest.
-  return (
-    createHmac('sha256', process.env.COMMANDER_INTEGRITY_KEY ?? 'commander-canonical-digest')
-      // lgtm[js/insufficient-password-hash] This is not a password hash.
-      .update(canonicalStringify(value))
-      .digest('hex')
-  );
+  return createHmac('sha256', process.env.COMMANDER_INTEGRITY_KEY ?? 'commander-canonical-digest')
+    .update(canonicalStringify(value)) // codeql[js/insufficient-password-hash] canonical request digest, not a password hash
+    .digest('hex');
 }
 
 function kernelInvariantCode(error: unknown): string | undefined {
