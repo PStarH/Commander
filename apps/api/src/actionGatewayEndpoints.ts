@@ -256,7 +256,7 @@ function assertBodyIdempotencyKey(
 }
 
 function requiredApprover(req: Request, res: Response): string | null {
-  const principalId = req.user?.id ?? req.apiKeyId;
+  const principalId = req.user?.id ?? req.principalRef;
   if (!principalId) {
     res.status(401).json({
       error: {
@@ -283,7 +283,7 @@ function requiredApprover(req: Request, res: Response): string | null {
 }
 
 function requiredReconcileAuthority(req: Request, res: Response): string | null {
-  const principalId = req.user?.id ?? req.apiKeyId;
+  const principalId = req.user?.id ?? req.principalRef;
   if (!principalId) {
     res.status(401).json({
       error: {
@@ -312,7 +312,7 @@ function requiredReconcileAuthority(req: Request, res: Response): string | null 
 }
 
 function requiredKillSwitchManager(req: Request, res: Response): string | null {
-  const principalId = req.user?.id ?? req.apiKeyId;
+  const principalId = req.user?.id ?? req.principalRef;
   if (!principalId) {
     res.status(401).json({
       error: {
@@ -376,7 +376,7 @@ async function rejectIfKillSwitchActive(
 }
 
 function actor(req: Request): string {
-  return req.apiKeyId ?? req.user?.id ?? 'action-gateway.unknown';
+  return req.principalRef ?? req.user?.id ?? 'action-gateway.unknown';
 }
 
 function deterministicId(prefix: string, value: string): string {
@@ -620,7 +620,7 @@ function actionRequestPrincipalBinding(req: Request) {
   }
   return {
     kind: 'api-key' as const,
-    id: req.apiKeyId!,
+    id: req.principalRef!,
     scopes: [...(req.apiScopes ?? [])].sort(),
   };
 }
