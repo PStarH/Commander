@@ -31,6 +31,16 @@ export interface ReversibilityDecision {
   requiresHumanApproval: boolean;
 }
 
+/**
+ * Trusted effect metadata supplied by the tool registry after tool-level
+ * classification. A read-only declaration can make an otherwise unknown
+ * enterprise adapter reversible, but it must never override a hardcoded
+ * external/irreversible tool or an argument-level attack indicator.
+ */
+export interface ReversibilityMetadata {
+  isReadOnly?: boolean;
+}
+
 export interface ReversibilityGateConfig {
   /** Callback for human approval of irreversible actions. Return true to allow. */
   approvalCallback?: (toolName: string, args: Record<string, unknown>) => Promise<boolean>;
@@ -367,6 +377,7 @@ export class ReversibilityGate {
     toolName: string,
     args: Record<string, unknown> = {},
     context?: { runId?: string; agentId?: string },
+    metadata?: ReversibilityMetadata,
   ): Promise<ReversibilityDecision> {
     let reversibility = this.classify(toolName, args);
 
@@ -374,6 +385,11 @@ export class ReversibilityGate {
     const argReason = this.checkArgs(toolName, args);
     if (argReason) {
       reversibility = 'irreversible';
+    } else if (metadata?.isReadOnly === true && !this.isHardcodedIrreversible(toolName)) {
+      // Custom enterprise read adapters are not knowable by name. Trust the
+      // registry's explicit read-only classification only after preserving the
+      // hardcoded external-tool deny list above.
+      reversibility = 'reversible';
     }
 
     if (reversibility === 'reversible') {
@@ -433,6 +449,13 @@ export class ReversibilityGate {
       reason: `irreversible tool approved by human: ${argReason ?? 'tool classification'}`,
       requiresHumanApproval: true,
     };
+  }
+
+  private isHardcodedIrreversible(toolName: string): boolean {
+    for (const prefix of this.irreversiblePatterns) {
+      if (toolName.startsWith(prefix)) return true;
+    }
+    return toolName.startsWith('mcp_');
   }
 
   private publishBlockEvent(

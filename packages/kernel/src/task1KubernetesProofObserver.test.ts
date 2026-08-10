@@ -78,12 +78,12 @@ function resources(): Record<string, any> {
       { name: 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256', value: digest('c') },
       { name: 'COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE', value: 'enforce' },
     ],
-    ports: [{ name: 'tenant-authority-proof', containerPort: 9443, protocol: 'TCP' }],
+    ports: [{ name: 'tenant-proof', containerPort: 9443, protocol: 'TCP' }],
     readinessProbe: {
       httpGet: {
         scheme: 'HTTPS',
         path: '/ready/tenant-authority/v1',
-        port: 'tenant-authority-proof',
+        port: 'tenant-proof',
       },
     },
   };
@@ -97,7 +97,7 @@ function resources(): Record<string, any> {
       },
       spec: {
         selector,
-        ports: [{ name: 'tenant-authority-proof', protocol: 'TCP', port: 9443, targetPort: 9443 }],
+        ports: [{ name: 'tenant-proof', protocol: 'TCP', port: 9443, targetPort: 9443 }],
       },
     },
     deployment: {

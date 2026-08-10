@@ -135,9 +135,7 @@ export function buildVerifiedPostgresPoolConfig(
       // node-postgres omits servername for literal IPs, which also skips Node's
       // identity callback. Node 26 forbids an IP as SNI, so a non-routing SNI
       // triggers the callback while the closure validates the original DSN IP.
-      servername: isIP(parsed.hostname)
-        ? 'commander-ip-literal.invalid'
-        : parsed.hostname,
+      servername: isIP(parsed.hostname) ? 'commander-ip-literal.invalid' : parsed.hostname,
       checkServerIdentity(_tlsServername, certificate) {
         const identityError = checkTlsServerIdentity(parsed.hostname, certificate);
         if (identityError) {

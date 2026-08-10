@@ -1517,7 +1517,10 @@ data: { owner-url: ${payload} }
       () => runHelmTenantCutover(input(), fixture),
       /TENANT_CUTOVER_PROOF_JOB_INVALID/,
     );
-    assert.equal(fixture.calls.some((call) => call.startsWith('run-proof-job:')), false);
+    assert.equal(
+      fixture.calls.some((call) => call.startsWith('run-proof-job:')),
+      false,
+    );
     assert.deepEqual(fixture.calls.slice(-4), [
       'cleanup-proof:commander/commander',
       'cleanup-configmap:commander/commander-proof-projection-v7-r7',

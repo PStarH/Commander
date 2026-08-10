@@ -10,14 +10,15 @@ describe('API typecheck gate', () => {
   it('rejects a missing or changed API typecheck script before invoking pnpm', () => {
     let invoked = false;
     assert.throws(
-      () => runApiTypecheckGate({
-        readApiManifest: () => JSON.stringify({ scripts: {} }),
-        runTypecheck: () => {
-          invoked = true;
-          return { status: 0, stdout: '', stderr: '' };
-        },
-        write: () => undefined,
-      }),
+      () =>
+        runApiTypecheckGate({
+          readApiManifest: () => JSON.stringify({ scripts: {} }),
+          runTypecheck: () => {
+            invoked = true;
+            return { status: 0, stdout: '', stderr: '' };
+          },
+          write: () => undefined,
+        }),
       /API_TYPECHECK_SCRIPT_INVALID/,
     );
     assert.equal(invoked, false);
@@ -26,18 +27,22 @@ describe('API typecheck gate', () => {
   it('rejects pnpm no-script and no-project failures without printing the marker', () => {
     const output: string[] = [];
     assert.throws(
-      () => runApiTypecheckGate({
-        readApiManifest: () => expectedManifest,
-        runTypecheck: () => ({
-          status: 1,
-          stdout: '',
-          stderr: 'ERR_PNPM_NO_SCRIPT_OR_SERVER No projects matched the filters',
+      () =>
+        runApiTypecheckGate({
+          readApiManifest: () => expectedManifest,
+          runTypecheck: () => ({
+            status: 1,
+            stdout: '',
+            stderr: 'ERR_PNPM_NO_SCRIPT_OR_SERVER No projects matched the filters',
+          }),
+          write: (value) => output.push(value),
         }),
-        write: (value) => output.push(value),
-      }),
       /API_TYPECHECK_CHILD_FAILED/,
     );
-    assert.equal(output.some((value) => value.includes('COMMANDER_GATE_EXECUTED')), false);
+    assert.equal(
+      output.some((value) => value.includes('COMMANDER_GATE_EXECUTED')),
+      false,
+    );
   });
 
   it('prints the execution marker only after the exact child command succeeds', () => {

@@ -46,22 +46,32 @@ describe('authority-closure-proof helpers', () => {
   const completeMetadata = (): AuthorityProofMetadata => ({
     workflowId: 'commander-wave2-task1-authority-closure',
     source: {
-      commit: 'abc123', dirty: true, trackedDiffSha256: 'd'.repeat(64),
+      commit: 'abc123',
+      dirty: true,
+      trackedDiffSha256: 'd'.repeat(64),
       untrackedFiles: [`packages/kernel/src/task1Authority.test.ts:sha256:${'e'.repeat(64)}`],
     },
     versions: {
-      dependencies: 'pnpm-lock.yaml', image: 'local-source', protocol: 'v1',
-      contract: 'v1', policy: 'v1', adapter: 'v1',
+      dependencies: 'pnpm-lock.yaml',
+      image: 'local-source',
+      protocol: 'v1',
+      contract: 'v1',
+      policy: 'v1',
+      adapter: 'v1',
     },
     environment: {
-      topology: 'single-process-local', backend: 'postgresql-16',
-      tenants: ['tenant-a'], databaseRoles: ['commander_owner', 'commander_app'],
+      topology: 'single-process-local',
+      backend: 'postgresql-16',
+      tenants: ['tenant-a'],
+      databaseRoles: ['commander_owner', 'commander_app'],
     },
     provider: { externalSystemReality: 'not-applicable' },
     fault: { description: 'none', injectionPoints: ['not-applicable'] },
     outcomes: { expected: ['all authority gates true'], observed: ['all authority gates true'] },
     timing: {
-      startedAt: '2026-07-25T00:00:00.000Z', endedAt: '2026-07-25T00:00:01.000Z', durationMs: 1000,
+      startedAt: '2026-07-25T00:00:00.000Z',
+      endedAt: '2026-07-25T00:00:01.000Z',
+      durationMs: 1000,
     },
     generatingCommand: 'pnpm proof:authority',
     hashes: {
@@ -76,34 +86,174 @@ describe('authority-closure-proof helpers', () => {
   it('fails closed with the exact field name when any mandatory Product Proof metadata group is empty', () => {
     assert.deepEqual(validateProofMetadata(completeMetadata()), []);
     const mandatoryFields: Array<[string, (metadata: AuthorityProofMetadata) => void]> = [
-      ['workflowId', (metadata) => { metadata.workflowId = ''; }],
-      ['source.commit', (metadata) => { metadata.source.commit = ''; }],
-      ['source.dirty', (metadata) => { delete (metadata.source as Partial<typeof metadata.source>).dirty; }],
-      ['source.trackedDiffSha256', (metadata) => { metadata.source.trackedDiffSha256 = ''; }],
-      ['versions.dependencies', (metadata) => { metadata.versions.dependencies = ''; }],
-      ['versions.image', (metadata) => { metadata.versions.image = ''; }],
-      ['versions.protocol', (metadata) => { metadata.versions.protocol = ''; }],
-      ['versions.contract', (metadata) => { metadata.versions.contract = ''; }],
-      ['versions.policy', (metadata) => { metadata.versions.policy = ''; }],
-      ['versions.adapter', (metadata) => { metadata.versions.adapter = ''; }],
-      ['environment.topology', (metadata) => { metadata.environment.topology = ''; }],
-      ['environment.backend', (metadata) => { metadata.environment.backend = ''; }],
-      ['environment.tenants', (metadata) => { metadata.environment.tenants = []; }],
-      ['environment.databaseRoles', (metadata) => { metadata.environment.databaseRoles = []; }],
-      ['provider.externalSystemReality', (metadata) => { metadata.provider.externalSystemReality = ''; }],
-      ['fault.description', (metadata) => { metadata.fault.description = ''; }],
-      ['fault.injectionPoints', (metadata) => { metadata.fault.injectionPoints = []; }],
-      ['outcomes.expected', (metadata) => { metadata.outcomes.expected = []; }],
-      ['outcomes.observed', (metadata) => { metadata.outcomes.observed = []; }],
-      ['timing.startedAt', (metadata) => { metadata.timing.startedAt = ''; }],
-      ['timing.endedAt', (metadata) => { metadata.timing.endedAt = ''; }],
-      ['timing.durationMs', (metadata) => { metadata.timing.durationMs = -1; }],
-      ['generatingCommand', (metadata) => { metadata.generatingCommand = ''; }],
-      ['hashes.logs', (metadata) => { metadata.hashes.logs = []; }],
-      ['hashes.evidence', (metadata) => { metadata.hashes.evidence = []; }],
-      ['hashes.artifacts', (metadata) => { metadata.hashes.artifacts = []; }],
-      ['limitations', (metadata) => { metadata.limitations = []; }],
-      ['untestedBranches', (metadata) => { metadata.untestedBranches = []; }],
+      [
+        'workflowId',
+        (metadata) => {
+          metadata.workflowId = '';
+        },
+      ],
+      [
+        'source.commit',
+        (metadata) => {
+          metadata.source.commit = '';
+        },
+      ],
+      [
+        'source.dirty',
+        (metadata) => {
+          delete (metadata.source as Partial<typeof metadata.source>).dirty;
+        },
+      ],
+      [
+        'source.trackedDiffSha256',
+        (metadata) => {
+          metadata.source.trackedDiffSha256 = '';
+        },
+      ],
+      [
+        'versions.dependencies',
+        (metadata) => {
+          metadata.versions.dependencies = '';
+        },
+      ],
+      [
+        'versions.image',
+        (metadata) => {
+          metadata.versions.image = '';
+        },
+      ],
+      [
+        'versions.protocol',
+        (metadata) => {
+          metadata.versions.protocol = '';
+        },
+      ],
+      [
+        'versions.contract',
+        (metadata) => {
+          metadata.versions.contract = '';
+        },
+      ],
+      [
+        'versions.policy',
+        (metadata) => {
+          metadata.versions.policy = '';
+        },
+      ],
+      [
+        'versions.adapter',
+        (metadata) => {
+          metadata.versions.adapter = '';
+        },
+      ],
+      [
+        'environment.topology',
+        (metadata) => {
+          metadata.environment.topology = '';
+        },
+      ],
+      [
+        'environment.backend',
+        (metadata) => {
+          metadata.environment.backend = '';
+        },
+      ],
+      [
+        'environment.tenants',
+        (metadata) => {
+          metadata.environment.tenants = [];
+        },
+      ],
+      [
+        'environment.databaseRoles',
+        (metadata) => {
+          metadata.environment.databaseRoles = [];
+        },
+      ],
+      [
+        'provider.externalSystemReality',
+        (metadata) => {
+          metadata.provider.externalSystemReality = '';
+        },
+      ],
+      [
+        'fault.description',
+        (metadata) => {
+          metadata.fault.description = '';
+        },
+      ],
+      [
+        'fault.injectionPoints',
+        (metadata) => {
+          metadata.fault.injectionPoints = [];
+        },
+      ],
+      [
+        'outcomes.expected',
+        (metadata) => {
+          metadata.outcomes.expected = [];
+        },
+      ],
+      [
+        'outcomes.observed',
+        (metadata) => {
+          metadata.outcomes.observed = [];
+        },
+      ],
+      [
+        'timing.startedAt',
+        (metadata) => {
+          metadata.timing.startedAt = '';
+        },
+      ],
+      [
+        'timing.endedAt',
+        (metadata) => {
+          metadata.timing.endedAt = '';
+        },
+      ],
+      [
+        'timing.durationMs',
+        (metadata) => {
+          metadata.timing.durationMs = -1;
+        },
+      ],
+      [
+        'generatingCommand',
+        (metadata) => {
+          metadata.generatingCommand = '';
+        },
+      ],
+      [
+        'hashes.logs',
+        (metadata) => {
+          metadata.hashes.logs = [];
+        },
+      ],
+      [
+        'hashes.evidence',
+        (metadata) => {
+          metadata.hashes.evidence = [];
+        },
+      ],
+      [
+        'hashes.artifacts',
+        (metadata) => {
+          metadata.hashes.artifacts = [];
+        },
+      ],
+      [
+        'limitations',
+        (metadata) => {
+          metadata.limitations = [];
+        },
+      ],
+      [
+        'untestedBranches',
+        (metadata) => {
+          metadata.untestedBranches = [];
+        },
+      ],
     ];
 
     for (const [field, makeEmpty] of mandatoryFields) {
@@ -181,7 +331,10 @@ describe('authority-closure-proof helpers', () => {
 
   it('retains complete metadata and fails closed when finalizeResult receives none', () => {
     const complete = finalizeResult({
-      gitSha: 'abc123', flags: allTrueFlags(), failures: [], metadata: completeMetadata(),
+      gitSha: 'abc123',
+      flags: allTrueFlags(),
+      failures: [],
+      metadata: completeMetadata(),
     });
     assert.deepEqual(complete.metadata, completeMetadata());
     assert.equal(complete.evidenceLevel, 'ENFORCED');
@@ -222,17 +375,11 @@ describe('authority-closure-proof helpers', () => {
       resolveOwnerDsn({ DATABASE_URL: 'postgres://db:d@127.0.0.1:5433/commander' }),
       'postgres://db:d@127.0.0.1:5433/commander',
     );
-    assert.equal(
-      resolveOwnerDsn({}),
-      'postgres://commander:commander@127.0.0.1:5433/commander',
-    );
+    assert.equal(resolveOwnerDsn({}), 'postgres://commander:commander@127.0.0.1:5433/commander');
   });
 
   it('canonicalJson sorts object keys stably', () => {
-    assert.equal(
-      canonicalJson({ b: 1, a: { d: 2, c: 3 } }),
-      '{"a":{"c":3,"d":2},"b":1}',
-    );
+    assert.equal(canonicalJson({ b: 1, a: { d: 2, c: 3 } }), '{"a":{"c":3,"d":2},"b":1}');
   });
 
   it('sha256Hex is deterministic', () => {

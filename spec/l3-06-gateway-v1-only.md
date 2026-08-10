@@ -25,7 +25,7 @@ L3-06 **不是** greenfield 重写，而是对 WS3 已 ACCEPTED 实现的残余�
 | `jwtMiddleware` — enterprise `/v1` 无效 Bearer → 401 INVALID_TOKEN | `v1TenantGuard.test.ts` + `jwtMiddleware.ts` |
 | OpenAPI 从 `routerRegistry` 生成，`/v1/openapi.json` 真实性 | `openApiGenerator.test.ts` (13 cases) |
 | WarRoom 写入端点 enterprise 410；`/v1` 只读 | `warRoomDemotion.test.ts` + `ws3Acceptance.test.ts` |
-| `/ready` 真实探测，无虚假 READY | `healthHonesty.test.ts` (15 cases) |
+| `/ready` 真实探测，无虚假 READY | `healthHonesty.test.ts` (18 cases) |
 
 ---
 
@@ -92,7 +92,7 @@ test/v1TenantGuard.test.ts             — 17 cases
 test/openApiGenerator.test.ts          — 13 cases
 test/warRoomDemotion.test.ts
 test/profileSignal.test.ts             — 7 cases
-test/l3-06GatewayResidual.test.ts      — 4 cases (new)
+test/l3-06GatewayResidual.test.ts      — 8 cases (new)
 ```
 
 ---

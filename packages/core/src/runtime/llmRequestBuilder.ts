@@ -29,6 +29,7 @@ import type {
 } from './types';
 import type { TokenGovernor } from './tokenGovernor';
 import type { ModelRouter } from './modelRouter';
+import type { SmartModelRouter } from './smartModelRouter';
 import type { ProjectContext } from './projectContextLoader';
 import type { TaskType } from './unifiedVerificationTypes';
 import {
@@ -66,6 +67,7 @@ export interface LLMRequestBuilderDeps {
   getConfig(): AgentRuntimeConfig;
   getGovernor(): TokenGovernor;
   getRouter(): ModelRouter;
+  getSmartRouter?: () => SmartModelRouter | null;
   getTools(): Map<string, Tool>;
   setPromotedTools(tools: Set<string>): void;
   setTool(name: string, tool: Tool): void;
@@ -259,7 +261,9 @@ export class LLMRequestBuilder {
     // falls back to standard API (fail-closed).
     const activeRouting = batchRouting ?? routing;
     const apiModel = (activeRouting.modelId || '').replace(/@\w+$/, '') || activeRouting.modelId;
-    const selectedModelCfg = router.getModel(activeRouting.modelId);
+    const selectedModelCfg =
+      router.getModel(activeRouting.modelId) ??
+      this.deps.getSmartRouter?.()?.getModel(activeRouting.modelId);
 
     // Security: System prompt extraction detection (OWASP ASI07).
     // Scan user input for common prompt extraction/leakage patterns before
@@ -308,13 +312,21 @@ export class LLMRequestBuilder {
 
     // Wire provider-native structured output when an output schema is supplied.
     if (ctx.outputSchema && selectedModelCfg) {
-      if (selectedModelCfg.supportsStructuredOutput) {
+      const supportsStructuredOutput =
+        ('supportsStructuredOutput' in selectedModelCfg
+          ? selectedModelCfg.supportsStructuredOutput === true
+          : false) || selectedModelCfg.capabilities.includes('structured_output');
+      const supportsJSONMode =
+        ('supportsJSONMode' in selectedModelCfg
+          ? selectedModelCfg.supportsJSONMode === true
+          : false) || selectedModelCfg.capabilities.includes('json_mode');
+      if (supportsStructuredOutput) {
         baseRequest.responseFormat = {
           type: 'json_schema',
           schema: ctx.outputSchema,
           name: 'structured_output',
         };
-      } else if (selectedModelCfg.supportsJSONMode) {
+      } else if (supportsJSONMode) {
         baseRequest.responseFormat = { type: 'json_object' };
       }
       // Anthropic / unsupported providers fall through to tool-use fallback in their provider.

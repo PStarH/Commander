@@ -902,9 +902,10 @@ class RepositoryKubernetesRollbackKindDriver implements KubernetesRollbackKindDr
         const annotations = isRecord(metadata.annotations) ? metadata.annotations : {};
         const responseStatus = isRecord(event.responseStatus) ? event.responseStatus : {};
         const auditId = typeof event.auditID === 'string' ? event.auditID : '';
-        const atMs = typeof event.requestReceivedTimestamp === 'string'
-          ? Date.parse(event.requestReceivedTimestamp)
-          : Number.NaN;
+        const atMs =
+          typeof event.requestReceivedTimestamp === 'string'
+            ? Date.parse(event.requestReceivedTimestamp)
+            : Number.NaN;
         if (
           event.stage !== 'ResponseComplete' ||
           event.verb !== 'patch' ||
@@ -932,7 +933,10 @@ class RepositoryKubernetesRollbackKindDriver implements KubernetesRollbackKindDr
     };
   }
 
-  private async requestGovernedCompensation(runId: string, originalEffectId: string): Promise<void> {
+  private async requestGovernedCompensation(
+    runId: string,
+    originalEffectId: string,
+  ): Promise<void> {
     if (!this.latestRevision) throw new Error('KIND_FORWARD_REVISION_REQUIRED');
     const forwardResponse = {
       deployment: this.config.deployment,
@@ -1063,9 +1067,7 @@ class RepositoryKubernetesRollbackKindDriver implements KubernetesRollbackKindDr
     let reconcileRequested = false;
     let terminalState = '';
     while (this.ports.now() <= deadlineAtMs) {
-      const status = await this.requestJson(
-        `v1/actions/${encodeURIComponent(submission.runId)}`,
-      );
+      const status = await this.requestJson(`v1/actions/${encodeURIComponent(submission.runId)}`);
       terminalState = requiredString(
         record(status.action, 'KIND_UNKNOWN_STATUS_INVALID').state,
         'KIND_UNKNOWN_STATE_REQUIRED',
@@ -1106,7 +1108,10 @@ class RepositoryKubernetesRollbackKindDriver implements KubernetesRollbackKindDr
       submission,
       receipt,
       observation:
-        terminalState === 'ESCALATED' && reconcileRequested && injectedAudit.available && finalAudit.available
+        terminalState === 'ESCALATED' &&
+        reconcileRequested &&
+        injectedAudit.available &&
+        finalAudit.available
           ? base
           : { ...base, disposition: 'NOT_RUN' },
     };

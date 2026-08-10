@@ -183,10 +183,7 @@ describe('Helm release projection', () => {
       credentialManifest.replace('namespace: commander', 'deletionTimestamp: 2026-07-29T00:00:00Z'),
       `${credentialManifest}\n---\n${credentialManifest.split('---')[0]}`,
     ]) {
-      assert.throws(
-        () => materialize(malformed),
-        /TENANT_CUTOVER_RESTORE_PROJECTION_INVALID/,
-      );
+      assert.throws(() => materialize(malformed), /TENANT_CUTOVER_RESTORE_PROJECTION_INVALID/);
     }
     assert.throws(
       () =>
@@ -203,13 +200,15 @@ describe('Helm release projection', () => {
   });
 
   it('refuses to project a retained credential from a deleting Secret', () => {
-    const deletingManifest = manifest.replace(
-      '  namespace: commander',
-      '  namespace: commander\n  deletionTimestamp: 2026-07-29T00:00:00Z',
-    ).replace(
-      '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
-      `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
-    );
+    const deletingManifest = manifest
+      .replace(
+        '  namespace: commander',
+        '  namespace: commander\n  deletionTimestamp: 2026-07-29T00:00:00Z',
+      )
+      .replace(
+        '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
+        `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
+      );
     assert.throws(
       () =>
         projectHelmReleaseRevision({
@@ -224,10 +223,15 @@ describe('Helm release projection', () => {
   });
 
   it('requires the retained Secret source name to be independently referenced by the release', () => {
-    const credentialManifest = manifest.replace(
-      '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
-      `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
-    ).replace('name: commander-database\n                  key: owner-url', 'name: other-database\n                  key: owner-url');
+    const credentialManifest = manifest
+      .replace(
+        '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
+        `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
+      )
+      .replace(
+        'name: commander-database\n                  key: owner-url',
+        'name: other-database\n                  key: owner-url',
+      );
     assert.throws(
       () =>
         projectHelmReleaseRevision({

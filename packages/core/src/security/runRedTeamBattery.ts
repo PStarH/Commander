@@ -3,7 +3,7 @@
  * security test battery against Commander's defense layers.
  *
  * Usage:
- *   npx tsx packages/core/src/security/runRedTeamBattery.ts                    # Full 44-scenario battery
+ *   npx tsx packages/core/src/security/runRedTeamBattery.ts                    # Full 47-scenario battery
  *   npx tsx packages/core/src/security/runRedTeamBattery.ts --critical-only     # Critical scenarios only
  *   npx tsx packages/core/src/security/runRedTeamBattery.ts --category=jailbreak # Single category
  *   npx tsx packages/core/src/security/runRedTeamBattery.ts --json              # JSON output for CI/CD

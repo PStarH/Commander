@@ -285,8 +285,9 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
       makeContext({ availableTools: ['echo'], goal: 'Echo a friendly message' }),
     );
 
-    // Execution still succeeds (the agent loop absorbs blocked results gracefully).
-    expect(result.status).toBe('success');
+    // A blocked required tool is a terminal business failure; the agent must
+    // not report a successful outcome after policy denial.
+    expect(result.status).toBe('failed');
 
     // Direct behavioral assertion: the underlying tool's execute fn MUST
     // have been short-circuited by blockedRawResult and never invoked.
@@ -338,7 +339,9 @@ describe('SecurityOrchestrator helper — execute() seam contract', () => {
       makeContext({ availableTools: ['write'], goal: 'Write a file' }),
     );
 
-    expect(result.status).toBe('success');
+    // A blocked required tool is a terminal business failure; the agent must
+    // not report a successful outcome after policy denial.
+    expect(result.status).toBe('failed');
 
     // Direct behavioral assertion: blockedToolResult short-circuits execute.
     expect(writeSpy).not.toHaveBeenCalled();

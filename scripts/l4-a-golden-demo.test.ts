@@ -5,7 +5,7 @@ import { GOLDEN_DEMO_CHECKS, runGoldenDemo } from './l4-a-golden-demo.js';
 const MAX_RUNTIME_MS = 5 * 60 * 1000;
 
 void describe('L4-A golden demo', () => {
-  void it('runs all eight named checks within five minutes', async () => {
+  void it('runs all ten named checks within five minutes', async () => {
     const result = await runGoldenDemo({ silent: true });
     assert.equal(result.mode, 'simulated');
     assert.equal(result.checks.length, GOLDEN_DEMO_CHECKS.length);

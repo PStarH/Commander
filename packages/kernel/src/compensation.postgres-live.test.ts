@@ -223,6 +223,7 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       type: base.compensationEffectType,
       originalEffectId: base.originalEffectId,
       adapterVersion: base.adapterVersion,
+      destination: forward.request.destination,
       forwardResponse: base.forwardReceipt,
       compensationPatch: base.compensationPatch,
     });
@@ -269,6 +270,7 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       actionDigest: claim.authorization.actionDigest,
       request: {
         originalEffectId: claim.request.originalEffectId,
+        destination: claim.request.destination,
         forwardResponse: claim.forwardResponse,
         compensationPatch: claim.authorization.compensationPatch,
       },
@@ -360,6 +362,7 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       type: base.compensationEffectType,
       originalEffectId: base.originalEffectId,
       adapterVersion: base.adapterVersion,
+      destination: forward.request.destination,
       forwardResponse: base.forwardReceipt,
       compensationPatch: base.compensationPatch,
     });
@@ -444,6 +447,7 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       actionDigest: claim.authorization.actionDigest,
       request: {
         originalEffectId: claim.request.originalEffectId,
+        destination: claim.request.destination,
         forwardResponse: claim.forwardResponse,
         compensationPatch: claim.authorization.compensationPatch,
       },
@@ -678,10 +682,135 @@ describe('governed compensation PostgreSQL authority', { skip: !adminUrl }, () =
       }),
       { applied: true, disposition: 'COMPLETED', replayed: false },
     );
+    const terminalRunEvents = await owner.query<{
+      type: string;
+      sequence: string;
+      duplicate_count: string;
+      run_version: string;
+    }>(
+      `SELECT event.type, event.sequence::text AS sequence,
+              count(*) OVER (PARTITION BY event.aggregate_id, event.sequence)::text AS duplicate_count,
+              run.version::text AS run_version
+         FROM commander_events event
+         JOIN commander_runs run
+           ON run.id=event.aggregate_id AND run.tenant_id=event.tenant_id
+        WHERE event.tenant_id=$1 AND event.aggregate_type='run'
+          AND event.aggregate_id=$2
+          AND event.type IN ('run.compensating','run.compensated')
+        ORDER BY event.sequence`,
+      [tenantA, claim.request.originalRunId],
+    );
+    assert.deepEqual(
+      terminalRunEvents.rows.map(({ type }) => type),
+      ['run.compensating', 'run.compensated'],
+    );
+    assert.equal(
+      new Set(terminalRunEvents.rows.map(({ sequence }) => sequence)).size,
+      terminalRunEvents.rows.length,
+      'terminal run events must use distinct aggregate sequences',
+    );
+    assert.ok(
+      terminalRunEvents.rows.every(({ duplicate_count }) => duplicate_count === '1'),
+      'terminal run event sequences must be unique in durable history',
+    );
+    assert.equal(
+      terminalRunEvents.rows.at(-1)?.sequence,
+      terminalRunEvents.rows.at(-1)?.run_version,
+      'the final terminal event must match the durable run version',
+    );
     await assert.rejects(
       adapter.query('SELECT * FROM commander_effects WHERE tenant_id=$1', [tenantA]),
       /permission denied/i,
     );
+  });
+
+  it('serializes concurrent terminal finalization into one durable outcome', async () => {
+    const { claim, compensationEffectId } = await claimAdmittedCompensation('finalize-race');
+    const response = { compensated: true, source: 'race' };
+    const evidence = await terminalEvidence(claim, compensationEffectId, 'COMPLETED', response);
+    const completionInput = {
+      workerId: adapterId,
+      workerGeneration: adapterGeneration,
+      claimSecret: adapterSecret,
+      tenantId: tenantA,
+      runId: claim.request.compensationRunId,
+      stepId: claim.request.compensationStepId,
+      effectId: compensationEffectId,
+      requestId: claim.request.id,
+      requestClaimToken: claim.request.claimToken!,
+      outboxMessageId: claim.outboxMessageId,
+      outboxClaimToken: claim.outboxClaimToken,
+      lease: claim.lease,
+      actor: adapterId,
+      response,
+      evidence,
+    };
+    assert.equal(
+      (await adapterRepository.completeCompensationEffectWithEvidence(completionInput))?.state,
+      'COMPLETED',
+    );
+
+    const finalizationInput = {
+      workerId: completionInput.workerId,
+      workerGeneration: completionInput.workerGeneration,
+      claimSecret: completionInput.claimSecret,
+      tenantId: completionInput.tenantId,
+      requestId: completionInput.requestId,
+      effectId: completionInput.effectId,
+      disposition: 'COMPLETED' as const,
+      actor: completionInput.actor,
+      outboxMessageId: completionInput.outboxMessageId,
+      outboxClaimToken: completionInput.outboxClaimToken,
+      response,
+      evidence,
+    };
+    const results = await Promise.all([
+      adapterRepository.finalizeCompensation(finalizationInput),
+      adapterRepository.finalizeCompensation(finalizationInput),
+    ]);
+    assert.deepEqual(
+      results.map((result) => result.replayed).sort(),
+      [false, true],
+      'one concurrent finalizer must apply and the other must replay',
+    );
+
+    const writes = await owner.query<{
+      receipts: string;
+      terminal_events: string;
+      terminal_outbox: string;
+      terminal_sequence: string;
+      duplicate_sequences: string;
+    }>(
+      `SELECT
+         (SELECT count(*)::text FROM commander_compensation_finalization_receipts
+           WHERE outbox_message_id=$1) AS receipts,
+         (SELECT count(*)::text FROM commander_events
+           WHERE tenant_id=$2 AND aggregate_id=$3 AND type='compensation.completed') AS terminal_events,
+         (SELECT count(*)::text FROM commander_outbox outbox
+           JOIN commander_events event ON event.id=outbox.event_id
+          WHERE outbox.tenant_id=$2 AND event.aggregate_id=$3 AND event.type='compensation.completed') AS terminal_outbox,
+         (SELECT max(sequence)::text FROM commander_events
+           WHERE tenant_id=$2 AND aggregate_type='effect' AND aggregate_id=$3
+             AND type='compensation.completed') AS terminal_sequence,
+         (SELECT (count(*) - count(DISTINCT sequence))::text FROM commander_events
+           WHERE tenant_id=$2 AND aggregate_type='effect' AND aggregate_id=$3) AS duplicate_sequences`,
+      [claim.outboxMessageId, tenantA, compensationEffectId],
+    );
+    assert.deepEqual(
+      {
+        receipts: writes.rows[0]?.receipts,
+        terminal_events: writes.rows[0]?.terminal_events,
+        terminal_outbox: writes.rows[0]?.terminal_outbox,
+        duplicate_sequences: writes.rows[0]?.duplicate_sequences,
+      },
+      {
+        receipts: '1',
+        terminal_events: '1',
+        terminal_outbox: '1',
+        duplicate_sequences: '0',
+      },
+    );
+    assert.ok(Number(writes.rows[0]?.terminal_sequence) > 0);
   });
 
   it('rejects stale leases in the legacy generic compensation completion fallback', async () => {

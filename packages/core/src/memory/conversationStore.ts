@@ -20,9 +20,12 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
+import { createRequire } from 'node:module';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -115,7 +118,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (err) {
   reportSilentFailure(err, 'conversationStore:117');
   // better-sqlite3 not installed

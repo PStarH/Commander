@@ -31,6 +31,7 @@ export interface OpsLoopTelemetryEvent {
   type: 'ops_loop_tick_failed';
   loop: 'reconciliation' | 'compensation';
   errorCode: string;
+  errorMessage?: string;
   at: string;
 }
 
@@ -173,6 +174,16 @@ export function opsLoopErrorCode(error: unknown): string {
   }
   if (error instanceof Error && error.name) return error.name;
   return 'UNKNOWN';
+}
+
+export function opsLoopErrorMessage(error: unknown): string | undefined {
+  if (error instanceof Error && error.message.trim().length > 0) {
+    return firstCodePoints(error.message, 512);
+  }
+  if (typeof error === 'string' && error.trim().length > 0) {
+    return firstCodePoints(error, 512);
+  }
+  return undefined;
 }
 
 export interface ReconciliationDaemonOptions {
@@ -563,6 +574,7 @@ export class ReconciliationDaemon {
       type: 'ops_loop_tick_failed',
       loop: 'reconciliation',
       errorCode,
+      ...(opsLoopErrorMessage(error) ? { errorMessage: opsLoopErrorMessage(error) } : {}),
       at,
     });
   }

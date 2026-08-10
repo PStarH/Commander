@@ -133,7 +133,11 @@ function waitForExit(worker: ReturnType<typeof fork>, timeoutMs = 5000): Promise
   });
 }
 
-function sendWork(worker: ReturnType<typeof fork>, payload?: unknown, timeoutMs = 5000): Promise<void> {
+function sendWork(
+  worker: ReturnType<typeof fork>,
+  payload?: unknown,
+  timeoutMs = 5000,
+): Promise<void> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
@@ -269,7 +273,8 @@ async function runDockerDrill(): Promise<Measurement> {
       actualMs: Number.NaN,
       thresholdMs: THRESHOLD_MS,
       passed: false,
-      reason: 'docker compose unavailable; live RTO drill requires a running docker compose topology',
+      reason:
+        'docker compose unavailable; live RTO drill requires a running docker compose topology',
     };
   }
 
@@ -315,7 +320,8 @@ async function runDockerDrill(): Promise<Measurement> {
     actualMs: rtoMs,
     thresholdMs: THRESHOLD_MS,
     passed: false,
-    reason: 'docker live RTO drill is a work in progress; measured restart time only, not full DB/worker failover reclaim',
+    reason:
+      'docker live RTO drill is a work in progress; measured restart time only, not full DB/worker failover reclaim',
   };
 }
 

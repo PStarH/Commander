@@ -246,9 +246,10 @@ describe('E2E: Deploy & Rollback through AgentRuntime.execute()', () => {
       makeContext({ availableTools: ['deploy', 'health_check'], goal: 'Deploy and check' }),
     );
 
-    // Runtime should complete — the tool failure is returned as an error
-    // message to the LLM, which then decides what to do
-    expect(result.status).toBe('success');
+    // A failed health check is a failed run until a later recovery batch
+    // proves the outcome; a final model explanation is not proof of success.
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('TOOL_EXECUTION_FAILED');
     // v2 was deployed, health check failed but no rollback was scripted
     expect(env.getVersion()).toBe('v2');
   });

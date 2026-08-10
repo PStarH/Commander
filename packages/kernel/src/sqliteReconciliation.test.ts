@@ -98,7 +98,11 @@ function terminalEvidence(
   state: 'COMPLETED' | 'CONFIRMED_NOT_APPLIED' | 'COMPLETION_UNKNOWN',
 ): KernelEvidenceRecord {
   const disposition =
-    state === 'COMPLETED' ? 'SUCCEEDED' : state === 'CONFIRMED_NOT_APPLIED' ? 'FAILED' : 'ESCALATED';
+    state === 'COMPLETED'
+      ? 'SUCCEEDED'
+      : state === 'CONFIRMED_NOT_APPLIED'
+        ? 'FAILED'
+        : 'ESCALATED';
   const bundleId = `evidence_${effectId}`;
   const contentHash = 'b'.repeat(64);
   const signature = {
@@ -120,8 +124,7 @@ function terminalEvidence(
       terminalDisposition: disposition,
       scope: { tenantId: 'tenant-a', runId, effectId },
       effects: [{ effectId, state }],
-      auditEvents:
-        disposition === 'ESCALATED' ? [{ type: 'effect.reconcile_escalated' }] : [],
+      auditEvents: disposition === 'ESCALATED' ? [{ type: 'effect.reconcile_escalated' }] : [],
       signature,
     },
     contentHash,
@@ -464,10 +467,7 @@ describe('SQLite reconciliation migration and file-backed parity', () => {
                 });
         assert.equal(result.applied, true);
         assert.equal(result.applied && result.replayed, false);
-        assert.deepEqual(
-          await seeded.repo.getEvidence(`run-${mutation}`, 'tenant-a'),
-          evidence,
-        );
+        assert.deepEqual(await seeded.repo.getEvidence(`run-${mutation}`, 'tenant-a'), evidence);
         const effect = await seeded.repo.getEffect(`effect-${mutation}`, 'tenant-a');
         assert.equal(effect?.reconcileClaimToken, null);
         assert.equal(

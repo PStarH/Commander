@@ -52,6 +52,7 @@ async function httpJson(
   method: string,
   path: string,
   body?: unknown,
+  idempotencyKey?: string,
 ): Promise<{ status: number; json: Record<string, unknown> | null }> {
   const res = await fetch(`${baseUrl}${path}`, {
     method,
@@ -60,6 +61,7 @@ async function httpJson(
       // Prefer x-api-key only — Authorization: Bearer is interpreted as JWT.
       'x-api-key': CELL_COMPOSE_ENV.COMMANDER_API_KEY,
       'x-tenant-id': CELL_E2E_TENANT,
+      ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -158,43 +160,62 @@ export async function runComposeDemoCompensationFlow(
   baseUrl = 'http://localhost:4000',
 ): Promise<Record<string, boolean>> {
   const idem = `cell-comp-${Date.now()}`;
-  const proposed = await httpJson(baseUrl, 'POST', '/v1/actions', {
-    source: 'cell-e2e',
-    package: 'cell-e2e',
-    model: 'mock',
-    tool: 'ticket.create',
-    destination: 'demo://tickets/approval',
-    effectType: 'demo.ticket.create',
-    args: { title: 'Cell compensation E2E' },
-    idempotencyKey: idem,
-  });
+  const proposed = await httpJson(
+    baseUrl,
+    'POST',
+    '/v1/actions',
+    {
+      source: 'cell-e2e',
+      package: 'cell-e2e',
+      model: 'mock',
+      tool: 'ticket.create',
+      destination: 'demo://tickets/approval',
+      effectType: 'demo.ticket.create',
+      args: { title: 'Cell compensation E2E' },
+      idempotencyKey: idem,
+    },
+    idem,
+  );
   if (proposed.status !== 202)
     return { proposed: false, approved: false, forwardDone: false, compensated: false };
   const action = (proposed.json?.action ?? {}) as {
     runId: string;
     simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
   };
-  const approved = await httpJson(baseUrl, 'POST', `/v1/actions/${action.runId}/approve`, {
-    actionDigest: action.simulation.actionDigest,
-    simulationId: action.simulation.simulationId,
-    policySnapshotId: action.simulation.policySnapshotId,
-  });
+  const approved = await httpJson(
+    baseUrl,
+    'POST',
+    `/v1/actions/${action.runId}/approve`,
+    {
+      actionDigest: action.simulation.actionDigest,
+      simulationId: action.simulation.simulationId,
+      policySnapshotId: action.simulation.policySnapshotId,
+    },
+    `approve-${idem}`,
+  );
   if (approved.status !== 200)
     return { proposed: true, approved: false, forwardDone: false, compensated: false };
   const forwardState = await pollActionTerminal(baseUrl, action.runId);
   if (forwardState !== 'SUCCEEDED') {
     return { proposed: true, approved: true, forwardDone: false, compensated: false };
   }
-  const compensate = await httpJson(baseUrl, 'POST', '/v1/actions', {
-    source: 'cell-e2e',
-    package: 'cell-e2e',
-    model: 'mock',
-    tool: 'ticket.compensate',
-    destination: 'demo://tickets',
-    effectType: 'compensate.demo.ticket.create',
-    args: { targetIdempotencyKey: idem },
-    idempotencyKey: `cmp-${idem}`,
-  });
+  const compensationIdempotencyKey = `cmp-${idem}`;
+  const compensate = await httpJson(
+    baseUrl,
+    'POST',
+    '/v1/actions',
+    {
+      source: 'cell-e2e',
+      package: 'cell-e2e',
+      model: 'mock',
+      tool: 'ticket.compensate',
+      destination: 'demo://tickets',
+      effectType: 'compensate.demo.ticket.create',
+      args: { targetIdempotencyKey: idem },
+      idempotencyKey: compensationIdempotencyKey,
+    },
+    compensationIdempotencyKey,
+  );
   if (compensate.status !== 202) {
     return { proposed: true, approved: true, forwardDone: true, compensated: false };
   }

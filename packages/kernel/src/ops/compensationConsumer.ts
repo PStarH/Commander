@@ -169,6 +169,7 @@ function durableExecution(work: ClaimedCompensationRequest) {
   const { authorization, request, forwardResponse } = work;
   const effectId = request.compensationEffectId;
   if (!effectId) throw mutationRejected('CLAIM_EFFECT_ID_MISSING');
+  if (request.destination.length === 0) throw mutationRejected('DESTINATION_MISSING');
   return {
     authorization,
     effectId,
@@ -176,6 +177,7 @@ function durableExecution(work: ClaimedCompensationRequest) {
     stepId: request.compensationStepId,
     requestPayload: {
       originalEffectId: request.originalEffectId,
+      destination: request.destination,
       forwardResponse,
       compensationPatch: authorization.compensationPatch,
     },
@@ -199,6 +201,7 @@ function validateDurableClaim(work: ClaimedCompensationRequest): boolean {
       type: authorization.compensationEffectType,
       originalEffectId: authorization.originalEffectId,
       adapterVersion: authorization.adapterVersion,
+      destination: request.destination,
       forwardResponse,
       compensationPatch: authorization.compensationPatch,
     }) === authorization.actionDigest

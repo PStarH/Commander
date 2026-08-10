@@ -4,8 +4,11 @@ import {
   type GovernedCompensationAuthorization,
   type GovernedCompensationAuthorizationInput,
 } from './compensationAuthority.js';
-import type { KernelEffect, KernelRunState } from '../types.js';
-import type { CompensationApprovalBinding, CompensationDecisionEffect } from './compensationAuthority.js';
+import type { CompensationAuthorizationRecord, KernelEffect, KernelRunState } from '../types.js';
+import type {
+  CompensationApprovalBinding,
+  CompensationDecisionEffect,
+} from './compensationAuthority.js';
 
 /** Legacy test-fixture input. Production authority uses CompensationAuthorizationRecord. */
 export interface LegacyGovernedCompensationInput {
@@ -48,14 +51,88 @@ export type PreparedCompensationRequest = {
   escalationReason: CompensationRequestEscalationReason | null;
 };
 
+/** Immutable binding persisted on the compensation run for evidence lookup. */
+export interface DurableCompensationMetadataAuthorization {
+  schema: 'commander.compensation/v1';
+  authorizationId: string;
+  requestId: string;
+  tenantId: string;
+  originalRunId: string;
+  originalEffectId: string;
+  originalRunStateAtRequest: string;
+  compensationRunId: string;
+  compensationStepId: string;
+  compensationEffectId: string;
+  compensationEffectType: string;
+  compensationRequest: Record<string, unknown>;
+  idempotencyKey: string;
+  forwardReceipt: Record<string, unknown>;
+  forwardReceiptHash: string;
+  requestHash: string;
+  adapterVersion: string;
+  policyDecisionId: string;
+  policySnapshotId: string;
+  actionDigest: string;
+  decisionEffect: CompensationDecisionEffect;
+  authorizationExpiresAt: string;
+  approvalBinding: CompensationApprovalBinding | null;
+}
+
+export function durableCompensationMetadataAuthorization(input: {
+  authorization: CompensationAuthorizationRecord;
+  requestId: string;
+  compensationRunId: string;
+  compensationStepId: string;
+  compensationEffectId: string;
+  originalRunStateAtRequest: KernelRunState;
+  originalEffect: Pick<KernelEffect, 'request' | 'response'>;
+  approvalBinding?: CompensationApprovalBinding | null;
+}): DurableCompensationMetadataAuthorization {
+  const { authorization, originalEffect } = input;
+  const forwardReceipt = originalEffect.response ?? {};
+  const compensationRequest = {
+    originalEffectId: authorization.originalEffectId,
+    destination: originalEffect.request.destination,
+    forwardResponse: forwardReceipt,
+    compensationPatch: authorization.compensationPatch,
+  };
+  return {
+    schema: 'commander.compensation/v1',
+    authorizationId: authorization.id,
+    requestId: input.requestId,
+    tenantId: authorization.tenantId,
+    originalRunId: authorization.originalRunId,
+    originalEffectId: authorization.originalEffectId,
+    originalRunStateAtRequest: input.originalRunStateAtRequest,
+    compensationRunId: input.compensationRunId,
+    compensationStepId: input.compensationStepId,
+    compensationEffectId: input.compensationEffectId,
+    compensationEffectType: authorization.compensationEffectType,
+    compensationRequest,
+    idempotencyKey: `cmp:${authorization.originalEffectId}:${authorization.adapterVersion}`,
+    forwardReceipt,
+    forwardReceiptHash: authorization.forwardReceiptHash,
+    requestHash: canonicalCompensationHash(compensationRequest),
+    adapterVersion: authorization.adapterVersion,
+    policyDecisionId: authorization.policyDecisionId,
+    policySnapshotId: authorization.policySnapshotId,
+    actionDigest: authorization.actionDigest,
+    decisionEffect: authorization.decision,
+    authorizationExpiresAt: authorization.expiresAt,
+    approvalBinding: input.approvalBinding ?? authorization.approvalBinding ?? null,
+  };
+}
+
 function stableId(prefix: string, value: unknown, length: number): string {
   return `${prefix}_${canonicalCompensationHash(value).slice(0, length)}`;
 }
 
-export function governedCompensationIdentifiers(input: Pick<
-  LegacyGovernedCompensationInput,
-  'tenantId' | 'originalRunId' | 'originalEffectId' | 'adapterVersion'
->): GovernedCompensationIdentifiers {
+export function governedCompensationIdentifiers(
+  input: Pick<
+    LegacyGovernedCompensationInput,
+    'tenantId' | 'originalRunId' | 'originalEffectId' | 'adapterVersion'
+  >,
+): GovernedCompensationIdentifiers {
   const identity = {
     protocol: 'commander.compensation/v1',
     tenantId: input.tenantId,

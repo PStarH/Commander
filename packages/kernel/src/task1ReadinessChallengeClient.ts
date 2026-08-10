@@ -25,34 +25,38 @@ function parseTarget(value: string): URL {
     return invalid('TENANT_CUTOVER_PROOF_URL_INVALID');
   }
   if (
-    url.protocol !== 'https:'
-    || !url.hostname
-    || url.username !== ''
-    || url.password !== ''
-    || url.pathname !== READINESS_PATH
-    || url.search !== ''
-    || url.hash !== ''
+    url.protocol !== 'https:' ||
+    !url.hostname ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.pathname !== READINESS_PATH ||
+    url.search !== '' ||
+    url.hash !== ''
   ) {
     invalid('TENANT_CUTOVER_PROOF_URL_INVALID');
   }
   return url;
 }
 
-function verifyIdentity(hostname: string, certificate: PeerCertificate, expectedSpki: string): Error | undefined {
+function verifyIdentity(
+  hostname: string,
+  certificate: PeerCertificate,
+  expectedSpki: string,
+): Error | undefined {
   const hostnameError = checkServerIdentity(hostname, certificate);
   if (hostnameError) return hostnameError;
   if (!certificate.raw) return new Error('TENANT_CUTOVER_PROOF_PEER_CERTIFICATE_REQUIRED');
   let observed: string;
   try {
     observed = createHash('sha256')
-      .update(new X509Certificate(certificate.raw).publicKey.export({ format: 'der', type: 'spki' }))
+      .update(
+        new X509Certificate(certificate.raw).publicKey.export({ format: 'der', type: 'spki' }),
+      )
       .digest('hex');
   } catch {
     return new Error('TENANT_CUTOVER_PROOF_PEER_CERTIFICATE_INVALID');
   }
-  return observed === expectedSpki
-    ? undefined
-    : new Error('TENANT_CUTOVER_PROOF_SPKI_MISMATCH');
+  return observed === expectedSpki ? undefined : new Error('TENANT_CUTOVER_PROOF_SPKI_MISMATCH');
 }
 
 export function requestTask1ReadinessChallenge(
@@ -75,46 +79,50 @@ export function requestTask1ReadinessChallenge(
       if (error) reject(error);
       else resolve(value);
     };
-    const call = request(url, {
-      method: 'GET',
-      agent: false,
-      ca: input.ca,
-      minVersion: 'TLSv1.3',
-      maxVersion: 'TLSv1.3',
-      rejectUnauthorized: true,
-      servername: url.hostname,
-      checkServerIdentity: (hostname, certificate) =>
-        verifyIdentity(hostname, certificate, input.expectedServerSpkiSha256),
-      headers: {
-        Accept: 'application/json',
-        'X-Commander-Readiness-Challenge': input.challenge,
+    const call = request(
+      url,
+      {
+        method: 'GET',
+        agent: false,
+        ca: input.ca,
+        minVersion: 'TLSv1.3',
+        maxVersion: 'TLSv1.3',
+        rejectUnauthorized: true,
+        servername: url.hostname,
+        checkServerIdentity: (hostname, certificate) =>
+          verifyIdentity(hostname, certificate, input.expectedServerSpkiSha256),
+        headers: {
+          Accept: 'application/json',
+          'X-Commander-Readiness-Challenge': input.challenge,
+        },
       },
-    }, (response) => {
-      if (response.statusCode !== 200) {
-        response.resume();
-        finish(new Error('TENANT_CUTOVER_PROOF_HTTP_STATUS_INVALID'));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let length = 0;
-      response.on('data', (chunk: Buffer) => {
-        length += chunk.length;
-        if (length > MAX_RESPONSE_BYTES) {
-          call.destroy(new Error('TENANT_CUTOVER_PROOF_RESPONSE_TOO_LARGE'));
+      (response) => {
+        if (response.statusCode !== 200) {
+          response.resume();
+          finish(new Error('TENANT_CUTOVER_PROOF_HTTP_STATUS_INVALID'));
           return;
         }
-        chunks.push(chunk);
-      });
-      response.once('end', () => {
-        try {
-          const body = Buffer.concat(chunks).toString('utf8');
-          if (!body || body.includes('\0')) invalid('TENANT_CUTOVER_PROOF_RESPONSE_INVALID');
-          finish(undefined, JSON.parse(body));
-        } catch {
-          finish(new Error('TENANT_CUTOVER_PROOF_RESPONSE_INVALID'));
-        }
-      });
-    });
+        const chunks: Buffer[] = [];
+        let length = 0;
+        response.on('data', (chunk: Buffer) => {
+          length += chunk.length;
+          if (length > MAX_RESPONSE_BYTES) {
+            call.destroy(new Error('TENANT_CUTOVER_PROOF_RESPONSE_TOO_LARGE'));
+            return;
+          }
+          chunks.push(chunk);
+        });
+        response.once('end', () => {
+          try {
+            const body = Buffer.concat(chunks).toString('utf8');
+            if (!body || body.includes('\0')) invalid('TENANT_CUTOVER_PROOF_RESPONSE_INVALID');
+            finish(undefined, JSON.parse(body));
+          } catch {
+            finish(new Error('TENANT_CUTOVER_PROOF_RESPONSE_INVALID'));
+          }
+        });
+      },
+    );
     call.once('socket', (socket) => {
       const tlsSocket = socket as TLSSocket;
       tlsSocket.once('secureConnect', () => {

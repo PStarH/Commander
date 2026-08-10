@@ -22,6 +22,82 @@ export interface RepairResult {
   repairs: string[];
 }
 
+export interface TextToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/**
+ * Parse the XML-like tool-call format emitted by some OpenAI-compatible
+ * providers. Only explicit <tool_call> blocks are accepted; ordinary prose
+ * is never interpreted as a tool invocation.
+ */
+export function parseTextToolCalls(content: string): TextToolCall[] {
+  const results: TextToolCall[] = [];
+  const blockPattern = /<tool_call\b[^>]*>([\s\S]*?)<\/tool_call>/gi;
+  let blockMatch: RegExpExecArray | null;
+
+  while ((blockMatch = blockPattern.exec(content)) !== null) {
+    const block = blockMatch[1];
+    const functionMatch = block.match(
+      /<function(?:=|_)([^>]+)>|<function\s+name=["']([^"']+)["'][^>]*>/i,
+    );
+    const name = (functionMatch?.[1] ?? functionMatch?.[2] ?? '').trim();
+    if (!name) continue;
+
+    const args: Record<string, unknown> = {};
+    const parameterPattern =
+      /<parameter(?:=|\s+name=)["']?([^>"']+)["']?>([\s\S]*?)<\/parameter>/gi;
+    let parameterMatch: RegExpExecArray | null;
+    while ((parameterMatch = parameterPattern.exec(block)) !== null) {
+      args[parameterMatch[1].trim()] = parseTextToolArgument(parameterMatch[2].trim());
+    }
+
+    if (Object.keys(args).length === 0) {
+      const argumentsMatch = block.match(/<arguments?>([\s\S]*?)<\/(?:arguments?)>/i);
+      if (argumentsMatch) {
+        try {
+          const parsed = JSON.parse(argumentsMatch[1].trim());
+          if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            Object.assign(args, parsed);
+          }
+        } catch (err) {
+          getGlobalLogger().debug('ToolCallRepair', 'Text tool arguments were not JSON', {
+            error: (err as Error)?.message,
+          });
+        }
+      }
+    }
+
+    results.push({
+      id: `call_text_${Date.now()}_${results.length}`,
+      name,
+      arguments: args,
+    });
+  }
+
+  return results;
+}
+
+function parseTextToolArgument(value: string): unknown {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (value === 'null') return null;
+  if (/^-?\d+(?:\.\d+)?$/.test(value)) return Number(value);
+  if (
+    (value.startsWith('{') && value.endsWith('}')) ||
+    (value.startsWith('[') && value.endsWith(']'))
+  ) {
+    try {
+      return JSON.parse(value);
+    } catch {
+      // Keep malformed values as strings so schema validation can reject them.
+    }
+  }
+  return value;
+}
+
 // ============================================================================
 // Main Entry Point
 // ============================================================================

@@ -61,6 +61,7 @@ describe('CompensationDaemon', () => {
       type: 'compensate.http.post',
       originalEffectId: 'effect-forward',
       adapterVersion: 'adapter-v1',
+      destination: 'https://example.test/resource',
       forwardResponse,
       compensationPatch,
     });
@@ -88,6 +89,7 @@ describe('CompensationDaemon', () => {
       compensationStepId: 'step-compensation',
       adapterVersion: 'adapter-v1',
       compensationEffectType: 'compensate.http.post',
+      destination: 'https://example.test/resource',
       compensationPatch,
       forwardReceiptHash: canonicalCompensationHash(forwardResponse),
       authorizationId: 'authorization-a',

@@ -8,13 +8,16 @@
 <h1 align="center">Commander</h1>
 <p align="center"><strong>看清 AI 在做什么。检查结果。花费更少。</strong></p>
 
+> **Alpha 提示：** Commander 目前是 alpha，尚未达到生产就绪标准。输出、基准、POC
+> 场景和仪表盘数据都可能是开发或演示信号；未经自行审查，不要用于无人值守的生产工作负载或敏感数据。
+
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
   <sub>无需安装。一条命令。实时查看多智能体事件和工具调用流式传输到你的终端。</sub>
 </p>
 
 <p align="center">
-  <img src="docs/assets/commander-watch-demo.gif" alt="Commander watch demo — 实时智能体流式传输" width="90%">
+  <img src="docs/assets/commander-watch-demo.svg" alt="Commander watch demo — 实时智能体流式传输" width="90%">
 </p>
 
 ---
@@ -162,8 +165,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # 使用 CLI
 pnpm exec tsx packages/core/src/cliEntry.ts run "your task here"
 
-# 使用 API
-pnpm exec tsx examples/api-usage.ts
+# 运行基础示例
+pnpm exec tsx examples/basic.ts
 
 # 使用 Docker
 docker compose up -d
@@ -183,11 +186,11 @@ pnpm benchmark:gaia        # 运行 GAIA 基准测试（完整脚本见 package.
 
 | 套件 | 覆盖范围 | 结果 |
 | ---- | -------- | ---- |
-| 混沌工程 | 255 个合成案例 + 55 个变异案例 | 仅列出 harness；结果见基准矩阵 |
+| 混沌工程 | 200 个合成案例 + 55 个变异案例（共 255） | 仅列出 harness；结果见基准矩阵 |
 | 红队 | 47 个场景、8 类攻击 | 所列用例均 blocked（模拟 harness） |
 | AgentDojo | 12 个安全测试案例 | 所列用例均 blocked（模拟 harness） |
 | GAIA Spine | 核心能力基准 | 已调度 quick/offline 回归；完整 fixture 待补齐 |
-| SLO | API 成功率 99.5%、P95 延迟 <2s | CI 基线，不是生产 SLA |
+| SLO | API 可用性 99.95%、P95 调度 <5s | CI 基线，不是生产 SLA |
 
 ```bash
 # 复现任意基准测试
@@ -281,6 +284,13 @@ docker compose up -d
 - [docs/README.md](docs/README.md) — 公开文档索引
 
 内部审计、AI 工作计划与尽调笔记**不在本仓库**；仅存在于开发者本机的 `.internal/`（已被 gitignore）。
+
+## 隐私、反馈与安全
+
+- [PRIVACY.md](PRIVACY.md)：provider 外发、trace/memory/audit 保存、保留与删除边界。
+- 普通 bug 请提交 [GitHub Issues](https://github.com/PStarH/Commander/issues)，先脱敏 prompt、日志、配置、PII 和密钥。
+- 问题讨论和建议请使用 [GitHub Discussions](https://github.com/PStarH/Commander/discussions)。
+- 安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，不要开公开 issue。
 
 ## 许可证
 

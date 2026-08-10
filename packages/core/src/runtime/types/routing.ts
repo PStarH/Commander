@@ -27,6 +27,8 @@ export interface ModelConfig {
   supportsBatchAPI?: boolean;
   /** Maximum batch size for this model's batch API (0 = no limit / unknown). */
   maxBatchSize?: number;
+  /** Provider-enforced maximum output tokens. Undefined means no provider-specific cap. */
+  maxOutputTokens?: number;
 }
 
 /**

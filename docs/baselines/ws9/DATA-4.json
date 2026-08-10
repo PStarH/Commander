@@ -5,6 +5,6 @@
   "breach": false,
   "details": "Cross-tenant access blocked by assertSameTenant (in-process PEP). A→B blocked=true, B→A blocked=true, same-tenant allowed=true.",
   "artifacts": [],
-  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
-  "ranAt": "2026-07-16T10:24:21.395Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:37:34.487Z"
 }

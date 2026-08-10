@@ -43,21 +43,96 @@ export interface DesignPartnerScenarioDefinition {
 }
 
 export const DESIGN_PARTNER_SCENARIOS: readonly DesignPartnerScenarioDefinition[] = [
-  { id: 'tenant_isolation', expectedExternalWrites: 0, requiresOutcomeQuery: false, allowedTerminalDispositions: ['DENIED'] },
-  { id: 'identity', expectedExternalWrites: 0, requiresOutcomeQuery: false, allowedTerminalDispositions: ['DENIED'] },
-  { id: 'policy_binding', expectedExternalWrites: 0, requiresOutcomeQuery: false, allowedTerminalDispositions: ['DENIED'] },
-  { id: 'approval_binding', expectedExternalWrites: 0, requiresOutcomeQuery: false, allowedTerminalDispositions: ['DENIED'] },
-  { id: 'mutation_resistance', expectedExternalWrites: 0, requiresOutcomeQuery: false, allowedTerminalDispositions: ['DENIED'] },
-  { id: 'lease_fencing', expectedExternalWrites: 1, requiresOutcomeQuery: false, allowedTerminalDispositions: ['COMPLETED'] },
-  { id: 'idempotency', expectedExternalWrites: 1, requiresOutcomeQuery: false, allowedTerminalDispositions: ['COMPLETED'] },
-  { id: 'ambiguous_completion', expectedExternalWrites: 1, requiresOutcomeQuery: true, allowedTerminalDispositions: ['COMPLETED'] },
-  { id: 'confirmed_not_applied', expectedExternalWrites: 1, requiresOutcomeQuery: true, allowedTerminalDispositions: ['COMPLETED', 'CONFIRMED_NOT_APPLIED'] },
-  { id: 'irreducible_unknown', expectedExternalWrites: 1, requiresOutcomeQuery: true, allowedTerminalDispositions: ['ESCALATED'] },
-  { id: 'compensation', expectedExternalWrites: 2, requiresOutcomeQuery: true, allowedTerminalDispositions: ['COMPENSATED'] },
-  { id: 'kill_switch', expectedExternalWrites: 0, requiresOutcomeQuery: false, allowedTerminalDispositions: ['DENIED'] },
-  { id: 'evidence', expectedExternalWrites: 1, requiresOutcomeQuery: false, allowedTerminalDispositions: ['COMPLETED', 'FAILED'] },
-  { id: 'recovery', expectedExternalWrites: 1, requiresOutcomeQuery: false, allowedTerminalDispositions: ['COMPLETED'] },
-  { id: 'backup_restore', expectedExternalWrites: 1, requiresOutcomeQuery: false, allowedTerminalDispositions: ['RESTORED'] },
+  {
+    id: 'tenant_isolation',
+    expectedExternalWrites: 0,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['DENIED'],
+  },
+  {
+    id: 'identity',
+    expectedExternalWrites: 0,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['DENIED'],
+  },
+  {
+    id: 'policy_binding',
+    expectedExternalWrites: 0,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['DENIED'],
+  },
+  {
+    id: 'approval_binding',
+    expectedExternalWrites: 0,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['DENIED'],
+  },
+  {
+    id: 'mutation_resistance',
+    expectedExternalWrites: 0,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['DENIED'],
+  },
+  {
+    id: 'lease_fencing',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['COMPLETED'],
+  },
+  {
+    id: 'idempotency',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['COMPLETED'],
+  },
+  {
+    id: 'ambiguous_completion',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: true,
+    allowedTerminalDispositions: ['COMPLETED'],
+  },
+  {
+    id: 'confirmed_not_applied',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: true,
+    allowedTerminalDispositions: ['COMPLETED', 'CONFIRMED_NOT_APPLIED'],
+  },
+  {
+    id: 'irreducible_unknown',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: true,
+    allowedTerminalDispositions: ['ESCALATED'],
+  },
+  {
+    id: 'compensation',
+    expectedExternalWrites: 2,
+    requiresOutcomeQuery: true,
+    allowedTerminalDispositions: ['COMPENSATED'],
+  },
+  {
+    id: 'kill_switch',
+    expectedExternalWrites: 0,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['DENIED'],
+  },
+  {
+    id: 'evidence',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['COMPLETED', 'FAILED'],
+  },
+  {
+    id: 'recovery',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['COMPLETED'],
+  },
+  {
+    id: 'backup_restore',
+    expectedExternalWrites: 1,
+    requiresOutcomeQuery: false,
+    allowedTerminalDispositions: ['RESTORED'],
+  },
 ];
 
 export interface DesignPartnerScenarioObservation {
@@ -155,8 +230,12 @@ export function validateCampaignObservation(
       failures.push(`SCENARIO_TERMINAL_DISPOSITION_INVALID:${scenario.id}`);
     }
     if (!scenario.receiptVerified) failures.push(`SCENARIO_RECEIPT_UNVERIFIED:${scenario.id}`);
-    if (!scenario.evidencePersisted) failures.push(`SCENARIO_EVIDENCE_NOT_PERSISTED:${scenario.id}`);
-    if (!Number.isFinite(scenario.reconciliationLatencyMs) || scenario.reconciliationLatencyMs < 0) {
+    if (!scenario.evidencePersisted)
+      failures.push(`SCENARIO_EVIDENCE_NOT_PERSISTED:${scenario.id}`);
+    if (
+      !Number.isFinite(scenario.reconciliationLatencyMs) ||
+      scenario.reconciliationLatencyMs < 0
+    ) {
       failures.push(`SCENARIO_LATENCY_INVALID:${scenario.id}`);
     }
   }
