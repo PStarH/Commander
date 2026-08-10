@@ -415,6 +415,22 @@ describe('compose source files (static drift guard)', () => {
       'deploy/docker/v2-compose.yml must isolate both API memory stores',
     );
 
+    for (const required of [
+      'COMMANDER_API_KEY',
+      'COMMANDER_CAPABILITY_TOKEN_KEY',
+      'COMMANDER_INTEGRITY_KEY',
+      'API_KEYS',
+      'TENANT_API_KEYS',
+      'COMMANDER_EVIDENCE_JWKS_JSON',
+    ]) {
+      const marker = `${required}: \${${required}:`;
+      assert.equal(
+        v2Bench.split(marker).length - 1,
+        2,
+        `deploy/docker/v2-compose.yml must bind ${required} on both API replicas`,
+      );
+    }
+
     const adapterBlock = cell.match(/^\s*adapter-ops:\s*\n(?:^\s{2,}.*\n)*/m)?.[0] ?? '';
     assert.ok(adapterBlock.length > 0, 'docker-compose.cell.yml must define adapter-ops');
     assert.match(adapterBlock, /commander_adapter_ops/, 'cell adapter-ops must use dedicated DSN');

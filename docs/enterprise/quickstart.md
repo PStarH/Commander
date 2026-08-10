@@ -17,7 +17,7 @@ work must use the Action Gateway (`/v1/actions`) or its MCP surface.
 
 ## Prerequisites
 
-- Node 22, pnpm 9, Docker, `kind`, `kubectl`, and PostgreSQL client tools.
+- Node 22, pnpm 9, Docker, `kind`, `kubectl`, `curl`, and PostgreSQL client tools.
 - A dedicated sandbox Kubernetes namespace and a named approver/escalation owner.
 - A Commander API key scoped to the pilot tenant.
 - A provider key supplied only at runtime. Never commit it or put it in an
@@ -29,16 +29,56 @@ failed preflight, not permission to substitute a fake external system.
 
 ## 1. Start the dedicated stack
 
-Use the repository's V2 compose topology for technical acceptance:
+Use the repository's V2 compose topology for technical acceptance. The following
+creates ephemeral local-only authority and signing keys, then binds the API key
+to the pilot tenant. Do not use this key-generation path for production; load
+the same variables from a secret manager instead.
 
 ```bash
 export COMMANDER_MASTER_KEY="$(openssl rand -hex 32)"
 export JWT_SECRET="$(openssl rand -hex 32)"
+export COMMANDER_API_KEY="$(openssl rand -hex 32)"
+export COMMANDER_CAPABILITY_TOKEN_KEY="$(openssl rand -hex 32)"
+export COMMANDER_INTEGRITY_KEY="$(openssl rand -hex 32)"
+export COMMANDER_TENANT_ID="pilot-tenant"
+export COMMANDER_WORKER_TENANTS="$COMMANDER_TENANT_ID"
+export COMMANDER_CAPABILITY_KEY_ID="pilot-capability-$(date -u +%Y%m%d%H%M%S)"
+export COMMANDER_EVIDENCE_SIGNING_KEY_ID="pilot-evidence-$(date -u +%Y%m%d%H%M%S)"
+export API_KEYS="${COMMANDER_API_KEY}:pilot:read;write;admin;actions:approve"
+export TENANT_API_KEYS="${COMMANDER_TENANT_ID}:${COMMANDER_API_KEY}"
+
+PILOT_KEY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/commander-pilot-keys.XXXXXX")"
+node --input-type=module - "$PILOT_KEY_DIR" <<'NODE'
+import { generateKeyPairSync } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const directory = process.argv[2];
+mkdirSync(directory, { recursive: true, mode: 0o700 });
+
+function material(prefix, keyId) {
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const jwk = publicKey.export({ format: 'jwk' });
+  writeFileSync(join(directory, `${prefix}-private.pem`), privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
+  writeFileSync(join(directory, `${prefix}-jwks.json`), JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }] }), { mode: 0o600 });
+}
+
+material('capability', process.env.COMMANDER_CAPABILITY_KEY_ID);
+material('evidence', process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
+NODE
+
+export COMMANDER_CAPABILITY_PRIVATE_KEY_PEM="$(< "$PILOT_KEY_DIR/capability-private.pem")"
+export COMMANDER_CAPABILITY_JWKS_JSON="$(< "$PILOT_KEY_DIR/capability-jwks.json")"
+export COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM="$(< "$PILOT_KEY_DIR/evidence-private.pem")"
+export COMMANDER_EVIDENCE_JWKS_JSON="$(< "$PILOT_KEY_DIR/evidence-jwks.json")"
+
+docker compose -f deploy/docker/v2-compose.yml config >/dev/null
 docker compose -f deploy/docker/v2-compose.yml up -d
 ```
 
 Wait for `/health` and `/ready` on the configured Gateway endpoint. Keep the
-Gateway, kernel-ops, worker, and adapter-ops identities separate.
+Gateway, kernel-ops, worker, and adapter-ops identities separate. Keep
+`PILOT_KEY_DIR` until the receipt has been verified; remove it after teardown.
 
 ## 2. Connect the external runtime
 
