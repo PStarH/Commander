@@ -42,6 +42,7 @@ export COMMANDER_CAPABILITY_TOKEN_KEY="$(openssl rand -hex 32)"
 export COMMANDER_INTEGRITY_KEY="$(openssl rand -hex 32)"
 export COMMANDER_TENANT_ID="pilot-tenant"
 export COMMANDER_WORKER_TENANTS="$COMMANDER_TENANT_ID"
+export COMMANDER_KUBERNETES_PROOF_NAMESPACE="${COMMANDER_KUBERNETES_PROOF_NAMESPACE:-commander-rollback-proof}"
 export COMMANDER_CAPABILITY_KEY_ID="pilot-capability-$(date -u +%Y%m%d%H%M%S)"
 export COMMANDER_EVIDENCE_SIGNING_KEY_ID="pilot-evidence-$(date -u +%Y%m%d%H%M%S)"
 export API_KEYS="${COMMANDER_API_KEY}:pilot:read;write;admin;actions:approve"
@@ -117,8 +118,16 @@ Use the sequence below for the Kubernetes template:
    restart it and call `commander_action_reconcile`.
 5. Confirm reconciliation reports the external outcome and zero writes during
    reconciliation.
-6. Call `commander_action_evidence` and verify the signed receipt in a separate
-   process.
+6. Call `commander_action_evidence`, save only its sanitized `receipt` object as
+   `receipt.json`, and verify it in a separate process:
+
+   ```bash
+   pnpm exec tsx scripts/verify-evidence.ts receipt.json \
+     --jwks "$PILOT_KEY_DIR/evidence-jwks.json"
+   ```
+
+   The verifier must print `{"ok":true}`. Never save the provider response,
+   request payload, or private key alongside the receipt.
 
 The deterministic external Agent Runtime acceptance is the no-key CI reference.
 The live provider smoke is an opt-in compatibility check and is not a CI gate.
@@ -127,9 +136,16 @@ The live provider smoke is an opt-in compatibility check and is not a CI gate.
 
 Before teardown, export the receipt hash and the sanitized verification result.
 Disable the tenant kill switch only after the action is terminal, then remove the
-dedicated stack and sandbox namespace using the deployment runbook. Keep only the
-sanitized evidence bundle; remove provider keys, raw payloads, and temporary
-credentials.
+dedicated stack and sandbox namespace using the deployment runbook:
+
+```bash
+docker compose -f deploy/docker/v2-compose.yml down -v --remove-orphans
+kubectl delete namespace "${COMMANDER_KUBERNETES_PROOF_NAMESPACE:?}" --ignore-not-found
+rm -rf "$PILOT_KEY_DIR"
+```
+
+Keep only the sanitized evidence bundle; remove provider keys, raw payloads, and
+temporary credentials.
 
 ## Acceptance rule
 
