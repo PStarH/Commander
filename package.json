@@ -101,7 +101,7 @@
     "docker:cell:down": "docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell down -v",
     "effect:io-guard": "pnpm exec tsx scripts/effect-io-guard.ts",
     "effect:io-guard:test": "pnpm exec node --import tsx --test scripts/effect-io-guard.test.ts",
-    "test:deploy-portability": "pnpm exec node --import tsx --test scripts/deploy-portability.test.ts",
+    "test:deploy-portability": "pnpm exec node --import tsx --test scripts/deploy-portability.test.ts scripts/g4-rotation-verify-ci.test.ts",
     "authority:inventory": "pnpm exec tsx scripts/legacy-authority-inventory.ts",
     "authority:inventory:test": "pnpm exec node --import tsx --test scripts/legacy-authority-inventory.test.ts",
     "verify:api:typecheck": "pnpm exec tsx scripts/api-typecheck-gate.ts",
