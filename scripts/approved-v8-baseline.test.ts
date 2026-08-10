@@ -4,10 +4,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import {
-  parseApprovedV8Baseline,
-  verifyApprovedV8Baseline,
-} from './approved-v8-baseline.js';
+import { parseApprovedV8Baseline, verifyApprovedV8Baseline } from './approved-v8-baseline.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -30,10 +27,7 @@ describe('approved v8 source baseline', () => {
   });
 
   it('verifies the tracked commit/tree from a clean detached worktree and records source digests', () => {
-    const fixturePath = resolve(
-      root,
-      'scripts/fixtures/helm-lifecycle/approved-v8-baseline.json',
-    );
+    const fixturePath = resolve(root, 'scripts/fixtures/helm-lifecycle/approved-v8-baseline.json');
     const manifest = parseApprovedV8Baseline(readFileSync(fixturePath, 'utf8'));
     const evidence = verifyApprovedV8Baseline(root, manifest);
 
@@ -58,11 +52,12 @@ describe('approved v8 source baseline', () => {
       encoding: 'utf8',
     }).trim();
     assert.throws(
-      () => verifyApprovedV8Baseline(root, {
-        format: 'commander.approved-v8-baseline/v1',
-        commitSha,
-        treeSha: '0'.repeat(40),
-      }),
+      () =>
+        verifyApprovedV8Baseline(root, {
+          format: 'commander.approved-v8-baseline/v1',
+          commitSha,
+          treeSha: '0'.repeat(40),
+        }),
       /APPROVED_V8_BASELINE_TREE_MISMATCH/,
     );
   });

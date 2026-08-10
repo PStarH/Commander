@@ -33,8 +33,7 @@ const CELL_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
       profiles: ['cell'],
     },
@@ -47,7 +46,8 @@ const CELL_FIXTURE: ComposeConfig = {
     },
     'adapter-ops': {
       environment: {
-        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        DATABASE_URL:
+          'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
         COMMANDER_WORKER_TENANTS: 'local',
         COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'local',
         COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
@@ -82,8 +82,7 @@ const V2_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
       profiles: ['v2'],
     },
@@ -96,7 +95,8 @@ const V2_FIXTURE: ComposeConfig = {
     },
     'adapter-ops': {
       environment: {
-        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        DATABASE_URL:
+          'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
         COMMANDER_WORKER_TENANTS: 'tenant-local',
         COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'local',
         COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
@@ -136,13 +136,13 @@ const V2_BENCH_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
     },
     'adapter-ops': {
       environment: {
-        DATABASE_URL: 'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
+        DATABASE_URL:
+          'postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander',
         COMMANDER_WORKER_TENANTS: 'tenant-0,tenant-1,tenant-2,tenant-3,tenant-4',
         COMMANDER_ADAPTER_OPS_INSTANCE_ID: 'bench',
         COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: '/var/run/commander/adapter-ops',
@@ -386,11 +386,7 @@ describe('compose source files (static drift guard)', () => {
       ['docker-compose.v2.yml', v2],
     ] as const) {
       assert.match(text, /commander_worker/, `${name} must reference commander_worker DSN`);
-      assert.match(
-        text,
-        /COMMANDER_WORKER_TENANTS/,
-        `${name} must set COMMANDER_WORKER_TENANTS`,
-      );
+      assert.match(text, /COMMANDER_WORKER_TENANTS/, `${name} must set COMMANDER_WORKER_TENANTS`);
       assert.doesNotMatch(
         text,
         /COMMANDER_WORKER_TENANTS\s*[:=]\s*['"]?\*/,

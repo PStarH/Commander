@@ -77,7 +77,8 @@ export function computeChartContentDigest(chartDirectory: string): string {
   const entries = collectFiles(root)
     .map((file) => ({ file, path: normalizedRelativePath(root, file) }))
     .sort((left, right) => Buffer.compare(Buffer.from(left.path), Buffer.from(right.path)));
-  if (!entries.some((entry) => entry.path === 'Chart.yaml')) fail('CHART_CONTENT_ANNOTATION_INVALID');
+  if (!entries.some((entry) => entry.path === 'Chart.yaml'))
+    fail('CHART_CONTENT_ANNOTATION_INVALID');
 
   const hash = createHash('sha256').update(PREFIX);
   for (const entry of entries) {

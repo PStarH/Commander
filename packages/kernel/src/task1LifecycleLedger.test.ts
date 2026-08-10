@@ -348,15 +348,16 @@ describe('Task 1 lifecycle operation ledger', () => {
     const fixture = ledger(lockedState(failed), []);
 
     await assert.rejects(
-      () => fixture.ledger.execute({
-        command: 'recover_runtime_after_enforce_failure',
-        platformBinding: composeBinding('enforce'),
-        businessConfiguration: { allowedTenants: ['caller'] },
-        descriptorSet: [],
-        verifyCurrent: async () => ({ status: 'absent' }),
-        verifyRecoveryPredecessor: async () => ({ status: 'absent' }),
-        applyTransition: async () => assert.fail('unproven predecessor must not write'),
-      }),
+      () =>
+        fixture.ledger.execute({
+          command: 'recover_runtime_after_enforce_failure',
+          platformBinding: composeBinding('enforce'),
+          businessConfiguration: { allowedTenants: ['caller'] },
+          descriptorSet: [],
+          verifyCurrent: async () => ({ status: 'absent' }),
+          verifyRecoveryPredecessor: async () => ({ status: 'absent' }),
+          applyTransition: async () => assert.fail('unproven predecessor must not write'),
+        }),
       /TENANT_CUTOVER_RECOVERY_PREDECESSOR_NOT_PROVEN/,
     );
     assert.equal(fixture.tx.appended.length, 0);
@@ -486,14 +487,17 @@ describe('Task 1 lifecycle operation ledger', () => {
         platformBinding: composeBinding(testCase.command === 'expand' ? 'expand' : 'enforce'),
         businessConfiguration: { allowlist: ['tenant-1'] },
         descriptorSet: ['lifecycle'],
-        legacyPredecessorArtifact: testCase.command === 'expand' ? {
-          kind: 'compose',
-          projectName: 'commander',
-          composeSourceSha256: digest('q'),
-          composeCliVersion: '5.3.1',
-          resolvedModelSha256: digest('r'),
-          imageDigest: `sha256:${digest('i')}`,
-        } : undefined,
+        legacyPredecessorArtifact:
+          testCase.command === 'expand'
+            ? {
+                kind: 'compose',
+                projectName: 'commander',
+                composeSourceSha256: digest('q'),
+                composeCliVersion: '5.3.1',
+                resolvedModelSha256: digest('r'),
+                imageDigest: `sha256:${digest('i')}`,
+              }
+            : undefined,
         applyTransition: async () => undefined,
       });
       assert.equal(result.action, 'append');
@@ -535,15 +539,38 @@ describe('Task 1 lifecycle operation ledger', () => {
       bootstrapSuperuser: { oid: '10', name: 'postgres', superuser: true, commanderNamed: false },
     };
     const inventory = {
-      format: 'prebootstrap_inventory/v1', postgresVersion: '16.14', catalogVersion: '202307071',
-      databaseIdentity: { oid: '16384', name: 'commander' }, ledger: null,
-      namespaces: [], relations: [], functions: [], types: [], extensions: [], policies: [], triggers: [],
-      productSources: [], productHasRows: [], roles: [], memberships: [], roleSettings: [],
-      databaseAcl: [], schemaAcls: [], defaultAcls: [], bootstrapIdentities,
+      format: 'prebootstrap_inventory/v1',
+      postgresVersion: '16.14',
+      catalogVersion: '202307071',
+      databaseIdentity: { oid: '16384', name: 'commander' },
+      ledger: null,
+      namespaces: [],
+      relations: [],
+      functions: [],
+      types: [],
+      extensions: [],
+      policies: [],
+      triggers: [],
+      productSources: [],
+      productHasRows: [],
+      roles: [],
+      memberships: [],
+      roleSettings: [],
+      databaseAcl: [],
+      schemaAcls: [],
+      defaultAcls: [],
+      bootstrapIdentities,
     };
     const snapshots = createPrebootstrapSnapshots(inventory, structuredClone(inventory));
     const origin = createOriginBinding(snapshots);
-    const roles = ['adapter-ops', 'app', 'owner', 'scheduler', 'tenant-authority', 'worker'] as const;
+    const roles = [
+      'adapter-ops',
+      'app',
+      'owner',
+      'scheduler',
+      'tenant-authority',
+      'worker',
+    ] as const;
     const peerInput = createDatabasePeerBindingInput({
       roles: roles.map((role) => ({ role, host: 'db.example', port: 5432 })),
       expectedServerSpkiSha256: digest('a'),
@@ -551,18 +578,24 @@ describe('Task 1 lifecycle operation ledger', () => {
     });
     const observed = createDatabasePeerBinding({
       roles: roles.map((role) => ({
-        role, host: 'db.example', port: 5432,
-        tlsServerSans: { dns: ['db.example'], ip: [] }, serverSpkiSha256: digest('a'),
-        databaseOid: '16384', databaseName: 'commander',
+        role,
+        host: 'db.example',
+        port: 5432,
+        tlsServerSans: { dns: ['db.example'], ip: [] },
+        serverSpkiSha256: digest('a'),
+        databaseOid: '16384',
+        databaseName: 'commander',
       })),
     });
     const calls: string[] = [];
     await verifyTask1FreshPendingRetry({
       state: {
-        databaseState: 'fresh_pending', pendingConfigurationSha256: digest('c'),
+        databaseState: 'fresh_pending',
+        pendingConfigurationSha256: digest('c'),
         prebootstrapSnapshotsJcs: canonicalBootstrapJson(snapshots),
         prebootstrapSnapshotsSha256: canonicalBootstrapSha256(snapshots),
-        originBindingJcs: canonicalBootstrapJson(origin), originBindingSha256: canonicalBootstrapSha256(origin),
+        originBindingJcs: canonicalBootstrapJson(origin),
+        originBindingSha256: canonicalBootstrapSha256(origin),
         databasePeerBindingInput: peerInput,
         databasePeerBindingJcs: canonicalBootstrapJson(observed),
         databasePeerBindingSha256: canonicalBootstrapSha256(observed),

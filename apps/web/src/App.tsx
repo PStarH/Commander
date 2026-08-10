@@ -25,6 +25,7 @@ import { OIDCSettingsPage } from './pages/OIDCSettingsPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { WorkflowsPage } from './pages/WorkflowsPage';
 import { POCPage } from './pages/POCPage';
+import { ResearchPage } from './pages/ResearchPage';
 import { ActionsPage } from './pages/ActionsPage';
 import { useWarRoom } from './hooks/useWarRoom';
 import { useAuth } from './hooks/useAuth';
@@ -160,6 +161,7 @@ export default function App() {
           <Route path="/settings/sso" element={<OIDCSettingsPage />} />
           <Route path="/workflows" element={<WorkflowsPage />} />
           <Route path="/poc" element={<POCPage />} />
+          <Route path="/research" element={<ResearchPage />} />
           <Route path="/actions" element={<ActionsPage token={auth.token!} />} />
         </Routes>
       </main>

@@ -30,9 +30,12 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
+import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+
+const nodeRequire = createRequire(import.meta.url);
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 
 // ============================================================================
@@ -547,7 +550,7 @@ export class SecurityAuditLogger {
   private publishToBus(event: SecurityEvent): void {
     try {
       // Dynamic import to avoid circular dependencies
-      const { getMessageBus } = require('../runtime/messageBus');
+      const { getMessageBus } = nodeRequire('../runtime/messageBus');
       const bus = getMessageBus();
       bus.publish('security.event', 'SecurityAudit', event, {
         priority: event.severity === 'critical' ? 0 : event.severity === 'high' ? 1 : 3,

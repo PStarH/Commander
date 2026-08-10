@@ -2,6 +2,10 @@
 
 5 分钟内在本地跑起来，并通过 CLI 或 Web Console 运行第一个多代理任务。
 
+> **Alpha / 非生产就绪：** 本文是开发与评估路径。provider-backed 任务会把 prompt
+> 发送给你选择的提供商；模拟结果会明确标识，不能当作真实执行或生产证据。详见
+> [`PRIVACY.md`](../PRIVACY.md)。
+
 下文默认是 **Local CLI / 本地单机** 路径。Enterprise Gateway（`/v1` + Postgres）见英文 `README.md` SKU 表与 `ENTERPRISE_READINESS.md`，状态为 **alpha**。
 
 ---
@@ -56,7 +60,7 @@ export DEEPSEEK_API_KEY=sk-...
 pnpm gui
 ```
 
-这会同时启动 API server（`:4000`）和 Web 界面（`:3000`），并尝试自动打开浏览器。
+这会同时启动 API server（`:4000`）和 Web 界面（`:5173`），并尝试自动打开浏览器。
 
 ### 方式 B：终端 CLI
 
@@ -97,7 +101,7 @@ pnpm --filter @commander/core test:quick
 
 - 查看架构概览：`docs/architecture/`
 - 查看 CLI 全部命令：`pnpm exec tsx packages/core/src/cliEntry.ts --help`
-- 查看 OpenAPI 规范：启动 API 后访问 http://localhost:4000/openapi.json
+- 查看 OpenAPI 规范：启动 API 后访问 http://localhost:4000/v1/openapi.json（标准 profile 也支持 `/api/openapi.json`）
 
 ---
 

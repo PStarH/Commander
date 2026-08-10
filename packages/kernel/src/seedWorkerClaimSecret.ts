@@ -52,6 +52,25 @@ export async function seedWorkerAllowedTenants(
   }
 }
 
+/** Seed the Task 1 tenant-authority allowlist from the owner/migration path only. */
+export async function seedTenantAuthorityAllowedTenants(
+  client: ClaimSecretSeedClient,
+  tenantIds: readonly string[],
+): Promise<void> {
+  for (const tenantId of tenantIds) {
+    const trimmed = tenantId.trim();
+    if (!trimmed || trimmed === '*') {
+      throw new Error(`TENANT_AUTHORITY_ALLOWED_TENANT_INVALID: refusing to seed '${tenantId}'`);
+    }
+    await client.query(
+      `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id, enabled)
+       VALUES ($1, true)
+       ON CONFLICT (tenant_id) DO UPDATE SET enabled = true`,
+      [trimmed],
+    );
+  }
+}
+
 /**
  * Owner/test helper: insert claim-secret hash for a worker row.
  * Used by integration / rls-live-fire / authority proof when workers are

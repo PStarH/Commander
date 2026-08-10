@@ -1400,6 +1400,187 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
+  it('exports signed evidence for compensation runs without forward action metadata', async () => {
+    const gateway = new InMemoryGateway();
+    const compensationRunId = 'compensation-run-evidence';
+    const compensationEffectId = 'effect-compensation-evidence';
+    const compensationActionDigest = 'c'.repeat(64);
+    const authorization = {
+      schema: 'commander.compensation/v1',
+      tenantId: 'tenant-a',
+      originalRunId: 'forward-run-evidence',
+      originalEffectId: 'effect-forward-evidence',
+      compensationRunId,
+      compensationEffectId,
+      actionDigest: compensationActionDigest,
+    };
+    const compensationRun = {
+      id: compensationRunId,
+      tenantId: 'tenant-a',
+      intentHash: 'compensation-intent',
+      workGraphHash: 'compensation-graph',
+      workGraphVersion: 'compensation/v1',
+      state: 'SUCCEEDED' as const,
+      version: 1,
+      policySnapshotId: 'action-gateway-mvp-v1',
+      createdAt: '2026-07-17T06:00:00.000Z',
+      updatedAt: '2026-07-17T06:00:04.000Z',
+      terminalAt: '2026-07-17T06:00:04.000Z',
+      metadata: { compensation: { authorization } },
+    };
+    const originalGetRun = gateway.getRun.bind(gateway);
+    gateway.getRun = async (runId, tenantId) =>
+      runId === compensationRunId && tenantId === 'tenant-a'
+        ? compensationRun
+        : originalGetRun(runId, tenantId);
+    const originalGetEffect = gateway.getEffect.bind(gateway);
+    const compensationEffect = {
+      id: compensationEffectId,
+      runId: compensationRunId,
+      stepId: 'step-compensation-evidence',
+      tenantId: 'tenant-a',
+      type: 'compensate.demo.ticket.create',
+      idempotencyKey: 'cmp:effect-forward-evidence:1.0.0',
+      requestHash: 'r'.repeat(64),
+      policyDecisionId: 'compensation-allow',
+      policySnapshotId: compensationRun.policySnapshotId,
+      actionDigest: compensationActionDigest,
+      leaseWorkerId: 'worker-compensation-evidence',
+      leaseWorkerGeneration: 1,
+      leaseFencingEpoch: 1,
+      state: 'COMPLETED' as const,
+      request: {},
+      response: {},
+      createdAt: compensationRun.createdAt,
+      completedAt: compensationRun.updatedAt,
+      reconcileAttempts: 0,
+      governedActionDeadlineAt: null,
+      reconcilePolicy: null,
+      reconcileDisposition: null,
+      reconcileAfter: null,
+      reconcileObservedAt: null,
+      reconcileClaimToken: null,
+      reconcileClaimExpiresAt: null,
+      reconcileClaimedAt: null,
+      reconcileClaimWorkerId: null,
+      reconcileClaimWorkerGeneration: null,
+      reconcileLastError: null,
+      reconcileEscalatedAt: null,
+      reconcileEscalationCode: null,
+    };
+    gateway.getEffect = async (effectId, tenantId) =>
+      effectId === compensationEffectId && tenantId === 'tenant-a'
+        ? compensationEffect
+        : originalGetEffect(effectId, tenantId);
+    const originalListEffects = gateway.listEffects.bind(gateway);
+    gateway.listEffects = async (runId, tenantId) =>
+      runId === compensationRunId && tenantId === 'tenant-a'
+        ? [compensationEffect]
+        : originalListEffects(runId, tenantId);
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const signer = createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId: 'cell-compensation-evidence-1',
+    });
+    const body = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId: compensationRunId,
+      actionDigest: compensationActionDigest,
+      policySnapshotId: compensationRun.policySnapshotId,
+      effects: [],
+      exportedAt: '2026-07-17T06:00:02.000Z',
+      bundleId: 'bundle-compensation-evidence',
+    });
+    const signature = await signer.sign(canonicalEvidenceBody(body));
+    gateway.evidence.set(`tenant-a\u0000${compensationRunId}`, {
+      tenantId: 'tenant-a',
+      runId: compensationRunId,
+      bundleId: body.bundleId,
+      actionDigest: body.actionDigest,
+      body,
+      contentHash: body.contentHash,
+      signature,
+      createdAt: body.exportedAt,
+      anchoredAt: '2026-07-17T06:00:04.000Z',
+      retentionUntil: '2027-07-17T06:00:04.000Z',
+    });
+
+    await withEvidenceJwks(signer.jwks, () =>
+      withGateway(gateway, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/v1/actions/${compensationRunId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as any;
+        assert.equal(payload.receipt.scope.runId, compensationRunId);
+        assert.equal(payload.verification.ok, true);
+      }),
+    );
+  });
+
+  it('does not expose evidence for a run without governed compensation binding', async () => {
+    const gateway = new InMemoryGateway();
+    const runId = 'unbound-evidence-run';
+    const run = {
+      id: runId,
+      tenantId: 'tenant-a',
+      intentHash: 'intent-unbound',
+      workGraphHash: 'graph-unbound',
+      workGraphVersion: 'generic/v1',
+      state: 'SUCCEEDED' as const,
+      version: 1,
+      policySnapshotId: 'action-gateway-mvp-v1',
+      createdAt: '2026-07-17T06:00:00.000Z',
+      updatedAt: '2026-07-17T06:00:04.000Z',
+      terminalAt: '2026-07-17T06:00:04.000Z',
+      metadata: { compensationRequestId: 'unbound-request' },
+    };
+    const originalGetRun = gateway.getRun.bind(gateway);
+    gateway.getRun = async (requestedRunId, tenantId) =>
+      requestedRunId === runId && tenantId === 'tenant-a'
+        ? run
+        : originalGetRun(requestedRunId, tenantId);
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const signer = createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId: 'cell-unbound-evidence-1',
+    });
+    const body = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId,
+      actionDigest: 'd'.repeat(64),
+      policySnapshotId: run.policySnapshotId,
+      effects: [],
+      exportedAt: '2026-07-17T06:00:02.000Z',
+      bundleId: 'bundle-unbound-evidence',
+    });
+    const signature = await signer.sign(canonicalEvidenceBody(body));
+    gateway.evidence.set(`tenant-a\u0000${runId}`, {
+      tenantId: 'tenant-a',
+      runId,
+      bundleId: body.bundleId,
+      actionDigest: body.actionDigest,
+      body,
+      contentHash: body.contentHash,
+      signature,
+      createdAt: body.exportedAt,
+      anchoredAt: '2026-07-17T06:00:04.000Z',
+      retentionUntil: '2027-07-17T06:00:04.000Z',
+    });
+
+    await withEvidenceJwks(signer.jwks, () =>
+      withGateway(gateway, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/v1/actions/${runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(response.status, 404);
+        assert.deepEqual(await response.json(), {
+          error: { code: 'ACTION_NOT_FOUND', message: 'Action was not found.' },
+        });
+      }),
+    );
+  });
+
   it('rejects persisted evidence whose body scope is not bound to the requested tenant', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {

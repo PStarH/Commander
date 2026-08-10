@@ -7,7 +7,7 @@ type JsonRecord = Record<string, unknown>;
 
 const AUDIENCE = 'commander-tenant-cutover-proof/v1';
 const PROOF_PATH = '/ready/tenant-authority/v1';
-const PROOF_PORT_NAME = 'tenant-authority-proof';
+const PROOF_PORT_NAME = 'tenant-proof';
 const PROOF_TOKEN_VOLUME = 'proof-api-token';
 const PROOF_TOKEN_MOUNT = '/var/run/secrets/commander.io/proof-api';
 const PROOF_TOKEN_PATH = 'token';

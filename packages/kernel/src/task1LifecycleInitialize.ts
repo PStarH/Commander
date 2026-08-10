@@ -29,10 +29,7 @@ import {
 } from './task1Catalog.js';
 import { observeTask1DatabasePeers } from './task1DatabasePeer.js';
 import type { Task1OwnerPreparedRequest } from './task1LifecycleOwnerCommand.js';
-import {
-  KERNEL_TASK1_BASELINE_MIGRATIONS,
-  KERNEL_TASK1_CLOSURE_MIGRATIONS,
-} from './migrations.js';
+import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
 import type { SqlClient } from './postgres.js';
 
 const ROLE_URL_ENV = {
@@ -542,9 +539,10 @@ export function instantiateTask1BaselineManifestSha256(
 
 function assertExactLegacyLedger(inventory: PrebootstrapInventoryV1): void {
   if (inventory.ledger === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
-  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({ id, checksum })).sort(
-    (left, right) => left.id.localeCompare(right.id),
-  );
+  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({
+    id,
+    checksum,
+  })).sort((left, right) => left.id.localeCompare(right.id));
   const actual = inventory.ledger
     .map((row) => ({ id: String(row.id), checksum: String(row.checksum) }))
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -579,9 +577,10 @@ async function exactLedgerRows(
 }
 
 function assertExactLedgerRows(rows: Array<{ id: string; checksum: string }>): void {
-  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({ id, checksum })).sort(
-    (left, right) => left.id.localeCompare(right.id),
-  );
+  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({
+    id,
+    checksum,
+  })).sort((left, right) => left.id.localeCompare(right.id));
   const actual = [...rows].sort((left, right) => left.id.localeCompare(right.id));
   if (canonicalBootstrapJson(actual) !== canonicalBootstrapJson(expected)) {
     throw new Error('MIGRATION_LEDGER_TAMPERED');

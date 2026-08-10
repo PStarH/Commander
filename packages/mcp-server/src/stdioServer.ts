@@ -38,6 +38,8 @@ export interface StdioMcpServerOptions {
   actionGatewayUrl?: string;
   /** Override Action Gateway API key (defaults to COMMANDER_API_KEY). */
   actionGatewayApiKey?: string;
+  /** Override Action Gateway tenant header (defaults to COMMANDER_TENANT_ID). */
+  actionGatewayTenantId?: string;
   /** Inject a custom Action Gateway executor (used by tests). */
   actionGatewayExecutor?: ActionGatewayExecutor | McpActionGatewayExecutor;
 }
@@ -567,6 +569,7 @@ function resolveMcpActionGatewayExecutor(
   return createFetchMcpActionGatewayExecutor({
     baseUrl,
     apiKey: options.actionGatewayApiKey ?? process.env.COMMANDER_API_KEY,
+    tenantId: options.actionGatewayTenantId ?? process.env.COMMANDER_TENANT_ID,
   });
 }
 
@@ -585,6 +588,7 @@ function isCoreActionGatewayExecutor(
 export function createFetchMcpActionGatewayExecutor(options: {
   baseUrl: string;
   apiKey?: string;
+  tenantId?: string;
   fetch?: typeof globalThis.fetch;
 }): McpActionGatewayExecutor {
   const fetchImpl = options.fetch ?? globalThis.fetch;
@@ -595,7 +599,11 @@ export function createFetchMcpActionGatewayExecutor(options: {
       const headers = new Headers(input.headers);
       headers.set('accept', 'application/json');
       if (input.body) headers.set('content-type', 'application/json');
-      if (options.apiKey) headers.set('authorization', `Bearer ${options.apiKey}`);
+      // Static Commander API keys use X-API-Key. Authorization: Bearer is
+      // reserved for JWT access tokens and is rejected by enterprise /v1 JWT
+      // middleware before the API-key middleware can inspect it.
+      if (options.apiKey) headers.set('x-api-key', options.apiKey);
+      if (options.tenantId) headers.set('x-tenant-id', options.tenantId);
       const response = await fetchImpl(`${baseUrl}${input.path}`, {
         method: input.method,
         headers,

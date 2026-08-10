@@ -20,6 +20,7 @@
   },
   "workspaces": [
     "apps/*",
+    "integrations/*",
     "packages/*"
   ],
   "scripts": {
@@ -28,6 +29,8 @@
     "build:production": "pnpm --filter @commander/core build:production",
     "build:mcp-server": "pnpm --filter @commander/mcp-server build",
     "test:mcp-server": "pnpm --filter @commander/mcp-server test",
+    "test:openai-agents-mcp": "pnpm --filter @commander/openai-agents-mcp test",
+    "typecheck:openai-agents-mcp": "pnpm --filter @commander/openai-agents-mcp typecheck",
     "publish:mcp-server": "pnpm --filter @commander/mcp-server publish --access public --no-git-checks",
     "release:mcp-server": "pnpm run build:mcp-server && pnpm run test:mcp-server && pnpm run publish:mcp-server",
     "dev:api": "pnpm --filter api dev",
@@ -132,6 +135,7 @@
     "test:deploy-gates": "pnpm authority:inventory:test && pnpm authority:inventory && pnpm test:deploy-portability && pnpm test:postgres-runtime && pnpm test:postgres-pool-bypass && pnpm test:task1 && pnpm test:compose:tenant-cutover && pnpm test:helm:lifecycle:static && pnpm helm:cell-assert && pnpm exec node --import tsx --test scripts/compose-role-assert.test.ts scripts/postgres-role-init-parity.test.ts && env -u COMMANDER_KERNEL_DATABASE_URL -u DATABASE_URL pnpm --filter @commander/adapter-ops test && pnpm exec node --import tsx --test apps/api/test/kernelEnabled.test.ts && pnpm exec node --import tsx --test scripts/helm-cell-assert.test.ts scripts/l4-b-cell-smoke.test.ts scripts/dr-backup-verify.test.ts && pnpm effect:io-guard:test && pnpm effect:io-guard && pnpm rotate:verify --json && pnpm exec tsx scripts/ci-restore-deploy-gate-roles.ts && pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full && pnpm proof:authority",
     "dr:verify": "pnpm exec tsx scripts/dr-backup-verify.ts --full",
     "design-partner:proof": "pnpm exec tsx scripts/design-partner-proof.ts",
+    "launch:verify": "pnpm exec tsx scripts/launch-verify.ts",
     "p0:kernel-e2e": "pnpm exec tsx scripts/p0-kernel-e2e.ts",
     "p0:kernel-pg": "pnpm exec tsx --test --test-force-exit packages/kernel/src/postgres.integration.test.ts packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts",
     "proof:authority": "pnpm exec tsx scripts/authority-closure-proof.ts",
@@ -144,10 +148,10 @@
     "demo:l4-a": "NODE_PATH=apps/api/node_modules pnpm exec tsx scripts/l4-a-golden-demo.ts",
     "publish:core": "cd packages/core && pnpm publish --access public --no-git-checks",
     "release:core": "pnpm claim:gate:test && pnpm claim:gate && pnpm run build:core && pnpm run test:core && pnpm run publish:core",
-    "lint": "npx eslint packages/core/src packages/kernel/src && pnpm run format:check && cd packages/core && npx tsc --noEmit",
+    "lint": "npx eslint packages/core/src packages/kernel/src && pnpm run format:check && pnpm --dir packages/core exec tsc --noEmit",
     "lint:eslint": "npx eslint packages/core/src packages/kernel/src",
     "lint:prettier": "pnpm run format:check",
-    "prepublish": "cd packages/core && npx tsc -p tsconfig.json",
+    "prepublish": "pnpm --dir packages/core exec tsc -p tsconfig.json",
     "format": "npx prettier --write \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"packages/kernel/src/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
     "format:check": "npx prettier --check \"packages/core/src/**/*.ts\" \"packages/core/tests/**/*.ts\" \"packages/kernel/src/**/*.ts\" \"apps/api/src/**/*.ts\" \"apps/web/src/**/*.{ts,tsx}\" \"scripts/**/*.ts\"",
     "cell:smoke": "pnpm exec tsx scripts/l4-b-cell-smoke.ts",
@@ -186,8 +190,9 @@
     "overrides": {
       "esbuild@<=0.24.2": ">=0.25.0",
       "path-to-regexp@<0.1.13": "0.1.13",
-      "brace-expansion": "5.0.8",
+      "brace-expansion": "5.0.9",
       "brace-expansion@<1.1.13": ">=1.1.13",
+      "nanoid@<3.3.17": "3.3.17",
       "minimatch@<4.0.0": "10.2.5",
       "picomatch@<2.3.2": ">=2.3.2",
       "vite@<=6.4.1": ">=6.4.2",

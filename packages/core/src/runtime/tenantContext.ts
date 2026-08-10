@@ -9,17 +9,19 @@
  * must still key their data by tenant. The helpers below make that easier.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createRequire } from 'node:module';
 // NOTE: getGlobalTenantProvider is imported lazily to break a value-import
 // cycle: tenantProvider → tenantContext → tenantProvider. Loading it at
 // module load time creates a circular dependency. The lazy wrapper resolves
 // it on first use.
 let _getGlobalTenantProvider: typeof import('./tenantProvider').getGlobalTenantProvider | null =
   null;
+const nodeRequire = createRequire(import.meta.url);
 function getGlobalTenantProviderLazy(): ReturnType<
   typeof import('./tenantProvider').getGlobalTenantProvider
 > {
   if (!_getGlobalTenantProvider) {
-    _getGlobalTenantProvider = require('./tenantProvider').getGlobalTenantProvider;
+    _getGlobalTenantProvider = nodeRequire('./tenantProvider').getGlobalTenantProvider;
   }
   return _getGlobalTenantProvider!();
 }

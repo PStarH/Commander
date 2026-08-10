@@ -5,7 +5,7 @@ external security researchers participating in Commander's red team program.
 
 Commander runs a tiered defense strategy:
 
-1. **In-tree automated red team** (`runRedTeamBattery.ts`) — 54+ scenarios
+1. **In-tree automated red team** (`runRedTeamBattery.ts`) — 47 scenarios
    covering prompt injection, jailbreak, data exfiltration, agent jacking,
    tool abuse, memory poisoning, denial of wallet, supply chain, multi-tenant
    isolation, and plugin supply chain attacks.

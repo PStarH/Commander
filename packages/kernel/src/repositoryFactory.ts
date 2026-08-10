@@ -98,11 +98,21 @@ export async function createKernelRepository(
   }
 
   const schedulerMode = env.COMMANDER_KERNEL_SCHEDULER_MODE === '1';
-  const tenantContextPhase = env.COMMANDER_TENANT_CONTEXT_PHASE?.trim();
-  if (tenantContextPhase && tenantContextPhase !== 'expand' && tenantContextPhase !== 'enforce') {
+  const configuredTenantContextPhase = env.COMMANDER_TENANT_CONTEXT_PHASE?.trim();
+  if (
+    configuredTenantContextPhase &&
+    configuredTenantContextPhase !== 'expand' &&
+    configuredTenantContextPhase !== 'enforce'
+  ) {
     throw new KernelBackendMissingError('COMMANDER_TENANT_CONTEXT_PHASE must be expand or enforce');
   }
-  const authorityUrl = env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL?.trim();
+  // Adapter-ops authenticates as commander_adapter_ops and uses owner-owned
+  // aggregate RPCs. It must never enter the app-only tenant-context protocol,
+  // even when launched with a shared environment containing API settings.
+  const tenantContextPhase = options.adapterOpsMode ? undefined : configuredTenantContextPhase;
+  const authorityUrl = tenantContextPhase
+    ? env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL?.trim()
+    : undefined;
   if (tenantContextPhase && !authorityUrl) {
     throw new KernelBackendMissingError(
       'COMMANDER_TENANT_AUTHORITY_DATABASE_URL is required when tenant context is enabled',
@@ -115,9 +125,12 @@ export async function createKernelRepository(
       ? createVerifiedPostgresPool(
           {
             connectionString: authorityUrl!,
-            max: 2,
-            connectionTimeoutMillis: 2_000,
-            query_timeout: 2_000,
+            // API reads render an action from several tenant-scoped transactions
+            // concurrently. Keep enough authority sessions for that fan-out while
+            // retaining bounded connection and query waits during database faults.
+            max: 4,
+            connectionTimeoutMillis: 5_000,
+            query_timeout: 5_000,
           },
           env,
         )

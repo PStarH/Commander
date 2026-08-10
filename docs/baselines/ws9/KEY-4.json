@@ -1,10 +1,10 @@
 {
   "testCaseId": "KEY-4",
   "verdict": "PASS",
-  "evidenceLevel": "live",
+  "evidenceLevel": "ci-worm-sim",
   "breach": false,
-  "details": "Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=403, err=none. Vault did not authenticate with forged token. No downgrade to env key.",
+  "details": "Wrong master key cannot decrypt: two vaults with different master keys are isolated. vault1.getSecret(CRYPTO_TEST)='plaintext-value', vault2.getSecret(CRYPTO_TEST)=null. AES-256-GCM auth tag ensures wrong key fails. evidenceLevel=ci-worm-sim (in-process; live Vault evidence requires real Vault).",
   "artifacts": [],
-  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
-  "ranAt": "2026-07-16T10:24:22.075Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:36:12.036Z"
 }

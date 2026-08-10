@@ -40,11 +40,30 @@ function tlsFixture(): { directory: string; cert: Buffer; key: Buffer } {
   const directory = mkdtempSync(join(tmpdir(), 'commander-kube-proof-'));
   const keyFile = join(directory, 'tls.key');
   const certFile = join(directory, 'tls.crt');
-  execFileSync('openssl', [
-    'req', '-x509', '-new', '-nodes', '-newkey', 'ec', '-pkeyopt',
-    'ec_paramgen_curve:P-256', '-days', '2', '-subj', '/CN=localhost',
-    '-addext', 'subjectAltName=DNS:localhost', '-keyout', keyFile, '-out', certFile,
-  ], { stdio: 'ignore' });
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-new',
+      '-nodes',
+      '-newkey',
+      'ec',
+      '-pkeyopt',
+      'ec_paramgen_curve:P-256',
+      '-days',
+      '2',
+      '-subj',
+      '/CN=localhost',
+      '-addext',
+      'subjectAltName=DNS:localhost',
+      '-keyout',
+      keyFile,
+      '-out',
+      certFile,
+    ],
+    { stdio: 'ignore' },
+  );
   return { directory, cert: readFileSync(certFile), key: readFileSync(keyFile) };
 }
 
@@ -63,7 +82,8 @@ describe('Task 1 Kubernetes proof runtime', () => {
       /TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID/,
     );
     assert.throws(
-      () => parseTask1ProjectedTokenIdentity(token({ sub: 'system:serviceaccount:commander:default' })),
+      () =>
+        parseTask1ProjectedTokenIdentity(token({ sub: 'system:serviceaccount:commander:default' })),
       /TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID/,
     );
   });
@@ -90,16 +110,27 @@ describe('Task 1 Kubernetes proof runtime', () => {
         readToken: async () => token(),
         readCa: async () => fixture.cert,
       });
-      assert.deepEqual(await api.read({
-        resource: 'service', namespace: 'commander', name: 'release-a-api-proof', audience,
-      }), { metadata: { name: 'release-a-api-proof' } });
-      assert.deepEqual(await api.read({
-        resource: 'pods', namespace: 'commander', audience,
-        selector: {
-          'app.kubernetes.io/instance': 'release-a',
-          'app.kubernetes.io/component': 'api',
-        },
-      }), { metadata: { name: 'release-a-api-proof' } });
+      assert.deepEqual(
+        await api.read({
+          resource: 'service',
+          namespace: 'commander',
+          name: 'release-a-api-proof',
+          audience,
+        }),
+        { metadata: { name: 'release-a-api-proof' } },
+      );
+      assert.deepEqual(
+        await api.read({
+          resource: 'pods',
+          namespace: 'commander',
+          audience,
+          selector: {
+            'app.kubernetes.io/instance': 'release-a',
+            'app.kubernetes.io/component': 'api',
+          },
+        }),
+        { metadata: { name: 'release-a-api-proof' } },
+      );
       assert.deepEqual(requests, [
         {
           url: '/api/v1/namespaces/commander/services/release-a-api-proof',
@@ -115,7 +146,9 @@ describe('Task 1 Kubernetes proof runtime', () => {
         /TENANT_CUTOVER_KUBERNETES_REQUEST_INVALID/,
       );
     } finally {
-      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
       rmSync(fixture.directory, { recursive: true, force: true });
     }
   });

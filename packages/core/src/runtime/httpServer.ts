@@ -231,8 +231,10 @@ export class CommanderHttpServer {
   private config: HttpServerConfig;
   private server:
     ReturnType<typeof createNodeHttpServer> | ReturnType<typeof createHttpsServer> | null = null;
-  private runtimes: Map<string, { runtime: AgentRuntimeInterface; lastAccessedAt: number }> =
-    new Map();
+  private runtimes: Map<
+    string,
+    { runtime: AgentRuntimeInterface; lastAccessedAt: number; tenantId?: string }
+  > = new Map();
   private bus = getMessageBus();
   private mcpServer: MCPServer | null = null;
   // Rate limiting: IP → { count, resetAt }
@@ -728,6 +730,14 @@ export class CommanderHttpServer {
     // Explicit auth-disabled mode remains the local-development escape hatch.
     if (authResult.success) return true;
 
+    // A mapped tenant key is also a valid outer authentication credential.
+    // `requireTenant` still resolves the tenant and enforces the tenant gate in
+    // multi-tenant mode; this check only prevents the request from being
+    // rejected before it reaches that route-level authorization.
+    if (resolveTenantFromAuthGate(req, this.tenantApiKeyHashes)) {
+      return true;
+    }
+
     // If auth plugins are registered, try async OIDC authentication
     if (this.authPlugins.length > 0) {
       const bearerToken = extractAuthKey(req);
@@ -1143,9 +1153,11 @@ export class CommanderHttpServer {
       }
 
       const [, resource] = segments;
-      const id = segments[3];
+      const id = segments[2];
       if (resource === 'runtime') {
         if (method === 'POST') {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
           const rawBody = await parseBody(req, this.config.maxBodyBytes);
           const body = validateOrThrow<{
             sessionId?: string;
@@ -1157,16 +1169,19 @@ export class CommanderHttpServer {
           }>(rawBody, Schemas.createRuntime);
           const sessionId = body.sessionId ?? `session_${Date.now()}`;
           const runtime = this.createRuntime(body.provider ?? 'openai');
-          this.runtimes.set(sessionId, { runtime, lastAccessedAt: Date.now() });
+          this.runtimes.set(sessionId, { runtime, lastAccessedAt: Date.now(), tenantId });
           sendJson(res, 201, { sessionId, status: 'created' });
           return;
         }
         if (id) {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
           const entry = this.runtimes.get(id);
           if (!entry) {
             sendJson(res, 404, { error: 'Session not found' });
             return;
           }
+          if (!this.assertTenantAccess(res, tenantId, entry.tenantId, req.url ?? '')) return;
           entry.lastAccessedAt = Date.now();
           if (method === 'GET') {
             sendJson(res, 200, {
@@ -1428,23 +1443,36 @@ export class CommanderHttpServer {
       }
       if (resource === 'bus') {
         if (method === 'GET') {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
           const topic = queryStr
             ? (new URLSearchParams(queryStr).get('topic') ?? undefined)
             : undefined;
-          sendJson(res, 200, {
-            topics: this.bus.getActiveTopics(),
-            history: this.bus
-              .getHistory(topic as MessageBusTopic | undefined, 50)
-              .map((m) => ({ topic: m.topic, source: m.source, timestamp: m.timestamp })),
+          await runWithTenant(tenantId, async () => {
+            const bus = getMessageBus();
+            sendJson(res, 200, {
+              topics: bus.getActiveTopics(),
+              history: bus
+                .getHistory(topic as MessageBusTopic | undefined, 50)
+                .map((m) => ({ topic: m.topic, source: m.source, timestamp: m.timestamp })),
+            });
           });
           return;
         }
       }
       if (resource === 'status') {
-        sendJson(res, 200, {
-          activeSessions: this.runtimes.size,
-          busTopics: this.bus.getActiveTopics(),
-          subscriberCounts: this.bus.getAllSubscriberCounts(),
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        await runWithTenant(tenantId, async () => {
+          const bus = getMessageBus();
+          const activeSessions = tenantId
+            ? [...this.runtimes.values()].filter((entry) => entry.tenantId === tenantId).length
+            : this.runtimes.size;
+          sendJson(res, 200, {
+            activeSessions,
+            busTopics: bus.getActiveTopics(),
+            subscriberCounts: bus.getAllSubscriberCounts(),
+          });
         });
         return;
       }
@@ -1461,7 +1489,11 @@ export class CommanderHttpServer {
       }
       if (resource === 'compensation' && method === 'GET') {
         // GET /api/v1/compensation — JSON compensation metrics snapshot
-        sendJson(res, 200, getCompensationData(this.bus));
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        await runWithTenant(tenantId, async () => {
+          sendJson(res, 200, getCompensationData(getMessageBus()));
+        });
         return;
       }
       if (resource === 'sops') {
@@ -1474,37 +1506,41 @@ export class CommanderHttpServer {
         // the /.commander/sops disk-scan no longer blocks the event loop
         // for the duration of a multi-agent directory listing.
         if (method === 'GET') {
-          // Skip 'v1' and 'sops' (2 elements) to get agentId, runId, format
-          const [, , agentId, runId, format] = segments;
-          if (!agentId) {
-            const data = await getSOPDashboardDataAsync();
-            sendJson(res, 200, data);
-            return;
-          }
-          if (!runId) {
-            // List SOPs for a specific agent
-            const allSops = await listSOPsAsync();
-            const filtered = allSops.filter((s) => s.agentId === agentId);
-            sendJson(res, 200, { agentId, sops: filtered, total: filtered.length });
-            return;
-          }
-          if (format === 'markdown') {
-            const md = await getSOPMarkdownAsync(agentId, runId);
-            if (!md) {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
+          await runWithTenant(tenantId, async () => {
+            // Skip 'v1' and 'sops' (2 elements) to get agentId, runId, format
+            const [, , agentId, runId, format] = segments;
+            if (!agentId) {
+              const data = await getSOPDashboardDataAsync();
+              sendJson(res, 200, data);
+              return;
+            }
+            if (!runId) {
+              // List SOPs for a specific agent
+              const allSops = await listSOPsAsync();
+              const filtered = allSops.filter((s) => s.agentId === agentId);
+              sendJson(res, 200, { agentId, sops: filtered, total: filtered.length });
+              return;
+            }
+            if (format === 'markdown') {
+              const md = await getSOPMarkdownAsync(agentId, runId);
+              if (!md) {
+                sendJson(res, 404, { error: 'SOP not found' });
+                return;
+              }
+              res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
+              res.end(md);
+              return;
+            }
+            // Default: return structured JSON
+            const sop = await getSOPAsync(agentId, runId);
+            if (!sop) {
               sendJson(res, 404, { error: 'SOP not found' });
               return;
             }
-            res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
-            res.end(md);
-            return;
-          }
-          // Default: return structured JSON
-          const sop = await getSOPAsync(agentId, runId);
-          if (!sop) {
-            sendJson(res, 404, { error: 'SOP not found' });
-            return;
-          }
-          sendJson(res, 200, sop);
+            sendJson(res, 200, sop);
+          });
           return;
         }
       }
@@ -1551,16 +1587,19 @@ export class CommanderHttpServer {
     res: ServerResponse,
     segments: string[],
   ): Promise<void> {
-    const [, resource, id] = segments;
+    const [resource, id] = segments;
     if (resource !== 'runtime' || !id) {
       sendJson(res, 404, { error: 'Not found' });
       return;
     }
+    const tenantId = this.requireTenant(req, res);
+    if (res.writableEnded) return;
     const entry = this.runtimes.get(id);
     if (!entry) {
       sendJson(res, 404, { error: 'Session not found' });
       return;
     }
+    if (!this.assertTenantAccess(res, tenantId, entry.tenantId, req.url ?? '')) return;
 
     // SSE per-IP connection limit
     const ip = req.socket.remoteAddress ?? 'unknown';
@@ -1575,34 +1614,37 @@ export class CommanderHttpServer {
     }
     ipConns.add(res);
 
-    entry.lastAccessedAt = Date.now();
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    });
-    const stream = new SSEStream();
-    stream.pipe(res);
-    stream.emitStatus('session.started', id);
-    const unsubStart = this.bus.subscribe('agent.started', () => {
-      stream.emitStatus('agent.started');
-    });
-    const unsubComplete = this.bus.subscribe('agent.completed', () => {
-      stream.emitStatus('agent.completed');
-    });
-    const unsubError = this.bus.subscribe('agent.failed', () => {
-      stream.emitStatus('agent.error');
-    });
-    req.on('close', () => {
-      unsubStart();
-      unsubComplete();
-      unsubError();
-      stream.close();
-      const conns = this.sseConnections.get(ip);
-      if (conns) {
-        conns.delete(res);
-        if (conns.size === 0) this.sseConnections.delete(ip);
-      }
+    await runWithTenant(tenantId, async () => {
+      entry.lastAccessedAt = Date.now();
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      const bus = getMessageBus();
+      const stream = new SSEStream();
+      stream.pipe(res);
+      stream.emitStatus('session.started', id);
+      const unsubStart = bus.subscribe('agent.started', () => {
+        stream.emitStatus('agent.started');
+      });
+      const unsubComplete = bus.subscribe('agent.completed', () => {
+        stream.emitStatus('agent.completed');
+      });
+      const unsubError = bus.subscribe('agent.failed', () => {
+        stream.emitStatus('agent.error');
+      });
+      req.on('close', () => {
+        unsubStart();
+        unsubComplete();
+        unsubError();
+        stream.close();
+        const conns = this.sseConnections.get(ip);
+        if (conns) {
+          conns.delete(res);
+          if (conns.size === 0) this.sseConnections.delete(ip);
+        }
+      });
     });
   }
 
@@ -1801,9 +1843,11 @@ export class CommanderHttpServer {
       sendJson(res, 503, { error: 'MCP Server not initialized. Call registerMCPServer first.' });
       return;
     }
+    const tenantId = this.requireTenant(req, res);
+    if (res.writableEnded) return;
     try {
       const body = (await parseBody(req, this.config.maxBodyBytes)) as JSONRPCRequest;
-      const response = await this.mcpServer.handleRequest(body);
+      const response = await runWithTenant(tenantId, () => this.mcpServer!.handleRequest(body));
       sendJson(res, 200, response);
     } catch (err) {
       if (err instanceof HttpRequestError && err.statusCode === 413) {

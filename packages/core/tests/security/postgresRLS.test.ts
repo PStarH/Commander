@@ -49,7 +49,7 @@ async function probePostgres(): Promise<{ available: boolean; hasAppRole: boolea
     const pool = new Pool({ connectionString: databaseUrl, max: 1, connectionTimeoutMillis: 5000 });
     try {
       const result = await pool.query<{ exists: boolean }>(
-        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') AS exists"
+        "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') AS exists",
       );
       return { available: true, hasAppRole: result.rows[0]?.exists ?? false };
     } finally {
@@ -98,13 +98,19 @@ describeIf('Postgres RLS tenant isolation', () => {
       expect(await appRepoB.getRun(runA.id, tenantB)).toBeNull();
 
       // Each tenant can still see its own run.
-      expect(await appRepoA.getRun(runA.id, tenantA)).toMatchObject({ id: runA.id, tenantId: tenantA });
-      expect(await appRepoB.getRun(runB.id, tenantB)).toMatchObject({ id: runB.id, tenantId: tenantB });
+      expect(await appRepoA.getRun(runA.id, tenantA)).toMatchObject({
+        id: runA.id,
+        tenantId: tenantA,
+      });
+      expect(await appRepoB.getRun(runB.id, tenantB)).toMatchObject({
+        id: runB.id,
+        tenantId: tenantB,
+      });
 
       // Owner connection (BYPASSRLS) can see both rows regardless of tenant scope.
       const ownerRows = await ownerPool.query<{ id: string; tenant_id: string }>(
         'SELECT id, tenant_id FROM commander_runs WHERE tenant_id = ANY($1::text[]) ORDER BY tenant_id',
-        [[tenantA, tenantB]]
+        [[tenantA, tenantB]],
       );
       expect(ownerRows.rows).toHaveLength(2);
       expect(ownerRows.rows.map((r) => r.tenant_id).sort()).toEqual([tenantA, tenantB].sort());
@@ -118,9 +124,9 @@ describeIf('Postgres RLS tenant isolation', () => {
   it('app role cannot disable RLS or read pg_authid', async () => {
     const client = await appPool.connect();
     try {
-      await expect(client.query('ALTER TABLE commander_runs DISABLE ROW LEVEL SECURITY')).rejects.toThrow(
-        /must be owner|permission denied/i
-      );
+      await expect(
+        client.query('ALTER TABLE commander_runs DISABLE ROW LEVEL SECURITY'),
+      ).rejects.toThrow(/must be owner|permission denied/i);
       await expect(client.query('SELECT * FROM pg_authid')).rejects.toThrow(/permission denied/i);
     } finally {
       await client.release();

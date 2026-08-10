@@ -3,8 +3,8 @@
   "verdict": "PASS",
   "evidenceLevel": "simulated",
   "breach": false,
-  "details": "Whole-chain delete detected: manifest has chain d8a655946d774ecd97caf3ebbc230684 but disk has 0 entries. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false.",
+  "details": "Whole-chain delete detected: manifest has chain d80f5e858e0e47e8ae8898a502e312cf but disk has 0 entries. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false.",
   "artifacts": [],
-  "gitSha": "258767cd75d990ce64ff861484187b5d6b7ce828",
-  "ranAt": "2026-07-30T08:48:34.779Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:34:46.523Z"
 }

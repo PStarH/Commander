@@ -64,7 +64,14 @@ describe('commander action kill CLI', () => {
         ),
     );
     await cmdAction(
-      ['kill', 'enable', 'tool', 'ticket.create', '--reason=maintenance', '--idempotency-key=kill-1'],
+      [
+        'kill',
+        'enable',
+        'tool',
+        'ticket.create',
+        '--reason=maintenance',
+        '--idempotency-key=kill-1',
+      ],
       {},
       { fetchImpl: fetchMock as typeof fetch },
     );
@@ -75,7 +82,9 @@ describe('commander action kill CLI', () => {
         body: JSON.stringify({ enabled: true, reason: 'maintenance' }),
       }),
     );
-    expect(new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('idempotency-key')).toBe('kill-1');
+    expect(
+      new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('idempotency-key'),
+    ).toBe('kill-1');
   });
 
   it('disables a kill switch via PUT with enabled=false', async () => {
@@ -102,7 +111,9 @@ describe('commander action kill CLI', () => {
         body: JSON.stringify({ enabled: false }),
       }),
     );
-    expect(new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('idempotency-key')).toBe('kill-2');
+    expect(
+      new Headers((fetchMock.mock.calls[0]?.[1] as RequestInit).headers).get('idempotency-key'),
+    ).toBe('kill-2');
   });
 
   it('exits non-zero when the API returns an error', async () => {
@@ -139,8 +150,16 @@ describe('commander action gateway CLI', () => {
   };
 
   it.each([
-    { args: ['simulate', `--data=${JSON.stringify(proposal)}`], method: 'POST', path: '/v1/actions/simulate' },
-    { args: ['propose', `--data=${JSON.stringify(proposal)}`], method: 'POST', path: '/v1/actions' },
+    {
+      args: ['simulate', `--data=${JSON.stringify(proposal)}`],
+      method: 'POST',
+      path: '/v1/actions/simulate',
+    },
+    {
+      args: ['propose', `--data=${JSON.stringify(proposal)}`],
+      method: 'POST',
+      path: '/v1/actions',
+    },
     { args: ['get', 'run-1'], method: 'GET', path: '/v1/actions/run-1' },
     {
       args: [
@@ -152,8 +171,16 @@ describe('commander action gateway CLI', () => {
       method: 'POST',
       path: '/v1/actions/run-1/approve',
     },
-    { args: ['reject', 'run-1', '--reason=unsafe', '--idempotency-key=reject-1'], method: 'POST', path: '/v1/actions/run-1/reject' },
-    { args: ['reconcile', 'run-1', '--idempotency-key=reconcile-1'], method: 'POST', path: '/v1/actions/run-1/reconcile' },
+    {
+      args: ['reject', 'run-1', '--reason=unsafe', '--idempotency-key=reject-1'],
+      method: 'POST',
+      path: '/v1/actions/run-1/reject',
+    },
+    {
+      args: ['reconcile', 'run-1', '--idempotency-key=reconcile-1'],
+      method: 'POST',
+      path: '/v1/actions/run-1/reconcile',
+    },
     {
       args: [
         'compensation',
@@ -248,7 +275,11 @@ describe('commander action gateway CLI', () => {
         }),
     );
     await expect(
-      cmdAction(['get', 'run-1'], {}, { env, fetchImpl: fetchMock as typeof fetch, exit: exit as never }),
+      cmdAction(
+        ['get', 'run-1'],
+        {},
+        { env, fetchImpl: fetchMock as typeof fetch, exit: exit as never },
+      ),
     ).rejects.toThrow('exit:1');
     expect(exit).toHaveBeenCalledWith(2);
     expect(exit).toHaveBeenCalledWith(1);

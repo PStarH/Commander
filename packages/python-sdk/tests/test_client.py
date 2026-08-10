@@ -8,7 +8,7 @@ import httpx
 import pytest
 import respx
 
-from commander import CommanderClient
+from commander import CommanderClient, __all__ as commander_exports
 from commander._gateway_client import CommanderGatewayClient
 from commander._types import (
     ActionApprovalInput,
@@ -26,6 +26,16 @@ from commander._exceptions import (
 
 
 class TestClientLifecycle:
+    def test_compensation_types_are_public_exports(self) -> None:
+        expected = {
+            "ActionCompensationApprovalInput",
+            "ActionCompensationApprovalResult",
+            "ActionCompensationAuthorization",
+            "ActionCompensationInput",
+            "ActionCompensationResult",
+        }
+        assert expected.issubset(commander_exports)
+
     async def test_enter_exit(self) -> None:
         async with CommanderClient(api_key="test") as client:
             assert client is not None

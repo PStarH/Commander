@@ -94,7 +94,12 @@ export function findAdapterManifest(input: {
   destination: string;
 }): ActionAdapterDescriptorV1 | null {
   for (const manifest of FIXED_ACTION_ADAPTER_MANIFESTS) {
-    if (manifest.effectType !== input.effectType) continue;
+    if (
+      manifest.effectType !== input.effectType &&
+      manifest.compensationEffectType !== input.effectType
+    ) {
+      continue;
+    }
     if (manifest.toolName !== input.toolName) continue;
     if (!destinationMatchesPattern(manifest.destinationPattern, input.destination)) continue;
     return manifest;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   assertEvidenceRecordBoundToEffect,
@@ -12,6 +13,7 @@ import {
   seedFreshOperationsDrains,
 } from './testing/inMemoryRepository.js';
 import type { KernelRepository } from './repository.js';
+import { KERNEL_FORWARD_MIGRATIONS, KERNEL_SIGNED_EVIDENCE_MIGRATIONS } from './migrations.js';
 
 const record: KernelEvidenceRecord = {
   tenantId: 'tenant-a',
@@ -122,6 +124,66 @@ async function admitAtomicEffect(
 }
 
 describe('standalone evidence repository contract', () => {
+  it('pins every evidence descriptor to its published SQL checksum', () => {
+    const expected = new Map([
+      [
+        '2026-07-29.1.signed_evidence_receipts',
+        '03e254172217224c72be0557b8f0e88bb9021427b580ed46e191bfaf50c03e9a',
+      ],
+      [
+        '2026-07-29.2.signed_evidence_authority_closure',
+        'd76d0dc499b7c2b69abe779252792cf3fd7dd1921e09cd9b8d77e42035f7149d',
+      ],
+      [
+        '2026-08-02.1.adapter_ops_evidence_context',
+        '5da52ef2d903c20bd81138331e0669e3745375f73161b5945a264e3ceaf27f65',
+      ],
+      [
+        '2026-08-02.2.adapter_ops_compensation_terminal_evidence',
+        'e26ae10783bdd959815887140cbc94ba641443898fde1c10ff61c670e97640f2',
+      ],
+      [
+        '2026-08-02.4.signed_evidence_ordering_repair',
+        'b5e5fe007767c4649e8c82bc43b6ffcac38fbb947b143866a031648b34298bcb',
+      ],
+      [
+        '2026-08-08.1.signed_evidence_tenant_context',
+        '951694343abd0f8523e617815fc9d9a6c78aef72c3d6bf46c346a91b2fffd57e',
+      ],
+      [
+        '2026-08-08.8.compensation_terminal_event_sequence',
+        'bc6d7966a9f6ca3cba07308eca89e039452a088b02bb0a8c52ba6d46f785f1e5',
+      ],
+    ]);
+    for (const [id, checksum] of expected) {
+      const descriptor = KERNEL_FORWARD_MIGRATIONS.find((migration) => migration.id === id);
+      assert.ok(descriptor, `missing migration descriptor: ${id}`);
+      assert.equal(descriptor.checksum, checksum, `descriptor checksum drift: ${id}`);
+      assert.equal(
+        createHash('sha256').update(descriptor.sql).digest('hex'),
+        checksum,
+        `SQL checksum drift: ${id}`,
+      );
+    }
+  });
+
+  it('keeps receipt reads bound to the authenticated app tenant after enforce', () => {
+    const migration = KERNEL_SIGNED_EVIDENCE_MIGRATIONS.find(
+      (entry) => entry.id === '2026-08-08.1.signed_evidence_tenant_context',
+    );
+    assert.ok(migration, 'tenant-context evidence migration is required');
+    assert.match(
+      migration.sql,
+      /CREATE POLICY commander_app_authenticated_tenant ON public\.commander_evidence_receipts/i,
+    );
+    const appPolicy =
+      migration.sql.match(
+        /CREATE POLICY commander_app_authenticated_tenant[\s\S]*?CREATE POLICY commander_worker_tenant_scope/i,
+      )?.[0] ?? '';
+    assert.match(appPolicy, /tenant_id\s*=\s*public\.commander_authenticated_app_tenant\(\)/i);
+    assert.doesNotMatch(appPolicy, /current_setting\('app\.tenant_scope'/i);
+  });
+
   it('stores once, replays identically, rejects mutation, and conceals tenants', async () => {
     const repository = new InMemoryEvidenceRepository();
     assert.deepEqual(await repository.appendEvidence(record), { inserted: true });
@@ -186,8 +248,14 @@ describe('PostgreSQL evidence repository availability probe', () => {
 
     assert.deepEqual(await repository.checkEvidenceRepositoryAvailability?.(), { ready: true });
     assert.equal(
-      queries.some((query) => query.includes('FROM public.commander_evidence_receipts')),
+      queries.some((query) =>
+        query.includes("to_regclass('public.commander_evidence_receipts') IS NOT NULL"),
+      ),
       true,
+    );
+    assert.equal(
+      queries.some((query) => query.includes('LIMIT 1')),
+      false,
     );
     assert.equal(
       queries.some((query) => query.includes("set_config('app.tenant_scope'")),

@@ -99,6 +99,49 @@ describe('createKernelRepository boot policy', () => {
     );
   });
 
+  it('does not create app tenant-context authority pools for adapter-ops', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-adapter-ops-factory-'));
+    const caFile = join(directory, 'ca.pem');
+    const certificate = rootCertificates[0];
+    assert.ok(certificate, 'Node must provide a root certificate fixture');
+    writeFileSync(caFile, certificate, { mode: 0o600 });
+
+    const initialize = mock.method(
+      PostgresKernelRepository.prototype,
+      'initialize',
+      async () => {},
+    );
+    try {
+      const handle = await createKernelRepository({
+        adapterOpsMode: true,
+        env: {
+          COMMANDER_KERNEL_BACKEND: 'postgres',
+          COMMANDER_KERNEL_DATABASE_URL:
+            'postgres://commander_adapter_ops:secret@app.internal/commander?sslmode=verify-full',
+          COMMANDER_TENANT_CONTEXT_PHASE: 'enforce',
+          // Deliberately invalid: adapter-ops must not construct this pool.
+          COMMANDER_TENANT_AUTHORITY_DATABASE_URL: 'not-a-postgres-url',
+          COMMANDER_DATABASE_TLS_CA_FILE: caFile,
+          COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: '1'.repeat(64),
+        },
+      });
+      try {
+        const options = (
+          handle.repository as unknown as {
+            options: { adapterOpsMode?: boolean; tenantContextAuthority?: unknown };
+          }
+        ).options;
+        assert.equal(options.adapterOpsMode, true);
+        assert.equal(options.tenantContextAuthority, undefined);
+      } finally {
+        await handle.close();
+      }
+    } finally {
+      initialize.mock.restore();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   it('closes both PostgreSQL pools when repository initialization fails', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'commander-kernel-factory-'));
     const caFile = join(directory, 'ca.pem');

@@ -15,7 +15,10 @@ async function fixture(model: 'bridge' | 'silo') {
   await mkdir(source, { recursive: true });
   await writeFile(join(source, 'visible.txt'), 'visible\n');
   await writeFile(join(source, '.hidden'), 'hidden\n');
-  await writeFile(config, `${JSON.stringify({ tenants: [{ tenantId: 'tenant-a', isolation: model }] }, null, 2)}\n`);
+  await writeFile(
+    config,
+    `${JSON.stringify({ tenants: [{ tenantId: 'tenant-a', isolation: model }] }, null, 2)}\n`,
+  );
   return { root, data, config, source };
 }
 

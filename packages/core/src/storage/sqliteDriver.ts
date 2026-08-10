@@ -19,6 +19,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import * as fs from 'node:fs';
+import { createRequire } from 'node:module';
 import * as path from 'node:path';
 import {
   DriverDescription,
@@ -29,6 +30,8 @@ import {
   TableSchema,
 } from './types';
 import { coerceColumn, isCompatibleWithSpec, cloneRow, matchesFilter } from './utils';
+
+const nodeRequire = createRequire(import.meta.url);
 
 interface SqliteTableState<T extends { id: string }> {
   name: string;
@@ -315,7 +318,7 @@ let cachedAvailability: SqliteAvailability | null = null;
 export function probeSqlite(): SqliteAvailability {
   if (cachedAvailability) return cachedAvailability;
   try {
-    const mod = require('better-sqlite3') as new (path: string) => SqliteNativeDatabase;
+    const mod = nodeRequire('better-sqlite3') as new (path: string) => SqliteNativeDatabase;
     if (typeof mod !== 'function') {
       cachedAvailability = {
         available: false,

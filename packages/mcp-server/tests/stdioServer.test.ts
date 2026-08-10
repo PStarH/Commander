@@ -1,4 +1,5 @@
 import { beforeEach, describe, it, expect } from 'vitest';
+import { pathToFileURL } from 'node:url';
 import {
   MCPServer,
   createFetchActionGatewayExecutor,
@@ -13,7 +14,7 @@ import {
   startStdioServer,
   type McpActionGatewayExecutor,
 } from '../src/stdioServer';
-import { run } from '../src/cli';
+import { isDirectCliInvocation, run } from '../src/cli';
 import { MCP_PROTOCOL_VERSION } from '@commander/core';
 
 beforeEach(() => {
@@ -368,6 +369,13 @@ describe('startStdioServer', () => {
 });
 
 describe('cli', () => {
+  it('detects direct ESM entrypoint invocation without require.main', () => {
+    const moduleUrl = pathToFileURL('/workspace/packages/mcp-server/dist/cli.js').href;
+    expect(isDirectCliInvocation(moduleUrl, '/workspace/packages/mcp-server/dist/cli.js')).toBe(true);
+    expect(isDirectCliInvocation(moduleUrl, '/workspace/packages/mcp-server/dist/index.js')).toBe(false);
+    expect(isDirectCliInvocation(moduleUrl, undefined)).toBe(false);
+  });
+
   it('prints help and exits', () => {
     let output = '';
     let exited = false;

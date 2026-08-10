@@ -239,6 +239,7 @@ describe('AgentLoopOrchestrator', () => {
     };
 
     const checkpointingPhase = {
+      isPaused: vi.fn(() => false),
       checkpointAfterStep: vi.fn(async () => undefined),
       checkpointTerminal: vi.fn(async () => undefined),
     };
