@@ -133,6 +133,78 @@ describe('writeSynthesisOutput', () => {
     expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
   });
 
+  it('writes beneath a workspace reached through a symlink or junction', async () => {
+    const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-output-link-'));
+    const linkedWorkspace = path.join(linkRoot, 'workspace');
+    fs.symlinkSync(workspace, linkedWorkspace, process.platform === 'win32' ? 'junction' : 'dir');
+    process.env.COMMANDER_WORKSPACE = linkedWorkspace;
+
+    try {
+      const writtenPath = await writeSynthesisOutput(
+        'Write the report to ./reports/result.md',
+        'ok',
+      );
+
+      expect(writtenPath).toBe(path.join(linkedWorkspace, 'reports', 'result.md'));
+      expect(fs.readFileSync(writtenPath, 'utf-8')).toBe('ok');
+    } finally {
+      process.env.COMMANDER_WORKSPACE = workspace;
+      fs.rmSync(linkRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a symlink or junction escape before creating a missing child', async () => {
+    const outside = fs.realpathSync(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'commander-output-outside-')),
+    );
+    const linkedOutside = path.join(workspace, 'linked-outside');
+    fs.symlinkSync(outside, linkedOutside, process.platform === 'win32' ? 'junction' : 'dir');
+
+    try {
+      await expect(
+        writeSynthesisOutput(
+          `Write the report to ${path.join(linkedOutside, 'nested', 'result.md')}`,
+          'blocked',
+        ),
+      ).rejects.toThrow(/outside workspace/);
+    } finally {
+      fs.rmSync(linkedOutside, { force: true, recursive: true });
+      fs.rmSync(outside, { force: true, recursive: true });
+    }
+  });
+
+  it('rejects dangling symlink or junctions before creating a missing child', async () => {
+    const danglingLinks = [
+      {
+        name: 'dangling-outside',
+        target: path.join(path.dirname(workspace), `${path.basename(workspace)}-missing`),
+      },
+      {
+        name: 'dangling-inside',
+        target: path.join(workspace, 'missing-target'),
+      },
+    ];
+    const linkType = process.platform === 'win32' ? 'junction' : 'dir';
+    for (const { name, target } of danglingLinks) {
+      fs.symlinkSync(target, path.join(workspace, name), linkType);
+    }
+
+    try {
+      for (const { name } of danglingLinks) {
+        await expect(
+          writeSynthesisOutput(
+            `Write the report to ${path.join(workspace, name, 'nested', 'result.md')}`,
+            'blocked',
+          ),
+        ).rejects.toThrow(/Access denied/);
+      }
+    } finally {
+      for (const { name } of danglingLinks) {
+        fs.rmSync(path.join(workspace, name), { force: true });
+      }
+    }
+  });
+
   it('rejects traversal and absolute output paths outside the workspace', async () => {
     const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-outside.md`);
 
