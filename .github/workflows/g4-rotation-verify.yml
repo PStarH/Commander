@@ -1,0 +1,125 @@
+name: G4 Rotation Verify
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: g4-rotation-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  g4-rotation-verify:
+    name: G4 rotation sign-off verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.4
+          run_install: false
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: Install locked dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Import authorized rotation public key
+        env:
+          COMMANDER_GPG_PUBLIC_KEY_ASC: ${{ secrets.COMMANDER_GPG_PUBLIC_KEY_ASC }}
+        run: |
+          set -eu
+          test -n "$COMMANDER_GPG_PUBLIC_KEY_ASC"
+          GNUPGHOME="$RUNNER_TEMP/commander-g4-gnupg"
+          export GNUPGHOME
+          install -d -m 700 "$GNUPGHOME"
+          key_file="$RUNNER_TEMP/commander-g4-signoff-public.asc"
+          umask 077
+          printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$key_file"
+          gpg --batch --import "$key_file"
+          gpg --batch --fingerprint C489A6C6865F81B690408C5B12AA1940B17D9448
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: Run strict rotation verification
+        run: |
+          set -eu
+          evidence_root="$GITHUB_WORKSPACE/.internal/evidence/ci/g4-rotation"
+          result_path="$evidence_root/g4-rotation-result.json"
+          install -d -m 700 "$evidence_root"
+          set +e
+          pnpm rotate:verify --json > "$evidence_root/rotate.json" 2> "$evidence_root/rotate.report"
+          verifier_status=$?
+          set -e
+          RESULT_PATH="$result_path" ROTATE_STATUS="$verifier_status" node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+
+          const resultPath = process.env.RESULT_PATH;
+          const rotateJsonPath = `${resultPath.slice(0, resultPath.lastIndexOf('/'))}/rotate.json`;
+          const reportPath = `${resultPath.slice(0, resultPath.lastIndexOf('/'))}/rotate.report`;
+          const exitCode = Number(process.env.ROTATE_STATUS ?? '2');
+          const base = {
+            schemaVersion: 1,
+            source: 'pnpm rotate:verify --json',
+            exitCode,
+          };
+
+          const writeResult = (value) => {
+            writeFileSync(resultPath, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+          };
+
+          let cliResult;
+          let report;
+          try {
+            cliResult = JSON.parse(readFileSync(rotateJsonPath, 'utf8'));
+            report = readFileSync(reportPath, 'utf8');
+          } catch {
+            writeResult({ ...base, status: 'RED', reason: 'ROTATION_OUTPUT_INVALID' });
+            process.exit(1);
+          }
+
+          const policy = report.match(
+            /Policy \([^)]*\): verified=(\d+) \(min=(\d+)\), failed=(\d+), pending=(\d+)\./,
+          );
+          if (!policy) {
+            writeResult({ ...base, status: 'RED', reason: 'ROTATION_POLICY_COUNTS_MISSING' });
+            process.exit(1);
+          }
+
+          const [, verified, minimum, failed, pending] = policy;
+          const result = {
+            ...base,
+            status: cliResult.status,
+            verified: Number(verified),
+            policyMinimum: Number(minimum),
+            failed: Number(failed),
+            pending: Number(pending),
+          };
+          writeResult(result);
+
+          if (
+            exitCode !== 0 ||
+            cliResult.status !== 'GREEN' ||
+            result.verified !== 4 ||
+            result.failed !== 0 ||
+            result.pending !== 0
+          ) {
+            process.stderr.write('G4 rotation verification contract failed\n');
+            process.exit(1);
+          }
+          NODE
+
+      - name: Upload sanitized rotation result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: g4-rotation-result-${{ github.run_id }}
+          path: .internal/evidence/ci/g4-rotation/g4-rotation-result.json
+          if-no-files-found: error
+          retention-days: 14
