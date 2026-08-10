@@ -3,8 +3,8 @@
   "verdict": "PASS",
   "evidenceLevel": "simulated",
   "breach": false,
-  "details": "Whole-chain deletion detected: manifest registered chain 9928b451ce09497f8224b3b788659033 (maxSeq=1) but no entries exist on disk. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false (derived from live verify, not hardcoded). L2 sig: InMemoryKeyProvider (ci-worm-sim).",
+  "details": "Whole-chain deletion detected: manifest registered chain 523984c0c9d44c79b6765466b8798e7f (maxSeq=1) but no entries exist on disk. manifestGaps[0].reason=chain_missing_from_log. tamperProof=false (derived from live verify, not hardcoded). L2 sig: InMemoryKeyProvider (ci-worm-sim).",
   "artifacts": [],
-  "gitSha": "258767cd75d990ce64ff861484187b5d6b7ce828",
-  "ranAt": "2026-07-30T08:48:34.373Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:34:44.240Z"
 }

@@ -85,8 +85,7 @@ async function startMockCollector(
 
 describe('OtelSpanExporter', () => {
   let collector:
-    | { port: number; captured: CapturedRequest[]; stop: () => Promise<void> }
-    | undefined;
+    { port: number; captured: CapturedRequest[]; stop: () => Promise<void> } | undefined;
 
   afterEach(async () => {
     if (collector) {

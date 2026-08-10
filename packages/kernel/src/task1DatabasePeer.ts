@@ -65,11 +65,11 @@ function parsedRoleUrl(env: NodeJS.ProcessEnv, role: Task1DatabaseRole): URL {
     throw new Error(`TASK1_DATABASE_PEER_${role.toUpperCase().replace('-', '_')}_URL_INVALID`);
   }
   if (
-    (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:')
-    || decodeURIComponent(url.username) !== ROLE_LOGIN[role]
-    || !url.password
-    || !url.hostname
-    || !url.pathname.slice(1)
+    (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') ||
+    decodeURIComponent(url.username) !== ROLE_LOGIN[role] ||
+    !url.password ||
+    !url.hostname ||
+    !url.pathname.slice(1)
   ) {
     throw new Error(`TASK1_DATABASE_PEER_${role.toUpperCase().replace('-', '_')}_URL_INVALID`);
   }
@@ -114,13 +114,16 @@ async function observeRole(
   env: NodeJS.ProcessEnv,
   createPool: typeof createVerifiedPostgresPool,
 ): Promise<DatabasePeerBindingRoleV1> {
-  const pool: Pool = createPool({
-    connectionString: url.toString(),
-    max: 1,
-    connectionTimeoutMillis: 2_000,
-    query_timeout: 2_000,
-    statement_timeout: 1_500,
-  }, env);
+  const pool: Pool = createPool(
+    {
+      connectionString: url.toString(),
+      max: 1,
+      connectionTimeoutMillis: 2_000,
+      query_timeout: 2_000,
+      statement_timeout: 1_500,
+    },
+    env,
+  );
   let client: PoolClient | undefined;
   try {
     client = await pool.connect();
@@ -139,11 +142,11 @@ async function observeRole(
     `);
     const row = result.rows[0];
     if (
-      result.rowCount !== 1
-      || row?.current_user !== ROLE_LOGIN[role]
-      || row.session_user !== ROLE_LOGIN[role]
-      || !/^[1-9][0-9]*$/.test(row.database_oid)
-      || row.database_name !== decodeURIComponent(url.pathname.slice(1))
+      result.rowCount !== 1 ||
+      row?.current_user !== ROLE_LOGIN[role] ||
+      row.session_user !== ROLE_LOGIN[role] ||
+      !/^[1-9][0-9]*$/.test(row.database_oid) ||
+      row.database_name !== decodeURIComponent(url.pathname.slice(1))
     ) {
       throw new Error('TASK1_DATABASE_PEER_ROLE_IDENTITY_INVALID');
     }

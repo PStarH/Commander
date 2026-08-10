@@ -8,13 +8,16 @@
 <h1 align="center">Commander</h1>
 <p align="center"><strong>AI が何をしているか見えるように。結果を確認。コストを削減。</strong></p>
 
+> **Alpha 注意:** Commander は現在 alpha で、プロダクション対応ではありません。出力、ベンチマーク、POC
+> シナリオ、ダッシュボード値は開発またはデモ用の信号です。独自の確認なしに、無人の本番ワークロードや機密データに使用しないでください。
+
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
   <sub>インストール不要。ワンコマンド。マルチエージェントのイベントとツール呼び出しをリアルタイムでターミナルに表示。</sub>
 </p>
 
 <p align="center">
-  <img src="docs/assets/commander-watch-demo.gif" alt="Commander watch demo — リアルタイムエージェントストリーミング" width="90%">
+  <img src="docs/assets/commander-watch-demo.svg" alt="Commander watch demo — リアルタイムエージェントストリーミング" width="90%">
 </p>
 
 ---
@@ -162,8 +165,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # CLI を使用
 pnpm exec tsx packages/core/src/cliEntry.ts run "your task here"
 
-# API を使用
-pnpm exec tsx examples/api-usage.ts
+# 基本例を実行
+pnpm exec tsx examples/basic.ts
 
 # Docker を使用
 docker compose up -d
@@ -183,11 +186,11 @@ pnpm benchmark:gaia        # GAIA ベンチマークを実行（詳細なスク�
 
 | スイート | カバレッジ | 結果 |
 | -------- | ---------- | ---- |
-| Chaos Engineering | 合成 255 ケース + mutation 55 ケース | harness の入口；結果は基準マトリクスを参照 |
+| Chaos Engineering | 合成 200 ケース + mutation 55 ケース（計 255） | harness の入口；結果は基準マトリクスを参照 |
 | Red Team | 47 シナリオ、8 攻撃カテゴリ | 掲載ケースはすべて blocked（シミュレーション harness） |
 | AgentDojo | 12 セキュリティテストケース | 掲載ケースはすべて blocked（シミュレーション harness） |
 | GAIA Spine | コア機能ベンチマーク | quick/offline 回帰をスケジュール；完全な fixture は保留 |
-| SLO | API 成功率 99.5%、P95 レイテンシ <2s | CI ベースライン、プロダクション SLA ではない |
+| SLO | API 可用性 99.95%、P95 スケジュール <5s | CI ベースライン、プロダクション SLA ではない |
 
 ```bash
 # 任意のベンチマークを再現
@@ -281,6 +284,13 @@ docker compose up -d
 - [docs/README.md](docs/README.md) — 公開ドキュメント索引
 
 内部監査・AI 作業計画・デューデリジェンスメモは**本リポジトリに含まれません**。開発者ローカルの `.internal/`（gitignore）のみです。
+
+## プライバシー、フィードバック、セキュリティ
+
+- [PRIVACY.md](PRIVACY.md): provider への送信、trace/memory/audit の保存、保持と削除の境界。
+- 通常のバグは [GitHub Issues](https://github.com/PStarH/Commander/issues) に、prompt・ログ・設定・PII・秘密情報を必ずマスキングして報告してください。
+- 質問や提案は [GitHub Discussions](https://github.com/PStarH/Commander/discussions) を使用してください。
+- セキュリティ脆弱性は [SECURITY.md](SECURITY.md) に従って非公開で報告し、公開 issue は作成しないでください。
 
 ## ライセンス
 

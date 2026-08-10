@@ -75,7 +75,9 @@ const bootstrapIdentities = {
 };
 
 function inventory(
-  identities: (Omit<typeof bootstrapIdentities, 'envelope'> & { envelope: 'E1' | 'E2' }) | null = bootstrapIdentities,
+  identities:
+    | (Omit<typeof bootstrapIdentities, 'envelope'> & { envelope: 'E1' | 'E2' })
+    | null = bootstrapIdentities,
   ledger: Array<{ id: string; checksum: string }> | null = null,
   productRows: boolean[] = [],
 ): PrebootstrapInventoryV1 {

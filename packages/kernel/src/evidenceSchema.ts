@@ -735,6 +735,39 @@ REVOKE ALL ON FUNCTION public.apply_reconcile_effect_with_evidence_v1(
   commander_adapter_ops;
 `;
 
+/**
+ * Tenant-context closure for receipts. The signed-evidence migrations predate
+ * Task 1's enforce phase, so the original receipt policy still depended on the
+ * legacy app.tenant_scope setting. Keep this as a forward migration instead
+ * of changing the published Task 1 relation inventory.
+ */
+export const KERNEL_SIGNED_EVIDENCE_TENANT_CONTEXT_SQL = `
+ALTER TABLE public.commander_evidence_receipts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.commander_evidence_receipts FORCE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS commander_tenant_isolation ON public.commander_evidence_receipts;
+DROP POLICY IF EXISTS commander_app_authenticated_tenant ON public.commander_evidence_receipts;
+DROP POLICY IF EXISTS commander_worker_tenant_scope ON public.commander_evidence_receipts;
+CREATE POLICY commander_app_authenticated_tenant ON public.commander_evidence_receipts
+  FOR SELECT TO commander_app
+  USING (tenant_id = public.commander_authenticated_app_tenant());
+CREATE POLICY commander_worker_tenant_scope ON public.commander_evidence_receipts
+  FOR ALL TO commander_worker
+  USING (
+    tenant_id = ANY(pg_catalog.string_to_array(pg_catalog.current_setting('app.tenant_scope', true), ','))
+    AND EXISTS (
+      SELECT 1 FROM public.commander_worker_allowed_tenants AS allowed
+       WHERE allowed.tenant_id = commander_evidence_receipts.tenant_id
+    )
+  )
+  WITH CHECK (
+    tenant_id = ANY(pg_catalog.string_to_array(pg_catalog.current_setting('app.tenant_scope', true), ','))
+    AND EXISTS (
+      SELECT 1 FROM public.commander_worker_allowed_tenants AS allowed
+       WHERE allowed.tenant_id = commander_evidence_receipts.tenant_id
+    )
+  );
+`;
+
 export const KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL = `
 CREATE FUNCTION public.read_adapter_ops_evidence_context(
   p_worker_id text,
@@ -1192,3 +1225,49 @@ GRANT EXECUTE ON FUNCTION public.complete_compensation_effect_with_evidence(json
 GRANT EXECUTE ON FUNCTION public.fail_compensation_effect_with_evidence(jsonb)
   TO commander_adapter_ops;
 `;
+
+/**
+ * Forward-only repair for compensation terminal event ordering. The original
+ * evidence migration is checksum-pinned; replace only its existing terminal
+ * function so deployed databases keep their historical descriptor intact.
+ */
+function deriveCompensationTerminalSequenceRepair(source: string): string {
+  const startMarker = 'CREATE FUNCTION public.apply_compensation_terminal_effect_with_evidence_v1';
+  const endMarker = '\n\nCREATE FUNCTION public.complete_compensation_effect_with_evidence';
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  if (start < 0 || end < 0) {
+    throw new Error('COMPENSATION_TERMINAL_EVIDENCE_FUNCTION_NOT_FOUND');
+  }
+  let functionSql = source
+    .slice(start, end)
+    .replace(
+      startMarker,
+      'CREATE OR REPLACE FUNCTION public.apply_compensation_terminal_effect_with_evidence_v1',
+    );
+  const declaration = '  v_event_id text;\n';
+  if (!functionSql.includes(declaration)) {
+    throw new Error('COMPENSATION_TERMINAL_EVIDENCE_EVENT_DECLARATION_NOT_FOUND');
+  }
+  functionSql = functionSql.replace(declaration, `${declaration}  v_event_sequence bigint;\n`);
+  const insertMarker =
+    '  v_event_id := gen_random_uuid()::text;\n  INSERT INTO public.commander_events (';
+  if (!functionSql.includes(insertMarker)) {
+    throw new Error('COMPENSATION_TERMINAL_EVIDENCE_EVENT_INSERT_NOT_FOUND');
+  }
+  functionSql = functionSql.replace(
+    insertMarker,
+    `  SELECT COALESCE(MAX(sequence), 0) + 1\n    INTO v_event_sequence\n    FROM public.commander_events\n   WHERE aggregate_type = 'effect'\n     AND aggregate_id = v_effect.id;\n${insertMarker}`,
+  );
+  const fixedSequence = "v_event_id, 'effect', v_effect.id, 2, v_event_type";
+  if (!functionSql.includes(fixedSequence)) {
+    throw new Error('COMPENSATION_TERMINAL_EVIDENCE_FIXED_SEQUENCE_NOT_FOUND');
+  }
+  return functionSql.replace(
+    fixedSequence,
+    "v_event_id, 'effect', v_effect.id, v_event_sequence, v_event_type",
+  );
+}
+
+export const KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_REPAIR_SQL =
+  deriveCompensationTerminalSequenceRepair(KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_SQL);

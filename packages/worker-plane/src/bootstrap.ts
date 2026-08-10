@@ -423,7 +423,8 @@ export function evaluateActionGatewayMvpV1(
   const adapter = typeof effectType === 'string' ? actionAdapters.resolve(effectType) : null;
   if (
     adapter &&
-    effectType === adapter.descriptor.effectType &&
+    (effectType === adapter.descriptor.effectType ||
+      effectType === adapter.descriptor.compensationEffectType) &&
     tool === adapter.descriptor.toolName &&
     adapter.descriptor.adapterId === 'kubernetes.deployment.rollback' &&
     typeof destination === 'string'

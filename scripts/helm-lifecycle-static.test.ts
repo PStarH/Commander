@@ -371,7 +371,7 @@ describe('Helm lifecycle static contract', () => {
     assert.match(rendered, /name: lifecycle-demo-api-proof/);
     assert.match(
       api,
-      /path: \/ready\/tenant-authority\/v1[\s\S]*port: tenant-authority-proof[\s\S]*scheme: HTTPS/,
+      /path: \/ready\/tenant-authority\/v1[\s\S]*port: tenant-proof[\s\S]*scheme: HTTPS/,
     );
     assert.match(
       api,
@@ -461,7 +461,7 @@ describe('Helm lifecycle static contract', () => {
     const service = resource(rendered, 'Service', 'lifecycle-demo-api-proof');
     assert.match(
       service,
-      /name: tenant-authority-proof[\s\S]*port: 9443[\s\S]*targetPort: 9443[\s\S]*protocol: TCP/,
+      /name: tenant-proof[\s\S]*port: 9443[\s\S]*targetPort: 9443[\s\S]*protocol: TCP/,
     );
     assert.doesNotMatch(service, /targetPort: tenant-authority-proof/);
   });

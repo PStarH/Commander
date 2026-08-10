@@ -516,6 +516,34 @@ function fromEffect(row: DbEffect): KernelEffect {
   };
 }
 
+function fromCompensationRequest(row: Record<string, unknown>): KernelCompensationRequest {
+  return {
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    originalRunId: String(row.original_run_id),
+    originalEffectId: String(row.original_effect_id),
+    compensationRunId: String(row.compensation_run_id),
+    compensationStepId: String(row.compensation_step_id),
+    adapterVersion: String(row.adapter_version),
+    compensationEffectType: String(row.compensation_effect_type),
+    destination: typeof row.destination === 'string' ? row.destination : '',
+    compensationPatch: row.compensation_patch as Record<string, unknown>,
+    forwardReceiptHash: String(row.forward_receipt_hash),
+    authorizationId: String(row.authorization_id),
+    reconcilePolicy: row.reconcile_policy as KernelCompensationRequest['reconcilePolicy'],
+    state: row.state as KernelCompensationRequest['state'],
+    ...(row.claim_worker_id ? { claimWorkerId: String(row.claim_worker_id) } : {}),
+    ...(row.claim_worker_generation != null
+      ? { claimWorkerGeneration: Number(row.claim_worker_generation) }
+      : {}),
+    ...(row.claim_token ? { claimToken: String(row.claim_token) } : {}),
+    ...(row.claim_expires_at ? { claimExpiresAt: iso(row.claim_expires_at as Date | string) } : {}),
+    ...(row.compensation_effect_id
+      ? { compensationEffectId: String(row.compensation_effect_id) }
+      : {}),
+  };
+}
+
 export interface PostgresKernelRepositoryOptions {
   /**
    * When true, the repository may perform cross-tenant operations such as
@@ -800,8 +828,10 @@ export class PostgresKernelRepository implements KernelRepository {
            JOIN commander_tenant_execution_usage u ON u.tenant_id=s.tenant_id
            JOIN commander_tenant_execution_control c ON c.tenant_id=s.tenant_id
            LEFT JOIN commander_tenant_execution_limits l ON l.tenant_id=s.tenant_id
-           WHERE s.state IN ('PENDING','RETRY_WAIT') AND s.scheduled_at <= $1
-             AND r.state IN ('PENDING','RUNNING') AND (cardinality($2::text[]) = 0 OR s.tenant_id = ANY($2::text[]))
+             WHERE s.state IN ('PENDING','RETRY_WAIT') AND s.scheduled_at <= $1
+             AND r.state IN ('PENDING','RUNNING')
+             AND r.metadata->>'compensationRequestId' IS NULL
+             AND (cardinality($2::text[]) = 0 OR s.tenant_id = ANY($2::text[]))
              AND c.paused=false
              AND (cardinality($3::text[]) = 0 OR s.kind = ANY($3::text[]))
              AND u.running_steps < COALESCE(l.max_concurrent_steps, 2147483647)
@@ -936,13 +966,30 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const result = await client.query<DbStep>(
         `WITH expired AS (
-           SELECT id FROM commander_steps WHERE state='RUNNING' AND lease_expires_at <= $1
-           ORDER BY lease_expires_at ASC FOR UPDATE SKIP LOCKED LIMIT $2
+           SELECT s.id,
+                  EXISTS (
+                    SELECT 1 FROM commander_effects e
+                     WHERE e.step_id=s.id AND e.tenant_id=s.tenant_id AND e.state='ADMITTED'
+                  ) AS has_admitted_effect
+             FROM commander_steps s
+            WHERE s.state='RUNNING' AND s.lease_expires_at <= $1
+            ORDER BY s.lease_expires_at ASC FOR UPDATE OF s SKIP LOCKED LIMIT $2
          )
          UPDATE commander_steps s SET
-           state=CASE WHEN s.attempt < s.max_attempts THEN 'RETRY_WAIT' ELSE 'FAILED' END,
-           scheduled_at=CASE WHEN s.attempt < s.max_attempts THEN $1 ELSE s.scheduled_at END,
-           error=jsonb_build_object('code','LEASE_EXPIRED','message','Worker lease expired before terminal transition','retryable', s.attempt < s.max_attempts),
+           state=CASE
+             WHEN expired.has_admitted_effect THEN 'WAITING_FOR_RECONCILIATION'
+             WHEN s.attempt < s.max_attempts THEN 'RETRY_WAIT'
+             ELSE 'FAILED'
+           END,
+           scheduled_at=CASE
+             WHEN NOT expired.has_admitted_effect AND s.attempt < s.max_attempts THEN $1
+             ELSE s.scheduled_at
+           END,
+           error=jsonb_build_object(
+             'code','LEASE_EXPIRED',
+             'message','Worker lease expired before terminal transition',
+             'retryable', NOT expired.has_admitted_effect AND s.attempt < s.max_attempts
+           ),
            version=s.version+1, updated_at=$1, lease_worker_id=NULL, lease_worker_generation=0, lease_token=NULL, lease_expires_at=NULL
          FROM expired WHERE s.id=expired.id RETURNING s.*`,
         [now.toISOString(), limit],
@@ -950,6 +997,7 @@ export class PostgresKernelRepository implements KernelRepository {
       const reclaimed = result.rows.map(fromStep);
       for (const step of reclaimed) {
         assertStepTransition('RUNNING', step.state);
+        const awaitingReconciliation = step.state === 'WAITING_FOR_RECONCILIATION';
         await this.releaseTenantSlot(client, step.tenantId);
         const retryable = step.state === 'RETRY_WAIT';
         await this.appendEvent(client, {
@@ -964,7 +1012,7 @@ export class PostgresKernelRepository implements KernelRepository {
           payload: { attempt: step.attempt },
         });
         await this.parkOrphanAdmittedEffects(client, step, 'lease_expired', 'kernel.recovery');
-        if (!retryable) {
+        if (!retryable && !awaitingReconciliation) {
           const source = result.rows.find((row) => row.id === step.id);
           const compensated = await this.requestCompensationIfNeeded(
             client,
@@ -2461,23 +2509,20 @@ export class PostgresKernelRepository implements KernelRepository {
   ): Promise<CompensationAuthorizationRecord | null> {
     return this.withTransaction(
       async (client) => {
-        const result = await client.query<Record<string, unknown>>(
-          `SELECT id,tenant_id AS "tenantId",original_run_id AS "originalRunId",
-          original_effect_id AS "originalEffectId",compensation_effect_type AS "compensationEffectType",
-          adapter_version AS "adapterVersion",compensation_patch AS "compensationPatch",
-          forward_receipt_hash AS "forwardReceiptHash",policy_decision_id AS "policyDecisionId",
-          policy_snapshot_id AS "policySnapshotId",decision,action_digest AS "actionDigest",
-          expires_at AS "expiresAt",approval_interaction_id AS "approvalInteractionId"
-         FROM commander_compensation_authorizations WHERE id=$1 AND tenant_id=$2`,
-          [authorizationId, tenantId],
-        );
-        const row = result.rows[0];
-        return row
-          ? ({
-              ...row,
-              expiresAt: iso(row.expiresAt as Date | string),
-            } as unknown as CompensationAuthorizationRecord)
-          : null;
+        const result = await client.query<{
+          authorization: CompensationAuthorizationRecord | string | null;
+        }>('SELECT get_compensation_authorization($1::text,$2::text) AS authorization', [
+          authorizationId,
+          tenantId,
+        ]);
+        const raw = result.rows[0]?.authorization;
+        if (!raw) return null;
+        const authorization =
+          typeof raw === 'string' ? (JSON.parse(raw) as CompensationAuthorizationRecord) : raw;
+        return {
+          ...authorization,
+          expiresAt: iso(authorization.expiresAt),
+        };
       },
       [tenantId],
     );
@@ -2492,7 +2537,14 @@ export class PostgresKernelRepository implements KernelRepository {
         );
         const raw = result.rows[0]?.result;
         if (!raw) throw new Error('COMPENSATION_REQUEST_PERSISTENCE_FAILED');
-        return typeof raw === 'string' ? JSON.parse(raw) : raw;
+        const value = (
+          typeof raw === 'string' ? JSON.parse(raw) : raw
+        ) as RequestCompensationResult;
+        if (!value.accepted) return value;
+        return {
+          ...value,
+          request: fromCompensationRequest(value.request as unknown as Record<string, unknown>),
+        };
       },
       [input.tenantId],
     );
@@ -2504,7 +2556,7 @@ export class PostgresKernelRepository implements KernelRepository {
     const client = await this.pool.connect();
     try {
       const result = await client.query<{ result: ClaimedCompensationRequest | string | null }>(
-        `SELECT claim_compensation_request($1::text,$2::text,$3::text,$4::bigint,$5::text) AS result`,
+        `SELECT claim_compensation_request_v2($1::text,$2::text,$3::text,$4::bigint,$5::text) AS result`,
         [
           input.requestId,
           input.outboxMessageId,
@@ -2893,6 +2945,14 @@ export class PostgresKernelRepository implements KernelRepository {
   async isCapabilityRevoked(jti: string, tenantId: string): Promise<boolean> {
     return this.withTransaction(
       async (client) => {
+        if (this.options.adapterOpsMode) {
+          const result = await client.query<{ read_capability_revocation_v1: boolean }>(
+            `SELECT public.read_capability_revocation_v1($1::text, $2::text)
+               AS read_capability_revocation_v1`,
+            [tenantId, jti],
+          );
+          return result.rows[0]?.read_capability_revocation_v1 === true;
+        }
         const result = await client.query(
           `SELECT 1 FROM commander_capability_revocations WHERE jti=$1 AND tenant_id=$2 AND expires_at > now()`,
           [jti, tenantId],
@@ -2929,6 +2989,15 @@ export class PostgresKernelRepository implements KernelRepository {
   }): Promise<boolean> {
     return this.withTransaction(
       async (client) => {
+        if (this.options.adapterOpsMode) {
+          const result = await client.query<{ consume_capability_replay_v1: boolean }>(
+            `SELECT public.consume_capability_replay_v1(
+               $1::text, $2::text, $3::text, $4::timestamptz
+             ) AS consume_capability_replay_v1`,
+            [input.tenantId, input.jti, input.nonce, input.expiresAt],
+          );
+          return result.rows[0]?.consume_capability_replay_v1 === true;
+        }
         const result = await client.query<{ jti: string }>(
           `INSERT INTO commander_capability_replays (tenant_id, jti, nonce, expires_at)
          VALUES ($1, $2, $3, $4)
@@ -3443,7 +3512,7 @@ export class PostgresKernelRepository implements KernelRepository {
                to_regprocedure('public.read_adapter_ops_evidence_context(text,bigint,text,text,text,text,text)') IS NOT NULL AS context_rpc,
                to_regprocedure('public.complete_compensation_effect_with_evidence(jsonb)') IS NOT NULL AS terminal_complete_rpc,
                to_regprocedure('public.fail_compensation_effect_with_evidence(jsonb)') IS NOT NULL AS terminal_fail_rpc`
-          : 'SELECT EXISTS (SELECT 1 FROM public.commander_evidence_receipts LIMIT 1) AS available',
+          : "SELECT to_regclass('public.commander_evidence_receipts') IS NOT NULL AS available",
       );
       const row = result.rows[0];
       return {
@@ -3683,8 +3752,9 @@ export class PostgresKernelRepository implements KernelRepository {
         if (request.releaseStep === false) {
           const current = await client.query<DbStep>(
             `SELECT * FROM commander_steps
-           WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='WAITING_FOR_HUMAN'`,
-            [interaction.step_id, request.runId, request.tenantId],
+           WHERE id=$1 AND run_id=$2 AND tenant_id=$3
+             AND ($4::boolean OR state='WAITING_FOR_HUMAN')`,
+            [interaction.step_id, request.runId, request.tenantId, request.releaseStep === false],
           );
           if (!current.rows[0]) {
             throw new KernelInvariantError(
@@ -4247,15 +4317,40 @@ export class PostgresKernelRepository implements KernelRepository {
     reason: string,
     actor: string,
   ): Promise<void> {
+    const unknownAt = new Date().toISOString();
+    const policy = createReconcilePolicy({ unknownAt });
     const uncertain = await client.query<{ id: string }>(
       `UPDATE commander_effects SET
          state='COMPLETION_UNKNOWN',
          response=jsonb_build_object('reason',$1::text),
-         reconcile_after=now(),
-         reconcile_attempts=0
+         reconcile_max_attempts=$5,
+         reconcile_initial_delay_ms=$6,
+         reconcile_max_delay_ms=$7,
+         reconcile_deadline_at=LEAST($8::timestamptz, COALESCE(governed_action_deadline_at, $8::timestamptz)),
+         reconcile_disposition='PENDING',
+         reconcile_after=$4::timestamptz,
+         reconcile_attempts=0,
+         reconcile_observed_at=NULL,
+         reconcile_last_error=NULL,
+         reconcile_escalated_at=NULL,
+         reconcile_escalation_code=NULL,
+         reconcile_claim_token=NULL,
+         reconcile_claim_expires_at=NULL,
+         reconcile_claimed_at=NULL,
+         reconcile_claim_worker_id=NULL,
+         reconcile_claim_worker_generation=NULL
        WHERE step_id=$2 AND tenant_id=$3 AND state='ADMITTED'
        RETURNING id`,
-      [reason, step.id, step.tenantId],
+      [
+        reason,
+        step.id,
+        step.tenantId,
+        unknownAt,
+        policy.maxAttempts,
+        policy.initialDelayMs,
+        policy.maxDelayMs,
+        policy.deadlineAt,
+      ],
     );
     for (const effect of uncertain.rows) {
       await this.appendEvent(client, {

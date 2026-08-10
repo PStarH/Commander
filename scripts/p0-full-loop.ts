@@ -20,8 +20,14 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolve } from 'node:path';
-import { runKernelMigrations, seedWorkerAllowedTenants } from '@commander/kernel';
+import {
+  runKernelMigrations,
+  runTask1ClosureMigrations,
+  seedTenantAuthorityAllowedTenants,
+  seedWorkerAllowedTenants,
+} from '@commander/kernel';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import { buildP0RuntimeDatabaseUrls } from './p0-runtime-config.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const PORT = Number(process.env.P0_PORT ?? 4012);
@@ -70,21 +76,26 @@ async function main(): Promise<void> {
   log('migrate kernel schema');
   const pool = createVerifiedPostgresPool({ connectionString: DB, max: 2 });
   const appPassword = `p0-${randomUUID()}`;
+  const authorityPassword = `p0-${randomUUID()}`;
   const workerPassword = `p0-${randomUUID()}`;
   try {
     await runKernelMigrations(pool);
+    await runTask1ClosureMigrations(pool, 'enforce');
     await seedWorkerAllowedTenants(pool, [TENANT]);
+    await seedTenantAuthorityAllowedTenants(pool, [TENANT]);
     await pool.query(`ALTER ROLE commander_app WITH LOGIN PASSWORD '${appPassword}'`);
+    await pool.query(
+      `ALTER ROLE commander_tenant_authority WITH LOGIN PASSWORD '${authorityPassword}'`,
+    );
     await pool.query(`ALTER ROLE commander_worker WITH LOGIN PASSWORD '${workerPassword}'`);
   } finally {
     await pool.end();
   }
-  const appDatabaseUrl = new URL(DB);
-  appDatabaseUrl.username = 'commander_app';
-  appDatabaseUrl.password = appPassword;
-  const workerDatabaseUrl = new URL(DB);
-  workerDatabaseUrl.username = 'commander_worker';
-  workerDatabaseUrl.password = workerPassword;
+  const runtimeDatabaseUrls = buildP0RuntimeDatabaseUrls(DB, {
+    app: appPassword,
+    authority: authorityPassword,
+    worker: workerPassword,
+  });
 
   const apiEnv = {
     ...process.env,
@@ -101,8 +112,10 @@ async function main(): Promise<void> {
     COMMANDER_INTEGRITY_KEY:
       process.env.COMMANDER_INTEGRITY_KEY ?? 'dev-integrity-key-32-bytes-minimum!!',
     COMMANDER_KERNEL_ENABLED: '1',
-    DATABASE_URL: appDatabaseUrl.toString(),
-    COMMANDER_KERNEL_DATABASE_URL: appDatabaseUrl.toString(),
+    DATABASE_URL: runtimeDatabaseUrls.app,
+    COMMANDER_KERNEL_DATABASE_URL: runtimeDatabaseUrls.app,
+    COMMANDER_TENANT_CONTEXT_PHASE: 'enforce',
+    COMMANDER_TENANT_AUTHORITY_DATABASE_URL: runtimeDatabaseUrls.authority,
     COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID:
       process.env.COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID ?? 'policy-default-v1',
     COMMANDER_DEFAULT_TENANT_ID: TENANT,
@@ -135,9 +148,11 @@ async function main(): Promise<void> {
       cwd: ROOT,
       env: {
         ...process.env,
-        DATABASE_URL: workerDatabaseUrl.toString(),
-        COMMANDER_KERNEL_DATABASE_URL: workerDatabaseUrl.toString(),
-        COMMANDER_WORKER_DATABASE_URL: workerDatabaseUrl.toString(),
+        DATABASE_URL: runtimeDatabaseUrls.worker,
+        COMMANDER_KERNEL_DATABASE_URL: runtimeDatabaseUrls.worker,
+        COMMANDER_WORKER_DATABASE_URL: runtimeDatabaseUrls.worker,
+        COMMANDER_TENANT_CONTEXT_PHASE: '',
+        COMMANDER_TENANT_AUTHORITY_DATABASE_URL: '',
         COMMANDER_WORKER_BOOTSTRAP: resolve(ROOT, 'scripts/p0-worker-bootstrap.ts'),
         COMMANDER_WORKER_AUTH_TOKEN: 'worker-token',
         COMMANDER_WORKER_TENANTS: TENANT,

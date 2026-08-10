@@ -5,6 +5,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { StateCheckpointer, CheckpointState } from '../../src/runtime/stateCheckpointer';
 import { LeaseManager } from '../../src/atr/leaseManager';
+import { runWithTenant } from '../../src/runtime/tenantContext';
 
 function tempDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'commander-ckpt-lease-'));
@@ -70,6 +71,22 @@ describe('StateCheckpointer + LeaseManager', () => {
     assert.strictEqual(written!.version, 1, 'first write sets version=1');
     assert.strictEqual(written!.leaseToken, lease.token);
     assert.strictEqual(written!.fencingEpoch, lease.fencingEpoch);
+  });
+
+  it('authorizes a shared checkpointer with the active tenant context', () => {
+    const tenantId = 'tenant-enterprise-a';
+    const lease = lm.acquire('run-tenant', { tenantId }).lease;
+    const state = baseState({
+      runId: 'run-tenant',
+      leaseToken: lease.token,
+      fencingEpoch: lease.fencingEpoch,
+    });
+
+    runWithTenant(tenantId, () => cp.checkpoint(state));
+
+    const written = runWithTenant(tenantId, () => cp.resume('run-tenant'));
+    assert.ok(written, 'active tenant must be used for lease validation');
+    assert.strictEqual(written?.leaseToken, lease.token);
   });
 
   it('bumps version on every successful write', () => {

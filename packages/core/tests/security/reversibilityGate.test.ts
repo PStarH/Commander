@@ -22,19 +22,16 @@ describe('ReversibilityGate', () => {
       expect(gate.classify('verify_answer')).toBe('reversible');
     });
 
-    it.each([
-      'file_read',
-      'file_list',
-      'memory_recall',
-      'memory_list',
-      'web_search',
-    ])('allows consolidated read semantic %s without approval', async (toolName) => {
-      await expect(gate.evaluate(toolName)).resolves.toMatchObject({
-        allowed: true,
-        reversibility: 'reversible',
-        requiresHumanApproval: false,
-      });
-    });
+    it.each(['file_read', 'file_list', 'memory_recall', 'memory_list', 'web_search'])(
+      'allows consolidated read semantic %s without approval',
+      async (toolName) => {
+        await expect(gate.evaluate(toolName)).resolves.toMatchObject({
+          allowed: true,
+          reversibility: 'reversible',
+          requiresHumanApproval: false,
+        });
+      },
+    );
 
     it.each(['checkpoint_save', 'checkpoint_rewind', 'checkpoint_collapse'])(
       'keeps checkpoint mutation semantic %s irreversible',

@@ -1,4 +1,4 @@
-import { beforeEach } from 'vitest';
+import { afterEach, beforeEach } from 'vitest';
 import { resetModelRouter } from '../src/runtime/modelRouter';
 import { resetMessageBus } from '../src/runtime/messageBus';
 import { resetTraceRecorder } from '../src/runtime/executionTrace';
@@ -38,6 +38,7 @@ import { resetInvariants } from '../src/security/securityInvariantVerifier';
 import { resetSecurityResponseState } from '../src/security/securityResponseEngine';
 import { resetWebhookDispatcher } from '../src/runtime/webhookDispatcher';
 import { resetEventSourcingSubscriber } from '../src/runtime/eventSourcingSubscriber';
+import { resetGlobalEventSourcingEngine } from '../src/runtime/eventSourcingEngine';
 import { resetGlobalSemanticMemoryStore } from '../src/memory/semanticStore';
 import { resetGlobalEpisodicStore } from '../src/memory/episodicStore';
 import { resetConversationStore } from '../src/memory/conversationStore';
@@ -49,6 +50,16 @@ import {
   setSideEffectGate,
   type SideEffectGate,
 } from '../src/runtime/sideEffectGate';
+
+// Runtime integration tests must not write to the checkout's durable WAL.
+// A caller can still provide an explicit path for tests that exercise WAL
+// persistence; an empty default keeps ordinary tests in-memory and isolated.
+if (process.env.COMMANDER_EVENT_SOURCING_WAL === undefined) {
+  process.env.COMMANDER_EVENT_SOURCING_WAL = '';
+}
+if (process.env.COMMANDER_OTEL_ENABLED === undefined) {
+  process.env.COMMANDER_OTEL_ENABLED = 'false';
+}
 
 /**
  * Always-admit SideEffectGate for unit/integration tests that exercise
@@ -79,7 +90,10 @@ function createAlwaysAdmitGate(): SideEffectGate {
 // CI Quality Gates sets NODE_ENV=production. Capability token issuance
 // refuses the default key in production unless COMMANDER_CAPABILITY_TOKEN_KEY
 // is set (>=32 chars). Provide a deterministic test key for the suite only.
-if (!process.env.COMMANDER_CAPABILITY_TOKEN_KEY || process.env.COMMANDER_CAPABILITY_TOKEN_KEY.length < 32) {
+if (
+  !process.env.COMMANDER_CAPABILITY_TOKEN_KEY ||
+  process.env.COMMANDER_CAPABILITY_TOKEN_KEY.length < 32
+) {
   process.env.COMMANDER_CAPABILITY_TOKEN_KEY = 'test-capability-token-key-32chars-min!!';
 }
 // Keep V2 gate soft for unit/integration tool loops; sideEffectGate unit tests
@@ -97,7 +111,10 @@ if (process.env.NODE_ENV === 'production' && process.env.COMMANDER_TEST_FORCE_PR
  * once a cheaper model has been recorded. Reset them before every test so that
  * no test is polluted by the security state of a previous test.
  */
-beforeEach(() => {
+beforeEach(async () => {
+  resetEventSourcingSubscriber();
+  await resetGlobalEventSourcingEngine();
+
   resetModelRouter();
   resetMessageBus();
   resetTraceRecorder();
@@ -125,7 +142,6 @@ beforeEach(() => {
   resetAuditChainLedger();
   resetZeroTrustValidator();
   resetReversibilityGate();
-  resetEventSourcingSubscriber();
   resetGlobalFetchGovernor();
   resetInvariants();
   resetSecurityResponseState();
@@ -150,4 +166,9 @@ beforeEach(() => {
   // integration tests can execute tool bodies without a full ATR handle.
   resetSideEffectGate();
   setSideEffectGate(createAlwaysAdmitGate());
+});
+
+afterEach(async () => {
+  resetEventSourcingSubscriber();
+  await resetGlobalEventSourcingEngine();
 });

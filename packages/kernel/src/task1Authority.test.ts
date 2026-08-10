@@ -12,6 +12,7 @@ import {
   KERNEL_TASK1_FINAL_SCHEMA_VERSION,
   KERNEL_TASK1_REPLAY_GATE_SCHEMA_VERSION,
   KERNEL_TASK1_RUNTIME_AUTHORITY_CLOSURE_SQL,
+  KERNEL_CLAIM_SQL,
 } from './schema.js';
 import {
   KERNEL_2026072116_MIGRATIONS,
@@ -25,11 +26,22 @@ import {
   KERNEL_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
+  KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
+  KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
   runTask1ClosureMigrations,
   runKernelMigrations,
 } from './migrations.js';
 import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
-import { KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL } from './task1TenantContext.js';
+import {
+  KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL,
+} from './task1TenantContext.js';
+import {
+  KERNEL_COMPENSATION_APPROVAL_BINDING_SQL,
+  KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+} from './compensationSchema.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -103,6 +115,94 @@ class MigrationLedgerPool implements SqlPool {
 }
 
 describe('Task 1 authoritative Class A admission', () => {
+  it('installs the approval-binding claim RPC after the campaign2 public wrapper', () => {
+    const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
+    const campaign2Index = ids.indexOf('2026-07-29.2.campaign2_critical_authority_hardening');
+    const approvalBindingIndex = ids.indexOf(
+      '2026-08-08.4.compensation_approval_binding_claim_rpc',
+    );
+    assert.ok(campaign2Index >= 0);
+    assert.ok(approvalBindingIndex > campaign2Index);
+    assert.equal(
+      KERNEL_MIGRATIONS.find(
+        ({ id }) => id === '2026-08-08.4.compensation_approval_binding_claim_rpc',
+      )?.sql,
+      KERNEL_COMPENSATION_APPROVAL_BINDING_SQL,
+    );
+  });
+
+  it('installs compensation terminal closure after the approval-bound claim RPC', () => {
+    const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
+    const campaign2Index = ids.indexOf('2026-07-29.2.campaign2_critical_authority_hardening');
+    const approvalBindingIndex = ids.indexOf(
+      '2026-08-08.4.compensation_approval_binding_claim_rpc',
+    );
+    const terminalClosureId = '2026-08-08.5.compensation_terminal_closure';
+    const terminalClosureIndex = ids.indexOf(terminalClosureId);
+    assert.ok(campaign2Index >= 0);
+    assert.ok(approvalBindingIndex >= 0);
+    assert.ok(terminalClosureIndex > approvalBindingIndex);
+    assert.ok(approvalBindingIndex > campaign2Index);
+    assert.equal(
+      KERNEL_MIGRATIONS.find(({ id }) => id === terminalClosureId)?.sql,
+      KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+    );
+  });
+
+  it('overrides the immutable baseline claim RPC with the governed-run guard', () => {
+    const baseline = KERNEL_2026072116_MIGRATIONS.find(({ id }) => id.endsWith('.claim'));
+    const guardId = '2026-08-08.6.compensation_claim_guard';
+    const forward = KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS.find(({ id }) => id === guardId);
+    assert.ok(baseline);
+    assert.ok(forward);
+    assert.doesNotMatch(baseline.sql, /compensationRequestId/i);
+    assert.match(KERNEL_CLAIM_SQL, /r\.metadata->>'compensationRequestId'\s+IS NULL/i);
+    assert.equal(forward.sql, KERNEL_CLAIM_SQL);
+    const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
+    assert.ok(ids.indexOf(guardId) > ids.indexOf(baseline.id));
+    assert.equal(KERNEL_MIGRATIONS.find(({ id }) => id === guardId)?.sql, KERNEL_CLAIM_SQL);
+  });
+
+  it('installs the clock-safe tenant-context close as a new forward descriptor', () => {
+    const id = '2026-08-08.7.task1_tenant_context_clock_safety';
+    const forward = KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS.find(
+      ({ id: migrationId }) => migrationId === id,
+    );
+    assert.ok(forward);
+    assert.equal(forward.sql, KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL);
+    assert.equal(
+      KERNEL_FORWARD_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+    assert.equal(
+      KERNEL_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+    assert.equal(
+      KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS[
+        '2026-07-27.3.task1_authenticated_tenant_authority_enforce'
+      ],
+      '9994edfd6cd1cb7f68b538b4b0f04d1f73435a003b6dba958da7ccdcffc42fc5',
+    );
+  });
+
+  it('installs bind timestamp monotonicity as a new forward descriptor', () => {
+    const id = '2026-08-09.1.task1_tenant_context_bind_monotonicity';
+    const forward = KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS.find(
+      ({ id: migrationId }) => migrationId === id,
+    );
+    assert.ok(forward);
+    assert.equal(forward.sql, KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL);
+    assert.equal(
+      KERNEL_FORWARD_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+    assert.equal(
+      KERNEL_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+  });
+
   it('ships the admission split and role closure as a new forward migration', () => {
     assert.equal(KERNEL_TASK1_FINAL_SCHEMA_VERSION, '2026-07-25.1');
     assert.ok(

@@ -7,6 +7,8 @@ import {
   KERNEL_TASK1_ENFORCED_TENANT_RELATIONS,
   KERNEL_TASK1_PRODUCT_TENANT_PREDICATE_SQL,
   KERNEL_TASK1_TENANT_CONTEXT_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL,
   READ_APP_TENANT_TRANSACTION_TARGET_SQL,
   buildBindAppTenantContextQuery,
   buildCloseAppTenantContextQuery,
@@ -61,6 +63,22 @@ describe('Task 1 authenticated tenant context', () => {
       )?.[0] ?? '';
     assert.match(closeFunction, /SET closed_at = pg_catalog\.clock_timestamp\(\)/i);
     assert.doesNotMatch(closeFunction, /DELETE\s+FROM/i);
+  });
+
+  it('uses a forward clock-safety repair without changing the pinned closure descriptor', () => {
+    assert.match(
+      KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL,
+      /CREATE OR REPLACE FUNCTION public\.close_app_tenant_context[\s\S]*SET closed_at = GREATEST\(pg_catalog\.clock_timestamp\(\),\s*context\.bound_at\)/i,
+    );
+    assert.doesNotMatch(KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL, /DELETE\s+FROM/i);
+  });
+
+  it('keeps bind timestamps at or after the issued timestamp after a wall-clock step', () => {
+    assert.match(
+      KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL,
+      /CREATE OR REPLACE FUNCTION public\.bind_app_tenant_context[\s\S]*SET bound_at = GREATEST\(pg_catalog\.clock_timestamp\(\),\s*context\.issued_at\)/i,
+    );
+    assert.doesNotMatch(KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL, /DELETE\s+FROM/i);
   });
 
   it('binds and resolves only the exact app database, backend PID, and xid8', () => {

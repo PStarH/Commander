@@ -9,7 +9,11 @@
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>Local-first multi-agent orchestration — v0.2 · beta</strong></p>
+<p align="center"><strong>Local-first multi-agent orchestration — v0.2 · alpha</strong></p>
+
+> **Alpha notice:** Commander is not production-ready. Treat outputs, benchmarks,
+> POC scenarios, and dashboard values as development or demo signals. Do not use
+> it for unattended production workloads or sensitive data without your own review.
 
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo" --stream</code><br>
@@ -55,11 +59,15 @@ that is still **alpha** for enterprise use.
 | **Auth** | None (single user) | `COMMANDER_API_KEY` + JWT tenant claims |
 | **Tenancy** | None (implicit `__default__`) | Alpha — kernel RLS + tenant-aware singletons; storage isolation opt-in |
 | **Durable kernel** | No | Yes (auto-on in production / when a Postgres DSN is set) |
-| **Status** | Shippable as a local tool | Alpha — not yet live-fire-proven on real backends |
+| **Status** | Alpha local evaluation tool — not production-ready | Alpha — not yet live-fire-proven on real backends |
 
 The quick start below defaults to the **Local CLI**. To run the Enterprise
 Gateway instead, see [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) and the
 Docker block at the end of Quick Start.
+
+For the bounded design-partner path, start with the [enterprise pilot
+quickstart](docs/enterprise/quickstart.md), then use the [Kubernetes rollback
+workflow template](docs/enterprise/workflow-template-kubernetes-rollback.md).
 
 ---
 
@@ -107,7 +115,7 @@ auto-enables in production. Multi-tenant isolation is **alpha** — review
 
 ### Deliberation Engine
 
-Task classification, complexity estimation, and topology selection — all automatic. Commander classifies your task (CODING / RESEARCH / ANALYSIS / FACTUAL), estimates complexity, and picks from 5 canonical topologies: SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW. A one-line task uses 1 agent. A cross-repository audit spins up 20.
+Task classification, complexity estimation, and topology selection — all automatic. Commander classifies your task (CODING / RESEARCH / ANALYSIS / FACTUAL), estimates complexity, and picks from 5 canonical topologies: SINGLE, CHAIN, DISPATCH, ORCHESTRATOR, REVIEW. A one-line task uses 1 agent. A cross-repository audit can fan out to 15 agents.
 
 ### Live Streaming
 
@@ -257,11 +265,11 @@ Open `http://localhost:5173`. The console provides:
 
 | Suite             | Coverage                           | Result                                       |
 | ----------------- | ---------------------------------- | -------------------------------------------- |
-| Chaos Engineering | 255 synthetic + 55 mutation        | Harness entry; see the retained baseline matrix |
+| Chaos Engineering | 200 synthetic + 55 mutation (=255)   | Harness entry; see the retained baseline matrix |
 | Red Team          | 47 scenarios, 8 attack categories  | all listed cases blocked (simulated harness) |
 | AgentDojo         | 12 security test cases             | all listed cases blocked (simulated harness) |
 | GAIA Spine        | Core capability benchmark          | Scheduled quick/offline run; full fixture pending |
-| SLO               | 99.5% API success, <2s p95 latency | CI baseline, not production SLA              |
+| SLO               | 99.95% API availability, <5s p95 schedule | CI baseline, not production SLA              |
 
 Full matrix: [BENCHMARK.md](BENCHMARK.md)
 
@@ -300,6 +308,18 @@ The system uses familiar distributed-system patterns: circuit breakers, dead let
 - [SECURITY.md](SECURITY.md) — Security model, threat model, compliance
 - [BENCHMARK.md](BENCHMARK.md) — Full benchmark matrix and methodology
 - [CHANGELOG.md](CHANGELOG.md) — Release history
+
+## Public boundaries and feedback
+
+- **Real vs simulated:** onboarding task results are real only when the UI/API
+  reports `source=real`; fallbacks and POC figures are simulated/demo data.
+- **Privacy:** prompts may be sent to the selected LLM provider, and local traces,
+  memory, audit data, and optional OpenTelemetry exports may be persisted. See
+  [PRIVACY.md](PRIVACY.md) before entering sensitive data.
+- **Bugs:** open a [GitHub issue](https://github.com/PStarH/Commander/issues) and
+  redact prompts, logs, configuration, PII, and secrets first.
+- **Questions and proposals:** use [GitHub Discussions](https://github.com/PStarH/Commander/discussions).
+- **Security vulnerabilities:** follow [SECURITY.md](SECURITY.md); do not open a public issue.
 
 ---
 

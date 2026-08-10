@@ -206,6 +206,36 @@ describe('UnifiedVerificationPipeline', () => {
     assert.ok(report.signals.some((s) => s.message.includes('count')));
   });
 
+  it('enforces top-level JSON Schema required, enum, array, and additionalProperties', async () => {
+    const pipeline = new UnifiedVerificationPipeline({
+      enabled: true,
+      confidenceSkipThreshold: 0.99,
+    });
+    const report = await pipeline.verify({
+      goal: 'Return a structured incident report',
+      output: JSON.stringify({
+        severity: 'SEV-9',
+        evidence: ['ok', 42],
+        unexpected: true,
+      }),
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          incidentId: { type: 'string' },
+          severity: { type: 'string', enum: ['SEV-1', 'SEV-2', 'SEV-3'] },
+          evidence: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['incidentId', 'severity'],
+      },
+    });
+    assert.ok(report.signals.some((s) => s.message.includes('incidentId')));
+    assert.ok(report.signals.some((s) => s.message.includes('SEV-1')));
+    assert.ok(report.signals.some((s) => s.message.includes('evidence[1]')));
+    assert.ok(report.signals.some((s) => s.message.includes('Unexpected field')));
+    assert.equal(report.passed, false);
+  });
+
   it('adjusts relevance threshold by task type', async () => {
     const pipeline = createPipeline();
     // Code tasks allow longer output

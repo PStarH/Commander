@@ -123,7 +123,11 @@ describe('compensationPublisherRace', () => {
       'kernel-ops publisher must not deliver compensation topics under interleaved load',
     );
     assert.equal(brokerAdmissions, 0, 'pre-Task-3 payloads must fail before broker admission');
-    assert.equal(brokerExecutions, 0, 'publisher race must not masquerade as compensation execution');
+    assert.equal(
+      brokerExecutions,
+      0,
+      'publisher race must not masquerade as compensation execution',
+    );
 
     // Legacy is never claimed by KERNEL topic consumer; publisher denylist keeps it out of WS2.
     const remainingLegacy = await repository.claimOutboxByTopic(LEGACY_COMPENSATION_TOPIC, 100);

@@ -11,10 +11,7 @@ import {
   type DatabasePeerBindingV1,
   type PrebootstrapInventoryV1,
 } from './canonicalBootstrap.js';
-import {
-  KERNEL_TASK1_BASELINE_MIGRATIONS,
-  KERNEL_TASK1_CLOSURE_MIGRATIONS,
-} from './migrations.js';
+import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
 import type { SqlClient } from './postgres.js';
 
 type JsonRecord = Record<string, unknown>;

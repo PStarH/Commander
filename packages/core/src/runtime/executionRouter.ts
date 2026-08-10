@@ -117,6 +117,7 @@ export class ExecutionRouter {
         const estimatedOutputTokens = Math.min(
           ctx.tokenBudget,
           batchModel.contextWindow - estimatedInputTokens,
+          batchModel.maxOutputTokens ?? Number.POSITIVE_INFINITY,
         );
         const standardCost =
           (estimatedInputTokens / 1_000_000) * batchModel.costPer1MInput +

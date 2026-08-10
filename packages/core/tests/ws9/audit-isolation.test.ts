@@ -47,14 +47,7 @@ import {
   FailClosedPersistor,
 } from '../../src/security/auditChainIntegrity';
 import { runWithTenant } from '../../src/runtime/tenantContext';
-import {
-  writeEvidence,
-  writePass,
-  writeBreach,
-  writeFail,
-  TENANT_A,
-  TENANT_B,
-} from './_evidence';
+import { writeEvidence, writePass, writeBreach, writeFail, TENANT_A, TENANT_B } from './_evidence';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -63,10 +56,7 @@ const FORGED_KEY = Buffer.from('y'.repeat(64), 'utf-8'); // attacker's guessed k
 
 let tmpCounter = 0;
 function makeTmp(): { dir: string; cleanup: () => void } {
-  const dir = path.join(
-    os.tmpdir(),
-    `ws9-audit-${process.pid}-${Date.now()}-${++tmpCounter}`,
-  );
+  const dir = path.join(os.tmpdir(), `ws9-audit-${process.pid}-${Date.now()}-${++tmpCounter}`);
   fs.mkdirSync(dir, { recursive: true });
   return {
     dir,
@@ -104,7 +94,7 @@ function readLines(file: string): string[] {
 
 // ─── AUDIT-1: A queries audit log API, cannot see B's events ─────────────
 
-describe('WS9 AUDIT-1: A queries audit log API, cannot see B\'s events', () => {
+describe("WS9 AUDIT-1: A queries audit log API, cannot see B's events", () => {
   let env: { dir: string; cleanup: () => void };
   beforeEach(() => {
     env = makeTmp();
@@ -224,7 +214,10 @@ describe('WS9 AUDIT-2: A tampers own audit entries (rewrite/delete/tail-truncate
     const lines = readLines(file);
     const tamperedEntry = JSON.parse(lines[1]!);
     tamperedEntry.message = 'FORGED';
-    fs.writeFileSync(file, lines[0]! + '\n' + JSON.stringify(tamperedEntry) + '\n' + lines[2]! + '\n');
+    fs.writeFileSync(
+      file,
+      lines[0]! + '\n' + JSON.stringify(tamperedEntry) + '\n' + lines[2]! + '\n',
+    );
 
     const afterRewrite = verifyWithManifest(ledger, manifest);
     try {
@@ -808,9 +801,7 @@ describe('WS9 TAMPER-4: Same-machine chainKey re-forge; manifest catches same-se
       expect(chainOk.ok).toBe(true);
       expect(withManifest.ok).toBe(false);
       expect(withManifest.tamperProof).toBe(false);
-      expect(
-        withManifest.manifestGaps.some((g) => g.reason === 'head_hmac_mismatch'),
-      ).toBe(true);
+      expect(withManifest.manifestGaps.some((g) => g.reason === 'head_hmac_mismatch')).toBe(true);
 
       expect(wrongKeyVerify.ok).toBe(false);
       expect(wrongKeyVerify.brokenChain?.reason).toBe('invalid_hmac');

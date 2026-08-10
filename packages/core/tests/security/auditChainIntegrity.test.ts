@@ -41,7 +41,16 @@ let tmpCounter = 0;
 function makeTmp(): { dir: string; cleanup: () => void } {
   const dir = path.join(os.tmpdir(), `ws9-integrity-${process.pid}-${Date.now()}-${++tmpCounter}`);
   fs.mkdirSync(dir, { recursive: true });
-  return { dir, cleanup: () => { try { fs.rmSync(dir, { recursive: true, force: true }); } catch { /* */ } } };
+  return {
+    dir,
+    cleanup: () => {
+      try {
+        fs.rmSync(dir, { recursive: true, force: true });
+      } catch {
+        /* */
+      }
+    },
+  };
 }
 
 function freshLedger(dir: string): AuditChainLedger {
@@ -55,7 +64,9 @@ async function drain(): Promise<void> {
 describe('ChainManifest', () => {
   let env: { dir: string; cleanup: () => void };
 
-  beforeEach(() => { env = makeTmp(); });
+  beforeEach(() => {
+    env = makeTmp();
+  });
   afterEach(() => env.cleanup());
 
   it('registers a chain head and detects whole-chain deletion', async () => {
@@ -67,7 +78,12 @@ describe('ChainManifest', () => {
 
     const entries = ledger.getEntries();
     const head = entries[entries.length - 1]!;
-    manifest.registerHead({ chainId: ledger.chainId, tenantId: undefined, maxSeq: head.seq, headHmac: head.hmac });
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: undefined,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
 
     // Whole-chain deletion: remove the audit-chain files but leave manifest.
     for (const f of fs.readdirSync(env.dir).filter((f) => f.startsWith('audit-chain-'))) {
@@ -91,7 +107,12 @@ describe('ChainManifest', () => {
 
     const entries = ledger.getEntries();
     const head = entries[entries.length - 1]!;
-    manifest.registerHead({ chainId: ledger.chainId, tenantId: undefined, maxSeq: head.seq, headHmac: head.hmac });
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: undefined,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
 
     // Truncate: rewrite the chain file keeping only seq=1 (drop 2 and 3).
     const chainFile = path.join(env.dir, 'audit-chain-0.ndjson');
@@ -133,7 +154,9 @@ describe('ChainManifest', () => {
 
 describe('AsymmetricChainSigner', () => {
   let env: { dir: string; cleanup: () => void };
-  beforeEach(() => { env = makeTmp(); });
+  beforeEach(() => {
+    env = makeTmp();
+  });
   afterEach(() => env.cleanup());
 
   it('signs and verifies a chain head with an injected keypair', () => {
@@ -161,7 +184,9 @@ describe('AsymmetricChainSigner', () => {
 
 describe('verifyWithManifest + tamperProof derivation', () => {
   let env: { dir: string; cleanup: () => void };
-  beforeEach(() => { env = makeTmp(); });
+  beforeEach(() => {
+    env = makeTmp();
+  });
   afterEach(() => env.cleanup());
 
   it('tamperProof is derived from live verify, never hardcoded true', async () => {
@@ -170,7 +195,12 @@ describe('verifyWithManifest + tamperProof derivation', () => {
     ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'a' });
     await drain();
     const head = ledger.getEntries()[ledger.getEntries().length - 1]!;
-    manifest.registerHead({ chainId: ledger.chainId, tenantId: undefined, maxSeq: head.seq, headHmac: head.hmac });
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: undefined,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
 
     const ok = verifyWithManifest(ledger, manifest);
     assert.equal(ok.tamperProof, true);
@@ -276,7 +306,9 @@ describe('verifyWithManifest + tamperProof derivation', () => {
 
 describe('startVerifyTimer', () => {
   let env: { dir: string; cleanup: () => void };
-  beforeEach(() => { env = makeTmp(); });
+  beforeEach(() => {
+    env = makeTmp();
+  });
   afterEach(() => env.cleanup());
 
   it('invokes the alert callback when verification fails', async () => {
@@ -285,16 +317,27 @@ describe('startVerifyTimer', () => {
     ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'a' });
     await drain();
     const head = ledger.getEntries()[ledger.getEntries().length - 1]!;
-    manifest.registerHead({ chainId: ledger.chainId, tenantId: undefined, maxSeq: head.seq, headHmac: head.hmac });
+    manifest.registerHead({
+      chainId: ledger.chainId,
+      tenantId: undefined,
+      maxSeq: head.seq,
+      headHmac: head.hmac,
+    });
 
     // Tamper so verify will fail.
     const chainFile = path.join(env.dir, 'audit-chain-0.ndjson');
-    fs.writeFileSync(chainFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(chainFile, 'utf-8').trim()), message: 'X' }) + '\n');
+    fs.writeFileSync(
+      chainFile,
+      JSON.stringify({ ...JSON.parse(fs.readFileSync(chainFile, 'utf-8').trim()), message: 'X' }) +
+        '\n',
+    );
 
     let alerted = false;
     const stop = startVerifyTimer(ledger, manifest, {
       intervalMs: 10,
-      onFailure: () => { alerted = true; },
+      onFailure: () => {
+        alerted = true;
+      },
     });
     await new Promise((r) => setTimeout(r, 60));
     stop();

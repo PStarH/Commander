@@ -42,19 +42,44 @@ const ENV_CHECK_SCRIPT = join(REPO_ROOT, 'scripts', 'ws9-env-check.ts');
 /** All expected test case IDs (spec §4.1–4.5, §5.3, §6.5). */
 const EXPECTED_CASES = [
   // §4.1 DATA
-  'DATA-1', 'DATA-2', 'DATA-3', 'DATA-4', 'DATA-5', 'DATA-6',
+  'DATA-1',
+  'DATA-2',
+  'DATA-3',
+  'DATA-4',
+  'DATA-5',
+  'DATA-6',
   // §4.2 EXEC
-  'EXEC-1', 'EXEC-2', 'EXEC-3', 'EXEC-4', 'EXEC-5',
+  'EXEC-1',
+  'EXEC-2',
+  'EXEC-3',
+  'EXEC-4',
+  'EXEC-5',
   // §4.3 NET
-  'NET-1', 'NET-2', 'NET-3',
+  'NET-1',
+  'NET-2',
+  'NET-3',
   // §4.4 RATE
-  'RATE-1', 'RATE-2', 'RATE-3',
+  'RATE-1',
+  'RATE-2',
+  'RATE-3',
   // §4.5 AUDIT
-  'AUDIT-1', 'AUDIT-2', 'AUDIT-3', 'AUDIT-4', 'AUDIT-5',
+  'AUDIT-1',
+  'AUDIT-2',
+  'AUDIT-3',
+  'AUDIT-4',
+  'AUDIT-5',
   // §6.5 TAMPER
-  'TAMPER-1', 'TAMPER-2', 'TAMPER-3', 'TAMPER-4', 'TAMPER-5',
+  'TAMPER-1',
+  'TAMPER-2',
+  'TAMPER-3',
+  'TAMPER-4',
+  'TAMPER-5',
   // §5.3 KEY
-  'KEY-1', 'KEY-2', 'KEY-3', 'KEY-4', 'KEY-5',
+  'KEY-1',
+  'KEY-2',
+  'KEY-3',
+  'KEY-4',
+  'KEY-5',
 ] as const;
 
 // ─── Types ───────────────────────────────────────────────────────────────
@@ -120,16 +145,12 @@ function ensureBaselineDir(): void {
 
 /** Run ws9-env-check.ts --json and parse the result. */
 function runEnvCheck(): EnvCheckResult {
-  const res = spawnSync(
-    'pnpm',
-    ['exec', 'tsx', ENV_CHECK_SCRIPT, '--json'],
-    {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'pipe'],
-      timeout: 30_000,
-    },
-  );
+  const res = spawnSync('pnpm', ['exec', 'tsx', ENV_CHECK_SCRIPT, '--json'], {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8',
+    stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 30_000,
+  });
 
   // env-check exits 0 on pass, 1 on fail, 2 on error.
   // stdout contains the JSON result regardless of exit code.
@@ -151,22 +172,12 @@ function runEnvCheck(): EnvCheckResult {
 
 /** Run the WS9 vitest suite. Returns true if all tests passed. */
 function runVitestSuite(): boolean {
-  const res = spawnSync(
-    'pnpm',
-    [
-      'exec',
-      'vitest',
-      'run',
-      '--reporter=default',
-      'tests/ws9/',
-    ],
-    {
-      cwd: join(REPO_ROOT, 'packages', 'core'),
-      encoding: 'utf-8',
-      stdio: 'inherit',
-      timeout: 300_000, // 5 min ceiling; tests are serial.
-    },
-  );
+  const res = spawnSync('pnpm', ['exec', 'vitest', 'run', '--reporter=default', 'tests/ws9/'], {
+    cwd: join(REPO_ROOT, 'packages', 'core'),
+    encoding: 'utf-8',
+    stdio: 'inherit',
+    timeout: 300_000, // 5 min ceiling; tests are serial.
+  });
 
   return res.status === 0;
 }
@@ -246,9 +257,7 @@ function main(): void {
     process.exit(3);
   }
 
-  const failedChecks = envCheck.checks.filter(
-    (c) => c.severity === 'FAIL' && !c.passed,
-  );
+  const failedChecks = envCheck.checks.filter((c) => c.severity === 'FAIL' && !c.passed);
 
   if (failedChecks.length > 0) {
     console.log(`\n❌ Environment gate FAILED: ${failedChecks.length} required check(s) failed.`);
@@ -354,14 +363,11 @@ function main(): void {
   const hasBreaches = breachCount > 0;
   const hasSkipped = skipCount > 0;
   const hasMissing = missing.length > 0;
-  const nonLivePasses = cases.filter(
-    (c) => c.verdict === 'PASS' && c.evidenceLevel !== 'live',
-  );
+  const nonLivePasses = cases.filter((c) => c.verdict === 'PASS' && c.evidenceLevel !== 'live');
   const allPassed = passCount === EXPECTED_CASES.length && nonLivePasses.length === 0;
 
-  const verdict: 'PASS' | 'FAIL' = allPassed && !hasBreaches && !hasSkipped && !hasMissing
-    ? 'PASS'
-    : 'FAIL';
+  const verdict: 'PASS' | 'FAIL' =
+    allPassed && !hasBreaches && !hasSkipped && !hasMissing ? 'PASS' : 'FAIL';
 
   const reasons: string[] = [];
   if (hasBreaches) reasons.push(`${breachCount} breach(es) detected`);
@@ -376,9 +382,10 @@ function main(): void {
 
   const summary: LiveFireSummary = {
     verdict,
-    reason: verdict === 'PASS'
-      ? `All ${EXPECTED_CASES.length} test cases passed with 0 breaches.`
-      : `FAIL: ${reasons.join('; ')}.`,
+    reason:
+      verdict === 'PASS'
+        ? `All ${EXPECTED_CASES.length} test cases passed with 0 breaches.`
+        : `FAIL: ${reasons.join('; ')}.`,
     envCheck,
     totalCases: EXPECTED_CASES.length,
     passed: passCount,

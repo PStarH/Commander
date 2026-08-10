@@ -17,33 +17,54 @@ const proofAttemptIds = [
 
 function operation(): Task1LifecycleOperation {
   const binding = {
-    kind: 'compose', projectName: 'commander', composeVariant: 'prod',
-    composeCredentialInventory: 'runtime-v1', composeSourceSha256: digest('a'),
-    composeCliVersion: '5.3.1', composeContentSha256: digest('b'), phase: 'enforce',
+    kind: 'compose',
+    projectName: 'commander',
+    composeVariant: 'prod',
+    composeCredentialInventory: 'runtime-v1',
+    composeSourceSha256: digest('a'),
+    composeCliVersion: '5.3.1',
+    composeContentSha256: digest('b'),
+    phase: 'enforce',
     apiImageDigest: `registry.example/commander@sha256:${digest('c')}`,
     apiProofUrl: 'https://api:9443/ready/tenant-authority/v1',
   };
   return {
-    installationUuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', operationVersion: '7',
-    predecessorStateVersion: '6', resultingStateVersion: '7', predecessorState: 'expanded',
-    resultingState: 'enforced', operationKind: 'enforce', runtimePhase: 'enforce',
-    platformKind: 'compose', previousBindingJcs: null, previousBindingSha256: null,
+    installationUuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    operationVersion: '7',
+    predecessorStateVersion: '6',
+    resultingStateVersion: '7',
+    predecessorState: 'expanded',
+    resultingState: 'enforced',
+    operationKind: 'enforce',
+    runtimePhase: 'enforce',
+    platformKind: 'compose',
+    previousBindingJcs: null,
+    previousBindingSha256: null,
     requestedBindingJcs: canonicalBootstrapJson(binding),
     requestedBindingSha256: canonicalBootstrapSha256(binding),
-    previousConfigurationJcs: null, previousConfigurationSha256: null,
+    previousConfigurationJcs: null,
+    previousConfigurationSha256: null,
     requestedConfigurationJcs: canonicalBootstrapJson({ operationAuditNonce: 'n'.repeat(43) }),
-    requestedConfigurationSha256: digest('d'), previousBusinessConfigurationSha256: null,
-    requestedBusinessConfigurationSha256: digest('e'), originBindingSha256: digest('f'),
-    databasePeerBindingSha256: digest('1'), proofKeySha256: digest('2'), descriptorSet: [],
+    requestedConfigurationSha256: digest('d'),
+    previousBusinessConfigurationSha256: null,
+    requestedBusinessConfigurationSha256: digest('e'),
+    originBindingSha256: digest('f'),
+    databasePeerBindingSha256: digest('1'),
+    proofKeySha256: digest('2'),
+    descriptorSet: [],
     predecessorEvidenceJcs: canonicalBootstrapJson({ kind: 'fresh-no-predecessor/v1' }),
-    predecessorEvidenceSha256: digest('3'), predecessorProof: 'fresh-no-predecessor', result: 'committed',
+    predecessorEvidenceSha256: digest('3'),
+    predecessorProof: 'fresh-no-predecessor',
+    result: 'committed',
   };
 }
 
 function platformFacts(): Task1AuthoritativePlatformFacts {
   const artifact = {
-    format: 'compose-runtime-projection/v1', projectName: 'commander',
-    imageDigest: `sha256:${digest('c')}`, containerId: 'a'.repeat(64),
+    format: 'compose-runtime-projection/v1',
+    projectName: 'commander',
+    imageDigest: `sha256:${digest('c')}`,
+    containerId: 'a'.repeat(64),
   };
   return {
     topology: 'compose',
@@ -51,12 +72,17 @@ function platformFacts(): Task1AuthoritativePlatformFacts {
     platformArtifact: artifact,
     platformArtifactSha256: canonicalBootstrapSha256(artifact),
     workload: {
-      uid: 'a'.repeat(64), generation: '1', observedGeneration: '1',
-      templateSha256: digest('4'), ready: ['api'],
+      uid: 'a'.repeat(64),
+      generation: '1',
+      observedGeneration: '1',
+      templateSha256: digest('4'),
+      ready: ['api'],
     },
     pinned: { node: process.version, compose: '5.3.1', sourceSha256: digest('a') },
     metadata: {
-      specRevision: 27, evidenceLevel: 'live', writeOwner: 'commander_owner',
+      specRevision: 27,
+      evidenceLevel: 'live',
+      writeOwner: 'commander_owner',
       publicationPoint: 'commander_tenant_cutover_rollout_proofs',
     },
   };
@@ -86,9 +112,12 @@ function runtime(transaction: RecordingTransaction, overrides: Record<string, un
     challengeApi: async ({ challenge }) => {
       challenges.push(challenge);
       return {
-        challenge, operationVersion: '7', phase: 'enforce',
+        challenge,
+        operationVersion: '7',
+        phase: 'enforce',
         installationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        databasePeerBindingSha256: digest('1'), imageDigest: `sha256:${digest('c')}`,
+        databasePeerBindingSha256: digest('1'),
+        imageDigest: `sha256:${digest('c')}`,
         configurationSha256: digest('d'),
       };
     },
@@ -141,7 +170,10 @@ describe('Task 1 rollout proof runtime', () => {
     assert.equal(proof.platformBindingSha256, operation().requestedBindingSha256);
     assert.equal(proof.requestedImageDigest, `sha256:${digest('c')}`);
     assert.equal(proof.proofKeySha256, digest('2'));
-    assert.equal(proof.challengedResponseSha256, canonicalBootstrapSha256(proof.challengedResponse));
+    assert.equal(
+      proof.challengedResponseSha256,
+      canonicalBootstrapSha256(proof.challengedResponse),
+    );
   });
 
   it('stabilizes the proof attempt ID before opening the owner transaction', async () => {
@@ -150,7 +182,9 @@ describe('Task 1 rollout proof runtime', () => {
     const proofAttemptId = proofAttemptIds[0]!;
     const { instance } = runtime(transaction, {
       transactions: {
-        async withLockedOwnerTransaction(work: (value: Task1RolloutProofTransaction) => Promise<unknown>) {
+        async withLockedOwnerTransaction(
+          work: (value: Task1RolloutProofTransaction) => Promise<unknown>,
+        ) {
           transactionOpened = true;
           return work(transaction);
         },
@@ -170,13 +204,19 @@ describe('Task 1 rollout proof runtime', () => {
     const transaction = new RecordingTransaction();
     const { instance } = runtime(transaction, {
       challengeApi: async ({ challenge }: { challenge: string }) => ({
-        challenge, operationVersion: '6', phase: 'enforce',
+        challenge,
+        operationVersion: '6',
+        phase: 'enforce',
         installationId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-        databasePeerBindingSha256: digest('1'), imageDigest: `sha256:${digest('c')}`,
+        databasePeerBindingSha256: digest('1'),
+        imageDigest: `sha256:${digest('c')}`,
         configurationSha256: digest('d'),
       }),
     });
-    await assert.rejects(() => instance.proveCurrent(operation()), /TENANT_CUTOVER_PROOF_RESPONSE_MISMATCH/);
+    await assert.rejects(
+      () => instance.proveCurrent(operation()),
+      /TENANT_CUTOVER_PROOF_RESPONSE_MISMATCH/,
+    );
     assert.equal(transaction.proofs.length, 0);
   });
 
@@ -185,8 +225,14 @@ describe('Task 1 rollout proof runtime', () => {
     let observed = false;
     let challenged = false;
     const { instance } = runtime(transaction, {
-      observePlatform: async () => { observed = true; return platformFacts(); },
-      challengeApi: async () => { challenged = true; return {}; },
+      observePlatform: async () => {
+        observed = true;
+        return platformFacts();
+      },
+      challengeApi: async () => {
+        challenged = true;
+        return {};
+      },
     });
     await assert.rejects(
       () => instance.proveCurrent({ ...operation(), operationVersion: '6' }),
@@ -223,10 +269,7 @@ describe('Task 1 rollout proof runtime', () => {
     const proofJcs = canonicalBootstrapJson(proof);
     const proofSha256 = canonicalBootstrapSha256(proof);
 
-    assert.equal(
-      isTask1RolloutProofForOperation(operation(), proofJcs, proofSha256),
-      true,
-    );
+    assert.equal(isTask1RolloutProofForOperation(operation(), proofJcs, proofSha256), true);
     assert.equal(
       isTask1RolloutProofForOperation(
         operation(),
@@ -235,9 +278,6 @@ describe('Task 1 rollout proof runtime', () => {
       ),
       false,
     );
-    assert.equal(
-      isTask1RolloutProofForOperation(operation(), `${proofJcs} `, proofSha256),
-      false,
-    );
+    assert.equal(isTask1RolloutProofForOperation(operation(), `${proofJcs} `, proofSha256), false);
   });
 });

@@ -1015,7 +1015,7 @@ export class ComplianceAuditManager {
         category: 'Documentation',
         item: 'Risk assessment methodology documented',
         status: 'passed',
-        evidence: 'RedTeamFramework 44-scenario battery with CVSS scoring',
+        evidence: 'RedTeamFramework 47-scenario battery with CVSS scoring',
       },
       {
         id: 'ACK-03',

@@ -2,6 +2,10 @@
 
 Publishable MCP (Model Context Protocol) server for Commander. Exposes Commander tools over line-delimited stdin/stdout JSON-RPC so any MCP client (Claude Desktop, Cursor, etc.) can call them.
 
+> **Alpha / non-production-ready:** this server exposes provider-backed and potentially state-changing
+> Commander tools. Review [PRIVACY.md](../../PRIVACY.md), keep dangerous tools disabled unless explicitly
+> reviewed, and redact prompts, traces, credentials, and customer data from public reports.
+
 ## Installation
 
 ```bash

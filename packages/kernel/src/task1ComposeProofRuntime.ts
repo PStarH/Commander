@@ -5,12 +5,19 @@ import type { Task1LifecycleOperation } from './task1LifecycleLedger.js';
 import type { Task1AuthoritativePlatformFacts } from './task1RolloutProof.js';
 
 export interface Task1ComposeRelayContainer {
-  containerId: string; projectLabel: string; serviceLabel: string; imageDigest: string;
-  createdAt: string; state: 'running'; health: 'healthy'; restartCount: number;
+  containerId: string;
+  projectLabel: string;
+  serviceLabel: string;
+  imageDigest: string;
+  createdAt: string;
+  state: 'running';
+  health: 'healthy';
+  restartCount: number;
   networkAttachmentIds: Record<string, string>;
 }
 export interface Task1ComposeRelayContainerDetail extends Task1ComposeRelayContainer {
-  containerName: string; imageId: string;
+  containerName: string;
+  imageId: string;
 }
 export interface Task1ComposeRelayClient {
   version(): Promise<{ schema: 'compose-topology-relay/v1'; dockerApiVersion: string }>;
@@ -26,12 +33,21 @@ const RELAY_ATTEMPT = /^[A-Za-z0-9_-]{1,128}$/;
 const RELAY_TOKEN = /^[A-Za-z0-9_-]{43}$/;
 const MAX_RELAY_RESPONSE_BYTES = 1024 * 1024;
 const CONTAINER_KEYS = [
-  'containerId', 'projectLabel', 'serviceLabel', 'imageDigest', 'createdAt',
-  'state', 'health', 'restartCount', 'networkAttachmentIds',
+  'containerId',
+  'projectLabel',
+  'serviceLabel',
+  'imageDigest',
+  'createdAt',
+  'state',
+  'health',
+  'restartCount',
+  'networkAttachmentIds',
 ] as const;
 const CONTAINER_DETAIL_KEYS = [...CONTAINER_KEYS, 'containerName', 'imageId'] as const;
 
-function fail(code = 'TENANT_CUTOVER_PROOF_PLATFORM_MISMATCH'): never { throw new Error(code); }
+function fail(code = 'TENANT_CUTOVER_PROOF_PLATFORM_MISMATCH'): never {
+  throw new Error(code);
+}
 function object(value: unknown): JsonRecord {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail();
   return value as JsonRecord;
@@ -79,10 +95,14 @@ function relayContainer(
   const createdAt = relayString(entry.createdAt);
   const restartCount = entry.restartCount;
   if (
-    !CONTAINER_ID.test(containerId) || !IMAGE.test(imageDigest) ||
-    !Number.isFinite(Date.parse(createdAt)) || entry.state !== 'running' ||
-    entry.health !== 'healthy' || typeof restartCount !== 'number' ||
-    !Number.isSafeInteger(restartCount) || restartCount < 0
+    !CONTAINER_ID.test(containerId) ||
+    !IMAGE.test(imageDigest) ||
+    !Number.isFinite(Date.parse(createdAt)) ||
+    entry.state !== 'running' ||
+    entry.health !== 'healthy' ||
+    typeof restartCount !== 'number' ||
+    !Number.isSafeInteger(restartCount) ||
+    restartCount < 0
   ) {
     fail('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID');
   }
@@ -122,15 +142,24 @@ function composeBinding(operation: Task1LifecycleOperation): JsonRecord & {
   apiProofUrl: string;
 } {
   let parsed: unknown;
-  try { parsed = JSON.parse(operation.requestedBindingJcs); } catch { return fail(); }
+  try {
+    parsed = JSON.parse(operation.requestedBindingJcs);
+  } catch {
+    return fail();
+  }
   const binding = object(parsed);
   if (
-    operation.platformKind !== 'compose' || binding.kind !== 'compose' || binding.phase !== operation.runtimePhase
-    || typeof binding.projectName !== 'string' || typeof binding.apiImageDigest !== 'string'
-    || !IMAGE.test(binding.apiImageDigest) || typeof binding.apiProofUrl !== 'string'
-    || canonicalBootstrapJson(binding) !== operation.requestedBindingJcs
-    || canonicalBootstrapSha256(binding) !== operation.requestedBindingSha256
-  ) return fail();
+    operation.platformKind !== 'compose' ||
+    binding.kind !== 'compose' ||
+    binding.phase !== operation.runtimePhase ||
+    typeof binding.projectName !== 'string' ||
+    typeof binding.apiImageDigest !== 'string' ||
+    !IMAGE.test(binding.apiImageDigest) ||
+    typeof binding.apiProofUrl !== 'string' ||
+    canonicalBootstrapJson(binding) !== operation.requestedBindingJcs ||
+    canonicalBootstrapSha256(binding) !== operation.requestedBindingSha256
+  )
+    return fail();
   return binding as JsonRecord & {
     projectName: string;
     apiImageDigest: string;
@@ -144,39 +173,75 @@ export function createTask1ComposePlatformObserver(
   return async (operation) => {
     const binding = composeBinding(operation);
     const version = await client.version();
-    if (version.schema !== 'compose-topology-relay/v1' || !/^\d+\.\d+$/.test(version.dockerApiVersion)) fail();
+    if (
+      version.schema !== 'compose-topology-relay/v1' ||
+      !/^\d+\.\d+$/.test(version.dockerApiVersion)
+    )
+      fail();
     const containers = await client.containers();
-    const api = containers.filter((entry) =>
-      entry.projectLabel === binding.projectName && entry.serviceLabel === 'api'
-      && entry.imageDigest === binding.apiImageDigest,
+    const api = containers.filter(
+      (entry) =>
+        entry.projectLabel === binding.projectName &&
+        entry.serviceLabel === 'api' &&
+        entry.imageDigest === binding.apiImageDigest,
     );
     if (api.length !== 1) fail();
     const detail = await client.container(api[0]!.containerId);
     if (
-      detail.containerId !== api[0]!.containerId || detail.projectLabel !== binding.projectName
-      || detail.serviceLabel !== 'api' || detail.imageDigest !== binding.apiImageDigest
-      || detail.state !== 'running' || detail.health !== 'healthy' || detail.restartCount !== 0
-      || detail.createdAt !== api[0]!.createdAt
-      || canonicalBootstrapJson(detail.networkAttachmentIds) !== canonicalBootstrapJson(api[0]!.networkAttachmentIds)
-    ) fail();
+      detail.containerId !== api[0]!.containerId ||
+      detail.projectLabel !== binding.projectName ||
+      detail.serviceLabel !== 'api' ||
+      detail.imageDigest !== binding.apiImageDigest ||
+      detail.state !== 'running' ||
+      detail.health !== 'healthy' ||
+      detail.restartCount !== 0 ||
+      detail.createdAt !== api[0]!.createdAt ||
+      canonicalBootstrapJson(detail.networkAttachmentIds) !==
+        canonicalBootstrapJson(api[0]!.networkAttachmentIds)
+    )
+      fail();
     const artifact: JsonRecord = {
-      format: 'compose-runtime-projection/v1', projectName: binding.projectName,
+      format: 'compose-runtime-projection/v1',
+      projectName: binding.projectName,
       api: {
-        service: 'api', containerId: detail.containerId, imageDigest: detail.imageDigest,
-        containerName: detail.containerName, imageId: detail.imageId,
-        createdAt: detail.createdAt, networkAttachmentIds: detail.networkAttachmentIds,
+        service: 'api',
+        containerId: detail.containerId,
+        imageDigest: detail.imageDigest,
+        containerName: detail.containerName,
+        imageId: detail.imageId,
+        createdAt: detail.createdAt,
+        networkAttachmentIds: detail.networkAttachmentIds,
       },
     };
     const artifactSha256 = canonicalBootstrapSha256(artifact);
     const generation = String(Date.parse(detail.createdAt));
     if (!/^\d+$/.test(generation) || Number(generation) <= 0) fail();
     return {
-      topology: 'compose', apiProofUrl: binding.apiProofUrl,
-      platformArtifact: artifact, platformArtifactSha256: artifactSha256,
-      workload: { uid: detail.containerId, generation, observedGeneration: generation,
-        templateSha256: canonicalBootstrapSha256({ imageDigest: detail.imageDigest, networkAttachmentIds: detail.networkAttachmentIds }), ready: ['api'] },
-      pinned: { schema: version.schema, dockerApiVersion: version.dockerApiVersion, projectName: binding.projectName },
-      metadata: { specRevision: 27, evidenceLevel: 'live', writeOwner: 'commander_owner', publicationPoint: 'commander_tenant_cutover_rollout_proofs' },
+      topology: 'compose',
+      apiProofUrl: binding.apiProofUrl,
+      platformArtifact: artifact,
+      platformArtifactSha256: artifactSha256,
+      workload: {
+        uid: detail.containerId,
+        generation,
+        observedGeneration: generation,
+        templateSha256: canonicalBootstrapSha256({
+          imageDigest: detail.imageDigest,
+          networkAttachmentIds: detail.networkAttachmentIds,
+        }),
+        ready: ['api'],
+      },
+      pinned: {
+        schema: version.schema,
+        dockerApiVersion: version.dockerApiVersion,
+        projectName: binding.projectName,
+      },
+      metadata: {
+        specRevision: 27,
+        evidenceLevel: 'live',
+        writeOwner: 'commander_owner',
+        publicationPoint: 'commander_tenant_cutover_rollout_proofs',
+      },
     };
   };
 }
@@ -188,48 +253,66 @@ export function createTask1ComposeRelayClientFromEnvironment(
   const attemptId = env.COMMANDER_COMPOSE_TOPOLOGY_RELAY_ATTEMPT;
   const token = env.COMMANDER_COMPOSE_TOPOLOGY_RELAY_TOKEN;
   if (
-    !socketPath || !attemptId || !token || !RELAY_ATTEMPT.test(attemptId) ||
+    !socketPath ||
+    !attemptId ||
+    !token ||
+    !RELAY_ATTEMPT.test(attemptId) ||
     !RELAY_TOKEN.test(token)
   ) {
     throw new Error('TENANT_CUTOVER_PROOF_RELAY_REQUIRED');
   }
-  const get = async (path: string): Promise<unknown> => new Promise((resolve, reject) => {
-    const call = request({ socketPath, path, method: 'GET', headers: {
-      'x-commander-relay-attempt': attemptId, 'x-commander-relay-token': token,
-    } }, (response) => {
-      const chunks: Buffer[] = [];
-      let responseBytes = 0;
-      response.on('data', (chunk: Buffer) => {
-        responseBytes += chunk.byteLength;
-        if (responseBytes > MAX_RELAY_RESPONSE_BYTES) {
-          response.destroy();
-          reject(new Error('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID'));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.once('end', () => {
-        if (response.statusCode !== 200) return reject(new Error('TENANT_CUTOVER_PROOF_RELAY_REJECTED'));
-        try {
-          const body = Buffer.concat(chunks).toString('utf8');
-          const parsed = JSON.parse(body) as unknown;
-          if (canonicalBootstrapJson(parsed) !== body) {
-            reject(new Error('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID'));
-            return;
-          }
-          resolve(parsed);
-        } catch {
-          reject(new Error('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID'));
-        }
-      });
+  const get = async (path: string): Promise<unknown> =>
+    new Promise((resolve, reject) => {
+      const call = request(
+        {
+          socketPath,
+          path,
+          method: 'GET',
+          headers: {
+            'x-commander-relay-attempt': attemptId,
+            'x-commander-relay-token': token,
+          },
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          let responseBytes = 0;
+          response.on('data', (chunk: Buffer) => {
+            responseBytes += chunk.byteLength;
+            if (responseBytes > MAX_RELAY_RESPONSE_BYTES) {
+              response.destroy();
+              reject(new Error('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID'));
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.once('end', () => {
+            if (response.statusCode !== 200)
+              return reject(new Error('TENANT_CUTOVER_PROOF_RELAY_REJECTED'));
+            try {
+              const body = Buffer.concat(chunks).toString('utf8');
+              const parsed = JSON.parse(body) as unknown;
+              if (canonicalBootstrapJson(parsed) !== body) {
+                reject(new Error('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID'));
+                return;
+              }
+              resolve(parsed);
+            } catch {
+              reject(new Error('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID'));
+            }
+          });
+        },
+      );
+      call.once('error', reject);
+      call.end();
     });
-    call.once('error', reject); call.end();
-  });
   return {
     version: async () => {
       const value = object(await get('/version'));
       exactKeys(value, ['schema', 'dockerApiVersion']);
-      if (value.schema !== 'compose-topology-relay/v1' || typeof value.dockerApiVersion !== 'string') {
+      if (
+        value.schema !== 'compose-topology-relay/v1' ||
+        typeof value.dockerApiVersion !== 'string'
+      ) {
         fail('TENANT_CUTOVER_PROOF_RELAY_RESPONSE_INVALID');
       }
       return { schema: value.schema, dockerApiVersion: value.dockerApiVersion };

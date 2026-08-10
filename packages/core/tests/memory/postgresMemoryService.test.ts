@@ -167,11 +167,7 @@ describe('PostgresMemoryService', () => {
       call.sql.includes('INSERT INTO memory_audit_events'),
     );
     expect(auditInsert?.values).toEqual(
-      expect.arrayContaining([
-        'forget',
-        'memory-1',
-        JSON.stringify(['namespace:alpha', 'other']),
-      ]),
+      expect.arrayContaining(['forget', 'memory-1', JSON.stringify(['namespace:alpha', 'other'])]),
     );
   });
 });

@@ -13,7 +13,10 @@ import {
 } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import { EnvAdapterCredentialProvider } from '@commander/action-adapters';
-import { sealGovernedCompensationAuthorization } from '../../kernel/src/ops/compensationAuthority.js';
+import {
+  canonicalCompensationHash,
+  sealGovernedCompensationAuthorization,
+} from '../../kernel/src/ops/compensationAuthority.js';
 import {
   assertEgressAllowlistBeforeDaemonStart,
   assertEgressUrlAllowed,
@@ -1046,6 +1049,91 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
     assert.match(
       grant.jti,
       /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+  });
+
+  it('carries an approved durable compensation binding into the capability grant', async () => {
+    const mat = ed25519Material('kid-cmp-approved');
+    const repo = new InMemoryKernelRepository();
+    const capability = createCapabilityAuthority(
+      {
+        NODE_ENV: 'test',
+        [CAPABILITY_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
+        [CAPABILITY_KEY_ID_ENV]: mat.keyId,
+        [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
+      },
+      repo,
+    );
+    const approvalBinding = {
+      approvalId: 'interaction-compensation-1',
+      approverPrincipalId: 'reviewer-a',
+      actionDigest: 'b'.repeat(64),
+      policySnapshotId: 'snapshot-approved',
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+    };
+    const durableAuthorization = {
+      id: 'authorization-approved',
+      tenantId: 'tenant-a',
+      originalRunId: 'run-forward',
+      originalEffectId: 'effect-forward',
+      compensationEffectType: 'compensate.kubernetes.deployment.rollback',
+      adapterVersion: '1.0.0',
+      compensationPatch: { targetRevision: '2', reason: 'approved compensation' },
+      forwardReceiptHash: 'a'.repeat(64),
+      policyDecisionId: 'decision-approved',
+      policySnapshotId: 'snapshot-approved',
+      decision: 'require_approval' as const,
+      actionDigest: approvalBinding.actionDigest,
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      approvalInteractionId: approvalBinding.approvalId,
+      approvalBinding,
+    };
+    const durableRequest = {
+      id: 'request-approved',
+      tenantId: 'tenant-a',
+      originalRunId: 'run-forward',
+      originalEffectId: 'effect-forward',
+      compensationRunId: 'run-compensation',
+      compensationStepId: 'step-compensation',
+      adapterVersion: '1.0.0',
+      compensationEffectType: durableAuthorization.compensationEffectType,
+      destination: 'k8s://cluster-a/default/deployments/api',
+      compensationPatch: durableAuthorization.compensationPatch,
+      forwardReceiptHash: durableAuthorization.forwardReceiptHash,
+      authorizationId: durableAuthorization.id,
+      reconcilePolicy: {
+        maxAttempts: 8,
+        initialDelayMs: 30_000,
+        maxDelayMs: 900_000,
+        deadlineAt: new Date(Date.now() + 86_400_000).toISOString(),
+      },
+      state: 'CLAIMED' as const,
+      claimToken: 'request-claim-token',
+      compensationEffectId: 'effect-compensation',
+    };
+    const token = issueCompensationCapabilityToken({
+      issuer: capability.issuer,
+      authorization: {
+        authorization: durableAuthorization,
+        request: durableRequest,
+        forwardResponse: { originalRevision: '7' },
+      },
+      workerId: ADAPTER_OPS_COMPENSATION_WORKER_ID,
+      workerGeneration: 2,
+    });
+    const grant = await capability.verifier.verify(token);
+    assert.deepEqual(
+      (grant as unknown as { approvalBinding?: typeof approvalBinding }).approvalBinding,
+      approvalBinding,
+    );
+    assert.equal(
+      grant.requestHash,
+      canonicalCompensationHash({
+        originalEffectId: durableRequest.originalEffectId,
+        destination: durableRequest.destination,
+        forwardResponse: { originalRevision: '7' },
+        compensationPatch: durableRequest.compensationPatch,
+      }),
     );
   });
 

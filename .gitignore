@@ -328,3 +328,9 @@ packages/core/.commander/otel_queue/
 # ---------------------------------------------------------------------------
 .internal/
 .superpowers/
+
+# Local secrets / runtime state that must never be tracked
+/.commander/api_keys.json
+/data/
+/tmp-*.head.ts
+/.tmp-*.head.ts
