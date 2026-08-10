@@ -188,7 +188,9 @@ describe('agent-facing memory tenant isolation', () => {
     const tenant = `memory-${randomUUID().slice(0, 8)}`;
     tenantIds.push(tenant);
     const tenantDefault = path.join(memoryDir, tenantPathSegment(tenant), 'default');
-    const external = await fs.mkdtemp(path.join(os.tmpdir(), 'commander-memory-hardlink-'));
+    const external = await fs.mkdtemp(
+      path.join(path.dirname(memoryDir), 'commander-memory-hardlink-'),
+    );
     externalDirs.push(external);
     await fs.mkdir(tenantDefault, { recursive: true });
     const target = path.join(external, 'external.json');

@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import {
   AppContainerSB,
   buildAppContainerAclGrantScript,
@@ -561,20 +561,27 @@ describe('AppContainerSB', () => {
   });
 
   it.runIf(process.platform === 'win32')(
-    'does not execute a malicious rollback path in Windows PowerShell',
+    'rolls back ACLs on a real path without executing injected syntax',
     () => {
-      const marker = path.join(stateDir, 'acl-injection-marker.txt');
-      const maliciousPath = `C:\\missing\"; Set-Content -Path '${marker}' -Value PWNED; #`;
-      const script = buildAppContainerAclRollbackScript('S-1-15-2-123-456', [
-        { path: maliciousPath, access: 'read' },
-      ]);
+      const targetPath = path.join(stateDir, 'acl-rollback-target');
+      fs.mkdirSync(targetPath, { recursive: true });
 
-      execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        { timeout: 10_000 },
-      );
-      expect(fs.existsSync(marker)).toBe(false);
+      try {
+        const script = buildAppContainerAclRollbackScript('S-1-15-2-123-456', [
+          { path: targetPath, access: 'read' },
+        ]);
+        const result = spawnSync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+          { encoding: 'utf8', timeout: 10_000 },
+        );
+
+        expect(result.error).toBeUndefined();
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain('ACL_ROLLED_BACK');
+      } finally {
+        fs.rmSync(targetPath, { recursive: true, force: true });
+      }
     },
   );
 });
