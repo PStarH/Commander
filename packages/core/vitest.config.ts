@@ -385,6 +385,7 @@ export default defineConfig({
       // the automated gate until the runner environment supports spawnSync.
       // 'tests/security/commander-rotate.test.ts',
       'tests/security/d25-precommit-hook.test.ts',
+      'tests/security/supplyChainScanner.sourceMode.test.ts',
       // --- http ---
       // --- ultimate ---
       // 'tests/ultimate/coordinationPolicy.test.ts', // skipped: legacy topology alias names incompatible with D3.2 canonical types
