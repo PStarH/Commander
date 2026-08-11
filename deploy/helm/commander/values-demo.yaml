@@ -29,6 +29,10 @@ adapterOps:
 capability:
   create: true
 
+# External even in demo: evidence signing has no chart-generated key path.
+evidenceSigning:
+  existingSecret: cell-demo-evidence-signing
+
 database:
   enabled: true
   backend: postgres
