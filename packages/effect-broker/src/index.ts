@@ -1235,6 +1235,8 @@ export type {
 } from './signedEvidence.js';
 export { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
 export type { ConfiguredEvidenceSigner, EvidenceJwk, EvidenceJwks } from './evidenceSigner.js';
+export { verifyEvidenceReceipt } from './evidenceReceipt.js';
+export type { EvidenceVerificationResult } from './evidenceReceipt.js';
 
 export {
   AdapterExecutionError,

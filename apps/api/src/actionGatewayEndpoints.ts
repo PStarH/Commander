@@ -1,12 +1,6 @@
 import express, { type Request, type Response, type Router } from 'express';
 import { z } from 'zod';
-import {
-  buildRunEvidenceBundle,
-  verifyEvidenceBundle,
-  type EvidenceAuditSource,
-  type EvidenceEffectSource,
-} from '@commander/effect-broker';
-import type { KernelEvent } from '@commander/kernel';
+import { verifyEvidenceReceipt, type EvidenceJwks } from '@commander/effect-broker';
 import {
   GatewayIdempotencyConflictError,
   GatewayStepIdConflictError,
@@ -380,31 +374,28 @@ function actionNotFound(res: Response) {
   });
 }
 
-function evidenceAuditDetails(event: KernelEvent): Record<string, unknown> {
-  if (event.type === 'interaction.created') {
-    const expiresAt = event.payload.expiresAt;
-    return {
-      interactionId: event.aggregateId,
-      status: 'pending',
-      expiresAt: typeof expiresAt === 'string' ? expiresAt : null,
-    };
+function configuredEvidenceJwks(env: NodeJS.ProcessEnv): EvidenceJwks | null {
+  const raw = env.COMMANDER_EVIDENCE_JWKS_JSON?.trim();
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (
+      !value ||
+      typeof value !== 'object' ||
+      Array.isArray(value) ||
+      !Array.isArray((value as { keys?: unknown }).keys)
+    ) {
+      return null;
+    }
+    return value as EvidenceJwks;
+  } catch {
+    return null;
   }
-  if (event.type === 'interaction.answered') {
-    const response =
-      event.payload.response && typeof event.payload.response === 'object'
-        ? (event.payload.response as Record<string, unknown>)
-        : {};
-    return {
-      interactionId: event.aggregateId,
-      status: 'answered',
-      ...(typeof response.approved === 'boolean' ? { approved: response.approved } : {}),
-    };
-  }
-  return event.payload;
 }
 
 export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
+  const evidenceJwks = configuredEvidenceJwks(process.env);
 
   router.get('/kill-switches', async (req, res) => {
     const tenantId = requiredTenant(req, res);
@@ -836,42 +827,46 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     }
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
-    const [events, effects] = await Promise.all([
-      kernel.listEvents(loaded.run.id, tenantId),
-      kernel.listEffects(loaded.run.id, tenantId),
-    ]);
-    const evidenceEffects: EvidenceEffectSource[] = effects.map((effect) => ({
-      ...effect,
-      approvalInteractionId:
-        effect.id === loaded.metadata.effectId ? loaded.metadata.interactionId : undefined,
-    }));
-    const auditEvents: EvidenceAuditSource[] = events.map((event) => ({
-      type: event.type,
-      severity: event.type.includes('failed') || event.type.includes('denied') ? 'high' : 'low',
-      tenantId: event.tenantId,
-      runId: event.runId,
-      stepId: event.stepId ?? loaded.metadata.stepId,
-      at: event.occurredAt,
-      details: evidenceAuditDetails(event),
-    }));
-    const bundle = buildRunEvidenceBundle({
+    if (!evidenceJwks) {
+      return res.status(503).json({
+        error: {
+          code: 'EVIDENCE_VERIFIER_UNAVAILABLE',
+          message: 'Evidence verification keys are not configured.',
+        },
+      });
+    }
+    const evidence = await kernel.getEvidence({
       tenantId,
       runId: loaded.run.id,
-      intentHash: loaded.run.intentHash,
-      workGraphHash: loaded.run.workGraphHash,
-      workGraphVersion: loaded.run.workGraphVersion,
-      policySnapshotId: loaded.run.policySnapshotId,
-      kernelApiVersion: 'v1',
-      effects: evidenceEffects,
-      auditEvents,
-      exportedAt: loaded.run.updatedAt,
-      bundleId: `bundle_${canonicalValueHash({
-        runId: loaded.run.id,
-        actionDigest: loaded.metadata.actionDigest,
-        updatedAt: loaded.run.updatedAt,
-      }).slice(0, 40)}`,
+      effectId: loaded.metadata.effectId,
+      actionDigest: loaded.metadata.actionDigest,
     });
-    return res.json({ bundle, verification: verifyEvidenceBundle(bundle) });
+    if (!evidence) {
+      return res.status(404).json({
+        error: { code: 'EVIDENCE_NOT_FOUND', message: 'Signed evidence was not found.' },
+      });
+    }
+    if (
+      evidence.tenantId !== tenantId ||
+      evidence.runId !== loaded.run.id ||
+      evidence.effectId !== loaded.metadata.effectId ||
+      evidence.actionDigest !== loaded.metadata.actionDigest ||
+      evidence.receipt.scope.tenantId !== tenantId ||
+      evidence.receipt.scope.runId !== loaded.run.id ||
+      evidence.receipt.scope.effectId !== loaded.metadata.effectId ||
+      evidence.receipt.actionDigest !== loaded.metadata.actionDigest
+    ) {
+      return res.status(409).json({
+        error: { code: 'EVIDENCE_BINDING_INVALID', message: 'Evidence binding is invalid.' },
+      });
+    }
+    const verification = verifyEvidenceReceipt(evidence.receipt, evidenceJwks);
+    if (!verification.ok) {
+      return res.status(409).json({
+        error: { code: 'EVIDENCE_VERIFICATION_FAILED', message: 'Evidence verification failed.' },
+      });
+    }
+    return res.json({ receipt: evidence.receipt, verification });
   });
 
   return router;
