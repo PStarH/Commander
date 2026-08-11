@@ -6,6 +6,7 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { spawnSync } from 'node:child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 import {
@@ -14,7 +15,99 @@ import {
   FileEditTool,
   FileSearchTool,
   FileListTool,
+  isWithinRoot,
+  safePath,
 } from '../../src/tools/fileSystemTool';
+
+describe('isWithinRoot', () => {
+  it('treats Windows drive paths as case-insensitive boundaries', () => {
+    assert.strictEqual(
+      isWithinRoot(
+        String.raw`C:\Users\RunnerAdmin\AppData\Local\Temp\workspace\reports`,
+        String.raw`c:\users\runneradmin\appdata\local\temp\workspace`,
+      ),
+      true,
+    );
+  });
+
+  it('normalizes Windows namespace paths before containment checks', () => {
+    assert.strictEqual(
+      isWithinRoot(
+        String.raw`\\?\C:\Users\runneradmin\workspace\reports`,
+        String.raw`C:\Users\runneradmin\workspace`,
+      ),
+      true,
+    );
+  });
+
+  it('rejects Windows traversal after path normalization', () => {
+    assert.strictEqual(
+      isWithinRoot(
+        String.raw`C:\Users\runneradmin\workspace\..\outside`,
+        String.raw`C:\Users\runneradmin\workspace`,
+      ),
+      false,
+    );
+  });
+
+  it('rejects an 8.3-style sibling that only shares a textual prefix', () => {
+    assert.strictEqual(
+      isWithinRoot(String.raw`C:\workspace-evil\reports`, String.raw`C:\workspace`),
+      false,
+    );
+  });
+
+  it(
+    'resolves an actual Windows 8.3 workspace alias before containment',
+    {
+      skip: process.platform !== 'win32',
+    },
+    async () => {
+      const originalWorkspace = process.env.COMMANDER_WORKSPACE;
+      const workspace = fs.realpathSync(
+        fs.mkdtempSync(path.join(process.env.TEMP ?? 'C:\\Temp', 'commander-8point3-')),
+      );
+      const file = path.join(workspace, 'existing.txt');
+      fs.writeFileSync(file, 'ok');
+
+      try {
+        const shortPath = spawnSync(
+          process.env.ComSpec ?? 'cmd.exe',
+          ['/d', '/c', `for %I in ("${workspace}") do @echo %~sI`],
+          { encoding: 'utf8' },
+        );
+        assert.strictEqual(shortPath.error, undefined);
+        assert.strictEqual(shortPath.status, 0, shortPath.stderr);
+        const shortWorkspace = shortPath.stdout.trim().split(/\r?\n/).at(-1);
+        assert.ok(shortWorkspace, shortPath.stdout);
+
+        if (!/~\d/.test(shortWorkspace!)) {
+          console.warn(
+            '[pathSecurity] Windows 8.3 short-path capability unavailable; using real junction/case coverage',
+          );
+          const linkedWorkspace = path.join(path.dirname(workspace), 'CommanderCaseLink');
+          fs.symlinkSync(workspace, linkedWorkspace, 'junction');
+          try {
+            process.env.COMMANDER_WORKSPACE = linkedWorkspace.toUpperCase();
+            const resolved = await safePath('existing.txt');
+            assert.strictEqual(fs.realpathSync(resolved), fs.realpathSync(file));
+          } finally {
+            fs.rmSync(linkedWorkspace, { recursive: true, force: true });
+          }
+          return;
+        }
+
+        process.env.COMMANDER_WORKSPACE = shortWorkspace!.toUpperCase();
+        const resolved = await safePath('existing.txt');
+        assert.strictEqual(fs.realpathSync(resolved), fs.realpathSync(file));
+      } finally {
+        if (originalWorkspace === undefined) delete process.env.COMMANDER_WORKSPACE;
+        else process.env.COMMANDER_WORKSPACE = originalWorkspace;
+        fs.rmSync(workspace, { recursive: true, force: true });
+      }
+    },
+  );
+});
 
 describe('FileReadTool', () => {
   let tool: FileReadTool;

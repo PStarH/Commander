@@ -7,13 +7,13 @@ import {
   getMetaLearner,
   resetMetaLearner,
   clearMetaLearnerState,
-} from '../../src/selfEvolution/metaLearner';
-import type { ExecutionExperience, FailureCategory } from '../../src/runtime/types';
+} from '.././../src/selfEvolution/metaLearner';
+import type { ExecutionExperience, FailureCategory } from '.././../src/runtime/types';
 
 function makeExperience(overrides: Partial<ExecutionExperience> = {}): ExecutionExperience {
   return {
-    id: `exp-${Math.random().toString(36).slice(2, 8)}`,
-    runId: `run-${Math.random().toString(36).slice(2, 8)}`,
+    id: 'exp-' + Math.random().toString(36).slice(2, 8),
+    runId: 'run-' + Math.random().toString(36).slice(2, 8),
     agentId: 'agent-1',
     taskType: 'code',
     modelUsed: 'gpt-4',
@@ -166,17 +166,18 @@ describe('MetaLearner', () => {
         minRunsBeforeLearning: 1,
         enablePredictionLoop: true,
       });
-      ml.createPrediction('edit-1', 'switch to parallel', 'PARALLEL', 'SEQUENTIAL', 'gpt-4', [
+      ml.recordExperience(
+        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'SEQUENTIAL' }),
+      );
+      const sourceStrategy = ml.selectStrategy('code', 'gpt-4');
+      const targetStrategy = sourceStrategy === 'PARALLEL' ? 'SEQUENTIAL' : 'PARALLEL';
+      ml.createPrediction('edit-1', 'switch strategy', targetStrategy, sourceStrategy, 'gpt-4', [
         'code',
       ]);
       expect(ml.getPredictions().length).toBe(1);
 
       ml.recordExperience(
-        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'SEQUENTIAL' }),
-      );
-      ml.selectStrategy('code', 'gpt-4');
-      ml.recordExperience(
-        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'PARALLEL' }),
+        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: targetStrategy }),
       );
       expect(ml.getVerdicts().length).toBe(1);
     });
