@@ -50,11 +50,37 @@ export interface CollectAgentFilesParams {
  * write/create a file. Returns the file path or null.
  */
 export function extractOutputFilePath(goal: string): string | null {
-  const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
+  const extRe =
+    '(?:' +
+    [
+      'md',
+      'txt',
+      'json',
+      'ts',
+      'js',
+      'py',
+      'html',
+      'css',
+      'yaml',
+      'yml',
+      'csv',
+      'xml',
+      'sh',
+      'sql',
+      'go',
+      'rs',
+      'java',
+      'c',
+      'cpp',
+      'h',
+    ].join('|') +
+    ')';
+  const pathPrefix = '(?:[A-Za-z]:[\\\\/]|[/\\\\]{2}|[/.])';
+  const pathExpression = pathPrefix + '\\S+?\\.' + extRe;
 
   // Pattern 1: verb + any words + "to" + path
   const toPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+([\\/\\.][\\S]+\\.${extRe})`,
+    '(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+(' + pathExpression + ')',
     'i',
   );
   const toMatch = goal.match(toPattern);
@@ -62,14 +88,14 @@ export function extractOutputFilePath(goal: string): string | null {
 
   // Pattern 2: verb + path directly (e.g., "write /tmp/file.md")
   const directPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\s+([\\/\\.][\\S]+\\.${extRe})`,
+    '(?:write|create|generate|output|produce|save)\\s+(' + pathExpression + ')',
     'i',
   );
   const directMatch = goal.match(directPattern);
   if (directMatch) return directMatch[1];
 
   // Pattern 3: any absolute path with known extension at end of sentence/line
-  const pathPattern = new RegExp(`([\\/][\\S]+\\.${extRe})(?:\\s|$|[.])`, 'i');
+  const pathPattern = new RegExp('(' + pathExpression + ')(?:\\s|$|[.])', 'i');
   const pathMatch = goal.match(pathPattern);
   if (pathMatch) return pathMatch[1];
 
@@ -147,7 +173,7 @@ export class AgentFileCollector {
       for (const node of completedNodes) {
         const resultText = node.fullSubtaskResults || node.result || '';
         const absPathMatches = resultText.matchAll(
-          /(?:^|\s)(\/[\w./-]+\.(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql))(?:\s|$|[.,:])/gm,
+          /(?:^|\s)(\/[\w./-]+\.(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|s(?:h)|sql))(?:\s|$|[.,:])/gm,
         );
         for (const match of absPathMatches) {
           tryAddFile(match[1]);
@@ -237,7 +263,13 @@ export class AgentFileCollector {
           .join('\n\n---\n\n');
         finalOutput = combined;
         reasoning.push(
-          `Combined ${agentWrittenFiles.length} agent-written files (${totalAgentContent} bytes) instead of synthesis (${params.finalSynthesis.length} bytes)`,
+          'Combined ' +
+            agentWrittenFiles.length +
+            ' agent-written files (' +
+            totalAgentContent +
+            ' bytes) instead of synthesis (' +
+            params.finalSynthesis.length +
+            ' bytes)',
         );
       }
 
@@ -249,20 +281,20 @@ export class AgentFileCollector {
           if (n.status !== 'COMPLETED') continue;
           const content = n.fullSubtaskResults || n.result;
           if (content && content.length > 10) {
-            allResults.push(`### ${n.goal.slice(0, 150)}\n\n${content}`);
+            allResults.push('### ' + n.goal.slice(0, 150) + '\n\n' + content);
           }
         }
         for (const artifact of params.allArtifacts) {
           if (artifact.content && artifact.content.length > 50) {
-            allResults.push(`### Artifact: ${artifact.title}\n\n${artifact.content}`);
+            allResults.push('### Artifact: ' + artifact.title + '\n\n' + artifact.content);
           }
         }
         if (allResults.length > 0) {
           const combinedAll = allResults.join('\n\n---\n\n');
           if (combinedAll.length > finalOutput.length) {
-            finalOutput = `# Complete Results\n\n${combinedAll}`;
+            finalOutput = '# Complete Results\n\n' + combinedAll;
             reasoning.push(
-              `Combined ${allResults.length} data sources (${finalOutput.length} bytes)`,
+              'Combined ' + allResults.length + ' data sources (' + finalOutput.length + ' bytes)',
             );
           }
         }
@@ -272,22 +304,22 @@ export class AgentFileCollector {
       if (finalOutput.length < 5000) {
         try {
           const outputGoal = [
-            `You are an expert analyst. Your job is to produce a comprehensive, detailed output.`,
-            ``,
-            `TASK: ${params.goal}`,
-            ``,
-            `INSTRUCTIONS:`,
-            `1. Use file_read to read ALL relevant source files mentioned in the task`,
-            `2. Analyze each file in detail — include specific code snippets, line numbers, and examples`,
-            `3. Produce a comprehensive analysis with clear headers and sections`,
-            `4. Include actionable recommendations with code examples`,
-            `5. Write at least 2000 words of substantive content`,
-            `6. If the task asks to write to a file, use file_write to write the complete output`,
-            `7. Do NOT just describe what you will do — actually read the files and produce the analysis`,
+            'You are an expert analyst. Your job is to produce a comprehensive, detailed output.',
+            '',
+            'TASK: ' + params.goal,
+            '',
+            'INSTRUCTIONS:',
+            '1. Use file_read to read ALL relevant source files mentioned in the task',
+            '2. Analyze each file in detail — include specific code snippets, line numbers, and examples',
+            '3. Produce a comprehensive analysis with clear headers and sections',
+            '4. Include actionable recommendations with code examples',
+            '5. Write at least 2000 words of substantive content',
+            '6. If the task asks to write to a file, use file_write to write the complete output',
+            '7. Do NOT just describe what you will do — actually read the files and produce the analysis',
           ].join('\n');
 
           const outputResult = await this.deps.runtime.execute({
-            agentId: `output-generator-${params.execId}`,
+            agentId: 'output-generator-' + params.execId,
             projectId: params.projectId,
             goal: outputGoal,
             contextData: params.contextData ?? {},
@@ -301,14 +333,18 @@ export class AgentFileCollector {
             outputResult.summary.length > finalOutput.length
           ) {
             finalOutput = outputResult.summary;
-            reasoning.push(`Output generator: produced ${finalOutput.length} bytes`);
+            reasoning.push('Output generator: produced ' + finalOutput.length + ' bytes');
           }
         } catch (e) {
-          reasoning.push(`Output generator failed: ${e instanceof Error ? e.message : 'unknown'}`);
+          reasoning.push(
+            'Output generator failed: ' + (e instanceof Error ? e.message : 'unknown'),
+          );
         }
       }
     } catch (e) {
-      reasoning.push(`Agent file collection failed: ${e instanceof Error ? e.message : 'unknown'}`);
+      reasoning.push(
+        'Agent file collection failed: ' + (e instanceof Error ? e.message : 'unknown'),
+      );
     }
 
     return finalOutput;
