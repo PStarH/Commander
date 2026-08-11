@@ -570,6 +570,12 @@ jobs:
           echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          {
+            echo 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM<<EOF'
+            openssl genpkey -algorithm Ed25519
+            echo 'EOF'
+            echo 'COMMANDER_EVIDENCE_SIGNING_KEY_ID=ci-cell-evidence'
+          } >> "$GITHUB_ENV"
 
       - name: Docker build worker image (--no-cache)
         run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
