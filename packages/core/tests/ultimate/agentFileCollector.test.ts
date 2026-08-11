@@ -10,7 +10,10 @@ import {
 import type { TaskTreeNode } from '.././../src/ultimate/types';
 import type { ArtifactReference } from '.././../src/shared/types';
 import type { AgentRuntimeInterface } from '.././../src/runtime';
-import { OrchestratorOutputCollector } from '.././../src/ultimate/orchestratorOutput';
+import {
+  OrchestratorOutputCollector,
+  extractOutputFilePath as extractLegacyOutputFilePath,
+} from '.././../src/ultimate/orchestratorOutput';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -120,6 +123,13 @@ describe('extractOutputFilePath', () => {
   it('extracts absolute path at end of sentence', () => {
     const result = extractOutputFilePath('The output is at /var/log/output.md.');
     expect(result).toBe('/var/log/output.md');
+  });
+});
+
+describe('legacy extractOutputFilePath', () => {
+  it('extracts the Windows drive path used by the legacy output collector', () => {
+    const windowsPath = 'D:\\a\\Commander\\Commander\\reports\\result.md';
+    expect(extractLegacyOutputFilePath('Write the report to ' + windowsPath)).toBe(windowsPath);
   });
 });
 
