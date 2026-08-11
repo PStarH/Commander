@@ -1,6 +1,12 @@
 /** Test-only model of the kernel repository. Never export from the package root. */
 import { randomUUID } from 'node:crypto';
+import type { TerminalEvidenceRecord } from '@commander/effect-broker';
 import type { KernelRepository } from '../repository.js';
+import {
+  assertEvidenceRecordBinding,
+  assertEvidenceRecordBoundToEffect,
+  type EvidenceLookup,
+} from '../evidenceRepository.js';
 import type {
   AdmitEffectRequest, AdmitEffectResult, AnswerInteractionRequest, ClaimStepRequest, CompleteStepRequest,
   CreateInteractionRequest, CreateKernelRun, CreateTimerRequest, FailStepRequest,
@@ -76,6 +82,7 @@ export class InMemoryKernelRepository implements KernelRepository {
   private readonly steps = new Map<string, KernelStep>();
   private readonly effectsByKey = new Map<string, KernelEffect>();
   private readonly effects = new Map<string, KernelEffect>();
+  private readonly evidence = new Map<string, TerminalEvidenceRecord>();
   private readonly events: KernelEvent[] = [];
   private readonly outbox = new Map<string, KernelOutboxMessage>();
   private readonly outboxClaims = new Map<string, { token: string; expiresAt: number }>();
@@ -555,6 +562,49 @@ export class InMemoryKernelRepository implements KernelRepository {
     }
     effect.state = 'COMPLETED'; effect.response = response; effect.completedAt = now(); this.event('effect', effect.id, 2, 'effect.completed', tenantId, effect.runId, effect.stepId, actor, {}); return clone(effect);
   }
+  async completeEffectWithEvidence(
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+    evidence: TerminalEvidenceRecord,
+  ): Promise<KernelEffect | null> {
+    const current = this.effects.get(effectId);
+    if (!current || current.tenantId !== tenantId) return null;
+    assertEvidenceRecordBoundToEffect(evidence, { ...current, state: 'COMPLETED' });
+    const key = `${evidence.tenantId}\u0000${evidence.bundleId}`;
+    const existing = this.evidence.get(key);
+    if (existing && canonical(existing) !== canonical(evidence))
+      throw new Error('EVIDENCE_CONFLICT');
+    const completed = await this.completeEffect(effectId, tenantId, lease, response, actor);
+    if (!completed) return null;
+    if (!existing) this.evidence.set(key, clone(evidence));
+    return completed;
+  }
+  async appendEvidence(record: TerminalEvidenceRecord): Promise<{ inserted: boolean }> {
+    assertEvidenceRecordBinding(record);
+    const key = `${record.tenantId}\u0000${record.bundleId}`;
+    const existing = this.evidence.get(key);
+    if (existing) {
+      if (canonical(existing) !== canonical(record)) throw new Error('EVIDENCE_CONFLICT');
+      return { inserted: false };
+    }
+    this.evidence.set(key, clone(record));
+    return { inserted: true };
+  }
+  async getEvidence(binding: EvidenceLookup): Promise<TerminalEvidenceRecord | null> {
+    const record = this.evidence.get(`${binding.tenantId}\u0000evidence_${binding.effectId}`);
+    if (
+      !record ||
+      record.runId !== binding.runId ||
+      record.effectId !== binding.effectId ||
+      record.actionDigest !== binding.actionDigest
+    ) {
+      return null;
+    }
+    return clone(record);
+  }
   async markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null> {
     const effect = this.effects.get(request.effectId);
     if (!effect || effect.tenantId !== request.tenantId || effect.state !== 'ADMITTED') return null;
@@ -692,6 +742,30 @@ export class InMemoryKernelRepository implements KernelRepository {
       'reconciliation-daemon',
       { reason: input.reason },
     );
+    return true;
+  }
+  async escalateReconcileWithEvidence(
+    input: EscalateReconcileInput,
+    evidence: TerminalEvidenceRecord,
+  ): Promise<boolean> {
+    const effect = this.effects.get(input.effectId);
+    if (
+      !effect ||
+      effect.tenantId !== input.tenantId ||
+      effect.state !== 'COMPLETION_UNKNOWN' ||
+      effect.reconcileClaimToken !== input.claimToken
+    ) {
+      return false;
+    }
+    assertEvidenceRecordBoundToEffect(evidence, effect);
+    const key = `${evidence.tenantId}\u0000${evidence.bundleId}`;
+    const existing = this.evidence.get(key);
+    if (existing && canonical(existing) !== canonical(evidence)) {
+      throw new Error('EVIDENCE_CONFLICT');
+    }
+    const escalated = await this.escalateReconcile(input);
+    if (!escalated) return false;
+    if (!existing) this.evidence.set(key, clone(evidence));
     return true;
   }
   async releaseReconcileClaim(effectId: string, tenantId: string, claimToken: string): Promise<boolean> {
