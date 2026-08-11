@@ -51,9 +51,12 @@ describe('G4 rotation-only CI workflow', () => {
     assert.equal(job.needs, undefined);
 
     const steps = job.steps ?? [];
+    const checkout = steps.find((step) => step.uses === 'actions/checkout@v6');
+    assert.equal(checkout?.uses, 'actions/checkout@v6');
     assert.equal(
-      steps.find((step) => step.uses === 'actions/checkout@v6')?.uses,
-      'actions/checkout@v6',
+      checkout?.with?.['fetch-depth'],
+      0,
+      'checkout must retain every immutable signed commit required by the four-row verifier',
     );
     assert.equal(
       steps.find((step) => step.uses === 'pnpm/action-setup@v6')?.uses,
