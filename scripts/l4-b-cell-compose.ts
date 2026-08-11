@@ -27,7 +27,20 @@ export function generateCellCapabilityMaterials(): {
   };
 }
 
+/** Ephemeral Ed25519 evidence-signing materials for the cell test harness. */
+export function generateCellEvidenceSigningMaterials(): {
+  COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: string;
+  COMMANDER_EVIDENCE_SIGNING_KEY_ID: string;
+} {
+  const capability = generateCellCapabilityMaterials();
+  return {
+    COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: capability.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM,
+    COMMANDER_EVIDENCE_SIGNING_KEY_ID: capability.COMMANDER_CAPABILITY_KEY_ID,
+  };
+}
+
 const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
+const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
 
 export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
@@ -41,6 +54,7 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
   COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
   ...CELL_CAPABILITY_MATERIALS,
+  ...CELL_EVIDENCE_SIGNING_MATERIALS,
 };
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */
