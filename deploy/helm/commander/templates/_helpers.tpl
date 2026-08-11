@@ -72,6 +72,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if not .Values.adapterOps.secrets.existingSecret -}}{{- fail "enterprise tier requires adapterOps.secrets.existingSecret" -}}{{- end -}}
 {{- if not .Values.capability.existingSecret -}}{{- fail "enterprise tier requires capability.existingSecret" -}}{{- end -}}
 {{- if .Values.capability.create -}}{{- fail "enterprise tier forbids capability.create (existingSecret refs only; no generated-key path)" -}}{{- end -}}
+{{- if not .Values.evidenceSigning.existingSecret -}}{{- fail "enterprise tier requires evidenceSigning.existingSecret" -}}{{- end -}}
 {{- if .Values.database.postgres.bundled -}}{{- fail "enterprise tier requires database.postgres.bundled=false" -}}{{- end -}}
 {{- if not .Values.worker.enabled -}}{{- fail "enterprise tier requires worker.enabled=true" -}}{{- end -}}
 {{- if not .Values.kernelOps.enabled -}}{{- fail "enterprise tier requires kernelOps.enabled=true" -}}{{- end -}}
@@ -81,6 +82,32 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- fail "enterprise tier requires worker.tenants as an explicit non-wildcard list (operator-supplied)" -}}
 {{- end -}}
 {{- end -}}
+{{- end -}}
+
+{{- define "commander.evidenceSigningSecretName" -}}
+{{- required "evidenceSigning.existingSecret is required for worker and adapter signing" .Values.evidenceSigning.existingSecret -}}
+{{- end -}}
+
+{{- define "commander.evidenceSigningPrivateKeyPemKey" -}}
+{{- required "evidenceSigning.privateKeyPemKey is required" .Values.evidenceSigning.privateKeyPemKey -}}
+{{- end -}}
+
+{{- define "commander.evidenceSigningKeyIdKey" -}}
+{{- required "evidenceSigning.keyIdKey is required" .Values.evidenceSigning.keyIdKey -}}
+{{- end -}}
+
+{{/* Mount evidence-signing authority from an operator-managed Secret only. */}}
+{{- define "commander.evidenceSigningEnv" -}}
+- name: COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "commander.evidenceSigningSecretName" . | quote }}
+      key: {{ include "commander.evidenceSigningPrivateKeyPemKey" . | quote }}
+- name: COMMANDER_EVIDENCE_SIGNING_KEY_ID
+  valueFrom:
+    secretKeyRef:
+      name: {{ include "commander.evidenceSigningSecretName" . | quote }}
+      key: {{ include "commander.evidenceSigningKeyIdKey" . | quote }}
 {{- end -}}
 
 {{- define "commander.apiSecretName" -}}
