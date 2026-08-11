@@ -6,11 +6,11 @@ import {
   AgentFileCollector,
   extractOutputFilePath,
   writeSynthesisOutput,
-} from '../../src/ultimate/agentFileCollector';
-import type { TaskTreeNode } from '../../src/ultimate/types';
-import type { ArtifactReference } from '../../src/shared/types';
-import type { AgentRuntimeInterface } from '../../src/runtime';
-import { OrchestratorOutputCollector } from '../../src/ultimate/orchestratorOutput';
+} from '.././../src/ultimate/agentFileCollector';
+import type { TaskTreeNode } from '.././../src/ultimate/types';
+import type { ArtifactReference } from '.././../src/shared/types';
+import type { AgentRuntimeInterface } from '.././../src/runtime';
+import { OrchestratorOutputCollector } from '.././../src/ultimate/orchestratorOutput';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -105,6 +105,18 @@ describe('extractOutputFilePath', () => {
     expect(extractOutputFilePath('write to /tmp/file.yaml')).toBe('/tmp/file.yaml');
   });
 
+  it('extracts a Windows drive path', () => {
+    const windowsPath = 'C:\\workspace\\reports\\result.md';
+    const goal = 'Write the report to ' + windowsPath;
+    expect(extractOutputFilePath(goal)).toBe(windowsPath);
+  });
+
+  it('extracts a Windows UNC path', () => {
+    const uncPath = '\\\\server\\share\\reports\\result.md';
+    const goal = 'Write the report to ' + uncPath;
+    expect(extractOutputFilePath(goal)).toBe(uncPath);
+  });
+
   it('extracts absolute path at end of sentence', () => {
     const result = extractOutputFilePath('The output is at /var/log/output.md.');
     expect(result).toBe('/var/log/output.md');
@@ -163,7 +175,7 @@ describe('writeSynthesisOutput', () => {
     try {
       await expect(
         writeSynthesisOutput(
-          `Write the report to ${path.join(linkedOutside, 'nested', 'result.md')}`,
+          'Write the report to ' + path.join(linkedOutside, 'nested', 'result.md'),
           'blocked',
         ),
       ).rejects.toThrow(/outside workspace/);
@@ -177,7 +189,7 @@ describe('writeSynthesisOutput', () => {
     const danglingLinks = [
       {
         name: 'dangling-outside',
-        target: path.join(path.dirname(workspace), `${path.basename(workspace)}-missing`),
+        target: path.join(path.dirname(workspace), path.basename(workspace) + '-missing'),
       },
       {
         name: 'dangling-inside',
@@ -193,7 +205,7 @@ describe('writeSynthesisOutput', () => {
       for (const { name } of danglingLinks) {
         await expect(
           writeSynthesisOutput(
-            `Write the report to ${path.join(workspace, name, 'nested', 'result.md')}`,
+            'Write the report to ' + path.join(workspace, name, 'nested', 'result.md'),
             'blocked',
           ),
         ).rejects.toThrow(/Access denied/);
@@ -206,9 +218,9 @@ describe('writeSynthesisOutput', () => {
   });
 
   it('rejects traversal and absolute output paths outside the workspace', async () => {
-    const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-outside.md`);
+    const outside = path.join(path.dirname(workspace), path.basename(workspace) + '-outside.md');
 
-    await expect(writeSynthesisOutput(`Write the report to ${outside}`, 'blocked')).rejects.toThrow(
+    await expect(writeSynthesisOutput('Write the report to ' + outside, 'blocked')).rejects.toThrow(
       /outside workspace/,
     );
     await expect(
@@ -218,11 +230,11 @@ describe('writeSynthesisOutput', () => {
   });
 
   it('keeps the legacy output collector inside the same workspace root', async () => {
-    const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-legacy.md`);
+    const outside = path.join(path.dirname(workspace), path.basename(workspace) + '-legacy.md');
     const reasoning: string[] = [];
     const collector = new OrchestratorOutputCollector(makeRuntime());
 
-    await collector.writeTargetFile(`Write the report to ${outside}`, 'blocked', reasoning);
+    await collector.writeTargetFile('Write the report to ' + outside, 'blocked', reasoning);
 
     expect(fs.existsSync(outside)).toBe(false);
     expect(reasoning).toEqual([expect.stringMatching(/outside workspace/)]);
