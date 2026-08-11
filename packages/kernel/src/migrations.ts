@@ -13,6 +13,7 @@ import {
   KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
   KERNEL_SIGNED_EVIDENCE_SQL,
 } from './evidenceSchema.js';
+import { KILL_SWITCH_MIGRATION_ID, KILL_SWITCH_SQL } from './killSwitchSchema.js';
 
 export interface KernelMigration {
   id: string;
@@ -41,6 +42,11 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
     id: KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
     sql: KERNEL_SIGNED_EVIDENCE_SQL,
     checksum: checksum(KERNEL_SIGNED_EVIDENCE_SQL),
+  },
+  {
+    id: KILL_SWITCH_MIGRATION_ID,
+    sql: KILL_SWITCH_SQL,
+    checksum: checksum(KILL_SWITCH_SQL),
   },
 ];
 
