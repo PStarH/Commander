@@ -25,12 +25,12 @@ services:
       POSTGRES_PASSWORD: commander
       POSTGRES_DB: commander
     ports:
-      - "5432:5432"
+      - '5432:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init.bench.sql:/docker-entrypoint-initdb.d/01-commander-roles.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U commander -d commander"]
+      test: ['CMD-SHELL', 'pg_isready -U commander -d commander']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -42,7 +42,7 @@ services:
       context: ../..
       dockerfile: packages/kernel/Dockerfile.ops
     image: ${COMMANDER_KERNEL_OPS_IMAGE:-commander-kernel-ops:latest}
-    entrypoint: ["node", "packages/kernel/dist/migrate.js"]
+    entrypoint: ['node', 'packages/kernel/dist/migrate.js']
     environment:
       DATABASE_URL: postgres://commander_owner:commander_owner@postgres:5432/commander
     depends_on:
@@ -57,7 +57,7 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "8080:8080"
+      - '8080:8080'
     volumes:
       - ./nginx-v2.conf:/etc/nginx/nginx.conf:ro
     depends_on:
@@ -76,22 +76,23 @@ services:
     image: ${COMMANDER_API_IMAGE:-commander-api:latest}
     environment:
       NODE_ENV: production
-      PORT: "4000"
+      PORT: '4000'
       API_STORE_BACKEND: memory
       COMMANDER_MEMORY_STORE: in-memory
       DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
-      COMMANDER_KERNEL_ENABLED: "1"
+      COMMANDER_KERNEL_ENABLED: '1'
       COMMANDER_LOG_LEVEL: info
       COMMANDER_PROJECT_ID: commander-v2-bench
       COMMANDER_MASTER_KEY: ${COMMANDER_MASTER_KEY:?COMMANDER_MASTER_KEY is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      COMMANDER_EVIDENCE_JWKS_JSON: ${COMMANDER_EVIDENCE_JWKS_JSON:?set COMMANDER_EVIDENCE_JWKS_JSON}
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health"]
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:4000/health']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -110,22 +111,23 @@ services:
     image: ${COMMANDER_API_IMAGE:-commander-api:latest}
     environment:
       NODE_ENV: production
-      PORT: "4000"
+      PORT: '4000'
       API_STORE_BACKEND: memory
       COMMANDER_MEMORY_STORE: in-memory
       DATABASE_URL: postgres://commander_app:commander_app@postgres:5432/commander
-      COMMANDER_KERNEL_ENABLED: "1"
+      COMMANDER_KERNEL_ENABLED: '1'
       COMMANDER_LOG_LEVEL: info
       COMMANDER_PROJECT_ID: commander-v2-bench
       COMMANDER_MASTER_KEY: ${COMMANDER_MASTER_KEY:?COMMANDER_MASTER_KEY is required}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      COMMANDER_EVIDENCE_JWKS_JSON: ${COMMANDER_EVIDENCE_JWKS_JSON:?set COMMANDER_EVIDENCE_JWKS_JSON}
     depends_on:
       postgres:
         condition: service_healthy
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/health"]
+      test: ['CMD-SHELL', 'wget -qO- http://localhost:4000/health']
       interval: 10s
       timeout: 5s
       retries: 5
@@ -150,14 +152,14 @@ services:
       COMMANDER_WORKER_AUTH_SUBJECT: worker:bench
       COMMANDER_WORKER_KIND: agent
       COMMANDER_WORKER_CAPABILITIES: agent
-      COMMANDER_WORKER_MAX_CONCURRENCY: "10"
+      COMMANDER_WORKER_MAX_CONCURRENCY: '10'
       # Five-tenant live benchmark default. scripts/bench-v2-live.ts --mode=live
       # fail-closes when --tenants≠5 unless COMMANDER_WORKER_TENANTS is set.
       # Workers reject '*' and empty scopes at bootstrap.
       COMMANDER_WORKER_TENANTS: ${COMMANDER_WORKER_TENANTS:-tenant-0,tenant-1,tenant-2,tenant-3,tenant-4}
-      COMMANDER_WORKER_POLL_MS: "250"
-      COMMANDER_WORKER_LEASE_TTL_MS: "30000"
-      COMMANDER_WORKER_HEARTBEAT_MS: "10000"
+      COMMANDER_WORKER_POLL_MS: '250'
+      COMMANDER_WORKER_LEASE_TTL_MS: '30000'
+      COMMANDER_WORKER_HEARTBEAT_MS: '10000'
       # Production worker: Ed25519 authority fail-closed (no HMAC capability-token-key).
       COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: ${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
       COMMANDER_CAPABILITY_KEY_ID: ${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}

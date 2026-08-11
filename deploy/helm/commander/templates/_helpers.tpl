@@ -73,6 +73,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if not .Values.capability.existingSecret -}}{{- fail "enterprise tier requires capability.existingSecret" -}}{{- end -}}
 {{- if .Values.capability.create -}}{{- fail "enterprise tier forbids capability.create (existingSecret refs only; no generated-key path)" -}}{{- end -}}
 {{- if not .Values.evidenceSigning.existingSecret -}}{{- fail "enterprise tier requires evidenceSigning.existingSecret" -}}{{- end -}}
+{{- if not .Values.evidenceVerification.existingSecret -}}{{- fail "enterprise tier requires evidenceVerification.existingSecret" -}}{{- end -}}
 {{- if .Values.database.postgres.bundled -}}{{- fail "enterprise tier requires database.postgres.bundled=false" -}}{{- end -}}
 {{- if not .Values.worker.enabled -}}{{- fail "enterprise tier requires worker.enabled=true" -}}{{- end -}}
 {{- if not .Values.kernelOps.enabled -}}{{- fail "enterprise tier requires kernelOps.enabled=true" -}}{{- end -}}

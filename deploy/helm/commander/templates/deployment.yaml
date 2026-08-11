@@ -66,6 +66,13 @@ spec:
             {{- end }}
             - name: API_RATE_LIMIT
               value: {{ .Values.config.rateLimitPerMinute | quote }}
+            {{- if .Values.evidenceVerification.existingSecret }}
+            - name: COMMANDER_EVIDENCE_JWKS_JSON
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.evidenceVerification.existingSecret | quote }}
+                  key: {{ .Values.evidenceVerification.jwksJsonKey | quote }}
+            {{- end }}
             - name: TENANT_PROVIDER
               value: {{ .Values.config.tenantProvider | quote }}
             {{- if .Values.api.secrets.existingSecret }}
