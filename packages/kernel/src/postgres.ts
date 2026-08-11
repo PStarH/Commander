@@ -1,5 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { TerminalEvidenceRecord } from '@commander/effect-broker';
 import type { KernelRepository } from './repository.js';
+import {
+  assertEvidenceRecordBinding,
+  assertEvidenceRecordBoundToEffect,
+  type EvidenceLookup,
+} from './evidenceRepository.js';
 import type {
   AdmitEffectRequest,
   AdmitEffectResult,
@@ -234,6 +240,15 @@ type DbTenantExecutionControl = {
   paused_at: string | Date | null;
   resumed_at: string | Date | null;
 };
+type DbEvidence = {
+  tenant_id: string;
+  run_id: string;
+  bundle_id: string;
+  action_digest: string;
+  receipt: TerminalEvidenceRecord['receipt'];
+  anchored_at: string | Date;
+  retention_until: string | Date;
+};
 
 function iso(value: Date | string): string { return value instanceof Date ? value.toISOString() : new Date(value).toISOString(); }
 function json(value: unknown): string { return JSON.stringify(value ?? {}); }
@@ -297,6 +312,20 @@ function fromEffect(row: DbEffect): KernelEffect {
       : null,
     reconcileLastError: row.reconcile_last_error ?? null,
     reconcileEscalatedAt: row.reconcile_escalated_at ? iso(row.reconcile_escalated_at) : null,
+  };
+}
+function fromEvidence(row: DbEvidence): TerminalEvidenceRecord {
+  const effectId = row.receipt.scope.effectId;
+  if (!effectId) throw new Error('EVIDENCE_RECORD_BINDING_INVALID');
+  return {
+    tenantId: row.tenant_id,
+    runId: row.run_id,
+    effectId,
+    bundleId: row.bundle_id,
+    actionDigest: row.action_digest,
+    receipt: row.receipt,
+    anchoredAt: iso(row.anchored_at),
+    retentionUntil: iso(row.retention_until),
   };
 }
 
@@ -943,31 +972,143 @@ export class PostgresKernelRepository implements KernelRepository {
     }, [request.tenantId]);
   }
 
-  async completeEffect(effectId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, response: Record<string, unknown>, actor: string): Promise<KernelEffect | null> {
-    return this.withTransaction(async (client) => {
-      let result = await client.query<DbEffect>(
-        `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
+  private async completeEffectInTransaction(
+    client: SqlClient,
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+  ): Promise<KernelEffect | null> {
+    let result = await client.query<DbEffect>(
+      `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
          WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED'
            AND EXISTS (SELECT 1 FROM commander_steps s WHERE s.id=e.step_id AND s.run_id=e.run_id AND s.tenant_id=e.tenant_id AND s.state='RUNNING' AND s.lease_worker_id=$4 AND s.lease_worker_generation=$5 AND s.lease_token=$6 AND s.fencing_epoch=$7 AND s.lease_expires_at > now())
            AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
          RETURNING e.*`,
-        [json(response), effectId, tenantId, lease.workerId, lease.workerGeneration ?? -1, lease.token, lease.fencingEpoch],
-      );
-      if (!result.rows[0]) {
-        // compensate.* may complete while the run is COMPENSATING and the step lease is gone.
-        result = await client.query<DbEffect>(
-          `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
+      [
+        json(response),
+        effectId,
+        tenantId,
+        lease.workerId,
+        lease.workerGeneration ?? -1,
+        lease.token,
+        lease.fencingEpoch,
+      ],
+    );
+    if (!result.rows[0]) {
+      // compensate.* may complete while the run is COMPENSATING and the step lease is gone.
+      result = await client.query<DbEffect>(
+        `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
            WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED' AND e.type LIKE 'compensate.%'
              AND EXISTS (SELECT 1 FROM commander_runs r WHERE r.id=e.run_id AND r.tenant_id=e.tenant_id AND r.state='COMPENSATING')
            RETURNING e.*`,
-          [json(response), effectId, tenantId],
+        [json(response), effectId, tenantId],
+      );
+    }
+    if (!result.rows[0]) return null;
+    const effect = fromEffect(result.rows[0]);
+    await this.appendEvent(client, {
+      aggregateType: 'effect',
+      aggregateId: effect.id,
+      sequence: 2,
+      type: 'effect.completed',
+      tenantId,
+      runId: effect.runId,
+      stepId: effect.stepId,
+      actor,
+      payload: {},
+    });
+    return effect;
+  }
+
+  async completeEffect(effectId: string, tenantId: string, lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>, response: Record<string, unknown>, actor: string): Promise<KernelEffect | null> {
+    return this.withTransaction(
+      (client) =>
+        this.completeEffectInTransaction(client, effectId, tenantId, lease, response, actor),
+      [tenantId],
+    );
+  }
+
+  async completeEffectWithEvidence(
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+    evidence: TerminalEvidenceRecord,
+  ): Promise<KernelEffect | null> {
+    return this.withTransaction(
+      async (client) => {
+        const completed = await this.completeEffectInTransaction(
+          client,
+          effectId,
+          tenantId,
+          lease,
+          response,
+          actor,
         );
-      }
-      if (!result.rows[0]) return null;
-      const effect = fromEffect(result.rows[0]);
-      await this.appendEvent(client, { aggregateType: 'effect', aggregateId: effect.id, sequence: 2, type: 'effect.completed', tenantId, runId: effect.runId, stepId: effect.stepId, actor, payload: {} });
-      return effect;
-    }, [tenantId]);
+        if (!completed) return null;
+        assertEvidenceRecordBoundToEffect(evidence, completed);
+        await this.appendEvidenceInTransaction(client, evidence);
+        return completed;
+      },
+      [tenantId],
+    );
+  }
+
+  private async appendEvidenceInTransaction(
+    client: SqlClient,
+    record: TerminalEvidenceRecord,
+  ): Promise<{ inserted: boolean }> {
+    assertEvidenceRecordBinding(record);
+    const inserted = await client.query<DbEvidence>(
+      `INSERT INTO commander_evidence_receipts
+         (tenant_id, run_id, bundle_id, action_digest, receipt, anchored_at, retention_until)
+       VALUES ($1,$2,$3,$4,$5::jsonb,$6::timestamptz,$7::timestamptz)
+       ON CONFLICT (tenant_id, bundle_id) DO NOTHING
+       RETURNING *`,
+      [
+        record.tenantId,
+        record.runId,
+        record.bundleId,
+        record.actionDigest,
+        json(record.receipt),
+        record.anchoredAt,
+        record.retentionUntil,
+      ],
+    );
+    if (inserted.rows[0]) return { inserted: true };
+    const existing = await client.query<DbEvidence>(
+      `SELECT * FROM commander_evidence_receipts WHERE tenant_id=$1 AND bundle_id=$2`,
+      [record.tenantId, record.bundleId],
+    );
+    if (!existing.rows[0] || canonical(fromEvidence(existing.rows[0])) !== canonical(record)) {
+      throw new Error('EVIDENCE_CONFLICT');
+    }
+    return { inserted: false };
+  }
+
+  async appendEvidence(record: TerminalEvidenceRecord): Promise<{ inserted: boolean }> {
+    return this.withTransaction(
+      (client) => this.appendEvidenceInTransaction(client, record),
+      [record.tenantId],
+    );
+  }
+
+  async getEvidence(binding: EvidenceLookup): Promise<TerminalEvidenceRecord | null> {
+    return this.withTransaction(
+      async (client) => {
+        const result = await client.query<DbEvidence>(
+          `SELECT * FROM commander_evidence_receipts
+         WHERE tenant_id=$1 AND run_id=$2 AND bundle_id=$3 AND action_digest=$4
+         LIMIT 1`,
+          [binding.tenantId, binding.runId, `evidence_${binding.effectId}`, binding.actionDigest],
+        );
+        return result.rows[0] ? fromEvidence(result.rows[0]) : null;
+      },
+      [binding.tenantId],
+    );
   }
 
   async markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null> {
@@ -1146,10 +1287,12 @@ export class PostgresKernelRepository implements KernelRepository {
     }, [input.tenantId]);
   }
 
-  async escalateReconcile(input: EscalateReconcileInput): Promise<boolean> {
-    return this.withTransaction(async (client) => {
-      const result = await client.query<DbEffect>(
-        `UPDATE commander_effects
+  private async escalateReconcileInTransaction(
+    client: SqlClient,
+    input: EscalateReconcileInput,
+  ): Promise<KernelEffect | null> {
+    const result = await client.query<DbEffect>(
+      `UPDATE commander_effects
          SET reconcile_escalated_at=now(),
              reconcile_claim_token=NULL,
              reconcile_claim_expires_at=NULL,
@@ -1157,23 +1300,45 @@ export class PostgresKernelRepository implements KernelRepository {
          WHERE id=$2 AND tenant_id=$3 AND state='COMPLETION_UNKNOWN'
            AND reconcile_claim_token=$4
          RETURNING *`,
-        [input.reason, input.effectId, input.tenantId, input.claimToken],
-      );
-      if (!result.rows[0]) return false;
-      const effect = fromEffect(result.rows[0]);
-      await this.appendEvent(client, {
-        aggregateType: 'effect',
-        aggregateId: effect.id,
-        sequence: 100 + effect.reconcileAttempts,
-        type: 'effect.reconcile_escalated',
-        tenantId: effect.tenantId,
-        runId: effect.runId,
-        stepId: effect.stepId,
-        actor: 'reconciliation-daemon',
-        payload: { reason: input.reason },
-      });
-      return true;
-    }, [input.tenantId]);
+      [input.reason, input.effectId, input.tenantId, input.claimToken],
+    );
+    if (!result.rows[0]) return null;
+    const effect = fromEffect(result.rows[0]);
+    await this.appendEvent(client, {
+      aggregateType: 'effect',
+      aggregateId: effect.id,
+      sequence: 100 + effect.reconcileAttempts,
+      type: 'effect.reconcile_escalated',
+      tenantId: effect.tenantId,
+      runId: effect.runId,
+      stepId: effect.stepId,
+      actor: 'reconciliation-daemon',
+      payload: { reason: input.reason },
+    });
+    return effect;
+  }
+
+  async escalateReconcile(input: EscalateReconcileInput): Promise<boolean> {
+    return this.withTransaction(
+      async (client) => (await this.escalateReconcileInTransaction(client, input)) !== null,
+      [input.tenantId],
+    );
+  }
+
+  async escalateReconcileWithEvidence(
+    input: EscalateReconcileInput,
+    evidence: TerminalEvidenceRecord,
+  ): Promise<boolean> {
+    return this.withTransaction(
+      async (client) => {
+        const effect = await this.escalateReconcileInTransaction(client, input);
+        if (!effect) return false;
+        assertEvidenceRecordBoundToEffect(evidence, effect);
+        await this.appendEvidenceInTransaction(client, evidence);
+        return true;
+      },
+      [input.tenantId],
+    );
   }
 
   async releaseReconcileClaim(

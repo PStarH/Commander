@@ -1,5 +1,10 @@
 import type { KernelRepository } from '@commander/kernel';
-import type { EffectBroker, EffectOutcomeQuerier } from '@commander/effect-broker';
+import {
+  buildEffectScopedEvidenceRecord,
+  type EffectBroker,
+  type EffectOutcomeQuerier,
+  type EvidenceSigner,
+} from '@commander/effect-broker';
 import type { ActionAdapterRegistry } from '@commander/action-adapters';
 
 export const MAX_RECONCILE_ATTEMPTS = 8;
@@ -17,6 +22,8 @@ export interface ReconciliationDaemonOptions {
   workerGeneration?: number;
   /** Unforgeable claim secret from register() — required on worker LOGIN path. */
   claimSecret?: string;
+  evidenceSigner?: EvidenceSigner;
+  evidenceRetentionMs?: number;
 }
 
 export class ReconciliationDaemon {
@@ -72,12 +79,7 @@ export class ReconciliationDaemon {
       const { effect, claimToken } = entry;
       const querier = this.options.registry.outcomeQuerierFor(effect.type);
       if (!querier) {
-        await this.options.repository.escalateReconcile({
-          effectId: effect.id,
-          tenantId: effect.tenantId,
-          claimToken,
-          reason: 'unregistered_adapter',
-        });
+        await this.escalateWithEvidence(effect, claimToken, 'unregistered_adapter');
         escalated += 1;
         continue;
       }
@@ -91,12 +93,11 @@ export class ReconciliationDaemon {
         });
         if (result.status === 'ESCALATED') {
           if (effect.reconcileAttempts + 1 >= MAX_RECONCILE_ATTEMPTS) {
-            await this.options.repository.escalateReconcile({
-              effectId: effect.id,
-              tenantId: effect.tenantId,
+            await this.escalateWithEvidence(
+              effect,
               claimToken,
-              reason: result.reason ?? 'queryOutcome still UNKNOWN',
-            });
+              result.reason ?? 'queryOutcome still UNKNOWN',
+            );
             escalated += 1;
           } else {
             await this.options.repository.rescheduleReconcile({
@@ -131,5 +132,40 @@ export class ReconciliationDaemon {
       }
     }
     return { claimed: claimed.length, completed, escalated, rescheduled };
+  }
+
+  private async escalateWithEvidence(
+    effect: Awaited<ReturnType<KernelRepository['claimReconcileEffects']>>[number]['effect'],
+    claimToken: string,
+    reason: string,
+  ): Promise<void> {
+    if (!this.options.evidenceSigner) throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
+    const recordedAt = new Date().toISOString();
+    const evidence = await buildEffectScopedEvidenceRecord({
+      effect,
+      projectedState: 'COMPLETION_UNKNOWN',
+      response: { errorCode: 'REMOTE_OUTCOME_UNKNOWN' },
+      auditEvents: [],
+      terminalEvent: {
+        type: 'effect.reconcile_escalated',
+        severity: 'high',
+        details: { reason },
+      },
+      signer: this.options.evidenceSigner,
+      recordedAt,
+      retentionUntil: new Date(
+        Date.parse(recordedAt) + (this.options.evidenceRetentionMs ?? 365 * 24 * 60 * 60 * 1_000),
+      ).toISOString(),
+    });
+    const persisted = await this.options.repository.escalateReconcileWithEvidence(
+      {
+        effectId: effect.id,
+        tenantId: effect.tenantId,
+        claimToken,
+        reason,
+      },
+      evidence,
+    );
+    if (!persisted) throw new Error('RECONCILE_ESCALATION_NOT_PERSISTED');
   }
 }
