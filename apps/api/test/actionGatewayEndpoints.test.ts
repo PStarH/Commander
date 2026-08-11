@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 import express from 'express';
-import { verifyEvidenceBundle } from '@commander/effect-broker';
+import {
+  buildEffectScopedEvidenceRecord,
+  createEvidenceSigner,
+  verifyEvidenceReceipt,
+} from '@commander/effect-broker';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import type { KillSwitchScope } from '@commander/kernel';
 import type { V1KernelGateway } from '../src/v1GatewayKernel.js';
@@ -68,6 +72,9 @@ class InMemoryGateway implements V1KernelGateway {
   getEffect(effectId: string, tenantId: string) {
     return this.repository.getEffect(effectId, tenantId);
   }
+  getEvidence(binding: Parameters<InMemoryKernelRepository['getEvidence']>[0]) {
+    return this.repository.getEvidence(binding);
+  }
   pauseRun(runId: string, tenantId: string, actor: string) {
     return this.repository.pauseRun(runId, tenantId, actor);
   }
@@ -109,7 +116,10 @@ const baseAction = {
 async function withGateway(
   gateway: InMemoryGateway,
   action: (baseUrl: string) => Promise<void>,
+  evidenceJwks?: ReturnType<typeof evidenceSigner>['jwks'],
 ): Promise<void> {
+  const previousEvidenceJwks = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+  if (evidenceJwks) process.env.COMMANDER_EVIDENCE_JWKS_JSON = JSON.stringify(evidenceJwks);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -150,7 +160,17 @@ async function withGateway(
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    if (previousEvidenceJwks === undefined) delete process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+    else process.env.COMMANDER_EVIDENCE_JWKS_JSON = previousEvidenceJwks;
   }
+}
+
+function evidenceSigner() {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  return createEvidenceSigner({
+    privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    keyId: 'action-gateway-evidence-test',
+  });
 }
 
 async function postJson(
@@ -750,138 +770,287 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
-  it('exports verifiable L3-11 evidence without raw prompts, tool args, or secrets', async () => {
+  it('returns the persisted signed receipt for a completed compensation effect', async () => {
     const gateway = new InMemoryGateway();
-    await withGateway(gateway, async (baseUrl) => {
-      const proposed = await postJson(baseUrl, '/v1/actions', {
-        ...baseAction,
-        destination: 'demo://tickets/approval',
-        idempotencyKey: 'action-key-evidence',
-        args: {
-          title: 'SENSITIVE_TOOL_ARGUMENT',
-          Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
-        },
-      });
-      const payload = (await proposed.json()) as any;
-      const approved = await postJson(
-        baseUrl,
-        `/v1/actions/${payload.action.runId}/approve`,
-        approvalBinding(payload.action),
-      );
-      assert.equal(approved.status, 200);
-      const claimed = await gateway.repository.claimNextStep({
-        workerId: 'evidence-worker',
-        workerGeneration: 1,
-        tenantId: 'tenant-a',
-        capabilities: ['tool'],
-        leaseTtlMs: 30_000,
-      });
-      assert.ok(claimed?.lease);
-      const run = await gateway.repository.getRun(payload.action.runId, 'tenant-a');
-      const metadata = run!.metadata.actionGateway as any;
-      const admission = await gateway.repository.admitEffect({
-        id: metadata.effectId,
-        runId: run!.id,
-        stepId: claimed.id,
-        tenantId: 'tenant-a',
-        type: 'demo.ticket.create',
-        idempotencyKey: 'action-key-evidence',
-        policyDecisionId: 'action-gateway-allow-after-approval',
-        policySnapshotId: metadata.policySnapshotId,
-        actionDigest: metadata.actionDigest,
-        request: metadata.envelope,
-        lease: claimed.lease,
-        actor: 'evidence-worker',
-      });
-      assert.equal(admission.admitted, true);
-      await gateway.repository.completeEffect(
-        metadata.effectId,
-        'tenant-a',
-        claimed.lease,
-        {
-          status: 'ok',
-          body: 'SENSITIVE_EFFECT_RESPONSE',
-          access_token: 'SENSITIVE_RESPONSE_TOKEN',
-        },
-        'evidence-worker',
-      );
-      await gateway.repository.completeStep({
-        stepId: claimed.id,
-        tenantId: 'tenant-a',
-        lease: claimed.lease,
-        expectedVersion: claimed.version,
-        output: { status: 'ok' },
-        actor: 'evidence-worker',
-      });
-      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
-        headers: { 'x-test-tenant': 'tenant-a' },
-      });
-      assert.equal(evidence.status, 200);
-      const evidenceText = await evidence.text();
-      const evidencePayload = JSON.parse(evidenceText) as any;
-      assert.equal(evidencePayload.bundle.schemaVersion, 'l3-11.v0');
-      assert.equal(evidencePayload.bundle.scope.runId, payload.action.runId);
-      assert.equal(evidencePayload.verification.ok, true);
-      assert.equal(verifyEvidenceBundle(evidencePayload.bundle).ok, true);
-      assert.equal(evidenceText.includes('SENSITIVE_TOOL_ARGUMENT'), false);
-      assert.equal(evidenceText.includes('SENSITIVE_AUTH_TOKEN'), false);
-      assert.equal(evidenceText.includes('SENSITIVE_EFFECT_RESPONSE'), false);
-      assert.equal(evidenceText.includes('SENSITIVE_RESPONSE_TOKEN'), false);
-      assert.equal(evidenceText.includes('Approve demo.ticket.create'), false);
-      assert.equal(evidencePayload.bundle.effects[0].responseSummary.status, 'ok');
+    const signer = evidenceSigner();
+    await withGateway(
+      gateway,
+      async (baseUrl) => {
+        const proposed = await postJson(baseUrl, '/v1/actions', {
+          ...baseAction,
+          tool: 'ticket.compensate',
+          effectType: 'compensate.demo.ticket.create',
+          args: { targetIdempotencyKey: 'action-key-0001' },
+          idempotencyKey: 'action-evidence-completed-compensation',
+        });
+        assert.equal(proposed.status, 202);
+        const action = ((await proposed.json()) as any).action;
+        const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+        const metadata = run!.metadata.actionGateway as any;
+        const claimed = await gateway.repository.claimNextStep({
+          workerId: 'evidence-completion-worker',
+          workerGeneration: 1,
+          tenantId: 'tenant-a',
+          capabilities: ['tool'],
+          leaseTtlMs: 30_000,
+        });
+        assert.ok(claimed?.lease);
+        const admitted = await gateway.repository.admitEffect({
+          id: metadata.effectId,
+          runId: action.runId,
+          stepId: claimed.id,
+          tenantId: 'tenant-a',
+          type: metadata.envelope.effectType,
+          idempotencyKey: metadata.envelope.idempotencyKey,
+          policyDecisionId: metadata.decision.decisionId,
+          policySnapshotId: metadata.policySnapshotId,
+          actionDigest: metadata.actionDigest,
+          request: metadata.envelope,
+          lease: claimed.lease,
+          actor: 'evidence-completion-worker',
+        });
+        assert.equal(admitted.admitted, true);
+        if (!admitted.admitted) return;
+        const record = await buildEffectScopedEvidenceRecord({
+          effect: admitted.effect,
+          projectedState: 'COMPLETED',
+          response: { status: 'compensated' },
+          auditEvents: [],
+          terminalEvent: {
+            type: 'compensation.completed',
+            severity: 'low',
+            details: { effectId: admitted.effect.id },
+          },
+          signer,
+          recordedAt: '2026-08-11T00:00:01.000Z',
+          retentionUntil: '2027-08-11T00:00:01.000Z',
+        });
+        await gateway.repository.completeEffectWithEvidence(
+          admitted.effect.id,
+          'tenant-a',
+          claimed.lease,
+          { status: 'compensated' },
+          'evidence-completion-worker',
+          record,
+        );
 
-      const reconcile = await postJson(
-        baseUrl,
-        `/v1/actions/${payload.action.runId}/reconcile`,
-        {},
-      );
-      assert.equal(reconcile.status, 409);
-    });
+        const response = await fetch(`${baseUrl}/v1/actions/${action.runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as any;
+        assert.deepEqual(Object.keys(payload).sort(), ['receipt', 'verification']);
+        assert.equal(payload.receipt.scope.effectId, metadata.effectId);
+        assert.equal(payload.receipt.actionDigest, metadata.actionDigest);
+        assert.equal(payload.receipt.terminalDisposition, 'SUCCEEDED');
+        assert.deepEqual(verifyEvidenceReceipt(payload.receipt, signer.jwks), payload.verification);
+      },
+      signer.jwks,
+    );
   });
 
-  it('drops free-text interaction fields from exported evidence audit details', async () => {
+  it('returns the persisted signed receipt for an escalated completion-unknown effect', async () => {
     const gateway = new InMemoryGateway();
-    await withGateway(gateway, async (baseUrl) => {
-      const proposed = await postJson(baseUrl, '/v1/actions', {
-        ...baseAction,
-        destination: 'demo://tickets/approval',
-        idempotencyKey: 'action-key-reject-evidence',
-      });
-      const payload = (await proposed.json()) as any;
-      const rejected = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/reject`, {
-        reason: 'Bearer USER_CONTROLLED_REJECT_SECRET',
-      });
-      assert.equal(rejected.status, 200);
+    const signer = evidenceSigner();
+    await withGateway(
+      gateway,
+      async (baseUrl) => {
+        const proposed = await postJson(baseUrl, '/v1/actions', {
+          ...baseAction,
+          idempotencyKey: 'action-evidence-escalated-unknown',
+        });
+        assert.equal(proposed.status, 202);
+        const action = ((await proposed.json()) as any).action;
+        const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+        const metadata = run!.metadata.actionGateway as any;
+        const claimedStep = await gateway.repository.claimNextStep({
+          workerId: 'evidence-escalation-worker',
+          workerGeneration: 1,
+          tenantId: 'tenant-a',
+          capabilities: ['tool'],
+          leaseTtlMs: 30_000,
+        });
+        assert.ok(claimedStep?.lease);
+        const admitted = await gateway.repository.admitEffect({
+          id: metadata.effectId,
+          runId: action.runId,
+          stepId: claimedStep.id,
+          tenantId: 'tenant-a',
+          type: metadata.envelope.effectType,
+          idempotencyKey: metadata.envelope.idempotencyKey,
+          policyDecisionId: metadata.decision.decisionId,
+          policySnapshotId: metadata.policySnapshotId,
+          actionDigest: metadata.actionDigest,
+          request: metadata.envelope,
+          lease: claimedStep.lease,
+          actor: 'evidence-escalation-worker',
+        });
+        assert.equal(admitted.admitted, true);
+        if (!admitted.admitted) return;
+        await gateway.repository.markEffectCompletionUnknown({
+          effectId: admitted.effect.id,
+          tenantId: 'tenant-a',
+          reason: 'remote outcome unknown',
+          actor: 'evidence-escalation-worker',
+        });
+        const [claimedEffect] = await gateway.repository.claimReconcileEffects({
+          tenantId: 'tenant-a',
+          limit: 1,
+          now: new Date(Date.now() + 60_000),
+          workerId: 'evidence-escalation-worker',
+          workerGeneration: 1,
+        });
+        assert.ok(claimedEffect);
+        const record = await buildEffectScopedEvidenceRecord({
+          effect: claimedEffect.effect,
+          projectedState: 'COMPLETION_UNKNOWN',
+          response: { errorCode: 'REMOTE_OUTCOME_UNKNOWN' },
+          auditEvents: [],
+          terminalEvent: {
+            type: 'effect.reconcile_escalated',
+            severity: 'high',
+            details: { reason: 'unregistered_adapter' },
+          },
+          signer,
+          recordedAt: '2026-08-11T00:00:02.000Z',
+          retentionUntil: '2027-08-11T00:00:02.000Z',
+        });
+        assert.equal(
+          await gateway.repository.escalateReconcileWithEvidence(
+            {
+              effectId: admitted.effect.id,
+              tenantId: 'tenant-a',
+              claimToken: claimedEffect.claimToken,
+              reason: 'unregistered_adapter',
+            },
+            record,
+          ),
+          true,
+        );
 
-      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
-        headers: { 'x-test-tenant': 'tenant-a' },
-      });
-      assert.equal(evidence.status, 200);
-      const evidenceText = await evidence.text();
-      const evidencePayload = JSON.parse(evidenceText) as any;
-      assert.equal(evidenceText.includes('USER_CONTROLLED_REJECT_SECRET'), false);
-      assert.equal(evidenceText.includes('USER_CONTROLLED_REVIEWER_SECRET'), false);
-      assert.equal(evidenceText.includes('Approve demo.ticket.create'), false);
-      assert.equal(evidencePayload.verification.ok, true);
-      assert.equal(verifyEvidenceBundle(evidencePayload.bundle).ok, true);
+        const response = await fetch(`${baseUrl}/v1/actions/${action.runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as any;
+        assert.deepEqual(Object.keys(payload).sort(), ['receipt', 'verification']);
+        assert.equal(payload.receipt.scope.effectId, metadata.effectId);
+        assert.equal(payload.receipt.actionDigest, metadata.actionDigest);
+        assert.equal(payload.receipt.terminalDisposition, 'ESCALATED');
+        assert.deepEqual(verifyEvidenceReceipt(payload.receipt, signer.jwks), payload.verification);
+      },
+      signer.jwks,
+    );
+  });
 
-      const created = evidencePayload.bundle.auditEvents.find(
-        (event: any) => event.type === 'interaction.created',
-      );
-      const answered = evidencePayload.bundle.auditEvents.find(
-        (event: any) => event.type === 'interaction.answered',
-      );
-      assert.deepEqual(Object.keys(created.details).sort(), [
-        'expiresAt',
-        'interactionId',
-        'status',
-      ]);
-      assert.deepEqual(answered.details, {
-        interactionId: created.details.interactionId,
-        status: 'answered',
-        approved: false,
-      });
-    });
+  it('does not synthesize evidence when a completed effect has no persisted receipt', async () => {
+    const gateway = new InMemoryGateway();
+    const signer = evidenceSigner();
+    await withGateway(
+      gateway,
+      async (baseUrl) => {
+        const proposed = await postJson(baseUrl, '/v1/actions', {
+          ...baseAction,
+          destination: 'demo://tickets/approval',
+          idempotencyKey: 'action-key-evidence',
+          args: {
+            title: 'SENSITIVE_TOOL_ARGUMENT',
+            Authorization: 'Bearer SENSITIVE_AUTH_TOKEN',
+          },
+        });
+        const payload = (await proposed.json()) as any;
+        const approved = await postJson(
+          baseUrl,
+          `/v1/actions/${payload.action.runId}/approve`,
+          approvalBinding(payload.action),
+        );
+        assert.equal(approved.status, 200);
+        const claimed = await gateway.repository.claimNextStep({
+          workerId: 'evidence-worker',
+          workerGeneration: 1,
+          tenantId: 'tenant-a',
+          capabilities: ['tool'],
+          leaseTtlMs: 30_000,
+        });
+        assert.ok(claimed?.lease);
+        const run = await gateway.repository.getRun(payload.action.runId, 'tenant-a');
+        const metadata = run!.metadata.actionGateway as any;
+        const admission = await gateway.repository.admitEffect({
+          id: metadata.effectId,
+          runId: run!.id,
+          stepId: claimed.id,
+          tenantId: 'tenant-a',
+          type: 'demo.ticket.create',
+          idempotencyKey: 'action-key-evidence',
+          policyDecisionId: 'action-gateway-allow-after-approval',
+          policySnapshotId: metadata.policySnapshotId,
+          actionDigest: metadata.actionDigest,
+          request: metadata.envelope,
+          lease: claimed.lease,
+          actor: 'evidence-worker',
+        });
+        assert.equal(admission.admitted, true);
+        await gateway.repository.completeEffect(
+          metadata.effectId,
+          'tenant-a',
+          claimed.lease,
+          {
+            status: 'ok',
+            body: 'SENSITIVE_EFFECT_RESPONSE',
+            access_token: 'SENSITIVE_RESPONSE_TOKEN',
+          },
+          'evidence-worker',
+        );
+        await gateway.repository.completeStep({
+          stepId: claimed.id,
+          tenantId: 'tenant-a',
+          lease: claimed.lease,
+          expectedVersion: claimed.version,
+          output: { status: 'ok' },
+          actor: 'evidence-worker',
+        });
+        const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(evidence.status, 404);
+        assert.equal(((await evidence.json()) as any).error.code, 'EVIDENCE_NOT_FOUND');
+
+        const reconcile = await postJson(
+          baseUrl,
+          `/v1/actions/${payload.action.runId}/reconcile`,
+          {},
+        );
+        assert.equal(reconcile.status, 409);
+      },
+      signer.jwks,
+    );
+  });
+
+  it('does not synthesize evidence for a rejected action without an effect receipt', async () => {
+    const gateway = new InMemoryGateway();
+    const signer = evidenceSigner();
+    await withGateway(
+      gateway,
+      async (baseUrl) => {
+        const proposed = await postJson(baseUrl, '/v1/actions', {
+          ...baseAction,
+          destination: 'demo://tickets/approval',
+          idempotencyKey: 'action-key-reject-evidence',
+        });
+        const payload = (await proposed.json()) as any;
+        const rejected = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/reject`, {
+          reason: 'Bearer USER_CONTROLLED_REJECT_SECRET',
+        });
+        assert.equal(rejected.status, 200);
+
+        const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(evidence.status, 404);
+        assert.equal(((await evidence.json()) as any).error.code, 'EVIDENCE_NOT_FOUND');
+      },
+      signer.jwks,
+    );
   });
 
   it('blocks generic run submissions from spoofing Action Gateway external work', async () => {
