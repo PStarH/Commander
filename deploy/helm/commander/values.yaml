@@ -172,6 +172,12 @@ capability:
   keyIdKey: key-id
   jwksJsonKey: jwks-json
 
+# Producer evidence-signing authority. The chart never creates this Secret.
+evidenceSigning:
+  existingSecret: ''
+  privateKeyPemKey: private-key-pem
+  keyIdKey: key-id
+
 sandboxd:
   enabled: false
 
