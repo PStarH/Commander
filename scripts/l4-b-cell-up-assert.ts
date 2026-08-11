@@ -17,7 +17,6 @@ import {
   COMPOSE_CMD,
   ensureCellSandboxImage,
   generateCellCapabilityMaterials,
-  generateCellEvidenceSigningMaterials,
 } from './l4-b-cell-compose.js';
 
 export const CELL_UP_ASSERT_SERVICES = [
@@ -44,8 +43,6 @@ Env (optional — generated when unset):
   COMMANDER_WORKER_AUTH_TOKEN,
   COMMANDER_CAPABILITY_PRIVATE_KEY_PEM / COMMANDER_CAPABILITY_KEY_ID /
   COMMANDER_CAPABILITY_JWKS_JSON (worker/adapter Ed25519; openssl/node when unset)
-  COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM / COMMANDER_EVIDENCE_SIGNING_KEY_ID
-  (worker/adapter evidence signing Ed25519; node when unset)
 
 DOCKER_GID is forced to 0 for this harness (adversarial deploy default).
 `;
@@ -75,16 +72,6 @@ export function buildCellUpAssertEnv(): Record<string, string> {
         }
       : generateCellCapabilityMaterials();
 
-  const evidenceSigning =
-    process.env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM &&
-    process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID
-      ? {
-          COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:
-            process.env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM,
-          COMMANDER_EVIDENCE_SIGNING_KEY_ID: process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID,
-        }
-      : generateCellEvidenceSigningMaterials();
-
   return {
     POSTGRES_PASSWORD: postgresPassword,
     COMMANDER_API_KEY: apiKey,
@@ -96,7 +83,6 @@ export function buildCellUpAssertEnv(): Record<string, string> {
     COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
     COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
     ...capability,
-    ...evidenceSigning,
     COMMANDER_ENABLE_DEMO_TICKET: '1',
     COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
     COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,
