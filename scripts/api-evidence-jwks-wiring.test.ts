@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { load } from 'js-yaml';
+import { load, loadAll } from 'js-yaml';
 
 const root = process.cwd();
 const read = (file: string) => readFileSync(`${root}/${file}`, 'utf8');
@@ -56,6 +56,34 @@ test('enterprise Helm fails without public JWKS Secret and demo remains renderab
       ],
       { cwd: root },
     ),
+  );
+  const rendered = execFileSync(
+    'helm',
+    [
+      'template',
+      'x',
+      'deploy/helm/commander',
+      '-f',
+      'deploy/helm/commander/values-enterprise.yaml',
+      '--set',
+      'image.tag=test',
+    ],
+    { cwd: root, encoding: 'utf8' },
+  );
+  const docs = loadAll(rendered) as Array<any>;
+  const api = docs.find(
+    (doc) =>
+      doc?.kind === 'Deployment' && doc.metadata?.labels?.['app.kubernetes.io/component'] === 'api',
+  );
+  const env = api.spec.template.spec.containers[0].env;
+  const jwks = env.find((entry: any) => entry.name === 'COMMANDER_EVIDENCE_JWKS_JSON');
+  assert.deepEqual(jwks.valueFrom.secretKeyRef, { name: 'cmdr-evidence-jwks', key: 'jwks-json' });
+  assert.notEqual(jwks.valueFrom.secretKeyRef.optional, true);
+  assert.equal(
+    env.find((entry: any) =>
+      /COMMANDER_(EVIDENCE_SIGNING|CAPABILITY)_PRIVATE_KEY_PEM/.test(entry.name),
+    ),
+    undefined,
   );
 });
 
