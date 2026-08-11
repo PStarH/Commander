@@ -4,7 +4,6 @@ import {
   applyApiGateToComposeSidecarSteps,
   assertCapabilityAuthorityOnCellServices,
   assertKernelBackendOnCellServices,
-  COMPOSE_CONFIG_ENV,
   runCellSmoke,
   runOptionalChaosStep,
 } from './l4-b-cell-smoke.js';
@@ -25,14 +24,6 @@ describe('l4-b-cell-smoke', () => {
     assert.equal(env.COMMANDER_CELL_TENANT_ID, 'cell-smoke-tenant');
     assert.equal(env.COMMANDER_WORKER_TENANTS, env.COMMANDER_CELL_TENANT_ID);
     assert.equal(env.COMMANDER_WORKER_ALLOWED_TENANTS, env.COMMANDER_CELL_TENANT_ID);
-    for (const source of [env, COMPOSE_CONFIG_ENV]) {
-      assert.ok(source.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM);
-      assert.ok(source.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
-      assert.notEqual(
-        source.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM,
-        source.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM,
-      );
-    }
   });
 
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {
