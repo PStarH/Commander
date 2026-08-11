@@ -98,6 +98,7 @@
     "docker:cell:down": "docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell down -v",
     "effect:io-guard": "pnpm exec tsx scripts/effect-io-guard.ts",
     "effect:io-guard:test": "pnpm exec node --import tsx --test scripts/effect-io-guard.test.ts",
+    "test:deploy-portability": "pnpm exec node --import tsx --test scripts/deploy-portability.test.ts scripts/g4-rotation-verify-ci.test.ts",
     "test:deploy-gates": "pnpm helm:cell-assert && pnpm exec tsx --test scripts/compose-role-assert.test.ts scripts/postgres-role-init-parity.test.ts && pnpm --filter @commander/adapter-ops test && pnpm exec tsx --test apps/api/test/kernelEnabled.test.ts && pnpm exec tsx --test scripts/helm-cell-assert.test.ts scripts/l4-b-cell-smoke.test.ts scripts/dr-backup-verify.test.ts && pnpm effect:io-guard:test && pnpm proof:authority",
     "dr:verify": "pnpm exec tsx scripts/dr-backup-verify.ts --full",
     "p0:kernel-e2e": "pnpm exec tsx scripts/p0-kernel-e2e.ts",
