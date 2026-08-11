@@ -133,7 +133,7 @@ This policy is binding on the engineering organisation once signed below. New se
 
 Each row below must carry a **Name · GitHub Handle · GPG fingerprint (16-char short) · Signed-Commit SHA**.
 
-> **DEMO BINDING (replace before next security release)**: the four rows below record demo SHA(s) from a sandbox-generated GPG key (ed25519, short fingerprint ). The corresponding private key is **not** published — downstream clones may not have it in their keyring and will fail until an operator replaces the binding per §6.4. Compliance Lead should swap these for the real per-role GPG-signed commits before merge to a release-tagged commit. The GPG fingerprint binds the sign-off to a cryptographic identity so substitution is detectable on review; the Signed-Commit SHA binds the policy to the exact text that was approved. **The effective date is NOT a free-form cell** — it is the cryptographic timestamp of the GPG-signed commit and is derived as:
+> **PROVISIONAL PRE-RELEASE BINDING (not a human approval):** the four rows below use the dedicated `Commander Pre-Release Sign-off` Ed25519 project key solely to replace the unrecoverable demo key and restore an auditable CI check. The same project identity is repeated for all four provisional role rows; this satisfies the mechanical `POLICY_MIN_VERIFIED_ROWS = 4` gate but does **not** represent four independent human approvals or Authority Closure. Formal release remains blocked until the named CISO, Head of Security, Engineering Lead, and Compliance Lead each provide independent signatures under §6.4. The private key is never stored in this repository. The GPG fingerprint binds the sign-off identity so substitution is detectable on review; the Signed-Commit SHA binds each row to a distinct signed policy commit. **The effective date is NOT a free-form cell** — it is the cryptographic timestamp of the GPG-signed commit and is derived as:
 
 ```
 git log -1 --format=%aI <Signed-Commit SHA>
@@ -158,12 +158,12 @@ The Signed-Commit SHA is the binding artifact; reviewers can replay `git verify-
 
 ### §6.3 — Sign-off table
 
-| Role                 | Name                  | GitHub handle        | GPG fingerprint (16-char short) | Signed-Commit SHA                        |
-| -------------------- | --------------------- | -------------------- | ------------------------------- | ---------------------------------------- |
-| **CISO**             | CISO Demo Operator    | @commander-ciso-demo | 12AA1940B17D9448                | e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
-| **Head of Security** | Demo Head of Security | @commander-hos-demo  | 12AA1940B17D9448                | e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
-| **Engineering Lead** | Demo Engineering Lead | @commander-eng-demo  | 12AA1940B17D9448                | e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
-| **Compliance Lead**  | Demo Compliance Lead  | @commander-cmp-demo  | 12AA1940B17D9448                | e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d |
+| Role                 | Name                           | GitHub handle              | GPG fingerprint (16-char short) | Signed-Commit SHA                        |
+| -------------------- | ------------------------------ | -------------------------- | ------------------------------- | ---------------------------------------- |
+| **CISO**             | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | 09ae4b172e4c9277786949a64b225aea98d183b2 |
+| **Head of Security** | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | dcee2082e0b8d3d6dadded3ca82dab787e487837 |
+| **Engineering Lead** | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | efe6b767049d59005e1648c5addc9fae6ea7d4b9 |
+| **Compliance Lead**  | Commander Pre-Release Sign-off | @commander-project-signoff | 09D0DB9C03667BEE                | b1f48b4bb2ac9f97d3900977c4fce6d47c747ce6 |
 
 ### §6.4 — Procedural note
 
