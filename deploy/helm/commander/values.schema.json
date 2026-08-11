@@ -3,7 +3,7 @@
   "title": "Commander Helm Values",
   "type": "object",
   "additionalProperties": true,
-  "required": ["tier"],
+  "required": ["tier", "evidenceSigning"],
   "properties": {
     "tier": {
       "type": "string",
@@ -65,6 +65,16 @@
             "existingSecret": { "type": "string" }
           }
         }
+      }
+    },
+    "evidenceSigning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["existingSecret", "privateKeyPemKey", "keyIdKey"],
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "privateKeyPemKey": { "type": "string", "minLength": 1 },
+        "keyIdKey": { "type": "string", "minLength": 1 }
       }
     },
     "networkPolicy": {
@@ -129,6 +139,12 @@
               "create": { "const": false }
             },
             "required": ["existingSecret", "create"]
+          },
+          "evidenceSigning": {
+            "properties": {
+              "existingSecret": { "minLength": 1 }
+            },
+            "required": ["existingSecret"]
           }
         }
       }

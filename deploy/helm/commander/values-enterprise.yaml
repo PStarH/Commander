@@ -30,6 +30,10 @@ capability:
   existingSecret: cmdr-capability
   create: false
 
+# Operator-managed evidence-signing private key and key id.
+evidenceSigning:
+  existingSecret: cmdr-evidence-signing
+
 database:
   enabled: true
   backend: postgres
