@@ -103,6 +103,7 @@ spec:
               value: {{ join "," .Values.networkPolicy.egress.adapterCidrs | quote }}
             {{- end }}
             {{- include "commander.capabilityEnv" . | nindent 12 }}
+            {{- include "commander.evidenceSigningEnv" . | nindent 12 }}
           resources: {{ toYaml .Values.adapterOps.resources | nindent 12 }}
           securityContext:
             {{- include "commander.cellSecurityContext" . | nindent 12 }}
