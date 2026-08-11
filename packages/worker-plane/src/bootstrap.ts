@@ -42,11 +42,13 @@ import type {
   AuditSink,
   EffectKernelPort,
   EffectBrokerOptions,
+  ConfiguredEvidenceSigner,
 } from '@commander/effect-broker';
 import {
   EffectBroker,
   CapabilityTokenIssuer,
   canonicalRequestHash,
+  createEvidenceSigner,
 } from '@commander/effect-broker';
 import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
 import {
@@ -67,6 +69,22 @@ export const OWNER_DATABASE_ROLE_REJECTED = 'OWNER_DATABASE_ROLE_REJECTED';
 
 /** Durable replay/revocation stores missing from authority or kernel repository. */
 export const CAPABILITY_DURABLE_STORES_REQUIRED = 'CAPABILITY_DURABLE_STORES_REQUIRED';
+
+export const EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV = 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM';
+
+export const EVIDENCE_SIGNING_KEY_ID_ENV = 'COMMANDER_EVIDENCE_SIGNING_KEY_ID';
+
+export function createWorkerEvidenceSigner(
+  env: NodeJS.ProcessEnv = process.env,
+): ConfiguredEvidenceSigner | undefined {
+  const privateKeyPem = env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]?.trim() ?? '';
+  const keyId = env[EVIDENCE_SIGNING_KEY_ID_ENV]?.trim() ?? '';
+  if (!privateKeyPem || !keyId) {
+    if (env.NODE_ENV === 'production') throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
+    return undefined;
+  }
+  return createEvidenceSigner({ privateKeyPem, keyId });
+}
 
 /** Owner / migration LOGIN role — never accept for worker DATABASE_URL. */
 export const OWNER_MIGRATION_DATABASE_ROLES = new Set(['commander_owner']);
@@ -193,6 +211,7 @@ export function assertDurableCapabilityStores(
 export function productionCapabilityBrokerOptions(
   capability: CapabilityAuthority,
   localWorkerId: string,
+  evidenceSigner?: ConfiguredEvidenceSigner,
 ): EffectBrokerOptions & {
   replay: CapabilityAuthority['replayForTenant'];
   revocations: CapabilityAuthority['revocations'];
@@ -205,6 +224,7 @@ export function productionCapabilityBrokerOptions(
     requireDurableCapabilityStores: true,
     replay: (tenantId: string) => capability.replayForTenant(tenantId),
     revocations: capability.revocations,
+    evidenceSigner,
   };
 }
 
@@ -632,6 +652,7 @@ export function withDefaultLlmAllowlist(
     admitEffect: (input) => kernel.admitEffect(input),
     completeEffect: (effectId, tenantId, lease, response, actor) =>
       kernel.completeEffect(effectId, tenantId, lease, response, actor),
+    completeEffectWithEvidence: kernel.completeEffectWithEvidence?.bind(kernel),
     markEffectCompletionUnknown: kernel.markEffectCompletionUnknown?.bind(kernel),
     incrementQuota: kernel.incrementQuota?.bind(kernel),
     getQuota: kernel.getQuota?.bind(kernel),
@@ -740,6 +761,7 @@ export function createEffectBroker(
   const policy = createWorkerPolicyEvaluator(kernel);
   const effectKernel = withDefaultLlmAllowlist(kernel);
   const executor = createWorkerEffectExecutor();
+  const evidenceSigner = createWorkerEvidenceSigner(env);
 
   // Console audit sink. Production should forward to a durable audit store.
   const audit: AuditSink = {
@@ -757,7 +779,11 @@ export function createEffectBroker(
     },
   };
 
-  const brokerOptions = productionCapabilityBrokerOptions(capability, localWorkerId);
+  const brokerOptions = productionCapabilityBrokerOptions(
+    capability,
+    localWorkerId,
+    evidenceSigner,
+  );
 
   // WS2 §4: request binding is mandatory. The EffectBroker constructor
   // enforces this in production (throws REQUEST_BINDING_DISABLED_IN_PROD).

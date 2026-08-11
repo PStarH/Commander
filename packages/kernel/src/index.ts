@@ -18,6 +18,10 @@ export {
 } from './schema.js';
 export { KERNEL_MIGRATIONS, runKernelMigrations } from './migrations.js';
 export {
+  KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
+  KERNEL_SIGNED_EVIDENCE_SQL,
+} from './evidenceSchema.js';
+export {
   generateWorkerClaimSecret,
   hashWorkerClaimSecret,
   verifyWorkerClaimSecret,
@@ -76,6 +80,11 @@ export type {
   SqlQueryResult,
 } from './postgres.js';
 export type { KernelRepository } from './repository.js';
+export {
+  assertEvidenceRecordBinding,
+  assertEvidenceRecordBoundToEffect,
+} from './evidenceRepository.js';
+export type { EvidenceLookup, EvidenceRepository } from './evidenceRepository.js';
 export {
   KernelCapabilityReplayStore,
   KernelCapabilityRevocationStore,

@@ -9,8 +9,10 @@ import {
   isClassAEffectType,
   type AuditSink,
   type CapabilityTokenIssuer,
+  type ConfiguredEvidenceSigner,
   type EffectBrokerOptions,
   type PolicyEvaluator,
+  createEvidenceSigner,
 } from '@commander/effect-broker';
 import {
   ActionAdapterRegistry,
@@ -38,6 +40,22 @@ export const OWNER_DATABASE_ROLE_REJECTED = 'OWNER_DATABASE_ROLE_REJECTED';
 
 /** Durable replay/revocation stores missing from authority or kernel repository. */
 export const CAPABILITY_DURABLE_STORES_REQUIRED = 'CAPABILITY_DURABLE_STORES_REQUIRED';
+
+export const EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV = 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM';
+
+export const EVIDENCE_SIGNING_KEY_ID_ENV = 'COMMANDER_EVIDENCE_SIGNING_KEY_ID';
+
+export function createAdapterOpsEvidenceSigner(
+  env: NodeJS.ProcessEnv = process.env,
+): ConfiguredEvidenceSigner | undefined {
+  const privateKeyPem = env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]?.trim() ?? '';
+  const keyId = env[EVIDENCE_SIGNING_KEY_ID_ENV]?.trim() ?? '';
+  if (!privateKeyPem || !keyId) {
+    if (env.NODE_ENV === 'production') throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
+    return undefined;
+  }
+  return createEvidenceSigner({ privateKeyPem, keyId });
+}
 
 /** Owner / migration LOGIN role — never accept for adapter-ops DSN. */
 export const OWNER_MIGRATION_DATABASE_ROLES = new Set(['commander_owner']);
@@ -287,6 +305,7 @@ export function productionCapabilityBrokerOptions(
   capability: CapabilityAuthority,
   localWorkerId: string,
   localWorkerGeneration?: number,
+  evidenceSigner?: ConfiguredEvidenceSigner,
 ): EffectBrokerOptions & {
   replay: CapabilityAuthority['replayForTenant'];
   revocations: CapabilityAuthority['revocations'];
@@ -300,6 +319,7 @@ export function productionCapabilityBrokerOptions(
     requireDurableCapabilityStores: true,
     replay: (tenantId: string) => capability.replayForTenant(tenantId),
     revocations: capability.revocations,
+    evidenceSigner,
   };
 }
 
@@ -562,6 +582,7 @@ export async function createAdapterOpsWiring(
   compensationLocalWorkerId: string;
 }> {
   const demoOpen = assertDemoOpenGate();
+  const evidenceSigner = createAdapterOpsEvidenceSigner(process.env);
   const egressAllowlist = parseEgressAllowlist();
 
   // Owner/scheduler DSN + schedulerMode gates BEFORE kernel connect.
@@ -617,6 +638,15 @@ export async function createAdapterOpsWiring(
       response: Record<string, unknown>,
       actor: string,
     ) => repository.completeEffect(effectId, tenantId, lease, response, actor),
+    completeEffectWithEvidence: (
+      effectId: string,
+      tenantId: string,
+      lease: Parameters<typeof repository.completeEffectWithEvidence>[2],
+      response: Record<string, unknown>,
+      actor: string,
+      evidence: Parameters<typeof repository.completeEffectWithEvidence>[5],
+    ) =>
+      repository.completeEffectWithEvidence(effectId, tenantId, lease, response, actor, evidence),
     markEffectCompletionUnknown: (
       input: Parameters<typeof repository.markEffectCompletionUnknown>[0],
     ) => repository.markEffectCompletionUnknown(input),
@@ -670,6 +700,7 @@ export async function createAdapterOpsWiring(
       capability,
       compensationWorkerId,
       compensationGeneration,
+      evidenceSigner,
     ),
   );
   const reconciliation = new ReconciliationDaemon({
@@ -689,6 +720,7 @@ export async function createAdapterOpsWiring(
           capability,
           reconcileWorkerId,
           reconcileGeneration,
+          evidenceSigner,
         ),
       ),
     registry,
@@ -698,6 +730,7 @@ export async function createAdapterOpsWiring(
     workerId: reconcileWorkerId,
     workerGeneration: reconcileGeneration,
     claimSecret: reconcileClaimSecret,
+    evidenceSigner,
   });
   const compensation = new CompensationDaemon({
     repository,
