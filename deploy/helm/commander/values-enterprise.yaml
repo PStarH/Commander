@@ -34,6 +34,9 @@ capability:
 evidenceSigning:
   existingSecret: cmdr-evidence-signing
 
+evidenceVerification:
+  existingSecret: cmdr-evidence-jwks
+
 database:
   enabled: true
   backend: postgres

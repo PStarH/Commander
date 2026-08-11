@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   applyApiGateToComposeSidecarSteps,
@@ -7,6 +8,7 @@ import {
   runCellSmoke,
   runOptionalChaosStep,
 } from './l4-b-cell-smoke.js';
+import { generateCellEvidenceSigningMaterials } from './l4-b-cell-compose.js';
 import { buildCellUpAssertEnv } from './l4-b-cell-up-assert.js';
 
 const KERNEL_BACKEND_ENV = { COMMANDER_KERNEL_BACKEND: 'postgres' };
@@ -24,6 +26,39 @@ describe('l4-b-cell-smoke', () => {
     assert.equal(env.COMMANDER_CELL_TENANT_ID, 'cell-smoke-tenant');
     assert.equal(env.COMMANDER_WORKER_TENANTS, env.COMMANDER_CELL_TENANT_ID);
     assert.equal(env.COMMANDER_WORKER_ALLOWED_TENANTS, env.COMMANDER_CELL_TENANT_ID);
+    assert.match(env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM, /BEGIN PRIVATE KEY/);
+    assert.ok(env.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
+    const evidenceJwks = JSON.parse(env.COMMANDER_EVIDENCE_JWKS_JSON) as {
+      keys?: Array<{ kid?: string }>;
+    };
+    assert.equal(evidenceJwks.keys?.[0]?.kid, env.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
+  });
+
+  it('cell evidence signing materials expose a matching public JWKS', () => {
+    const materials = generateCellEvidenceSigningMaterials();
+    const jwks = JSON.parse(materials.COMMANDER_EVIDENCE_JWKS_JSON) as {
+      keys?: Array<{ kid?: string; kty?: string; crv?: string; x?: string }>;
+    };
+    assert.equal(jwks.keys?.length, 1);
+    const key = jwks.keys?.[0];
+    assert.ok(key);
+    assert.equal(key.kid, materials.COMMANDER_EVIDENCE_SIGNING_KEY_ID);
+    assert.equal(key.kty, 'OKP');
+    assert.equal(key.crv, 'Ed25519');
+    assert.match(key.x ?? '', /^[A-Za-z0-9_-]+$/);
+    assert.match(materials.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM, /BEGIN PRIVATE KEY/);
+  });
+
+  it('derives the public JWK from CI-provided evidence signing private material', () => {
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const privateJwk = privateKey.export({ format: 'jwk' }) as { x?: string };
+    const materials = generateCellEvidenceSigningMaterials(privateKeyPem, 'ci-cell-evidence');
+    const jwks = JSON.parse(materials.COMMANDER_EVIDENCE_JWKS_JSON) as {
+      keys?: Array<{ kid?: string; x?: string }>;
+    };
+    assert.equal(jwks.keys?.[0]?.kid, 'ci-cell-evidence');
+    assert.equal(jwks.keys?.[0]?.x, privateJwk.x);
   });
 
   it('mock mode only asserts chaos step S6 (no fake deploy steps)', async (t) => {

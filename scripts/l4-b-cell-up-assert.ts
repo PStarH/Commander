@@ -17,6 +17,7 @@ import {
   COMPOSE_CMD,
   ensureCellSandboxImage,
   generateCellCapabilityMaterials,
+  generateCellEvidenceSigningMaterials,
 } from './l4-b-cell-compose.js';
 
 export const CELL_UP_ASSERT_SERVICES = [
@@ -71,6 +72,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
           COMMANDER_CAPABILITY_JWKS_JSON: process.env.COMMANDER_CAPABILITY_JWKS_JSON,
         }
       : generateCellCapabilityMaterials();
+  const evidenceSigning = generateCellEvidenceSigningMaterials();
 
   return {
     POSTGRES_PASSWORD: postgresPassword,
@@ -83,6 +85,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
     COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
     COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
     ...capability,
+    ...evidenceSigning,
     COMMANDER_ENABLE_DEMO_TICKET: '1',
     COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
     COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,

@@ -3,7 +3,7 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { generateKeyPairSync } from 'node:crypto';
+import { createPrivateKey, generateKeyPairSync } from 'node:crypto';
 import { execSync } from 'node:child_process';
 
 export const CELL_E2E_TENANT = 'cell-smoke-tenant';
@@ -27,7 +27,54 @@ export function generateCellCapabilityMaterials(): {
   };
 }
 
+export interface CellEvidenceSigningMaterials {
+  COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: string;
+  COMMANDER_EVIDENCE_SIGNING_KEY_ID: string;
+  COMMANDER_EVIDENCE_JWKS_JSON: string;
+}
+
+/**
+ * Build cell-only evidence signing materials and its matching public JWKS.
+ * CI may provide the private key and key ID; derive the public key from that
+ * same private key so compose verification cannot silently use a different key.
+ */
+export function generateCellEvidenceSigningMaterials(
+  privateKeyPem = process.env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM,
+  keyId = process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID,
+): CellEvidenceSigningMaterials {
+  let privateKey: ReturnType<typeof createPrivateKey>;
+  let resolvedPrivateKeyPem = privateKeyPem;
+  let resolvedKeyId = keyId;
+
+  if (privateKeyPem && keyId) {
+    privateKey = createPrivateKey(privateKeyPem);
+  } else {
+    const generated = generateKeyPairSync('ed25519');
+    privateKey = generated.privateKey;
+    resolvedPrivateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    resolvedKeyId = keyId ?? `cell-evidence-${Date.now().toString(36)}`;
+  }
+
+  const jwk = privateKey.export({ format: 'jwk' }) as {
+    kty: string;
+    crv: string;
+    x: string;
+  };
+  if (!resolvedPrivateKeyPem || !resolvedKeyId) {
+    throw new Error('cell evidence signing materials are incomplete');
+  }
+
+  return {
+    COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: resolvedPrivateKeyPem,
+    COMMANDER_EVIDENCE_SIGNING_KEY_ID: resolvedKeyId,
+    COMMANDER_EVIDENCE_JWKS_JSON: JSON.stringify({
+      keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: resolvedKeyId }],
+    }),
+  };
+}
+
 const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
+const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
 
 export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
@@ -41,6 +88,7 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
   COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
   ...CELL_CAPABILITY_MATERIALS,
+  ...CELL_EVIDENCE_SIGNING_MATERIALS,
 };
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */

@@ -70,6 +70,7 @@ services:
       # -------------------------------------------------------------------------
       - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:-dev-master-key-change-me-in-production}
       - JWT_SECRET=${JWT_SECRET:-dev-jwt-secret-change-me-in-production}
+      - COMMANDER_EVIDENCE_JWKS_JSON=${COMMANDER_EVIDENCE_JWKS_JSON:?set COMMANDER_EVIDENCE_JWKS_JSON}
       # CORS origins — comma-separated. NEVER use '*' in production.
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
     volumes:
@@ -130,7 +131,7 @@ services:
     build:
       context: .
       dockerfile: packages/kernel/Dockerfile.ops
-    entrypoint: ["node", "packages/kernel/dist/migrate.js"]
+    entrypoint: ['node', 'packages/kernel/dist/migrate.js']
     environment:
       - NODE_ENV=production
       # Migration owner authority (owns schema, runs migrations, BYPASSRLS).
@@ -140,7 +141,7 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    restart: "no"
+    restart: 'no'
     profiles:
       - worker
       - v2
@@ -247,7 +248,16 @@ services:
       - '6379'
     volumes:
       - redis-data:/data
-    command: ['redis-server', '--appendonly', 'yes', '--maxmemory', '256mb', '--maxmemory-policy', 'allkeys-lru']
+    command:
+      [
+        'redis-server',
+        '--appendonly',
+        'yes',
+        '--maxmemory',
+        '256mb',
+        '--maxmemory-policy',
+        'allkeys-lru',
+      ]
     restart: unless-stopped
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
