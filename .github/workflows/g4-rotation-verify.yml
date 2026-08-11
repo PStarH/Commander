@@ -44,7 +44,7 @@ jobs:
           umask 077
           printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$key_file"
           gpg --batch --import "$key_file"
-          gpg --batch --fingerprint C489A6C6865F81B690408C5B12AA1940B17D9448
+          gpg --batch --fingerprint 46F79055E17F2356DC4BFDFD09D0DB9C03667BEE
           printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
 
       - name: Run strict rotation verification
@@ -54,7 +54,7 @@ jobs:
           result_path="$evidence_root/g4-rotation-result.json"
           install -d -m 700 "$evidence_root"
           set +e
-          pnpm rotate:verify --json > "$evidence_root/rotate.json" 2> "$evidence_root/rotate.report"
+          pnpm exec tsx scripts/verify-rotation-signoff.ts --json > "$evidence_root/rotate.json" 2> "$evidence_root/rotate.report"
           verifier_status=$?
           set -e
           RESULT_PATH="$result_path" ROTATE_STATUS="$verifier_status" node --input-type=module <<'NODE'
@@ -66,7 +66,7 @@ jobs:
           const exitCode = Number(process.env.ROTATE_STATUS ?? '2');
           const base = {
             schemaVersion: 1,
-            source: 'pnpm rotate:verify --json',
+            source: 'pnpm exec tsx scripts/verify-rotation-signoff.ts --json',
             exitCode,
           };
 

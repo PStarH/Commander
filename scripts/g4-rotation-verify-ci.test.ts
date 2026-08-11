@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { load } from 'js-yaml';
 
+const PROJECT_FINGERPRINT = '46F79055E17F2356DC4BFDFD09D0DB9C03667BEE';
+const RETIRED_FINGERPRINT = 'C489A6C6865F81B690408C5B12AA1940B17D9448';
+
 type WorkflowStep = {
   name?: string;
   uses?: string;
@@ -73,6 +76,8 @@ describe('G4 rotation-only CI workflow', () => {
     );
     assert.match(importStep.run ?? '', /GNUPGHOME=.*commander-g4-gnupg/);
     assert.match(importStep.run ?? '', /gpg --batch --import/);
+    assert.match(importStep.run ?? '', new RegExp(PROJECT_FINGERPRINT));
+    assert.doesNotMatch(importStep.run ?? '', new RegExp(RETIRED_FINGERPRINT));
     assert.match(importStep.run ?? '', />>\s*"\$GITHUB_ENV"/);
     assert.doesNotMatch(
       importStep.run ?? '',
@@ -81,7 +86,8 @@ describe('G4 rotation-only CI workflow', () => {
 
     const verifyStep = steps.find((step) => step.name === 'Run strict rotation verification');
     assert.ok(verifyStep, 'workflow must run the rotation verifier');
-    assert.match(verifyStep.run ?? '', /pnpm rotate:verify --json/);
+    assert.match(verifyStep.run ?? '', /pnpm exec tsx scripts\/verify-rotation-signoff\.ts --json/);
+    assert.doesNotMatch(verifyStep.run ?? '', /pnpm rotate:verify --json/);
     assert.match(verifyStep.run ?? '', /verified\s*!==\s*4/);
     assert.match(verifyStep.run ?? '', /failed\s*!==\s*0/);
     assert.match(verifyStep.run ?? '', /pending\s*!==\s*0/);
