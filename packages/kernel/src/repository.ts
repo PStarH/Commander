@@ -33,6 +33,8 @@ import type {
   PutKillSwitchInput,
   RemoveKillSwitchInput,
 } from './types.js';
+import type { TerminalEvidenceRecord } from '@commander/effect-broker';
+import type { EvidenceRepository } from './evidenceRepository.js';
 
 export type { KillSwitchMatchDims } from './types.js';
 
@@ -43,7 +45,7 @@ export type { KillSwitchMatchDims } from './types.js';
  * in-memory implementation is intentionally test-only and is never selected
  * by a production factory.
  */
-export interface KernelRepository {
+export interface KernelRepository extends EvidenceRepository {
   initialize(): Promise<void>;
   createRun(command: CreateKernelRun, actor: string): Promise<KernelRun>;
   /** Control-plane configured maximum simultaneously running steps for a tenant. */
@@ -91,6 +93,14 @@ export interface KernelRepository {
     response: Record<string, unknown>,
     actor: string,
   ): Promise<KernelEffect | null>;
+  completeEffectWithEvidence(
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+    evidence: TerminalEvidenceRecord,
+  ): Promise<KernelEffect | null>;
   markEffectCompletionUnknown(request: MarkEffectCompletionUnknownRequest): Promise<KernelEffect | null>;
   /** L3-08a: load a single effect for UNKNOWN reconcile. */
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
@@ -103,6 +113,10 @@ export interface KernelRepository {
   claimReconcileEffects(input: ClaimReconcileEffectsInput): Promise<ClaimedReconcileEffect[]>;
   rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean>;
   escalateReconcile(input: EscalateReconcileInput): Promise<boolean>;
+  escalateReconcileWithEvidence(
+    input: EscalateReconcileInput,
+    evidence: TerminalEvidenceRecord,
+  ): Promise<boolean>;
   releaseReconcileClaim(effectId: string, tenantId: string, claimToken: string): Promise<boolean>;
   failEffect(request: FailEffectRequest): Promise<KernelEffect | null>;
   requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult | null>;

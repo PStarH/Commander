@@ -9,6 +9,10 @@ import {
   KERNEL_SCHEMA_VERSION,
 } from './schema.js';
 import type { SqlPool } from './postgres.js';
+import {
+  KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
+  KERNEL_SIGNED_EVIDENCE_SQL,
+} from './evidenceSchema.js';
 
 export interface KernelMigration {
   id: string;
@@ -32,6 +36,11 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
     id: `${KERNEL_SCHEMA_VERSION}.claim_reconcile`,
     sql: KERNEL_CLAIM_RECONCILE_SQL,
     checksum: checksum(KERNEL_CLAIM_RECONCILE_SQL),
+  },
+  {
+    id: KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
+    sql: KERNEL_SIGNED_EVIDENCE_SQL,
+    checksum: checksum(KERNEL_SIGNED_EVIDENCE_SQL),
   },
 ];
 

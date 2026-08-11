@@ -297,6 +297,27 @@ CREATE TABLE IF NOT EXISTS commander_action_kill_switches (
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   PRIMARY KEY (tenant_id, scope, value)
 );
+
+CREATE TABLE IF NOT EXISTS commander_evidence_receipts (
+  tenant_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  bundle_id TEXT NOT NULL,
+  action_digest TEXT NOT NULL,
+  receipt TEXT NOT NULL,
+  anchored_at TEXT NOT NULL,
+  retention_until TEXT NOT NULL,
+  PRIMARY KEY (tenant_id, bundle_id),
+  FOREIGN KEY (run_id, tenant_id) REFERENCES commander_runs(id, tenant_id) ON DELETE RESTRICT,
+  CHECK (json_extract(receipt, '$.scope.tenantId') = tenant_id),
+  CHECK (json_extract(receipt, '$.scope.runId') = run_id),
+  CHECK (bundle_id = 'evidence_' || json_extract(receipt, '$.scope.effectId')),
+  CHECK (json_extract(receipt, '$.actionDigest') = action_digest),
+  CHECK (json_extract(receipt, '$.bodyVersion') = 'commander.evidence-body/v1'),
+  CHECK (json_type(receipt, '$.signature') = 'object'),
+  CHECK (retention_until > anchored_at)
+);
+CREATE INDEX IF NOT EXISTS commander_evidence_exact_lookup_idx
+  ON commander_evidence_receipts (tenant_id, run_id, bundle_id, action_digest);
 `;
 
 /** Table names that must exist in SQLite kernel schema (parity audit). */
@@ -321,4 +342,5 @@ export const SQLITE_KERNEL_TABLES = [
   'commander_capability_revocations',
   'commander_capability_replays',
   'commander_action_kill_switches',
+  'commander_evidence_receipts',
 ] as const;

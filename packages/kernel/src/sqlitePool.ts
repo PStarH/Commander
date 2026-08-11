@@ -3,7 +3,7 @@ import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 
 const JSON_COLUMNS = new Set([
   'metadata', 'dependencies', 'input', 'output', 'error', 'request', 'response',
-  'payload', 'capabilities', 'labels', 'tenant_ids', 'reconcile_last_error', 'last_error',
+  'payload', 'capabilities', 'labels', 'tenant_ids', 'reconcile_last_error', 'last_error', 'receipt',
 ]);
 
 function parseJsonFields<T extends Record<string, unknown>>(row: T): T {
