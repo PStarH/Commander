@@ -8,6 +8,7 @@ import {
   type KernelRepository,
   type AnswerInteractionRequest,
   type KernelEffect,
+  type EvidenceLookup,
   type KernelEvent,
   type KernelInteraction,
   type KernelRun,
@@ -45,6 +46,7 @@ export interface V1KernelGateway {
   answerInteraction(input: AnswerInteractionRequest): Promise<KernelInteraction>;
   listEffects(runId: string, tenantId: string): Promise<KernelEffect[]>;
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
+  getEvidence(binding: EvidenceLookup): ReturnType<KernelRepository['getEvidence']>;
   /**
    * Pause a run, releasing any active worker leases but keeping scheduled work.
    * Returns null when the run was not found or is not in a pausable state.
@@ -230,6 +232,9 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   }
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
     return this.repository.getEffect(effectId, tenantId);
+  }
+  getEvidence(binding: EvidenceLookup): ReturnType<KernelRepository['getEvidence']> {
+    return this.repository.getEvidence(binding);
   }
   pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     return this.repository.pauseRun(runId, tenantId, actor);
