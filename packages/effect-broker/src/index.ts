@@ -9,6 +9,9 @@ import {
   KeyObject,
 } from 'node:crypto';
 import { AdapterExecutionError } from './adapterErrors.js';
+import { buildEffectScopedEvidenceRecord } from './terminalEvidence.js';
+import type { TerminalEvidenceRecord } from './terminalEvidence.js';
+import type { EvidenceSigner } from './signedEvidence.js';
 
 export interface CapabilityGrant {
   jti: string;
@@ -170,7 +173,20 @@ export interface EffectKernelPort {
     response: Record<string, unknown>,
     actor: string,
   ): Promise<unknown | null>;
-  markEffectCompletionUnknown?(input: { effectId: string; tenantId: string; reason: string; actor: string }): Promise<unknown | null>;
+  completeEffectWithEvidence?(
+    effectId: string,
+    tenantId: string,
+    lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number },
+    response: Record<string, unknown>,
+    actor: string,
+    evidence: TerminalEvidenceRecord,
+  ): Promise<unknown | null>;
+  markEffectCompletionUnknown?(input: {
+    effectId: string;
+    tenantId: string;
+    reason: string;
+    actor: string;
+  }): Promise<unknown | null>;
   /**
    * Terminal fail for effects that never committed remotely (AdapterCommitState NOT_COMMITTED).
    * Distinct from markEffectCompletionUnknown (QUERY_FIRST / UNKNOWN).
@@ -453,6 +469,8 @@ export interface EffectBrokerOptions {
    * profile.
    */
   requireDurableCapabilityStores?: boolean;
+  evidenceSigner?: EvidenceSigner;
+  evidenceRetentionMs?: number;
 }
 
 /** EffectBroker ctor reject when durable replay/revocations wiring is missing. */
@@ -521,6 +539,8 @@ export interface AdmittedEffect {
   /** Kernel ledger state at admit time — replay cache-hit only when COMPLETED. */
   effectState: string;
   cachedResponse?: Record<string, unknown>;
+  actionDigest: string;
+  createdAt: string;
 }
 
 class InMemoryAdmissionStore implements AdmissionStore {
@@ -600,7 +620,20 @@ function workerFenceMismatch(
 
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
-  private readonly options: Required<Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding'>> & Pick<EffectBrokerOptions, 'approval' | 'quotaLimits' | 'localWorkerId' | 'localWorkerGeneration' | 'replay' | 'revocations' | 'requireDurableCapabilityStores'>;
+  private readonly options: Required<
+    Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding' | 'evidenceRetentionMs'>
+  > &
+    Pick<
+      EffectBrokerOptions,
+      | 'approval'
+      | 'quotaLimits'
+      | 'localWorkerId'
+      | 'localWorkerGeneration'
+      | 'replay'
+      | 'revocations'
+      | 'requireDurableCapabilityStores'
+      | 'evidenceSigner'
+    >;
   private readonly admissionStore: AdmissionStore;
 
   constructor(
@@ -639,6 +672,9 @@ export class EffectBroker {
     if (requireDurable) {
       assertEffectBrokerDurableStores(options);
     }
+    if (options.evidenceSigner && typeof kernel.completeEffectWithEvidence !== 'function') {
+      throw new EffectBrokerError('EVIDENCE_PERSISTENCE_REQUIRED');
+    }
     this.options = {
       audience: options.audience ?? 'commander.effect-broker',
       requireRequestBinding,
@@ -649,6 +685,8 @@ export class EffectBroker {
       replay: options.replay,
       revocations: options.revocations,
       requireDurableCapabilityStores: requireDurable,
+      evidenceSigner: options.evidenceSigner,
+      evidenceRetentionMs: options.evidenceRetentionMs ?? 365 * 24 * 60 * 60 * 1_000,
     };
     this.admissionStore = new InMemoryAdmissionStore();
   }
@@ -730,6 +768,7 @@ export class EffectBroker {
     const actionDigest = isClassAEffectType(input.type)
       ? grant.actionDigest!
       : (grant.actionDigest ?? canonicalRequestHash(input.request));
+    const createdAt = new Date().toISOString();
     const admitted = await this.kernel.admitEffect({
       id: input.effectId,
       runId: grant.runId,
@@ -786,6 +825,8 @@ export class EffectBroker {
       replayed: !!admitted.replayed,
       effectState,
       cachedResponse: completedReplay ? admitted.effect.response : undefined,
+      actionDigest,
+      createdAt,
     });
     return result;
   }
@@ -848,7 +889,55 @@ export class EffectBroker {
             effectId: admission.effectId,
           },
         });
-        const committed = await this.kernel.completeEffect(admission.kernelEffectId, admission.grant.tenantId, admission.lease, response, admission.actor);
+        let committed: unknown | null;
+        if (this.options.evidenceSigner) {
+          const recordedAt = new Date().toISOString();
+          const evidence = await buildEffectScopedEvidenceRecord({
+            effect: {
+              id: admission.kernelEffectId,
+              runId: admission.grant.runId,
+              stepId: admission.grant.stepId,
+              tenantId: admission.grant.tenantId,
+              type: admission.type,
+              state: admission.effectState,
+              policyDecisionId: admission.decision.decisionId,
+              policySnapshotId: admission.decision.policySnapshotId,
+              actionDigest: admission.actionDigest,
+              requestHash: canonicalRequestHash(admission.request),
+              request: admission.request,
+              createdAt: admission.createdAt,
+            },
+            projectedState: 'COMPLETED',
+            response,
+            auditEvents: [],
+            terminalEvent: {
+              type: 'effect.completed',
+              severity: 'low',
+              details: { policyDecisionId: admission.decision.decisionId },
+            },
+            signer: this.options.evidenceSigner,
+            recordedAt,
+            retentionUntil: new Date(
+              Date.parse(recordedAt) + this.options.evidenceRetentionMs,
+            ).toISOString(),
+          });
+          committed = await this.kernel.completeEffectWithEvidence!(
+            admission.kernelEffectId,
+            admission.grant.tenantId,
+            admission.lease,
+            response,
+            admission.actor,
+            evidence,
+          );
+        } else {
+          committed = await this.kernel.completeEffect(
+            admission.kernelEffectId,
+            admission.grant.tenantId,
+            admission.lease,
+            response,
+            admission.actor,
+          );
+        }
         if (!committed) {
           await this.parkUnfinishedAdmission(admission, 'Kernel rejected completion after external executor returned');
           parked = true;
@@ -1122,6 +1211,30 @@ export type {
   EvidenceEffectSource,
   VerifyEvidenceBundleResult,
 } from './evidenceBundle.js';
+
+export { buildEffectScopedEvidenceRecord } from './terminalEvidence.js';
+export type {
+  SignedTerminalEvidenceReceipt,
+  TerminalEvidenceEffect,
+  TerminalEvidenceRecord,
+} from './terminalEvidence.js';
+export {
+  EVIDENCE_BODY_VERSION,
+  assertTerminalEvidence,
+  buildSignedEvidenceBundle,
+  canonicalEvidenceBody,
+  canonicalEvidenceJson,
+  verifySignedEvidenceBundle,
+} from './signedEvidence.js';
+export type {
+  BuildSignedEvidenceBundleInput,
+  EvidenceSignature,
+  EvidenceSigner,
+  EvidenceTerminalDisposition,
+  SignedEvidenceBundle,
+} from './signedEvidence.js';
+export { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
+export type { ConfiguredEvidenceSigner, EvidenceJwk, EvidenceJwks } from './evidenceSigner.js';
 
 export {
   AdapterExecutionError,

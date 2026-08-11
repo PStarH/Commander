@@ -14,6 +14,8 @@ import {
   assertNonOwnerDatabaseUrl,
   CAPABILITY_DURABLE_STORES_REQUIRED,
   createEffectBroker,
+  EVIDENCE_SIGNING_KEY_ID_ENV,
+  EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV,
   OWNER_DATABASE_ROLE_REJECTED,
   productionCapabilityBrokerOptions,
 } from './bootstrap.js';
@@ -100,6 +102,24 @@ describe('worker-plane authority startup gates', () => {
     );
   });
 
+  it('rejects missing evidence signing key before broker startup', () => {
+    const mat = ed25519Material('kid-evidence-required');
+    const repo = new InMemoryKernelRepository();
+    assert.throws(
+      () =>
+        createEffectBroker(
+          repo as never,
+          'worker-1',
+          productionEnv({
+            [CAPABILITY_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
+            [CAPABILITY_KEY_ID_ENV]: mat.keyId,
+            [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
+          }),
+        ),
+      /EVIDENCE_SIGNING_KEY_REQUIRED/,
+    );
+  });
+
   it('rejects owner-role DSN userinfo (no false-positive on commander_worker)', () => {
     assert.throws(
       () =>
@@ -145,6 +165,8 @@ describe('worker-plane authority startup gates', () => {
         [CAPABILITY_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
         [CAPABILITY_KEY_ID_ENV]: mat.keyId,
         [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
+        [EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
+        [EVIDENCE_SIGNING_KEY_ID_ENV]: 'evidence-replay',
       }),
     );
     assert.throws(
@@ -171,6 +193,8 @@ describe('worker-plane authority startup gates', () => {
         [CAPABILITY_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
         [CAPABILITY_KEY_ID_ENV]: mat.keyId,
         [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
+        [EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
+        [EVIDENCE_SIGNING_KEY_ID_ENV]: 'evidence-revocation',
       }),
     );
     assert.throws(
@@ -196,6 +220,8 @@ describe('worker-plane authority startup gates', () => {
         [CAPABILITY_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
         [CAPABILITY_KEY_ID_ENV]: mat.keyId,
         [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
+        [EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]: mat.privateKeyPem,
+        [EVIDENCE_SIGNING_KEY_ID_ENV]: 'evidence-ok',
       }),
     );
     assert.equal(capability.generated, false);
