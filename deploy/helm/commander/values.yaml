@@ -178,6 +178,10 @@ evidenceSigning:
   privateKeyPemKey: private-key-pem
   keyIdKey: key-id
 
+evidenceVerification:
+  existingSecret: ''
+  jwksJsonKey: jwks-json
+
 sandboxd:
   enabled: false
 
