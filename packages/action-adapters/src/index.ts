@@ -7,9 +7,11 @@ export {
 export { ActionAdapterRegistry } from './registry.js';
 export { createGitHubPullRequestCreateAdapter } from './github/pullRequestCreate.js';
 export { createServiceNowIncidentCreateAdapter } from './servicenow/incidentCreate.js';
+export { createKubernetesDeploymentRollbackAdapter } from './kubernetes/deploymentRollback.js';
 export {
   EnvAdapterCredentialProvider,
   parseGitHubDestination,
+  parseKubernetesDestination,
   parseServiceNowDestination,
   toEvidenceSummary,
 } from './types.js';
