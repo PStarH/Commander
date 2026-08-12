@@ -56,6 +56,7 @@ import {
   type CapabilityAuthority,
 } from '@commander/kernel';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
+import { evaluateManifestGatewayEffect, findAdapterManifest } from '@commander/contracts';
 
 // Lazy import to avoid circular dependency at module load time
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -411,6 +412,21 @@ export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
   const effectType = envelope.effectType;
   const tool = envelope.tool;
   const destination = envelope.destination;
+  if (
+    typeof effectType === 'string' &&
+    typeof tool === 'string' &&
+    typeof destination === 'string'
+  ) {
+    const manifest = findAdapterManifest({ effectType, toolName: tool, destination });
+    if (manifest && evaluateManifestGatewayEffect(manifest, destination) === 'require_approval') {
+      return {
+        effect: 'require_approval',
+        decisionId: 'action-gateway-require_approval',
+        reason: `The registered ${manifest.adapterId} destination requires a human decision.`,
+        policySnapshotId: 'action-gateway-mvp-v1',
+      };
+    }
+  }
   const isCreate = effectType === 'demo.ticket.create' && tool === 'ticket.create';
   const isCompensation =
     effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate';
