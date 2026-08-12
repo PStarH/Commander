@@ -43,9 +43,31 @@ export const SERVICENOW_INCIDENT_CREATE_DESCRIPTOR: ActionAdapterDescriptorV1 = 
   compensationPatchKeys: ['state', 'close_code', 'close_notes'],
 };
 
+export const KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR: ActionAdapterDescriptorV1 = {
+  schema: 'commander.action-adapter/v1',
+  adapterId: 'kubernetes.deployment.rollback',
+  adapterVersion: '1.0.0',
+  effectType: 'mutate.kubernetes.deployment.rollback',
+  toolName: 'kubernetes.deployment.rollback',
+  compensationEffectType: 'compensate.kubernetes.deployment.rollback',
+  destinationPattern: 'k8s://{cluster}/{namespace}/deployments/{name}',
+  defaultGatewayEffect: 'require_approval',
+  reversible: true,
+  evidenceResponseSummaryKeys: [
+    'deployment',
+    'namespace',
+    'revision',
+    'status',
+    'httpStatus',
+    'errorCode',
+  ],
+  compensationPatchKeys: ['targetRevision', 'reason'],
+};
+
 export const FIXED_ACTION_ADAPTER_MANIFESTS: readonly ActionAdapterDescriptorV1[] = [
   GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
   SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
 ];
 
 function destinationMatchesPattern(pattern: string, destination: string): boolean {
@@ -102,6 +124,9 @@ export function servicenowCorrelationId(tenantId: string, idempotencyKey: string
   return `commander:${commanderActionMarker(tenantId, idempotencyKey)}`;
 }
 
-export function compensationIdempotencyKey(originalEffectId: string, adapterVersion: string): string {
+export function compensationIdempotencyKey(
+  originalEffectId: string,
+  adapterVersion: string,
+): string {
   return `cmp:${originalEffectId}:${adapterVersion}`;
 }
