@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } from '@commander/contracts';
 import { ActionAdapterRegistry } from './registry.js';
+import { FIXED_ACTION_ADAPTER_MANIFESTS } from '@commander/contracts';
 import type { ActionAdapter } from './types.js';
 
 function stubAdapter(effectType: string): ActionAdapter {
@@ -23,6 +24,29 @@ function stubAdapter(effectType: string): ActionAdapter {
 }
 
 describe('ActionAdapterRegistry', () => {
+  it('production registers Kubernetes rollback for both effect directions', () => {
+    const descriptor = FIXED_ACTION_ADAPTER_MANIFESTS.find(
+      (manifest) => manifest.adapterId === 'kubernetes.deployment.rollback',
+    )!;
+    const credentials = {
+      getGitHubToken: async () => 'github',
+      getServiceNowCredentials: async () => ({ instance: 'dev', username: 'u', password: 'p' }),
+      getKubernetesCredentials: async () => ({
+        cluster: 'cluster-a',
+        server: 'https://kubernetes.example',
+        token: 'token',
+      }),
+    };
+    const registry = ActionAdapterRegistry.production(credentials);
+    assert.equal(
+      registry.resolve(descriptor.effectType)?.descriptor.adapterId,
+      descriptor.adapterId,
+    );
+    assert.equal(
+      registry.resolve(descriptor.compensationEffectType)?.descriptor.adapterId,
+      descriptor.adapterId,
+    );
+  });
   it('resolve returns adapter by effect type', () => {
     const adapter = stubAdapter('connector.github.pull-request.create');
     const registry = new ActionAdapterRegistry([adapter]);
@@ -36,7 +60,10 @@ describe('ActionAdapterRegistry', () => {
   });
 
   it('empty registry resolve returns null', () => {
-    assert.equal(ActionAdapterRegistry.empty().resolve('connector.github.pull-request.create'), null);
+    assert.equal(
+      ActionAdapterRegistry.empty().resolve('connector.github.pull-request.create'),
+      null,
+    );
   });
 
   it('outcomeQuerierFor bridges adapter queryOutcome', async () => {

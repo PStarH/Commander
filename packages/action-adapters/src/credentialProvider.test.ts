@@ -4,7 +4,10 @@ import { EnvAdapterCredentialProvider } from './types.js';
 
 describe('EnvAdapterCredentialProvider', () => {
   it('requires cell tenant id at construction', () => {
-    assert.throws(() => new EnvAdapterCredentialProvider({ cellTenantId: '' }), /COMMANDER_CELL_TENANT_ID/);
+    assert.throws(
+      () => new EnvAdapterCredentialProvider({ cellTenantId: '' }),
+      /COMMANDER_CELL_TENANT_ID/,
+    );
   });
 
   it('rejects tenant id mismatch fail-closed', async () => {
@@ -58,6 +61,39 @@ describe('EnvAdapterCredentialProvider', () => {
               : 'SERVICENOW_PASSWORD';
         if (value === undefined) delete process.env[envKey];
         else process.env[envKey] = value;
+      }
+    }
+  });
+
+  it('returns Kubernetes credentials only for the configured cluster', async () => {
+    const previous = {
+      cluster: process.env.COMMANDER_KUBERNETES_CLUSTER,
+      server: process.env.COMMANDER_KUBERNETES_SERVER,
+      token: process.env.COMMANDER_KUBERNETES_TOKEN,
+    };
+    process.env.COMMANDER_KUBERNETES_CLUSTER = 'cluster-a';
+    process.env.COMMANDER_KUBERNETES_SERVER = 'https://kube.example';
+    process.env.COMMANDER_KUBERNETES_TOKEN = 'token';
+    try {
+      const provider = new EnvAdapterCredentialProvider({ cellTenantId: 'tenant-a' });
+      const credentials = await provider.getKubernetesCredentials!(
+        'tenant-a',
+        'k8s://cluster-a/team-a/deployments/api',
+      );
+      assert.deepEqual(credentials, {
+        cluster: 'cluster-a',
+        server: 'https://kube.example',
+        token: 'token',
+      });
+      await assert.rejects(
+        () =>
+          provider.getKubernetesCredentials!('tenant-a', 'k8s://cluster-b/team-a/deployments/api'),
+        /Kubernetes cluster mismatch/,
+      );
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[`COMMANDER_KUBERNETES_${key.toUpperCase()}`];
+        else process.env[`COMMANDER_KUBERNETES_${key.toUpperCase()}`] = value;
       }
     }
   });
