@@ -3,6 +3,7 @@ import type { ActionAdapterDescriptorV1 } from '@commander/contracts';
 import type { ActionAdapter, AdapterCredentialProvider } from './types.js';
 import { createGitHubPullRequestCreateAdapter } from './github/pullRequestCreate.js';
 import { createServiceNowIncidentCreateAdapter } from './servicenow/incidentCreate.js';
+import { createKubernetesDeploymentRollbackAdapter } from './kubernetes/deploymentRollback.js';
 
 export class ActionAdapterRegistry {
   private readonly adapters: Map<string, ActionAdapter>;
@@ -19,6 +20,7 @@ export class ActionAdapterRegistry {
     return new ActionAdapterRegistry([
       createGitHubPullRequestCreateAdapter({ credentials }),
       createServiceNowIncidentCreateAdapter({ credentials }),
+      createKubernetesDeploymentRollbackAdapter({ credentials }),
     ]);
   }
 
