@@ -333,6 +333,54 @@ describe('L4-04 kill switch matrix', () => {
   });
 });
 
+describe('Kubernetes rollback policy wiring', () => {
+  it('requires approval for a registered Kubernetes rollback destination', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const response = await postJson(baseUrl, '/v1/actions/simulate', {
+        ...baseAction,
+        tool: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api',
+        effectType: 'mutate.kubernetes.deployment.rollback',
+        idempotencyKey: 'k8s-policy-red-1',
+      });
+      assert.equal(response.status, 200);
+      const payload = (await response.json()) as {
+        simulation: { effect: string; decisionId: string };
+      };
+      assert.equal(payload.simulation.effect, 'require_approval');
+      assert.equal(payload.simulation.decisionId, 'action-gateway-require_approval');
+    });
+  });
+
+  it('denies malformed Kubernetes rollback envelopes', async () => {
+    const cases = [
+      { effectType: 'connector.kubernetes.deployment.rollback' },
+      { destination: 'k8s://kind/other%2Ftenant/deployments/api' },
+      { destination: 'k8s://kind/commander/services/api' },
+      { destination: 'k8s://kind/commander/deployments/api/extra' },
+    ] as const;
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      for (const invalid of cases) {
+        const response = await postJson(baseUrl, '/v1/actions/simulate', {
+          ...baseAction,
+          tool: 'kubernetes.deployment.rollback',
+          destination: 'k8s://kind/commander/deployments/api',
+          effectType: 'mutate.kubernetes.deployment.rollback',
+          ...invalid,
+        });
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as {
+          simulation: { effect: string; decisionId: string };
+        };
+        assert.equal(payload.simulation.effect, 'deny');
+        assert.equal(payload.simulation.decisionId, 'action-gateway-deny');
+      }
+    });
+  });
+});
+
 describe('L4-01 governed action HTTP API', () => {
   it('requires an authenticated principal on every action endpoint', async () => {
     const gateway = new InMemoryGateway();
