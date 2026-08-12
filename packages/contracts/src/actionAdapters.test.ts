@@ -9,15 +9,17 @@ import {
   FIXED_ACTION_ADAPTER_MANIFESTS,
   githubPrBodyMarker,
   GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
   servicenowCorrelationId,
   SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
 } from './actionAdapters.js';
 
 describe('actionAdapters contracts', () => {
-  it('exposes exactly two fixed production manifests', () => {
-    assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS.length, 2);
+  it('exposes the fixed production manifests', () => {
+    assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS.length, 3);
     assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS[0]?.adapterId, 'github.pull-request.create');
     assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS[1]?.adapterId, 'servicenow.incident.create');
+    assert.equal(FIXED_ACTION_ADAPTER_MANIFESTS[2]?.adapterId, 'kubernetes.deployment.rollback');
   });
 
   it('findAdapterManifest matches registered GitHub destination', () => {
@@ -58,6 +60,48 @@ describe('actionAdapters contracts', () => {
       }),
       null,
     );
+  });
+
+  it('findAdapterManifest matches the Kubernetes rollback destination', () => {
+    const manifest = findAdapterManifest({
+      effectType: 'mutate.kubernetes.deployment.rollback',
+      toolName: 'kubernetes.deployment.rollback',
+      destination: 'k8s://kind/commander/deployments/api',
+    });
+    assert.equal(manifest, KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR);
+    assert.equal(
+      evaluateManifestGatewayEffect(
+        KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+        'k8s://kind/commander/deployments/api',
+      ),
+      'require_approval',
+    );
+  });
+
+  it('fails closed for Kubernetes effect and destination shape mismatches', () => {
+    const cases = [
+      {
+        effectType: 'connector.kubernetes.deployment.rollback',
+        toolName: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api',
+      },
+      {
+        effectType: 'mutate.kubernetes.deployment.rollback',
+        toolName: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/other%2Ftenant/deployments/api',
+      },
+      {
+        effectType: 'mutate.kubernetes.deployment.rollback',
+        toolName: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/services/api',
+      },
+      {
+        effectType: 'mutate.kubernetes.deployment.rollback',
+        toolName: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api/extra',
+      },
+    ] as const;
+    for (const input of cases) assert.equal(findAdapterManifest(input), null);
   });
 
   it('findAdapterManifest rejects malicious ServiceNow placeholder values', () => {
