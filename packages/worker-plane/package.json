@@ -53,6 +53,7 @@
   },
   "dependencies": {
     "@commander/action-adapters": "workspace:*",
+    "@commander/contracts": "workspace:*",
     "@commander/core": "workspace:*",
     "@commander/kernel": "workspace:*",
     "@commander/effect-broker": "workspace:*",
