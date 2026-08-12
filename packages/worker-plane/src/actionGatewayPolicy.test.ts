@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import { createWorkerPolicyEvaluator } from './bootstrap.js';
+import { createWorkerPolicyEvaluator, evaluateActionGatewayMvpV1 } from './bootstrap.js';
 
 const canonical = (value: unknown): string => {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -44,6 +44,8 @@ async function createActionRun(
     simulationId?: string;
     simulationActionDigest?: string;
     simulationDecisionId?: string;
+    effectType?: string;
+    tool?: string;
   } = {},
 ) {
   const tenantId = options.tenantId ?? envelope.tenantId;
@@ -62,6 +64,8 @@ async function createActionRun(
   const actionEnvelope = {
     ...envelope,
     tenantId,
+    effectType: options.effectType ?? envelope.effectType,
+    tool: options.tool ?? envelope.tool,
     destination,
   };
   const actionDigest = options.actionDigest ?? digest(actionEnvelope);
@@ -142,13 +146,44 @@ function evaluate(
     tenantId: input.tenantId,
     runId: input.runId,
     stepId: input.stepId,
-    type: 'demo.ticket.create',
+    type: (input.request?.effectType as string) ?? 'demo.ticket.create',
     request: input.request ?? envelope,
     token: {} as never,
   });
 }
 
 describe('L4-01 Action Gateway worker policy', () => {
+  it('requires approval for a registered Kubernetes rollback destination', () => {
+    const decision = evaluateActionGatewayMvpV1({
+      ...envelope,
+      tool: 'kubernetes.deployment.rollback',
+      destination: 'k8s://kind/commander/deployments/api',
+      effectType: 'mutate.kubernetes.deployment.rollback',
+    });
+    assert.equal(decision.effect, 'require_approval');
+    assert.equal(decision.decisionId, 'action-gateway-require_approval');
+  });
+
+  it('denies malformed Kubernetes rollback envelopes', () => {
+    const cases = [
+      { effectType: 'connector.kubernetes.deployment.rollback' },
+      { destination: 'k8s://kind/other%2Ftenant/deployments/api' },
+      { destination: 'k8s://kind/commander/services/api' },
+      { destination: 'k8s://kind/commander/deployments/api/extra' },
+    ] as const;
+    for (const invalid of cases) {
+      const decision = evaluateActionGatewayMvpV1({
+        ...envelope,
+        tool: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api',
+        effectType: 'mutate.kubernetes.deployment.rollback',
+        ...invalid,
+      });
+      assert.equal(decision.effect, 'deny');
+      assert.equal(decision.decisionId, 'action-gateway-deny');
+    }
+  });
+
   it('allows only a trusted persisted Action Gateway envelope', async () => {
     const repository = new InMemoryKernelRepository();
     const action = await createActionRun(repository);
