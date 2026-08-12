@@ -46,6 +46,15 @@ export interface AdapterCredentialProvider {
     tenantId: string,
     destination: string,
   ): Promise<{ instance: string; username: string; password: string }>;
+  getKubernetesCredentials?(
+    tenantId: string,
+    destination: string,
+  ): Promise<{
+    cluster: string;
+    server: string;
+    token: string;
+    caData?: string;
+  }>;
 }
 
 export interface EnvAdapterCredentialProviderOptions {
@@ -116,6 +125,24 @@ export class EnvAdapterCredentialProvider implements AdapterCredentialProvider {
     }
     return { instance, username, password };
   }
+
+  async getKubernetesCredentials(
+    tenantId: string,
+    destination: string,
+  ): Promise<{ cluster: string; server: string; token: string }> {
+    this.assertTenant(tenantId);
+    const parsed = parseKubernetesDestination(destination);
+    const cluster = process.env.COMMANDER_KUBERNETES_CLUSTER;
+    const server = process.env.COMMANDER_KUBERNETES_SERVER;
+    const token = process.env.COMMANDER_KUBERNETES_TOKEN;
+    if (!cluster || !server || !token) {
+      throw new Error('Kubernetes credentials are not configured');
+    }
+    if (cluster !== parsed.cluster) {
+      throw new Error('Kubernetes cluster mismatch');
+    }
+    return { cluster, server, token };
+  }
 }
 
 export interface AdapterEvidenceSummary {
@@ -153,6 +180,22 @@ export function parseServiceNowDestination(destination: string): { instance: str
   return { instance };
 }
 
+export function parseKubernetesDestination(destination: string): {
+  cluster: string;
+  namespace: string;
+  name: string;
+} {
+  const match = /^k8s:\/\/([^/]+)\/([^/]+)\/deployments\/([^/]+)$/.exec(destination);
+  if (!match || !match[1] || !match[2] || !match[3]) {
+    throw new Error(`Invalid Kubernetes destination: ${destination}`);
+  }
+  const [cluster, namespace, name] = [match[1], match[2], match[3]];
+  if (![cluster, namespace, name].every((value) => GITHUB_DEST_SEGMENT.test(value))) {
+    throw new Error(`Invalid Kubernetes destination: ${destination}`);
+  }
+  return { cluster, namespace, name };
+}
+
 export function toEvidenceSummary(
   descriptor: ActionAdapterDescriptorV1,
   response: Record<string, unknown>,
@@ -161,11 +204,7 @@ export function toEvidenceSummary(
   for (const key of descriptor.evidenceResponseSummaryKeys) {
     if (key in response) {
       const value = response[key];
-      if (
-        typeof value === 'string' ||
-        typeof value === 'number' ||
-        typeof value === 'boolean'
-      ) {
+      if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         (summary as Record<string, unknown>)[key] = value;
       }
     }
