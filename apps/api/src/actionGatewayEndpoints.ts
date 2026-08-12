@@ -1,6 +1,7 @@
 import express, { type Request, type Response, type Router } from 'express';
 import { z } from 'zod';
 import { verifyEvidenceReceipt, type EvidenceJwks } from '@commander/effect-broker';
+import { evaluateManifestGatewayEffect, findAdapterManifest } from '@commander/contracts';
 import {
   GatewayIdempotencyConflictError,
   GatewayStepIdConflictError,
@@ -215,6 +216,22 @@ function deterministicId(prefix: string, value: string): string {
 }
 
 function evaluateAction(envelope: ActionEnvelope): ActionDecision {
+  const manifest = findAdapterManifest({
+    effectType: envelope.effectType,
+    toolName: envelope.tool,
+    destination: envelope.destination,
+  });
+  if (manifest) {
+    const effect = evaluateManifestGatewayEffect(manifest, envelope.destination);
+    if (effect === 'require_approval') {
+      return {
+        effect,
+        decisionId: 'action-gateway-require_approval',
+        reason: `The registered ${manifest.adapterId} destination requires a human decision.`,
+        policySnapshotId: ACTION_POLICY_SNAPSHOT,
+      };
+    }
+  }
   const isCreate =
     envelope.effectType === 'demo.ticket.create' && envelope.tool === 'ticket.create';
   const isCompensation =

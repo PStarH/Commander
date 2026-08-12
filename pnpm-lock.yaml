@@ -383,6 +383,9 @@ importers:
       '@commander/action-adapters':
         specifier: workspace:*
         version: link:../action-adapters
+      '@commander/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@commander/core':
         specifier: workspace:*
         version: link:../core
