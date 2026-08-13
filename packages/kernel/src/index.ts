@@ -31,6 +31,12 @@ export type { ClaimSecretSeedClient } from './seedWorkerClaimSecret.js';
 export { PostgresKernelRepository } from './postgres.js';
 export { SqliteKernelRepository } from './sqlite.js';
 export {
+  buildVerifiedPostgresPoolConfig,
+  createVerifiedPostgresPool,
+  verifyPeerCertificateSpki,
+} from './postgresRuntime.js';
+export type { VerifiedPostgresPoolInput } from './postgresRuntime.js';
+export {
   createKernelRepository,
   resolveKernelBackend,
   KernelBackendRefusedError,

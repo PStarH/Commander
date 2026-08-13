@@ -1,5 +1,5 @@
 import { reportSilentFailure } from '@commander/core';
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import { createVerifiedPostgresPool } from '@commander/kernel';
 import type { QueryResultRow } from 'pg';
 import * as fs from 'fs';
 import * as path from 'path';

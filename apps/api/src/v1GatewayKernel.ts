@@ -5,6 +5,7 @@ const require = getRequire(import.meta.url);
 import {
   KernelInvariantError,
   PostgresKernelRepository,
+  createVerifiedPostgresPool,
   type KernelRepository,
   type AnswerInteractionRequest,
   type KernelEffect,
@@ -326,10 +327,7 @@ export async function initializeV1KernelGateway(): Promise<void> {
       'Kernel enabled (COMMANDER_KERNEL_ENABLED default-on or =1) requires COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL',
     );
   initializePromise = (async () => {
-    const pg = require('pg') as {
-      Pool: new (options: { connectionString: string }) => { connect(): Promise<unknown> };
-    };
-    const pool = new pg.Pool({ connectionString });
+    const pool = createVerifiedPostgresPool({ connectionString });
     const repository = new PostgresKernelRepository(pool as never);
     await repository.initialize();
     gateway = new RepositoryV1KernelGateway(repository);
