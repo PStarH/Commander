@@ -4,6 +4,11 @@ import { describe, it } from 'node:test';
 
 const cellCompose = readFileSync(new URL('../docker-compose.cell.yml', import.meta.url), 'utf8');
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
+const p0Workflow = readFileSync(
+  new URL('../.github/workflows/p0-kernel-e2e.yml', import.meta.url),
+  'utf8',
+);
+const p0FullLoop = readFileSync(new URL('./p0-full-loop.ts', import.meta.url), 'utf8');
 
 const tlsConsumers = ['api', 'worker', 'adapter-ops'];
 
@@ -21,6 +26,24 @@ describe('cell PostgreSQL TLS configuration', () => {
     assert.match(ciWorkflow, /DNS:postgres/);
     assert.match(ciWorkflow, /COMMANDER_CELL_POSTGRES_TLS_DIR=/);
     assert.match(ciWorkflow, /COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=/);
+  });
+
+  it('configures verified TLS before P0 PostgreSQL consumers start', () => {
+    for (const workflow of [ciWorkflow, p0Workflow]) {
+      assert.match(workflow, /Configure verified PostgreSQL TLS for runtime consumers/);
+      assert.match(workflow, /ALTER SYSTEM SET ssl = 'on'/);
+      assert.match(
+        workflow,
+        /COMMANDER_DATABASE_TLS_CA_FILE=\$GITHUB_WORKSPACE\/artifacts\/ci-postgres-tls\/ca\.crt/,
+      );
+      assert.match(workflow, /COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=/);
+    }
+  });
+
+  it('adds verify-full to P0 runtime child DSNs when the verified CA is configured', () => {
+    assert.match(p0FullLoop, /if \(process\.env\.COMMANDER_DATABASE_TLS_CA_FILE\)/);
+    assert.match(p0FullLoop, /appDatabaseUrl\.searchParams\.set\('sslmode', 'verify-full'\)/);
+    assert.match(p0FullLoop, /workerDatabaseUrl\.searchParams\.set\('sslmode', 'verify-full'\)/);
   });
 
   it('runs PostgreSQL with a protected server key copied from the fixture', () => {
