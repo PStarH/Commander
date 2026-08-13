@@ -28,6 +28,7 @@
     "@commander/core": "workspace:*",
     "@commander/effect-broker": "workspace:*",
     "@commander/kernel": "workspace:*",
+    "@commander/postgres-runtime": "workspace:*",
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",

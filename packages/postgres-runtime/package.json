@@ -1,0 +1,29 @@
+{
+  "name": "@commander/postgres-runtime",
+  "version": "0.2.0",
+  "description": "Verified PostgreSQL TLS and SPKI-pinned runtime pool factory.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/index.test.ts"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "pg": "^8.15.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.8.2"
+  }
+}
