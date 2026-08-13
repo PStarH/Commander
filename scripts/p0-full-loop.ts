@@ -82,6 +82,10 @@ async function main(): Promise<void> {
   const workerDatabaseUrl = new URL(DB);
   workerDatabaseUrl.username = 'commander_worker';
   workerDatabaseUrl.password = workerPassword;
+  if (process.env.COMMANDER_DATABASE_TLS_CA_FILE) {
+    appDatabaseUrl.searchParams.set('sslmode', 'verify-full');
+    workerDatabaseUrl.searchParams.set('sslmode', 'verify-full');
+  }
 
   const apiEnv = {
     ...process.env,
