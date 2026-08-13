@@ -44,7 +44,11 @@ const allowedDependencies = {
     '@commander/worker-plane',
     '@commander/effect-broker',
     '@commander/core',
+    '@commander/postgres-runtime',
   ],
+  // Shared verified PostgreSQL TLS/SPKI pool factory. It stays leaf so application
+  // packages cannot exchange database capabilities through it.
+  '@commander/postgres-runtime': [],
   '@commander/core': ['@commander/plugin-sdk', '@commander/contracts'],
   '@commander/plugin-sdk': [],
   '@commander/sdk': ['@commander/contracts', '@commander/core'],
