@@ -49,6 +49,11 @@ describe('cell PostgreSQL TLS configuration', () => {
   it('runs PostgreSQL with a protected server key copied from the fixture', () => {
     assert.match(cellCompose, /postgres-tls-init:/);
     assert.match(cellCompose, /postgres-tls-init:[\s\S]*?user: '0:0'/);
+    assert.match(
+      cellCompose,
+      /entrypoint: \['\/bin\/sh', '-ec'\]\n    command:\n      - \|/,
+      'the multi-line init program must be one argv argument to sh -ec',
+    );
     assert.match(cellCompose, /cell-postgres-tls:/);
     assert.match(cellCompose, /condition: service_completed_successfully/);
     assert.match(cellCompose, /chown 70:70 [^\n]*\/etc\/postgres-tls\/server\.key/);
