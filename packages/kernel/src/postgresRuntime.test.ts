@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rootCertificates } from 'node:tls';
 import { describe, it } from 'node:test';
-import { buildVerifiedPostgresPoolConfig, verifyPeerCertificateSpki } from './index.js';
+import { buildVerifiedPostgresPoolConfig, verifyPeerCertificateSpki } from './postgresRuntime.js';
 
 function fixtureCertificate(): {
   caFile: string;
@@ -14,7 +14,7 @@ function fixtureCertificate(): {
 } {
   const pem = rootCertificates[0];
   assert.ok(pem, 'Node must provide at least one trusted root certificate');
-  const directory = mkdtempSync(join(tmpdir(), 'commander-postgres-runtime-'));
+  const directory = mkdtempSync(join(tmpdir(), 'commander-kernel-postgres-runtime-'));
   const caFile = join(directory, 'ca.pem');
   writeFileSync(caFile, pem, { mode: 0o600 });
   const certificate = new X509Certificate(pem);
@@ -27,7 +27,7 @@ function fixtureCertificate(): {
   };
 }
 
-describe('verified PostgreSQL pool configuration', () => {
+describe('kernel verified PostgreSQL pool configuration', () => {
   it('requires the CA file and expected SPKI before a pool can open', () => {
     assert.throws(
       () =>
@@ -68,6 +68,23 @@ describe('verified PostgreSQL pool configuration', () => {
       config.ssl && typeof config.ssl === 'object' && typeof config.ssl.checkServerIdentity,
       'function',
     );
+  });
+
+  it('uses a non-IP TLS servername for IPv4 and IPv6 literals', () => {
+    const { caFile, spkiSha256 } = fixtureCertificate();
+    for (const host of ['127.0.0.1', '[::1]']) {
+      const config = buildVerifiedPostgresPoolConfig(
+        { connectionString: `postgres://app:secret@${host}/commander?sslmode=verify-full` },
+        {
+          COMMANDER_DATABASE_TLS_CA_FILE: caFile,
+          COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: spkiSha256,
+        },
+      );
+      assert.equal(
+        config.ssl && typeof config.ssl === 'object' ? config.ssl.servername : undefined,
+        'commander-ip-literal.invalid',
+      );
+    }
   });
 
   it('rejects a mismatched peer SPKI', () => {

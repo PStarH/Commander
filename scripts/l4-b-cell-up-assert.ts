@@ -28,6 +28,42 @@ export const CELL_UP_ASSERT_SERVICES = [
   'postgres',
 ] as const;
 
+export const POSTGRES_TLS_INIT_LOG_TAIL_LINES = 80;
+
+function sanitizeComposeLogTail(logs: string): string {
+  return logs
+    .split('\n')
+    .slice(-POSTGRES_TLS_INIT_LOG_TAIL_LINES)
+    .join('\n')
+    .replace(/-----BEGIN [^-]+-----[\s\S]*?-----END [^-]+-----/g, '[REDACTED PEM]')
+    .replace(
+      /\b([A-Z][A-Z0-9_]*(?:PASSWORD|SECRET|TOKEN|PRIVATE_KEY|API_KEY)[A-Z0-9_]*)=\S+/g,
+      '$1=[REDACTED]',
+    );
+}
+
+/** Captures only the TLS-init service after compose startup has failed. */
+export function collectPostgresTlsInitFailureLogs(
+  composeEnv: Record<string, string>,
+  execute: (command: string) => string = (command) =>
+    execSync(command, {
+      cwd: process.cwd(),
+      env: { ...process.env, ...composeEnv },
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }),
+): string {
+  try {
+    return sanitizeComposeLogTail(
+      execute(
+        `${COMPOSE_CMD} logs --no-color --tail ${POSTGRES_TLS_INIT_LOG_TAIL_LINES} postgres-tls-init`,
+      ),
+    );
+  } catch {
+    return 'postgres-tls-init diagnostics unavailable';
+  }
+}
+
 const HELP = `L4-B cell up-assert — compose cell profile health + anonymous /ready hammer
 
 Usage:
@@ -198,6 +234,7 @@ export interface CellUpAssertResult {
   readyHammer: { ok: boolean; statuses: number[] };
   workerPid1: { ok: boolean; raw: string; pid1User?: string };
   dockerError?: string;
+  postgresTlsInitLogs?: string;
   artifactPath: string;
   elapsedMs: number;
 }
@@ -221,6 +258,8 @@ export async function runCellUpAssert(options: {
   let readyHammer = { ok: false, statuses: [] as number[] };
   let workerPid1 = { ok: false, raw: '' };
   let passed = false;
+  let composeStartupAttempted = false;
+  let postgresTlsInitLogs: string | undefined;
 
   try {
     ensureCellSandboxImage();
@@ -234,6 +273,7 @@ export async function runCellUpAssert(options: {
       /* no prior stack */
     }
 
+    composeStartupAttempted = true;
     execSync(`${COMPOSE_CMD} up -d --build`, {
       cwd: process.cwd(),
       env: runtimeEnv,
@@ -256,6 +296,9 @@ export async function runCellUpAssert(options: {
     }
   } catch (err) {
     dockerError = err instanceof Error ? err.message : String(err);
+    if (composeStartupAttempted) {
+      postgresTlsInitLogs = collectPostgresTlsInitFailureLogs(runtimeEnv);
+    }
     passed = false;
   } finally {
     if (!options.keepStack) {
@@ -282,6 +325,7 @@ export async function runCellUpAssert(options: {
     readyHammer,
     workerPid1,
     dockerError,
+    postgresTlsInitLogs,
     artifactPath,
     elapsedMs: Date.now() - started,
   };

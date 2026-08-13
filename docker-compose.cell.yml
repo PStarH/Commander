@@ -22,9 +22,42 @@
 # =============================================================================
 
 services:
+  postgres-tls-init:
+    image: postgres:16-alpine
+    profiles:
+      - cell
+    user: '0:0'
+    volumes:
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}:/run/cell-postgres-tls-source:ro
+      - cell-postgres-tls:/etc/postgres-tls
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        cp /run/cell-postgres-tls-source/ca.crt /etc/postgres-tls/ca.crt
+        cp /run/cell-postgres-tls-source/server.crt /etc/postgres-tls/server.crt
+        cp /run/cell-postgres-tls-source/server.key /etc/postgres-tls/server.key
+        chown 70:70 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt /etc/postgres-tls/server.key
+        chmod 0644 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt
+        chmod 0600 /etc/postgres-tls/server.key
+
   postgres:
     profiles:
       - cell
+    volumes:
+      - cell-postgres-tls:/etc/postgres-tls:ro
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/postgres-tls/server.crt
+      - -c
+      - ssl_key_file=/etc/postgres-tls/server.key
+      - -c
+      - ssl_ca_file=/etc/postgres-tls/ca.crt
+    depends_on:
+      postgres-tls-init:
+        condition: service_completed_successfully
 
   kernel-migrate:
     profiles:
@@ -43,6 +76,8 @@ services:
   api:
     profiles:
       - cell
+    volumes:
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     environment:
       # Legacy /api stores are frozen presentation compatibility, not /v1 authority.
       # Keep their runtime DDL away from the least-privilege commander_app role.
@@ -55,8 +90,10 @@ services:
       - TENANT_API_KEYS=${TENANT_API_KEYS:-}
       - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-${COMMANDER_CELL_TENANT_ID:-local}}
-      - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander
+      - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
       - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:?set COMMANDER_MASTER_KEY}
       - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET}
       # API legacy HMAC path (not worker/adapter authority).
@@ -73,12 +110,15 @@ services:
     # Entrypoint auto-joins the sock GID; group_add is optional belt-and-suspenders.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     group_add:
       - ${DOCKER_GID:-0}
     user: '0:0'
     environment:
-      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
       # Cell / Helm demo tenant scope (explicit; never '*').
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:?set COMMANDER_WORKER_AUTH_TOKEN}
@@ -121,8 +161,10 @@ services:
     environment:
       - NODE_ENV=production
       - COMMANDER_KERNEL_BACKEND=postgres
-      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander
+      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
+      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
       # Same fail-closed tenant scope as worker (resolveWorkerTenantScope on postgres path).
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_ADAPTER_OPS_HEALTH_PORT=8082
@@ -138,6 +180,8 @@ services:
       - COMMANDER_EVIDENCE_SIGNING_KEY_ID=${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?set COMMANDER_EVIDENCE_SIGNING_KEY_ID}
     expose:
       - '8082'
+    volumes:
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     healthcheck:
       test:
         [
@@ -156,3 +200,6 @@ services:
     restart: unless-stopped
     profiles:
       - cell
+
+volumes:
+  cell-postgres-tls:
