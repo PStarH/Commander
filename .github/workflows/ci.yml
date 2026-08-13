@@ -304,7 +304,6 @@ jobs:
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
-          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/core exec tsx --test \
             tests/sandbox/productionPolicy.test.ts \
             tests/memory/memoryAuditQuery.test.ts \
@@ -443,6 +442,30 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install
+      - name: Configure verified PostgreSQL TLS for runtime consumers
+        shell: bash
+        run: |
+          TLS_DIR="$GITHUB_WORKSPACE/artifacts/ci-postgres-tls"
+          mkdir -p "$TLS_DIR"
+          openssl genrsa -out "$TLS_DIR/ca.key" 2048
+          openssl req -x509 -new -nodes -key "$TLS_DIR/ca.key" -sha256 -days 1 -subj '/CN=commander-ci-postgres-ca' -out "$TLS_DIR/ca.crt"
+          openssl genrsa -out "$TLS_DIR/server.key" 2048
+          openssl req -new -key "$TLS_DIR/server.key" -subj '/CN=localhost' -out "$TLS_DIR/server.csr"
+          openssl x509 -req -in "$TLS_DIR/server.csr" -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" -CAcreateserial -out "$TLS_DIR/server.crt" -days 1 -sha256 -extfile <(printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n')
+          PG_CONTAINER="$(docker ps --filter ancestor=postgres:16 --format '{{.ID}}' | head -1)"
+          test -n "$PG_CONTAINER"
+          docker cp "$TLS_DIR/." "$PG_CONTAINER:/tmp/ci-postgres-tls/"
+          docker exec -u 0 "$PG_CONTAINER" sh -ec 'install -d -o postgres -g postgres -m 0755 /var/lib/postgresql/data/ci-postgres-tls; install -o postgres -g postgres -m 0644 /tmp/ci-postgres-tls/ca.crt /var/lib/postgresql/data/ci-postgres-tls/ca.crt; install -o postgres -g postgres -m 0644 /tmp/ci-postgres-tls/server.crt /var/lib/postgresql/data/ci-postgres-tls/server.crt; install -o postgres -g postgres -m 0600 /tmp/ci-postgres-tls/server.key /var/lib/postgresql/data/ci-postgres-tls/server.key'
+          docker exec -u postgres "$PG_CONTAINER" psql -U commander -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET ssl = 'on'"
+          docker exec -u postgres "$PG_CONTAINER" psql -U commander -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET ssl_ca_file = '/var/lib/postgresql/data/ci-postgres-tls/ca.crt'"
+          docker exec -u postgres "$PG_CONTAINER" psql -U commander -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET ssl_cert_file = '/var/lib/postgresql/data/ci-postgres-tls/server.crt'"
+          docker exec -u postgres "$PG_CONTAINER" psql -U commander -d postgres -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET ssl_key_file = '/var/lib/postgresql/data/ci-postgres-tls/server.key'"
+          docker restart "$PG_CONTAINER"
+          until docker exec "$PG_CONTAINER" pg_isready -U commander -d commander; do sleep 1; done
+          SPKI_SHA256="$(openssl x509 -pubkey -noout -in "$TLS_DIR/server.crt" | openssl pkey -pubin -outform DER | openssl dgst -sha256 -r | awk '{print $1}')"
+          test "${#SPKI_SHA256}" -eq 64
+          echo "COMMANDER_DATABASE_TLS_CA_FILE=$GITHUB_WORKSPACE/artifacts/ci-postgres-tls/ca.crt" >> "$GITHUB_ENV"
+          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$SPKI_SHA256" >> "$GITHUB_ENV"
       - name: Rebuild better-sqlite3 (repositoryContract SQLite suite)
         run: pnpm rebuild better-sqlite3
       - name: Build kernel / worker-plane / core / api
@@ -454,7 +477,6 @@ jobs:
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
-          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/api build
       - name: Kernel PostgreSQL integration (fencing + tenant isolation)
         run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
@@ -579,6 +601,31 @@ jobs:
             echo 'COMMANDER_EVIDENCE_SIGNING_KEY_ID=ci-cell-evidence'
           } >> "$GITHUB_ENV"
 
+      - name: Cell PostgreSQL TLS configuration contract
+        run: pnpm exec tsx --test scripts/cell-postgres-tls-config.test.ts
+
+      - name: Generate cell PostgreSQL TLS fixture
+        shell: bash
+        run: |
+          TLS_DIR="$GITHUB_WORKSPACE/artifacts/cell-postgres-tls"
+          mkdir -p "$TLS_DIR"
+          openssl genrsa -out "$TLS_DIR/ca.key" 2048
+          openssl req -x509 -new -nodes -key "$TLS_DIR/ca.key" -sha256 -days 1 \
+            -subj '/CN=commander-cell-postgres-ca' -out "$TLS_DIR/ca.crt"
+          openssl genrsa -out "$TLS_DIR/server.key" 2048
+          openssl req -new -key "$TLS_DIR/server.key" -subj '/CN=postgres' -out "$TLS_DIR/server.csr"
+          openssl x509 -req -in "$TLS_DIR/server.csr" -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" \
+            -CAcreateserial -out "$TLS_DIR/server.crt" -days 1 -sha256 \
+            -extfile <(printf 'subjectAltName=DNS:postgres\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n')
+          chmod 0600 "$TLS_DIR/server.key"
+          SPKI_SHA256="$(openssl x509 -pubkey -noout -in "$TLS_DIR/server.crt" \
+            | openssl pkey -pubin -outform DER \
+            | openssl dgst -sha256 -r \
+            | awk '{print $1}')"
+          test "${#SPKI_SHA256}" -eq 64
+          echo "COMMANDER_CELL_POSTGRES_TLS_DIR=$TLS_DIR" >> "$GITHUB_ENV"
+          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$SPKI_SHA256" >> "$GITHUB_ENV"
+
       - name: Docker build worker image (--no-cache)
         run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
 
@@ -592,7 +639,7 @@ jobs:
         run: pnpm cell:compensation-e2e -- --mode compose --up
 
       - name: Upload cell up-assert artifacts
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: l4-b-cell-up-assert

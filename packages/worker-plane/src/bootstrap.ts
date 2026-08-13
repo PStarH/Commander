@@ -53,6 +53,7 @@ import {
 import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
 import {
   createCapabilityAuthority,
+  createVerifiedPostgresPool,
   type CapabilityAuthority,
 } from '@commander/kernel';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
@@ -280,18 +281,15 @@ export async function createWorkerService(): Promise<WorkerService> {
   };
 
   // ── Connect to PostgreSQL ──
-  const { Pool: PgPool } = (await import('pg')) as unknown as {
-    Pool: new (config: { connectionString: string; max: number }) => Pool;
-  };
-  const pool = new PgPool({ connectionString: dbUrl, max: maxConcurrency + 5 });
+  const pool = createVerifiedPostgresPool({ connectionString: dbUrl, max: maxConcurrency + 5 });
 
   // Post-connect owner-role gate (current_user) before kernel/broker/poll.
   {
     const client = await pool.connect();
     try {
-      const identityRows = (await client.query(
-        'SELECT current_user::text AS role_name',
-      )) as { rows: Array<{ role_name?: string }> };
+      const identityRows = (await client.query('SELECT current_user::text AS role_name')) as {
+        rows: Array<{ role_name?: string }>;
+      };
       assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
     } finally {
       client.release();
@@ -321,10 +319,7 @@ export async function createWorkerService(): Promise<WorkerService> {
 
   // ── Create shared Effect Broker for external side effects ──
   // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
-  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(
-    kernel,
-    workerId,
-  );
+  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel, workerId);
 
   // ── Create step executor based on worker kind ──
   const executor = await createExecutorForKind(
