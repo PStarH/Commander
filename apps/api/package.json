@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "ts-node-dev src/index.ts",
+    "prebuild": "pnpm --filter @commander/postgres-runtime build",
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "pretest": "pnpm --filter @commander/contracts --filter @commander/effect-broker --filter @commander/core --filter @commander/kernel build && pnpm build",
     "test": "node --import tsx --test test/*.test.cjs test/*.test.ts test/ws9/*.test.ts",
