@@ -59,7 +59,6 @@ jobs:
           pnpm --filter @commander/core build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/worker-plane build
-          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/api build
       - name: Kernel PG integration
         run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
