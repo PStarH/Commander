@@ -31,13 +31,14 @@ services:
       - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}:/run/cell-postgres-tls-source:ro
       - cell-postgres-tls:/etc/postgres-tls
     entrypoint: ['/bin/sh', '-ec']
-    command: |
-      cp /run/cell-postgres-tls-source/ca.crt /etc/postgres-tls/ca.crt
-      cp /run/cell-postgres-tls-source/server.crt /etc/postgres-tls/server.crt
-      cp /run/cell-postgres-tls-source/server.key /etc/postgres-tls/server.key
-      chown 70:70 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt /etc/postgres-tls/server.key
-      chmod 0644 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt
-      chmod 0600 /etc/postgres-tls/server.key
+    command:
+      - |
+        cp /run/cell-postgres-tls-source/ca.crt /etc/postgres-tls/ca.crt
+        cp /run/cell-postgres-tls-source/server.crt /etc/postgres-tls/server.crt
+        cp /run/cell-postgres-tls-source/server.key /etc/postgres-tls/server.key
+        chown 70:70 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt /etc/postgres-tls/server.key
+        chmod 0644 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt
+        chmod 0600 /etc/postgres-tls/server.key
 
   postgres:
     profiles:
