@@ -70,6 +70,23 @@ describe('kernel verified PostgreSQL pool configuration', () => {
     );
   });
 
+  it('uses a non-IP TLS servername for IPv4 and IPv6 literals', () => {
+    const { caFile, spkiSha256 } = fixtureCertificate();
+    for (const host of ['127.0.0.1', '[::1]']) {
+      const config = buildVerifiedPostgresPoolConfig(
+        { connectionString: `postgres://app:secret@${host}/commander?sslmode=verify-full` },
+        {
+          COMMANDER_DATABASE_TLS_CA_FILE: caFile,
+          COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: spkiSha256,
+        },
+      );
+      assert.equal(
+        config.ssl && typeof config.ssl === 'object' ? config.ssl.servername : undefined,
+        'commander-ip-literal.invalid',
+      );
+    }
+  });
+
   it('rejects a mismatched peer SPKI', () => {
     const { certificate, spkiSha256 } = fixtureCertificate();
     assert.doesNotThrow(() => verifyPeerCertificateSpki(certificate.toLegacyObject(), spkiSha256));

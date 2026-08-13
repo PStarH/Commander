@@ -1,6 +1,5 @@
 import { X509Certificate, createHash, timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { isIP } from 'node:net';
 import { checkServerIdentity as checkTlsServerIdentity, createSecureContext } from 'node:tls';
 import type { PeerCertificate } from 'node:tls';
 import { Pool } from 'pg';
@@ -9,6 +8,15 @@ import type { PoolConfig } from 'pg';
 const CA_FILE_ENV = 'COMMANDER_DATABASE_TLS_CA_FILE';
 const EXPECTED_SPKI_ENV = 'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256';
 const SHA256_HEX = /^[a-f0-9]{64}$/;
+
+function isIpLiteral(hostname: string): boolean {
+  if (hostname.includes(':')) return true;
+  const octets = hostname.split('.');
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^\d+$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255)
+  );
+}
 
 export type VerifiedPostgresPoolInput = Omit<PoolConfig, 'connectionString' | 'ssl'> & {
   connectionString: string;
@@ -116,7 +124,7 @@ export function buildVerifiedPostgresPoolConfig(
     ssl: {
       ca,
       rejectUnauthorized: true,
-      servername: isIP(parsed.hostname) ? 'commander-ip-literal.invalid' : parsed.hostname,
+      servername: isIpLiteral(parsed.hostname) ? 'commander-ip-literal.invalid' : parsed.hostname,
       checkServerIdentity(_tlsServername, certificate) {
         const identityError = checkTlsServerIdentity(parsed.hostname, certificate);
         if (identityError) return identityError;
