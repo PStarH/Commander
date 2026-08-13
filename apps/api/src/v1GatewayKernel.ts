@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { getRequire } from './esmCompat';
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 const require = getRequire(import.meta.url);
 
 import {
   KernelInvariantError,
   PostgresKernelRepository,
+  createVerifiedPostgresPool,
   type KernelRepository,
   type AnswerInteractionRequest,
   type KernelEffect,
