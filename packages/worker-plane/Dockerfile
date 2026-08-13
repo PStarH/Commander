@@ -34,6 +34,7 @@ COPY packages/plugin-sdk/package.json ./packages/plugin-sdk/package.json
 COPY packages/core/package.json ./packages/core/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
+COPY packages/postgres-runtime/package.json ./packages/postgres-runtime/package.json
 COPY packages/action-adapters/package.json ./packages/action-adapters/package.json
 COPY packages/worker-plane/package.json ./packages/worker-plane/package.json
 
@@ -45,6 +46,7 @@ RUN pnpm install --frozen-lockfile \
     --filter @commander/core \
     --filter @commander/kernel \
     --filter @commander/effect-broker \
+    --filter @commander/postgres-runtime \
     --filter @commander/action-adapters \
     --filter @commander/worker-plane
 
@@ -56,6 +58,7 @@ COPY --from=deps /app/packages/plugin-sdk/node_modules ./packages/plugin-sdk/nod
 COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
 COPY --from=deps /app/packages/effect-broker/node_modules ./packages/effect-broker/node_modules
+COPY --from=deps /app/packages/postgres-runtime/node_modules ./packages/postgres-runtime/node_modules
 COPY --from=deps /app/packages/action-adapters/node_modules ./packages/action-adapters/node_modules
 COPY --from=deps /app/packages/worker-plane/node_modules ./packages/worker-plane/node_modules
 
@@ -67,6 +70,7 @@ COPY packages/plugin-sdk ./packages/plugin-sdk
 COPY packages/core ./packages/core
 COPY packages/kernel ./packages/kernel
 COPY packages/effect-broker ./packages/effect-broker
+COPY packages/postgres-runtime ./packages/postgres-runtime
 COPY packages/action-adapters ./packages/action-adapters
 COPY packages/worker-plane ./packages/worker-plane
 
@@ -76,6 +80,7 @@ RUN cd packages/contracts && pnpm exec tsc -p tsconfig.json && node ../../script
 RUN cd packages/plugin-sdk && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/core && pnpm exec tsc --noEmit && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/effect-broker && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+RUN cd packages/postgres-runtime && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/kernel && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/action-adapters && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/worker-plane && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
@@ -101,6 +106,7 @@ COPY --from=deps /app/packages/plugin-sdk/node_modules ./packages/plugin-sdk/nod
 COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
 COPY --from=deps /app/packages/effect-broker/node_modules ./packages/effect-broker/node_modules
+COPY --from=deps /app/packages/postgres-runtime/node_modules ./packages/postgres-runtime/node_modules
 COPY --from=deps /app/packages/action-adapters/node_modules ./packages/action-adapters/node_modules
 COPY --from=deps /app/packages/worker-plane/node_modules ./packages/worker-plane/node_modules
 
@@ -111,6 +117,7 @@ COPY --from=build /app/packages/plugin-sdk/dist ./packages/plugin-sdk/dist
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
 COPY --from=build /app/packages/effect-broker/dist ./packages/effect-broker/dist
+COPY --from=build /app/packages/postgres-runtime/dist ./packages/postgres-runtime/dist
 COPY --from=build /app/packages/action-adapters/dist ./packages/action-adapters/dist
 COPY --from=build /app/packages/worker-plane/dist ./packages/worker-plane/dist
 
@@ -119,6 +126,7 @@ COPY packages/plugin-sdk/package.json ./packages/plugin-sdk/package.json
 COPY packages/core/package.json ./packages/core/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
+COPY packages/postgres-runtime/package.json ./packages/postgres-runtime/package.json
 COPY packages/action-adapters/package.json ./packages/action-adapters/package.json
 COPY packages/worker-plane/package.json ./packages/worker-plane/package.json
 COPY packages/worker-plane/docker-entrypoint.sh /usr/local/bin/commander-worker-entrypoint.sh
