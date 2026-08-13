@@ -27,10 +27,10 @@
     "LICENSE"
   ],
   "scripts": {
-    "prebuild": "pnpm --filter @commander/effect-broker build",
+    "prebuild": "pnpm --filter @commander/postgres-runtime build && pnpm --filter @commander/effect-broker build",
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "pretest": "pnpm --filter @commander/effect-broker build",
+    "pretest": "pnpm --filter @commander/postgres-runtime build && pnpm --filter @commander/effect-broker build",
     "test": "tsx --test src/kernel.test.ts src/transitionValidation.test.ts src/tenantPause.test.ts src/ws2-acceptance.test.ts src/contracts.test.ts src/kernel-m2.test.ts src/killSwitch.test.ts src/repositoryFactory.test.ts src/sqliteSchema.test.ts src/evidenceRepository.test.ts src/claimAuthzParity.test.ts src/capabilityAuthority.test.ts src/seedWorkerClaimSecret.test.ts src/postgres.outbox-worker-mode.test.ts src/testing/repositoryContract.ts src/ops/compensationConsumer.test.ts src/ops/compensationConsumerDaemon.test.ts src/ops/compensationReclaimConsume.test.ts src/ops/healthServer.test.ts src/ops/opsRuntime.test.ts src/ops/reclaimDaemon.test.ts src/ops/timerWakeupWorker.test.ts src/ops/outbox/kernelOutboxPublisher.test.ts src/ops/outbox/outboxDelivery.test.ts src/ops/outbox/compensationPublisherRace.integration.test.ts",
     "test:sqlite": "tsx --test src/claimAuthzParity.test.ts src/testing/repositoryContract.ts",
     "test:integration": "tsx --test --test-concurrency=1 src/postgres.integration.test.ts src/postgres.ops.integration.test.ts src/postgres.dlq.integration.test.ts src/evidenceRepository.postgres.integration.test.ts src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts",
@@ -66,6 +66,7 @@
   "dependencies": {
     "@commander/contracts": "workspace:*",
     "@commander/effect-broker": "workspace:*",
+    "@commander/postgres-runtime": "workspace:*",
     "better-sqlite3": "^12.11.1",
     "pg": "^8.15.0"
   },
