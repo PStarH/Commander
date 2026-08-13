@@ -579,6 +579,31 @@ jobs:
             echo 'COMMANDER_EVIDENCE_SIGNING_KEY_ID=ci-cell-evidence'
           } >> "$GITHUB_ENV"
 
+      - name: Cell PostgreSQL TLS configuration contract
+        run: pnpm exec tsx --test scripts/cell-postgres-tls-config.test.ts
+
+      - name: Generate cell PostgreSQL TLS fixture
+        shell: bash
+        run: |
+          TLS_DIR="$GITHUB_WORKSPACE/artifacts/cell-postgres-tls"
+          mkdir -p "$TLS_DIR"
+          openssl genrsa -out "$TLS_DIR/ca.key" 2048
+          openssl req -x509 -new -nodes -key "$TLS_DIR/ca.key" -sha256 -days 1 \
+            -subj '/CN=commander-cell-postgres-ca' -out "$TLS_DIR/ca.crt"
+          openssl genrsa -out "$TLS_DIR/server.key" 2048
+          openssl req -new -key "$TLS_DIR/server.key" -subj '/CN=postgres' -out "$TLS_DIR/server.csr"
+          openssl x509 -req -in "$TLS_DIR/server.csr" -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" \
+            -CAcreateserial -out "$TLS_DIR/server.crt" -days 1 -sha256 \
+            -extfile <(printf 'subjectAltName=DNS:postgres\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n')
+          chmod 0600 "$TLS_DIR/server.key"
+          SPKI_SHA256="$(openssl x509 -pubkey -noout -in "$TLS_DIR/server.crt" \
+            | openssl pkey -pubin -outform DER \
+            | openssl dgst -sha256 -r \
+            | awk '{print $1}')"
+          test "${#SPKI_SHA256}" -eq 64
+          echo "COMMANDER_CELL_POSTGRES_TLS_DIR=$TLS_DIR" >> "$GITHUB_ENV"
+          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$SPKI_SHA256" >> "$GITHUB_ENV"
+
       - name: Docker build worker image (--no-cache)
         run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
 
@@ -592,7 +617,7 @@ jobs:
         run: pnpm cell:compensation-e2e -- --mode compose --up
 
       - name: Upload cell up-assert artifacts
-        if: success()
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: l4-b-cell-up-assert
