@@ -33,6 +33,7 @@ COPY packages/plugin-sdk/package.json ./packages/plugin-sdk/package.json
 COPY packages/core/package.json ./packages/core/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
+COPY packages/postgres-runtime/package.json ./packages/postgres-runtime/package.json
 COPY apps/api/package.json ./apps/api/package.json
 
 # Install only the workspace packages required by the API service and their
@@ -44,6 +45,7 @@ RUN pnpm install --frozen-lockfile \
     --filter @commander/core \
     --filter @commander/kernel \
     --filter @commander/effect-broker \
+    --filter @commander/postgres-runtime \
     --filter @commander/api
 
 # ---- Stage 3: Build ----
@@ -54,6 +56,7 @@ COPY --from=deps /app/packages/plugin-sdk/node_modules ./packages/plugin-sdk/nod
 COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
 COPY --from=deps /app/packages/effect-broker/node_modules ./packages/effect-broker/node_modules
+COPY --from=deps /app/packages/postgres-runtime/node_modules ./packages/postgres-runtime/node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 
 COPY tsconfig.base.json ./
@@ -64,6 +67,7 @@ COPY packages/plugin-sdk ./packages/plugin-sdk
 COPY packages/core ./packages/core
 COPY packages/kernel ./packages/kernel
 COPY packages/effect-broker ./packages/effect-broker
+COPY packages/postgres-runtime ./packages/postgres-runtime
 COPY apps/api ./apps/api
 
 # Build workspace packages in dependency order. Core is type-checked first
@@ -74,6 +78,7 @@ RUN cd packages/plugin-sdk && pnpm exec tsc -p tsconfig.json && node ../../scrip
 RUN cd packages/core && pnpm exec tsc --noEmit && pnpm exec tsc -p tsconfig.json && test -f dist/index.d.ts && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/effect-broker && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/kernel && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+RUN cd packages/postgres-runtime && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd apps/api && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 
 # ---- Stage 4: Production ----
@@ -95,6 +100,7 @@ COPY --from=deps /app/packages/plugin-sdk/node_modules ./packages/plugin-sdk/nod
 COPY --from=deps /app/packages/core/node_modules ./packages/core/node_modules
 COPY --from=deps /app/packages/kernel/node_modules ./packages/kernel/node_modules
 COPY --from=deps /app/packages/effect-broker/node_modules ./packages/effect-broker/node_modules
+COPY --from=deps /app/packages/postgres-runtime/node_modules ./packages/postgres-runtime/node_modules
 COPY --from=deps /app/apps/api/node_modules ./apps/api/node_modules
 
 COPY --from=build /app/packages/contracts/dist ./packages/contracts/dist
@@ -104,6 +110,7 @@ COPY --from=build /app/packages/plugin-sdk/dist ./packages/plugin-sdk/dist
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
 COPY --from=build /app/packages/effect-broker/dist ./packages/effect-broker/dist
+COPY --from=build /app/packages/postgres-runtime/dist ./packages/postgres-runtime/dist
 COPY --from=build /app/apps/api/dist ./apps/api/dist
 
 COPY packages/contracts/package.json ./packages/contracts/package.json
@@ -111,6 +118,7 @@ COPY packages/plugin-sdk/package.json ./packages/plugin-sdk/package.json
 COPY packages/core/package.json ./packages/core/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
+COPY packages/postgres-runtime/package.json ./packages/postgres-runtime/package.json
 COPY apps/api/package.json ./apps/api/package.json
 
 RUN chown -R commander:commander /app
