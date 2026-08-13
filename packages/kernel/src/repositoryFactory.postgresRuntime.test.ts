@@ -6,7 +6,7 @@ const source = readFileSync(new URL('./repositoryFactory.ts', import.meta.url), 
 
 describe('kernel PostgreSQL runtime wiring', () => {
   it('uses the verified PostgreSQL pool factory for the postgres backend', () => {
-    assert.match(source, /createVerifiedPostgresPool/);
+    assert.match(source, /from '\.\/postgresRuntime\.js'/);
     assert.doesNotMatch(source, /new\s+Pool\s*\(/);
   });
 });

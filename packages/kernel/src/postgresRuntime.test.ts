@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rootCertificates } from 'node:tls';
 import { describe, it } from 'node:test';
-import { buildVerifiedPostgresPoolConfig, verifyPeerCertificateSpki } from './index.js';
+import { buildVerifiedPostgresPoolConfig, verifyPeerCertificateSpki } from './postgresRuntime.js';
 
 function fixtureCertificate(): {
   caFile: string;
@@ -14,7 +14,7 @@ function fixtureCertificate(): {
 } {
   const pem = rootCertificates[0];
   assert.ok(pem, 'Node must provide at least one trusted root certificate');
-  const directory = mkdtempSync(join(tmpdir(), 'commander-postgres-runtime-'));
+  const directory = mkdtempSync(join(tmpdir(), 'commander-kernel-postgres-runtime-'));
   const caFile = join(directory, 'ca.pem');
   writeFileSync(caFile, pem, { mode: 0o600 });
   const certificate = new X509Certificate(pem);
@@ -27,7 +27,7 @@ function fixtureCertificate(): {
   };
 }
 
-describe('verified PostgreSQL pool configuration', () => {
+describe('kernel verified PostgreSQL pool configuration', () => {
   it('requires the CA file and expected SPKI before a pool can open', () => {
     assert.throws(
       () =>

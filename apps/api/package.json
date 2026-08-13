@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "ts-node-dev src/index.ts",
-    "prebuild": "pnpm --filter @commander/postgres-runtime build",
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "pretest": "pnpm --filter @commander/contracts --filter @commander/effect-broker --filter @commander/core --filter @commander/kernel build && pnpm build",
     "test": "node --import tsx --test test/*.test.cjs test/*.test.ts test/ws9/*.test.ts",
@@ -29,7 +28,6 @@
     "@commander/core": "workspace:*",
     "@commander/effect-broker": "workspace:*",
     "@commander/kernel": "workspace:*",
-    "@commander/postgres-runtime": "workspace:*",
     "bcryptjs": "^3.0.3",
     "express": "^5.2.1",
     "jsonwebtoken": "^9.0.3",

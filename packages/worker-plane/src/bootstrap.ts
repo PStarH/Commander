@@ -51,10 +51,13 @@ import {
   createEvidenceSigner,
 } from '@commander/effect-broker';
 import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
-import { createCapabilityAuthority, type CapabilityAuthority } from '@commander/kernel';
+import {
+  createCapabilityAuthority,
+  createVerifiedPostgresPool,
+  type CapabilityAuthority,
+} from '@commander/kernel';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
 import { evaluateManifestGatewayEffect, findAdapterManifest } from '@commander/contracts';
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 
 // Lazy import to avoid circular dependency at module load time
 /* eslint-disable @typescript-eslint/no-explicit-any */
