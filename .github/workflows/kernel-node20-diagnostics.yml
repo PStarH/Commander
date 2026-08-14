@@ -1,0 +1,86 @@
+name: Kernel Node 20 Diagnostics
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Kernel Node 20 per-file diagnostics
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Rebuild better-sqlite3 for Node 20
+        run: pnpm rebuild better-sqlite3
+
+      - name: Capture per-file kernel test boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          report_dir="kernel-node20-diagnostics"
+          events="$report_dir/kernel-test-events.ndjson"
+          mkdir -p "$report_dir"
+          : > "$events"
+
+          pnpm --filter @commander/effect-broker build
+          node -e '
+            const test = require("./packages/kernel/package.json").scripts.test;
+            const prefix = "tsx --test ";
+            if (!test.startsWith(prefix)) throw new Error("unexpected kernel test command");
+            console.log(test.slice(prefix.length).split(" ").join("\n"));
+          ' > "$report_dir/kernel-test-files.txt"
+
+          failed=0
+          while IFS= read -r test_file; do
+            name="${test_file//\//_}"
+            log="$report_dir/$name.log"
+            started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf '{"event":"start","file":"%s","at":"%s"}\n' "$test_file" "$started_at" >> "$events"
+
+            set +e
+            timeout --signal=TERM --kill-after=10s 120s \
+              pnpm --filter @commander/kernel exec tsx --test "$test_file" > "$log" 2>&1
+            exit_code=$?
+            set -e
+
+            sed -E -i \
+              -e 's#(postgres(ql)?://)[^[:space:]]+#\1[REDACTED]#Ig' \
+              -e 's#(password|token|secret|authorization)[=:][^[:space:]]+#\1=[REDACTED]#Ig' \
+              "$log"
+            ended_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf '{"event":"end","file":"%s","at":"%s","exit_code":%s}\n' \
+              "$test_file" "$ended_at" "$exit_code" >> "$events"
+
+            if [[ "$exit_code" -ne 0 ]]; then
+              failed=1
+              break
+            fi
+          done < "$report_dir/kernel-test-files.txt"
+
+          exit "$failed"
+
+      - name: Upload sanitized kernel diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-node20-diagnostics
+          path: |
+            kernel-node20-diagnostics/kernel-test-events.ndjson
+            kernel-node20-diagnostics/kernel-test-files.txt
+            kernel-node20-diagnostics/*.log
+          if-no-files-found: error
+          retention-days: 14
