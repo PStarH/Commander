@@ -2,6 +2,7 @@
  * Minimal HTTP health surface for adapter-operations Deployments.
  */
 import { createServer, type Server } from 'node:http';
+import { handleFaultControlRequest, type FaultControlHandlerPort } from './faultControlServer.js';
 
 export interface AdapterOpsHealthHandle {
   port: number;
@@ -11,6 +12,7 @@ export interface AdapterOpsHealthHandle {
 export async function startAdapterOpsHealthServer(options: {
   port: number;
   isReady: () => boolean | Promise<boolean>;
+  faultControlHandler?: FaultControlHandlerPort;
 }): Promise<AdapterOpsHealthHandle> {
   const server: Server = createServer((req, res) => {
     const url = req.url?.split('?')[0] ?? '/';
@@ -29,6 +31,23 @@ export async function startAdapterOpsHealthServer(options: {
         .catch(() => {
           res.writeHead(503, { 'content-type': 'application/json' });
           res.end(JSON.stringify({ status: 'not_ready', degraded: true }));
+        });
+      return;
+    }
+    if (options.faultControlHandler) {
+      void handleFaultControlRequest(req, res, options.faultControlHandler)
+        .then((handled) => {
+          if (handled) return;
+          res.writeHead(404, { 'content-type': 'text/plain' });
+          res.end('not found');
+        })
+        .catch(() => {
+          if (!res.headersSent) {
+            res.writeHead(503, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'fault_control_unavailable' }));
+          } else {
+            res.destroy();
+          }
         });
       return;
     }
