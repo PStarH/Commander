@@ -584,6 +584,7 @@ function createFaultControlAuditSink(
 function configuredFaultControlRuntime(
   env: NodeJS.ProcessEnv,
   capability: CapabilityAuthority,
+  tenantId: string,
   workerId: string,
   workerGeneration: number,
 ): FaultControlRuntime | undefined {
@@ -605,6 +606,7 @@ function configuredFaultControlRuntime(
     throw new Error('FAULT_CONTROL_DIRTY_SOURCE_FORBIDDEN');
   }
   return {
+    tenantId,
     audience: capability.audience,
     sourceCommit,
     imageDigest,
@@ -762,6 +764,7 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
   const faultControlRuntime = configuredFaultControlRuntime(
     process.env,
     capability,
+    cellTenantId,
     compensationWorkerId,
     compensationGeneration,
   );
