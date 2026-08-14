@@ -58,14 +58,22 @@ describe('kernel Node 20 hang diagnostics workflow', () => {
     );
 
     const diagnose = steps.find((step) => step.name === 'Capture per-file kernel test boundaries');
-    assert.match(diagnose?.run ?? '', /pnpm --filter @commander\/effect-broker build/);
-    assert.match(diagnose?.run ?? '', /packages\/kernel\/package\.json/);
-    assert.match(diagnose?.run ?? '', /timeout --signal=TERM/);
-    assert.match(diagnose?.run ?? '', /kernel-test-events\.ndjson/);
-    assert.match(diagnose?.run ?? '', /\"event\":\"start\"/);
-    assert.match(diagnose?.run ?? '', /\"event\":\"end\"/);
+    const diagnosticScript = diagnose?.run ?? '';
+    const contractsBuild = 'pnpm --filter @commander/contracts build';
+    const effectBrokerBuild = 'pnpm --filter @commander/effect-broker build';
+    assert.match(diagnosticScript, /pnpm --filter @commander\/contracts build/);
+    assert.match(diagnosticScript, /pnpm --filter @commander\/effect-broker build/);
+    assert.ok(
+      diagnosticScript.indexOf(contractsBuild) < diagnosticScript.indexOf(effectBrokerBuild),
+      'contracts must be built before effect-broker and individual kernel tests',
+    );
+    assert.match(diagnosticScript, /packages\/kernel\/package\.json/);
+    assert.match(diagnosticScript, /timeout --signal=TERM/);
+    assert.match(diagnosticScript, /kernel-test-events\.ndjson/);
+    assert.match(diagnosticScript, /\"event\":\"start\"/);
+    assert.match(diagnosticScript, /\"event\":\"end\"/);
     assert.doesNotThrow(() => {
-      execFileSync('bash', ['-n'], { input: diagnose?.run ?? '', stdio: 'pipe' });
+      execFileSync('bash', ['-n'], { input: diagnosticScript, stdio: 'pipe' });
     }, 'diagnostic shell must remain syntactically valid');
 
     const artifact = steps.find((step) => step.name === 'Upload sanitized kernel diagnostics');
