@@ -815,7 +815,9 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
     const effects = await kernel.listEffects(loaded.run.id, tenantId);
-    const unknown = effects.find((effect) => effect.state === 'COMPLETION_UNKNOWN');
+    const unknown = effects.find(
+      (effect) => effect.id === loaded.metadata.effectId && effect.state === 'COMPLETION_UNKNOWN',
+    );
     if (!unknown) {
       return res.status(409).json({
         error: { code: 'NO_RECONCILABLE_EFFECT', message: 'No completion-unknown effect exists.' },

@@ -644,7 +644,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     this.event(
       'effect',
       effect.id,
-      3,
+      this.nextEventSequence('effect', effect.id),
       request.state === 'COMPLETED' ? 'effect.reconciled_completed' : 'effect.reconciled_failed',
       effect.tenantId,
       effect.runId,
@@ -658,6 +658,17 @@ export class InMemoryKernelRepository implements KernelRepository {
     const effect = this.effects.get(input.effectId);
     if (!effect || effect.tenantId !== input.tenantId || effect.state !== 'COMPLETION_UNKNOWN') return null;
     effect.reconcileAfter = input.reconcileAfter ?? now();
+    this.event(
+      'effect',
+      effect.id,
+      this.nextEventSequence('effect', effect.id),
+      'effect.reconcile_requested',
+      effect.tenantId,
+      effect.runId,
+      effect.stepId,
+      input.actor,
+      { reconcileAfter: effect.reconcileAfter },
+    );
     return clone(effect);
   }
   async claimReconcileEffects(input: ClaimReconcileEffectsInput): Promise<ClaimedReconcileEffect[]> {
@@ -1304,6 +1315,15 @@ export class InMemoryKernelRepository implements KernelRepository {
   private event(aggregateType: KernelEvent['aggregateType'], aggregateId: string, sequence: number, type: string, tenantId: string, runId: string, stepId: string | undefined, actor: string, payload: Record<string, unknown>, outboxKey = runId): void {
     const event: KernelEvent = { eventId: randomUUID(), aggregateType, aggregateId, sequence, type, tenantId, runId, stepId, actor, schemaVersion: 'v2', payload, occurredAt: now() }; this.events.push(event);
     const message: KernelOutboxMessage = { id: randomUUID(), eventId: event.eventId, tenantId, topic: `commander.${type}`, key: outboxKey, payload: { ...payload, eventId: event.eventId, type, runId, stepId: stepId ?? null, tenantId }, attempts: 0, availableAt: event.occurredAt, createdAt: event.occurredAt }; this.outbox.set(message.id, message);
+  }
+  private nextEventSequence(aggregateType: KernelEvent['aggregateType'], aggregateId: string): number {
+    return this.events.reduce(
+      (highest, event) =>
+        event.aggregateType === aggregateType && event.aggregateId === aggregateId
+          ? Math.max(highest, event.sequence)
+          : highest,
+      0,
+    ) + 1;
   }
   private finish(runId: string, actor: string): void {
     const run = this.runs.get(runId)!; const steps = [...this.steps.values()].filter((step) => step.runId === runId);
