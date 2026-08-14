@@ -32,6 +32,8 @@ function command(overrides: Partial<FaultControlCommand> = {}): FaultControlComm
     nonce: 'nonce-g3-001',
     issuer: 'commander-g3-authority',
     keyId: 'g3-key-1',
+    workerId: 'compensation-daemon',
+    workerGeneration: 1,
     ...overrides,
   };
 }
@@ -89,6 +91,8 @@ function fixture(input = command()) {
       sourceDirty: false,
       allowedDestinations: [{ provider: 'digitalocean', destinationHash }],
       allowedFaults: ['adapter.timeout-after-commit'],
+      workerId: 'compensation-daemon',
+      workerGeneration: 1,
     },
     executor: {
       apply: async () => {
@@ -131,6 +135,17 @@ describe('CampaignFaultControlHandler', () => {
     assert.deepEqual(audits, ['fault_control.rejected']);
   });
 
+  it('rejects a capability for a stale adapter-ops worker generation', async () => {
+    const input = command({ workerGeneration: 2 });
+    const { handler, token, audits, calls } = fixture(input);
+
+    const result = await handler.handle({ token, command: input });
+
+    assert.deepEqual(result, { accepted: false, code: 'FAULT_CONTROL_RUNTIME_DENIED' });
+    assert.deepEqual(calls, []);
+    assert.deepEqual(audits, ['fault_control.rejected']);
+  });
+
   it('rejects a signed grant whose issuer differs from the command capability claim', async () => {
     const { handler, input, audits, calls } = fixture();
     const foreignCapability = signedCapability(input, 'untrusted-g3-authority');
@@ -144,6 +159,8 @@ describe('CampaignFaultControlHandler', () => {
         sourceDirty: false,
         allowedDestinations: [{ provider: 'digitalocean', destinationHash }],
         allowedFaults: ['adapter.timeout-after-commit'],
+        workerId: 'compensation-daemon',
+        workerGeneration: 1,
       },
       executor: {
         apply: async () => calls.push('apply'),
@@ -172,6 +189,8 @@ describe('CampaignFaultControlHandler', () => {
         sourceDirty: false,
         allowedDestinations: [{ provider: 'digitalocean', destinationHash }],
         allowedFaults: ['adapter.timeout-after-commit'],
+        workerId: 'compensation-daemon',
+        workerGeneration: 1,
       },
       executor: {
         apply: async () => new Promise<void>(() => {}),
@@ -208,6 +227,8 @@ describe('CampaignFaultControlHandler', () => {
         sourceDirty: false,
         allowedDestinations: [{ provider: 'digitalocean', destinationHash }],
         allowedFaults: ['adapter.timeout-after-commit'],
+        workerId: 'compensation-daemon',
+        workerGeneration: 1,
       },
       executor: {
         apply: async () => {},
@@ -243,6 +264,8 @@ describe('CampaignFaultControlHandler', () => {
         sourceDirty: false,
         allowedDestinations: [{ provider: 'digitalocean', destinationHash }],
         allowedFaults: ['adapter.timeout-after-commit'],
+        workerId: 'compensation-daemon',
+        workerGeneration: 1,
       },
       executor: {
         apply: async ({ signal }) =>
@@ -267,5 +290,16 @@ describe('CampaignFaultControlHandler', () => {
       'fault_control.failed',
       'fault_control.cleaned',
     ]);
+  });
+
+  it('rejects a capability whose total lifetime exceeds the five-minute control window', async () => {
+    const input = command({ expiresAt: '2030-01-01T00:06:00.000Z' });
+    const { handler, token, audits, calls } = fixture(input);
+
+    const result = await handler.handle({ token, command: input });
+
+    assert.deepEqual(result, { accepted: false, code: 'FAULT_CONTROL_RUNTIME_DENIED' });
+    assert.deepEqual(calls, []);
+    assert.deepEqual(audits, ['fault_control.rejected']);
   });
 });

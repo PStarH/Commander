@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { AdapterExecutionError } from '@commander/effect-broker';
 import { createKubernetesDeploymentRollbackAdapter } from './deploymentRollback.js';
 import type { AdapterCredentialProvider } from '../types.js';
 
@@ -109,6 +110,59 @@ describe('Kubernetes deployment rollback adapter', () => {
         },
       },
     });
+  });
+
+  it('lets a governed post-PATCH observer classify one committed rollback as unknown', async () => {
+    const adapter = createKubernetesDeploymentRollbackAdapter({
+      credentials: credentials(),
+      afterPatchResponse: async (patch) => {
+        assert.deepEqual(patch, {
+          tenantId: 'tenant-a',
+          effectId: 'effect-1',
+          idempotencyKey: 'idem-1',
+          destination: 'k8s://cluster-a/team-a/deployments/api',
+        });
+        throw new AdapterExecutionError('Governed fault after Kubernetes PATCH', {
+          code: 'GOVERNED_TIMEOUT_AFTER_COMMIT',
+          commitState: 'UNKNOWN',
+          retryMode: 'QUERY_FIRST',
+        });
+      },
+      fetch: async (url) => {
+        if (String(url).includes('/replicasets?')) {
+          return new Response(
+            JSON.stringify({
+              items: [
+                {
+                  metadata: {
+                    annotations: { 'deployment.kubernetes.io/revision': '12' },
+                    ownerReferences: [{ uid: 'deploy-uid' }],
+                  },
+                  spec: { template: { metadata: { labels: { app: 'api' } }, spec: {} } },
+                },
+              ],
+            }),
+            { status: 200 },
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            metadata: { uid: 'deploy-uid' },
+            spec: { selector: { matchLabels: { app: 'api' } }, template: { metadata: {} } },
+          }),
+          { status: 200 },
+        );
+      },
+    });
+
+    await assert.rejects(
+      () => adapter.execute({ ...input, args: { targetRevision: '12', reason: 'rollback' } }),
+      (error: unknown) =>
+        error instanceof AdapterExecutionError &&
+        error.commitState === 'UNKNOWN' &&
+        error.retryMode === 'QUERY_FIRST' &&
+        error.code === 'GOVERNED_TIMEOUT_AFTER_COMMIT',
+    );
   });
 
   it('returns UNKNOWN until the deployment reports the requested revision', async () => {

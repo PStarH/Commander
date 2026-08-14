@@ -5,6 +5,7 @@ export { ReconciliationDaemon, MAX_RECONCILE_ATTEMPTS } from './reconciliationDa
 export { CompensationDaemon } from './compensationDaemon.js';
 export { createAdapterOpsWiring } from './wiring.js';
 export { CampaignFaultControlHandler } from './faultControl.js';
+export { startFaultControlServer } from './faultControlServer.js';
 export type {
   CampaignFaultControlHandlerOptions,
   FaultControlCommand,
