@@ -41,6 +41,7 @@ export async function main(): Promise<void> {
       if (tier !== 'demo' && egressAllowlist.length === 0) return false;
       return true;
     },
+    faultControlHandler: wiring.faultControl,
   });
 
   let stopping = false;
