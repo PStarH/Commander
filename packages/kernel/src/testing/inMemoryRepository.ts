@@ -1101,6 +1101,11 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
 
   async listEvents(runId: string, tenantId: string): Promise<KernelEvent[]> { return this.events.filter((event) => event.runId === runId && event.tenantId === tenantId).map(clone); }
+  async appendFaultControlAudit(record: import('../repository.js').FaultControlAuditRecord): Promise<void> {
+    const aggregateId = `${record.runId}:${record.effectId}`;
+    const sequence = this.events.filter((event) => event.aggregateType === 'fault-control' && event.aggregateId === aggregateId).length + 1;
+    this.event('fault-control', aggregateId, sequence, record.type, record.tenantId, record.runId, record.effectId, record.actor, record.payload);
+  }
   async listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]> {
     return [...this.effects.values()].filter((effect) => effect.runId === runId && effect.tenantId === tenantId).map(clone);
   }
