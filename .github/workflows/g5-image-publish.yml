@@ -1,0 +1,126 @@
+name: G5 Immutable Image Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Immutable lowercase 40-character commit SHA to build
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  validate:
+    name: Validate immutable source
+    runs-on: ubuntu-latest
+    outputs:
+      commit_sha: ${{ steps.validate.outputs.commit_sha }}
+    steps:
+      - name: Validate immutable commit SHA
+        id: validate
+        env:
+          REQUESTED_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid commit SHA: expected 40 lowercase hexadecimal characters." >&2
+            exit 1
+          fi
+          printf 'commit_sha=%s\n' "$REQUESTED_SHA" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Build and publish immutable images
+    needs: validate
+    runs-on: ubuntu-latest
+    env:
+      COMMIT_SHA: ${{ needs.validate.outputs.commit_sha }}
+      GATEWAY_IMAGE: ghcr.io/pstarh/commander-g5-gateway
+      WORKER_IMAGE: ghcr.io/pstarh/commander-g5-worker
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.validate.outputs.commit_sha }}
+          fetch-depth: 1
+
+      - name: Verify checked-out source
+        run: |
+          set -euo pipefail
+          actual_sha="$(git rev-parse HEAD)"
+          test "$actual_sha" = "$COMMIT_SHA"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Gateway image
+        id: gateway
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/api/Dockerfile
+          push: true
+          provenance: mode=max
+          tags: |
+            ${{ env.GATEWAY_IMAGE }}:${{ env.COMMIT_SHA }}
+            ${{ env.GATEWAY_IMAGE }}:sha-${{ env.COMMIT_SHA }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.COMMIT_SHA }}
+
+      - name: Build and push Worker image
+        id: worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packages/worker-plane/Dockerfile
+          push: true
+          provenance: mode=max
+          tags: |
+            ${{ env.WORKER_IMAGE }}:${{ env.COMMIT_SHA }}
+            ${{ env.WORKER_IMAGE }}:sha-${{ env.COMMIT_SHA }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ env.COMMIT_SHA }}
+
+      - name: Write image provenance
+        env:
+          GATEWAY_DIGEST: ${{ steps.gateway.outputs.digest }}
+          WORKER_DIGEST: ${{ steps.worker.outputs.digest }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --arg source_sha "$COMMIT_SHA" \
+            --arg source "${{ github.server_url }}/${{ github.repository }}" \
+            --arg gateway_image "$GATEWAY_IMAGE" \
+            --arg gateway_digest "$GATEWAY_DIGEST" \
+            --arg worker_image "$WORKER_IMAGE" \
+            --arg worker_digest "$WORKER_DIGEST" \
+            '{source_sha: $source_sha, source: $source, gateway: {image: $gateway_image, digest: $gateway_digest, dockerfile: "apps/api/Dockerfile", context: "."}, worker: {image: $worker_image, digest: $worker_digest, dockerfile: "packages/worker-plane/Dockerfile", context: "."}}' \
+            > g5-image-provenance.json
+          {
+            echo '## G5 immutable image provenance'
+            echo
+            echo "- Source: \`$COMMIT_SHA\`"
+            echo "- Gateway: \`$GATEWAY_IMAGE@$GATEWAY_DIGEST\`"
+            echo "- Worker: \`$WORKER_IMAGE@$WORKER_DIGEST\`"
+            echo
+            echo 'A retained host must authenticate separately to GHCR with package read access before pulling these digest references.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload image provenance
+        uses: actions/upload-artifact@v4
+        with:
+          name: g5-image-provenance
+          path: g5-image-provenance.json
+          if-no-files-found: error
+          retention-days: 30
