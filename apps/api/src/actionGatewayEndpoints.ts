@@ -815,19 +815,37 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     const loaded = await loadAction(kernel, req.params.runId, tenantId);
     if (!loaded) return actionNotFound(res);
     const effects = await kernel.listEffects(loaded.run.id, tenantId);
-    const unknown = effects.find((effect) => effect.state === 'COMPLETION_UNKNOWN');
+    const unknown = effects.find(
+      (effect) => effect.id === loaded.metadata.effectId && effect.state === 'COMPLETION_UNKNOWN',
+    );
     if (!unknown) {
       return res.status(409).json({
         error: { code: 'NO_RECONCILABLE_EFFECT', message: 'No completion-unknown effect exists.' },
       });
     }
-    return res.status(501).json({
-      error: {
-        code: 'RECONCILER_NOT_CONFIGURED',
-        message: 'The adapter reconciler is not configured on this API process.',
-      },
-      effectId: unknown.id,
-    });
+    try {
+      const queued = await kernel.requestReconcile({
+        effectId: unknown.id,
+        tenantId,
+        actor: actor(req),
+      });
+      if (!queued) {
+        return res.status(409).json({
+          error: {
+            code: 'NO_RECONCILABLE_EFFECT',
+            message: 'No completion-unknown effect exists.',
+          },
+        });
+      }
+      return res.status(202).json({ effectId: queued.id, state: 'RECONCILE_QUEUED' });
+    } catch {
+      return res.status(503).json({
+        error: {
+          code: 'RECONCILER_UNAVAILABLE',
+          message: 'The adapter reconciler cannot accept reconciliation requests.',
+        },
+      });
+    }
   });
 
   router.get('/:runId/evidence', async (req, res) => {

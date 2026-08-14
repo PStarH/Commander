@@ -1152,7 +1152,7 @@ export class PostgresKernelRepository implements KernelRepository {
       await this.appendEvent(client, {
         aggregateType: 'effect',
         aggregateId: effect.id,
-        sequence: 3,
+        sequence: await this.nextEventSequence(client, 'effect', effect.id),
         type: request.state === 'COMPLETED' ? 'effect.reconciled_completed' : 'effect.reconciled_failed',
         tenantId: effect.tenantId,
         runId: effect.runId,
@@ -1173,7 +1173,20 @@ export class PostgresKernelRepository implements KernelRepository {
          RETURNING *`,
         [input.reconcileAfter ?? null, input.effectId, input.tenantId],
       );
-      return result.rows[0] ? fromEffect(result.rows[0]) : null;
+      if (!result.rows[0]) return null;
+      const effect = fromEffect(result.rows[0]);
+      await this.appendEvent(client, {
+        aggregateType: 'effect',
+        aggregateId: effect.id,
+        sequence: await this.nextEventSequence(client, 'effect', effect.id),
+        type: 'effect.reconcile_requested',
+        tenantId: effect.tenantId,
+        runId: effect.runId,
+        stepId: effect.stepId,
+        actor: input.actor,
+        payload: { reconcileAfter: effect.reconcileAfter },
+      });
+      return effect;
     }, [input.tenantId]);
   }
 
@@ -2312,6 +2325,19 @@ export class PostgresKernelRepository implements KernelRepository {
         payload: { reason },
       });
     }
+  }
+  protected async nextEventSequence(
+    client: SqlClient,
+    aggregateType: import('./types.js').KernelEvent['aggregateType'],
+    aggregateId: string,
+  ): Promise<number> {
+    const result = await client.query<{ sequence: number | string }>(
+      `SELECT COALESCE(MAX(sequence), 0) AS sequence
+       FROM commander_events
+       WHERE aggregate_type=$1 AND aggregate_id=$2`,
+      [aggregateType, aggregateId],
+    );
+    return Number(result.rows[0]?.sequence ?? 0) + 1;
   }
   protected async appendEvent(client: SqlClient, event: Omit<import('./types.js').KernelEvent, 'eventId' | 'schemaVersion' | 'occurredAt'>, outboxKey = event.runId): Promise<void> {
     const eventId = randomUUID();
