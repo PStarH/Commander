@@ -1812,6 +1812,23 @@ export class PostgresKernelRepository implements KernelRepository {
     }, [tenantId]);
   }
 
+  async appendFaultControlAudit(record: import('./repository.js').FaultControlAuditRecord): Promise<void> {
+    const aggregateId = `${record.runId}:${record.effectId}`;
+    await this.withTransaction(async (client) => {
+      const current = await client.query<{ sequence: number | string }>(
+        `SELECT COALESCE(MAX(sequence), 0) AS sequence
+         FROM commander_events
+         WHERE aggregate_type='fault-control' AND aggregate_id=$1`,
+        [aggregateId],
+      );
+      await this.appendEvent(client, {
+        aggregateType: 'fault-control', aggregateId, sequence: Number(current.rows[0]?.sequence ?? 0) + 1,
+        type: record.type, tenantId: record.tenantId, runId: record.runId, stepId: record.effectId,
+        actor: record.actor, payload: record.payload,
+      });
+    }, [record.tenantId]);
+  }
+
   async listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]> {
     return this.withTransaction(async (client) => {
       const result = await client.query<DbEffect>(

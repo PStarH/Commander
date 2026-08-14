@@ -18,14 +18,20 @@ import {
   ActionAdapterRegistry,
   EnvAdapterCredentialProvider,
   createGitHubPullRequestCreateAdapter,
+  createKubernetesDeploymentRollbackAdapter,
   createServiceNowIncidentCreateAdapter,
   type AdapterCompensateInput,
   type AdapterExecuteInput,
 } from '@commander/action-adapters';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
 import { ReconciliationDaemon } from './reconciliationDaemon.js';
 import { CompensationDaemon } from './compensationDaemon.js';
+import {
+  CampaignFaultControlHandler,
+  KubernetesRollbackFaultArm,
+  type FaultControlRuntime,
+} from './faultControl.js';
 
 const POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
 
@@ -105,9 +111,7 @@ type AdapterOpsRegistryPool = {
   }>;
 };
 
-export function resolveAdapterOpsTenantScope(
-  env: NodeJS.ProcessEnv = process.env,
-): string[] {
+export function resolveAdapterOpsTenantScope(env: NodeJS.ProcessEnv = process.env): string[] {
   const tenantIds = (env.COMMANDER_WORKER_TENANTS ?? '')
     .split(',')
     .map((tenantId) => tenantId.trim())
@@ -130,7 +134,9 @@ class PostgresAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
         `SELECT to_regclass('public.commander_workers')::text AS ok`,
       );
       if (!result.rows[0]?.ok) {
-        throw new Error('commander_workers table is missing; run kernel migrations before adapter-ops');
+        throw new Error(
+          'commander_workers table is missing; run kernel migrations before adapter-ops',
+        );
       }
     } finally {
       client.release();
@@ -144,7 +150,9 @@ class PostgresAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
     previousClaimSecret?: string,
   ): Promise<AdapterOpsWorkerRegistration> {
     if (tenantIds.length === 0 || tenantIds.includes('*')) {
-      throw new Error(`${WORKER_TENANT_SCOPE_REQUIRED}: daemon registration requires explicit tenantIds`);
+      throw new Error(
+        `${WORKER_TENANT_SCOPE_REQUIRED}: daemon registration requires explicit tenantIds`,
+      );
     }
     const client = await this.pool.connect();
     try {
@@ -231,9 +239,7 @@ export function assertNonOwnerDatabaseRole(currentUser: string): void {
  * Adapter-ops must never run kernel schedulerMode (BYPASSRLS / skip claim secret).
  * Fail-closed if COMMANDER_KERNEL_SCHEDULER_MODE=1 is present in the process env.
  */
-export function assertAdapterOpsSchedulerModeForbidden(
-  env: NodeJS.ProcessEnv = process.env,
-): void {
+export function assertAdapterOpsSchedulerModeForbidden(env: NodeJS.ProcessEnv = process.env): void {
   if (env.COMMANDER_KERNEL_SCHEDULER_MODE === '1') {
     throw new Error(
       `${ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN}: COMMANDER_KERNEL_SCHEDULER_MODE=1 is forbidden ` +
@@ -327,10 +333,7 @@ export function productionCapabilityBrokerOptions(
  * Class A compensation digest: bind effect type + exact compensation patch.
  * requestHash remains canonicalRequestHash(patch) for admit request binding.
  */
-export function compensationActionDigest(
-  action: string,
-  payload: Record<string, unknown>,
-): string {
+export function compensationActionDigest(action: string, payload: Record<string, unknown>): string {
   return canonicalRequestHash({ type: action, ...payload });
 }
 
@@ -390,8 +393,7 @@ export async function registerAdapterOpsDaemonWorkers(
   compensation: { id: string; generation: number; claimSecret: string };
 }> {
   const reconcileWorkerId = opts?.reconcileWorkerId ?? ADAPTER_OPS_RECONCILE_WORKER_ID;
-  const compensationWorkerId =
-    opts?.compensationWorkerId ?? ADAPTER_OPS_COMPENSATION_WORKER_ID;
+  const compensationWorkerId = opts?.compensationWorkerId ?? ADAPTER_OPS_COMPENSATION_WORKER_ID;
   await registry.initialize();
   const reconcile = await registry.register(
     {
@@ -555,20 +557,90 @@ function createStdoutAuditSink(): AuditSink {
   };
 }
 
+function createFaultControlAuditSink(
+  repository: Pick<
+    Awaited<ReturnType<typeof createKernelRepository>>['repository'],
+    'appendFaultControlAudit'
+  >,
+): AuditSink {
+  return {
+    append: async (event) => {
+      await repository.appendFaultControlAudit({
+        tenantId: event.tenantId,
+        runId: event.runId,
+        effectId: event.stepId,
+        type: event.type,
+        actor: 'adapter-ops-fault-control',
+        payload: {
+          severity: event.severity,
+          at: event.at,
+          ...event.details,
+        },
+      });
+    },
+  };
+}
+
+function configuredFaultControlRuntime(
+  env: NodeJS.ProcessEnv,
+  capability: CapabilityAuthority,
+  tenantId: string,
+  workerId: string,
+  workerGeneration: number,
+): FaultControlRuntime | undefined {
+  if (!env.COMMANDER_FAULT_CONTROL_PORT?.trim()) return undefined;
+  const destination = env.COMMANDER_FAULT_CONTROL_DESTINATION?.trim() ?? '';
+  const sourceCommit = env.COMMANDER_GIT_SHA?.trim() ?? '';
+  const imageDigest = env.COMMANDER_IMAGE_DIGEST?.trim() ?? '';
+  if (
+    !/^k8s:\/\/[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*\/deployments\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(
+      destination,
+    )
+  ) {
+    throw new Error('FAULT_CONTROL_DESTINATION_REQUIRED');
+  }
+  if (!/^[a-f0-9]{40}$/i.test(sourceCommit) || !/^sha256:[a-f0-9]{64}$/.test(imageDigest)) {
+    throw new Error('FAULT_CONTROL_RUNTIME_IDENTITY_REQUIRED');
+  }
+  if (env.COMMANDER_GIT_DIRTY === '1') {
+    throw new Error('FAULT_CONTROL_DIRTY_SOURCE_FORBIDDEN');
+  }
+  return {
+    tenantId,
+    audience: capability.audience,
+    sourceCommit,
+    imageDigest,
+    sourceDirty: false,
+    allowedDestinations: [
+      {
+        provider: 'kubernetes',
+        destinationHash: createHash('sha256').update(destination).digest('hex'),
+      },
+    ],
+    allowedFaults: ['adapter.timeout-after-commit'],
+    workerId,
+    workerGeneration,
+  };
+}
+
 function createProductionRegistry(
   credentials: EnvAdapterCredentialProvider,
   egressAllowlist: readonly string[],
+  kubernetesFaultArm: KubernetesRollbackFaultArm,
 ): ActionAdapterRegistry {
   const fetchImpl = createEgressGatedFetch(egressAllowlist);
   return new ActionAdapterRegistry([
     createGitHubPullRequestCreateAdapter({ credentials, fetch: fetchImpl }),
     createServiceNowIncidentCreateAdapter({ credentials, fetch: fetchImpl }),
+    createKubernetesDeploymentRollbackAdapter({
+      credentials,
+      fetch: fetchImpl,
+      afterPatchResponse: (patch) => kubernetesFaultArm.afterPatchResponse(patch),
+    }),
   ]);
 }
 
-export async function createAdapterOpsWiring(
-  options: AdapterOpsWiringOptions = {},
-): Promise<{
+export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = {}): Promise<{
   reconciliation: ReconciliationDaemon;
   compensation: CompensationDaemon;
   close: () => Promise<void>;
@@ -580,6 +652,8 @@ export async function createAdapterOpsWiring(
   requiresDurableClaim: boolean;
   /** Compensation EffectBroker localWorkerId — must equal compensation-daemon. */
   compensationLocalWorkerId: string;
+  /** Present only when the dedicated fault-control listener is explicitly configured. */
+  faultControl?: CampaignFaultControlHandler;
 }> {
   const demoOpen = assertDemoOpenGate();
   const evidenceSigner = createAdapterOpsEvidenceSigner(process.env);
@@ -588,9 +662,7 @@ export async function createAdapterOpsWiring(
   // Owner/scheduler DSN + schedulerMode gates BEFORE kernel connect.
   assertAdapterOpsSchedulerModeForbidden(process.env);
   const dsn =
-    process.env.COMMANDER_KERNEL_DATABASE_URL?.trim() ||
-    process.env.DATABASE_URL?.trim() ||
-    '';
+    process.env.COMMANDER_KERNEL_DATABASE_URL?.trim() || process.env.DATABASE_URL?.trim() || '';
   if (dsn) assertNonOwnerDatabaseUrl(dsn);
 
   // Force schedulerMode off even if env was mutated after the assert above.
@@ -623,7 +695,8 @@ export async function createAdapterOpsWiring(
     );
   }
   const credentials = new EnvAdapterCredentialProvider({ cellTenantId });
-  const registry = createProductionRegistry(credentials, egressAllowlist);
+  const kubernetesFaultArm = new KubernetesRollbackFaultArm();
+  const registry = createProductionRegistry(credentials, egressAllowlist, kubernetesFaultArm);
   const issuer = capability.issuer;
   const tokens = capability.verifier;
   const policy = demoOpen ? createHollowDemoPolicy() : createRegistryPolicy(registry);
@@ -688,6 +761,21 @@ export async function createAdapterOpsWiring(
     reconcileClaimSecret = registered.reconcile.claimSecret;
     compensationClaimSecret = registered.compensation.claimSecret;
   }
+  const faultControlRuntime = configuredFaultControlRuntime(
+    process.env,
+    capability,
+    cellTenantId,
+    compensationWorkerId,
+    compensationGeneration,
+  );
+  const faultControl = faultControlRuntime
+    ? new CampaignFaultControlHandler({
+        capability: capability.verifier,
+        audit: createFaultControlAuditSink(repository),
+        runtime: faultControlRuntime,
+        executor: kubernetesFaultArm,
+      })
+    : undefined;
 
   // Compensation path: broker affinity MUST match admit lease workerId (not adapter-ops-worker).
   const compensationBroker = new EffectBroker(
@@ -772,6 +860,7 @@ export async function createAdapterOpsWiring(
       },
     },
     compensationLocalWorkerId: compensationWorkerId,
+    ...(faultControl ? { faultControl } : {}),
     close: async () => {
       await handle.close();
     },
