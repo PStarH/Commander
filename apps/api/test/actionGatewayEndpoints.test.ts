@@ -450,6 +450,27 @@ describe('L4-01 governed action HTTP API', () => {
         policySnapshotId: string;
         envelope: Record<string, unknown>;
       };
+      const unrelatedEffectId = 'effect-unrelated-completion-unknown';
+      await gateway.repository.admitEffect({
+        id: unrelatedEffectId,
+        runId: action.runId,
+        stepId: claimed.id,
+        tenantId: 'tenant-a',
+        type: 'demo.ticket.create',
+        idempotencyKey: 'action-reconcile-unrelated-0001',
+        policyDecisionId: 'action-gateway-allow',
+        policySnapshotId: metadata.policySnapshotId,
+        actionDigest: metadata.actionDigest,
+        request: metadata.envelope,
+        lease: claimed.lease,
+        actor: 'gateway-reconcile-worker',
+      });
+      await gateway.repository.markEffectCompletionUnknown({
+        effectId: unrelatedEffectId,
+        tenantId: 'tenant-a',
+        reason: 'unrelated remote outcome uncertain',
+        actor: 'gateway-reconcile-worker',
+      });
       const admitted = await gateway.repository.admitEffect({
         id: metadata.effectId,
         runId: action.runId,
@@ -500,6 +521,16 @@ describe('L4-01 governed action HTTP API', () => {
       assert.ok(
         (await gateway.repository.getEffect(metadata.effectId, 'tenant-a'))?.reconcileAfter,
       );
+      assert.deepEqual(
+        (await gateway.repository.listEvents(action.runId, 'tenant-a'))
+          .filter((event) => event.type === 'effect.reconcile_requested')
+          .map((event) => ({
+            aggregateId: event.aggregateId,
+            actor: event.actor,
+            stepId: event.stepId,
+          })),
+        [{ aggregateId: metadata.effectId, actor: 'test-key', stepId: claimed.id }],
+      );
 
       const adapter = {
         descriptor: {
@@ -524,7 +555,7 @@ describe('L4-01 governed action HTTP API', () => {
         registry: new ActionAdapterRegistry([adapter]),
         actor: 'reconciliation-daemon',
         pollIntervalMs: 60_000,
-        batchSize: 1,
+        batchSize: 2,
         brokerFactory: () =>
           new EffectBroker(
             { verify: async () => ({}) },
@@ -549,7 +580,7 @@ describe('L4-01 governed action HTTP API', () => {
           ),
       });
       const stats = await daemon.tick();
-      assert.deepEqual(stats, { claimed: 1, completed: 1, escalated: 0, rescheduled: 0 });
+      assert.deepEqual(stats, { claimed: 2, completed: 2, escalated: 0, rescheduled: 0 });
       assert.equal(
         (await gateway.repository.getEffect(metadata.effectId, 'tenant-a'))?.state,
         'COMPLETED',
