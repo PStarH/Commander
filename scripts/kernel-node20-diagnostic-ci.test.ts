@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { describe, it } from 'node:test';
+import { load } from 'js-yaml';
+
+type WorkflowStep = {
+  name?: string;
+  uses?: string;
+  run?: string;
+  with?: Record<string, string | boolean | number>;
+  if?: string;
+};
+
+type Workflow = {
+  permissions?: Record<string, string>;
+  jobs?: Record<
+    string,
+    {
+      'runs-on'?: string;
+      'timeout-minutes'?: number;
+      steps?: WorkflowStep[];
+    }
+  >;
+};
+
+const workflowPath = join(process.cwd(), '.github/workflows/kernel-node20-diagnostics.yml');
+
+describe('kernel Node 20 hang diagnostics workflow', () => {
+  it('runs only on dispatch and retains bounded per-file evidence', () => {
+    assert.ok(existsSync(workflowPath), 'manual diagnostic workflow must exist');
+
+    const source = readFileSync(workflowPath, 'utf8');
+    const workflow = load(source) as Workflow;
+
+    assert.match(source, /^on:\s*\n\s+workflow_dispatch:/m);
+    assert.doesNotMatch(source, /^\s+(pull_request|push):/m);
+    assert.deepEqual(workflow.permissions, { contents: 'read' });
+
+    const job = workflow.jobs?.diagnose;
+    assert.ok(job, 'workflow must define one diagnostic job');
+    assert.equal(job['runs-on'], 'ubuntu-latest');
+    assert.equal(job['timeout-minutes'], 30);
+
+    const steps = job.steps ?? [];
+    assert.equal(
+      steps.find((step) => step.uses === 'actions/checkout@v6')?.uses,
+      'actions/checkout@v6',
+    );
+    assert.equal(
+      steps.find((step) => step.uses === 'actions/setup-node@v7')?.with?.['node-version'],
+      20,
+    );
+    assert.match(
+      steps.find((step) => step.name === 'Install dependencies')?.run ?? '',
+      /pnpm install --frozen-lockfile/,
+    );
+
+    const diagnose = steps.find((step) => step.name === 'Capture per-file kernel test boundaries');
+    assert.match(diagnose?.run ?? '', /pnpm --filter @commander\/effect-broker build/);
+    assert.match(diagnose?.run ?? '', /packages\/kernel\/package\.json/);
+    assert.match(diagnose?.run ?? '', /timeout --signal=TERM/);
+    assert.match(diagnose?.run ?? '', /kernel-test-events\.ndjson/);
+    assert.match(diagnose?.run ?? '', /\"event\":\"start\"/);
+    assert.match(diagnose?.run ?? '', /\"event\":\"end\"/);
+    assert.doesNotThrow(() => {
+      execFileSync('bash', ['-n'], { input: diagnose?.run ?? '', stdio: 'pipe' });
+    }, 'diagnostic shell must remain syntactically valid');
+
+    const artifact = steps.find((step) => step.name === 'Upload sanitized kernel diagnostics');
+    assert.equal(artifact?.uses, 'actions/upload-artifact@v4');
+    assert.equal(artifact?.if, 'always()');
+    assert.equal(artifact?.with?.name, 'kernel-node20-diagnostics');
+    assert.match(String(artifact?.with?.path), /kernel-test-events\.ndjson/);
+
+    assert.doesNotMatch(source, /\bkubectl\b|\bkind\b|\bdocker\b/i);
+  });
+});
