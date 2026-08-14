@@ -1,4 +1,4 @@
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import type { IncomingMessage, ServerResponse } from 'node:http';
 import type {
   CampaignFaultControlHandler,
   FaultControlCommand,
@@ -25,11 +25,6 @@ const COMMAND_KEYS = new Set([
   'workerId',
   'workerGeneration',
 ]);
-
-export interface FaultControlServerHandle {
-  port: number;
-  close(): Promise<void>;
-}
 
 export interface FaultControlHandlerPort {
   handle(input: { token: string; command: FaultControlCommand }): Promise<FaultControlResult>;
@@ -117,56 +112,39 @@ async function readCommand(request: IncomingMessage): Promise<FaultControlComman
 }
 
 function route(request: IncomingMessage): { campaignId: string } | null {
-  if (request.method !== 'POST' || !request.url || request.url.includes('?')) return null;
+  if (request.method !== 'PATCH' || !request.url || request.url.includes('?')) return null;
   const match = /^\/v1\/fault-control\/campaigns\/([A-Za-z0-9._-]+)\/execute$/.exec(request.url);
   return match ? { campaignId: match[1] } : null;
 }
 
-export async function startFaultControlServer(options: {
-  port: number;
-  handler: FaultControlHandlerPort | CampaignFaultControlHandler;
-}): Promise<FaultControlServerHandle> {
-  const server: Server = createServer((request, response) => {
-    void (async () => {
-      const target = route(request);
-      if (!target) {
-        respond(response, 404, { error: 'not_found' });
-        return;
-      }
-      const token = bearerToken(request);
-      if (!token) {
-        respond(response, 401, { error: 'unauthorized' });
-        return;
-      }
-      const command = await readCommand(request);
-      if (!command || command.campaignId !== target.campaignId) {
-        respond(response, 400, { error: 'invalid_request' });
-        return;
-      }
-      const result = await options.handler.handle({ token, command });
-      if (!result.accepted) {
-        respond(response, 403, { accepted: false, code: result.code });
-        return;
-      }
-      respond(response, 200, result);
-    })().catch(() => {
-      if (!response.headersSent) respond(response, 503, { error: 'fault_control_unavailable' });
-      else response.destroy();
-    });
-  });
-
-  await new Promise<void>((resolve, reject) => {
-    server.once('error', reject);
-    server.once('listening', resolve);
-    server.listen(options.port);
-  });
-  const address = server.address();
-  const port = typeof address === 'object' && address ? address.port : options.port;
-  return {
-    port,
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      }),
-  };
+export async function handleFaultControlRequest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  handler: FaultControlHandlerPort | CampaignFaultControlHandler,
+): Promise<boolean> {
+  const target = route(request);
+  if (!target) return false;
+  try {
+    const token = bearerToken(request);
+    if (!token) {
+      respond(response, 401, { error: 'unauthorized' });
+      return true;
+    }
+    const command = await readCommand(request);
+    if (!command || command.campaignId !== target.campaignId) {
+      respond(response, 400, { error: 'invalid_request' });
+      return true;
+    }
+    const result = await handler.handle({ token, command });
+    if (!result.accepted) {
+      respond(response, 403, { accepted: false, code: result.code });
+      return true;
+    }
+    respond(response, 200, result);
+    return true;
+  } catch {
+    if (!response.headersSent) respond(response, 503, { error: 'fault_control_unavailable' });
+    else response.destroy();
+    return true;
+  }
 }

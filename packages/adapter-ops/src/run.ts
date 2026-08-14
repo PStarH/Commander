@@ -5,7 +5,6 @@ import {
 } from './egress.js';
 import { createAdapterOpsWiring } from './wiring.js';
 import { startAdapterOpsHealthServer } from './healthServer.js';
-import { startFaultControlServer } from './faultControlServer.js';
 
 function positiveInteger(name: string, fallback: number): number {
   const value = Number(process.env[name] ?? fallback);
@@ -42,16 +41,8 @@ export async function main(): Promise<void> {
       if (tier !== 'demo' && egressAllowlist.length === 0) return false;
       return true;
     },
+    faultControlHandler: wiring.faultControl,
   });
-  const configuredFaultControlPort = process.env.COMMANDER_FAULT_CONTROL_PORT?.trim();
-  const faultControl = wiring.faultControl;
-  const faultServer =
-    configuredFaultControlPort && faultControl
-      ? await startFaultControlServer({
-          port: positiveInteger('COMMANDER_FAULT_CONTROL_PORT', 0),
-          handler: faultControl,
-        })
-      : undefined;
 
   let stopping = false;
   const shutdown = async (): Promise<void> => {
@@ -59,7 +50,6 @@ export async function main(): Promise<void> {
     stopping = true;
     await wiring.reconciliation.stop();
     await wiring.compensation.stop();
-    await faultServer?.close();
     await health.close();
     await wiring.close();
   };
