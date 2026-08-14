@@ -47,6 +47,11 @@ export interface V1KernelGateway {
   answerInteraction(input: AnswerInteractionRequest): Promise<KernelInteraction>;
   listEffects(runId: string, tenantId: string): Promise<KernelEffect[]>;
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
+  requestReconcile(input: {
+    effectId: string;
+    tenantId: string;
+    actor: string;
+  }): Promise<KernelEffect | null>;
   getEvidence(binding: EvidenceLookup): ReturnType<KernelRepository['getEvidence']>;
   /**
    * Pause a run, releasing any active worker leases but keeping scheduled work.
@@ -233,6 +238,13 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   }
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
     return this.repository.getEffect(effectId, tenantId);
+  }
+  requestReconcile(input: {
+    effectId: string;
+    tenantId: string;
+    actor: string;
+  }): Promise<KernelEffect | null> {
+    return this.repository.requestReconcile(input);
   }
   getEvidence(binding: EvidenceLookup): ReturnType<KernelRepository['getEvidence']> {
     return this.repository.getEvidence(binding);
