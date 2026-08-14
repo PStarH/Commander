@@ -93,11 +93,73 @@ describe('G3 Gateway HTTP campaign', () => {
     );
   });
 
+  it('rejects unusable evidence JWKS before any Gateway request', async () => {
+    const { jwks } = await receipt();
+    let requests = 0;
+
+    await withGateway(
+      (_request, response) => {
+        requests += 1;
+        response.statusCode = 500;
+        response.end();
+      },
+      async (gatewayUrl) => {
+        await assert.rejects(
+          () =>
+            runGatewayCampaign({
+              gatewayUrl,
+              submitBearerToken: 'submit-secret',
+              approverBearerToken: 'approver-secret',
+              tenantId: 'tenant-a',
+              source: 'g3-campaign',
+              packageName: 'commander',
+              model: 'operator',
+              tool: 'kubernetes.deployment.rollback',
+              destination: 'k8s://fresh-g3/tenant-a/deployments/nginx',
+              effectType: 'mutate.kubernetes.deployment.rollback',
+              args: {},
+              idempotencyKey: 'g3-campaign-key-0001',
+              evidenceJwks: { keys: [] },
+              sourceSha: 'b9512df8997580550e3d662823e4167b6f5d9741',
+              imageDigest: `sha256:${'c'.repeat(64)}`,
+              outputDir: join(tmpdir(), 'g3-campaign'),
+            }),
+          /G3_EVIDENCE_JWKS_INVALID/,
+        );
+        await assert.rejects(
+          () =>
+            runGatewayCampaign({
+              gatewayUrl,
+              submitBearerToken: 'submit-secret',
+              approverBearerToken: 'approver-secret',
+              tenantId: 'tenant-a',
+              source: 'g3-campaign',
+              packageName: 'commander',
+              model: 'operator',
+              tool: 'kubernetes.deployment.rollback',
+              destination: 'k8s://fresh-g3/tenant-a/deployments/nginx',
+              effectType: 'mutate.kubernetes.deployment.rollback',
+              args: {},
+              idempotencyKey: 'g3-campaign-key-0001',
+              evidenceJwks: { keys: [{ ...jwks.keys[0], x: 'not-a-valid-jwk' }] },
+              sourceSha: 'b9512df8997580550e3d662823e4167b6f5d9741',
+              imageDigest: `sha256:${'c'.repeat(64)}`,
+              outputDir: join(tmpdir(), 'g3-campaign'),
+            }),
+          /G3_EVIDENCE_JWKS_INVALID/,
+        );
+      },
+    );
+
+    assert.equal(requests, 0);
+  });
+
   it('uses Gateway submit, approval, observation, recovery, and evidence endpoints without persisting secrets', async () => {
     const outputDir = await mkdtemp(join(tmpdir(), 'g3-campaign-'));
     const { bundle, jwks } = await receipt();
     const seen: Array<{ method?: string; url?: string; authorization?: string }> = [];
     let gets = 0;
+    let reconciled = false;
 
     await withGateway(
       (request, response) => {
@@ -132,10 +194,15 @@ describe('G3 Gateway HTTP campaign', () => {
                 runId: 'run-g3-1',
                 effectId: 'effect-g3-1',
                 actionDigest: digest,
-                state: gets === 1 ? 'COMPLETION_UNKNOWN' : 'SUCCEEDED',
+                state: gets === 1 || !reconciled ? 'COMPLETION_UNKNOWN' : 'SUCCEEDED',
               },
             }),
           );
+          return;
+        }
+        if (request.method === 'POST' && request.url === '/v1/actions/run-g3-1/reconcile') {
+          reconciled = true;
+          response.end(JSON.stringify({ accepted: true }));
           return;
         }
         if (request.method === 'GET' && request.url === '/v1/actions/run-g3-1/evidence') {
@@ -179,6 +246,7 @@ describe('G3 Gateway HTTP campaign', () => {
             'POST /v1/actions',
             'POST /v1/actions/run-g3-1/approve',
             'GET /v1/actions/run-g3-1',
+            'POST /v1/actions/run-g3-1/reconcile',
             'GET /v1/actions/run-g3-1',
             'GET /v1/actions/run-g3-1/evidence',
           ],

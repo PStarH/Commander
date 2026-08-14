@@ -1,5 +1,5 @@
 #!/usr/bin/env tsx
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, type JsonWebKeyInput } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -112,6 +112,27 @@ function gatewayOrigin(raw: string): string {
   return url.origin;
 }
 
+function hasUsableEvidenceJwk(jwks: EvidenceJwks): boolean {
+  return jwks.keys.some((candidate) => {
+    if (
+      candidate.kty !== 'OKP' ||
+      candidate.crv !== 'Ed25519' ||
+      typeof candidate.kid !== 'string' ||
+      !candidate.kid ||
+      typeof candidate.x !== 'string' ||
+      !candidate.x
+    ) {
+      return false;
+    }
+    try {
+      createPublicKey({ key: candidate, format: 'jwk' } as JsonWebKeyInput);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+}
+
 function assertOptions(options: GatewayCampaignOptions): string {
   const origin = gatewayOrigin(nonEmpty('G3_GATEWAY_URL', options.gatewayUrl));
   nonEmpty('G3_SUBMIT_BEARER_TOKEN', options.submitBearerToken);
@@ -128,7 +149,11 @@ function assertOptions(options: GatewayCampaignOptions): string {
   if (!/^[a-f0-9]{40}$/i.test(options.sourceSha)) throw new Error('G3_SOURCE_SHA_INVALID');
   if (!/^sha256:[a-f0-9]{64}$/.test(options.imageDigest))
     throw new Error('G3_IMAGE_DIGEST_INVALID');
-  if (!options.evidenceJwks || !Array.isArray(options.evidenceJwks.keys)) {
+  if (
+    !options.evidenceJwks ||
+    !Array.isArray(options.evidenceJwks.keys) ||
+    !hasUsableEvidenceJwk(options.evidenceJwks)
+  ) {
     throw new Error('G3_EVIDENCE_JWKS_INVALID');
   }
   return origin;
@@ -230,6 +255,13 @@ export async function runGatewayCampaign(
     if (!state) throw new Error('G3_GATEWAY_ACTION_STATE_INVALID');
     states.push(state);
     observedCompletionUnknown ||= state === 'COMPLETION_UNKNOWN';
+    if (state === 'COMPLETION_UNKNOWN') {
+      await requestJson(
+        'POST',
+        `${origin}/v1/actions/${encodeURIComponent(submitted.runId)}/reconcile`,
+        options.submitBearerToken,
+      );
+    }
     if (observedCompletionUnknown && TERMINAL_STATES.has(state)) break;
     await sleep(options.pollIntervalMs ?? 1_000);
   }
