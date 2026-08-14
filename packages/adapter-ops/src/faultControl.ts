@@ -31,6 +31,7 @@ export interface FaultControlCommand {
 }
 
 export interface FaultControlRuntime {
+  tenantId: string;
   audience: string;
   sourceCommit: string;
   imageDigest: string;
@@ -313,6 +314,7 @@ export class CampaignFaultControlHandler {
   private runtimeAllows(command: FaultControlCommand): boolean {
     return (
       !this.options.runtime.sourceDirty &&
+      command.tenantId === this.options.runtime.tenantId &&
       command.audience === this.options.runtime.audience &&
       command.sourceCommit === this.options.runtime.sourceCommit &&
       command.imageDigest === this.options.runtime.imageDigest &&
@@ -347,6 +349,7 @@ export class CampaignFaultControlHandler {
       stepId: command.effectId,
       at: this.clock().toISOString(),
       details: {
+        cellTenantId: this.options.runtime.tenantId,
         campaignId: command.campaignId,
         provider: command.provider,
         destinationHash: command.destinationHash,

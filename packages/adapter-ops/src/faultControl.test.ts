@@ -76,15 +76,18 @@ function signedCapability(
 function fixture(input = command()) {
   const { token, verifier } = signedCapability(input);
   const audits: string[] = [];
+  const auditDetails: Array<Record<string, unknown>> = [];
   const calls: string[] = [];
   const handler = new CampaignFaultControlHandler({
     capability: verifier,
     audit: {
       append: async (event) => {
         audits.push(event.type);
+        auditDetails.push(event.details);
       },
     },
     runtime: {
+      tenantId: 'tenant-a',
       audience,
       sourceCommit: commit,
       imageDigest,
@@ -104,7 +107,7 @@ function fixture(input = command()) {
     },
     clock: () => new Date('2030-01-01T00:00:00.000Z'),
   });
-  return { handler, input, token, audits, calls };
+  return { handler, input, token, audits, auditDetails, calls };
 }
 
 describe('CampaignFaultControlHandler', () => {
@@ -137,6 +140,18 @@ describe('CampaignFaultControlHandler', () => {
 
   it('rejects a capability for a stale adapter-ops worker generation', async () => {
     const input = command({ workerGeneration: 2 });
+    const { handler, token, audits, auditDetails, calls } = fixture(input);
+
+    const result = await handler.handle({ token, command: input });
+
+    assert.deepEqual(result, { accepted: false, code: 'FAULT_CONTROL_RUNTIME_DENIED' });
+    assert.deepEqual(calls, []);
+    assert.deepEqual(audits, ['fault_control.rejected']);
+    assert.equal(auditDetails[0]?.cellTenantId, 'tenant-a');
+  });
+
+  it('rejects a valid foreign-tenant capability before arming this cell destination', async () => {
+    const input = command({ tenantId: 'tenant-b' });
     const { handler, token, audits, calls } = fixture(input);
 
     const result = await handler.handle({ token, command: input });
@@ -153,6 +168,7 @@ describe('CampaignFaultControlHandler', () => {
       capability: foreignCapability.verifier,
       audit: { append: async (event) => audits.push(event.type) },
       runtime: {
+        tenantId: 'tenant-a',
         audience,
         sourceCommit: commit,
         imageDigest,
@@ -183,6 +199,7 @@ describe('CampaignFaultControlHandler', () => {
       capability: timeoutCapability.verifier,
       audit: { append: async (event) => audits.push(event.type) },
       runtime: {
+        tenantId: 'tenant-a',
         audience,
         sourceCommit: commit,
         imageDigest,
@@ -221,6 +238,7 @@ describe('CampaignFaultControlHandler', () => {
       capability: cleanupCapability.verifier,
       audit: { append: async (event) => audits.push(event.type) },
       runtime: {
+        tenantId: 'tenant-a',
         audience,
         sourceCommit: commit,
         imageDigest,
@@ -258,6 +276,7 @@ describe('CampaignFaultControlHandler', () => {
       capability: capability.verifier,
       audit: { append: async (event) => audits.push(event.type) },
       runtime: {
+        tenantId: 'tenant-a',
         audience,
         sourceCommit: commit,
         imageDigest,
