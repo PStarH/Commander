@@ -36,6 +36,7 @@ jobs:
           mkdir -p "$report_dir"
           : > "$events"
 
+          pnpm --filter @commander/contracts build
           pnpm --filter @commander/effect-broker build
           node -e '
             const test = require("./packages/kernel/package.json").scripts.test;
