@@ -38,6 +38,16 @@ import type { EvidenceRepository } from './evidenceRepository.js';
 
 export type { KillSwitchMatchDims } from './types.js';
 
+/** Narrow append-only audit record for a governed fault-control campaign. */
+export interface FaultControlAuditRecord {
+  tenantId: string;
+  runId: string;
+  effectId: string;
+  type: string;
+  actor: string;
+  payload: Record<string, unknown>;
+}
+
 /**
  * The only persistence boundary used by the execution kernel.
  *
@@ -132,6 +142,8 @@ export interface KernelRepository extends EvidenceRepository {
     tenantId?: string,
   ): Promise<boolean>;
   listEvents(runId: string, tenantId: string): Promise<KernelEvent[]>;
+  /** Persist a fault-control admission/outcome event and its transactional outbox record. */
+  appendFaultControlAudit(record: FaultControlAuditRecord): Promise<void>;
   /** Effect ledger rows for a run (commander_effects). */
   listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]>;
 

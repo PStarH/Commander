@@ -25,6 +25,16 @@ export interface KubernetesCredentials {
 export interface KubernetesDeploymentRollbackAdapterOptions {
   credentials: AdapterCredentialProvider;
   fetch?: FetchFn;
+  /**
+   * Narrow post-commit hook used by the governed fault-control boundary.
+   * It runs only after this adapter receives a successful Deployment PATCH.
+   */
+  afterPatchResponse?: (input: {
+    tenantId: string;
+    effectId: string;
+    idempotencyKey: string;
+    destination: string;
+  }) => Promise<void>;
 }
 
 interface Destination {
@@ -292,6 +302,12 @@ export function createKubernetesDeploymentRollbackAdapter(
       signal: input.signal,
     });
     await assertOkResponse(response, 'Kubernetes deployment rollback');
+    await options.afterPatchResponse?.({
+      tenantId: input.tenantId,
+      effectId: input.effectId,
+      idempotencyKey: input.idempotencyKey,
+      destination: input.destination,
+    });
     const deployment = await readJsonResponse<Record<string, unknown>>(response);
     return {
       deployment: destination.name,
