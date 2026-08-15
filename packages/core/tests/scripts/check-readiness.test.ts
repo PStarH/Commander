@@ -126,7 +126,12 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(
+      MOCK_BASELINES_DIR,
+      'tenant-concurrency.',
+      'required',
+      CURRENT,
+    );
     expect(result.passed).toBe(true);
     expect(result.reason).toBeUndefined();
   });
@@ -142,7 +147,12 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(
+      MOCK_BASELINES_DIR,
+      'tenant-concurrency.',
+      'required',
+      CURRENT,
+    );
     expect(result.passed).toBe(false);
     expect(result.reason).toContain('does not count toward required readiness');
   });
@@ -183,7 +193,12 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(
+      MOCK_BASELINES_DIR,
+      'tenant-concurrency.',
+      'required',
+      CURRENT,
+    );
     expect(result.passed).toBe(false);
     expect(result.reason).toContain('errors > 0');
   });
@@ -203,7 +218,12 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(
+      MOCK_BASELINES_DIR,
+      'tenant-concurrency.',
+      'required',
+      CURRENT,
+    );
     expect(result.passed).toBe(false);
     expect(result.reason).toContain('summary.passed is not true');
   });
@@ -228,7 +248,12 @@ describe('checkBaselineFile', () => {
       ],
     });
 
-    const result = checkBaselineFile(MOCK_BASELINES_DIR, 'tenant-concurrency.', 'required', CURRENT);
+    const result = checkBaselineFile(
+      MOCK_BASELINES_DIR,
+      'tenant-concurrency.',
+      'required',
+      CURRENT,
+    );
     expect(result.passed).toBe(false);
     expect(result.evidencePath).toContain('tenant-concurrency.2026-07-13.json');
   });

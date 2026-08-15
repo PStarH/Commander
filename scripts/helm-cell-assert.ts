@@ -37,7 +37,7 @@ function parseArgs(): { file: string | null; profile: HelmCellProfile; stdin: bo
   const fileIdx = args.indexOf('--file');
   const profileIdx = args.indexOf('--profile');
   return {
-    file: fileIdx >= 0 ? args[fileIdx + 1] ?? null : null,
+    file: fileIdx >= 0 ? (args[fileIdx + 1] ?? null) : null,
     profile: (profileIdx >= 0 ? args[profileIdx + 1] : 'demo') as HelmCellProfile,
     stdin: !process.stdin.isTTY && fileIdx < 0,
   };
@@ -51,8 +51,9 @@ export function loadYamlDocuments(yaml: string): K8sDoc[] {
     .map((chunk) => {
       try {
         const kind = chunk.match(/^kind:\s*(\S+)/m)?.[1];
-        const name = chunk.match(/^metadata:\s*\n\s*name:\s*(.+)$/m)?.[1]?.trim()
-          ?? chunk.match(/^  name:\s*(.+)$/m)?.[1]?.trim();
+        const name =
+          chunk.match(/^metadata:\s*\n\s*name:\s*(.+)$/m)?.[1]?.trim() ??
+          chunk.match(/^  name:\s*(.+)$/m)?.[1]?.trim();
         const annotations: Record<string, string> = {};
         const hook = chunk.match(/helm\.sh\/hook:\s*(.+)$/m)?.[1]?.trim();
         if (hook) annotations['helm.sh/hook'] = hook;
@@ -132,7 +133,11 @@ function findPostgresStatefulSetRaw(docs: K8sDoc[]): string {
 
 function findDatabaseInitConfigMapRaw(docs: K8sDoc[]): string {
   for (const doc of docs) {
-    if (doc.kind === 'ConfigMap' && doc._raw && /database-init|01-commander-roles\.sh/.test(doc._raw)) {
+    if (
+      doc.kind === 'ConfigMap' &&
+      doc._raw &&
+      /database-init|01-commander-roles\.sh/.test(doc._raw)
+    ) {
       return doc._raw;
     }
   }
@@ -143,10 +148,10 @@ function findDatabaseSecretRaw(docs: K8sDoc[]): string {
   for (const doc of docs) {
     if (doc.kind !== 'Secret' || !doc._raw) continue;
     if (
-      /owner-url:/.test(doc._raw)
-      && /app-url:/.test(doc._raw)
-      && /scheduler-url:/.test(doc._raw)
-      && /worker-url:/.test(doc._raw)
+      /owner-url:/.test(doc._raw) &&
+      /app-url:/.test(doc._raw) &&
+      /scheduler-url:/.test(doc._raw) &&
+      /worker-url:/.test(doc._raw)
     ) {
       return doc._raw;
     }
@@ -244,10 +249,7 @@ function assertCapabilityAuthorityMounts(
         'H17: enterprise must not render chart-generated capability Secret (jwks-json)',
       );
     }
-    assert.ok(
-      !/BEGIN PRIVATE KEY/.test(raw),
-      'H17: enterprise render must not embed literal PEM',
-    );
+    assert.ok(!/BEGIN PRIVATE KEY/.test(raw), 'H17: enterprise render must not embed literal PEM');
     // Worker/adapter must ref operator secret name from values-enterprise.
     for (const component of CAPABILITY_COMPONENTS) {
       const deployRaw = deployByComponent.get(component) ?? '';
@@ -262,7 +264,11 @@ function assertCapabilityAuthorityMounts(
   if (profile === 'demo') {
     // Fixed DEV keypair is demo-gated; Secret must carry not-for-production annotations.
     const capSecret = docs.find(
-      (d) => d.kind === 'Secret' && d._raw && /private-key-pem:/.test(d._raw) && /jwks-json:/.test(d._raw),
+      (d) =>
+        d.kind === 'Secret' &&
+        d._raw &&
+        /private-key-pem:/.test(d._raw) &&
+        /jwks-json:/.test(d._raw),
     );
     assert.ok(capSecret?._raw, 'H17: demo must render capability Secret with PEM/JWKS');
     assert.match(
@@ -301,9 +307,17 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
       component === 'migration' ? migrationRaw : (deployByComponent.get(component) ?? '');
     assert.ok(componentRaw, `H12: ${component} manifest missing for DSN key check`);
     const key = extractKernelDatabaseSecretKey(componentRaw);
-    assert.equal(key, expectedKey, `H12: ${component} must use secret key ${expectedKey}, got ${key}`);
+    assert.equal(
+      key,
+      expectedKey,
+      `H12: ${component} must use secret key ${expectedKey}, got ${key}`,
+    );
     const prior = seenKeys.get(key);
-    if (prior && prior !== component && !(key === 'worker-url' && (component === 'worker' || component === 'adapter-ops'))) {
+    if (
+      prior &&
+      prior !== component &&
+      !(key === 'worker-url' && (component === 'worker' || component === 'adapter-ops'))
+    ) {
       // worker and adapter-ops intentionally share worker-url
     }
     seenKeys.set(key, component);
@@ -323,7 +337,10 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
     const deployRaw = deployByComponent.get(component) ?? '';
     const key = extractKernelDatabaseSecretKey(deployRaw);
     assert.notEqual(key, 'owner-url', `H13: runtime ${component} must not use owner-url`);
-    assert.ok(!/key:\s*["']?owner-url["']?/.test(deployRaw), `H13: runtime ${component} must not reference owner-url`);
+    assert.ok(
+      !/key:\s*["']?owner-url["']?/.test(deployRaw),
+      `H13: runtime ${component} must not reference owner-url`,
+    );
   }
 
   // Migration alone uses owner-url (never the legacy generic "url" key)
@@ -337,9 +354,15 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
   // Worker + adapter-ops tenants: never empty / never '*'
   const workerRaw = deployByComponent.get('worker') ?? '';
   const tenants = extractWorkerTenants(workerRaw);
-  assert.ok(tenants && tenants.length > 0, 'H14: worker COMMANDER_WORKER_TENANTS must be non-empty');
+  assert.ok(
+    tenants && tenants.length > 0,
+    'H14: worker COMMANDER_WORKER_TENANTS must be non-empty',
+  );
   assert.notEqual(tenants, '*', 'H14: COMMANDER_WORKER_TENANTS must not be *');
-  assert.ok(!/COMMANDER_WORKER_TENANTS[\s\S]*?value:\s*["']?\*/.test(workerRaw), 'H14: no WORKER_TENANTS=*');
+  assert.ok(
+    !/COMMANDER_WORKER_TENANTS[\s\S]*?value:\s*["']?\*/.test(workerRaw),
+    'H14: no WORKER_TENANTS=*',
+  );
   if (profile === 'demo') {
     assert.equal(tenants, 'local', 'H14: demo worker tenants must be local');
   }
@@ -420,15 +443,32 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
     const initCm = findDatabaseInitConfigMapRaw(docs);
     assert.ok(initCm, 'H15: demo must render database-init ConfigMap');
     const createRoleLogin = initCm.match(/CREATE ROLE \w+ WITH LOGIN/g) ?? [];
-    assert.equal(createRoleLogin.length, 4, `H15: expected 4 CREATE ROLE ... LOGIN, got ${createRoleLogin.length}`);
-    for (const role of ['commander_owner', 'commander_app', 'commander_scheduler', 'commander_worker']) {
-      assert.match(initCm, new RegExp(`CREATE ROLE ${role} WITH LOGIN`), `H15: missing CREATE ROLE ${role} LOGIN`);
+    assert.equal(
+      createRoleLogin.length,
+      4,
+      `H15: expected 4 CREATE ROLE ... LOGIN, got ${createRoleLogin.length}`,
+    );
+    for (const role of [
+      'commander_owner',
+      'commander_app',
+      'commander_scheduler',
+      'commander_worker',
+    ]) {
+      assert.match(
+        initCm,
+        new RegExp(`CREATE ROLE ${role} WITH LOGIN`),
+        `H15: missing CREATE ROLE ${role} LOGIN`,
+      );
     }
 
     // StatefulSet mounts init under /docker-entrypoint-initdb.d and sources password secrets
     const sts = findPostgresStatefulSetRaw(docs);
     assert.ok(sts, 'H15: demo Postgres StatefulSet missing');
-    assert.match(sts, /mountPath:\s*\/docker-entrypoint-initdb\.d/, 'H15: init mount /docker-entrypoint-initdb.d required');
+    assert.match(
+      sts,
+      /mountPath:\s*\/docker-entrypoint-initdb\.d/,
+      'H15: init mount /docker-entrypoint-initdb.d required',
+    );
     assert.match(sts, /name:\s*database-init/, 'H15: database-init volume required');
     for (const env of [
       'COMMANDER_OWNER_PASSWORD',
@@ -439,7 +479,11 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
       assert.match(sts, new RegExp(`name:\\s*${env}`), `H15: StatefulSet must inject ${env}`);
     }
     for (const key of ['owner-password', 'app-password', 'scheduler-password', 'worker-password']) {
-      assert.match(sts, new RegExp(`key:\\s*${key}`), `H15: StatefulSet must ref secret key ${key}`);
+      assert.match(
+        sts,
+        new RegExp(`key:\\s*${key}`),
+        `H15: StatefulSet must ref secret key ${key}`,
+      );
     }
 
     // Generated Secret has four DSN keys + passwords
@@ -453,14 +497,36 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
     }
 
     // Init script references password env vars (sourced from Secret via STS)
-    assert.match(initCm, /COMMANDER_OWNER_PASSWORD/, 'H15: init must reference COMMANDER_OWNER_PASSWORD');
-    assert.match(initCm, /COMMANDER_APP_PASSWORD/, 'H15: init must reference COMMANDER_APP_PASSWORD');
-    assert.match(initCm, /COMMANDER_SCHEDULER_PASSWORD/, 'H15: init must reference COMMANDER_SCHEDULER_PASSWORD');
-    assert.match(initCm, /COMMANDER_WORKER_PASSWORD/, 'H15: init must reference COMMANDER_WORKER_PASSWORD');
+    assert.match(
+      initCm,
+      /COMMANDER_OWNER_PASSWORD/,
+      'H15: init must reference COMMANDER_OWNER_PASSWORD',
+    );
+    assert.match(
+      initCm,
+      /COMMANDER_APP_PASSWORD/,
+      'H15: init must reference COMMANDER_APP_PASSWORD',
+    );
+    assert.match(
+      initCm,
+      /COMMANDER_SCHEDULER_PASSWORD/,
+      'H15: init must reference COMMANDER_SCHEDULER_PASSWORD',
+    );
+    assert.match(
+      initCm,
+      /COMMANDER_WORKER_PASSWORD/,
+      'H15: init must reference COMMANDER_WORKER_PASSWORD',
+    );
   } else {
     // Enterprise: no bundled init / no generated four-DSN secret from chart
-    assert.ok(!findDatabaseInitConfigMapRaw(docs), 'H15: enterprise must not render database-init ConfigMap');
-    assert.ok(!findPostgresStatefulSetRaw(docs), 'H15: enterprise must not render Postgres StatefulSet');
+    assert.ok(
+      !findDatabaseInitConfigMapRaw(docs),
+      'H15: enterprise must not render database-init ConfigMap',
+    );
+    assert.ok(
+      !findPostgresStatefulSetRaw(docs),
+      'H15: enterprise must not render Postgres StatefulSet',
+    );
     // Operator-supplied Secret is external — rendered workloads must still pin all four DSN keys.
     for (const key of ['owner-url', 'app-url', 'scheduler-url', 'worker-url']) {
       assert.match(
@@ -472,10 +538,17 @@ function assertRoleDsnSeparation(docs: K8sDoc[], profile: HelmCellProfile, raw: 
   }
 
   // Sanity: rendered yaml never ships WORKER_TENANTS=*
-  assert.ok(!/COMMANDER_WORKER_TENANTS[\s\S]{0,80}value:\s*["']?\*/.test(raw), 'H14: rendered yaml must not contain WORKER_TENANTS=*');
+  assert.ok(
+    !/COMMANDER_WORKER_TENANTS[\s\S]{0,80}value:\s*["']?\*/.test(raw),
+    'H14: rendered yaml must not contain WORKER_TENANTS=*',
+  );
 }
 
-export function assertHelmCellTopology(docs: K8sDoc[], profile: HelmCellProfile, yaml?: string): void {
+export function assertHelmCellTopology(
+  docs: K8sDoc[],
+  profile: HelmCellProfile,
+  yaml?: string,
+): void {
   const raw = yaml ?? docs.map((d) => d._raw ?? '').join('\n---\n');
   const deployments = docs.filter((d) => d.kind === 'Deployment');
   const deployByComponent = indexDeploymentsByComponent(docs);
@@ -486,7 +559,11 @@ export function assertHelmCellTopology(docs: K8sDoc[], profile: HelmCellProfile,
   }
   const cellDeployCount = CELL_COMPONENTS.filter((c) => deployByComponent.has(c)).length;
   assert.equal(cellDeployCount, CELL_COMPONENTS.length, 'H1: expected four cell Deployments');
-  assert.equal(deployments.length, cellDeployCount, `H1: unexpected extra Deployments (got ${deployments.length})`);
+  assert.equal(
+    deployments.length,
+    cellDeployCount,
+    `H1: unexpected extra Deployments (got ${deployments.length})`,
+  );
 
   // H2
   assert.ok(!deployByComponent.has('sandboxd'), 'H2: sandboxd Deployment must not exist');
@@ -506,7 +583,10 @@ export function assertHelmCellTopology(docs: K8sDoc[], profile: HelmCellProfile,
   assert.ok(raw.includes('drop:') && raw.includes('ALL'), 'H5: capabilities.drop ALL required');
 
   // H6
-  assert.ok(/automountServiceAccountToken:\s*false/.test(raw), 'H6: automountServiceAccountToken false');
+  assert.ok(
+    /automountServiceAccountToken:\s*false/.test(raw),
+    'H6: automountServiceAccountToken false',
+  );
 
   // H7
   assert.ok(/post-install,post-upgrade/.test(raw), 'H7: migration post-install/post-upgrade hook');
@@ -514,7 +594,10 @@ export function assertHelmCellTopology(docs: K8sDoc[], profile: HelmCellProfile,
   // H8
   assert.ok(!/password:\s*commander/.test(raw), 'H8: no default password commander');
   assert.ok(!/value:\s*worker-token/.test(raw), 'H8: no plaintext worker-token env');
-  assert.ok(!/COMMANDER_WORKER_AUTH_TOKEN:\s*worker-token/.test(raw), 'H8: no default worker token');
+  assert.ok(
+    !/COMMANDER_WORKER_AUTH_TOKEN:\s*worker-token/.test(raw),
+    'H8: no default worker token',
+  );
 
   // H9
   if (raw.includes('default-deny')) {

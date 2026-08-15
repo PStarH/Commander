@@ -56,8 +56,8 @@ function makeRunCommand(tenantId: string) {
 
 // ─── RATE-1: 10x burst from A does not affect B's p95/p99 ──────────────
 
-describe('WS9 RATE-1: A\'s 10x burst does not affect B\'s p95/p99', () => {
-  it('per-tenant semaphore isolates A\'s burst from B\'s latency', async () => {
+describe("WS9 RATE-1: A's 10x burst does not affect B's p95/p99", () => {
+  it("per-tenant semaphore isolates A's burst from B's latency", async () => {
     const artifacts: string[] = [];
     // 1 slot per tenant — A can saturate its own slot but B's slot is
     // independent. This is the ConcurrencyController contract.
@@ -98,10 +98,22 @@ describe('WS9 RATE-1: A\'s 10x burst does not affect B\'s p95/p99', () => {
     }
     await Promise.all(aPromises);
 
-    const baselineP95 = percentile([...baselineB].sort((a, b) => a - b), 95);
-    const burstP95 = percentile([...burstBLatency].sort((a, b) => a - b), 95);
-    const baselineP99 = percentile([...baselineB].sort((a, b) => a - b), 99);
-    const burstP99 = percentile([...burstBLatency].sort((a, b) => a - b), 99);
+    const baselineP95 = percentile(
+      [...baselineB].sort((a, b) => a - b),
+      95,
+    );
+    const burstP95 = percentile(
+      [...burstBLatency].sort((a, b) => a - b),
+      95,
+    );
+    const baselineP99 = percentile(
+      [...baselineB].sort((a, b) => a - b),
+      99,
+    );
+    const burstP99 = percentile(
+      [...burstBLatency].sort((a, b) => a - b),
+      99,
+    );
 
     // B's burst p95 must be within 3x of its baseline p95 — A's burst must
     // not starve B (spec: "fair scheduling works; B unaffected").
@@ -126,7 +138,7 @@ describe('WS9 RATE-1: A\'s 10x burst does not affect B\'s p95/p99', () => {
 
 // ─── RATE-2: A exhausts shared worker pool, B's lease claims still SLA ─
 
-describe('WS9 RATE-2: A exhausts shared worker pool, B\'s lease claims still succeed', () => {
+describe("WS9 RATE-2: A exhausts shared worker pool, B's lease claims still succeed", () => {
   it('B claims steps in SLA while A saturates the shared pool', async () => {
     const artifacts: string[] = [];
     const kernel = new InMemoryKernelRepository();
@@ -267,7 +279,12 @@ describeIf(pgReady)('WS9 RATE-3: bench-tenant-concurrency on real kernel Postgre
     }
 
     if (!fs.existsSync(outFile)) {
-      writeFail('RATE-3', `bench-tenant-concurrency did not produce baseline at ${outFile}`, artifacts, 'live');
+      writeFail(
+        'RATE-3',
+        `bench-tenant-concurrency did not produce baseline at ${outFile}`,
+        artifacts,
+        'live',
+      );
       throw new Error(`bench baseline missing: ${outFile}`);
     }
 

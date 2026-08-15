@@ -22,7 +22,11 @@ import { execFileSync, execSync } from 'node:child_process';
 import { mkdir, writeFile, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { verifyRunExists, verifyRunMissing, type DrilledRun } from '../packages/kernel/src/disasterRecovery.js';
+import {
+  verifyRunExists,
+  verifyRunMissing,
+  type DrilledRun,
+} from '../packages/kernel/src/disasterRecovery.js';
 import { createDrillRun } from '../packages/kernel/src/drillWorkload.js';
 
 export interface DsnParts {
@@ -124,7 +128,11 @@ export function computeRpoMs(cutoffAt: Date, lastCommittedAt: Date): number {
   return Math.max(0, cutoffAt.getTime() - lastCommittedAt.getTime());
 }
 
-export function queryRunCommittedAt(dsn: DsnParts, runId: string, runPsqlFn: (dsn: DsnParts, sql: string) => string): Date {
+export function queryRunCommittedAt(
+  dsn: DsnParts,
+  runId: string,
+  runPsqlFn: (dsn: DsnParts, sql: string) => string,
+): Date {
   const raw = runPsqlFn(
     dsn,
     `SELECT EXTRACT(EPOCH FROM created_at AT TIME ZONE 'UTC') * 1000 FROM commander_runs WHERE id = '${runId}'`,
@@ -178,7 +186,9 @@ function runPsql(dsn: DsnParts, sql: string): string {
 
 function tableExists(dsn: DsnParts, table: string): boolean {
   try {
-    return runPsql(dsn, `SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = '${table}');`) === 't';
+    return (
+      runPsql(dsn, `SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = '${table}');`) === 't'
+    );
   } catch {
     return false;
   }
@@ -223,10 +233,11 @@ async function main(): Promise<void> {
 
   const sourceDsn = parseDatabaseUrl(dbUrl);
   const restorePort = process.env.COMMANDER_DR_RESTORE_PORT ?? '5433';
-  const restoreDbUrl =
-    process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
+  const restoreDbUrl = process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
   const restoredDsn = parseDatabaseUrl(restoreDbUrl);
-  const redactSecrets = [sourceDsn.password, restoredDsn.password, dbUrl, restoreDbUrl].filter(Boolean);
+  const redactSecrets = [sourceDsn.password, restoredDsn.password, dbUrl, restoreDbUrl].filter(
+    Boolean,
+  );
 
   const drillId = `drill_${new Date().toISOString().replace(/[:.]/g, '-')}_${randomUUID().slice(0, 8)}`;
   const drillBackupPath = join(backupPath, drillId);
@@ -408,7 +419,8 @@ async function main(): Promise<void> {
     const completedAt = new Date();
     report.rto.actualMs = completedAt.getTime() - incidentStart.getTime();
     report.rto.passed = report.rto.actualMs <= RTO_TARGET_MS;
-    if (!report.rto.passed) failures.push(`RTO exceeded: ${report.rto.actualMs}ms > ${RTO_TARGET_MS}ms`);
+    if (!report.rto.passed)
+      failures.push(`RTO exceeded: ${report.rto.actualMs}ms > ${RTO_TARGET_MS}ms`);
 
     const cellProcessesVerified = process.env.COMMANDER_DR_CELL_VERIFY === '1';
     report.honestyLevel = resolveHonestyLevel({
@@ -425,7 +437,9 @@ async function main(): Promise<void> {
     report.completedAt = completedAt.toISOString();
 
     console.log(`\n[DR Drill ${drillId}] ${report.overall} honesty=${report.honestyLevel}`);
-    console.log(`  RPO: ${report.rpo.actualMs}ms mode=${report.rpo.mode} — ${report.rpo.passed ? 'PASS' : 'FAIL'}`);
+    console.log(
+      `  RPO: ${report.rpo.actualMs}ms mode=${report.rpo.mode} — ${report.rpo.passed ? 'PASS' : 'FAIL'}`,
+    );
     console.log(`  RTO: ${report.rto.actualMs}ms — ${report.rto.passed ? 'PASS' : 'FAIL'}`);
     if (failures.length > 0) {
       console.log('  Failures:');
@@ -465,7 +479,9 @@ function buildRedactSecrets(): string[] {
       process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
     secrets.push(restoreDbUrl);
     secrets.push(parseDatabaseUrl(restoreDbUrl).password);
-  } catch { /* ignore malformed DSN */ }
+  } catch {
+    /* ignore malformed DSN */
+  }
   return secrets.filter(Boolean);
 }
 

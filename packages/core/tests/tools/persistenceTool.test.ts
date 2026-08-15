@@ -54,13 +54,19 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
-const EXPECTED_MEMORY_DIR = path.join(process.cwd(), '.commander_memory');
+const ORIGINAL_CWD = process.cwd();
+let testRoot = '';
+let restoreCwd: (() => void) | undefined;
+
+function expectedMemoryDir(): string {
+  return path.join(process.cwd(), '.commander_memory');
+}
 
 /** Windows CI can hit ENOTEMPTY/EBUSY/EPERM while AV or node still holds files. */
 async function rmMemoryDirRetry(): Promise<void> {
   for (let i = 0; i < 16; i++) {
     try {
-      await fsp.rm(EXPECTED_MEMORY_DIR, {
+      await fsp.rm(expectedMemoryDir(), {
         recursive: true,
         force: true,
         maxRetries: 5,
@@ -76,17 +82,25 @@ async function rmMemoryDirRetry(): Promise<void> {
   // Best-effort on Windows — do not fail the suite on leftover locked files.
   if (process.platform === 'win32') {
     try {
-      await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await fsp.rm(expectedMemoryDir(), {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
     } catch {
       /* ignore */
     }
     return;
   }
-  await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true });
+  await fsp.rm(expectedMemoryDir(), { recursive: true, force: true });
 }
 
 describe('persistenceTool lazy async init contract', () => {
   beforeEach(async () => {
+    testRoot = await fsp.mkdtemp(path.join(os.tmpdir(), 'commander-persistence-tool-'));
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(testRoot);
+    restoreCwd = () => cwdSpy.mockRestore();
     await rmMemoryDirRetry();
     // Reset module cache so each test gets a fresh persistenceTool instance
     // with `ensureMemoryDirOnce = undefined`. Without this, the module-level
@@ -98,7 +112,19 @@ describe('persistenceTool lazy async init contract', () => {
   });
 
   afterEach(async () => {
-    await rmMemoryDirRetry();
+    try {
+      await rmMemoryDirRetry();
+    } finally {
+      restoreCwd?.();
+      restoreCwd = undefined;
+      await fsp.rm(testRoot, { recursive: true, force: true });
+      testRoot = '';
+    }
+  });
+
+  it('runs against an isolated memory root', () => {
+    expect(process.cwd()).toBe(testRoot);
+    expect(process.cwd()).not.toBe(ORIGINAL_CWD);
   });
 
   it('module load: importing persistenceTool does NOT mkdir for MEMORY_DIR', async () => {
@@ -106,7 +132,7 @@ describe('persistenceTool lazy async init contract', () => {
     // counting override before re-importing the module under test.
     const mkdirCallsForMemoryDir: Array<unknown[]> = [];
     vi.mocked(fsp.mkdir).mockImplementation(((p: unknown, opts: unknown) => {
-      if (p === EXPECTED_MEMORY_DIR) mkdirCallsForMemoryDir.push([p, opts]);
+      if (p === expectedMemoryDir()) mkdirCallsForMemoryDir.push([p, opts]);
       return (realRefs.mkdir as typeof fsp.mkdir)(
         p as Parameters<typeof fsp.mkdir>[0],
         opts as Parameters<typeof fsp.mkdir>[1],
@@ -116,14 +142,14 @@ describe('persistenceTool lazy async init contract', () => {
     await import('../../src/tools/persistenceTool');
 
     expect(mkdirCallsForMemoryDir).toEqual([]);
-    expect(await fsp.access(EXPECTED_MEMORY_DIR).catch(() => false)).toBe(false);
+    expect(await fsp.access(expectedMemoryDir()).catch(() => false)).toBe(false);
   });
 
   it('first execute() creates the dir lazily', async () => {
     const storeMod = await import('../../src/tools/persistenceTool');
     const storeTool = new storeMod.MemoryStoreTool();
 
-    expect(await fsp.access(EXPECTED_MEMORY_DIR).catch(() => false)).toBe(false);
+    expect(await fsp.access(expectedMemoryDir()).catch(() => false)).toBe(false);
 
     const result = await storeTool.execute({
       key: 'k1',
@@ -133,7 +159,7 @@ describe('persistenceTool lazy async init contract', () => {
     expect(result).toMatch(/^Stored "k1" in "default"/);
 
     const calls = vi.mocked(fsp.mkdir).mock.calls;
-    expect(calls.some(([p]) => p === EXPECTED_MEMORY_DIR)).toBe(true);
+    expect(calls.some(([p]) => p === expectedMemoryDir())).toBe(true);
   });
 
   it('two execute() calls share one mkdir for MEMORY_DIR (singleton lazy init)', async () => {
@@ -143,14 +169,14 @@ describe('persistenceTool lazy async init contract', () => {
     await storeTool.execute({ key: 'k2', value: 'v2' });
 
     const calls = vi.mocked(fsp.mkdir).mock.calls;
-    const memoryDirMkdirs = calls.filter(([p]) => p === EXPECTED_MEMORY_DIR);
+    const memoryDirMkdirs = calls.filter(([p]) => p === expectedMemoryDir());
     expect(memoryDirMkdirs.length).toBe(1);
   });
 
   it('mkdir failure on first call: rejection propagates + cache resets + retry succeeds', async () => {
     let memoryDirCalls = 0;
     vi.mocked(fsp.mkdir).mockImplementation(((p: unknown, opts: unknown) => {
-      if (p === EXPECTED_MEMORY_DIR) {
+      if (p === expectedMemoryDir()) {
         memoryDirCalls += 1;
         if (memoryDirCalls === 1) {
           const err = new Error(

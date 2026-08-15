@@ -60,7 +60,12 @@ export interface AuthorityProofResult {
     claimExecuteRequiresSecret: boolean;
     workerOutsideAllowlistWriteRejected: boolean;
   };
-  effect: { policyBound: boolean; actionDigestBound: boolean; actionDigestRequired: boolean; fenced: boolean };
+  effect: {
+    policyBound: boolean;
+    actionDigestBound: boolean;
+    actionDigestRequired: boolean;
+    fenced: boolean;
+  };
   capability: {
     replayRejected: boolean;
     revocationObserved: boolean;
@@ -162,7 +167,8 @@ export function finalizeResult(input: {
   }
 
   const allTrue = boolChecks.every(([, ok]) => ok);
-  const passed = allTrue && failures.length === 0 && Boolean(input.gitSha) && input.gitSha !== 'unknown';
+  const passed =
+    allTrue && failures.length === 0 && Boolean(input.gitSha) && input.gitSha !== 'unknown';
 
   return {
     gitSha: input.gitSha,
@@ -280,7 +286,12 @@ function falseFlags(): AuthorityProofFlags {
       claimExecuteRequiresSecret: false,
       workerOutsideAllowlistWriteRejected: false,
     },
-    effect: { policyBound: false, actionDigestBound: false, actionDigestRequired: false, fenced: false },
+    effect: {
+      policyBound: false,
+      actionDigestBound: false,
+      actionDigestRequired: false,
+      fenced: false,
+    },
     capability: {
       replayRejected: false,
       revocationObserved: false,
@@ -369,7 +380,9 @@ async function checkRolesSeparated(input: {
   const client = await appPool.connect();
   try {
     await client.query(`SELECT set_config('app.tenant_scope', $1, false)`, [tenantA]);
-    const leaked = await client.query(`SELECT id FROM commander_runs WHERE tenant_id=$1`, [tenantB]);
+    const leaked = await client.query(`SELECT id FROM commander_runs WHERE tenant_id=$1`, [
+      tenantB,
+    ]);
     if (leaked.rows.length > 0) {
       ok = false;
       failures.push('rolesSeparated: app role leaked cross-tenant rows');
@@ -377,7 +390,9 @@ async function checkRolesSeparated(input: {
   } finally {
     try {
       await client.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     client.release();
   }
 
@@ -521,7 +536,9 @@ async function checkEffectBindings(input: {
       actor: workerId,
     });
     if (!admitted.admitted) {
-      failures.push(`effect: initial admit failed (${'reason' in admitted ? admitted.reason : 'unknown'})`);
+      failures.push(
+        `effect: initial admit failed (${'reason' in admitted ? admitted.reason : 'unknown'})`,
+      );
       return { policyBound, actionDigestBound, actionDigestRequired, fenced };
     }
 
@@ -707,7 +724,10 @@ async function checkEffectBindings(input: {
         }),
       },
       {
-        admitEffect: async () => ({ admitted: true, effect: { id: 'e-digest', state: 'ADMITTED' } }),
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'e-digest', state: 'ADMITTED' },
+        }),
         completeEffect: async () => ({}),
       },
       { execute: async () => ({ ok: true }) },
@@ -761,7 +781,9 @@ async function checkEffectBindings(input: {
       );
     }
   } finally {
-    await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [workerId]);
+    await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+      workerId,
+    ]);
     await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
   }
 
@@ -896,7 +918,9 @@ async function checkCapability(input: {
   let rotatedAwayRejected = false;
   try {
     await authBOnly.verifier.verify(tokenSignedByA);
-    failures.push('capability.rotationObserved: rotated-away kid A still verified under B-only JWKS');
+    failures.push(
+      'capability.rotationObserved: rotated-away kid A still verified under B-only JWKS',
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (/Unknown capability token key id|unknown.*kid|key id/i.test(msg)) {
@@ -1067,9 +1091,7 @@ async function checkWorkerDsnThreat(input: {
       const workerHasSecretExec = secretOverloads.some((r) => r.worker_exec);
       const workerHasStaleExec = staleOverloads.some((r) => r.worker_exec);
       if (!workerHasSecretExec) {
-        failures.push(
-          `database.claimExecuteRequiresSecret: worker missing EXECUTE on ${label}`,
-        );
+        failures.push(`database.claimExecuteRequiresSecret: worker missing EXECUTE on ${label}`);
         return false;
       }
       if (workerHasStaleExec) {
@@ -1095,10 +1117,7 @@ async function checkWorkerDsnThreat(input: {
       );
       // text,bigint,integer,timestamptz,integer,text
       return (
-        types.length === 6 &&
-        types[0] === 'text' &&
-        types[1] === 'bigint' &&
-        types[5] === 'text'
+        types.length === 6 && types[0] === 'text' && types[1] === 'bigint' && types[5] === 'text'
       );
     };
     const outboxSecret = (args: string): boolean => {
@@ -1107,10 +1126,16 @@ async function checkWorkerDsnThreat(input: {
         m[1]!.toLowerCase(),
       );
       // text,bigint,text,integer,timestamptz,text
-      return types.length === 6 && types[0] === 'text' && types[2] === 'text' && types[5] === 'text';
+      return (
+        types.length === 6 && types[0] === 'text' && types[2] === 'text' && types[5] === 'text'
+      );
     };
 
-    const okNext = await checkClaimExec('claim_next_step', nextStepSecret, 'claim_next_step with p_claim_secret');
+    const okNext = await checkClaimExec(
+      'claim_next_step',
+      nextStepSecret,
+      'claim_next_step with p_claim_secret',
+    );
     const okReconcile = await checkClaimExec(
       'claim_reconcile_effects',
       reconcileSecret,
@@ -1145,7 +1170,9 @@ async function checkWorkerDsnThreat(input: {
     }
     try {
       await wClient.query('SELECT secret_hash FROM commander_worker_claim_secrets LIMIT 1');
-      failures.push('database.peerClaimWithoutSecretRejected: worker SELECT claim_secrets unexpectedly succeeded');
+      failures.push(
+        'database.peerClaimWithoutSecretRejected: worker SELECT claim_secrets unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (!/permission denied/i.test(msg)) {
@@ -1155,7 +1182,9 @@ async function checkWorkerDsnThreat(input: {
   } finally {
     try {
       await wClient.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     wClient.release();
   }
   const updateId = `proof-upd-${randomUUID().slice(0, 8)}`;
@@ -1168,10 +1197,10 @@ async function checkWorkerDsnThreat(input: {
   try {
     await updClient.query(`SELECT set_config('app.tenant_scope', $1, false)`, [allowedTenant]);
     try {
-      await updClient.query(
-        `UPDATE commander_workers SET tenant_ids = $1::jsonb WHERE id = $2`,
-        [JSON.stringify([allowedTenant, 'victim-widen']), updateId],
-      );
+      await updClient.query(`UPDATE commander_workers SET tenant_ids = $1::jsonb WHERE id = $2`, [
+        JSON.stringify([allowedTenant, 'victim-widen']),
+        updateId,
+      ]);
       failures.push('database.workerDirectUpdateRejected: UPDATE unexpectedly succeeded');
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -1181,7 +1210,9 @@ async function checkWorkerDsnThreat(input: {
   } finally {
     try {
       await updClient.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     updClient.release();
   }
 
@@ -1203,7 +1234,9 @@ async function checkWorkerDsnThreat(input: {
         `DELETE FROM commander_capability_revocations WHERE tenant_id = $1 AND jti = $2`,
         [allowedTenant, revokeJti],
       );
-      failures.push('database.workerRevocationDeleteRejected: DELETE revocations unexpectedly succeeded');
+      failures.push(
+        'database.workerRevocationDeleteRejected: DELETE revocations unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/permission denied/i.test(msg)) revokeDeleteDenied = true;
@@ -1211,16 +1244,21 @@ async function checkWorkerDsnThreat(input: {
     }
     try {
       await delClient.query(`DELETE FROM commander_outbox WHERE tenant_id = $1`, [allowedTenant]);
-      failures.push('database.workerRevocationDeleteRejected: DELETE outbox unexpectedly succeeded');
+      failures.push(
+        'database.workerRevocationDeleteRejected: DELETE outbox unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/permission denied/i.test(msg)) outboxDeleteDenied = true;
-      else failures.push(`database.workerRevocationDeleteRejected: outbox unexpected error: ${msg}`);
+      else
+        failures.push(`database.workerRevocationDeleteRejected: outbox unexpected error: ${msg}`);
     }
   } finally {
     try {
       await delClient.query(`SELECT set_config('app.tenant_scope', '', false)`);
-    } catch { /* best-effort pool hygiene */ }
+    } catch {
+      /* best-effort pool hygiene */
+    }
     delClient.release();
   }
   if (revokeDeleteDenied && outboxDeleteDenied) {
@@ -1374,7 +1412,11 @@ async function checkWorkerDsnThreat(input: {
       );
       await outsideClient.query('COMMIT');
     } catch (err) {
-      try { await outsideClient.query('ROLLBACK'); } catch { /* ignore */ }
+      try {
+        await outsideClient.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
       const msg = err instanceof Error ? err.message : String(err);
       if (/row-level security|permission denied/i.test(msg)) {
         workerOutsideAllowlistWriteRejected = true;
@@ -1396,7 +1438,9 @@ async function checkWorkerDsnThreat(input: {
          )`,
         [victimId, JSON.stringify(['victim-not-allowed'])],
       );
-      failures.push('database.workerCrossTenantRegisterRejected: register_worker unexpectedly succeeded');
+      failures.push(
+        'database.workerCrossTenantRegisterRejected: register_worker unexpectedly succeeded',
+      );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       if (/WORKER_TENANT_NOT_ALLOWED/i.test(msg)) workerCrossTenantRegisterRejected = true;
@@ -1416,7 +1460,9 @@ async function checkWorkerDsnThreat(input: {
   );
   const hijackPool = new Pool({ connectionString: workerUrl, max: 1 });
   try {
-    const first = await hijackPool.query<{ register_worker: { claim_secret?: string; generation?: number } }>(
+    const first = await hijackPool.query<{
+      register_worker: { claim_secret?: string; generation?: number };
+    }>(
       `SELECT register_worker(
          $1::text, 'agent', 'v1', '["agent"]'::jsonb, '{}'::jsonb, 1, $1::text, $2::jsonb, NULL
        ) AS register_worker`,
@@ -1424,7 +1470,9 @@ async function checkWorkerDsnThreat(input: {
     );
     const firstSecret = first.rows[0]?.register_worker?.claim_secret;
     if (!firstSecret) {
-      failures.push('database.workerIdentityTakeoverRejected: initial register_worker returned no secret');
+      failures.push(
+        'database.workerIdentityTakeoverRejected: initial register_worker returned no secret',
+      );
     } else {
       try {
         await hijackPool.query(
@@ -1445,7 +1493,9 @@ async function checkWorkerDsnThreat(input: {
             [hijackId],
           );
           if (drained.rows[0]?.drain_worker === true) {
-            failures.push('database.workerIdentityTakeoverRejected: drain_worker without secret succeeded');
+            failures.push(
+              'database.workerIdentityTakeoverRejected: drain_worker without secret succeeded',
+            );
           } else {
             workerIdentityTakeoverRejected = true;
           }
@@ -1458,9 +1508,10 @@ async function checkWorkerDsnThreat(input: {
     await hijackPool.end();
   }
 
-  await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])', [
-    [directId, victimId, peerId, updateId, hijackId],
-  ]);
+  await ownerPool.query(
+    'DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])',
+    [[directId, victimId, peerId, updateId, hijackId]],
+  );
   await ownerPool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
     [directId, victimId, peerId, updateId, hijackId],
   ]);

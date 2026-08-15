@@ -269,9 +269,11 @@ describe('AgentRuntime', () => {
       const statuses = [a, b, c].map((x) => x.status);
       expect(statuses.filter((s) => s === 'success')).toHaveLength(1);
       expect(statuses.filter((s) => s === 'failed')).toHaveLength(2);
-      expect([a, b, c].filter((x) => x.status === 'failed').every((x) =>
-        String(x.error ?? '').includes('CONCURRENT_EXECUTE_REJECTED'),
-      )).toBe(true);
+      expect(
+        [a, b, c]
+          .filter((x) => x.status === 'failed')
+          .every((x) => String(x.error ?? '').includes('CONCURRENT_EXECUTE_REJECTED')),
+      ).toBe(true);
       expect(callCount).toBe(1);
     });
 

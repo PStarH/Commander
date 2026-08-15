@@ -52,8 +52,8 @@ class StubEventPublisher implements EventPublisher {
   private failN = 0;
   private failCount = 0;
   private failMatcher:
-    | ((msg: { topic: string; key: string; payload: Record<string, unknown> }) => boolean)
-    | null = null;
+    ((msg: { topic: string; key: string; payload: Record<string, unknown> }) => boolean) | null =
+    null;
 
   /** Fail the next N publish() calls regardless of message. */
   failNext(n: number): void {

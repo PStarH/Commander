@@ -78,8 +78,10 @@ function walk(dir: string, files: string[] = []): string[] {
 function registeredAdapterPrefixes(): string[] {
   const prefixes = new Set<string>();
   for (const manifest of FIXED_ACTION_ADAPTER_MANIFESTS) {
-    if (manifest.adapterId.startsWith('github.')) prefixes.add('packages/action-adapters/src/github');
-    if (manifest.adapterId.startsWith('servicenow.')) prefixes.add('packages/action-adapters/src/servicenow');
+    if (manifest.adapterId.startsWith('github.'))
+      prefixes.add('packages/action-adapters/src/github');
+    if (manifest.adapterId.startsWith('servicenow.'))
+      prefixes.add('packages/action-adapters/src/servicenow');
   }
   return [...prefixes];
 }
@@ -95,7 +97,10 @@ function stripComments(source: string): string {
 }
 
 function stripTypeOnlyImports(source: string): string {
-  return source.split('\n').filter((line) => !/^\s*import\s+type\b/.test(line)).join('\n');
+  return source
+    .split('\n')
+    .filter((line) => !/^\s*import\s+type\b/.test(line))
+    .join('\n');
 }
 
 function analyzableSource(source: string): string {
@@ -133,7 +138,9 @@ export function scanEffectIo(root = ROOT): string[] {
   const exceptionsConfig = loadJson<{ baselineCount: number; exceptions: ExceptionEntry[] }>(
     join(root, 'config/effect-io-exceptions.json'),
   );
-  const allowlistConfig = loadJson<{ paths: AllowlistEntry[] }>(join(root, 'config/effect-io-allowlist.json'));
+  const allowlistConfig = loadJson<{ paths: AllowlistEntry[] }>(
+    join(root, 'config/effect-io-allowlist.json'),
+  );
   const adapterPrefixes = registeredAdapterPrefixes();
   const today = new Date().toISOString().slice(0, 10);
   const exceptionByPath = new Map(exceptionsConfig.exceptions.map((e) => [e.path, e]));

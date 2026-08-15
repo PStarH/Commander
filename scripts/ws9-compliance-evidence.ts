@@ -23,13 +23,7 @@
  *
  * Run: tsx scripts/ws9-compliance-evidence.ts [--json]
  */
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -358,18 +352,13 @@ function main(): void {
         }
       }
 
-      const testCasesPass =
-        missingTestCases.length === 0 && failedTestCases.length === 0;
-      const artifactsPass =
-        missingArtifacts.length === 0 && failedArtifacts.length === 0;
+      const testCasesPass = missingTestCases.length === 0 && failedTestCases.length === 0;
+      const artifactsPass = missingArtifacts.length === 0 && failedArtifacts.length === 0;
 
       // Control points with explicit test case IDs require both arms to pass.
       // Control points without test case IDs (e.g. Configuration Management)
       // rely on their artifact baselines' overall verdicts.
-      const pass =
-        cp.testCaseIds.length > 0
-          ? testCasesPass && artifactsPass
-          : artifactsPass;
+      const pass = cp.testCaseIds.length > 0 ? testCasesPass && artifactsPass : artifactsPass;
 
       verdict = pass ? 'PASS' : 'FAIL';
       evidenceLevel = 'live';
@@ -456,24 +445,17 @@ function main(): void {
     console.log(`Output:      ${EVIDENCE_DIR_REL}/`);
     console.log('');
     for (const e of evaluations) {
-      const icon =
-        e.verdict === 'PASS' ? '✅' : e.verdict === 'FAIL' ? '❌' : '⏳';
-      console.log(
-        `${icon} [${e.verdict}] ${e.controlName} (${e.controlId}) — ${e.evidencePath}`,
-      );
+      const icon = e.verdict === 'PASS' ? '✅' : e.verdict === 'FAIL' ? '❌' : '⏳';
+      console.log(`${icon} [${e.verdict}] ${e.controlName} (${e.controlId}) — ${e.evidencePath}`);
       const details: string[] = [];
       if (e.missingTestCases.length > 0)
         details.push(`missing test cases: ${e.missingTestCases.join(', ')}`);
       if (e.failedTestCases.length > 0)
         details.push(`failed test cases: ${e.failedTestCases.join(', ')}`);
       if (e.missingArtifacts.length > 0)
-        details.push(
-          `missing artifacts: ${e.missingArtifacts.map((s) => s + '.json').join(', ')}`,
-        );
+        details.push(`missing artifacts: ${e.missingArtifacts.map((s) => s + '.json').join(', ')}`);
       if (e.failedArtifacts.length > 0)
-        details.push(
-          `failed artifacts: ${e.failedArtifacts.map((s) => s + '.json').join(', ')}`,
-        );
+        details.push(`failed artifacts: ${e.failedArtifacts.map((s) => s + '.json').join(', ')}`);
       if (details.length > 0) {
         console.log(`    ${details.join('; ')}`);
       }
