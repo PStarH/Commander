@@ -100,54 +100,46 @@ interface ScanLike {
 async function scanContent(name: string, content: string): Promise<ScanLike> {
   try {
     const mod = await import(SCANNER_MODULE_PATH);
-    const scanner = mod.getSupplyChainScanner();
-    const r = scanner.scan({ name, content, tools: [] });
+    const scanner = new mod.SupplyChainScanner({ auditAllScans: false });
+    const r = scanner.scan({
+      name,
+      content,
+      tools: [],
+    });
+    const sourceWarnings = r.warnings.filter(
+      (warning) => !warning.category.startsWith('pre_scan.'),
+    );
+    const blocked = r.warnings.some(
+      (warning) =>
+        !warning.category.startsWith('pre_scan.') &&
+        (warning.severity === 'critical' ||
+          warning.severity === 'high' ||
+          warning.category.startsWith('malware.')),
+    );
     return {
-      passed: r.passed,
-      severity: r.severity,
-      recommendation: r.recommendation,
-      warnings: r.warnings,
+      passed: !blocked,
+      severity: blocked ? r.severity : 'clean',
+      recommendation: blocked ? 'block' : 'allow',
+      warnings: sourceWarnings,
     };
   } catch (err) {
-    // Singleton init can fail under D1 prod fail-fast (production NODE_ENV +
-    // missing COMMANDER_AUDIT_CHAIN_KEY). Continue with the inline mirror.
     process.stderr.write(
-      `[D3 hook] SupplyChainScanner unavailable (${(err as Error)?.message ?? err}); using inline blocklist.\n`,
+      `[D3 hook] SupplyChainScanner unavailable (${(err as Error)?.message ?? err}); blocking (fail-closed).\n`,
     );
-    return inlineBlocklistScan(name, content);
+    return {
+      passed: false,
+      severity: 'malicious',
+      recommendation: 'block',
+      warnings: [
+        {
+          severity: 'critical',
+          category: 'scanner-unavailable',
+          message: 'SupplyChainScanner failed to load; commit blocked (fail-closed)',
+          evidence: name,
+        },
+      ],
+    };
   }
-}
-
-function inlineBlocklistScan(name: string, content: string): ScanLike {
-  // Mirror of MAL-001 / MAL-005 / MAL-007 / MAL-008 — keep in lock-step with
-  // packages/core/src/security/supplyChainScanner.ts MALWARE_SIGNATURES.
-  const PATTERNS: Array<{ id: string; regex: RegExp }> = [
-    { id: 'MAL-001-reverse-shell', regex: /\/dev\/tcp\/.*\/.*|bash -i >& \/dev\/tcp/ },
-    {
-      id: 'MAL-005-data-destruction',
-      regex: /rm\s+-rf\s+\/(?:\s|$)|;\s*:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
-    },
-    {
-      id: 'MAL-007-ssh-backdoor',
-      regex: />>\s*~\/\.ssh\/authorized_keys|>>\s*\/root\/\.ssh\/authorized_keys/,
-    },
-    {
-      id: 'MAL-008-persistence',
-      regex: /@reboot|crontab\s+-\s+-[el]|\/etc\/cron\.(daily|hourly|weekly|monthly)/i,
-    },
-  ];
-  const warnings = PATTERNS.filter((p) => p.regex.test(content)).map((p) => ({
-    severity: 'critical' as const,
-    category: p.id,
-    message: `blocklist hit: ${p.id}`,
-    evidence: name,
-  }));
-  return {
-    passed: warnings.length === 0,
-    severity: warnings.length > 0 ? 'malicious' : 'clean',
-    recommendation: warnings.length > 0 ? 'block' : 'allow',
-    warnings,
-  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
