@@ -8,7 +8,9 @@ import { FIXED_ACTION_ADAPTER_MANIFESTS } from '../packages/contracts/src/action
 
 describe('effect-io-guard', () => {
   it('baseline exceptions count matches config', () => {
-    const config = JSON.parse(readFileSync(join(process.cwd(), 'config/effect-io-exceptions.json'), 'utf-8'));
+    const config = JSON.parse(
+      readFileSync(join(process.cwd(), 'config/effect-io-exceptions.json'), 'utf-8'),
+    );
     assert.equal(config.exceptions.length, config.baselineCount);
   });
 
@@ -29,7 +31,10 @@ describe('effect-io-guard', () => {
       for (const dir of ['config', 'packages/kernel/src']) {
         mkdirSync(join(root, dir), { recursive: true });
       }
-      writeFileSync(join(root, 'config/effect-io-exceptions.json'), JSON.stringify({ baselineCount: 0, exceptions: [] }));
+      writeFileSync(
+        join(root, 'config/effect-io-exceptions.json'),
+        JSON.stringify({ baselineCount: 0, exceptions: [] }),
+      );
       writeFileSync(join(root, 'config/effect-io-allowlist.json'), JSON.stringify({ paths: [] }));
       writeFileSync(
         join(root, 'packages/kernel/src/bypass.ts'),
@@ -43,7 +48,9 @@ describe('effect-io-guard', () => {
   });
 
   it('flags expired exceptions', async () => {
-    const config = JSON.parse(readFileSync(join(process.cwd(), 'config/effect-io-exceptions.json'), 'utf-8'));
+    const config = JSON.parse(
+      readFileSync(join(process.cwd(), 'config/effect-io-exceptions.json'), 'utf-8'),
+    );
     const expired = config.exceptions.map((e: { expiresAt: string }) => ({
       ...e,
       expiresAt: '2020-01-01',
@@ -53,13 +60,19 @@ describe('effect-io-guard', () => {
     try {
       config.exceptions = expired;
       const { writeFileSync } = await import('node:fs');
-      writeFileSync(join(tmpRoot, 'config/effect-io-exceptions.json'), JSON.stringify(config, null, 2));
+      writeFileSync(
+        join(tmpRoot, 'config/effect-io-exceptions.json'),
+        JSON.stringify(config, null, 2),
+      );
       const errors = scanEffectIo(tmpRoot);
       assert.ok(errors.some((e) => e.includes('Expired')));
     } finally {
       config.exceptions = orig;
       const { writeFileSync } = await import('node:fs');
-      writeFileSync(join(tmpRoot, 'config/effect-io-exceptions.json'), JSON.stringify(config, null, 2) + '\n');
+      writeFileSync(
+        join(tmpRoot, 'config/effect-io-exceptions.json'),
+        JSON.stringify(config, null, 2) + '\n',
+      );
     }
   });
 
