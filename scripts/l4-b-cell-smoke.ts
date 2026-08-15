@@ -137,8 +137,7 @@ export async function runOptionalChaosStep(
   steps: Record<string, boolean>,
   options?: { require?: boolean; loadChaos?: () => Promise<ChaosModule> },
 ): Promise<void> {
-  const requireChaos =
-    options?.require === true || process.env.CELL_SMOKE_REQUIRE_CHAOS === '1';
+  const requireChaos = options?.require === true || process.env.CELL_SMOKE_REQUIRE_CHAOS === '1';
   try {
     const { runL4BAdapterChaos } = options?.loadChaos
       ? await options.loadChaos()
@@ -157,7 +156,9 @@ function assertComposeKernelBackend(): boolean {
     'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell config --format json',
     { encoding: 'utf-8', cwd: process.cwd(), env: { ...process.env, ...COMPOSE_CONFIG_ENV } },
   );
-  const config = JSON.parse(json) as { services?: Record<string, { environment?: ComposeServiceEnv }> };
+  const config = JSON.parse(json) as {
+    services?: Record<string, { environment?: ComposeServiceEnv }>;
+  };
   assertKernelBackendOnCellServices(config);
   assertCapabilityAuthorityOnCellServices(config);
   return true;
@@ -277,9 +278,7 @@ async function main(): Promise<void> {
   await mkdir(outDir, { recursive: true });
   const outPath = join(outDir, 'l4-b-cell-smoke-' + Date.now() + '.json');
   await writeFile(outPath, JSON.stringify(result, null, 2));
-  console.log(
-    'Cell smoke ' + (result.passed ? 'PASS' : 'FAIL') + ' → ' + outPath,
-  );
+  console.log('Cell smoke ' + (result.passed ? 'PASS' : 'FAIL') + ' → ' + outPath);
   if (!result.passed) process.exit(1);
 }
 

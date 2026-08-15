@@ -79,7 +79,10 @@ function createAlwaysAdmitGate(): SideEffectGate {
 // CI Quality Gates sets NODE_ENV=production. Capability token issuance
 // refuses the default key in production unless COMMANDER_CAPABILITY_TOKEN_KEY
 // is set (>=32 chars). Provide a deterministic test key for the suite only.
-if (!process.env.COMMANDER_CAPABILITY_TOKEN_KEY || process.env.COMMANDER_CAPABILITY_TOKEN_KEY.length < 32) {
+if (
+  !process.env.COMMANDER_CAPABILITY_TOKEN_KEY ||
+  process.env.COMMANDER_CAPABILITY_TOKEN_KEY.length < 32
+) {
   process.env.COMMANDER_CAPABILITY_TOKEN_KEY = 'test-capability-token-key-32chars-min!!';
 }
 // Keep V2 gate soft for unit/integration tool loops; sideEffectGate unit tests
