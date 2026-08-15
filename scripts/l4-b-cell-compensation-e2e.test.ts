@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { runAdapterOpsCompensationMock, runCellCompensationE2E } from './l4-b-cell-compensation-e2e.js';
+import {
+  runAdapterOpsCompensationMock,
+  runCellCompensationE2E,
+} from './l4-b-cell-compensation-e2e.js';
 
 describe('l4-b-cell-compensation-e2e', () => {
   it('mock mode proves adapter-ops compensation consumer (ENFORCED)', async (t) => {

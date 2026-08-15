@@ -25,8 +25,7 @@ export type CommandRunner = (
 ) => CommandResult;
 
 /** Default image: prefer a locally cached alpine-family image to avoid Hub flakes. */
-export const DEFAULT_EXEC1_IMAGE =
-  process.env.COMMANDER_WS9_EXEC1_IMAGE?.trim() || 'nginx:alpine';
+export const DEFAULT_EXEC1_IMAGE = process.env.COMMANDER_WS9_EXEC1_IMAGE?.trim() || 'nginx:alpine';
 
 export type EscapeProbeId = 'nsenter' | 'proc-1-root-host-marker' | 'cross-container-canary';
 
@@ -356,8 +355,7 @@ export function runExec1LiveFire(options?: {
     const readBAfter = runner('docker', ['exec', nameB, 'cat', '/tmp/canary-b'], {
       timeout: 30_000,
     });
-    const bUnaffected =
-      readBAfter.status === 0 && combinedOutput(readBAfter).includes(canaryB);
+    const bUnaffected = readBAfter.status === 0 && combinedOutput(readBAfter).includes(canaryB);
 
     const verdict = evaluateExec1Isolation(probes, bUnaffected);
     const details =

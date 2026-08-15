@@ -206,9 +206,7 @@ describe('V2 Cross-Tenant Live-Fire — Kernel Tenant Isolation', () => {
   // ── 7. Cross-tenant interaction hijack (TENANT-001: data access) ──
 
   it('rejects cross-tenant interaction: tenant B cannot answer tenant A interaction', async () => {
-    const cmd = createRunCommand(TENANT_A, [
-      { kind: 'agent', initialState: 'WAITING_FOR_HUMAN' },
-    ]);
+    const cmd = createRunCommand(TENANT_A, [{ kind: 'agent', initialState: 'WAITING_FOR_HUMAN' }]);
     const run = await kernel.createRun(cmd, 'gateway');
     const stepId = cmd.steps[0]!.id;
 

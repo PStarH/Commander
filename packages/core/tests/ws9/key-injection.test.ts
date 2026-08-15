@@ -20,7 +20,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import { resolveSecureApiKey, initSecureApiKeyResolver, isVaultAvailable } from '../../src/security/secureApiKeyResolver';
+import {
+  resolveSecureApiKey,
+  initSecureApiKeyResolver,
+  isVaultAvailable,
+} from '../../src/security/secureApiKeyResolver';
 import {
   EncryptedSecretsVault,
   getEncryptedSecretsVault,
@@ -31,7 +35,15 @@ import {
   resolveMasterKey as resolveAuditMasterKey,
   AUDIT_CHAIN_KEY_ENV,
 } from '../../src/security/auditChainLedger';
-import { probeVault, describeIf, writePass, writeBreach, writeFail, TENANT_A, TENANT_B } from './_evidence';
+import {
+  probeVault,
+  describeIf,
+  writePass,
+  writeBreach,
+  writeFail,
+  TENANT_A,
+  TENANT_B,
+} from './_evidence';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -39,7 +51,15 @@ const TEST_MASTER_KEY = 'm'.repeat(64); // 64-char master key for test vaults
 
 /** Read the keypath allowlist to verify env var compliance. */
 function readAllowlist(): { allowed: string[]; forbiddenPatterns: string[] } {
-  const allowlistPath = path.resolve(__dirname, '..', '..', '..', '..', 'config', 'keypath-allowlist.json');
+  const allowlistPath = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    'config',
+    'keypath-allowlist.json',
+  );
   const raw = fs.readFileSync(allowlistPath, 'utf-8');
   return JSON.parse(raw);
 }
@@ -276,56 +296,59 @@ describe('WS9 KEY-3: Vault unreachable in production → fail-closed; no env fal
 
 // ─── KEY-4: Forged COMMANDER_VAULT_TOKEN → auth rejected ─────────────────
 
-describeIf(probeVault.available)('WS9 KEY-4 (live Vault): Forged COMMANDER_VAULT_TOKEN rejected by real Vault', () => {
-  let snap: { restore: () => void };
-  beforeEach(() => {
-    snap = envSnapshot();
-  });
-  afterEach(() => snap.restore());
+describeIf(probeVault.available)(
+  'WS9 KEY-4 (live Vault): Forged COMMANDER_VAULT_TOKEN rejected by real Vault',
+  () => {
+    let snap: { restore: () => void };
+    beforeEach(() => {
+      snap = envSnapshot();
+    });
+    afterEach(() => snap.restore());
 
-  it('forged token returns 403/401; no downgrade to env', async () => {
-    const artifacts: string[] = [];
-    const vaultAddr = process.env.COMMANDER_VAULT_ADDR!;
-    const forgedToken = 'hvs.forged-ws9-token-that-must-fail';
+    it('forged token returns 403/401; no downgrade to env', async () => {
+      const artifacts: string[] = [];
+      const vaultAddr = process.env.COMMANDER_VAULT_ADDR!;
+      const forgedToken = 'hvs.forged-ws9-token-that-must-fail';
 
-    let status = 0;
-    let err = '';
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5_000);
-      const res = await fetch(`${vaultAddr}/v1/secret/data/commander/tenant-a/openai-api-key`, {
-        headers: { 'X-Vault-Token': forgedToken },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      status = res.status;
-    } catch (e) {
-      err = (e as Error).message;
-    }
+      let status = 0;
+      let err = '';
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5_000);
+        const res = await fetch(`${vaultAddr}/v1/secret/data/commander/tenant-a/openai-api-key`, {
+          headers: { 'X-Vault-Token': forgedToken },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        status = res.status;
+      } catch (e) {
+        err = (e as Error).message;
+      }
 
-    try {
-      // Probe a KV path (not /sys/health). Accept 401/403; also 500 when Vault
-      // rejects malformed tokens without granting data.
-      expect([0, 401, 403, 500].includes(status) || err.length > 0).toBe(true);
-      expect(status).not.toBe(200);
+      try {
+        // Probe a KV path (not /sys/health). Accept 401/403; also 500 when Vault
+        // rejects malformed tokens without granting data.
+        expect([0, 401, 403, 500].includes(status) || err.length > 0).toBe(true);
+        expect(status).not.toBe(200);
 
-      writePass(
-        'KEY-4',
-        `Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=${status}, err=${err || 'none'}. ` +
-          `Vault did not authenticate with forged token. No downgrade to env key.`,
-        artifacts,
-        'live',
-      );
-    } catch (e) {
-      writeBreach(
-        'KEY-4',
-        `Forged token was ACCEPTED by Vault: status=${status}. ${(e as Error).message ?? ''}`,
-        artifacts,
-      );
-      throw e;
-    }
-  });
-});
+        writePass(
+          'KEY-4',
+          `Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=${status}, err=${err || 'none'}. ` +
+            `Vault did not authenticate with forged token. No downgrade to env key.`,
+          artifacts,
+          'live',
+        );
+      } catch (e) {
+        writeBreach(
+          'KEY-4',
+          `Forged token was ACCEPTED by Vault: status=${status}. ${(e as Error).message ?? ''}`,
+          artifacts,
+        );
+        throw e;
+      }
+    });
+  },
+);
 
 // In-process equivalent: wrong master key fails to decrypt (AES-256-GCM auth tag mismatch)
 describeIf(!probeVault.available)(

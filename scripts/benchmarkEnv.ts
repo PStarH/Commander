@@ -138,11 +138,11 @@ function getImageDigest(): string | undefined {
   const image = process.env.COMMANDER_IMAGE;
   if (!image || image === 'undefined') return undefined;
   try {
-    const result = spawnSync(
-      'docker',
-      ['inspect', '--format={{index .RepoDigests 0}}', image],
-      { encoding: 'utf-8', stdio: ['pipe', 'pipe', 'ignore'], timeout: 10_000 },
-    );
+    const result = spawnSync('docker', ['inspect', '--format={{index .RepoDigests 0}}', image], {
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: 10_000,
+    });
     if (result.error || result.status !== 0 || !result.stdout) return undefined;
     const raw = result.stdout.trim();
     // RepoDigests looks like "name@sha256:..."
@@ -165,7 +165,20 @@ function getPostgresVersion(): string | undefined {
   try {
     const result = spawnSync(
       'psql',
-      ['-h', pgHost, '-p', String(pgPort), '-U', pgUser, '-d', pgDb, '-t', '-A', '-c', 'SELECT version();'],
+      [
+        '-h',
+        pgHost,
+        '-p',
+        String(pgPort),
+        '-U',
+        pgUser,
+        '-d',
+        pgDb,
+        '-t',
+        '-A',
+        '-c',
+        'SELECT version();',
+      ],
       {
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'ignore'],

@@ -223,7 +223,11 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
           }),
         },
         kernel,
-        { execute: async () => { throw new Error('no write on reconcile'); } },
+        {
+          execute: async () => {
+            throw new Error('no write on reconcile');
+          },
+        },
         { append: async () => {} },
         { requireRequestBinding: false },
       ),

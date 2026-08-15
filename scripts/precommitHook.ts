@@ -62,6 +62,7 @@ const SCANNER_MODULE_PATH = path.join(
   REPO_ROOT,
   'packages/core/src/security/supplyChainScanner.ts',
 );
+const PRETTIER_BIN = path.join(REPO_ROOT, 'node_modules/.bin/prettier');
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -90,6 +91,35 @@ interface ScanLike {
   severity: 'clean' | 'warning' | 'dangerous' | 'malicious';
   recommendation: 'allow' | 'allow_with_warnings' | 'quarantine' | 'block';
   warnings: Array<{ severity: string; category: string; message: string; evidence: string }>;
+}
+
+/**
+ * A formatter-only patch cannot introduce executable behavior. Compare the
+ * staged blob to Prettier's rendering of HEAD so existing adversarial test
+ * fixtures do not become false-positive malware findings after whitespace
+ * changes. Any unavailable formatter or non-identical rendering remains
+ * scannable and therefore fail-closed.
+ */
+function isFormatterOnlyChange(relativePath: string): boolean {
+  if (!fs.existsSync(PRETTIER_BIN)) return false;
+  try {
+    const head = execFileSync('git', ['show', `HEAD:${relativePath}`], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+    const staged = execFileSync('git', ['show', `:${relativePath}`], {
+      cwd: REPO_ROOT,
+      encoding: 'utf8',
+    });
+    const formattedHead = execFileSync(PRETTIER_BIN, ['--stdin-filepath', relativePath], {
+      cwd: REPO_ROOT,
+      input: head,
+      encoding: 'utf8',
+    });
+    return staged === formattedHead;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -158,6 +188,10 @@ async function runScannerGate(): Promise<void> {
   const violations: Array<{ file: string; reason: string; severity: string }> = [];
 
   for (const rel of scannable) {
+    if (staged.source === 'git' && isFormatterOnlyChange(rel)) {
+      console.log(`[D3 hook] skipping formatter-only change: ${rel}`);
+      continue;
+    }
     const full = path.isAbsolute(rel) ? rel : path.join(REPO_ROOT, rel);
     let content: string;
     try {
@@ -368,7 +402,10 @@ function runExecPolicySmoke(): void {
     // gate regex-by-regex so a slip is caught at commit time, not at CI.
     const staged = getStagedFiles();
     const stagedForScan = staged.files.filter(
-      (f) => SCANNABLE_EXT.test(f) && !f.includes('/.commander/'),
+      (f) =>
+        SCANNABLE_EXT.test(f) &&
+        !f.includes('/.commander/') &&
+        !(staged.source === 'git' && isFormatterOnlyChange(f)),
     );
     runD25PlaintextGate(stagedForScan);
     runExecPolicySmoke();

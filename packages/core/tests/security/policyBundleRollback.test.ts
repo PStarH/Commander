@@ -323,8 +323,7 @@ describe('SignedPolicyBundle — Ed25519 asymmetric signing (MCP-13)', () => {
     const tampered = { ...bundle, rules: PERMISSIVE_RULES };
     assert.throws(
       () => verifier.verifyAndLoad(tampered),
-      (e: unknown) =>
-        e instanceof SignedPolicyBundleError && e.code === 'SIGNATURE_INVALID',
+      (e: unknown) => e instanceof SignedPolicyBundleError && e.code === 'SIGNATURE_INVALID',
     );
   });
 
@@ -344,8 +343,7 @@ describe('SignedPolicyBundle — Ed25519 asymmetric signing (MCP-13)', () => {
     const bundle = signer.publish(makePayload(2, RESTRICTIVE_RULES, 'ps_ed_wrongkey'));
     assert.throws(
       () => wrongVerifier.verifyAndLoad(bundle),
-      (e: unknown) =>
-        e instanceof SignedPolicyBundleError && e.code === 'SIGNATURE_INVALID',
+      (e: unknown) => e instanceof SignedPolicyBundleError && e.code === 'SIGNATURE_INVALID',
     );
   });
 
