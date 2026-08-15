@@ -20,7 +20,12 @@ const repoRoot = join(here, '..');
 const PROD = join(repoRoot, 'deploy', 'docker', 'postgres-init.sql');
 const BENCH = join(repoRoot, 'deploy', 'docker', 'postgres-init.bench.sql');
 
-const EXPECTED_ROLES = ['commander_owner', 'commander_app', 'commander_scheduler', 'commander_worker'];
+const EXPECTED_ROLES = [
+  'commander_owner',
+  'commander_app',
+  'commander_scheduler',
+  'commander_worker',
+];
 
 interface RoleFacts {
   roles: string[];
@@ -118,8 +123,10 @@ describe('postgres role-init parity', () => {
     const schedulerLine = prod.roles.find((r) => r.startsWith('commander_scheduler:'));
     assert.ok(workerLine?.includes('NOBYPASSRLS'), 'commander_worker must be NOBYPASSRLS');
     assert.ok(appLine?.includes('NOBYPASSRLS'), 'commander_app must be NOBYPASSRLS');
-    assert.ok(schedulerLine?.includes('BYPASSRLS') && !schedulerLine.includes('NOBYPASSRLS'),
-      'commander_scheduler must carry BYPASSRLS');
+    assert.ok(
+      schedulerLine?.includes('BYPASSRLS') && !schedulerLine.includes('NOBYPASSRLS'),
+      'commander_scheduler must carry BYPASSRLS',
+    );
     assert.ok(workerLine?.includes('NOCREATEROLE'), 'commander_worker must be NOCREATEROLE');
   });
 });

@@ -46,7 +46,9 @@ describe('cacheManager', () => {
     mockGeminiStats = vi
       .spyOn(GeminiCacheManager.prototype, 'getStats')
       .mockReturnValue({ hits: 0, misses: 0 } as never);
-    mockToolDispose = vi.spyOn(ToolResultCache.prototype, 'dispose').mockImplementation(() => undefined);
+    mockToolDispose = vi
+      .spyOn(ToolResultCache.prototype, 'dispose')
+      .mockImplementation(() => undefined);
   });
 
   afterEach(() => {

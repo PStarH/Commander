@@ -31,25 +31,61 @@ describe('dr-backup-verify honesty', () => {
   });
 
   it('assertDistinctRestoreTarget rejects same host:port:database', () => {
-    const dsn: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
+    const dsn: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     assert.throws(() => assertDistinctRestoreTarget(dsn, { ...dsn }), /distinct restore/);
   });
 
   it('refuseSourceDestructiveRestore blocks restore when RST DSN equals source', () => {
-    const dsn: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
+    const dsn: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     const reason = refuseSourceDestructiveRestore(dsn, { ...dsn });
     assert.match(reason ?? '', /distinct restore/);
   });
 
   it('refuseSourceDestructiveRestore allows distinct port restore target', () => {
-    const source: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
-    const restore: DsnParts = { host: 'localhost', port: 5433, database: 'commander_dr', user: 'u', password: 'p' };
+    const source: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
+    const restore: DsnParts = {
+      host: 'localhost',
+      port: 5433,
+      database: 'commander_dr',
+      user: 'u',
+      password: 'p',
+    };
     assert.equal(refuseSourceDestructiveRestore(source, restore), null);
   });
 
   it('assertDistinctRestoreTarget accepts different port', () => {
-    const source: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
-    const restore: DsnParts = { host: 'localhost', port: 5433, database: 'commander', user: 'u', password: 'p' };
+    const source: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
+    const restore: DsnParts = {
+      host: 'localhost',
+      port: 5433,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     assert.doesNotThrow(() => assertDistinctRestoreTarget(source, restore));
   });
 
@@ -64,19 +100,32 @@ describe('dr-backup-verify honesty', () => {
   });
 
   it('queryRunCommittedAt reads epoch ms from psql output', () => {
-    const dsn: DsnParts = { host: 'localhost', port: 5432, database: 'commander', user: 'u', password: 'p' };
+    const dsn: DsnParts = {
+      host: 'localhost',
+      port: 5432,
+      database: 'commander',
+      user: 'u',
+      password: 'p',
+    };
     const epochMs = '1718806710000';
     const committed = queryRunCommittedAt(dsn, 'run_test', (_d, _sql) => epochMs);
     assert.equal(committed.getTime(), Number(epochMs));
   });
 
   it('resolveHonestyLevel is DRAFT without independent restore', () => {
-    assert.equal(resolveHonestyLevel({ independentRestore: false, sentinelVerified: false }), 'DRAFT');
+    assert.equal(
+      resolveHonestyLevel({ independentRestore: false, sentinelVerified: false }),
+      'DRAFT',
+    );
   });
 
   it('resolveHonestyLevel is ENFORCED with restore + sentinel but no cell processes', () => {
     assert.equal(
-      resolveHonestyLevel({ independentRestore: true, sentinelVerified: true, cellProcessesVerified: false }),
+      resolveHonestyLevel({
+        independentRestore: true,
+        sentinelVerified: true,
+        cellProcessesVerified: false,
+      }),
       'ENFORCED',
     );
   });

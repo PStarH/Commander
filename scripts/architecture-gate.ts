@@ -82,9 +82,7 @@ for (const pkg of config.v2Packages) {
       if (config.v2ImportExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`))) continue;
       const bad = checkFile(file, config.forbiddenCoreImports);
       if (bad.length > 0) {
-        failures.push(
-          `${rel} imports forbidden @commander/core modules: ${bad.join(', ')}`,
-        );
+        failures.push(`${rel} imports forbidden @commander/core modules: ${bad.join(', ')}`);
       }
     }
   } catch {
