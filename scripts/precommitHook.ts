@@ -130,7 +130,10 @@ function isFormatterOnlyChange(relativePath: string): boolean {
 async function scanContent(name: string, content: string): Promise<ScanLike> {
   try {
     const mod = await import(SCANNER_MODULE_PATH);
-    const scanner = mod.getSupplyChainScanner();
+    // Pre-commit needs a synchronous detection decision only. Audit/SBOM work
+    // belongs to the normal scanner pipeline and can otherwise keep commits
+    // alive after a clean decision.
+    const scanner = new mod.SupplyChainScanner({ auditAllScans: false });
     const r = scanner.scan({
       name,
       content,
