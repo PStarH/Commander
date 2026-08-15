@@ -56,17 +56,11 @@ describe('authority-closure-proof helpers', () => {
       resolveOwnerDsn({ DATABASE_URL: 'postgres://db:d@127.0.0.1:5433/commander' }),
       'postgres://db:d@127.0.0.1:5433/commander',
     );
-    assert.equal(
-      resolveOwnerDsn({}),
-      'postgres://commander:commander@127.0.0.1:5433/commander',
-    );
+    assert.equal(resolveOwnerDsn({}), 'postgres://commander:commander@127.0.0.1:5433/commander');
   });
 
   it('canonicalJson sorts object keys stably', () => {
-    assert.equal(
-      canonicalJson({ b: 1, a: { d: 2, c: 3 } }),
-      '{"a":{"c":3,"d":2},"b":1}',
-    );
+    assert.equal(canonicalJson({ b: 1, a: { d: 2, c: 3 } }), '{"a":{"c":3,"d":2},"b":1}');
   });
 
   it('sha256Hex is deterministic', () => {

@@ -788,10 +788,7 @@ describe('AttackCampaignTracker', () => {
           timestamp: new Date(Date.now() + i * 1800000).toISOString(),
           attackType: 'escalating_attack',
           severity: ['low', 'medium', 'medium', 'high', 'high', 'critical'][i] as
-            | 'low'
-            | 'medium'
-            | 'high'
-            | 'critical',
+            'low' | 'medium' | 'high' | 'critical',
           sourceModule: 'securityMonitor',
           sourceIp: '198.51.100.10',
           userAgent: 'escalator',

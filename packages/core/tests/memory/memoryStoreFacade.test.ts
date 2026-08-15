@@ -174,7 +174,10 @@ describe('MemoryStoreFacade', () => {
     });
 
     expect(service.forget).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'memory-1', scope: { tenantId: 'tenant-a', projectId: 'project-a' } }),
+      expect.objectContaining({
+        id: 'memory-1',
+        scope: { tenantId: 'tenant-a', projectId: 'project-a' },
+      }),
     );
     expect(service.store).not.toHaveBeenCalled();
   });

@@ -32,8 +32,7 @@ const CELL_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
       profiles: ['cell'],
     },
@@ -78,8 +77,7 @@ const V2_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
       profiles: ['v2'],
     },
@@ -122,8 +120,7 @@ const V2_BENCH_FIXTURE: ComposeConfig = {
     },
     'kernel-ops': {
       environment: {
-        DATABASE_URL:
-          'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
+        DATABASE_URL: 'postgres://commander_scheduler:commander_scheduler@postgres:5432/commander',
       },
     },
   },
@@ -324,11 +321,7 @@ describe('compose source files (static drift guard)', () => {
       ['docker-compose.v2.yml', v2],
     ] as const) {
       assert.match(text, /commander_worker/, `${name} must reference commander_worker DSN`);
-      assert.match(
-        text,
-        /COMMANDER_WORKER_TENANTS/,
-        `${name} must set COMMANDER_WORKER_TENANTS`,
-      );
+      assert.match(text, /COMMANDER_WORKER_TENANTS/, `${name} must set COMMANDER_WORKER_TENANTS`);
       assert.doesNotMatch(
         text,
         /COMMANDER_WORKER_TENANTS\s*[:=]\s*['"]?\*/,
