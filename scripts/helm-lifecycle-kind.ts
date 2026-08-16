@@ -64,6 +64,22 @@ export const CALICO_URL =
   'https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/calico.yaml';
 export const PRODUCTION_IMAGE = 'commander-lifecycle-api:kind';
 export const NAMESPACE = 'commander-lifecycle';
+
+export function productionImageBuildArguments(sourceRevision: string): string[] {
+  if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
+    throw new Error('PRODUCTION_IMAGE_SOURCE_REVISION_INVALID');
+  }
+  return [
+    'buildx',
+    'build',
+    '--load',
+    '--tag',
+    PRODUCTION_IMAGE,
+    '--build-arg',
+    'COMMANDER_SOURCE_REVISION=' + sourceRevision,
+  ];
+}
+
 const EXTERNAL_DATABASE_NAMESPACE = 'commander-external-database';
 const RUN_ID = `${Date.now().toString(36)}-${process.pid}`;
 const CALICO_IMAGES = calicoImagesForArchitecture(arch());
@@ -693,12 +709,15 @@ export async function loadPinnedRuntimeImages(): Promise<void> {
 export async function buildProductionImage(): Promise<string> {
   const metadataDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-image-'));
   const metadataFile = resolve(metadataDirectory, 'metadata.json');
+  const revisionFromEnvironment = process.env.GITHUB_SHA?.trim();
+  const revision =
+    revisionFromEnvironment ||
+    requireCommand(
+      runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
+      'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
+    ).trim();
   const build = await runCmd('docker', [
-    'buildx',
-    'build',
-    '--load',
-    '--tag',
-    PRODUCTION_IMAGE,
+    ...productionImageBuildArguments(revision),
     '--metadata-file',
     metadataFile,
     '--file',

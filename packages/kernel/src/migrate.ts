@@ -12,14 +12,17 @@ import {
   runTask1OwnerCommand,
   parseTask1OwnerCommandInput,
   type Task1OwnerCommandMode,
+  type Task1OwnerPreparedRequest,
   type Task1HelmRestoreEvidence,
 } from './task1LifecycleOwnerCommand.js';
 import { initializeTask1LifecycleBoundary } from './task1LifecycleInitialize.js';
+import type { SqlClient, SqlPool } from './postgres.js';
 import {
   PostgresTask1LifecycleOwnerTransactions,
   Task1LifecycleLedger,
   type Task1LifecycleOperation,
 } from './task1LifecycleLedger.js';
+import type { TenantCutoverCommand } from './tenantCutoverStateMachine.js';
 import {
   isTask1RolloutProofForOperation,
   Task1RolloutProofRuntime,
@@ -98,6 +101,92 @@ export function resolveMigrationDatabaseUrl(env: NodeJS.ProcessEnv): string | un
   return env.COMMANDER_OWNER_DATABASE_URL ?? env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL;
 }
 
+const MIGRATION_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+\.[a-z0-9_]+$/;
+const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
+export const OWNER_MIGRATION_FAILURE_STAGES = [
+  'input',
+  'proof_runtime',
+  'bootstrap_kernel',
+  'bootstrap_closure',
+  'lifecycle_initialize',
+  'lifecycle_transaction',
+  'current_read',
+  'rollout_proof',
+] as const;
+export type OwnerMigrationFailureStage = (typeof OWNER_MIGRATION_FAILURE_STAGES)[number];
+
+function isOwnerMigrationFailureStage(value: unknown): value is OwnerMigrationFailureStage {
+  return (
+    typeof value === 'string' &&
+    (OWNER_MIGRATION_FAILURE_STAGES as readonly string[]).includes(value)
+  );
+}
+
+function withOwnerMigrationFailureStage(
+  error: unknown,
+  ownerStage: OwnerMigrationFailureStage,
+): unknown {
+  if (!error || typeof error !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
+  }
+  const failure = error as { ownerStage?: unknown };
+  if (isOwnerMigrationFailureStage(failure.ownerStage)) return error;
+  try {
+    Object.defineProperty(error, 'ownerStage', {
+      configurable: true,
+      enumerable: true,
+      value: ownerStage,
+      writable: true,
+    });
+    return error;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
+  }
+}
+
+async function atOwnerMigrationFailureStage<T>(
+  ownerStage: OwnerMigrationFailureStage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw withOwnerMigrationFailureStage(error, ownerStage);
+  }
+}
+
+/** Return the owner Job's fixed, non-sensitive migration failure record. */
+export function migrationFailureDiagnostic(error: unknown): string {
+  if (!error || typeof error !== 'object') return 'COMMANDER_MIGRATION_FAILED';
+  const failure = error as {
+    migrationId?: unknown;
+    ownerStage?: unknown;
+    phase?: unknown;
+    sqlstate?: unknown;
+  };
+  if (!isOwnerMigrationFailureStage(failure.ownerStage)) return 'COMMANDER_MIGRATION_FAILED';
+  const diagnostic = 'COMMANDER_MIGRATION_FAILED;owner_stage=' + failure.ownerStage;
+  if (
+    typeof failure.migrationId !== 'string' ||
+    !MIGRATION_ID.test(failure.migrationId) ||
+    typeof failure.phase !== 'string' ||
+    !['baseline', 'lifecycle', 'expand', 'enforce'].includes(failure.phase) ||
+    typeof failure.sqlstate !== 'string' ||
+    !POSTGRES_SQLSTATE.test(failure.sqlstate)
+  ) {
+    return diagnostic;
+  }
+  return (
+    diagnostic +
+    ';migration=' +
+    failure.migrationId +
+    ';phase=' +
+    failure.phase +
+    ';sqlstate=' +
+    failure.sqlstate
+  );
+}
+
 export function parseTask1ClosureMigrationPhase(
   args: readonly string[],
   env: NodeJS.ProcessEnv,
@@ -124,6 +213,42 @@ const TASK1_OWNER_COMMAND_MODES = new Set<Task1OwnerCommandMode>([
 
 export function isTask1OwnerCommandMode(value: string | undefined): value is Task1OwnerCommandMode {
   return value !== undefined && TASK1_OWNER_COMMAND_MODES.has(value as Task1OwnerCommandMode);
+}
+
+/** Apply the historical and phase-gated migration descriptors for an explicit migration action. */
+export async function bootstrapTask1OwnerAppendMigrations(
+  pool: SqlPool,
+  command: TenantCutoverCommand,
+): Promise<void> {
+  await atOwnerMigrationFailureStage('bootstrap_kernel', () =>
+    runKernelMigrations(pool, { requiredRole: 'owner' }),
+  );
+  await atOwnerMigrationFailureStage('bootstrap_closure', () =>
+    runTask1ClosureMigrations(pool, command === 'expand' ? 'expand' : 'enforce'),
+  );
+}
+
+export async function runTask1OwnerAppendBootstrap(
+  pool: SqlPool,
+  prepared: Task1OwnerPreparedRequest,
+  dependencies: {
+    initialize?: (client: SqlClient, request: Task1OwnerPreparedRequest) => Promise<void>;
+    applyClosure?: (pool: SqlPool, phase: Task1ClosurePhase) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const initialize =
+    dependencies.initialize ??
+    ((client, request) => initializeTask1LifecycleBoundary({ client, prepared: request }));
+  const applyClosure = dependencies.applyClosure ?? runTask1ClosureMigrations;
+  const client = await pool.connect();
+  try {
+    await atOwnerMigrationFailureStage('lifecycle_initialize', () => initialize(client, prepared));
+  } finally {
+    client.release();
+  }
+  await atOwnerMigrationFailureStage('bootstrap_closure', () =>
+    applyClosure(pool, prepared.command === 'expand' ? 'expand' : 'enforce'),
+  );
 }
 
 function operationFromDatabaseRow(row: Record<string, unknown>): Task1LifecycleOperation {
@@ -421,22 +546,42 @@ export async function runTask1OwnerMode(
   } = {},
 ): Promise<Record<string, unknown>> {
   const prepared =
-    mode === 'tenant-cutover-append' ? parseTask1OwnerCommandInput(stdin) : undefined;
+    mode === 'tenant-cutover-append'
+      ? await atOwnerMigrationFailureStage('input', async () => parseTask1OwnerCommandInput(stdin))
+      : undefined;
+  if (prepared) await runTask1OwnerAppendBootstrap(pool, prepared);
   const ledger = new Task1LifecycleLedger(
     new PostgresTask1LifecycleOwnerTransactions(pool, {
       initialize: prepared
-        ? (client) => initializeTask1LifecycleBoundary({ client, prepared })
+        ? (client) =>
+            atOwnerMigrationFailureStage('lifecycle_initialize', () =>
+              initializeTask1LifecycleBoundary({ client, prepared }),
+            )
         : undefined,
       applyTransition: ({ client, operation }) =>
-        applyTask1ClosureDescriptorSet(client, operation.descriptorSet),
+        atOwnerMigrationFailureStage('lifecycle_transaction', () =>
+          applyTask1ClosureDescriptorSet(client, operation.descriptorSet),
+        ),
     }),
   );
-  return runTask1OwnerCommand(mode, stdin, {
-    execute: (request) => ledger.execute(request),
-    current: () => currentTask1Operation(pool),
-    proveCurrent: proof.proveCurrent,
-    verifyRecoveryPredecessor: proof.verifyRecoveryPredecessor,
-  });
+  return atOwnerMigrationFailureStage('input', () =>
+    runTask1OwnerCommand(mode, stdin, {
+      execute: (request) =>
+        atOwnerMigrationFailureStage('lifecycle_transaction', () => ledger.execute(request)),
+      current: () =>
+        atOwnerMigrationFailureStage('current_read', () => currentTask1Operation(pool)),
+      proveCurrent: proof.proveCurrent
+        ? (operation) =>
+            atOwnerMigrationFailureStage('rollout_proof', () => proof.proveCurrent!(operation))
+        : undefined,
+      verifyRecoveryPredecessor: proof.verifyRecoveryPredecessor
+        ? (operation) =>
+            atOwnerMigrationFailureStage('rollout_proof', () =>
+              proof.verifyRecoveryPredecessor!(operation),
+            )
+        : undefined,
+    }),
+  );
 }
 
 export function createTask1ComposeProofRuntime(
@@ -576,8 +721,10 @@ async function main() {
   try {
     const action = process.argv[2];
     if (isTask1OwnerCommandMode(action)) {
-      const stdin = await readTask1OwnerInput();
-      const proofRuntime = createTask1ProofRuntime(pool, process.env);
+      const stdin = await atOwnerMigrationFailureStage('input', () => readTask1OwnerInput());
+      const proofRuntime = await atOwnerMigrationFailureStage('proof_runtime', async () =>
+        createTask1ProofRuntime(pool, process.env),
+      );
       const response = await runTask1OwnerMode(action, stdin, pool, {
         proveCurrent: proofRuntime
           ? (operation) => proofRuntime.proveCurrent(operation)
@@ -616,10 +763,10 @@ async function main() {
         ? `Task 1 ${closurePhase} migrations applied successfully`
         : 'Kernel migrations applied successfully',
     );
-  } catch {
+  } catch (error) {
     // Database errors can echo DSNs, bind values, or generated SQL. The lifecycle evidence uses
     // owner-side error codes; this general entrypoint never reflects exception text to its logs.
-    console.error('Migration failed: COMMANDER_MIGRATION_FAILED');
+    console.error('Migration failed: ' + migrationFailureDiagnostic(error));
     process.exit(1);
   } finally {
     await pool.end();
