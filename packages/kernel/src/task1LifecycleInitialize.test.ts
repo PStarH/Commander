@@ -203,6 +203,9 @@ class RecordingClient implements SqlClient {
               },
       ] as T[]);
     }
+    if (sql.includes("to_regclass('public.commander_kernel_migrations')")) {
+      return result<T>([{ exists: this.ledgerRows.length > 0 } as T]);
+    }
     if (sql.includes('SELECT state::text, state_version::text, pending_configuration_sha256')) {
       return result<T>(
         this.existingLifecycleState === null ? [] : ([this.existingLifecycleState] as T[]),
@@ -415,6 +418,29 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
       );
       assert.ok(client.statements.includes(`ROLE_CREDENTIALS_${envelope}`));
     }
+  });
+
+  it('reuses the exact baseline ledger bootstrapped before fresh lifecycle initialization', async () => {
+    const client = new RecordingClient();
+    client.ledgerRows = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({
+      id,
+      checksum,
+    }));
+    await runTask1LifecycleDescriptorStateTransaction(
+      client,
+      async () => undefined,
+      'fresh',
+      undefined,
+      testCatalogTransaction(),
+    );
+    assert.equal(
+      client.bindings.filter(
+        (values) =>
+          typeof values[0] === 'string' &&
+          KERNEL_TASK1_BASELINE_MIGRATIONS.some(({ id }) => values[0] === id),
+      ).length,
+      0,
+    );
   });
 
   it('creates a populated legacy pending boundary with explicit role enablement and rejects a forged ledger first', async () => {

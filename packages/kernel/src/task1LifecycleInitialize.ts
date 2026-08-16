@@ -619,6 +619,16 @@ async function applyHistoricalBaseline(
   classification: 'fresh' | 'legacy',
 ): Promise<void> {
   if (classification === 'fresh') {
+    const table = await client.query<{ exists: boolean }>(
+      "SELECT pg_catalog.to_regclass('public.commander_kernel_migrations') IS NOT NULL AS exists",
+    );
+    if (table.rows[0]?.exists) {
+      const existing = await exactLedgerRows(client);
+      if (existing.length > 0) {
+        assertExactLedgerRows(existing);
+        return;
+      }
+    }
     await client.query(`
         CREATE TABLE public.commander_kernel_migrations (
           id TEXT PRIMARY KEY,
