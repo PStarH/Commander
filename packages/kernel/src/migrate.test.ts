@@ -6,6 +6,7 @@ import {
   parseTask1ClosureMigrationPhase,
   resolveMigrationDatabaseUrl,
   runTask1OwnerMode,
+  runTask1OwnerAppendBootstrap,
   currentTask1Operation,
   createTask1ProofRuntime,
   readTask1OwnerInput,
@@ -235,6 +236,31 @@ describe('kernel owner migration entrypoint', () => {
       ...KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id }) => id),
       ...KERNEL_TASK1_CLOSURE_MIGRATIONS.map(({ id }) => id),
     ]);
+  });
+
+  it('initializes the lifecycle catalog before applying the requested closure', async () => {
+    const events: string[] = [];
+    const client = new OwnerBootstrapLedgerClient();
+    const pool = {
+      client,
+      async connect() {
+        return client;
+      },
+    } as unknown as SqlPool;
+    const prepared = { command: 'install_enforce' } as Parameters<
+      typeof runTask1OwnerAppendBootstrap
+    >[1];
+
+    await runTask1OwnerAppendBootstrap(pool, prepared, {
+      initialize: async () => {
+        events.push('lifecycle_initialize');
+      },
+      applyClosure: async () => {
+        events.push('bootstrap_closure');
+      },
+    });
+
+    assert.deepEqual(events, ['lifecycle_initialize', 'bootstrap_closure']);
   });
 
   it('uses the dedicated owner DSN before legacy migration variables', () => {
