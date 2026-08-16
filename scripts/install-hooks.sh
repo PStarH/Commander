@@ -25,10 +25,7 @@ fi
 cd "$REPO_ROOT"
 
 # HOOKS — ordered list of git hook names this installer manages. Adding a
-# new D3 gate (e.g. commit-msg)? Append here. The corresponding bypass
-# variable convention is COMMANDER_SKIP<NAME_UPPER> — e.g. pre-commit →
-# COMMANDER_SKIP_PRECOMMIT, pre-push → COMMANDER_SKIP_PREPUSH. Mirror this
-# pattern so the bypass env var remains predictable for downstream consumers.
+# new D3 gate (e.g. commit-msg)? Append here.
 HOOKS=(
   "pre-commit"
   "pre-push"
@@ -96,9 +93,9 @@ All D3 hardening-sprint hooks installed:
 
 Re-run with --uninstall to restore the most-recent backups.
 
-Bypass individual hooks (logged) with their respective env vars:
-  COMMANDER_SKIP_PRECOMMIT=1 git commit -m "emergency"
-  COMMANDER_SKIP_PREPUSH=1   git push origin master
+The pre-commit security gate has no environment bypass.
+The pre-push formatting gate can be skipped only with its logged emergency variable:
+  COMMANDER_SKIP_PREPUSH=1 git push origin master
 
 Run the same gates in CI without git via:
   CORE_PRECOMMIT_HOOK=1 npx tsx scripts/precommitHook.ts <files…>
