@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import * as migrationEntrypoint from './migrate.js';
 import {
   isTask1OwnerCommandMode,
   parseTask1ClosureMigrationPhase,
@@ -10,10 +11,90 @@ import {
   readTask1OwnerInput,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
+import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
+import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 import type { Task1RolloutProofReceipt } from './task1RolloutProof.js';
+
+function sqlResult<T>(rows: T[]): SqlQueryResult<T> {
+  return { rows, rowCount: rows.length };
+}
+
+class OwnerBootstrapLedgerClient implements SqlClient {
+  readonly appliedMigrationIds: string[] = [];
+
+  constructor(private readonly ledger = new Map<string, string>()) {}
+
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    values: readonly unknown[] = [],
+  ): Promise<SqlQueryResult<T>> {
+    const normalized = sql.replace(/\s+/g, ' ').trim();
+    if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') {
+      return sqlResult<T>([]);
+    }
+    if (normalized.includes('pg_advisory_xact_lock')) return sqlResult<T>([]);
+    if (normalized === 'SELECT current_user, session_user') {
+      return sqlResult([{ current_user: 'commander_owner', session_user: 'commander_owner' } as T]);
+    }
+    if (normalized.includes("tablename = 'commander_runs'") && normalized.includes('tableowner')) {
+      return sqlResult([{ owns: true } as T]);
+    }
+    if (
+      normalized.includes("tablename='public'") ||
+      normalized.includes("tablename='commander_runs'") ||
+      normalized.includes("tablename = 'commander_runs'")
+    ) {
+      return sqlResult([{ exists: true } as T]);
+    }
+    if (normalized.startsWith('CREATE TABLE IF NOT EXISTS commander_kernel_migrations')) {
+      return sqlResult<T>([]);
+    }
+    if (normalized === 'SELECT checksum FROM commander_kernel_migrations WHERE id=$1') {
+      const checksum = this.ledger.get(String(values[0]));
+      return sqlResult(checksum ? [{ checksum } as T] : []);
+    }
+    if (normalized.startsWith('INSERT INTO commander_kernel_migrations')) {
+      const id = String(values[0]);
+      this.ledger.set(id, String(values[1]));
+      this.appliedMigrationIds.push(id);
+      return sqlResult<T>([]);
+    }
+    if (normalized === 'SELECT rolbypassrls, rolname FROM pg_roles WHERE rolname = current_user') {
+      return sqlResult([{ rolbypassrls: true, rolname: 'commander_owner' } as T]);
+    }
+    return sqlResult<T>([]);
+  }
+
+  release(): void {}
+}
+
+class OwnerBootstrapLedgerPool implements SqlPool {
+  readonly client = new OwnerBootstrapLedgerClient();
+
+  async connect(): Promise<SqlClient> {
+    return this.client;
+  }
+}
 
 describe('kernel owner migration entrypoint', () => {
   const digest = (value: string): string => value.repeat(64).slice(0, 64);
+
+  it('bootstraps enforce lifecycle descriptors before a fresh owner append initializes state', async () => {
+    const bootstrap = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        bootstrapTask1OwnerAppendMigrations?: (pool: SqlPool, command: 'enforce') => Promise<void>;
+      }
+    ).bootstrapTask1OwnerAppendMigrations;
+    assert.equal(typeof bootstrap, 'function');
+
+    const pool = new OwnerBootstrapLedgerPool();
+    await bootstrap!(pool, 'enforce');
+
+    assert.deepEqual(pool.client.appliedMigrationIds, [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id }) => id),
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS.map(({ id }) => id),
+    ]);
+  });
 
   it('uses the dedicated owner DSN before legacy migration variables', () => {
     assert.equal(

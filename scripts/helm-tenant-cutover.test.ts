@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { dump, load } from 'js-yaml';
+import { SupplyChainScanner } from '../packages/core/src/security/supplyChainScanner.js';
+import * as helmTenantCutover from './helm-tenant-cutover.js';
 import {
   canonicalBootstrapJson,
   canonicalBootstrapSha256,
@@ -34,6 +36,47 @@ const digest = (value: string): string => value.repeat(64).slice(0, 64);
 const image = `sha256:${digest('a')}`;
 const chart = digest('b');
 const nonce = 'n'.repeat(43);
+
+describe('Helm owner Job diagnostics', () => {
+  it('retains a sanitized error code and hash without reflecting owner Job logs', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (logs: string) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const logs = [
+      'Migration failed: COMMANDER_MIGRATION_FAILED',
+      'owner-job-opaque-marker-4820',
+      'second-opaque-marker-9157',
+    ].join('\n');
+    const result = diagnostic!(logs);
+
+    assert.match(result, /^code=COMMANDER_MIGRATION_FAILED;log_sha256=[a-f0-9]{64}$/);
+    assert.doesNotMatch(result, /opaque-marker-4820|opaque-marker-9157/);
+  });
+
+  it('keeps owner Job failure diagnostics free of new scanner high findings', async () => {
+    const source = await readFile(new URL('./helm-tenant-cutover.ts', import.meta.url), 'utf8');
+    const diagnosticStart = source.indexOf('export function ownerJobFailureDiagnostic');
+    const diagnosticEnd = source.indexOf('function phase', diagnosticStart);
+    const waitStart = source.indexOf('try {', source.indexOf('if (createdJob !=='));
+    const waitEnd = source.indexOf('const output =', waitStart);
+    assert.ok(diagnosticStart >= 0 && diagnosticEnd > diagnosticStart);
+    assert.ok(waitStart >= 0 && waitEnd > waitStart);
+
+    const warnings = new SupplyChainScanner({ auditAllScans: false })
+      .scan({
+        name: 'scripts/helm-tenant-cutover.ts',
+        content: source.slice(diagnosticStart, diagnosticEnd) + source.slice(waitStart, waitEnd),
+        tools: [],
+      })
+      .warnings.filter((warning) => warning.severity === 'high');
+
+    assert.deepEqual(warnings, []);
+  });
+});
 
 function objectIdentity(kind: string, name: string): HelmReleaseObjectIdentity {
   return { apiVersion: kind === 'Secret' ? 'v1' : 'apps/v1', kind, namespace: 'commander', name };
