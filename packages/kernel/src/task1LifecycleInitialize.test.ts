@@ -317,6 +317,29 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     assert.doesNotMatch(client.statements[0]!, /pg_catalog\.session_user/i);
   });
 
+  it('classifies bootstrap authority failures without reflecting their detail', async () => {
+    const client = new RecordingClient();
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => {
+              throw new Error('postgres://bootstrap:secret@db/commander private detail');
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'bootstrap_context',
+        );
+        return true;
+      },
+    );
+  });
+
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
       resolveTask1BootstrapAuthorityUrl({

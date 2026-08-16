@@ -386,6 +386,36 @@ async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1Catalo
   }
 }
 
+function bootstrapContextFailure(error: unknown): unknown {
+  if (!error || typeof error !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage: 'bootstrap_context' });
+  }
+  const failure = error as { ownerStage?: unknown };
+  if (failure.ownerStage === 'bootstrap_context') return error;
+  try {
+    Object.defineProperty(error, 'ownerStage', {
+      configurable: true,
+      enumerable: true,
+      value: 'bootstrap_context',
+      writable: true,
+    });
+    return error;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage: 'bootstrap_context' });
+  }
+}
+
+async function loadOwnerBootstrapContext(
+  loadContext: (env: NodeJS.ProcessEnv) => Promise<Task1CatalogBootstrapContext>,
+  env: NodeJS.ProcessEnv,
+): Promise<Task1CatalogBootstrapContext> {
+  try {
+    return await loadContext(env);
+  } catch (error) {
+    throw bootstrapContextFailure(error);
+  }
+}
+
 function peerCertificate(client: SqlClient): X509Certificate {
   const stream = (
     client as PoolClient & {
@@ -892,7 +922,7 @@ export async function initializeTask1LifecycleBoundary(input: {
         throw new Error('MIGRATION_LEDGER_TAMPERED');
       if (row.state === 'fresh_pending') {
         if (identities === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
-        const context = await loadContext(env);
+        const context = await loadOwnerBootstrapContext(loadContext, env);
         if (
           canonicalBootstrapJson(context.authority) !==
             canonicalBootstrapJson(identities.authority) ||
@@ -924,7 +954,7 @@ export async function initializeTask1LifecycleBoundary(input: {
   }
 
   const fresh = input.prepared.command === 'install_enforce';
-  const context = fresh ? await loadContext(env) : null;
+  const context = fresh ? await loadOwnerBootstrapContext(loadContext, env) : null;
   const candidate = await observeCandidate(input.client, env);
   assertPreparedPeerInput(input.prepared, candidate.input);
   const s0 = await collectReadOnlySnapshot(input.client, context, collectInventory);
