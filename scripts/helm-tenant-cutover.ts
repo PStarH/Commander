@@ -227,9 +227,26 @@ function fail(code: string): never {
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(logs: string): string {
   const tail = logs.slice(-4_096);
+  const migrationDiagnostic = [
+    ...tail.matchAll(
+      /\bCOMMANDER_MIGRATION_FAILED;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5})\b/g,
+    ),
+  ].at(-1);
   const codes = tail.match(/\b(?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]+\b/g) ?? [];
   const code = codes.at(-1) ?? 'TENANT_CUTOVER_OWNER_JOB_LOG_UNCLASSIFIED';
   const digest = createHash('sha256').update(tail).digest('hex');
+  if (migrationDiagnostic) {
+    return (
+      'code=COMMANDER_MIGRATION_FAILED;migration=' +
+      migrationDiagnostic[1] +
+      ';phase=' +
+      migrationDiagnostic[2] +
+      ';sqlstate=' +
+      migrationDiagnostic[3] +
+      ';log_sha256=' +
+      digest
+    );
+  }
   return 'code=' + code + ';log_sha256=' + digest;
 }
 

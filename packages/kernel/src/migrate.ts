@@ -100,6 +100,37 @@ export function resolveMigrationDatabaseUrl(env: NodeJS.ProcessEnv): string | un
   return env.COMMANDER_OWNER_DATABASE_URL ?? env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL;
 }
 
+const MIGRATION_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+\.[a-z0-9_]+$/;
+const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
+
+/** Return the owner Job's fixed, non-sensitive migration failure record. */
+export function migrationFailureDiagnostic(error: unknown): string {
+  if (!error || typeof error !== 'object') return 'COMMANDER_MIGRATION_FAILED';
+  const failure = error as {
+    migrationId?: unknown;
+    phase?: unknown;
+    sqlstate?: unknown;
+  };
+  if (
+    typeof failure.migrationId !== 'string' ||
+    !MIGRATION_ID.test(failure.migrationId) ||
+    typeof failure.phase !== 'string' ||
+    !['baseline', 'lifecycle', 'expand', 'enforce'].includes(failure.phase) ||
+    typeof failure.sqlstate !== 'string' ||
+    !POSTGRES_SQLSTATE.test(failure.sqlstate)
+  ) {
+    return 'COMMANDER_MIGRATION_FAILED';
+  }
+  return (
+    'COMMANDER_MIGRATION_FAILED;migration=' +
+    failure.migrationId +
+    ';phase=' +
+    failure.phase +
+    ';sqlstate=' +
+    failure.sqlstate
+  );
+}
+
 export function parseTask1ClosureMigrationPhase(
   args: readonly string[],
   env: NodeJS.ProcessEnv,
@@ -631,10 +662,10 @@ async function main() {
         ? `Task 1 ${closurePhase} migrations applied successfully`
         : 'Kernel migrations applied successfully',
     );
-  } catch {
+  } catch (error) {
     // Database errors can echo DSNs, bind values, or generated SQL. The lifecycle evidence uses
     // owner-side error codes; this general entrypoint never reflects exception text to its logs.
-    console.error('Migration failed: COMMANDER_MIGRATION_FAILED');
+    console.error('Migration failed: ' + migrationFailureDiagnostic(error));
     process.exit(1);
   } finally {
     await pool.end();
