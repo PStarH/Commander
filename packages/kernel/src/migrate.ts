@@ -108,6 +108,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'proof_runtime',
   'bootstrap_kernel',
   'bootstrap_closure',
+  'owner_pool_connect',
   'bootstrap_context',
   'lifecycle_initialize',
   'lifecycle_transaction',
@@ -241,7 +242,7 @@ export async function runTask1OwnerAppendBootstrap(
     dependencies.initialize ??
     ((client, request) => initializeTask1LifecycleBoundary({ client, prepared: request }));
   const applyClosure = dependencies.applyClosure ?? runTask1ClosureMigrations;
-  const client = await pool.connect();
+  const client = await atOwnerMigrationFailureStage('owner_pool_connect', () => pool.connect());
   try {
     await atOwnerMigrationFailureStage('lifecycle_initialize', () => initialize(client, prepared));
   } finally {
