@@ -187,4 +187,73 @@ describe('pre-commit scanner index policy', () => {
       }
     }
   });
+
+  it('rejects a high finding renamed to a path without a HEAD baseline', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-precommit-policy-'));
+    const primary = process.cwd();
+    const linked = path.join(tempRoot, 'linked');
+    const original = path.join('.commander', 'legacy-policy-fixture.ts');
+    const renamed = path.join('.commander', 'renamed-policy-fixture.ts');
+    const high = ['sp', 'awn', '('].join('') + 'dangerous()\n';
+
+    const git = (cwd: string, args: string[]) =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' });
+    const runHook = () =>
+      execFileSync(
+        process.execPath,
+        ['--import', 'tsx', path.join(primary, 'scripts', 'precommitHook.ts')],
+        {
+          cwd: linked,
+          encoding: 'utf8',
+          stdio: 'pipe',
+        },
+      );
+
+    try {
+      git(primary, ['worktree', 'add', '--detach', linked]);
+      for (const [target, source] of [
+        ['node_modules', 'node_modules'],
+        [
+          path.join('packages', 'core', 'node_modules'),
+          path.join('packages', 'core', 'node_modules'),
+        ],
+      ]) {
+        const destination = path.join(linked, target);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.symlinkSync(
+          path.join(primary, source),
+          destination,
+          process.platform === 'win32' ? 'junction' : 'dir',
+        );
+      }
+
+      fs.mkdirSync(path.join(linked, '.commander'), { recursive: true });
+      fs.writeFileSync(path.join(linked, original), high);
+      git(linked, ['add', original]);
+      const tree = git(linked, ['write-tree']).trim();
+      const parent = git(linked, ['rev-parse', 'HEAD']).trim();
+      const commit = git(linked, [
+        '-c',
+        'user.name=Scanner Policy Test',
+        '-c',
+        'user.email=test@example.com',
+        'commit-tree',
+        tree,
+        '-p',
+        parent,
+        '-m',
+        'test fixture',
+      ]).trim();
+      git(linked, ['update-ref', 'HEAD', commit]);
+      git(linked, ['mv', original, renamed]);
+
+      assert.throws(runHook, /precommit scanner gate failed/);
+    } finally {
+      try {
+        git(primary, ['worktree', 'remove', '--force', linked]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    }
+  });
 });
