@@ -327,6 +327,11 @@ export async function loadTask1BootstrapContext(
   };
 }
 
+/** The owner snapshots the immutable PostgreSQL catalog version during fresh initialization. */
+export async function grantTask1CatalogInspection(client: SqlClient): Promise<void> {
+  await client.query('GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO commander_owner');
+}
+
 export function resolveTask1BootstrapAuthorityUrl(env: NodeJS.ProcessEnv): string {
   const explicit = env.COMMANDER_BOOTSTRAP_AUTHORITY_DATABASE_URL?.trim();
   if (explicit) return explicit;
@@ -376,7 +381,9 @@ async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1Catalo
   let client: PoolClient | undefined;
   try {
     client = await pool.connect();
-    return await loadTask1BootstrapContext(client);
+    const context = await loadTask1BootstrapContext(client);
+    await grantTask1CatalogInspection(client);
+    return context;
   } finally {
     client?.release();
     await pool.end();

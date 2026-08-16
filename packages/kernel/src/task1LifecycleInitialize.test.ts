@@ -14,6 +14,7 @@ import {
   PINNED_TASK1_LIFECYCLE_MANIFESTS,
   applyTask1LifecycleRoleCredentials,
   assertPinnedTask1LifecycleManifests,
+  grantTask1CatalogInspection,
   initializeTask1LifecycleBoundary,
   loadTask1BootstrapContext,
   planTask1LifecycleInitialization,
@@ -243,6 +244,14 @@ class RecordingClient implements SqlClient {
 }
 
 describe('Task 1 pinned lifecycle initializer manifests', () => {
+  it('grants the owner only the read-only catalog inspection function before fresh inventory', async () => {
+    const client = new RecordingClient();
+    await grantTask1CatalogInspection(client);
+    assert.deepEqual(client.statements, [
+      'GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO commander_owner',
+    ]);
+  });
+
   it('writes independent explicit adapter-ops and tenant-authority credentials with exact attributes', async () => {
     const client = new RecordingClient();
     await applyTask1LifecycleRoleCredentials(
