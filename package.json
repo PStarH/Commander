@@ -31,7 +31,8 @@
     "build:integrations": "pnpm --filter @commander/effect-broker... --filter @commander/kernel... --filter @commander/mcp-server... --filter @commander/sdk... build",
     "test:codex": "pnpm run build:integrations && pnpm exec tsx --test integrations/codex/codex.integration.test.ts",
     "test:pi": "pnpm run build:integrations && pnpm exec tsx --test integrations/pi/pi.integration.test.ts",
-    "test:integrations": "pnpm run build:integrations && pnpm exec tsx --test integrations/codex/codex.integration.test.ts integrations/pi/pi.integration.test.ts",
+    "test:deepseek-harness": "pnpm run build:integrations && pnpm exec tsx --test integrations/deepseek-harness/deepseek-harness.integration.test.ts",
+    "test:integrations": "pnpm run build:integrations && pnpm exec tsx --test integrations/codex/codex.integration.test.ts integrations/pi/pi.integration.test.ts integrations/deepseek-harness/deepseek-harness.integration.test.ts",
     "publish:mcp-server": "pnpm --filter @commander/mcp-server publish --access public --no-git-checks",
     "release:mcp-server": "pnpm run build:mcp-server && pnpm run test:mcp-server && pnpm run publish:mcp-server",
     "dev:api": "pnpm --filter api dev",
@@ -161,6 +162,10 @@
     "helm:cell-assert:enterprise": "helm template cell-enterprise deploy/helm/commander -f deploy/helm/commander/values-enterprise.yaml --set image.tag=test --set tenantAuthority.proofOwnerSecret=cell-enterprise-proof-owner-r1 --set tenantAuthority.releaseProjectionConfigMap=cell-enterprise-release-projection-r1 --set tenantAuthority.bootstrapAuthoritySecret=cell-enterprise-bootstrap-authority-r1 | pnpm exec tsx scripts/helm-cell-assert.ts --profile enterprise"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-app-boot": "0.1.0-rc.6",
+    "@deepseek-ai/dsh-mcp-client": "0.1.0-rc.6",
     "@types/express": "^5.0.6",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26.1.1",
@@ -200,8 +205,8 @@
       "typescript": "5.8.2",
       "esbuild@>=0.17.0 <0.28.1": ">=0.28.1",
       "vite@<=6.4.2": ">=6.4.3",
-      "js-yaml@<=4.1.1": ">=4.2.0",
-      "js-yaml@>=4.0.0 <4.3.0": ">=4.3.0"
+      "js-yaml@<=4.1.1": ">=4.2.0 <5.0.0",
+      "js-yaml@>=4.0.0 <4.3.0": ">=4.3.0 <5.0.0"
     }
   }
 }
