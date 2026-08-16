@@ -15,11 +15,13 @@ import {
   type Task1HelmRestoreEvidence,
 } from './task1LifecycleOwnerCommand.js';
 import { initializeTask1LifecycleBoundary } from './task1LifecycleInitialize.js';
+import type { SqlPool } from './postgres.js';
 import {
   PostgresTask1LifecycleOwnerTransactions,
   Task1LifecycleLedger,
   type Task1LifecycleOperation,
 } from './task1LifecycleLedger.js';
+import type { TenantCutoverCommand } from './tenantCutoverStateMachine.js';
 import {
   isTask1RolloutProofForOperation,
   Task1RolloutProofRuntime,
@@ -124,6 +126,18 @@ const TASK1_OWNER_COMMAND_MODES = new Set<Task1OwnerCommandMode>([
 
 export function isTask1OwnerCommandMode(value: string | undefined): value is Task1OwnerCommandMode {
   return value !== undefined && TASK1_OWNER_COMMAND_MODES.has(value as Task1OwnerCommandMode);
+}
+
+/**
+ * Fresh owner append runs before the normal Helm migration hook. Establish the phase-bound
+ * lifecycle schema first so initialization can atomically write its first operation.
+ */
+export async function bootstrapTask1OwnerAppendMigrations(
+  pool: SqlPool,
+  command: TenantCutoverCommand,
+): Promise<void> {
+  await runKernelMigrations(pool, { requiredRole: 'owner' });
+  await runTask1ClosureMigrations(pool, command === 'expand' ? 'expand' : 'enforce');
 }
 
 function operationFromDatabaseRow(row: Record<string, unknown>): Task1LifecycleOperation {
@@ -422,6 +436,7 @@ export async function runTask1OwnerMode(
 ): Promise<Record<string, unknown>> {
   const prepared =
     mode === 'tenant-cutover-append' ? parseTask1OwnerCommandInput(stdin) : undefined;
+  if (prepared) await bootstrapTask1OwnerAppendMigrations(pool, prepared.command);
   const ledger = new Task1LifecycleLedger(
     new PostgresTask1LifecycleOwnerTransactions(pool, {
       initialize: prepared

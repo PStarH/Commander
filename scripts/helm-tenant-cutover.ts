@@ -224,6 +224,15 @@ function fail(code: string): never {
   throw new Error(code);
 }
 
+/** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
+export function ownerJobFailureDiagnostic(logs: string): string {
+  const tail = logs.slice(-4_096);
+  const codes = tail.match(/\b(?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]+\b/g) ?? [];
+  const code = codes.at(-1) ?? 'TENANT_CUTOVER_OWNER_JOB_LOG_UNCLASSIFIED';
+  const digest = createHash('sha256').update(tail).digest('hex');
+  return 'code=' + code + ';log_sha256=' + digest;
+}
+
 function phase(command: HelmCutoverCommand): HelmPhase {
   return command === 'expand' || command === 'rollback-recorded-expand' ? 'expand' : 'enforce';
 }
@@ -3124,14 +3133,32 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       if (createdJob !== `job.batch/${bundle.jobName}`) {
         fail('TENANT_CUTOVER_OWNER_JOB_CREATE_FAILED');
       }
-      await command('kubectl', [
-        'wait',
-        '--for=condition=complete',
-        `job/${bundle.jobName}`,
-        '--namespace',
-        context.namespace,
-        '--timeout=5m',
-      ]);
+      try {
+        const ownerJob = 'job/' + bundle.jobName;
+        await command('kubectl', [
+          'wait',
+          '--for=condition=complete',
+          ownerJob,
+          '--namespace',
+          context.namespace,
+          '--timeout=5m',
+        ]);
+      } catch {
+        const ownerJob = 'job/' + bundle.jobName;
+        let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        try {
+          logs = await command('kubectl', [
+            'logs',
+            ownerJob,
+            '--namespace',
+            context.namespace,
+            '--tail=40',
+          ]);
+        } catch {
+          logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        }
+        fail('TENANT_CUTOVER_OWNER_JOB_FAILED:' + ownerJobFailureDiagnostic(logs));
+      }
       const output = (
         await command('kubectl', [
           'logs',
