@@ -118,15 +118,66 @@ describe('kernel owner migration entrypoint', () => {
         migrationId: '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
         phase: 'enforce',
         sqlstate: '42P01',
+        ownerStage: 'bootstrap_kernel',
       },
     );
     const result = formatter!(failure);
 
     assert.equal(
       result,
-      'COMMANDER_MIGRATION_FAILED;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
+      'COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_kernel;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
     );
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+  });
+
+  it('formats every allowlisted owner boundary without reflecting failure details', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const stages = [
+      'input',
+      'proof_runtime',
+      'bootstrap_kernel',
+      'bootstrap_closure',
+      'lifecycle_initialize',
+      'lifecycle_transaction',
+      'current_read',
+      'rollout_proof',
+    ] as const;
+
+    for (const ownerStage of stages) {
+      const result = formatter!(
+        Object.assign(new Error('owner-stage-opaque-marker'), {
+          ownerStage,
+        }),
+      );
+      assert.equal(result, 'COMMANDER_MIGRATION_FAILED;owner_stage=' + ownerStage);
+      assert.doesNotMatch(result, /owner-stage-opaque-marker/i);
+    }
+  });
+
+  it('fails closed when an owner stage is not allowlisted', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('untrusted-owner-stage-marker'), {
+        ownerStage: 'untrusted_stage',
+        migrationId: '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
+        phase: 'enforce',
+        sqlstate: '42P01',
+      }),
+    );
+
+    assert.equal(result, 'COMMANDER_MIGRATION_FAILED');
   });
 
   it('fails closed when migration failure fields are malformed', () => {
@@ -162,6 +213,7 @@ describe('kernel owner migration entrypoint', () => {
         assert.equal(failure.migrationId, KERNEL_TASK1_BASELINE_MIGRATIONS[0]?.id);
         assert.equal(failure.phase, 'baseline');
         assert.equal(failure.sqlstate, '42P01');
+        assert.equal(failure.ownerStage, 'bootstrap_kernel');
         assert.doesNotMatch(failure.message, /postgres:|secret|SELECT|private_value/i);
         return true;
       },

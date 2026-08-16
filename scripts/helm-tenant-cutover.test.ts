@@ -68,14 +68,14 @@ describe('Helm owner Job diagnostics', () => {
     const result = diagnostic!(
       [
         'postgres://owner:secret@postgres/commander SELECT private_value',
-        'Migration failed: COMMANDER_MIGRATION_FAILED;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
+        'Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_kernel;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
         'owner-job-opaque-marker-4820',
       ].join('\n'),
     );
 
     assert.match(
       result,
-      /^code=COMMANDER_MIGRATION_FAILED;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
+      /^code=COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_kernel;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
     );
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
   });
@@ -97,7 +97,7 @@ describe('Helm owner Job diagnostics', () => {
         "} else if (action === 'wait') {",
         '  process.exitCode = 1;',
         "} else if (action === 'logs') {",
-        "  process.stderr.write('Migration failed: COMMANDER_MIGRATION_FAILED;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01\\n');",
+        "  process.stderr.write('Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_initialize;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01\\n');",
         '}',
       ].join('\n'),
       { mode: 0o700 },
@@ -136,7 +136,7 @@ describe('Helm owner Job diagnostics', () => {
           const message = error instanceof Error ? error.message : String(error);
           assert.match(
             message,
-            /TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}/,
+            /TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_initialize;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}/,
           );
           assert.doesNotMatch(message, /postgres:|secret|SELECT/i);
           return true;
