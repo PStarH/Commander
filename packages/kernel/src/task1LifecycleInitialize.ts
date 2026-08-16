@@ -2,7 +2,7 @@ import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
-import type { PoolClient } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import {
   TASK1_DATABASE_ROLES,
   canonicalBootstrapJson,
@@ -365,43 +365,94 @@ export function resolveTask1BootstrapAuthorityUrl(env: NodeJS.ProcessEnv): strin
   return owner.toString();
 }
 
-async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1CatalogBootstrapContext> {
-  const pool = createVerifiedPostgresPool(
-    {
-      connectionString: resolveTask1BootstrapAuthorityUrl(env),
-      max: 1,
-      connectionTimeoutMillis: 2_000,
-      query_timeout: 2_000,
-      statement_timeout: 1_500,
-    },
-    env,
+const BOOTSTRAP_CONTEXT_FAILURE_STAGES = [
+  'bootstrap_context',
+  'bootstrap_context_authority_url',
+  'bootstrap_context_pool_configuration',
+  'bootstrap_context_pool_connect',
+  'bootstrap_context_catalog_query',
+  'bootstrap_context_pool_close',
+] as const;
+type BootstrapContextFailureStage = (typeof BOOTSTRAP_CONTEXT_FAILURE_STAGES)[number];
+
+function isBootstrapContextFailureStage(value: unknown): value is BootstrapContextFailureStage {
+  return (
+    typeof value === 'string' &&
+    (BOOTSTRAP_CONTEXT_FAILURE_STAGES as readonly string[]).includes(value)
   );
-  let client: PoolClient | undefined;
-  try {
-    client = await pool.connect();
-    return await loadTask1BootstrapContext(client);
-  } finally {
-    client?.release();
-    await pool.end();
-  }
 }
 
-function bootstrapContextFailure(error: unknown): unknown {
+function bootstrapContextFailure(
+  error: unknown,
+  ownerStage: BootstrapContextFailureStage = 'bootstrap_context',
+): unknown {
   if (!error || typeof error !== 'object') {
-    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage: 'bootstrap_context' });
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
   }
   const failure = error as { ownerStage?: unknown };
-  if (failure.ownerStage === 'bootstrap_context') return error;
+  if (isBootstrapContextFailureStage(failure.ownerStage)) return error;
   try {
     Object.defineProperty(error, 'ownerStage', {
       configurable: true,
       enumerable: true,
-      value: 'bootstrap_context',
+      value: ownerStage,
       writable: true,
     });
     return error;
   } catch {
-    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage: 'bootstrap_context' });
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
+  }
+}
+
+async function atBootstrapContextFailureStage<T>(
+  ownerStage: BootstrapContextFailureStage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw bootstrapContextFailure(error, ownerStage);
+  }
+}
+
+async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1CatalogBootstrapContext> {
+  let pool: Pool | undefined;
+  let client: PoolClient | undefined;
+  try {
+    const databaseUrl = await atBootstrapContextFailureStage(
+      'bootstrap_context_authority_url',
+      async () => resolveTask1BootstrapAuthorityUrl(env),
+    );
+    const configuredPool = await atBootstrapContextFailureStage(
+      'bootstrap_context_pool_configuration',
+      async () =>
+        createVerifiedPostgresPool(
+          {
+            connectionString: databaseUrl,
+            max: 1,
+            connectionTimeoutMillis: 2_000,
+            query_timeout: 2_000,
+            statement_timeout: 1_500,
+          },
+          env,
+        ),
+    );
+    pool = configuredPool;
+    const connectedClient = await atBootstrapContextFailureStage(
+      'bootstrap_context_pool_connect',
+      () => configuredPool.connect(),
+    );
+    client = connectedClient;
+    return await atBootstrapContextFailureStage('bootstrap_context_catalog_query', () =>
+      loadTask1BootstrapContext(connectedClient),
+    );
+  } finally {
+    try {
+      client?.release();
+      await pool?.end();
+    } catch (error) {
+      throw bootstrapContextFailure(error, 'bootstrap_context_pool_close');
+    }
   }
 }
 

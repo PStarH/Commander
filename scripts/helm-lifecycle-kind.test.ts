@@ -49,7 +49,7 @@ describe('helm-lifecycle-kind helpers', () => {
     );
     assert.deepEqual(
       parseOwnerFailureEvidence(
-        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=bootstrap_context;log_sha256=' +
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=bootstrap_context_catalog_query;log_sha256=' +
           'b'.repeat(64) +
           '\nNAME   READY   STATUS\npod/postgres-0   1/1   Running',
       ),
@@ -57,7 +57,7 @@ describe('helm-lifecycle-kind helpers', () => {
         code: 'COMMANDER_MIGRATION_FAILED',
         producer: 'owner_entrypoint',
         transport: 'kubectl_logs',
-        ownerStage: 'bootstrap_context',
+        ownerStage: 'bootstrap_context_catalog_query',
         logSha256: 'b'.repeat(64),
       },
     );
@@ -69,10 +69,7 @@ describe('helm-lifecycle-kind helpers', () => {
       productionImageSourceRevision({}, () => 'c'.repeat(40)),
       'c'.repeat(40),
     );
-    assert.equal(
-      parseOwnerFailureEvidence('postgres://owner:secret@db private detail'),
-      undefined,
-    );
+    assert.equal(parseOwnerFailureEvidence('postgres://owner:secret@db private detail'), undefined);
   });
 
   it('pins Kubernetes 1.33.2 and the expected digest', () => {
