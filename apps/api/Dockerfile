@@ -50,6 +50,10 @@ RUN pnpm install --frozen-lockfile \
 
 # ---- Stage 3: Build ----
 FROM base AS build
+# The lifecycle harness supplies the checked-out commit so BuildKit cannot
+# reuse a source/build layer from a different revision.
+ARG COMMANDER_SOURCE_REVISION
+RUN test -n "$COMMANDER_SOURCE_REVISION"
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_modules
 COPY --from=deps /app/packages/plugin-sdk/node_modules ./packages/plugin-sdk/node_modules

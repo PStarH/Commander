@@ -413,6 +413,29 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     assert.doesNotMatch(sql, /rolpassword/i);
   });
 
+  it('does not execute the superuser-only control function from the owner inventory query', () => {
+    assert.doesNotMatch(TASK1_CATALOG_QUERIES.identity, /pg_control_system/);
+  });
+
+  it('uses the catalog version captured by the bootstrap connection for owner inventory', async () => {
+    const client = new CatalogClient({
+      identity: [
+        {
+          postgres_version: '16.14',
+          catalog_version: null,
+          database_oid: '16384',
+          database_name: 'commander',
+          ledger_exists: false,
+        },
+      ],
+    });
+    const observed = await collectTask1PrebootstrapInventory(client, {
+      ...bootstrap,
+      catalogVersion: '202307071',
+    });
+    assert.equal(observed.catalogVersion, '202307071');
+  });
+
   it('fails closed on one role attribute or grant-provenance substitution', async () => {
     for (const overrides of [
       {
