@@ -1,0 +1,41 @@
+# Commander MCP server for DeepSeek Harness (DSH).
+#
+# This file is a committed reference patch fragment for the DSH config tree
+# (an entry list composed from bundle + user patch layers). It inserts the
+# Commander MCP server as a stdio entry named `commander`, bridging DSH's
+# stdio JSON-RPC transport to the Commander MCP server
+# (node ./packages/mcp-server/dist/cli.js).
+#
+# Use it as a boot overlay (patch) for an existing profile:
+#
+#   dsh --profile <name> --patch integrations/deepseek-harness/cordis.yml
+#
+# or persist it as the profile's user patch layer (drop the patch fragment
+# into the profile directory and rename it to cordis.patch.yml):
+#
+#   cp integrations/deepseek-harness/cordis.yml $DSH_HOME/profiles/<name>/cordis.patch.yml
+#
+# Requirements:
+#   - Built server: pnpm run build:integrations (or pnpm --filter @commander/mcp-server build)
+#   - Action Gateway reachable at COMMANDER_ACTION_GATEWAY_URL (default http://127.0.0.1:4000,
+#     started with `pnpm dev:api`). Without a gateway URL the Commander tools
+#     fail closed with an ACTION_GATEWAY_REQUIRED response.
+#   - Optional: export COMMANDER_API_KEY=... in your shell when the gateway
+#     requires an API key. Do not commit secrets into this file.
+#   - cwd resolves relative to the dsh process working directory, so run
+#     `dsh` from the repository root (same contract as integrations/codex).
+#
+# Tools are exposed to the model as mcp__commander__<toolName>.
+
+- insert:
+    - id: commander
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: commander
+        transport: stdio
+        command: node
+        args:
+          - ./packages/mcp-server/dist/cli.js
+        cwd: "."
+        env:
+          COMMANDER_ACTION_GATEWAY_URL: "http://127.0.0.1:4000"
