@@ -12,10 +12,11 @@ import {
   runTask1OwnerCommand,
   parseTask1OwnerCommandInput,
   type Task1OwnerCommandMode,
+  type Task1OwnerPreparedRequest,
   type Task1HelmRestoreEvidence,
 } from './task1LifecycleOwnerCommand.js';
 import { initializeTask1LifecycleBoundary } from './task1LifecycleInitialize.js';
-import type { SqlPool } from './postgres.js';
+import type { SqlClient, SqlPool } from './postgres.js';
 import {
   PostgresTask1LifecycleOwnerTransactions,
   Task1LifecycleLedger,
@@ -214,10 +215,7 @@ export function isTask1OwnerCommandMode(value: string | undefined): value is Tas
   return value !== undefined && TASK1_OWNER_COMMAND_MODES.has(value as Task1OwnerCommandMode);
 }
 
-/**
- * Fresh owner append runs before the normal Helm migration hook. Establish the phase-bound
- * lifecycle schema first so initialization can atomically write its first operation.
- */
+/** Apply the historical and phase-gated migration descriptors for an explicit migration action. */
 export async function bootstrapTask1OwnerAppendMigrations(
   pool: SqlPool,
   command: TenantCutoverCommand,
@@ -227,6 +225,29 @@ export async function bootstrapTask1OwnerAppendMigrations(
   );
   await atOwnerMigrationFailureStage('bootstrap_closure', () =>
     runTask1ClosureMigrations(pool, command === 'expand' ? 'expand' : 'enforce'),
+  );
+}
+
+export async function runTask1OwnerAppendBootstrap(
+  pool: SqlPool,
+  prepared: Task1OwnerPreparedRequest,
+  dependencies: {
+    initialize?: (client: SqlClient, request: Task1OwnerPreparedRequest) => Promise<void>;
+    applyClosure?: (pool: SqlPool, phase: Task1ClosurePhase) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const initialize =
+    dependencies.initialize ??
+    ((client, request) => initializeTask1LifecycleBoundary({ client, prepared: request }));
+  const applyClosure = dependencies.applyClosure ?? runTask1ClosureMigrations;
+  const client = await pool.connect();
+  try {
+    await atOwnerMigrationFailureStage('lifecycle_initialize', () => initialize(client, prepared));
+  } finally {
+    client.release();
+  }
+  await atOwnerMigrationFailureStage('bootstrap_closure', () =>
+    applyClosure(pool, prepared.command === 'expand' ? 'expand' : 'enforce'),
   );
 }
 
@@ -528,7 +549,7 @@ export async function runTask1OwnerMode(
     mode === 'tenant-cutover-append'
       ? await atOwnerMigrationFailureStage('input', async () => parseTask1OwnerCommandInput(stdin))
       : undefined;
-  if (prepared) await bootstrapTask1OwnerAppendMigrations(pool, prepared.command);
+  if (prepared) await runTask1OwnerAppendBootstrap(pool, prepared);
   const ledger = new Task1LifecycleLedger(
     new PostgresTask1LifecycleOwnerTransactions(pool, {
       initialize: prepared
