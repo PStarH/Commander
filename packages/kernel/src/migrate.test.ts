@@ -76,8 +76,97 @@ class OwnerBootstrapLedgerPool implements SqlPool {
   }
 }
 
+class FailingOwnerBootstrapLedgerClient extends OwnerBootstrapLedgerClient {
+  override async query<T = Record<string, unknown>>(
+    sql: string,
+    values: readonly unknown[] = [],
+  ): Promise<SqlQueryResult<T>> {
+    if (sql === KERNEL_TASK1_BASELINE_MIGRATIONS[0]?.sql) {
+      throw Object.assign(
+        new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+        {
+          code: '42P01',
+        },
+      );
+    }
+    return super.query(sql, values);
+  }
+}
+
+class FailingOwnerBootstrapLedgerPool implements SqlPool {
+  readonly client = new FailingOwnerBootstrapLedgerClient();
+
+  async connect(): Promise<SqlClient> {
+    return this.client;
+  }
+}
+
 describe('kernel owner migration entrypoint', () => {
   const digest = (value: string): string => value.repeat(64).slice(0, 64);
+
+  it('formats only a sanitized PostgreSQL migration failure diagnostic', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const failure = Object.assign(
+      new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+      {
+        migrationId: '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
+        phase: 'enforce',
+        sqlstate: '42P01',
+      },
+    );
+    const result = formatter!(failure);
+
+    assert.equal(
+      result,
+      'COMMANDER_MIGRATION_FAILED;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+  });
+
+  it('fails closed when migration failure fields are malformed', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('postgres://owner:secret@postgres/commander'), {
+        migrationId: 'not a migration id',
+        phase: 'unbounded',
+        sqlstate: 'not-a-sqlstate',
+      }),
+    );
+
+    assert.equal(result, 'COMMANDER_MIGRATION_FAILED');
+  });
+
+  it('attaches only migration identity, phase, and PostgreSQL SQLSTATE to a failed query', async () => {
+    const pool = new FailingOwnerBootstrapLedgerPool();
+
+    await assert.rejects(
+      () => migrationEntrypoint.bootstrapTask1OwnerAppendMigrations(pool, 'enforce'),
+      (error: unknown) => {
+        const failure = error as Error & {
+          migrationId?: string;
+          phase?: string;
+          sqlstate?: string;
+        };
+        assert.equal(failure.migrationId, KERNEL_TASK1_BASELINE_MIGRATIONS[0]?.id);
+        assert.equal(failure.phase, 'baseline');
+        assert.equal(failure.sqlstate, '42P01');
+        assert.doesNotMatch(failure.message, /postgres:|secret|SELECT|private_value/i);
+        return true;
+      },
+    );
+  });
 
   it('bootstraps enforce lifecycle descriptors before a fresh owner append initializes state', async () => {
     const bootstrap = (

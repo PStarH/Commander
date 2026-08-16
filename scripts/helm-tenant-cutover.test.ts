@@ -57,6 +57,29 @@ describe('Helm owner Job diagnostics', () => {
     assert.doesNotMatch(result, /opaque-marker-4820|opaque-marker-9157/);
   });
 
+  it('retains only the canonical migration identifier, phase, and SQLSTATE', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (logs: string) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const result = diagnostic!(
+      [
+        'postgres://owner:secret@postgres/commander SELECT private_value',
+        'Migration failed: COMMANDER_MIGRATION_FAILED;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
+        'owner-job-opaque-marker-4820',
+      ].join('\n'),
+    );
+
+    assert.match(
+      result,
+      /^code=COMMANDER_MIGRATION_FAILED;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
+  });
+
   it('keeps owner Job failure diagnostics free of new scanner high findings', async () => {
     const source = await readFile(new URL('./helm-tenant-cutover.ts', import.meta.url), 'utf8');
     const diagnosticStart = source.indexOf('export function ownerJobFailureDiagnostic');
