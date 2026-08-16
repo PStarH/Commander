@@ -18,6 +18,7 @@ import {
   namespaceCleanupArgs,
   postgresImageForArchitecture,
   productionImageReferences,
+  productionImageBuildArguments,
   reusableProductionImageDigest,
   controlPlaneReadinessSelectors,
   proofReaderName,
@@ -322,6 +323,16 @@ describe('helm-lifecycle-kind helpers', () => {
       target: `docker.io/library/commander-lifecycle-api@sha256:${'a'.repeat(64)}`,
     });
     assert.throws(() => productionImageReferences('sha256:bad'), /PRODUCTION_IMAGE_DIGEST_INVALID/);
+  });
+
+  it('passes the checked-out source revision into the production image build', () => {
+    const args = productionImageBuildArguments('a'.repeat(40));
+    assert.ok(args.includes('--build-arg'));
+    assert.ok(args.includes('COMMANDER_SOURCE_REVISION=' + 'a'.repeat(40)));
+    assert.throws(
+      () => productionImageBuildArguments('not-a-revision'),
+      /PRODUCTION_IMAGE_SOURCE_REVISION_INVALID/,
+    );
   });
 
   it('reuses a local production image only when its exact repo digest matches its image ID', () => {

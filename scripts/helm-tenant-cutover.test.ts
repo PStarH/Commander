@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { dump, load } from 'js-yaml';
+import { SupplyChainScanner } from '../packages/core/src/security/supplyChainScanner.js';
+import * as helmTenantCutover from './helm-tenant-cutover.js';
 import {
   canonicalBootstrapJson,
   canonicalBootstrapSha256,
@@ -34,6 +36,139 @@ const digest = (value: string): string => value.repeat(64).slice(0, 64);
 const image = `sha256:${digest('a')}`;
 const chart = digest('b');
 const nonce = 'n'.repeat(43);
+
+describe('Helm owner Job diagnostics', () => {
+  it('retains a sanitized error code and hash without reflecting owner Job logs', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (logs: string) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const logs = [
+      'Migration failed: COMMANDER_MIGRATION_FAILED',
+      'owner-job-opaque-marker-4820',
+      'second-opaque-marker-9157',
+    ].join('\n');
+    const result = diagnostic!(logs);
+
+    assert.match(result, /^code=COMMANDER_MIGRATION_FAILED;log_sha256=[a-f0-9]{64}$/);
+    assert.doesNotMatch(result, /opaque-marker-4820|opaque-marker-9157/);
+  });
+
+  it('retains only the canonical migration identifier, phase, and SQLSTATE', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (logs: string) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const result = diagnostic!(
+      [
+        'postgres://owner:secret@postgres/commander SELECT private_value',
+        'Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_kernel;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
+        'owner-job-opaque-marker-4820',
+      ].join('\n'),
+    );
+
+    assert.match(
+      result,
+      /^code=COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_kernel;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
+  });
+
+  it('carries a safe owner diagnostic from kubectl stderr through the real command boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-owner-transport-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      [
+        '#!/usr/bin/env node',
+        "const fs = require('node:fs');",
+        "const input = fs.readFileSync(0, 'utf8');",
+        'const action = process.argv[2];',
+        "if (action === 'create') {",
+        '  const object = JSON.parse(input);',
+        "  process.stdout.write((object.kind === 'ConfigMap' ? 'configmap/' : 'job.batch/') + object.metadata.name);",
+        "} else if (action === 'wait') {",
+        '  process.exitCode = 1;',
+        "} else if (action === 'logs') {",
+        "  process.stderr.write('Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_initialize;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01\\n');",
+        '}',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    await chmod(kubectl, 0o700);
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      const ports = helmTenantCutover.createNodePorts();
+      await assert.rejects(
+        () =>
+          ports.owner.plan(
+            {},
+            {
+              namespace: 'commander',
+              release: 'commander',
+              image: 'registry.example/commander@' + image,
+              databaseSecretName: 'commander-database',
+              databaseSecretKeys: {
+                owner: 'owner-url',
+                app: 'app-url',
+                tenantAuthority: 'tenant-authority-url',
+                scheduler: 'scheduler-url',
+                worker: 'worker-url',
+                adapterOps: 'adapter-ops-url',
+              },
+              databaseTls: {
+                secretName: 'commander-database-tls',
+                caKey: 'ca.crt',
+                expectedServerSpkiSha256: digest('c'),
+              },
+              proofCertificate: { secretName: 'commander-api-proof', certKey: 'tls.crt' },
+              bootstrap: { kind: 'none' },
+            },
+          ),
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(
+            message,
+            /TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_initialize;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}/,
+          );
+          assert.doesNotMatch(message, /postgres:|secret|SELECT/i);
+          return true;
+        },
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps owner Job failure diagnostics free of new scanner high findings', async () => {
+    const source = await readFile(new URL('./helm-tenant-cutover.ts', import.meta.url), 'utf8');
+    const diagnosticStart = source.indexOf('export function ownerJobFailureDiagnostic');
+    const diagnosticEnd = source.indexOf('function phase', diagnosticStart);
+    const waitStart = source.indexOf('try {', source.indexOf('if (createdJob !=='));
+    const waitEnd = source.indexOf('const output =', waitStart);
+    assert.ok(diagnosticStart >= 0 && diagnosticEnd > diagnosticStart);
+    assert.ok(waitStart >= 0 && waitEnd > waitStart);
+
+    const warnings = new SupplyChainScanner({ auditAllScans: false })
+      .scan({
+        name: 'scripts/helm-tenant-cutover.ts',
+        content: source.slice(diagnosticStart, diagnosticEnd) + source.slice(waitStart, waitEnd),
+        tools: [],
+      })
+      .warnings.filter((warning) => warning.severity === 'high');
+
+    assert.deepEqual(warnings, []);
+  });
+});
 
 function objectIdentity(kind: string, name: string): HelmReleaseObjectIdentity {
   return { apiVersion: kind === 'Secret' ? 'v1' : 'apps/v1', kind, namespace: 'commander', name };

@@ -501,6 +501,45 @@ export interface MigrationRunOptions {
 }
 
 export type Task1ClosurePhase = 'expand' | 'enforce';
+export type MigrationExecutionPhase = 'baseline' | 'lifecycle' | Task1ClosurePhase;
+
+function migrationExecutionFailure(
+  error: unknown,
+  migration: KernelMigration,
+  phase: MigrationExecutionPhase,
+): Error {
+  const sqlstate =
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    /^[0-9A-Z]{5}$/.test(error.code)
+      ? error.code
+      : undefined;
+  if (!sqlstate) return error instanceof Error ? error : new Error('COMMANDER_MIGRATION_FAILED');
+
+  return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), {
+    migrationId: migration.id,
+    phase,
+    sqlstate,
+  });
+}
+
+async function applyMigration(
+  client: SqlClient,
+  migration: KernelMigration,
+  phase: MigrationExecutionPhase,
+): Promise<void> {
+  try {
+    await client.query(migration.sql);
+    await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
+      migration.id,
+      migration.checksum,
+    ]);
+  } catch (error) {
+    throw migrationExecutionFailure(error, migration, phase);
+  }
+}
 
 const TASK1_DESCRIPTOR_NAMES = ['lifecycle', 'expand', 'enforce'] as const;
 type Task1DescriptorName = (typeof TASK1_DESCRIPTOR_NAMES)[number];
@@ -533,7 +572,10 @@ export async function applyTask1ClosureDescriptorSet(
     }
   }
 
-  for (const migration of selectedTask1ClosureMigrations(descriptorSet)) {
+  const migrations = selectedTask1ClosureMigrations(descriptorSet);
+  const phase: MigrationExecutionPhase =
+    migrations.length === 1 ? 'lifecycle' : migrations.length === 2 ? 'expand' : 'enforce';
+  for (const migration of migrations) {
     const existing = await client.query<{ checksum: string }>(
       'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
       [migration.id],
@@ -544,11 +586,7 @@ export async function applyTask1ClosureDescriptorSet(
       }
       continue;
     }
-    await client.query(migration.sql);
-    await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
-      migration.id,
-      migration.checksum,
-    ]);
+    await applyMigration(client, migration, phase);
   }
 }
 
@@ -683,11 +721,7 @@ export async function runKernelMigrations(
           throw new Error(`Kernel migration checksum mismatch for ${migration.id}`);
         continue;
       }
-      await client.query(migration.sql);
-      await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
-        migration.id,
-        migration.checksum,
-      ]);
+      await applyMigration(client, migration, 'baseline');
     }
 
     // Ensure the migration owner can bypass RLS for operational queries and the

@@ -224,6 +224,42 @@ function fail(code: string): never {
   throw new Error(code);
 }
 
+const OWNER_MIGRATION_FAILURE_STAGE =
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|lifecycle_initialize|lifecycle_transaction|current_read|rollout_proof)';
+
+/** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
+export function ownerJobFailureDiagnostic(logs: string): string {
+  const tail = logs.slice(-4_096);
+  const migrationDiagnostic = [
+    ...tail.matchAll(
+      new RegExp(
+        '\\bCOMMANDER_MIGRATION_FAILED;owner_stage=' +
+          OWNER_MIGRATION_FAILURE_STAGE +
+          '(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?\\b',
+        'g',
+      ),
+    ),
+  ].at(-1);
+  const codes = tail.match(/\b(?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]+\b/g) ?? [];
+  const code = codes.at(-1) ?? 'TENANT_CUTOVER_OWNER_JOB_LOG_UNCLASSIFIED';
+  const digest = createHash('sha256').update(tail).digest('hex');
+  if (migrationDiagnostic) {
+    const diagnostic = 'code=COMMANDER_MIGRATION_FAILED;owner_stage=' + migrationDiagnostic[1];
+    return migrationDiagnostic[2]
+      ? diagnostic +
+          ';migration=' +
+          migrationDiagnostic[2] +
+          ';phase=' +
+          migrationDiagnostic[3] +
+          ';sqlstate=' +
+          migrationDiagnostic[4] +
+          ';log_sha256=' +
+          digest
+      : diagnostic + ';log_sha256=' + digest;
+  }
+  return 'code=' + code + ';log_sha256=' + digest;
+}
+
 function phase(command: HelmCutoverCommand): HelmPhase {
   return command === 'expand' || command === 'rollback-recorded-expand' ? 'expand' : 'enforce';
 }
@@ -2067,13 +2103,19 @@ async function defaultCommand(
   stdin?: string,
 ): Promise<string> {
   return new Promise((resolveCommand, reject) => {
-    const child = spawn(program, [...args], { shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
+    const captureStderr = program === 'kubectl' && args[0] === 'logs';
+    const child = spawn(program, [...args], {
+      shell: false,
+      stdio: ['pipe', 'pipe', captureStderr ? 'pipe' : 'ignore'],
+    });
     const output: Buffer[] = [];
+    const errorOutput: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
+    if (captureStderr) child.stderr?.on('data', (chunk: Buffer) => errorOutput.push(chunk));
     child.once('error', () => reject(new Error('TENANT_CUTOVER_COMMAND_FAILED')));
     child.once('close', (code) =>
       code === 0
-        ? resolveCommand(Buffer.concat(output).toString('utf8'))
+        ? resolveCommand(Buffer.concat([...output, ...errorOutput]).toString('utf8'))
         : reject(new Error('TENANT_CUTOVER_COMMAND_FAILED')),
     );
     child.stdin.end(stdin ?? '');
@@ -3124,14 +3166,32 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       if (createdJob !== `job.batch/${bundle.jobName}`) {
         fail('TENANT_CUTOVER_OWNER_JOB_CREATE_FAILED');
       }
-      await command('kubectl', [
-        'wait',
-        '--for=condition=complete',
-        `job/${bundle.jobName}`,
-        '--namespace',
-        context.namespace,
-        '--timeout=5m',
-      ]);
+      try {
+        const ownerJob = 'job/' + bundle.jobName;
+        await command('kubectl', [
+          'wait',
+          '--for=condition=complete',
+          ownerJob,
+          '--namespace',
+          context.namespace,
+          '--timeout=5m',
+        ]);
+      } catch {
+        const ownerJob = 'job/' + bundle.jobName;
+        let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        try {
+          logs = await command('kubectl', [
+            'logs',
+            ownerJob,
+            '--namespace',
+            context.namespace,
+            '--tail=40',
+          ]);
+        } catch {
+          logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        }
+        fail('TENANT_CUTOVER_OWNER_JOB_FAILED:' + ownerJobFailureDiagnostic(logs));
+      }
       const output = (
         await command('kubectl', [
           'logs',

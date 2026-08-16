@@ -20,6 +20,7 @@ export interface Task1CatalogBootstrapContext {
   sessionUser: string;
   authority: BootstrapIdentityV1;
   bootstrapSuperuser: BootstrapIdentityV1;
+  catalogVersion?: string;
 }
 
 export type Task1CatalogOriginKind = 'E1' | 'E2' | 'legacy';
@@ -113,12 +114,11 @@ export const TASK1_CATALOG_QUERIES = Object.freeze({
   identity: `/* task1-catalog:identity */
 SELECT (current_setting('server_version_num')::integer / 10000)::text || '.' ||
          (current_setting('server_version_num')::integer % 100)::text AS postgres_version,
-       control.catalog_version_no::text AS catalog_version,
+       NULL::text AS catalog_version,
        database.oid::text AS database_oid,
        database.datname::text AS database_name,
        pg_catalog.to_regclass('public.commander_kernel_migrations') IS NOT NULL AS ledger_exists
 FROM pg_catalog.pg_database AS database
-CROSS JOIN pg_catalog.pg_control_system() AS control
 WHERE database.datname = pg_catalog.current_database()`,
 
   ledger: `/* task1-catalog:ledger */
@@ -523,7 +523,7 @@ async function queryRows(client: SqlClient, sql: string): Promise<JsonRecord[]> 
 export async function collectTask1PrebootstrapInventory(
   client: SqlClient,
   bootstrap: Task1CatalogBootstrapContext | null,
-  options: { transaction?: 'managed' | 'caller' } = {},
+  options: { transaction?: 'managed' | 'caller'; catalogVersion?: string } = {},
 ): Promise<PrebootstrapInventoryV1> {
   let open = false;
   try {
@@ -574,10 +574,14 @@ export async function collectTask1PrebootstrapInventory(
       });
     }
 
+    const catalogVersion = options.catalogVersion ?? bootstrap?.catalogVersion ?? identity.catalog_version;
+    if (typeof catalogVersion !== 'string' || !/^[0-9]+$/.test(catalogVersion)) {
+      fail('TASK1_CATALOG_IDENTITY_INVALID');
+    }
     const inventory = {
       format: 'prebootstrap_inventory/v1' as const,
       postgresVersion: String(identity.postgres_version),
-      catalogVersion: String(identity.catalog_version),
+      catalogVersion,
       databaseIdentity: {
         oid: String(identity.database_oid),
         name: String(identity.database_name),
@@ -622,9 +626,10 @@ export async function collectTask1PrebootstrapInventory(
 
 export async function collectTask1LockedCatalogInventory(
   client: SqlClient,
-  origin:
+  origin: (
     | { classification: 'E1' | 'E2'; bootstrapIdentities: BootstrapIdentitiesV1 }
-    | { classification: 'legacy'; bootstrapIdentities: null },
+    | { classification: 'legacy'; bootstrapIdentities: null }
+  ) & { catalogVersion?: string },
 ): Promise<PrebootstrapInventoryV1> {
   if (
     (origin.classification === 'legacy' && origin.bootstrapIdentities !== null) ||
@@ -636,6 +641,7 @@ export async function collectTask1LockedCatalogInventory(
   }
   const inventory = await collectTask1PrebootstrapInventory(client, null, {
     transaction: 'caller',
+    catalogVersion: origin.catalogVersion,
   });
   inventory.bootstrapIdentities = origin.bootstrapIdentities;
   return inventory;
