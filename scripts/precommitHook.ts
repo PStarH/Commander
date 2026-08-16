@@ -25,16 +25,21 @@
  *     exactly — same regex set, same hard-coded prefix list, same fallback
  *     comment-line guard. If the CI gate rejects a prefix, the pre-commit
  *     gate rejects it too; if CI accepts, pre-commit accepts.
- *   - Singleton resolveMasterKey failure (D2 prod-mode) is caught and we
- *     fall back to inline regex so the hook never silently disables itself.
- *
- * Halt switch: COMMANDER_SKIP_PRECOMMIT=1 (handled in .githooks/pre-commit).
+ *   - Scanner-loading failures are blocking so the hook never silently
+ *     disables itself.
  */
 
 import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  enumerateHighWarnings,
+  evaluateIndexedWarnings,
+  readGitBlob,
+  readIndexedContent,
+  type ScannerWarning,
+} from './precommitScannerPolicy.js';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -92,71 +97,66 @@ interface ScanLike {
   warnings: Array<{ severity: string; category: string; message: string; evidence: string }>;
 }
 
+function readContent(relativePath: string, source: 'git' | 'argv'): string {
+  if (source === 'git') {
+    return readIndexedContent(REPO_ROOT, relativePath);
+  }
+  return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf8');
+}
+
 /**
- * Run SupplyChainScanner.scan() if we can load the module. Otherwise fall
- * back to an inline blocklist mirroring MAL-001 / MAL-005 / MAL-007 so
- * the hook still blocks catastrophic commits when the SDK is unavailable.
+ * Run SupplyChainScanner.scan(). If the module cannot be loaded, fail closed:
+ * a pre-commit malware gate must not silently pass while its scanner is down.
  */
 async function scanContent(name: string, content: string): Promise<ScanLike> {
   try {
     const mod = await import(SCANNER_MODULE_PATH);
-    const scanner = mod.getSupplyChainScanner();
-    const r = scanner.scan({ name, content, tools: [] });
+    // Pre-commit needs a synchronous detection decision only. Audit/SBOM work
+    // belongs to the normal scanner pipeline and can otherwise keep commits
+    // alive after a clean decision.
+    const scanner = new mod.SupplyChainScanner({ auditAllScans: false });
+    const r = scanner.scan({
+      name,
+      content,
+      tools: [],
+    });
+    const blocked = r.warnings.some(
+      (w) =>
+        w.severity === 'critical' || w.severity === 'high' || w.category.startsWith('malware.'),
+    );
     return {
-      passed: r.passed,
-      severity: r.severity,
-      recommendation: r.recommendation,
+      passed: !blocked,
+      severity: blocked ? r.severity : 'clean',
+      recommendation: blocked ? 'block' : 'allow',
       warnings: r.warnings,
     };
   } catch (err) {
-    // Singleton init can fail under D1 prod fail-fast (production NODE_ENV +
-    // missing COMMANDER_AUDIT_CHAIN_KEY). Continue with the inline mirror.
     process.stderr.write(
-      `[D3 hook] SupplyChainScanner unavailable (${(err as Error)?.message ?? err}); using inline blocklist.\n`,
+      '[D3 hook] SupplyChainScanner unavailable (' +
+        ((err as Error)?.message ?? err) +
+        '); blocking (fail-closed).\n',
     );
-    return inlineBlocklistScan(name, content);
+    return {
+      passed: false,
+      severity: 'malicious',
+      recommendation: 'block',
+      warnings: [
+        {
+          severity: 'critical',
+          category: 'scanner-unavailable',
+          message: 'SupplyChainScanner failed to load; commit blocked (fail-closed)',
+          evidence: name,
+        },
+      ],
+    };
   }
-}
-
-function inlineBlocklistScan(name: string, content: string): ScanLike {
-  // Mirror of MAL-001 / MAL-005 / MAL-007 / MAL-008 — keep in lock-step with
-  // packages/core/src/security/supplyChainScanner.ts MALWARE_SIGNATURES.
-  const PATTERNS: Array<{ id: string; regex: RegExp }> = [
-    { id: 'MAL-001-reverse-shell', regex: /\/dev\/tcp\/.*\/.*|bash -i >& \/dev\/tcp/ },
-    {
-      id: 'MAL-005-data-destruction',
-      regex: /rm\s+-rf\s+\/(?:\s|$)|;\s*:\(\)\s*\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:/,
-    },
-    {
-      id: 'MAL-007-ssh-backdoor',
-      regex: />>\s*~\/\.ssh\/authorized_keys|>>\s*\/root\/\.ssh\/authorized_keys/,
-    },
-    {
-      id: 'MAL-008-persistence',
-      regex: /@reboot|crontab\s+-\s+-[el]|\/etc\/cron\.(daily|hourly|weekly|monthly)/i,
-    },
-  ];
-  const warnings = PATTERNS.filter((p) => p.regex.test(content)).map((p) => ({
-    severity: 'critical' as const,
-    category: p.id,
-    message: `blocklist hit: ${p.id}`,
-    evidence: name,
-  }));
-  return {
-    passed: warnings.length === 0,
-    severity: warnings.length > 0 ? 'malicious' : 'clean',
-    recommendation: warnings.length > 0 ? 'block' : 'allow',
-    warnings,
-  };
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function runScannerGate(): Promise<void> {
   const staged = getStagedFiles();
-  const scannable = staged.files.filter(
-    (f) => SCANNABLE_EXT.test(f) && !f.includes('/.commander/'),
-  );
+  const scannable = staged.files.filter((f) => SCANNABLE_EXT.test(f));
 
   if (scannable.length === 0) {
     console.log(
@@ -169,35 +169,62 @@ async function runScannerGate(): Promise<void> {
   const violations: Array<{ file: string; reason: string; severity: string }> = [];
 
   for (const rel of scannable) {
-    const full = path.isAbsolute(rel) ? rel : path.join(REPO_ROOT, rel);
     let content: string;
     try {
-      const stat = fs.statSync(full);
-      if (stat.size > MAX_FILE_BYTES) {
-        console.warn(`[D3 hook] skipping ${rel} (size ${stat.size} > ${MAX_FILE_BYTES})`);
-        continue;
+      content = readContent(rel, staged.source);
+      if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
+        throw new Error('D3_INDEX_BLOB_TOO_LARGE:' + rel);
       }
-      content = fs.readFileSync(full, 'utf-8');
     } catch (err) {
-      console.warn(`[D3 hook] cannot read ${rel}: ${(err as Error).message}`);
+      violations.push({
+        file: rel,
+        reason: 'index_blob_unavailable: ' + (err as Error).message,
+        severity: 'critical',
+      });
       continue;
     }
-    const result = await scanContent(rel, content);
-    if (!result.passed || result.recommendation === 'block') {
-      for (const w of result.warnings) {
-        // Only show critical/high hits so the output is actionable.
-        if (
-          w.severity === 'critical' ||
-          w.severity === 'high' ||
-          w.category.startsWith('malware.')
-        ) {
-          violations.push({
-            file: rel,
-            reason: `${w.category}: ${w.message}`,
-            severity: w.severity,
-          });
-        }
-      }
+    const stagedResult = await scanContent(rel, content);
+    const headContent = staged.source === 'git' ? readGitBlob(REPO_ROOT, 'HEAD', rel) : undefined;
+    const headResult = headContent === undefined ? undefined : await scanContent(rel, headContent);
+    const stagedWarnings = [
+      ...stagedResult.warnings.filter(
+        (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
+      ),
+      ...(await enumerateHighWarnings(
+        content,
+        async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
+      )),
+    ] as ScannerWarning[];
+    const headWarnings =
+      headContent === undefined || headResult === undefined
+        ? []
+        : [
+            ...headResult.warnings.filter(
+              (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
+            ),
+            ...(await enumerateHighWarnings(
+              headContent,
+              async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
+            )),
+          ];
+    const policy = evaluateIndexedWarnings(stagedWarnings, headWarnings as ScannerWarning[]);
+    for (const warning of policy.inherited) {
+      console.log(
+        '[D3 hook] inherited high warning ' +
+          warning.fingerprint +
+          ' ' +
+          warning.category +
+          ' (' +
+          rel +
+          ')',
+      );
+    }
+    for (const violation of policy.violations) {
+      violations.push({
+        file: rel,
+        reason: violation.reason + ':' + violation.fingerprint + ':' + violation.category,
+        severity: violation.severity,
+      });
     }
   }
 
@@ -206,7 +233,7 @@ async function runScannerGate(): Promise<void> {
     for (const v of violations) {
       console.error(`  [${v.severity}] ${v.file}: ${v.reason}`);
     }
-    console.error('\nFix or amend the staging; bypass with COMMANDER_SKIP_PRECOMMIT=1 (logged).\n');
+    console.error('\nFix or amend the staging before committing.\n');
     throw new Error('precommit scanner gate failed');
   }
   console.log('[D3 hook] scanner gate clean ✅');
@@ -298,19 +325,17 @@ function scanFileForPlaintextKeys(rel: string, content: string): D25Violation[] 
   return hits;
 }
 
-function runD25PlaintextGate(scannableFiles: string[]): void {
+function runD25PlaintextGate(scannableFiles: string[], source: 'git' | 'argv'): void {
   if (scannableFiles.length === 0) {
     console.log('[D2.5 hook] no staged files to scan');
     return;
   }
   const violations: D25Violation[] = [];
   for (const rel of scannableFiles) {
-    const full = path.isAbsolute(rel) ? rel : path.join(REPO_ROOT, rel);
     let content: string;
     try {
-      const stat = fs.statSync(full);
-      if (stat.size > MAX_FILE_BYTES) continue;
-      content = fs.readFileSync(full, 'utf-8');
+      content = readContent(rel, source);
+      if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) continue;
     } catch (err) {
       reportSilentFailure(err, 'precommitHook:300');
       continue;
@@ -326,7 +351,7 @@ function runD25PlaintextGate(scannableFiles: string[]): void {
     }
     console.error(
       '\nFix or amend the staging; replace with `process.env.<env-var>`. ' +
-        'Bypass with COMMANDER_SKIP_PRECOMMIT=1 (logged).\n',
+        'Commit only after removing the plaintext value.\n',
     );
     throw new Error('precommit d2.5 plaintext gate failed');
   }
@@ -340,16 +365,30 @@ function runExecPolicySmoke(): void {
   // packages/core as cwd so vitest resolves its config and the test
   // file path is relative to the package root.
   const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
+  // Resolve the local vitest binary explicitly. The npx vitest command re-resolves
+  // the package from a nested node_modules/.pnpm path that does not exist
+  // in pnpm workspaces (worktree + CI argv-replay), so the smoke test
+  // would always fail with MODULE_NOT_FOUND even though the binary works.
+  const vitestBin = [
+    path.join(vitestCwd, 'node_modules', '.bin', 'vitest'),
+    path.join(REPO_ROOT, 'node_modules', '.bin', 'vitest'),
+  ].find((p) => {
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!vitestBin) {
+    throw new Error('precommit ExecPolicy smoke failed — vitest binary not found');
+  }
   try {
-    execFileSync(
-      'pnpm',
-      ['exec', 'vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
-      {
-        cwd: vitestCwd,
-        stdio: 'inherit',
-        env: { ...process.env, NODE_ENV: 'test' },
-      },
-    );
+    execFileSync(vitestBin, ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'], {
+      cwd: vitestCwd,
+      stdio: 'inherit',
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
     reportSilentFailure(err, 'precommitHook:335');
@@ -364,10 +403,8 @@ function runExecPolicySmoke(): void {
     // SupplyChain scanner and the vitest smoke. Mirrors the d25 vitest
     // gate regex-by-regex so a slip is caught at commit time, not at CI.
     const staged = getStagedFiles();
-    const stagedForScan = staged.files.filter(
-      (f) => SCANNABLE_EXT.test(f) && !f.includes('/.commander/'),
-    );
-    runD25PlaintextGate(stagedForScan);
+    const stagedForScan = staged.files.filter((f) => SCANNABLE_EXT.test(f));
+    runD25PlaintextGate(stagedForScan, staged.source);
     runExecPolicySmoke();
     console.log('[D3+hook] all gates passed ✅');
     process.exit(0);
