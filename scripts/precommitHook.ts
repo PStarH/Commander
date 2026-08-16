@@ -75,9 +75,9 @@ function getStagedFiles(): { source: 'git' | 'argv'; files: string[] } {
   if (process.env.CORE_PRECOMMIT_HOOK === '1' && process.env.GIT_DIR === undefined) {
     return { source: 'argv', files: process.argv.slice(2).filter(Boolean) };
   }
-  // Git-side invocation: read staged + added files (added vs modified = same
-  // security posture for our purposes).
-  const out = execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=AM'], {
+  // Git-side invocation: read every staged path that can introduce content.
+  // A rename or copy has no same-path HEAD baseline, so it must be scanned.
+  const out = execFileSync('git', ['diff', '--cached', '--name-only', '--diff-filter=AMRC'], {
     cwd: REPO_ROOT,
     encoding: 'utf-8',
   });
