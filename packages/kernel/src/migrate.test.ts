@@ -144,6 +144,7 @@ describe('kernel owner migration entrypoint', () => {
       'proof_runtime',
       'bootstrap_kernel',
       'bootstrap_closure',
+      'owner_pool_connect',
       'bootstrap_context',
       'lifecycle_initialize',
       'lifecycle_transaction',
@@ -262,6 +263,25 @@ describe('kernel owner migration entrypoint', () => {
     });
 
     assert.deepEqual(events, ['lifecycle_initialize', 'bootstrap_closure']);
+  });
+
+  it('classifies a rejected owner pool connection before lifecycle initialization', async () => {
+    const pool = {
+      async connect() {
+        throw new Error('postgres://owner:secret@db/commander connect refused');
+      },
+    } as unknown as SqlPool;
+    const prepared = { command: 'install_enforce' } as Parameters<
+      typeof runTask1OwnerAppendBootstrap
+    >[1];
+
+    await assert.rejects(
+      () => runTask1OwnerAppendBootstrap(pool, prepared),
+      (error: unknown) => {
+        assert.equal((error as { ownerStage?: unknown }).ownerStage, 'owner_pool_connect');
+        return true;
+      },
+    );
   });
 
   it('uses the dedicated owner DSN before legacy migration variables', () => {
