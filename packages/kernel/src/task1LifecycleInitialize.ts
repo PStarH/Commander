@@ -301,13 +301,15 @@ export async function loadTask1BootstrapContext(
     bootstrap_oid: string;
     bootstrap_name: string;
     bootstrap_superuser: boolean;
+    catalog_version: string;
   }>(`
     SELECT authority.oid::text AS authority_oid,
            authority.rolname::text AS authority_name,
            authority.rolsuper AS authority_superuser,
            bootstrap.oid::text AS bootstrap_oid,
            bootstrap.rolname::text AS bootstrap_name,
-           bootstrap.rolsuper AS bootstrap_superuser
+           bootstrap.rolsuper AS bootstrap_superuser,
+           pg_catalog.pg_control_system().catalog_version_no::text AS catalog_version
       FROM pg_catalog.pg_roles AS authority
       JOIN pg_catalog.pg_roles AS bootstrap ON bootstrap.oid = 10
      WHERE authority.rolname = session_user
@@ -324,12 +326,8 @@ export async function loadTask1BootstrapContext(
     sessionUser: row.authority_name,
     authority: identity(row.authority_oid, row.authority_name, row.authority_superuser),
     bootstrapSuperuser: identity(row.bootstrap_oid, row.bootstrap_name, row.bootstrap_superuser),
+    catalogVersion: row.catalog_version,
   };
-}
-
-/** The owner snapshots the immutable PostgreSQL catalog version during fresh initialization. */
-export async function grantTask1CatalogInspection(client: SqlClient): Promise<void> {
-  await client.query('GRANT EXECUTE ON FUNCTION pg_catalog.pg_control_system() TO commander_owner');
 }
 
 export function resolveTask1BootstrapAuthorityUrl(env: NodeJS.ProcessEnv): string {
@@ -381,9 +379,7 @@ async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1Catalo
   let client: PoolClient | undefined;
   try {
     client = await pool.connect();
-    const context = await loadTask1BootstrapContext(client);
-    await grantTask1CatalogInspection(client);
-    return context;
+    return await loadTask1BootstrapContext(client);
   } finally {
     client?.release();
     await pool.end();
@@ -955,7 +951,11 @@ export async function initializeTask1LifecycleBoundary(input: {
     catalogOrigin = { classification, bootstrapIdentities: null };
   } else {
     if (identities === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
-    catalogOrigin = { classification, bootstrapIdentities: identities };
+    catalogOrigin = {
+      classification,
+      bootstrapIdentities: identities,
+      catalogVersion: context?.catalogVersion,
+    };
   }
   await runTask1LifecycleDescriptorStateTransaction(
     input.client,
