@@ -26,11 +26,41 @@ import {
   sanitizeEvidence,
   kindClusterExists,
   proofTemplatesPresent,
+  parseOwnerFailureEvidence,
+  productionImageSourceRevision,
   KIND_NODE_IMAGE,
   CALICO_URL,
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('retains only a parsed allowlisted owner failure record and source revision', () => {
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=owner_pool_connect;log_sha256=' +
+          'a'.repeat(64),
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'owner_pool_connect',
+        logSha256: 'a'.repeat(64),
+      },
+    );
+    assert.equal(
+      productionImageSourceRevision({ GITHUB_SHA: 'b'.repeat(40) }, () => 'c'.repeat(40)),
+      'b'.repeat(40),
+    );
+    assert.equal(
+      productionImageSourceRevision({}, () => 'c'.repeat(40)),
+      'c'.repeat(40),
+    );
+    assert.equal(
+      parseOwnerFailureEvidence('postgres://owner:secret@db private detail'),
+      undefined,
+    );
+  });
+
   it('pins Kubernetes 1.33.2 and the expected digest', () => {
     assert.match(KIND_NODE_IMAGE, /kindest\/node:v1\.33\.2/);
     assert.match(KIND_NODE_IMAGE, /sha256:[a-f0-9]{64}/);

@@ -53,7 +53,10 @@ describe('Helm owner Job diagnostics', () => {
     ].join('\n');
     const result = diagnostic!(logs);
 
-    assert.match(result, /^code=COMMANDER_MIGRATION_FAILED;log_sha256=[a-f0-9]{64}$/);
+    assert.match(
+      result,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+    );
     assert.doesNotMatch(result, /opaque-marker-4820|opaque-marker-9157/);
   });
 
@@ -75,9 +78,25 @@ describe('Helm owner Job diagnostics', () => {
 
     assert.match(
       result,
-      /^code=COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_kernel;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=bootstrap_kernel;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
     );
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
+  });
+
+  it('marks unavailable owner Job logs with a fixed transport discriminator', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (
+          logs: string,
+          transport?: 'kubectl_logs' | 'kubectl_logs_unavailable',
+        ) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+    assert.match(
+      diagnostic!('TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE', 'kubectl_logs_unavailable'),
+      /^code=TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=[a-f0-9]{64}$/,
+    );
   });
 
   it('carries a safe owner diagnostic from kubectl stderr through the real command boundary', async () => {
@@ -136,7 +155,7 @@ describe('Helm owner Job diagnostics', () => {
           const message = error instanceof Error ? error.message : String(error);
           assert.match(
             message,
-            /TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_initialize;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}/,
+            /TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}/,
           );
           assert.doesNotMatch(message, /postgres:|secret|SELECT/i);
           return true;

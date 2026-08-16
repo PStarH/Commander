@@ -144,6 +144,7 @@ describe('kernel owner migration entrypoint', () => {
       'proof_runtime',
       'bootstrap_kernel',
       'bootstrap_closure',
+      'owner_pool_configuration',
       'owner_pool_connect',
       'bootstrap_context',
       'lifecycle_initialize',
