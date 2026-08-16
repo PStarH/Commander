@@ -2093,13 +2093,19 @@ async function defaultCommand(
   stdin?: string,
 ): Promise<string> {
   return new Promise((resolveCommand, reject) => {
-    const child = spawn(program, [...args], { shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
+    const captureStderr = program === 'kubectl' && args[0] === 'logs';
+    const child = spawn(program, [...args], {
+      shell: false,
+      stdio: ['pipe', 'pipe', captureStderr ? 'pipe' : 'ignore'],
+    });
     const output: Buffer[] = [];
+    const errorOutput: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
+    if (captureStderr) child.stderr?.on('data', (chunk: Buffer) => errorOutput.push(chunk));
     child.once('error', () => reject(new Error('TENANT_CUTOVER_COMMAND_FAILED')));
     child.once('close', (code) =>
       code === 0
-        ? resolveCommand(Buffer.concat(output).toString('utf8'))
+        ? resolveCommand(Buffer.concat([...output, ...errorOutput]).toString('utf8'))
         : reject(new Error('TENANT_CUTOVER_COMMAND_FAILED')),
     );
     child.stdin.end(stdin ?? '');

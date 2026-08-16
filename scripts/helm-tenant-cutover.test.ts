@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -78,6 +78,75 @@ describe('Helm owner Job diagnostics', () => {
       /^code=COMMANDER_MIGRATION_FAILED;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
     );
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
+  });
+
+  it('carries a safe owner diagnostic from kubectl stderr through the real command boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-owner-transport-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      [
+        '#!/usr/bin/env node',
+        "const fs = require('node:fs');",
+        "const input = fs.readFileSync(0, 'utf8');",
+        'const action = process.argv[2];',
+        "if (action === 'create') {",
+        '  const object = JSON.parse(input);',
+        "  process.stdout.write((object.kind === 'ConfigMap' ? 'configmap/' : 'job.batch/') + object.metadata.name);",
+        "} else if (action === 'wait') {",
+        '  process.exitCode = 1;',
+        "} else if (action === 'logs') {",
+        "  process.stderr.write('Migration failed: COMMANDER_MIGRATION_FAILED;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01\\n');",
+        '}',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    await chmod(kubectl, 0o700);
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      const ports = helmTenantCutover.createNodePorts();
+      await assert.rejects(
+        () =>
+          ports.owner.plan(
+            {},
+            {
+              namespace: 'commander',
+              release: 'commander',
+              image: 'registry.example/commander@' + image,
+              databaseSecretName: 'commander-database',
+              databaseSecretKeys: {
+                owner: 'owner-url',
+                app: 'app-url',
+                tenantAuthority: 'tenant-authority-url',
+                scheduler: 'scheduler-url',
+                worker: 'worker-url',
+                adapterOps: 'adapter-ops-url',
+              },
+              databaseTls: {
+                secretName: 'commander-database-tls',
+                caKey: 'ca.crt',
+                expectedServerSpkiSha256: digest('c'),
+              },
+              proofCertificate: { secretName: 'commander-api-proof', certKey: 'tls.crt' },
+              bootstrap: { kind: 'none' },
+            },
+          ),
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(
+            message,
+            /TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}/,
+          );
+          assert.doesNotMatch(message, /postgres:|secret|SELECT/i);
+          return true;
+        },
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
   });
 
   it('keeps owner Job failure diagnostics free of new scanner high findings', async () => {
