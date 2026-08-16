@@ -108,6 +108,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'proof_runtime',
   'bootstrap_kernel',
   'bootstrap_closure',
+  'owner_pool_configuration',
   'owner_pool_connect',
   'bootstrap_context',
   'lifecycle_initialize',
@@ -713,21 +714,21 @@ export async function readTask1OwnerInput(
 }
 
 async function main() {
-  const databaseUrl = resolveMigrationDatabaseUrl(process.env);
-  if (!databaseUrl) {
-    console.error('Missing owner migration database URL');
-    process.exit(1);
-  }
-
-  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
+  let pool: Pool | undefined;
   try {
+    const activePool = await atOwnerMigrationFailureStage('owner_pool_configuration', async () => {
+      const databaseUrl = resolveMigrationDatabaseUrl(process.env);
+      if (!databaseUrl) throw new Error('COMMANDER_MIGRATION_FAILED');
+      return createVerifiedPostgresPool({ connectionString: databaseUrl });
+    });
+    pool = activePool;
     const action = process.argv[2];
     if (isTask1OwnerCommandMode(action)) {
       const stdin = await atOwnerMigrationFailureStage('input', () => readTask1OwnerInput());
       const proofRuntime = await atOwnerMigrationFailureStage('proof_runtime', async () =>
-        createTask1ProofRuntime(pool, process.env),
+        createTask1ProofRuntime(activePool, process.env),
       );
-      const response = await runTask1OwnerMode(action, stdin, pool, {
+      const response = await runTask1OwnerMode(action, stdin, activePool, {
         proveCurrent: proofRuntime
           ? (operation) => proofRuntime.proveCurrent(operation)
           : undefined,
@@ -741,11 +742,11 @@ async function main() {
     const closurePhase = parseTask1ClosureMigrationPhase(process.argv.slice(2), process.env);
     const adapterOpsPassword = resolveAdapterOpsPassword(process.env);
     if (adapterOpsPassword) {
-      await ensureAdapterOpsLogin(pool, adapterOpsPassword);
+      await ensureAdapterOpsLogin(activePool, adapterOpsPassword);
     }
-    await runKernelMigrations(pool, { requiredRole: 'owner' });
+    await runKernelMigrations(activePool, { requiredRole: 'owner' });
     if (closurePhase) {
-      await runTask1ClosureMigrations(pool, closurePhase);
+      await runTask1ClosureMigrations(activePool, closurePhase);
     }
     // Seed cell tenants so register_worker can admit worker LOGIN registrations.
     // Prefer COMMANDER_WORKER_ALLOWED_TENANTS; fall back to COMMANDER_WORKER_TENANTS.
@@ -753,10 +754,10 @@ async function main() {
       process.env.COMMANDER_WORKER_ALLOWED_TENANTS ?? process.env.COMMANDER_WORKER_TENANTS,
     );
     if (tenants.length > 0) {
-      await seedWorkerAllowedTenants(pool, tenants);
+      await seedWorkerAllowedTenants(activePool, tenants);
       console.log(`Seeded commander_worker_allowed_tenants: ${tenants.join(',')}`);
       if (process.env.COMMANDER_ENABLE_DEMO_TICKET === '1') {
-        await seedDemoTicketAllowlist(pool, tenants);
+        await seedDemoTicketAllowlist(activePool, tenants);
         console.log(`Seeded demo ticket effect policy: ${tenants.join(',')}`);
       }
     }
@@ -771,7 +772,7 @@ async function main() {
     console.error('Migration failed: ' + migrationFailureDiagnostic(error));
     process.exit(1);
   } finally {
-    await pool.end();
+    await pool?.end();
   }
 }
 

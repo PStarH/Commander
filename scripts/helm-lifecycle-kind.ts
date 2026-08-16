@@ -80,6 +80,17 @@ export function productionImageBuildArguments(sourceRevision: string): string[] 
   ];
 }
 
+export function productionImageSourceRevision(
+  env: Pick<NodeJS.ProcessEnv, 'GITHUB_SHA'>,
+  readHead: () => string,
+): string {
+  const sourceRevision = env.GITHUB_SHA?.trim() || readHead().trim();
+  if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
+    throw new Error('PRODUCTION_IMAGE_SOURCE_REVISION_INVALID');
+  }
+  return sourceRevision;
+}
+
 const EXTERNAL_DATABASE_NAMESPACE = 'commander-external-database';
 const RUN_ID = `${Date.now().toString(36)}-${process.pid}`;
 const CALICO_IMAGES = calicoImagesForArchitecture(arch());
@@ -523,8 +534,66 @@ export interface HarnessEvidence {
   rbac?: AssertionResult[];
   networkPolicy?: AssertionResult[];
   rolloutRecovery?: ScenarioEvidence;
+  image?: {
+    digest: string;
+    sourceRevision: string;
+  };
+  ownerFailureEvidence?: OwnerFailureEvidence[];
   passed: boolean;
   sanitized: boolean;
+}
+
+export interface OwnerFailureEvidence {
+  code: 'COMMANDER_MIGRATION_FAILED';
+  producer: 'owner_entrypoint';
+  transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
+  ownerStage?: OwnerMigrationFailureStage;
+  migration?: string;
+  phase?: 'baseline' | 'lifecycle' | 'expand' | 'enforce';
+  sqlstate?: string;
+  logSha256: string;
+}
+
+type OwnerMigrationFailureStage =
+  | 'input'
+  | 'proof_runtime'
+  | 'bootstrap_kernel'
+  | 'bootstrap_closure'
+  | 'owner_pool_configuration'
+  | 'owner_pool_connect'
+  | 'bootstrap_context'
+  | 'lifecycle_initialize'
+  | 'lifecycle_transaction'
+  | 'current_read'
+  | 'rollout_proof';
+
+const OWNER_FAILURE_STAGE =
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|lifecycle_initialize|lifecycle_transaction|current_read|rollout_proof)';
+const OWNER_FAILURE_RECORD = new RegExp(
+  '(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)' +
+    '(?:;owner_stage=' +
+    OWNER_FAILURE_STAGE +
+    ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})$',
+);
+
+/** Extract only the canonical owner diagnostic record, never the original error text. */
+export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
+  const match = OWNER_FAILURE_RECORD.exec(error);
+  if (!match) return undefined;
+  const [, transport, ownerStage, migration, phase, sqlstate, logSha256] = match;
+  const evidence: OwnerFailureEvidence = {
+    code: 'COMMANDER_MIGRATION_FAILED',
+    producer: 'owner_entrypoint',
+    transport: transport as OwnerFailureEvidence['transport'],
+    logSha256,
+  };
+  if (ownerStage) evidence.ownerStage = ownerStage as OwnerMigrationFailureStage;
+  if (migration && phase && sqlstate) {
+    evidence.migration = migration;
+    evidence.phase = phase as OwnerFailureEvidence['phase'];
+    evidence.sqlstate = sqlstate;
+  }
+  return evidence;
 }
 
 interface HarnessOptions {
@@ -709,13 +778,12 @@ export async function loadPinnedRuntimeImages(): Promise<void> {
 export async function buildProductionImage(): Promise<string> {
   const metadataDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-image-'));
   const metadataFile = resolve(metadataDirectory, 'metadata.json');
-  const revisionFromEnvironment = process.env.GITHUB_SHA?.trim();
-  const revision =
-    revisionFromEnvironment ||
+  const revision = productionImageSourceRevision(process.env, () =>
     requireCommand(
       runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
       'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
-    ).trim();
+    ),
+  );
   const build = await runCmd('docker', [
     ...productionImageBuildArguments(revision),
     '--metadata-file',
@@ -740,6 +808,7 @@ export async function buildProductionImage(): Promise<string> {
     throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
   }
   process.env.COMMANDER_LIFECYCLE_IMAGE_DIGEST = digest;
+  process.env.COMMANDER_LIFECYCLE_IMAGE_SOURCE_REVISION = revision;
   return digest;
 }
 
@@ -2018,6 +2087,14 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   const imageDigest = opts.reuseProductionImage
     ? await inspectReusableProductionImage()
     : await buildProductionImage();
+  const imageSourceRevision =
+    process.env.COMMANDER_LIFECYCLE_IMAGE_SOURCE_REVISION ??
+    productionImageSourceRevision(process.env, () =>
+      requireCommand(
+        runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
+        'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
+      ),
+    );
 
   if (!kindClusterExists(CLUSTER_NAME)) {
     await createKindCluster(CLUSTER_NAME);
@@ -2058,6 +2135,10 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
     rbac,
     networkPolicy,
     rolloutRecovery,
+    image: { digest: imageDigest, sourceRevision: imageSourceRevision },
+    ownerFailureEvidence: scenarios.flatMap(({ error }) =>
+      typeof error === 'string' ? [parseOwnerFailureEvidence(error)].filter(Boolean) : [],
+    ),
     passed: aggregateScenarioPass(scenarios),
     sanitized: false,
   };

@@ -225,10 +225,13 @@ function fail(code: string): never {
 }
 
 const OWNER_MIGRATION_FAILURE_STAGE =
-  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|lifecycle_initialize|lifecycle_transaction|current_read|rollout_proof)';
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|lifecycle_initialize|lifecycle_transaction|current_read|rollout_proof)';
 
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
-export function ownerJobFailureDiagnostic(logs: string): string {
+export function ownerJobFailureDiagnostic(
+  logs: string,
+  transport: 'kubectl_logs' | 'kubectl_logs_unavailable' = 'kubectl_logs',
+): string {
   const tail = logs.slice(-4_096);
   const migrationDiagnostic = [
     ...tail.matchAll(
@@ -244,7 +247,11 @@ export function ownerJobFailureDiagnostic(logs: string): string {
   const code = codes.at(-1) ?? 'TENANT_CUTOVER_OWNER_JOB_LOG_UNCLASSIFIED';
   const digest = createHash('sha256').update(tail).digest('hex');
   if (migrationDiagnostic) {
-    const diagnostic = 'code=COMMANDER_MIGRATION_FAILED;owner_stage=' + migrationDiagnostic[1];
+    const diagnostic =
+      'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=' +
+      transport +
+      ';owner_stage=' +
+      migrationDiagnostic[1];
     return migrationDiagnostic[2]
       ? diagnostic +
           ';migration=' +
@@ -257,7 +264,7 @@ export function ownerJobFailureDiagnostic(logs: string): string {
           digest
       : diagnostic + ';log_sha256=' + digest;
   }
-  return 'code=' + code + ';log_sha256=' + digest;
+  return 'code=' + code + ';producer=owner_entrypoint;transport=' + transport + ';log_sha256=' + digest;
 }
 
 function phase(command: HelmCutoverCommand): HelmPhase {
@@ -3179,6 +3186,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       } catch {
         const ownerJob = 'job/' + bundle.jobName;
         let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        let logTransport: 'kubectl_logs' | 'kubectl_logs_unavailable' = 'kubectl_logs_unavailable';
         try {
           logs = await command('kubectl', [
             'logs',
@@ -3187,10 +3195,11 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             context.namespace,
             '--tail=40',
           ]);
+          logTransport = 'kubectl_logs';
         } catch {
           logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
         }
-        fail('TENANT_CUTOVER_OWNER_JOB_FAILED:' + ownerJobFailureDiagnostic(logs));
+        fail('TENANT_CUTOVER_OWNER_JOB_FAILED:' + ownerJobFailureDiagnostic(logs, logTransport));
       }
       const output = (
         await command('kubectl', [
