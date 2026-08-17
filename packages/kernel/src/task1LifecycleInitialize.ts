@@ -378,6 +378,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'lifecycle_candidate_peer_observation',
   'lifecycle_candidate_peer_validation',
   'lifecycle_prebootstrap_snapshot',
+  'lifecycle_prebootstrap_snapshot_comparison',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 type SnapshotTransaction = 'begin' | 'commit';
@@ -1094,7 +1095,10 @@ export async function initializeTask1LifecycleBoundary(input: {
   const s1 = await atLifecyclePrebootstrapSnapshot('s1', () =>
     collectReadOnlySnapshot(input.client, context, collectInventory),
   );
-  const snapshots = createPrebootstrapSnapshots(s0, s1);
+  const snapshots = await atLifecycleInitializerFailureStage(
+    'lifecycle_prebootstrap_snapshot_comparison',
+    async () => createPrebootstrapSnapshots(s0, s1),
+  );
   const initialization = planTask1LifecycleInitialization({
     command: input.prepared.command,
     comparisonKind: snapshots.comparisonKind,
