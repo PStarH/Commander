@@ -349,6 +349,35 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies candidate peer observation failures after bootstrap context succeeds', async () => {
+    const client = new RecordingClient();
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => {
+              throw new Error('candidate-peer-opaque-marker');
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_candidate_peer_observation',
+        );
+        return true;
+      },
+    );
+  });
+
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
       resolveTask1BootstrapAuthorityUrl({

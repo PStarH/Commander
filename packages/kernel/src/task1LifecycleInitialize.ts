@@ -368,32 +368,33 @@ export function resolveTask1BootstrapAuthorityUrl(env: NodeJS.ProcessEnv): strin
   return owner.toString();
 }
 
-const BOOTSTRAP_CONTEXT_FAILURE_STAGES = [
+const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'bootstrap_context',
   'bootstrap_context_authority_url',
   'bootstrap_context_pool_configuration',
   'bootstrap_context_pool_connect',
   'bootstrap_context_catalog_query',
   'bootstrap_context_pool_close',
+  'lifecycle_candidate_peer_observation',
 ] as const;
-type BootstrapContextFailureStage = (typeof BOOTSTRAP_CONTEXT_FAILURE_STAGES)[number];
+type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 
-function isBootstrapContextFailureStage(value: unknown): value is BootstrapContextFailureStage {
+function isLifecycleInitializerFailureStage(value: unknown): value is LifecycleInitializerFailureStage {
   return (
     typeof value === 'string' &&
-    (BOOTSTRAP_CONTEXT_FAILURE_STAGES as readonly string[]).includes(value)
+    (LIFECYCLE_INITIALIZER_FAILURE_STAGES as readonly string[]).includes(value)
   );
 }
 
-function bootstrapContextFailure(
+function lifecycleInitializerFailure(
   error: unknown,
-  ownerStage: BootstrapContextFailureStage = 'bootstrap_context',
+  ownerStage: LifecycleInitializerFailureStage = 'bootstrap_context',
 ): unknown {
   if (!error || typeof error !== 'object') {
     return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
   }
   const failure = error as { ownerStage?: unknown };
-  if (isBootstrapContextFailureStage(failure.ownerStage)) return error;
+  if (isLifecycleInitializerFailureStage(failure.ownerStage)) return error;
   try {
     Object.defineProperty(error, 'ownerStage', {
       configurable: true,
@@ -407,14 +408,14 @@ function bootstrapContextFailure(
   }
 }
 
-async function atBootstrapContextFailureStage<T>(
-  ownerStage: BootstrapContextFailureStage,
+async function atLifecycleInitializerFailureStage<T>(
+  ownerStage: LifecycleInitializerFailureStage,
   operation: () => Promise<T>,
 ): Promise<T> {
   try {
     return await operation();
   } catch (error) {
-    throw bootstrapContextFailure(error, ownerStage);
+    throw lifecycleInitializerFailure(error, ownerStage);
   }
 }
 
@@ -422,11 +423,11 @@ async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1Catalo
   let pool: Pool | undefined;
   let client: PoolClient | undefined;
   try {
-    const databaseUrl = await atBootstrapContextFailureStage(
+    const databaseUrl = await atLifecycleInitializerFailureStage(
       'bootstrap_context_authority_url',
       async () => resolveTask1BootstrapAuthorityUrl(env),
     );
-    const configuredPool = await atBootstrapContextFailureStage(
+    const configuredPool = await atLifecycleInitializerFailureStage(
       'bootstrap_context_pool_configuration',
       async () =>
         createVerifiedPostgresPool(
@@ -441,12 +442,12 @@ async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1Catalo
         ),
     );
     pool = configuredPool;
-    const connectedClient = await atBootstrapContextFailureStage(
+    const connectedClient = await atLifecycleInitializerFailureStage(
       'bootstrap_context_pool_connect',
       () => configuredPool.connect(),
     );
     client = connectedClient;
-    return await atBootstrapContextFailureStage('bootstrap_context_catalog_query', () =>
+    return await atLifecycleInitializerFailureStage('bootstrap_context_catalog_query', () =>
       loadTask1BootstrapContext(connectedClient),
     );
   } finally {
@@ -454,7 +455,7 @@ async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1Catalo
       client?.release();
       await pool?.end();
     } catch (error) {
-      throw bootstrapContextFailure(error, 'bootstrap_context_pool_close');
+      throw lifecycleInitializerFailure(error, 'bootstrap_context_pool_close');
     }
   }
 }
@@ -466,7 +467,7 @@ async function loadOwnerBootstrapContext(
   try {
     return await loadContext(env);
   } catch (error) {
-    throw bootstrapContextFailure(error);
+    throw lifecycleInitializerFailure(error);
   }
 }
 
@@ -987,7 +988,10 @@ export async function initializeTask1LifecycleBoundary(input: {
       } else if (identities !== null) {
         throw new Error('MIGRATION_LEDGER_TAMPERED');
       }
-      const candidate = await observeCandidate(input.client, env);
+      const candidate = await atLifecycleInitializerFailureStage(
+        'lifecycle_candidate_peer_observation',
+        () => observeCandidate(input.client, env),
+      );
       assertPreparedPeerInput(input.prepared, candidate.input);
       const observed = await observePeers(env);
       if (
@@ -1009,7 +1013,10 @@ export async function initializeTask1LifecycleBoundary(input: {
 
   const fresh = input.prepared.command === 'install_enforce';
   const context = fresh ? await loadOwnerBootstrapContext(loadContext, env) : null;
-  const candidate = await observeCandidate(input.client, env);
+  const candidate = await atLifecycleInitializerFailureStage(
+    'lifecycle_candidate_peer_observation',
+    () => observeCandidate(input.client, env),
+  );
   assertPreparedPeerInput(input.prepared, candidate.input);
   const s0 = await collectReadOnlySnapshot(input.client, context, collectInventory);
   const s1 = await collectReadOnlySnapshot(input.client, context, collectInventory);

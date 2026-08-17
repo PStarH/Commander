@@ -153,6 +153,7 @@ describe('kernel owner migration entrypoint', () => {
       'bootstrap_context_catalog_query',
       'bootstrap_context_pool_close',
       'lifecycle_initialize',
+      'lifecycle_candidate_peer_observation',
       'lifecycle_transaction',
       'current_read',
       'rollout_proof',

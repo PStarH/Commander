@@ -49,7 +49,7 @@ describe('helm-lifecycle-kind helpers', () => {
     );
     assert.deepEqual(
       parseOwnerFailureEvidence(
-        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=bootstrap_context_catalog_query;log_sha256=' +
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_candidate_peer_observation;log_sha256=' +
           'b'.repeat(64) +
           '\nNAME   READY   STATUS\npod/postgres-0   1/1   Running',
       ),
@@ -57,7 +57,7 @@ describe('helm-lifecycle-kind helpers', () => {
         code: 'COMMANDER_MIGRATION_FAILED',
         producer: 'owner_entrypoint',
         transport: 'kubectl_logs',
-        ownerStage: 'bootstrap_context_catalog_query',
+        ownerStage: 'lifecycle_candidate_peer_observation',
         logSha256: 'b'.repeat(64),
       },
     );
