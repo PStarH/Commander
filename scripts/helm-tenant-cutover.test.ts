@@ -71,14 +71,14 @@ describe('Helm owner Job diagnostics', () => {
     const result = diagnostic!(
       [
         'postgres://owner:secret@postgres/commander SELECT private_value',
-        'Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_context_pool_connect;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
+        'Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_candidate_peer_observation;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
         'owner-job-opaque-marker-4820',
       ].join('\n'),
     );
 
     assert.match(
       result,
-      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=bootstrap_context_pool_connect;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_candidate_peer_observation;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}$/,
     );
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
   });
