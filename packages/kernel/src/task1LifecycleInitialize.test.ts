@@ -313,8 +313,17 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     assert.equal(context.sessionUser, 'postgres');
     assert.equal(context.catalogVersion, '202307071');
     assert.match(client.statements[0]!, /authority\.rolname = session_user/i);
-    assert.match(client.statements[0]!, /pg_catalog\.pg_control_system\(\)\.catalog_version_no/i);
+    assert.match(client.statements[0]!, /current_setting\('server_version_num'\)/i);
+    assert.match(client.statements[0]!, /WHEN 16 THEN '202307071'/i);
     assert.doesNotMatch(client.statements[0]!, /pg_catalog\.session_user/i);
+  });
+
+  it('loads the bootstrap catalog contract without a superuser-only control function', async () => {
+    const client = new RecordingClient();
+    await loadTask1BootstrapContext(client as unknown as PoolClient);
+
+    assert.doesNotMatch(client.statements[0]!, /pg_catalog\.pg_control_system\(\)/i);
+    assert.match(client.statements[0]!, /current_setting\('server_version_num'\)/i);
   });
 
   it('classifies bootstrap authority failures without reflecting their detail', async () => {

@@ -309,7 +309,10 @@ export async function loadTask1BootstrapContext(
            bootstrap.oid::text AS bootstrap_oid,
            bootstrap.rolname::text AS bootstrap_name,
            bootstrap.rolsuper AS bootstrap_superuser,
-           pg_catalog.pg_control_system().catalog_version_no::text AS catalog_version
+           CASE current_setting('server_version_num')::integer / 10000
+             WHEN 16 THEN '202307071'
+             ELSE NULL
+           END AS catalog_version
       FROM pg_catalog.pg_roles AS authority
       JOIN pg_catalog.pg_roles AS bootstrap ON bootstrap.oid = 10
      WHERE authority.rolname = session_user
