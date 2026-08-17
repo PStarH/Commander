@@ -225,7 +225,7 @@ function fail(code: string): never {
 }
 
 const OWNER_MIGRATION_FAILURE_STAGE =
-  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_transaction|current_read|rollout_proof)';
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_transaction|current_read|rollout_proof)';
 
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(

@@ -378,6 +378,54 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies a declared candidate peer binding mismatch after observation', async () => {
+    const client = new RecordingClient();
+    const declaredPeerInput = createDatabasePeerBindingInput({
+      roles: roles.map((role) => ({ role, host: 'db.example', port: 5433 })),
+      expectedServerSpkiSha256: 'f'.repeat(64),
+      ca: { mountIdentity: 'database-ca', path: '/ca.crt', publicBytesSha256: '0'.repeat(64) },
+    });
+    const mismatchedPrepared = {
+      ...prepared,
+      businessConfiguration: {
+        ...prepared.businessConfiguration,
+        databasePeerBindingInput: declaredPeerInput,
+      },
+      configuration: {
+        ...prepared.configuration,
+        databasePeerBindingInput: declaredPeerInput,
+      },
+      configurationSha256: canonicalBootstrapSha256({
+        ...prepared.configuration,
+        databasePeerBindingInput: declaredPeerInput,
+      }),
+    };
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared: mismatchedPrepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_candidate_peer_validation',
+        );
+        return true;
+      },
+    );
+  });
+
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
       resolveTask1BootstrapAuthorityUrl({
