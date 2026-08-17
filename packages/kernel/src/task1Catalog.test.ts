@@ -365,6 +365,46 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     assert.ok(client.queries.every(({ values }) => values.length === 0));
   });
 
+  it('classifies the fresh owner catalog with the required global app timeouts', async () => {
+    const client = new CatalogClient({
+      'role-settings': [
+        {
+          database: '*',
+          role: 'commander_app',
+          settings: [
+            { name: 'idle_in_transaction_session_timeout', value: '10s' },
+            { name: 'statement_timeout', value: '55s' },
+          ],
+        },
+      ],
+    });
+
+    const inventory = await collectTask1PrebootstrapInventory(client, bootstrap);
+
+    assert.equal(classifyTask1CatalogOrigin(inventory, bootstrap).kind, 'E2');
+  });
+
+  it('rejects a fresh owner catalog with an unrecognized role setting', async () => {
+    await assert.rejects(
+      () =>
+        collectTask1PrebootstrapInventory(
+          new CatalogClient({
+            'role-settings': [
+              {
+                database: '*',
+                role: 'commander_worker',
+                settings: [{ name: 'statement_timeout', value: '55s' }],
+              },
+            ],
+          }),
+          bootstrap,
+        ),
+      (error: unknown) =>
+        (error as { originClassificationStep?: unknown }).originClassificationStep ===
+        'fresh_catalog_shape',
+    );
+  });
+
   it('does not commit a read-only snapshot owned by the lifecycle initializer', async () => {
     const client = new CatalogClient();
     await collectTask1PrebootstrapInventory(client, bootstrap, { transaction: 'caller' });
