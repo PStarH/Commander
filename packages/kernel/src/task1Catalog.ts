@@ -46,6 +46,16 @@ export const TASK1_CATALOG_SNAPSHOT_VALIDATIONS = [
 ] as const;
 export type Task1CatalogSnapshotValidation = (typeof TASK1_CATALOG_SNAPSHOT_VALIDATIONS)[number];
 
+export const TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS = [
+  'fresh_catalog_shape',
+  'role_envelope',
+  'role_attributes',
+  'memberships',
+  'public_acl',
+] as const;
+export type Task1CatalogOriginClassificationStep =
+  (typeof TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS)[number];
+
 function isTask1CatalogCollectionStep(value: unknown): value is Task1CatalogCollectionStep {
   return (
     typeof value === 'string' &&
@@ -57,6 +67,15 @@ function isTask1CatalogSnapshotValidation(value: unknown): value is Task1Catalog
   return (
     typeof value === 'string' &&
     (TASK1_CATALOG_SNAPSHOT_VALIDATIONS as readonly string[]).includes(value)
+  );
+}
+
+function isTask1CatalogOriginClassificationStep(
+  value: unknown,
+): value is Task1CatalogOriginClassificationStep {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS as readonly string[]).includes(value)
   );
 }
 
@@ -576,8 +595,18 @@ async function atCatalogSnapshotValidation<T>(
 ): Promise<T> {
   try {
     return await operation();
-  } catch {
-    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { snapshotValidation });
+  } catch (error) {
+    const originClassificationStep =
+      error && typeof error === 'object'
+        ? (error as { originClassificationStep?: unknown }).originClassificationStep
+        : undefined;
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), {
+      snapshotValidation,
+      ...(snapshotValidation === 'origin_classification' &&
+      isTask1CatalogOriginClassificationStep(originClassificationStep)
+        ? { originClassificationStep }
+        : {}),
+    });
   }
 }
 
@@ -594,7 +623,17 @@ function catalogCollectionFailure(error: unknown): never {
       ? (error as { snapshotValidation?: unknown }).snapshotValidation
       : undefined;
   if (isTask1CatalogSnapshotValidation(snapshotValidation)) {
-    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { snapshotValidation });
+    const originClassificationStep =
+      error && typeof error === 'object'
+        ? (error as { originClassificationStep?: unknown }).originClassificationStep
+        : undefined;
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), {
+      snapshotValidation,
+      ...(snapshotValidation === 'origin_classification' &&
+      isTask1CatalogOriginClassificationStep(originClassificationStep)
+        ? { originClassificationStep }
+        : {}),
+    });
   }
   fail('TASK1_CATALOG_COLLECTION_FAILED');
 }
@@ -815,6 +854,10 @@ function exactRows(actual: unknown, expected: unknown): boolean {
   return canonicalBootstrapJson(actual) === canonicalBootstrapJson(expected);
 }
 
+function originClassificationFailure(step: Task1CatalogOriginClassificationStep): never {
+  throw Object.assign(new Error('MIGRATION_LEDGER_TAMPERED'), { originClassificationStep: step });
+}
+
 export function classifyTask1CatalogOrigin(
   inventory: PrebootstrapInventoryV1,
   bootstrap: Task1CatalogBootstrapContext | null,
@@ -826,7 +869,7 @@ export function classifyTask1CatalogOrigin(
         inventory.relations.length === 0 &&
         inventory.roles.length === 0)
     ) {
-      fail('MIGRATION_LEDGER_TAMPERED');
+      originClassificationFailure('fresh_catalog_shape');
     }
     return { kind: 'legacy', bootstrapIdentities: null };
   }
@@ -844,11 +887,11 @@ export function classifyTask1CatalogOrigin(
     : exactRows(actualRoleNames, E2_ROLES)
       ? 'E2'
       : null;
-  if (!envelope) fail('MIGRATION_LEDGER_TAMPERED');
+  if (!envelope) originClassificationFailure('role_envelope');
   const expectedRoles = (envelope === 'E1' ? E1_ROLES : E2_ROLES)
     .map(expectedRole)
     .sort((left, right) => byteCompare(String(left.name), String(right.name)));
-  if (!exactRows(roles, expectedRoles)) fail('MIGRATION_LEDGER_TAMPERED');
+  if (!exactRows(roles, expectedRoles)) originClassificationFailure('role_attributes');
   const memberRoles = (envelope === 'E1' ? E1_ROLES : E2_ROLES).filter((name) => name !== OWNER);
   const expectedMemberships = memberRoles
     .map((role) => ({
@@ -860,12 +903,12 @@ export function classifyTask1CatalogOrigin(
       setOption: true,
     }))
     .sort((left, right) => byteCompare(left.role, right.role));
-  if (!exactRows(memberships, expectedMemberships)) fail('MIGRATION_LEDGER_TAMPERED');
+  if (!exactRows(memberships, expectedMemberships)) originClassificationFailure('memberships');
   if (
     inventory.databaseAcl.some((entry) => entry.grantee === 'PUBLIC') ||
     inventory.schemaAcls.some((entry) => entry.grantee === 'PUBLIC')
   ) {
-    fail('MIGRATION_LEDGER_TAMPERED');
+    originClassificationFailure('public_acl');
   }
   const bootstrapIdentities: BootstrapIdentitiesV1 = {
     format: 'bootstrap_identities/v1',

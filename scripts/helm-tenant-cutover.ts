@@ -231,6 +231,8 @@ const OWNER_MIGRATION_CATALOG_STEP =
 const OWNER_MIGRATION_SNAPSHOT_TRANSACTION = '(begin|commit)';
 const OWNER_MIGRATION_SNAPSHOT_VALIDATION =
   '(bootstrap_validation|identity_validation|product_source_validation|catalog_version_validation|origin_classification)';
+const OWNER_MIGRATION_ORIGIN_CLASSIFICATION_STEP =
+  '(fresh_catalog_shape|role_envelope|role_attributes|memberships|public_acl)';
 
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(
@@ -249,6 +251,9 @@ export function ownerJobFailureDiagnostic(
           OWNER_MIGRATION_SNAPSHOT_TRANSACTION +
           '|;snapshot_validation=' +
           OWNER_MIGRATION_SNAPSHOT_VALIDATION +
+          '(?:;origin_classification_step=' +
+          OWNER_MIGRATION_ORIGIN_CLASSIFICATION_STEP +
+          ')?' +
           ')' +
           ')?' +
           '(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?\\b',
@@ -283,17 +288,20 @@ export function ownerJobFailureDiagnostic(
               ';snapshot=' +
               migrationDiagnostic[2] +
               ';snapshot_validation=' +
-              migrationDiagnostic[5]
+              migrationDiagnostic[5] +
+              (migrationDiagnostic[5] === 'origin_classification' && migrationDiagnostic[6]
+                ? ';origin_classification_step=' + migrationDiagnostic[6]
+                : '')
             : diagnostic
       : diagnostic;
-    return migrationDiagnostic[6]
+    return migrationDiagnostic[7]
       ? snapshotDiagnostic +
           ';migration=' +
-          migrationDiagnostic[6] +
-          ';phase=' +
           migrationDiagnostic[7] +
-          ';sqlstate=' +
+          ';phase=' +
           migrationDiagnostic[8] +
+          ';sqlstate=' +
+          migrationDiagnostic[9] +
           ';log_sha256=' +
           digest
       : snapshotDiagnostic + ';log_sha256=' + digest;
