@@ -376,6 +376,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'bootstrap_context_catalog_query',
   'bootstrap_context_pool_close',
   'lifecycle_candidate_peer_observation',
+  'lifecycle_candidate_peer_validation',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 
@@ -992,7 +993,9 @@ export async function initializeTask1LifecycleBoundary(input: {
         'lifecycle_candidate_peer_observation',
         () => observeCandidate(input.client, env),
       );
-      assertPreparedPeerInput(input.prepared, candidate.input);
+      await atLifecycleInitializerFailureStage('lifecycle_candidate_peer_validation', async () =>
+        assertPreparedPeerInput(input.prepared, candidate.input),
+      );
       const observed = await observePeers(env);
       if (
         candidate.input &&
@@ -1017,7 +1020,9 @@ export async function initializeTask1LifecycleBoundary(input: {
     'lifecycle_candidate_peer_observation',
     () => observeCandidate(input.client, env),
   );
-  assertPreparedPeerInput(input.prepared, candidate.input);
+  await atLifecycleInitializerFailureStage('lifecycle_candidate_peer_validation', async () =>
+    assertPreparedPeerInput(input.prepared, candidate.input),
+  );
   const s0 = await collectReadOnlySnapshot(input.client, context, collectInventory);
   const s1 = await collectReadOnlySnapshot(input.client, context, collectInventory);
   const snapshots = createPrebootstrapSnapshots(s0, s1);

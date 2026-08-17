@@ -118,6 +118,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'bootstrap_context_pool_close',
   'lifecycle_initialize',
   'lifecycle_candidate_peer_observation',
+  'lifecycle_candidate_peer_validation',
   'lifecycle_transaction',
   'current_read',
   'rollout_proof',
