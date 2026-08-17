@@ -253,6 +253,39 @@ describe('kernel owner migration entrypoint', () => {
     });
   }
 
+  for (const originClassificationStep of [
+    'fresh_catalog_shape',
+    'role_envelope',
+    'role_attributes',
+    'memberships',
+    'public_acl',
+  ] as const) {
+    it(`formats only the fixed ${originClassificationStep} origin classification step`, () => {
+      const formatter = (
+        migrationEntrypoint as typeof migrationEntrypoint & {
+          migrationFailureDiagnostic?: (error: unknown) => string;
+        }
+      ).migrationFailureDiagnostic;
+      assert.equal(typeof formatter, 'function');
+
+      const result = formatter!(
+        Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
+          ownerStage: 'lifecycle_prebootstrap_snapshot',
+          snapshot: 's0',
+          snapshotValidation: 'origin_classification',
+          originClassificationStep,
+        }),
+      );
+
+      assert.equal(
+        result,
+        'COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=origin_classification;origin_classification_step=' +
+          originClassificationStep,
+      );
+      assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+    });
+  }
+
   it('fails closed when an owner stage is not allowlisted', () => {
     const formatter = (
       migrationEntrypoint as typeof migrationEntrypoint & {

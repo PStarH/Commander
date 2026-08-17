@@ -576,6 +576,57 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     });
   }
 
+  for (const originClassificationStep of [
+    'fresh_catalog_shape',
+    'role_envelope',
+    'role_attributes',
+    'memberships',
+    'public_acl',
+  ] as const) {
+    it(`carries the S0 ${originClassificationStep} classification step without lifecycle mutation`, async () => {
+      const client = new RecordingClient();
+
+      await assert.rejects(
+        () =>
+          initializeTask1LifecycleBoundary({
+            client,
+            prepared,
+            dependencies: {
+              loadBootstrapContext: async () => ({
+                sessionUser: 'postgres',
+                authority: bootstrapIdentities.authority,
+                bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+                catalogVersion: '202307071',
+              }),
+              observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+              collectInventory: async () => {
+                throw Object.assign(
+                  new Error('postgres://snapshot:secret@db/commander classification-opaque-marker'),
+                  {
+                    snapshotValidation: 'origin_classification',
+                    originClassificationStep,
+                  },
+                );
+              },
+            },
+          }),
+        (error: unknown) => {
+          assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+          assert.equal(
+            (error as { originClassificationStep?: unknown }).originClassificationStep,
+            originClassificationStep,
+          );
+          return true;
+        },
+      );
+
+      assert.equal(
+        client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+        false,
+      );
+    });
+  }
+
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
       resolveTask1BootstrapAuthorityUrl({

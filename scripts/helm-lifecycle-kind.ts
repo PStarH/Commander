@@ -573,6 +573,7 @@ export interface OwnerFailureEvidence {
   catalogStep?: OwnerMigrationCatalogStep;
   snapshotTransaction?: 'begin' | 'commit';
   snapshotValidation?: OwnerMigrationSnapshotValidation;
+  originClassificationStep?: OwnerMigrationOriginClassificationStep;
   migration?: string;
   phase?: 'baseline' | 'lifecycle' | 'expand' | 'enforce';
   sqlstate?: string;
@@ -626,6 +627,13 @@ type OwnerMigrationSnapshotValidation =
   | 'catalog_version_validation'
   | 'origin_classification';
 
+type OwnerMigrationOriginClassificationStep =
+  | 'fresh_catalog_shape'
+  | 'role_envelope'
+  | 'role_attributes'
+  | 'memberships'
+  | 'public_acl';
+
 const OWNER_FAILURE_STAGE =
   '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_transaction|current_read|rollout_proof)';
 const OWNER_FAILURE_CATALOG_STEP =
@@ -633,6 +641,8 @@ const OWNER_FAILURE_CATALOG_STEP =
 const OWNER_FAILURE_SNAPSHOT_TRANSACTION = '(begin|commit)';
 const OWNER_FAILURE_SNAPSHOT_VALIDATION =
   '(bootstrap_validation|identity_validation|product_source_validation|catalog_version_validation|origin_classification)';
+const OWNER_FAILURE_ORIGIN_CLASSIFICATION_STEP =
+  '(fresh_catalog_shape|role_envelope|role_attributes|memberships|public_acl)';
 const OWNER_FAILURE_RECORD = new RegExp(
   '(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)' +
     '(?:;owner_stage=' +
@@ -643,6 +653,9 @@ const OWNER_FAILURE_RECORD = new RegExp(
     OWNER_FAILURE_SNAPSHOT_TRANSACTION +
     '|;snapshot_validation=' +
     OWNER_FAILURE_SNAPSHOT_VALIDATION +
+    '(?:;origin_classification_step=' +
+    OWNER_FAILURE_ORIGIN_CLASSIFICATION_STEP +
+    ')?' +
     ')' +
     ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
@@ -659,6 +672,7 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
     catalogStep,
     snapshotTransaction,
     snapshotValidation,
+    originClassificationStep,
     migration,
     phase,
     sqlstate,
@@ -680,6 +694,10 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
   } else if (snapshot && snapshotValidation) {
     evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
     evidence.snapshotValidation = snapshotValidation as OwnerMigrationSnapshotValidation;
+    if (snapshotValidation === 'origin_classification' && originClassificationStep) {
+      evidence.originClassificationStep =
+        originClassificationStep as OwnerMigrationOriginClassificationStep;
+    }
   }
   if (migration && phase && sqlstate) {
     evidence.migration = migration;
@@ -737,6 +755,9 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
               : {}),
             ...(failure.snapshotValidation
               ? { snapshotValidation: failure.snapshotValidation }
+              : {}),
+            ...(failure.originClassificationStep
+              ? { originClassificationStep: failure.originClassificationStep }
               : {}),
             ...(failure.migration ? { migration: failure.migration } : {}),
             ...(failure.phase ? { phase: failure.phase } : {}),

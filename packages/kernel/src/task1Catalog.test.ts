@@ -573,6 +573,56 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     });
   }
 
+  for (const [originClassificationStep, overrides] of [
+    [
+      'fresh_catalog_shape',
+      { relations: [{ schema: 'public', name: 'commander_view', kind: 'v' }] },
+    ],
+    ['role_envelope', { roles: roleNames.slice(0, -1).map(role) }],
+    [
+      'role_attributes',
+      {
+        roles: roleNames
+          .map(role)
+          .map((value) =>
+            value.name === 'commander_worker' ? { ...value, bypassRls: true } : value,
+          ),
+      },
+    ],
+    [
+      'memberships',
+      {
+        memberships: roleNames
+          .filter((name) => name !== 'commander_owner')
+          .map((name) =>
+            name === 'commander_worker'
+              ? { ...membership(name), setOption: false }
+              : membership(name),
+          ),
+      },
+    ],
+    ['public_acl', { 'database-acl': [{ grantee: 'PUBLIC' }] }],
+  ] as const) {
+    it(`retains only the fixed ${originClassificationStep} origin classification step`, async () => {
+      await assert.rejects(
+        () => collectTask1PrebootstrapInventory(new CatalogClient(overrides), bootstrap),
+        (error: unknown) => {
+          assert.equal((error as Error).message, 'TASK1_CATALOG_COLLECTION_FAILED');
+          assert.equal(
+            (error as { snapshotValidation?: unknown }).snapshotValidation,
+            'origin_classification',
+          );
+          assert.equal(
+            (error as { originClassificationStep?: unknown }).originClassificationStep,
+            originClassificationStep,
+          );
+          assert.doesNotMatch((error as Error).message, /postgres:|secret|SELECT|private_value/i);
+          return true;
+        },
+      );
+    });
+  }
+
   it('executes the finite state-2 hardening delta on the caller transaction', async () => {
     const client = new CatalogClient();
     await applyTask1CatalogHardening(client);

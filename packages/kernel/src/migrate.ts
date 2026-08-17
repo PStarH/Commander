@@ -18,6 +18,7 @@ import {
 import { initializeTask1LifecycleBoundary } from './task1LifecycleInitialize.js';
 import {
   TASK1_CATALOG_COLLECTION_STEPS,
+  TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS,
   TASK1_CATALOG_SNAPSHOT_VALIDATIONS,
 } from './task1Catalog.js';
 import type { SqlClient, SqlPool } from './postgres.js';
@@ -155,6 +156,13 @@ function isSnapshotValidation(value: unknown): boolean {
   );
 }
 
+function isOriginClassificationStep(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS as readonly string[]).includes(value)
+  );
+}
+
 function withOwnerMigrationFailureStage(
   error: unknown,
   ownerStage: OwnerMigrationFailureStage,
@@ -198,6 +206,7 @@ export function migrationFailureDiagnostic(error: unknown): string {
     catalogStep?: unknown;
     snapshotTransaction?: unknown;
     snapshotValidation?: unknown;
+    originClassificationStep?: unknown;
     phase?: unknown;
     sqlstate?: unknown;
   };
@@ -220,6 +229,12 @@ export function migrationFailureDiagnostic(error: unknown): string {
         : hasSnapshotTransaction
           ? ';snapshot_transaction=' + failure.snapshotTransaction
           : ';snapshot_validation=' + failure.snapshotValidation;
+      if (
+        failure.snapshotValidation === 'origin_classification' &&
+        isOriginClassificationStep(failure.originClassificationStep)
+      ) {
+        diagnostic += ';origin_classification_step=' + failure.originClassificationStep;
+      }
     }
   }
   if (
