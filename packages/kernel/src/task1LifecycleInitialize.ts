@@ -380,6 +380,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'lifecycle_prebootstrap_snapshot',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
+type SnapshotTransaction = 'begin' | 'commit';
 
 function isLifecycleInitializerFailureStage(value: unknown): value is LifecycleInitializerFailureStage {
   return (
@@ -442,6 +443,26 @@ function lifecycleInitializerSnapshotFailure(error: unknown, snapshot: 's0' | 's
       ownerStage: 'lifecycle_prebootstrap_snapshot',
       snapshot,
     });
+  }
+}
+
+function lifecycleSnapshotTransactionFailure(
+  error: unknown,
+  snapshotTransaction: SnapshotTransaction,
+): unknown {
+  if (!error || typeof error !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { snapshotTransaction });
+  }
+  try {
+    Object.defineProperty(error, 'snapshotTransaction', {
+      configurable: true,
+      enumerable: true,
+      value: snapshotTransaction,
+      writable: true,
+    });
+    return error;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { snapshotTransaction });
   }
 }
 
@@ -717,10 +738,18 @@ async function collectReadOnlySnapshot(
   context: Task1CatalogBootstrapContext | null,
   collectInventory: typeof collectTask1PrebootstrapInventory,
 ): Promise<PrebootstrapInventoryV1> {
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  } catch (error) {
+    throw lifecycleSnapshotTransactionFailure(error, 'begin');
+  }
   try {
     const snapshot = await collectInventory(client, context, { transaction: 'caller' });
-    await client.query('COMMIT');
+    try {
+      await client.query('COMMIT');
+    } catch (error) {
+      throw lifecycleSnapshotTransactionFailure(error, 'commit');
+    }
     return snapshot;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);

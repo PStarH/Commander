@@ -571,6 +571,7 @@ export interface OwnerFailureEvidence {
   ownerStage?: OwnerMigrationFailureStage;
   snapshot?: 's0' | 's1';
   catalogStep?: OwnerMigrationCatalogStep;
+  snapshotTransaction?: 'begin' | 'commit';
   migration?: string;
   phase?: 'baseline' | 'lifecycle' | 'expand' | 'enforce';
   sqlstate?: string;
@@ -621,12 +622,16 @@ const OWNER_FAILURE_STAGE =
   '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_transaction|current_read|rollout_proof)';
 const OWNER_FAILURE_CATALOG_STEP =
   '(search_path|identity|ledger|namespaces|relations|functions|types|extensions|policies|triggers|roles|memberships|role_settings|database_acl|schema_acls|default_acls|product_has_rows)';
+const OWNER_FAILURE_SNAPSHOT_TRANSACTION = '(begin|commit)';
 const OWNER_FAILURE_RECORD = new RegExp(
   '(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)' +
     '(?:;owner_stage=' +
     OWNER_FAILURE_STAGE +
-    ')?(?:;snapshot=(s0|s1);catalog_step=' +
+    ')?(?:;snapshot=(s0|s1)(?:;catalog_step=' +
     OWNER_FAILURE_CATALOG_STEP +
+    '|;snapshot_transaction=' +
+    OWNER_FAILURE_SNAPSHOT_TRANSACTION +
+    ')' +
     ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
 
@@ -634,7 +639,18 @@ const OWNER_FAILURE_RECORD = new RegExp(
 export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
   const match = OWNER_FAILURE_RECORD.exec(error);
   if (!match) return undefined;
-  const [, transport, ownerStage, snapshot, catalogStep, migration, phase, sqlstate, logSha256] = match;
+  const [
+    ,
+    transport,
+    ownerStage,
+    snapshot,
+    catalogStep,
+    snapshotTransaction,
+    migration,
+    phase,
+    sqlstate,
+    logSha256,
+  ] = match;
   const evidence: OwnerFailureEvidence = {
     code: 'COMMANDER_MIGRATION_FAILED',
     producer: 'owner_entrypoint',
@@ -645,6 +661,9 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
   if (snapshot && catalogStep) {
     evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
     evidence.catalogStep = catalogStep as OwnerMigrationCatalogStep;
+  } else if (snapshot && snapshotTransaction) {
+    evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
+    evidence.snapshotTransaction = snapshotTransaction as OwnerFailureEvidence['snapshotTransaction'];
   }
   if (migration && phase && sqlstate) {
     evidence.migration = migration;
@@ -697,6 +716,9 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
             ...(failure.ownerStage ? { ownerStage: failure.ownerStage } : {}),
             ...(failure.snapshot ? { snapshot: failure.snapshot } : {}),
             ...(failure.catalogStep ? { catalogStep: failure.catalogStep } : {}),
+            ...(failure.snapshotTransaction
+              ? { snapshotTransaction: failure.snapshotTransaction }
+              : {}),
             ...(failure.migration ? { migration: failure.migration } : {}),
             ...(failure.phase ? { phase: failure.phase } : {}),
             ...(failure.sqlstate ? { sqlstate: failure.sqlstate } : {}),
