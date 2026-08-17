@@ -155,6 +155,7 @@ describe('kernel owner migration entrypoint', () => {
       'lifecycle_initialize',
       'lifecycle_candidate_peer_observation',
       'lifecycle_candidate_peer_validation',
+      'lifecycle_prebootstrap_snapshot',
       'lifecycle_transaction',
       'current_read',
       'rollout_proof',
@@ -169,6 +170,29 @@ describe('kernel owner migration entrypoint', () => {
       assert.equal(result, 'COMMANDER_MIGRATION_FAILED;owner_stage=' + ownerStage);
       assert.doesNotMatch(result, /owner-stage-opaque-marker/i);
     }
+  });
+
+  it('formats only the fixed prebootstrap snapshot and catalog step', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
+        ownerStage: 'lifecycle_prebootstrap_snapshot',
+        snapshot: 's0',
+        catalogStep: 'functions',
+      }),
+    );
+
+    assert.equal(
+      result,
+      'COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;catalog_step=functions',
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
   });
 
   it('fails closed when an owner stage is not allowlisted', () => {

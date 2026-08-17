@@ -514,6 +514,21 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     assert.equal(client.queries.at(-1)?.sql, 'ROLLBACK');
   });
 
+  it('retains only the fixed catalog step when a catalog query fails', async () => {
+    const client = new CatalogClient();
+    client.failMarker = 'functions';
+
+    await assert.rejects(
+      () => collectTask1PrebootstrapInventory(client, bootstrap),
+      (error: unknown) => {
+        assert.equal((error as Error).message, 'TASK1_CATALOG_COLLECTION_FAILED');
+        assert.equal((error as { catalogStep?: unknown }).catalogStep, 'functions');
+        assert.doesNotMatch((error as Error).message, /catalog failed/i);
+        return true;
+      },
+    );
+  });
+
   it('executes the finite state-2 hardening delta on the caller transaction', async () => {
     const client = new CatalogClient();
     await applyTask1CatalogHardening(client);

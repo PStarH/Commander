@@ -377,6 +377,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'bootstrap_context_pool_close',
   'lifecycle_candidate_peer_observation',
   'lifecycle_candidate_peer_validation',
+  'lifecycle_prebootstrap_snapshot',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 
@@ -417,6 +418,41 @@ async function atLifecycleInitializerFailureStage<T>(
     return await operation();
   } catch (error) {
     throw lifecycleInitializerFailure(error, ownerStage);
+  }
+}
+
+function lifecycleInitializerSnapshotFailure(error: unknown, snapshot: 's0' | 's1'): unknown {
+  const failure = lifecycleInitializerFailure(error, 'lifecycle_prebootstrap_snapshot');
+  if (!failure || typeof failure !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), {
+      ownerStage: 'lifecycle_prebootstrap_snapshot',
+      snapshot,
+    });
+  }
+  try {
+    Object.defineProperty(failure, 'snapshot', {
+      configurable: true,
+      enumerable: true,
+      value: snapshot,
+      writable: true,
+    });
+    return failure;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), {
+      ownerStage: 'lifecycle_prebootstrap_snapshot',
+      snapshot,
+    });
+  }
+}
+
+async function atLifecyclePrebootstrapSnapshot<T>(
+  snapshot: 's0' | 's1',
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw lifecycleInitializerSnapshotFailure(error, snapshot);
   }
 }
 
@@ -1023,8 +1059,12 @@ export async function initializeTask1LifecycleBoundary(input: {
   await atLifecycleInitializerFailureStage('lifecycle_candidate_peer_validation', async () =>
     assertPreparedPeerInput(input.prepared, candidate.input),
   );
-  const s0 = await collectReadOnlySnapshot(input.client, context, collectInventory);
-  const s1 = await collectReadOnlySnapshot(input.client, context, collectInventory);
+  const s0 = await atLifecyclePrebootstrapSnapshot('s0', () =>
+    collectReadOnlySnapshot(input.client, context, collectInventory),
+  );
+  const s1 = await atLifecyclePrebootstrapSnapshot('s1', () =>
+    collectReadOnlySnapshot(input.client, context, collectInventory),
+  );
   const snapshots = createPrebootstrapSnapshots(s0, s1);
   const initialization = planTask1LifecycleInitialization({
     command: input.prepared.command,

@@ -543,11 +543,34 @@ export interface HarnessEvidence {
   sanitized: boolean;
 }
 
+export interface SanitizedScenarioEvidence {
+  name: string;
+  passed: boolean;
+  durationMs: number;
+}
+
+export interface SanitizedHarnessEvidence {
+  generatedAt: string;
+  cluster: string;
+  kindNodeImage: string;
+  calicoUrl: string;
+  scenarios: SanitizedScenarioEvidence[];
+  image?: {
+    digest: string;
+    sourceRevision: string;
+  };
+  ownerFailureEvidence?: OwnerFailureEvidence[];
+  passed: boolean;
+  sanitized: true;
+}
+
 export interface OwnerFailureEvidence {
   code: 'COMMANDER_MIGRATION_FAILED';
   producer: 'owner_entrypoint';
   transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
   ownerStage?: OwnerMigrationFailureStage;
+  snapshot?: 's0' | 's1';
+  catalogStep?: OwnerMigrationCatalogStep;
   migration?: string;
   phase?: 'baseline' | 'lifecycle' | 'expand' | 'enforce';
   sqlstate?: string;
@@ -570,16 +593,40 @@ type OwnerMigrationFailureStage =
   | 'lifecycle_initialize'
   | 'lifecycle_candidate_peer_observation'
   | 'lifecycle_candidate_peer_validation'
+  | 'lifecycle_prebootstrap_snapshot'
   | 'lifecycle_transaction'
   | 'current_read'
   | 'rollout_proof';
 
+type OwnerMigrationCatalogStep =
+  | 'search_path'
+  | 'identity'
+  | 'ledger'
+  | 'namespaces'
+  | 'relations'
+  | 'functions'
+  | 'types'
+  | 'extensions'
+  | 'policies'
+  | 'triggers'
+  | 'roles'
+  | 'memberships'
+  | 'role_settings'
+  | 'database_acl'
+  | 'schema_acls'
+  | 'default_acls'
+  | 'product_has_rows';
+
 const OWNER_FAILURE_STAGE =
-  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_transaction|current_read|rollout_proof)';
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_transaction|current_read|rollout_proof)';
+const OWNER_FAILURE_CATALOG_STEP =
+  '(search_path|identity|ledger|namespaces|relations|functions|types|extensions|policies|triggers|roles|memberships|role_settings|database_acl|schema_acls|default_acls|product_has_rows)';
 const OWNER_FAILURE_RECORD = new RegExp(
   '(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)' +
     '(?:;owner_stage=' +
     OWNER_FAILURE_STAGE +
+    ')?(?:;snapshot=(s0|s1);catalog_step=' +
+    OWNER_FAILURE_CATALOG_STEP +
     ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
 
@@ -587,7 +634,7 @@ const OWNER_FAILURE_RECORD = new RegExp(
 export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
   const match = OWNER_FAILURE_RECORD.exec(error);
   if (!match) return undefined;
-  const [, transport, ownerStage, migration, phase, sqlstate, logSha256] = match;
+  const [, transport, ownerStage, snapshot, catalogStep, migration, phase, sqlstate, logSha256] = match;
   const evidence: OwnerFailureEvidence = {
     code: 'COMMANDER_MIGRATION_FAILED',
     producer: 'owner_entrypoint',
@@ -595,6 +642,10 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
     logSha256,
   };
   if (ownerStage) evidence.ownerStage = ownerStage as OwnerMigrationFailureStage;
+  if (snapshot && catalogStep) {
+    evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
+    evidence.catalogStep = catalogStep as OwnerMigrationCatalogStep;
+  }
   if (migration && phase && sqlstate) {
     evidence.migration = migration;
     evidence.phase = phase as OwnerFailureEvidence['phase'];
@@ -618,23 +669,44 @@ function fixturePath(name: string): string {
   return resolve(__dirname, 'fixtures', 'helm-lifecycle', name);
 }
 
-export function sanitizeEvidence(evidence: HarnessEvidence): HarnessEvidence {
-  const secretPatterns = [
-    // Postgres DSNs and URLs
-    [/postgres(?:ql)?:\/\/[^\s"']+/, 'postgres://***@***'],
-    // Generic password/token/key values
-    [/"password"\s*:\s*"[^"]*"/, '"password": "***"'],
-    [/"token"\s*:\s*"[^"]*"/, '"token": "***"'],
-    // PEM blocks
-    [/-----BEGIN [A-Z ]+-----[\s\S]*?-----END [A-Z ]+-----/, '[PEM_REDACTED]'],
-  ];
-  const text = JSON.stringify(evidence);
-  const sanitized = secretPatterns.reduce((acc, [pattern, replacement]) => {
-    return acc.replace(new RegExp(pattern, 'g'), String(replacement));
-  }, text);
-  const out = JSON.parse(sanitized) as HarnessEvidence;
-  out.sanitized = true;
-  return out;
+export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvidence {
+  return {
+    generatedAt: evidence.generatedAt,
+    cluster: evidence.cluster,
+    kindNodeImage: evidence.kindNodeImage,
+    calicoUrl: evidence.calicoUrl,
+    ...(evidence.image
+      ? {
+          image: {
+            digest: evidence.image.digest,
+            sourceRevision: evidence.image.sourceRevision,
+          },
+        }
+      : {}),
+    scenarios: evidence.scenarios.map(({ name, passed, durationMs }) => ({
+      name,
+      passed,
+      durationMs,
+    })),
+    ...(evidence.ownerFailureEvidence
+      ? {
+          ownerFailureEvidence: evidence.ownerFailureEvidence.map((failure) => ({
+            code: failure.code,
+            producer: failure.producer,
+            transport: failure.transport,
+            ...(failure.ownerStage ? { ownerStage: failure.ownerStage } : {}),
+            ...(failure.snapshot ? { snapshot: failure.snapshot } : {}),
+            ...(failure.catalogStep ? { catalogStep: failure.catalogStep } : {}),
+            ...(failure.migration ? { migration: failure.migration } : {}),
+            ...(failure.phase ? { phase: failure.phase } : {}),
+            ...(failure.sqlstate ? { sqlstate: failure.sqlstate } : {}),
+            logSha256: failure.logSha256,
+          })),
+        }
+      : {}),
+    passed: evidence.passed,
+    sanitized: true,
+  };
 }
 
 function runCmd(

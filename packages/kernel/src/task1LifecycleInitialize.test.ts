@@ -426,6 +426,52 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies S0 collection failures after candidate validation without state mutation', async () => {
+    const client = new RecordingClient();
+    let candidateObserved = false;
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => {
+              candidateObserved = true;
+              return { input: peerInput, binding: peerBinding };
+            },
+            collectInventory: async () => {
+              assert.equal(candidateObserved, true);
+              throw Object.assign(new Error('prebootstrap-s0-opaque-marker'), {
+                catalogStep: 'functions',
+              });
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_prebootstrap_snapshot',
+        );
+        assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+        assert.equal((error as { catalogStep?: unknown }).catalogStep, 'functions');
+        return true;
+      },
+    );
+
+    assert.equal(candidateObserved, true);
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
+    );
+  });
+
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
       resolveTask1BootstrapAuthorityUrl({

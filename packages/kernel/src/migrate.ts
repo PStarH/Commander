@@ -16,6 +16,7 @@ import {
   type Task1HelmRestoreEvidence,
 } from './task1LifecycleOwnerCommand.js';
 import { initializeTask1LifecycleBoundary } from './task1LifecycleInitialize.js';
+import { TASK1_CATALOG_COLLECTION_STEPS } from './task1Catalog.js';
 import type { SqlClient, SqlPool } from './postgres.js';
 import {
   PostgresTask1LifecycleOwnerTransactions,
@@ -119,6 +120,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'lifecycle_initialize',
   'lifecycle_candidate_peer_observation',
   'lifecycle_candidate_peer_validation',
+  'lifecycle_prebootstrap_snapshot',
   'lifecycle_transaction',
   'current_read',
   'rollout_proof',
@@ -129,6 +131,13 @@ function isOwnerMigrationFailureStage(value: unknown): value is OwnerMigrationFa
   return (
     typeof value === 'string' &&
     (OWNER_MIGRATION_FAILURE_STAGES as readonly string[]).includes(value)
+  );
+}
+
+function isTask1CatalogCollectionStep(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_COLLECTION_STEPS as readonly string[]).includes(value)
   );
 }
 
@@ -171,11 +180,20 @@ export function migrationFailureDiagnostic(error: unknown): string {
   const failure = error as {
     migrationId?: unknown;
     ownerStage?: unknown;
+    snapshot?: unknown;
+    catalogStep?: unknown;
     phase?: unknown;
     sqlstate?: unknown;
   };
   if (!isOwnerMigrationFailureStage(failure.ownerStage)) return 'COMMANDER_MIGRATION_FAILED';
-  const diagnostic = 'COMMANDER_MIGRATION_FAILED;owner_stage=' + failure.ownerStage;
+  let diagnostic = 'COMMANDER_MIGRATION_FAILED;owner_stage=' + failure.ownerStage;
+  if (
+    failure.ownerStage === 'lifecycle_prebootstrap_snapshot' &&
+    (failure.snapshot === 's0' || failure.snapshot === 's1') &&
+    isTask1CatalogCollectionStep(failure.catalogStep)
+  ) {
+    diagnostic += ';snapshot=' + failure.snapshot + ';catalog_step=' + failure.catalogStep;
+  }
   if (
     typeof failure.migrationId !== 'string' ||
     !MIGRATION_ID.test(failure.migrationId) ||
