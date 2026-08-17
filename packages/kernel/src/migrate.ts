@@ -141,6 +141,10 @@ function isTask1CatalogCollectionStep(value: unknown): boolean {
   );
 }
 
+function isSnapshotTransaction(value: unknown): value is 'begin' | 'commit' {
+  return value === 'begin' || value === 'commit';
+}
+
 function withOwnerMigrationFailureStage(
   error: unknown,
   ownerStage: OwnerMigrationFailureStage,
@@ -182,6 +186,7 @@ export function migrationFailureDiagnostic(error: unknown): string {
     ownerStage?: unknown;
     snapshot?: unknown;
     catalogStep?: unknown;
+    snapshotTransaction?: unknown;
     phase?: unknown;
     sqlstate?: unknown;
   };
@@ -189,10 +194,16 @@ export function migrationFailureDiagnostic(error: unknown): string {
   let diagnostic = 'COMMANDER_MIGRATION_FAILED;owner_stage=' + failure.ownerStage;
   if (
     failure.ownerStage === 'lifecycle_prebootstrap_snapshot' &&
-    (failure.snapshot === 's0' || failure.snapshot === 's1') &&
-    isTask1CatalogCollectionStep(failure.catalogStep)
+    (failure.snapshot === 's0' || failure.snapshot === 's1')
   ) {
-    diagnostic += ';snapshot=' + failure.snapshot + ';catalog_step=' + failure.catalogStep;
+    const hasCatalogStep = isTask1CatalogCollectionStep(failure.catalogStep);
+    const hasSnapshotTransaction = isSnapshotTransaction(failure.snapshotTransaction);
+    if (hasCatalogStep !== hasSnapshotTransaction) {
+      diagnostic += ';snapshot=' + failure.snapshot;
+      diagnostic += hasCatalogStep
+        ? ';catalog_step=' + failure.catalogStep
+        : ';snapshot_transaction=' + failure.snapshotTransaction;
+    }
   }
   if (
     typeof failure.migrationId !== 'string' ||

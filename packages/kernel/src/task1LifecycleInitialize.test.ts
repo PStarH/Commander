@@ -149,6 +149,7 @@ class RecordingClient implements SqlClient {
   readonly statements: string[] = [];
   readonly bindings: unknown[][] = [];
   failDescriptor = false;
+  snapshotTransactionFailure: 'begin' | 'commit' | undefined;
   existingLifecycleState: {
     state: 'fresh_pending' | 'legacy_pending' | 'expanded' | 'enforced';
     pending_configuration_sha256: string | null;
@@ -182,6 +183,15 @@ class RecordingClient implements SqlClient {
   ): Promise<SqlQueryResult<T>> {
     this.statements.push(sql.replace(/\s+/g, ' ').trim());
     this.bindings.push([...values]);
+    if (
+      this.snapshotTransactionFailure === 'begin' &&
+      sql === 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'
+    ) {
+      throw new Error('postgres://snapshot:secret@db/commander begin-opaque-marker');
+    }
+    if (this.snapshotTransactionFailure === 'commit' && sql === 'COMMIT') {
+      throw new Error('postgres://snapshot:secret@db/commander commit-opaque-marker');
+    }
     if (sql.includes("to_regclass('public.commander_tenant_cutover_state')")) {
       return result<T>([
         this.lifecycleTables === 'absent'
@@ -471,6 +481,48 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
       false,
     );
   });
+
+  for (const snapshotTransaction of ['begin', 'commit'] as const) {
+    it(`classifies the S0 ${snapshotTransaction} transaction boundary without state mutation`, async () => {
+      const client = new RecordingClient();
+      client.snapshotTransactionFailure = snapshotTransaction;
+
+      await assert.rejects(
+        () =>
+          initializeTask1LifecycleBoundary({
+            client,
+            prepared,
+            dependencies: {
+              loadBootstrapContext: async () => ({
+                sessionUser: 'postgres',
+                authority: bootstrapIdentities.authority,
+                bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+                catalogVersion: '202307071',
+              }),
+              observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+              collectInventory: async () => inventory(),
+            },
+          }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { ownerStage?: unknown }).ownerStage,
+            'lifecycle_prebootstrap_snapshot',
+          );
+          assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+          assert.equal(
+            (error as { snapshotTransaction?: unknown }).snapshotTransaction,
+            snapshotTransaction,
+          );
+          return true;
+        },
+      );
+
+      assert.equal(
+        client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+        false,
+      );
+    });
+  }
 
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
