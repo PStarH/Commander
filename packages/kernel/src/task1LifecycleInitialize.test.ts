@@ -482,6 +482,46 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies a fresh S0/S1 comparison failure without state mutation', async () => {
+    const client = new RecordingClient();
+    let collection = 0;
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            collectInventory: async () => {
+              collection += 1;
+              const observed = inventory();
+              return collection === 2 ? { ...observed, catalogVersion: '202307072' } : observed;
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_prebootstrap_snapshot_comparison',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(collection, 2);
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
+    );
+  });
+
   for (const snapshotTransaction of ['begin', 'commit'] as const) {
     it(`classifies the S0 ${snapshotTransaction} transaction boundary without state mutation`, async () => {
       const client = new RecordingClient();
