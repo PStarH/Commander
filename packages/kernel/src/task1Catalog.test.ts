@@ -529,6 +529,50 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     );
   });
 
+  for (const [snapshotValidation, client, context] of [
+    [
+      'bootstrap_validation',
+      new CatalogClient(),
+      { ...bootstrap, sessionUser: 'commander_owner' },
+    ],
+    ['identity_validation', new CatalogClient({ identity: [] }), bootstrap],
+    [
+      'product_source_validation',
+      new CatalogClient({
+        relations: [{ schema: 'public', name: 'commander_runs', kind: 'r' }],
+        'product-has-rows': [],
+      }),
+      bootstrap,
+    ],
+    ['catalog_version_validation', new CatalogClient(), { ...bootstrap, catalogVersion: 'invalid' }],
+    [
+      'origin_classification',
+      new CatalogClient({
+        roles: roleNames
+          .map(role)
+          .map((value) =>
+            value.name === 'commander_worker' ? { ...value, bypassRls: true } : value,
+          ),
+      }),
+      bootstrap,
+    ],
+  ] as const) {
+    it(`retains only the fixed ${snapshotValidation} collector validation`, async () => {
+      await assert.rejects(
+        () => collectTask1PrebootstrapInventory(client, context),
+        (error: unknown) => {
+          assert.equal((error as Error).message, 'TASK1_CATALOG_COLLECTION_FAILED');
+          assert.equal(
+            (error as { snapshotValidation?: unknown }).snapshotValidation,
+            snapshotValidation,
+          );
+          assert.doesNotMatch((error as Error).message, /postgres:|secret|SELECT|private_value/i);
+          return true;
+        },
+      );
+    });
+  }
+
   it('executes the finite state-2 hardening delta on the caller transaction', async () => {
     const client = new CatalogClient();
     await applyTask1CatalogHardening(client);
