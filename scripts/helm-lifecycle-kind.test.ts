@@ -49,7 +49,7 @@ describe('helm-lifecycle-kind helpers', () => {
     );
     assert.deepEqual(
       parseOwnerFailureEvidence(
-        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_candidate_peer_validation;log_sha256=' +
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;catalog_step=functions;log_sha256=' +
           'b'.repeat(64) +
           '\nNAME   READY   STATUS\npod/postgres-0   1/1   Running',
       ),
@@ -57,7 +57,9 @@ describe('helm-lifecycle-kind helpers', () => {
         code: 'COMMANDER_MIGRATION_FAILED',
         producer: 'owner_entrypoint',
         transport: 'kubectl_logs',
-        ownerStage: 'lifecycle_candidate_peer_validation',
+        ownerStage: 'lifecycle_prebootstrap_snapshot',
+        snapshot: 's0',
+        catalogStep: 'functions',
         logSha256: 'b'.repeat(64),
       },
     );
@@ -519,37 +521,57 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(workflow, /run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts run/);
   });
 
-  it('sanitizes DSNs and PEM blocks from evidence', () => {
+  it('omits raw scenario diagnostics and retains only canonical safe evidence fields', () => {
     const evidence = {
       generatedAt: '2024-01-01T00:00:00Z',
       cluster: 'test',
       kindNodeImage: KIND_NODE_IMAGE,
-      chartPath: '/chart',
+      chartPath: '/private/secret/chart',
       calicoUrl: CALICO_URL,
+      image: { digest: `sha256:${'a'.repeat(64)}`, sourceRevision: 'b'.repeat(40) },
       scenarios: [
         {
           name: 'fresh-bundled',
-          passed: true,
+          passed: false,
           durationMs: 100,
-          events: [],
+          events: [{ message: 'kubectl event secret-token private SQL SELECT' }],
           assertions: [
             {
-              description: 'contains a DSN',
-              passed: true,
-              detail: 'postgres://owner:secret@db:5432/commander',
+              description: 'raw assertion',
+              passed: false,
+              detail: 'postgres://owner:secret@db:5432/commander SELECT private_value',
             },
           ],
+          error: 'raw scenario failure secret SQL SELECT private_value',
         },
-      ] as any[],
-      passed: true,
+      ],
+      ownerFailureEvidence: [
+        {
+          code: 'COMMANDER_MIGRATION_FAILED' as const,
+          producer: 'owner_entrypoint' as const,
+          transport: 'kubectl_logs' as const,
+          ownerStage: 'lifecycle_prebootstrap_snapshot',
+          snapshot: 's0',
+          catalogStep: 'functions',
+          logSha256: 'c'.repeat(64),
+        },
+      ],
+      passed: false,
       sanitized: false,
-    };
+    } satisfies Parameters<typeof sanitizeEvidence>[0];
     const sanitized = sanitizeEvidence(evidence);
-    assert.equal(sanitized.sanitized, true);
-    const detail = sanitized.scenarios[0].assertions[0].detail;
-    assert.ok(detail !== undefined);
-    assert.ok(!detail.includes('secret'), 'password should be redacted');
-    assert.ok(detail.startsWith('postgres://'), 'DSN prefix preserved for diagnostics');
+    assert.deepEqual(sanitized, {
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      calicoUrl: CALICO_URL,
+      image: { digest: `sha256:${'a'.repeat(64)}`, sourceRevision: 'b'.repeat(40) },
+      scenarios: [{ name: 'fresh-bundled', passed: false, durationMs: 100 }],
+      ownerFailureEvidence: evidence.ownerFailureEvidence,
+      passed: false,
+      sanitized: true,
+    });
+    assert.doesNotMatch(JSON.stringify(sanitized), /secret|private|SELECT|event|assertion|postgres/i);
   });
 
   it('reports cluster existence without throwing', () => {

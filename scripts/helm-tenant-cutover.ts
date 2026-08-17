@@ -225,7 +225,9 @@ function fail(code: string): never {
 }
 
 const OWNER_MIGRATION_FAILURE_STAGE =
-  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_transaction|current_read|rollout_proof)';
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_transaction|current_read|rollout_proof)';
+const OWNER_MIGRATION_CATALOG_STEP =
+  '(search_path|identity|ledger|namespaces|relations|functions|types|extensions|policies|triggers|roles|memberships|role_settings|database_acl|schema_acls|default_acls|product_has_rows)';
 
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(
@@ -238,6 +240,9 @@ export function ownerJobFailureDiagnostic(
       new RegExp(
         '\\bCOMMANDER_MIGRATION_FAILED;owner_stage=' +
           OWNER_MIGRATION_FAILURE_STAGE +
+          '(?:;snapshot=(s0|s1);catalog_step=' +
+          OWNER_MIGRATION_CATALOG_STEP +
+          ')?' +
           '(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?\\b',
         'g',
       ),
@@ -252,17 +257,25 @@ export function ownerJobFailureDiagnostic(
       transport +
       ';owner_stage=' +
       migrationDiagnostic[1];
-    return migrationDiagnostic[2]
-      ? diagnostic +
-          ';migration=' +
+    const snapshotDiagnostic =
+      migrationDiagnostic[2] && migrationDiagnostic[3]
+        ? diagnostic +
+          ';snapshot=' +
           migrationDiagnostic[2] +
-          ';phase=' +
-          migrationDiagnostic[3] +
-          ';sqlstate=' +
+          ';catalog_step=' +
+          migrationDiagnostic[3]
+        : diagnostic;
+    return migrationDiagnostic[4]
+      ? snapshotDiagnostic +
+          ';migration=' +
           migrationDiagnostic[4] +
+          ';phase=' +
+          migrationDiagnostic[5] +
+          ';sqlstate=' +
+          migrationDiagnostic[6] +
           ';log_sha256=' +
           digest
-      : diagnostic + ';log_sha256=' + digest;
+      : snapshotDiagnostic + ';log_sha256=' + digest;
   }
   return (
     'code=' + code + ';producer=owner_entrypoint;transport=' + transport + ';log_sha256=' + digest

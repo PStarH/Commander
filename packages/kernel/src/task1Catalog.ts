@@ -16,6 +16,34 @@ import type { SqlClient } from './postgres.js';
 
 type JsonRecord = Record<string, unknown>;
 
+export const TASK1_CATALOG_COLLECTION_STEPS = [
+  'search_path',
+  'identity',
+  'ledger',
+  'namespaces',
+  'relations',
+  'functions',
+  'types',
+  'extensions',
+  'policies',
+  'triggers',
+  'roles',
+  'memberships',
+  'role_settings',
+  'database_acl',
+  'schema_acls',
+  'default_acls',
+  'product_has_rows',
+] as const;
+export type Task1CatalogCollectionStep = (typeof TASK1_CATALOG_COLLECTION_STEPS)[number];
+
+function isTask1CatalogCollectionStep(value: unknown): value is Task1CatalogCollectionStep {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_COLLECTION_STEPS as readonly string[]).includes(value)
+  );
+}
+
 export interface Task1CatalogBootstrapContext {
   sessionUser: string;
   authority: BootstrapIdentityV1;
@@ -515,9 +543,37 @@ function validateBootstrap(context: Task1CatalogBootstrapContext): void {
   }
 }
 
-async function queryRows(client: SqlClient, sql: string): Promise<JsonRecord[]> {
-  const result = await client.query(sql);
-  return normalizedRows(result.rows);
+async function atCatalogCollectionStep<T>(
+  catalogStep: Task1CatalogCollectionStep,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { catalogStep });
+  }
+}
+
+function catalogCollectionFailure(error: unknown): never {
+  const catalogStep =
+    error && typeof error === 'object'
+      ? (error as { catalogStep?: unknown }).catalogStep
+      : undefined;
+  if (isTask1CatalogCollectionStep(catalogStep)) {
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { catalogStep });
+  }
+  fail('TASK1_CATALOG_COLLECTION_FAILED');
+}
+
+async function queryRows(
+  client: SqlClient,
+  catalogStep: Task1CatalogCollectionStep,
+  sql: string,
+): Promise<JsonRecord[]> {
+  return atCatalogCollectionStep(catalogStep, async () => {
+    const result = await client.query(sql);
+    return normalizedRows(result.rows);
+  });
 }
 
 export async function collectTask1PrebootstrapInventory(
@@ -532,27 +588,29 @@ export async function collectTask1PrebootstrapInventory(
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       open = true;
     }
-    await client.query('SET LOCAL search_path = pg_catalog');
-    const identityRows = await queryRows(client, TASK1_CATALOG_QUERIES.identity);
+    await atCatalogCollectionStep('search_path', () =>
+      client.query('SET LOCAL search_path = pg_catalog'),
+    );
+    const identityRows = await queryRows(client, 'identity', TASK1_CATALOG_QUERIES.identity);
     if (identityRows.length !== 1) fail('TASK1_CATALOG_IDENTITY_INVALID');
     const identity = identityRows[0]!;
     const ledgerExists = identity.ledger_exists === true;
-    const ledger = ledgerExists ? await queryRows(client, TASK1_CATALOG_QUERIES.ledger) : null;
-    const namespaces = await queryRows(client, TASK1_CATALOG_QUERIES.namespaces);
-    const relations = await queryRows(client, TASK1_CATALOG_QUERIES.relations);
-    const functions = (await queryRows(client, TASK1_CATALOG_QUERIES.functions)).map(
+    const ledger = ledgerExists ? await queryRows(client, 'ledger', TASK1_CATALOG_QUERIES.ledger) : null;
+    const namespaces = await queryRows(client, 'namespaces', TASK1_CATALOG_QUERIES.namespaces);
+    const relations = await queryRows(client, 'relations', TASK1_CATALOG_QUERIES.relations);
+    const functions = (await queryRows(client, 'functions', TASK1_CATALOG_QUERIES.functions)).map(
       normalizeFunction,
     );
-    const types = await queryRows(client, TASK1_CATALOG_QUERIES.types);
-    const extensions = await queryRows(client, TASK1_CATALOG_QUERIES.extensions);
-    const policies = await queryRows(client, TASK1_CATALOG_QUERIES.policies);
-    const triggers = await queryRows(client, TASK1_CATALOG_QUERIES.triggers);
-    const roles = await queryRows(client, TASK1_CATALOG_QUERIES.roles);
-    const memberships = await queryRows(client, TASK1_CATALOG_QUERIES.memberships);
-    const roleSettings = await queryRows(client, TASK1_CATALOG_QUERIES.roleSettings);
-    const databaseAcl = await queryRows(client, TASK1_CATALOG_QUERIES.databaseAcl);
-    const schemaAcls = await queryRows(client, TASK1_CATALOG_QUERIES.schemaAcls);
-    const defaultAcls = await queryRows(client, TASK1_CATALOG_QUERIES.defaultAcls);
+    const types = await queryRows(client, 'types', TASK1_CATALOG_QUERIES.types);
+    const extensions = await queryRows(client, 'extensions', TASK1_CATALOG_QUERIES.extensions);
+    const policies = await queryRows(client, 'policies', TASK1_CATALOG_QUERIES.policies);
+    const triggers = await queryRows(client, 'triggers', TASK1_CATALOG_QUERIES.triggers);
+    const roles = await queryRows(client, 'roles', TASK1_CATALOG_QUERIES.roles);
+    const memberships = await queryRows(client, 'memberships', TASK1_CATALOG_QUERIES.memberships);
+    const roleSettings = await queryRows(client, 'role_settings', TASK1_CATALOG_QUERIES.roleSettings);
+    const databaseAcl = await queryRows(client, 'database_acl', TASK1_CATALOG_QUERIES.databaseAcl);
+    const schemaAcls = await queryRows(client, 'schema_acls', TASK1_CATALOG_QUERIES.schemaAcls);
+    const defaultAcls = await queryRows(client, 'default_acls', TASK1_CATALOG_QUERIES.defaultAcls);
     const productRelations = relations.filter(
       (relation) => relation.kind === 'r' || relation.kind === 'p',
     );
@@ -562,8 +620,10 @@ export async function collectTask1PrebootstrapInventory(
     const productHasRows: Array<{ relation: string; hasRows: boolean }> = [];
     for (const relation of productRelations) {
       const qualified = `${quoteIdentifier(String(relation.schema))}.${quoteIdentifier(String(relation.name))}`;
-      const result = await client.query<{ has_rows: boolean }>(
-        `/* task1-catalog:product-has-rows */ SELECT EXISTS (SELECT 1 FROM ${qualified} LIMIT 1) AS has_rows`,
+      const result = await atCatalogCollectionStep('product_has_rows', () =>
+        client.query<{ has_rows: boolean }>(
+          `/* task1-catalog:product-has-rows */ SELECT EXISTS (SELECT 1 FROM ${qualified} LIMIT 1) AS has_rows`,
+        ),
       );
       if (result.rowCount !== 1 || typeof result.rows[0]?.has_rows !== 'boolean') {
         fail('TASK1_CATALOG_PRODUCT_SOURCE_INVALID');
@@ -612,7 +672,7 @@ export async function collectTask1PrebootstrapInventory(
       open = false;
     }
     return inventory;
-  } catch {
+  } catch (error) {
     if (open) {
       try {
         await client.query('ROLLBACK');
@@ -620,7 +680,7 @@ export async function collectTask1PrebootstrapInventory(
         // Preserve the sanitized collector failure.
       }
     }
-    fail('TASK1_CATALOG_COLLECTION_FAILED');
+    catalogCollectionFailure(error);
   }
 }
 
