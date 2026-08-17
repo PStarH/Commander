@@ -844,9 +844,19 @@ function freshCatalogIsEmpty(inventory: PrebootstrapInventoryV1): boolean {
       'triggers',
       'productSources',
       'productHasRows',
-      'roleSettings',
       'defaultAcls',
-    ].every((key) => Array.isArray(inventory[key]) && (inventory[key] as unknown[]).length === 0)
+    ].every((key) => Array.isArray(inventory[key]) && (inventory[key] as unknown[]).length === 0) &&
+    (inventory.roleSettings.length === 0 ||
+      exactRows(inventory.roleSettings, [
+        {
+          database: '*',
+          role: 'commander_app',
+          settings: [
+            { name: 'idle_in_transaction_session_timeout', value: '10s' },
+            { name: 'statement_timeout', value: '55s' },
+          ],
+        },
+      ]))
   );
 }
 
