@@ -113,6 +113,42 @@ describe('Helm owner Job diagnostics', () => {
     });
   }
 
+  for (const snapshotValidation of [
+    'bootstrap_validation',
+    'identity_validation',
+    'product_source_validation',
+    'catalog_version_validation',
+    'origin_classification',
+  ] as const) {
+    it(`retains only the fixed ${snapshotValidation} snapshot validation`, () => {
+      const diagnostic = (
+        helmTenantCutover as typeof helmTenantCutover & {
+          ownerJobFailureDiagnostic?: (logs: string) => string;
+        }
+      ).ownerJobFailureDiagnostic;
+      assert.equal(typeof diagnostic, 'function');
+
+      const result = diagnostic!(
+        [
+          'postgres://owner:secret@postgres/commander SELECT private_value',
+          'Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=' +
+            snapshotValidation,
+          'owner-job-opaque-marker-4820',
+        ].join('\n'),
+      );
+
+      assert.match(
+        result,
+        new RegExp(
+          '^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=' +
+            snapshotValidation +
+            ';log_sha256=[a-f0-9]{64}$',
+        ),
+      );
+      assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
+    });
+  }
+
   it('marks unavailable owner Job logs with a fixed transport discriminator', () => {
     const diagnostic = (
       helmTenantCutover as typeof helmTenantCutover & {

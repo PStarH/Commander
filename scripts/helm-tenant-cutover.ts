@@ -229,6 +229,8 @@ const OWNER_MIGRATION_FAILURE_STAGE =
 const OWNER_MIGRATION_CATALOG_STEP =
   '(search_path|identity|ledger|namespaces|relations|functions|types|extensions|policies|triggers|roles|memberships|role_settings|database_acl|schema_acls|default_acls|product_has_rows)';
 const OWNER_MIGRATION_SNAPSHOT_TRANSACTION = '(begin|commit)';
+const OWNER_MIGRATION_SNAPSHOT_VALIDATION =
+  '(bootstrap_validation|identity_validation|product_source_validation|catalog_version_validation|origin_classification)';
 
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(
@@ -245,6 +247,8 @@ export function ownerJobFailureDiagnostic(
           OWNER_MIGRATION_CATALOG_STEP +
           '|;snapshot_transaction=' +
           OWNER_MIGRATION_SNAPSHOT_TRANSACTION +
+          '|;snapshot_validation=' +
+          OWNER_MIGRATION_SNAPSHOT_VALIDATION +
           ')' +
           ')?' +
           '(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?\\b',
@@ -274,16 +278,22 @@ export function ownerJobFailureDiagnostic(
             migrationDiagnostic[2] +
             ';snapshot_transaction=' +
             migrationDiagnostic[4]
-          : diagnostic
+          : migrationDiagnostic[5]
+            ? diagnostic +
+              ';snapshot=' +
+              migrationDiagnostic[2] +
+              ';snapshot_validation=' +
+              migrationDiagnostic[5]
+            : diagnostic
       : diagnostic;
-    return migrationDiagnostic[5]
+    return migrationDiagnostic[6]
       ? snapshotDiagnostic +
           ';migration=' +
-          migrationDiagnostic[5] +
-          ';phase=' +
           migrationDiagnostic[6] +
-          ';sqlstate=' +
+          ';phase=' +
           migrationDiagnostic[7] +
+          ';sqlstate=' +
+          migrationDiagnostic[8] +
           ';log_sha256=' +
           digest
       : snapshotDiagnostic + ';log_sha256=' + digest;

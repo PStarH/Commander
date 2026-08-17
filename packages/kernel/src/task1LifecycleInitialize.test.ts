@@ -524,6 +524,58 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     });
   }
 
+  for (const snapshotValidation of [
+    'bootstrap_validation',
+    'identity_validation',
+    'product_source_validation',
+    'catalog_version_validation',
+    'origin_classification',
+  ] as const) {
+    it(`carries the S0 ${snapshotValidation} marker without lifecycle mutation`, async () => {
+      const client = new RecordingClient();
+
+      await assert.rejects(
+        () =>
+          initializeTask1LifecycleBoundary({
+            client,
+            prepared,
+            dependencies: {
+              loadBootstrapContext: async () => ({
+                sessionUser: 'postgres',
+                authority: bootstrapIdentities.authority,
+                bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+                catalogVersion: '202307071',
+              }),
+              observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+              collectInventory: async () => {
+                throw Object.assign(
+                  new Error('postgres://snapshot:secret@db/commander validation-opaque-marker'),
+                  { snapshotValidation },
+                );
+              },
+            },
+          }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { ownerStage?: unknown }).ownerStage,
+            'lifecycle_prebootstrap_snapshot',
+          );
+          assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+          assert.equal(
+            (error as { snapshotValidation?: unknown }).snapshotValidation,
+            snapshotValidation,
+          );
+          return true;
+        },
+      );
+
+      assert.equal(
+        client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+        false,
+      );
+    });
+  }
+
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
       resolveTask1BootstrapAuthorityUrl({

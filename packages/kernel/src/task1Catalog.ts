@@ -37,10 +37,26 @@ export const TASK1_CATALOG_COLLECTION_STEPS = [
 ] as const;
 export type Task1CatalogCollectionStep = (typeof TASK1_CATALOG_COLLECTION_STEPS)[number];
 
+export const TASK1_CATALOG_SNAPSHOT_VALIDATIONS = [
+  'bootstrap_validation',
+  'identity_validation',
+  'product_source_validation',
+  'catalog_version_validation',
+  'origin_classification',
+] as const;
+export type Task1CatalogSnapshotValidation = (typeof TASK1_CATALOG_SNAPSHOT_VALIDATIONS)[number];
+
 function isTask1CatalogCollectionStep(value: unknown): value is Task1CatalogCollectionStep {
   return (
     typeof value === 'string' &&
     (TASK1_CATALOG_COLLECTION_STEPS as readonly string[]).includes(value)
+  );
+}
+
+function isTask1CatalogSnapshotValidation(value: unknown): value is Task1CatalogSnapshotValidation {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_SNAPSHOT_VALIDATIONS as readonly string[]).includes(value)
   );
 }
 
@@ -554,6 +570,17 @@ async function atCatalogCollectionStep<T>(
   }
 }
 
+async function atCatalogSnapshotValidation<T>(
+  snapshotValidation: Task1CatalogSnapshotValidation,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { snapshotValidation });
+  }
+}
+
 function catalogCollectionFailure(error: unknown): never {
   const catalogStep =
     error && typeof error === 'object'
@@ -561,6 +588,13 @@ function catalogCollectionFailure(error: unknown): never {
       : undefined;
   if (isTask1CatalogCollectionStep(catalogStep)) {
     throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { catalogStep });
+  }
+  const snapshotValidation =
+    error && typeof error === 'object'
+      ? (error as { snapshotValidation?: unknown }).snapshotValidation
+      : undefined;
+  if (isTask1CatalogSnapshotValidation(snapshotValidation)) {
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { snapshotValidation });
   }
   fail('TASK1_CATALOG_COLLECTION_FAILED');
 }
@@ -583,7 +617,9 @@ export async function collectTask1PrebootstrapInventory(
 ): Promise<PrebootstrapInventoryV1> {
   let open = false;
   try {
-    if (bootstrap) validateBootstrap(bootstrap);
+    if (bootstrap) {
+      await atCatalogSnapshotValidation('bootstrap_validation', () => validateBootstrap(bootstrap));
+    }
     if (options.transaction !== 'caller') {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       open = true;
@@ -592,8 +628,10 @@ export async function collectTask1PrebootstrapInventory(
       client.query('SET LOCAL search_path = pg_catalog'),
     );
     const identityRows = await queryRows(client, 'identity', TASK1_CATALOG_QUERIES.identity);
-    if (identityRows.length !== 1) fail('TASK1_CATALOG_IDENTITY_INVALID');
-    const identity = identityRows[0]!;
+    const identity = await atCatalogSnapshotValidation('identity_validation', () => {
+      if (identityRows.length !== 1) fail('TASK1_CATALOG_IDENTITY_INVALID');
+      return identityRows[0]!;
+    });
     const ledgerExists = identity.ledger_exists === true;
     const ledger = ledgerExists ? await queryRows(client, 'ledger', TASK1_CATALOG_QUERIES.ledger) : null;
     const namespaces = await queryRows(client, 'namespaces', TASK1_CATALOG_QUERIES.namespaces);
@@ -625,9 +663,11 @@ export async function collectTask1PrebootstrapInventory(
           `/* task1-catalog:product-has-rows */ SELECT EXISTS (SELECT 1 FROM ${qualified} LIMIT 1) AS has_rows`,
         ),
       );
-      if (result.rowCount !== 1 || typeof result.rows[0]?.has_rows !== 'boolean') {
-        fail('TASK1_CATALOG_PRODUCT_SOURCE_INVALID');
-      }
+      await atCatalogSnapshotValidation('product_source_validation', () => {
+        if (result.rowCount !== 1 || typeof result.rows[0]?.has_rows !== 'boolean') {
+          fail('TASK1_CATALOG_PRODUCT_SOURCE_INVALID');
+        }
+      });
       productHasRows.push({
         relation: `${String(relation.schema)}.${String(relation.name)}`,
         hasRows: result.rows[0].has_rows,
@@ -635,9 +675,11 @@ export async function collectTask1PrebootstrapInventory(
     }
 
     const catalogVersion = options.catalogVersion ?? bootstrap?.catalogVersion ?? identity.catalog_version;
-    if (typeof catalogVersion !== 'string' || !/^[0-9]+$/.test(catalogVersion)) {
-      fail('TASK1_CATALOG_IDENTITY_INVALID');
-    }
+    await atCatalogSnapshotValidation('catalog_version_validation', () => {
+      if (typeof catalogVersion !== 'string' || !/^[0-9]+$/.test(catalogVersion)) {
+        fail('TASK1_CATALOG_IDENTITY_INVALID');
+      }
+    });
     const inventory = {
       format: 'prebootstrap_inventory/v1' as const,
       postgresVersion: String(identity.postgres_version),
@@ -664,7 +706,9 @@ export async function collectTask1PrebootstrapInventory(
       defaultAcls,
       bootstrapIdentities: null,
     } as PrebootstrapInventoryV1;
-    const classification = classifyTask1CatalogOrigin(inventory, bootstrap);
+    const classification = await atCatalogSnapshotValidation('origin_classification', () =>
+      classifyTask1CatalogOrigin(inventory, bootstrap),
+    );
     if (classification.kind !== 'legacy')
       inventory.bootstrapIdentities = classification.bootstrapIdentities;
     if (open) {

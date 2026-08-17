@@ -16,7 +16,10 @@ import {
   type Task1HelmRestoreEvidence,
 } from './task1LifecycleOwnerCommand.js';
 import { initializeTask1LifecycleBoundary } from './task1LifecycleInitialize.js';
-import { TASK1_CATALOG_COLLECTION_STEPS } from './task1Catalog.js';
+import {
+  TASK1_CATALOG_COLLECTION_STEPS,
+  TASK1_CATALOG_SNAPSHOT_VALIDATIONS,
+} from './task1Catalog.js';
 import type { SqlClient, SqlPool } from './postgres.js';
 import {
   PostgresTask1LifecycleOwnerTransactions,
@@ -145,6 +148,13 @@ function isSnapshotTransaction(value: unknown): value is 'begin' | 'commit' {
   return value === 'begin' || value === 'commit';
 }
 
+function isSnapshotValidation(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_SNAPSHOT_VALIDATIONS as readonly string[]).includes(value)
+  );
+}
+
 function withOwnerMigrationFailureStage(
   error: unknown,
   ownerStage: OwnerMigrationFailureStage,
@@ -187,6 +197,7 @@ export function migrationFailureDiagnostic(error: unknown): string {
     snapshot?: unknown;
     catalogStep?: unknown;
     snapshotTransaction?: unknown;
+    snapshotValidation?: unknown;
     phase?: unknown;
     sqlstate?: unknown;
   };
@@ -198,11 +209,17 @@ export function migrationFailureDiagnostic(error: unknown): string {
   ) {
     const hasCatalogStep = isTask1CatalogCollectionStep(failure.catalogStep);
     const hasSnapshotTransaction = isSnapshotTransaction(failure.snapshotTransaction);
-    if (hasCatalogStep !== hasSnapshotTransaction) {
+    const hasSnapshotValidation = isSnapshotValidation(failure.snapshotValidation);
+    if (
+      Number(hasCatalogStep) + Number(hasSnapshotTransaction) + Number(hasSnapshotValidation) ===
+      1
+    ) {
       diagnostic += ';snapshot=' + failure.snapshot;
       diagnostic += hasCatalogStep
         ? ';catalog_step=' + failure.catalogStep
-        : ';snapshot_transaction=' + failure.snapshotTransaction;
+        : hasSnapshotTransaction
+          ? ';snapshot_transaction=' + failure.snapshotTransaction
+          : ';snapshot_validation=' + failure.snapshotValidation;
     }
   }
   if (
