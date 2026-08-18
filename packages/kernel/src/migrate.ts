@@ -133,6 +133,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'lifecycle_descriptor_transaction',
   'lifecycle_peer_reobservation',
   'lifecycle_peer_reobservation_input_consistency',
+  'lifecycle_peer_reobservation_candidate_binding_validation',
   'lifecycle_transaction',
   'current_read',
   'rollout_proof',
