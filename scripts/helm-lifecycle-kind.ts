@@ -602,6 +602,7 @@ type OwnerMigrationFailureStage =
   | 'lifecycle_prebootstrap_snapshot'
   | 'lifecycle_prebootstrap_snapshot_comparison'
   | 'lifecycle_initialization_planning'
+  | 'lifecycle_descriptor_transaction'
   | 'lifecycle_transaction'
   | 'current_read'
   | 'rollout_proof';
@@ -640,7 +641,7 @@ type OwnerMigrationOriginClassificationStep =
   | 'public_acl';
 
 const OWNER_FAILURE_STAGE =
-  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_pinned_manifest_validation|lifecycle_prepared_request_validation|lifecycle_table_discovery|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_prebootstrap_snapshot_comparison|lifecycle_initialization_planning|lifecycle_transaction|current_read|rollout_proof)';
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_pinned_manifest_validation|lifecycle_prepared_request_validation|lifecycle_table_discovery|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_prebootstrap_snapshot_comparison|lifecycle_initialization_planning|lifecycle_descriptor_transaction|lifecycle_transaction|current_read|rollout_proof)';
 const OWNER_FAILURE_CATALOG_STEP =
   '(search_path|identity|ledger|namespaces|relations|functions|types|extensions|policies|triggers|roles|memberships|role_settings|database_acl|schema_acls|default_acls|product_has_rows)';
 const OWNER_FAILURE_SNAPSHOT_TRANSACTION = '(begin|commit)';

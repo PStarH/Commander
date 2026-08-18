@@ -602,6 +602,42 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies descriptor transaction failures after initialization planning', async () => {
+    const client = new RecordingClient();
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => {
+              throw new Error('descriptor-transaction-opaque-marker');
+            },
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_descriptor_transaction',
+        );
+        return true;
+      },
+    );
+  });
+
   for (const snapshotTransaction of ['begin', 'commit'] as const) {
     it(`classifies the S0 ${snapshotTransaction} transaction boundary without state mutation`, async () => {
       const client = new RecordingClient();
