@@ -570,6 +570,21 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(workflow, /run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts run/);
   });
 
+  it('fails closed when sanitized Kind evidence cannot be uploaded', () => {
+    const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
+    const uploadStep = workflow.match(
+      /- name: Upload sanitized evidence\n[\s\S]*$/,
+    )?.[0];
+
+    assert.ok(uploadStep, 'the Kind lifecycle workflow must upload sanitized evidence');
+    assert.match(uploadStep, /uses: actions\/upload-artifact@v4/);
+    assert.match(uploadStep, /if: always\(\)/);
+    assert.match(uploadStep, /name: kind-lifecycle-evidence/);
+    assert.match(uploadStep, /path: kind-lifecycle-evidence\.json/);
+    assert.match(uploadStep, /if-no-files-found: error/);
+    assert.match(uploadStep, /retention-days: 30/);
+  });
+
   it('omits raw scenario diagnostics and retains only canonical safe evidence fields', () => {
     const evidence = {
       generatedAt: '2024-01-01T00:00:00Z',
