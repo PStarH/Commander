@@ -149,6 +149,7 @@ class RecordingClient implements SqlClient {
   readonly statements: string[] = [];
   readonly bindings: unknown[][] = [];
   failDescriptor = false;
+  lifecycleTableDiscoveryFailure = false;
   snapshotTransactionFailure: 'begin' | 'commit' | undefined;
   existingLifecycleState: {
     state: 'fresh_pending' | 'legacy_pending' | 'expanded' | 'enforced';
@@ -193,6 +194,9 @@ class RecordingClient implements SqlClient {
       throw new Error('postgres://snapshot:secret@db/commander commit-opaque-marker');
     }
     if (sql.includes("to_regclass('public.commander_tenant_cutover_state')")) {
+      if (this.lifecycleTableDiscoveryFailure) {
+        throw new Error('lifecycle-table-discovery-opaque-marker');
+      }
       return result<T>([
         this.lifecycleTables === 'absent'
           ? {
@@ -356,6 +360,45 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
         );
         return true;
       },
+    );
+  });
+
+  it('classifies prepared-request canonical validation before lifecycle discovery', async () => {
+    const client = new RecordingClient();
+    const invalidPrepared = { ...prepared, configurationSha256: 'f'.repeat(64) };
+
+    await assert.rejects(
+      () => initializeTask1LifecycleBoundary({ client, prepared: invalidPrepared }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_prepared_request_validation',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(client.statements.length, 0);
+  });
+
+  it('classifies initial lifecycle-table discovery failures before state mutation', async () => {
+    const client = new RecordingClient();
+    client.lifecycleTableDiscoveryFailure = true;
+
+    await assert.rejects(
+      () => initializeTask1LifecycleBoundary({ client, prepared }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_table_discovery',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
     );
   });
 

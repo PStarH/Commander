@@ -47,19 +47,28 @@ describe('helm-lifecycle-kind helpers', () => {
         logSha256: 'a'.repeat(64),
       },
     );
-    assert.deepEqual(
-      parseOwnerFailureEvidence(
-        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialization_planning;log_sha256=' +
-          'f'.repeat(64),
-      ),
-      {
-        code: 'COMMANDER_MIGRATION_FAILED',
-        producer: 'owner_entrypoint',
-        transport: 'kubectl_logs',
-        ownerStage: 'lifecycle_initialization_planning',
-        logSha256: 'f'.repeat(64),
-      },
-    );
+    for (const ownerStage of [
+      'lifecycle_pinned_manifest_validation',
+      'lifecycle_prepared_request_validation',
+      'lifecycle_table_discovery',
+      'lifecycle_initialization_planning',
+    ] as const) {
+      assert.deepEqual(
+        parseOwnerFailureEvidence(
+          'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=' +
+            ownerStage +
+            ';log_sha256=' +
+            'f'.repeat(64),
+        ),
+        {
+          code: 'COMMANDER_MIGRATION_FAILED',
+          producer: 'owner_entrypoint',
+          transport: 'kubectl_logs',
+          ownerStage,
+          logSha256: 'f'.repeat(64),
+        },
+      );
+    }
     assert.deepEqual(
       parseOwnerFailureEvidence(
         'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=origin_classification;origin_classification_step=role_envelope;log_sha256=' +
