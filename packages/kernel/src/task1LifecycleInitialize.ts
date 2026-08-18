@@ -768,13 +768,22 @@ async function collectReadOnlySnapshot(
   }
 }
 
-function assertExactPendingLedgerRows(rows: Array<{ id: string; checksum: string }>): void {
-  const lifecycle = KERNEL_TASK1_CLOSURE_MIGRATIONS[0]!;
-  const expected = [...KERNEL_TASK1_BASELINE_MIGRATIONS, lifecycle]
-    .map(({ id, checksum }) => ({ id, checksum }))
-    .sort((left, right) => left.id.localeCompare(right.id));
+function assertExactPendingLedgerRows(
+  rows: Array<{ id: string; checksum: string }>,
+  command: Task1OwnerPreparedRequest['command'],
+): void {
+  const phaseClosureCount = command === 'expand' ? 2 : 3;
+  const expected = [1, phaseClosureCount].map((closureCount) =>
+    [...KERNEL_TASK1_BASELINE_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, closureCount)]
+      .map(({ id, checksum }) => ({ id, checksum }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  );
   const actual = [...rows].sort((left, right) => left.id.localeCompare(right.id));
-  if (canonicalBootstrapJson(actual) !== canonicalBootstrapJson(expected)) {
+  if (
+    !expected.some(
+      (candidate) => canonicalBootstrapJson(actual) === canonicalBootstrapJson(candidate),
+    )
+  ) {
     throw new Error('MIGRATION_LEDGER_TAMPERED');
   }
 }
@@ -1025,7 +1034,7 @@ export async function initializeTask1LifecycleBoundary(input: {
       if (operation.rowCount !== 1 || operation.rows[0]?.operation_count !== '0') {
         throw new Error('MIGRATION_LEDGER_TAMPERED');
       }
-      assertExactPendingLedgerRows(await exactLedgerRows(input.client));
+      assertExactPendingLedgerRows(await exactLedgerRows(input.client), input.prepared.command);
       let snapshots: unknown;
       let origin: unknown;
       let persistedPeer: unknown;
