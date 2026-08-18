@@ -807,6 +807,52 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies a post-transaction peer-binding consistency failure', async () => {
+    const client = new RecordingClient();
+    const mismatchedObservedBinding = createDatabasePeerBinding({
+      roles: peerBinding.roles.map((role) => ({
+        ...role,
+        databaseOid: '16385',
+      })),
+    });
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => ({
+              input: peerInput,
+              binding: mismatchedObservedBinding,
+            }),
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => inventory(),
+            verifyLockedCatalogState: () => undefined,
+            applyCatalogHardening: async () => undefined,
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_peer_reobservation_binding_consistency',
+        );
+        return true;
+      },
+    );
+  });
+
   for (const snapshotTransaction of ['begin', 'commit'] as const) {
     it(`classifies the S0 ${snapshotTransaction} transaction boundary without state mutation`, async () => {
       const client = new RecordingClient();
