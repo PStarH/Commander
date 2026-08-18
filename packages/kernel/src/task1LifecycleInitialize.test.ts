@@ -522,6 +522,43 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies post-snapshot planning failures before state mutation', async () => {
+    const client = new RecordingClient();
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            collectInventory: async () => inventory(),
+            verifyCatalogBaseline: () => {
+              throw new Error('post-snapshot-planning-opaque-marker');
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_initialization_planning',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
+    );
+  });
+
   for (const snapshotTransaction of ['begin', 'commit'] as const) {
     it(`classifies the S0 ${snapshotTransaction} transaction boundary without state mutation`, async () => {
       const client = new RecordingClient();

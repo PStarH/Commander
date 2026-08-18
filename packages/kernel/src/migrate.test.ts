@@ -157,6 +157,7 @@ describe('kernel owner migration entrypoint', () => {
       'lifecycle_candidate_peer_validation',
       'lifecycle_prebootstrap_snapshot',
       'lifecycle_prebootstrap_snapshot_comparison',
+      'lifecycle_initialization_planning',
       'lifecycle_transaction',
       'current_read',
       'rollout_proof',

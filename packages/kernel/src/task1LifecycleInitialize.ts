@@ -379,6 +379,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'lifecycle_candidate_peer_validation',
   'lifecycle_prebootstrap_snapshot',
   'lifecycle_prebootstrap_snapshot_comparison',
+  'lifecycle_initialization_planning',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 type SnapshotTransaction = 'begin' | 'commit';
@@ -1099,33 +1100,58 @@ export async function initializeTask1LifecycleBoundary(input: {
     'lifecycle_prebootstrap_snapshot_comparison',
     async () => createPrebootstrapSnapshots(s0, s1),
   );
-  const initialization = planTask1LifecycleInitialization({
-    command: input.prepared.command,
-    comparisonKind: snapshots.comparisonKind,
-    configurationSha256: input.prepared.configurationSha256,
-    existing: null,
-  });
-  const origin = createOriginBinding(snapshots);
-  const prebootstrapSnapshotsJcs = canonicalBootstrapJson(snapshots);
-  const originBindingJcs = canonicalBootstrapJson(origin);
-  const peerBindingJcs = canonicalBootstrapJson(candidate.binding);
-  const classification = fresh ? snapshots.s0.bootstrapIdentities!.envelope : 'legacy';
-  verifyCatalogBaseline({ classification: fresh ? 'fresh' : 'legacy', snapshots });
-  const identities = snapshots.s0.bootstrapIdentities;
-  const historicalManifestSha256 = instantiateManifest('historical', identities);
-  const hardenedManifestSha256 = instantiateManifest('hardened', identities);
-  const selectedProofKeySha256 = readProofKeySha256(env);
-  let catalogOrigin: Parameters<typeof collectTask1LockedCatalogInventory>[1];
-  if (classification === 'legacy') {
-    catalogOrigin = { classification, bootstrapIdentities: null };
-  } else {
-    if (identities === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
-    catalogOrigin = {
-      classification,
-      bootstrapIdentities: identities,
-      catalogVersion: context?.catalogVersion,
+  const {
+    initialization,
+    origin,
+    prebootstrapSnapshotsJcs,
+    originBindingJcs,
+    peerBindingJcs,
+    identities,
+    historicalManifestSha256,
+    hardenedManifestSha256,
+    selectedProofKeySha256,
+    catalogOrigin,
+  } = await atLifecycleInitializerFailureStage('lifecycle_initialization_planning', async () => {
+    const initialization = planTask1LifecycleInitialization({
+      command: input.prepared.command,
+      comparisonKind: snapshots.comparisonKind,
+      configurationSha256: input.prepared.configurationSha256,
+      existing: null,
+    });
+    const origin = createOriginBinding(snapshots);
+    const prebootstrapSnapshotsJcs = canonicalBootstrapJson(snapshots);
+    const originBindingJcs = canonicalBootstrapJson(origin);
+    const peerBindingJcs = canonicalBootstrapJson(candidate.binding);
+    const classification = fresh ? snapshots.s0.bootstrapIdentities!.envelope : 'legacy';
+    verifyCatalogBaseline({ classification: fresh ? 'fresh' : 'legacy', snapshots });
+    const identities = snapshots.s0.bootstrapIdentities;
+    const historicalManifestSha256 = instantiateManifest('historical', identities);
+    const hardenedManifestSha256 = instantiateManifest('hardened', identities);
+    const selectedProofKeySha256 = readProofKeySha256(env);
+    let catalogOrigin: Parameters<typeof collectTask1LockedCatalogInventory>[1];
+    if (classification === 'legacy') {
+      catalogOrigin = { classification, bootstrapIdentities: null };
+    } else {
+      if (identities === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
+      catalogOrigin = {
+        classification,
+        bootstrapIdentities: identities,
+        catalogVersion: context?.catalogVersion,
+      };
+    }
+    return {
+      initialization,
+      origin,
+      prebootstrapSnapshotsJcs,
+      originBindingJcs,
+      peerBindingJcs,
+      identities,
+      historicalManifestSha256,
+      hardenedManifestSha256,
+      selectedProofKeySha256,
+      catalogOrigin,
     };
-  }
+  });
   await runTask1LifecycleDescriptorStateTransaction(
     input.client,
     async () => {
