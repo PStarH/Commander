@@ -54,6 +54,7 @@ describe('helm-lifecycle-kind helpers', () => {
       'lifecycle_initialization_planning',
       'lifecycle_descriptor_transaction',
       'lifecycle_peer_reobservation',
+      'lifecycle_peer_reobservation_input_consistency',
     ] as const) {
       assert.deepEqual(
         parseOwnerFailureEvidence(
