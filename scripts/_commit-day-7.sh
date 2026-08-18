@@ -400,9 +400,6 @@ Deploy:
 
 Docs:
 - README.md updates + BENCHMARK.md (already in Commit 1) updates.
-- docs/superpowers/specs/* + plans/*: agent-runtime god-object
-  decomposition design + plan, p0-security-health-fixes plan
-  (architecture docs).
 
 Tests (packages/core/tests/*): bulk test-file modifications reflecting
 the core refactor + new paradigm tables in this batch. ~150 test files
