@@ -1081,20 +1081,40 @@ export async function initializeTask1LifecycleBoundary(input: {
       await atLifecycleInitializerFailureStage('lifecycle_candidate_peer_validation', async () =>
         assertPreparedPeerInput(input.prepared, candidate.input),
       );
-      const observed = await observePeers(env);
-      if (
-        candidate.input &&
-        observed.input &&
-        canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
-      )
-        throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
-      verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding);
-      verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding);
-      if (
-        canonicalBootstrapJson(candidate.binding) !== row.database_peer_binding_jcs ||
-        canonicalBootstrapJson(observed.binding) !== row.database_peer_binding_jcs
-      )
-        throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+      const observed = await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation',
+        () => observePeers(env),
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_input_consistency',
+        async () => {
+          if (
+            candidate.input &&
+            observed.input &&
+            canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
+          )
+            throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+        },
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_candidate_binding_validation',
+        async () =>
+          verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding),
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_observed_binding_validation',
+        async () => verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding),
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_binding_consistency',
+        async () => {
+          if (
+            canonicalBootstrapJson(candidate.binding) !== row.database_peer_binding_jcs ||
+            canonicalBootstrapJson(observed.binding) !== row.database_peer_binding_jcs
+          )
+            throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+        },
+      );
     }
     return;
   }

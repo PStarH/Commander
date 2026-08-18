@@ -1503,6 +1503,44 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     assert.equal(inventoryCollections, 0, 'pending retry must not recollect S0/S1');
     assert.equal(bootstrapChecks, 1);
     assert.equal(peerChecks, 1);
+
+    const changedObservedBinding = createDatabasePeerBinding({
+      roles: roles.map((role) => ({
+        role,
+        host: 'db.example',
+        port: 5432,
+        tlsServerSans: { dns: ['db.example'], ip: [] },
+        serverSpkiSha256: 'f'.repeat(64),
+        databaseOid: '16385',
+        databaseName: 'commander',
+      })),
+    });
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => ({
+              input: peerInput,
+              binding: changedObservedBinding,
+            }),
+            proofKeySha256: () => '9'.repeat(64),
+            instantiateManifestSha256: (_kind, _identities) =>
+              _kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        (error as Error & { ownerStage?: unknown }).ownerStage ===
+          'lifecycle_peer_reobservation_binding_consistency',
+    );
   });
 
   it('rejects lifecycle tables without the sole state row and partial lifecycle tables', async () => {
