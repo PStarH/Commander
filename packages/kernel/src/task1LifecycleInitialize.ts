@@ -384,6 +384,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'lifecycle_prebootstrap_snapshot_comparison',
   'lifecycle_initialization_planning',
   'lifecycle_descriptor_transaction',
+  'lifecycle_peer_reobservation',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 type SnapshotTransaction = 'begin' | 'commit';
@@ -1216,7 +1217,10 @@ export async function initializeTask1LifecycleBoundary(input: {
     ),
   );
 
-  const observed = await observePeers(env);
+  const observed = await atLifecycleInitializerFailureStage(
+    'lifecycle_peer_reobservation',
+    () => observePeers(env),
+  );
   if (
     candidate.input &&
     observed.input &&

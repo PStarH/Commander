@@ -131,6 +131,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'lifecycle_prebootstrap_snapshot_comparison',
   'lifecycle_initialization_planning',
   'lifecycle_descriptor_transaction',
+  'lifecycle_peer_reobservation',
   'lifecycle_transaction',
   'current_read',
   'rollout_proof',

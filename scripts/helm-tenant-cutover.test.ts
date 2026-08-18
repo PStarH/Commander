@@ -89,6 +89,7 @@ describe('Helm owner Job diagnostics', () => {
     'lifecycle_table_discovery',
     'lifecycle_initialization_planning',
     'lifecycle_descriptor_transaction',
+    'lifecycle_peer_reobservation',
   ] as const) {
     it(`retains the fixed ${ownerStage} boundary without owner Job logs`, () => {
       const diagnostic = (

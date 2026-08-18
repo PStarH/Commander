@@ -638,6 +638,45 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     );
   });
 
+  it('classifies post-transaction peer re-observation failures', async () => {
+    const client = new RecordingClient();
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => {
+              throw new Error('peer-reobservation-opaque-marker');
+            },
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => inventory(),
+            verifyLockedCatalogState: () => undefined,
+            applyCatalogHardening: async () => undefined,
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_peer_reobservation',
+        );
+        return true;
+      },
+    );
+  });
+
   for (const snapshotTransaction of ['begin', 'commit'] as const) {
     it(`classifies the S0 ${snapshotTransaction} transaction boundary without state mutation`, async () => {
       const client = new RecordingClient();
