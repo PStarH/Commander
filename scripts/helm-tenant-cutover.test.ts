@@ -93,6 +93,7 @@ describe('Helm owner Job diagnostics', () => {
     'lifecycle_peer_reobservation_input_consistency',
     'lifecycle_peer_reobservation_candidate_binding_validation',
     'lifecycle_peer_reobservation_observed_binding_validation',
+    'lifecycle_peer_reobservation_binding_consistency',
   ] as const) {
     it(`retains the fixed ${ownerStage} boundary without owner Job logs`, () => {
       const diagnostic = (
