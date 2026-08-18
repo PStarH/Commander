@@ -1,5 +1,9 @@
 name: GAIA Bench Regression
 
+permissions:
+  contents: write
+  pull-requests: write
+
 # Day 7 closeout: capture today's GAIA spine-pinned benchmark baseline via
 # `npx tsx scripts/benchmark-gaia.ts --quick --output=<path>`, compare against
 # yesterday's baseline JSON, gate on passed/summary.spineErrors=0/
@@ -58,6 +62,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           # fetch-depth: 0 is required so today's run can compare against
           # yesterday's baseline JSON committed to HEAD by the previous day's
           # scheduled run. Without it the regress step would always see
@@ -75,6 +80,20 @@ jobs:
 
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
+
+      - name: Rebuild and probe better-sqlite3 native binding
+        shell: bash
+        run: |
+          pnpm rebuild better-sqlite3 || { echo "::warning::better-sqlite3 rebuild failed; probe will decide"; true; }
+          node -e "
+            try {
+              var D=require('better-sqlite3'), db=new D(':memory:');
+              db.exec('CREATE TABLE t (a)');
+              var row=db.prepare('SELECT 1 AS v').get();
+              db.close();
+              process.exit(row&&row.v===1?0:1);
+            } catch(e) { console.error('PROBE_ERROR:', e.message); process.exit(1); }
+          "
 
       - name: Resolve today / yesterday (UTC)
         id: dates

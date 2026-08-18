@@ -1,5 +1,9 @@
 name: Cost Model Drift Bench
 
+permissions:
+  contents: write
+  pull-requests: write
+
 # Day 7 closeout: capture today's costModel <-> costEstimator drift baseline
 # via `pnpm bench:cost-model-drift`, compare against yesterday's baseline
 # JSON, fail the run if any model's drift exceeds the threshold (default 5%)
@@ -45,6 +49,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Setup pnpm

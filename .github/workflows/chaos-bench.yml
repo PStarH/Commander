@@ -1,5 +1,9 @@
 name: Chaos Bench Regression
 
+permissions:
+  contents: write
+  pull-requests: write
+
 # Day 7 closeout: capture today's Chaos Engineering benchmark v2 baseline
 # via `npx tsx benchmarks/chaos-runner/src/index.ts run --simulated --scripted`,
 # compare against yesterday's baseline JSON, fail the run if any case failed
@@ -59,6 +63,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           # fetch-depth: 0 is required so today's run can compare against
           # yesterday's baseline JSON committed to HEAD by the previous day's
           # scheduled run. Without it the regress step would always see
