@@ -375,6 +375,9 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'bootstrap_context_pool_connect',
   'bootstrap_context_catalog_query',
   'bootstrap_context_pool_close',
+  'lifecycle_pinned_manifest_validation',
+  'lifecycle_prepared_request_validation',
+  'lifecycle_table_discovery',
   'lifecycle_candidate_peer_observation',
   'lifecycle_candidate_peer_validation',
   'lifecycle_prebootstrap_snapshot',
@@ -909,32 +912,41 @@ export async function initializeTask1LifecycleBoundary(input: {
   const instantiateManifest =
     dependencies.instantiateManifestSha256 ?? instantiateTask1BaselineManifestSha256;
   const createInstallationUuid = dependencies.createInstallationUuid ?? randomUUID;
-  assertPinnedTask1LifecycleManifests();
-  if (
-    canonicalBootstrapSha256(input.prepared.configuration) !== input.prepared.configurationSha256 ||
-    canonicalBootstrapJson(input.prepared.configuration) !==
-      canonicalBootstrapJson({
-        ...input.prepared.businessConfiguration,
-        operationAuditNonce: input.prepared.configuration.operationAuditNonce,
-      })
-  )
-    throw new Error('TENANT_CUTOVER_STATE_INVALID');
-
-  const existing = await input.client.query<{
-    state_table: string | null;
-    operation_table: string | null;
-    proof_table: string | null;
-  }>(`
-    SELECT pg_catalog.to_regclass('public.commander_tenant_cutover_state')::text AS state_table,
-           pg_catalog.to_regclass('public.commander_tenant_cutover_operations')::text AS operation_table,
-           pg_catalog.to_regclass('public.commander_tenant_cutover_rollout_proofs')::text AS proof_table
-  `);
-  const tables = existing.rows[0];
-  if (!tables) throw new Error('TENANT_CUTOVER_STATE_INVALID');
+  await atLifecycleInitializerFailureStage('lifecycle_pinned_manifest_validation', async () => {
+    assertPinnedTask1LifecycleManifests();
+  });
+  await atLifecycleInitializerFailureStage('lifecycle_prepared_request_validation', async () => {
+    if (
+      canonicalBootstrapSha256(input.prepared.configuration) !== input.prepared.configurationSha256 ||
+      canonicalBootstrapJson(input.prepared.configuration) !==
+        canonicalBootstrapJson({
+          ...input.prepared.businessConfiguration,
+          operationAuditNonce: input.prepared.configuration.operationAuditNonce,
+        })
+    )
+      throw new Error('TENANT_CUTOVER_STATE_INVALID');
+  });
+  const tables = await atLifecycleInitializerFailureStage('lifecycle_table_discovery', async () => {
+    const existing = await input.client.query<{
+      state_table: string | null;
+      operation_table: string | null;
+      proof_table: string | null;
+    }>(`
+      SELECT pg_catalog.to_regclass('public.commander_tenant_cutover_state')::text AS state_table,
+             pg_catalog.to_regclass('public.commander_tenant_cutover_operations')::text AS operation_table,
+             pg_catalog.to_regclass('public.commander_tenant_cutover_rollout_proofs')::text AS proof_table
+    `);
+    const tables = existing.rows[0];
+    if (!tables) throw new Error('TENANT_CUTOVER_STATE_INVALID');
+    const tableCount = [tables.state_table, tables.operation_table, tables.proof_table].filter(
+      Boolean,
+    ).length;
+    if (tableCount !== 0 && tableCount !== 3) throw new Error('TENANT_CUTOVER_STATE_INVALID');
+    return tables;
+  });
   const tableCount = [tables.state_table, tables.operation_table, tables.proof_table].filter(
     Boolean,
   ).length;
-  if (tableCount !== 0 && tableCount !== 3) throw new Error('TENANT_CUTOVER_STATE_INVALID');
   if (tableCount === 3) {
     const state = await input.client.query<{
       state: 'fresh_pending' | 'legacy_pending' | 'expanded' | 'enforced';
