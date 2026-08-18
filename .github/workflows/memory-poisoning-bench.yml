@@ -1,5 +1,9 @@
 name: Memory Poisoning Bench
 
+permissions:
+  contents: write
+  pull-requests: write
+
 # Companion to .github/workflows/tenant-isolation-bench.yml. The two workflows
 # guard the same class-level attack surface against cross-tenant data bleed —
 # tenant-isolation-bench.yml covers the in-memory key/value target
@@ -47,6 +51,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Setup pnpm

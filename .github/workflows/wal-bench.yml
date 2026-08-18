@@ -1,5 +1,9 @@
 name: WAL Bench Regression
 
+permissions:
+  contents: write
+  pull-requests: write
+
 # Day 6 closeout: capture today's WAL baseline via `pnpm bench:wal:quick`,
 # compare against yesterday's baseline JSON, fail the run if p99 latency
 # regressed more than the threshold (default 15%).
@@ -48,6 +52,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          persist-credentials: false
           # Preserve existing baseline JSONs so yesterday's run is
           # available even on a fresh runner clone (the workflow reads
           # both files in the regress step).

@@ -54,6 +54,8 @@
     "bench:slo": "pnpm exec tsx scripts/bench-slo-baseline.ts",
     "bench:slo:regress": "pnpm exec tsx scripts/bench-slo-regress.ts",
     "bench:tenant-isolation": "pnpm exec tsx scripts/bench-tenant-isolation.ts",
+    "bench:cost-model-drift": "pnpm exec tsx scripts/bench-cost-model-drift.ts",
+    "bench:memory-poisoning": "pnpm exec tsx scripts/bench-memory-poisoning.ts",
     "bench:cost-prediction": "pnpm exec tsx scripts/bench-cost-prediction.ts",
     "bench:e2e-latency": "pnpm exec tsx scripts/bench-e2e-latency.ts",
     "bench:tenant-concurrency": "pnpm exec tsx scripts/bench-tenant-concurrency.ts",
