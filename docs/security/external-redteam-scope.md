@@ -5,7 +5,7 @@ external security researchers participating in Commander's red team program.
 
 Commander runs a tiered defense strategy:
 
-1. **In-tree automated red team** (`runRedTeamBattery.ts`) — 54+ scenarios
+1. **In-tree automated red team** (`runRedTeamBattery.ts`) — 47 scenarios
    covering prompt injection, jailbreak, data exfiltration, agent jacking,
    tool abuse, memory poisoning, denial of wallet, supply chain, multi-tenant
    isolation, and plugin supply chain attacks.
@@ -103,7 +103,5 @@ A finding is considered **triaged** when step 2-3 are complete and
 ## See Also
 
 - `SECURITY.md` — coordinated disclosure process and PGP key
-- `docs/superpowers/specs/2026-06-30-red-team-evaluation-design.md` —
-  design rationale
 - `docs/runbooks/chaos.md` — internal chaos test suite
 - `docs/runbooks/shadow.md` — shadow traffic capture

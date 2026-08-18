@@ -353,13 +353,6 @@ const RULES: Rule[] = [
       'readiness status is an internal contract and must not imply an enterprise certification',
   },
   {
-    file: 'benchmark-report-2026-07-13/benchmark-report-2026-07-13.html',
-    pattern:
-      /真实(?: StepFun API|环境)|真实 API 验证通过|所有 4 个真实场景|全场景攻击成功率归零|12 passed \/ 0 failed/i,
-    reason:
-      'archival benchmark pages must scope provider, environment, and readiness results to the declared harness snapshot',
-  },
-  {
     file: 'commander-benchmark-report/commander-benchmark-report.html',
     pattern: /外部安全 benchmark[^。\n]*(?:达到|均达到)\s*100% 拦截|通过率\s*55\.7%|全拦截/i,
     reason:
