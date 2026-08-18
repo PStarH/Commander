@@ -387,6 +387,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'lifecycle_peer_reobservation',
   'lifecycle_peer_reobservation_input_consistency',
   'lifecycle_peer_reobservation_candidate_binding_validation',
+  'lifecycle_peer_reobservation_observed_binding_validation',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 type SnapshotTransaction = 'begin' | 'commit';
@@ -1235,7 +1236,10 @@ export async function initializeTask1LifecycleBoundary(input: {
     'lifecycle_peer_reobservation_candidate_binding_validation',
     async () => verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding),
   );
-  verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding);
+  await atLifecycleInitializerFailureStage(
+    'lifecycle_peer_reobservation_observed_binding_validation',
+    async () => verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding),
+  );
   if (canonicalBootstrapJson(candidate.binding) !== canonicalBootstrapJson(observed.binding)) {
     throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
   }
