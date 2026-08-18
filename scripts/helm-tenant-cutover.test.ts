@@ -83,6 +83,29 @@ describe('Helm owner Job diagnostics', () => {
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
   });
 
+  it('retains the fixed post-snapshot planning boundary without owner Job logs', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (logs: string) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const result = diagnostic!(
+      [
+        'postgres://owner:secret@postgres/commander SELECT private_value',
+        'Migration failed: COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_initialization_planning',
+        'owner-job-opaque-marker-4820',
+      ].join('\n'),
+    );
+
+    assert.match(
+      result,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialization_planning;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
+  });
+
   for (const snapshotTransaction of ['begin', 'commit'] as const) {
     it(`retains only the fixed ${snapshotTransaction} snapshot transaction discriminator`, () => {
       const diagnostic = (
