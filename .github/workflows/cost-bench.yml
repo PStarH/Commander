@@ -1,5 +1,9 @@
 name: Cost Bench Regression
 
+permissions:
+  contents: write
+  pull-requests: write
+
 # Day 6 closeout: capture today's cost-prediction baseline via
 # `pnpm bench:cost-prediction`, compare against yesterday's baseline JSON,
 # fail the run if `summary.passed` is false OR MAE regressed > 25% relative.
@@ -54,6 +58,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v6
         with:
+          persist-credentials: false
           # fetch-depth: 0 is required so today's run can compare against
           # yesterday's baseline JSON committed to HEAD by the previous day's
           # scheduled run. Without it the regress step would always see

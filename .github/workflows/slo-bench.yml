@@ -1,5 +1,9 @@
 name: SLO Bench Regression
 
+permissions:
+  contents: write
+  pull-requests: write
+
 # Day 7 closeout: capture today's SLO baseline via `pnpm bench:slo`, compare
 # against yesterday's baseline JSON, fail the run if any of the 4 SLO
 # measurements (recovery / failover / compensation / dlq) failed or threw.
@@ -48,6 +52,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Setup pnpm
@@ -61,6 +66,20 @@ jobs:
 
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
+
+      - name: Rebuild and probe better-sqlite3 native binding
+        shell: bash
+        run: |
+          pnpm rebuild better-sqlite3 || { echo "::warning::better-sqlite3 rebuild failed; probe will decide"; true; }
+          node -e "
+            try {
+              var D=require('better-sqlite3'), db=new D(':memory:');
+              db.exec('CREATE TABLE t (a)');
+              var row=db.prepare('SELECT 1 AS v').get();
+              db.close();
+              process.exit(row&&row.v===1?0:1);
+            } catch(e) { console.error('PROBE_ERROR:', e.message); process.exit(1); }
+          "
 
       - name: Resolve today / yesterday (UTC)
         id: dates
