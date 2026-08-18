@@ -1474,35 +1474,54 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     let bootstrapChecks = 0;
     let peerChecks = 0;
 
-    await initializeTask1LifecycleBoundary({
-      client,
-      prepared,
-      dependencies: {
-        collectInventory: async () => {
-          inventoryCollections += 1;
-          return inventory();
-        },
-        loadBootstrapContext: async () => {
-          bootstrapChecks += 1;
-          return {
-            sessionUser: 'postgres',
-            authority: bootstrapIdentities.authority,
-            bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
-          };
-        },
-        observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
-        observePeers: async () => {
-          peerChecks += 1;
-          return { input: peerInput, binding: peerBinding };
-        },
-        proofKeySha256: () => '9'.repeat(64),
-        instantiateManifestSha256: (_kind, _identities) =>
-          _kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+    const retryDependencies = {
+      collectInventory: async () => {
+        inventoryCollections += 1;
+        return inventory();
       },
-    });
+      loadBootstrapContext: async () => {
+        bootstrapChecks += 1;
+        return {
+          sessionUser: 'postgres',
+          authority: bootstrapIdentities.authority,
+          bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+        };
+      },
+      observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+      observePeers: async () => {
+        peerChecks += 1;
+        return { input: peerInput, binding: peerBinding };
+      },
+      proofKeySha256: () => '9'.repeat(64),
+      instantiateManifestSha256: (kind: 'historical' | 'hardened') =>
+        kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+    };
+
+    await initializeTask1LifecycleBoundary({ client, prepared, dependencies: retryDependencies });
     assert.equal(inventoryCollections, 0, 'pending retry must not recollect S0/S1');
     assert.equal(bootstrapChecks, 1);
     assert.equal(peerChecks, 1);
+
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS,
+    ].map(({ id, checksum }) => ({ id, checksum }));
+    await initializeTask1LifecycleBoundary({ client, prepared, dependencies: retryDependencies });
+    assert.equal(bootstrapChecks, 2);
+    assert.equal(peerChecks, 2);
+
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, 2),
+    ].map(({ id, checksum }) => ({ id, checksum }));
+    await assert.rejects(
+      () => initializeTask1LifecycleBoundary({ client, prepared, dependencies: retryDependencies }),
+      /MIGRATION_LEDGER_TAMPERED/,
+    );
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS,
+    ].map(({ id, checksum }) => ({ id, checksum }));
 
     const changedObservedBinding = createDatabasePeerBinding({
       roles: roles.map((role) => ({
