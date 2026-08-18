@@ -383,6 +383,7 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
   'lifecycle_prebootstrap_snapshot',
   'lifecycle_prebootstrap_snapshot_comparison',
   'lifecycle_initialization_planning',
+  'lifecycle_descriptor_transaction',
 ] as const;
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 type SnapshotTransaction = 'begin' | 'commit';
@@ -1164,9 +1165,10 @@ export async function initializeTask1LifecycleBoundary(input: {
       catalogOrigin,
     };
   });
-  await runTask1LifecycleDescriptorStateTransaction(
-    input.client,
-    async () => {
+  await atLifecycleInitializerFailureStage('lifecycle_descriptor_transaction', () =>
+    runTask1LifecycleDescriptorStateTransaction(
+      input.client,
+      async () => {
       await input.client.query(
         `INSERT INTO public.commander_tenant_cutover_state
          (singleton, installation_uuid, state, state_version, platform_kind,
@@ -1201,16 +1203,17 @@ export async function initializeTask1LifecycleBoundary(input: {
           input.prepared.configurationSha256,
         ],
       );
-    },
-    fresh ? 'fresh' : 'legacy',
-    () => applyRoleCredentials(input.client, env),
-    {
-      origin: catalogOrigin,
-      databasePeerBinding: candidate.binding,
-      collectInventory: dependencies.collectLockedInventory,
-      verifyState: dependencies.verifyLockedCatalogState,
-      applyHardening: dependencies.applyCatalogHardening,
-    },
+      },
+      fresh ? 'fresh' : 'legacy',
+      () => applyRoleCredentials(input.client, env),
+      {
+        origin: catalogOrigin,
+        databasePeerBinding: candidate.binding,
+        collectInventory: dependencies.collectLockedInventory,
+        verifyState: dependencies.verifyLockedCatalogState,
+        applyHardening: dependencies.applyCatalogHardening,
+      },
+    ),
   );
 
   const observed = await observePeers(env);
