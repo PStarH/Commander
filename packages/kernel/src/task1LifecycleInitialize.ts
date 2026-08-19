@@ -2,7 +2,7 @@ import { createHash, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { isIP } from 'node:net';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
-import type { PoolClient } from 'pg';
+import type { Pool, PoolClient } from 'pg';
 import {
   TASK1_DATABASE_ROLES,
   canonicalBootstrapJson,
@@ -29,10 +29,7 @@ import {
 } from './task1Catalog.js';
 import { observeTask1DatabasePeers } from './task1DatabasePeer.js';
 import type { Task1OwnerPreparedRequest } from './task1LifecycleOwnerCommand.js';
-import {
-  KERNEL_TASK1_BASELINE_MIGRATIONS,
-  KERNEL_TASK1_CLOSURE_MIGRATIONS,
-} from './migrations.js';
+import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
 import type { SqlClient } from './postgres.js';
 
 const ROLE_URL_ENV = {
@@ -304,13 +301,18 @@ export async function loadTask1BootstrapContext(
     bootstrap_oid: string;
     bootstrap_name: string;
     bootstrap_superuser: boolean;
+    catalog_version: string;
   }>(`
     SELECT authority.oid::text AS authority_oid,
            authority.rolname::text AS authority_name,
            authority.rolsuper AS authority_superuser,
            bootstrap.oid::text AS bootstrap_oid,
            bootstrap.rolname::text AS bootstrap_name,
-           bootstrap.rolsuper AS bootstrap_superuser
+           bootstrap.rolsuper AS bootstrap_superuser,
+           CASE current_setting('server_version_num')::integer / 10000
+             WHEN 16 THEN '202307071'
+             ELSE NULL
+           END AS catalog_version
       FROM pg_catalog.pg_roles AS authority
       JOIN pg_catalog.pg_roles AS bootstrap ON bootstrap.oid = 10
      WHERE authority.rolname = session_user
@@ -327,6 +329,7 @@ export async function loadTask1BootstrapContext(
     sessionUser: row.authority_name,
     authority: identity(row.authority_oid, row.authority_name, row.authority_superuser),
     bootstrapSuperuser: identity(row.bootstrap_oid, row.bootstrap_name, row.bootstrap_superuser),
+    catalogVersion: row.catalog_version,
   };
 }
 
@@ -365,24 +368,175 @@ export function resolveTask1BootstrapAuthorityUrl(env: NodeJS.ProcessEnv): strin
   return owner.toString();
 }
 
-async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1CatalogBootstrapContext> {
-  const pool = createVerifiedPostgresPool(
-    {
-      connectionString: resolveTask1BootstrapAuthorityUrl(env),
-      max: 1,
-      connectionTimeoutMillis: 2_000,
-      query_timeout: 2_000,
-      statement_timeout: 1_500,
-    },
-    env,
+const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
+  'bootstrap_context',
+  'bootstrap_context_authority_url',
+  'bootstrap_context_pool_configuration',
+  'bootstrap_context_pool_connect',
+  'bootstrap_context_catalog_query',
+  'bootstrap_context_pool_close',
+  'lifecycle_pinned_manifest_validation',
+  'lifecycle_prepared_request_validation',
+  'lifecycle_table_discovery',
+  'lifecycle_candidate_peer_observation',
+  'lifecycle_candidate_peer_validation',
+  'lifecycle_prebootstrap_snapshot',
+  'lifecycle_prebootstrap_snapshot_comparison',
+  'lifecycle_initialization_planning',
+  'lifecycle_descriptor_transaction',
+  'lifecycle_peer_reobservation',
+  'lifecycle_peer_reobservation_input_consistency',
+  'lifecycle_peer_reobservation_candidate_binding_validation',
+  'lifecycle_peer_reobservation_observed_binding_validation',
+  'lifecycle_peer_reobservation_binding_consistency',
+] as const;
+type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
+type SnapshotTransaction = 'begin' | 'commit';
+
+function isLifecycleInitializerFailureStage(value: unknown): value is LifecycleInitializerFailureStage {
+  return (
+    typeof value === 'string' &&
+    (LIFECYCLE_INITIALIZER_FAILURE_STAGES as readonly string[]).includes(value)
   );
+}
+
+function lifecycleInitializerFailure(
+  error: unknown,
+  ownerStage: LifecycleInitializerFailureStage = 'bootstrap_context',
+): unknown {
+  if (!error || typeof error !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
+  }
+  const failure = error as { ownerStage?: unknown };
+  if (isLifecycleInitializerFailureStage(failure.ownerStage)) return error;
+  try {
+    Object.defineProperty(error, 'ownerStage', {
+      configurable: true,
+      enumerable: true,
+      value: ownerStage,
+      writable: true,
+    });
+    return error;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
+  }
+}
+
+async function atLifecycleInitializerFailureStage<T>(
+  ownerStage: LifecycleInitializerFailureStage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw lifecycleInitializerFailure(error, ownerStage);
+  }
+}
+
+function lifecycleInitializerSnapshotFailure(error: unknown, snapshot: 's0' | 's1'): unknown {
+  const failure = lifecycleInitializerFailure(error, 'lifecycle_prebootstrap_snapshot');
+  if (!failure || typeof failure !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), {
+      ownerStage: 'lifecycle_prebootstrap_snapshot',
+      snapshot,
+    });
+  }
+  try {
+    Object.defineProperty(failure, 'snapshot', {
+      configurable: true,
+      enumerable: true,
+      value: snapshot,
+      writable: true,
+    });
+    return failure;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), {
+      ownerStage: 'lifecycle_prebootstrap_snapshot',
+      snapshot,
+    });
+  }
+}
+
+function lifecycleSnapshotTransactionFailure(
+  error: unknown,
+  snapshotTransaction: SnapshotTransaction,
+): unknown {
+  if (!error || typeof error !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { snapshotTransaction });
+  }
+  try {
+    Object.defineProperty(error, 'snapshotTransaction', {
+      configurable: true,
+      enumerable: true,
+      value: snapshotTransaction,
+      writable: true,
+    });
+    return error;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { snapshotTransaction });
+  }
+}
+
+async function atLifecyclePrebootstrapSnapshot<T>(
+  snapshot: 's0' | 's1',
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw lifecycleInitializerSnapshotFailure(error, snapshot);
+  }
+}
+
+async function loadBootstrapContext(env: NodeJS.ProcessEnv): Promise<Task1CatalogBootstrapContext> {
+  let pool: Pool | undefined;
   let client: PoolClient | undefined;
   try {
-    client = await pool.connect();
-    return await loadTask1BootstrapContext(client);
+    const databaseUrl = await atLifecycleInitializerFailureStage(
+      'bootstrap_context_authority_url',
+      async () => resolveTask1BootstrapAuthorityUrl(env),
+    );
+    const configuredPool = await atLifecycleInitializerFailureStage(
+      'bootstrap_context_pool_configuration',
+      async () =>
+        createVerifiedPostgresPool(
+          {
+            connectionString: databaseUrl,
+            max: 1,
+            connectionTimeoutMillis: 2_000,
+            query_timeout: 2_000,
+            statement_timeout: 1_500,
+          },
+          env,
+        ),
+    );
+    pool = configuredPool;
+    const connectedClient = await atLifecycleInitializerFailureStage(
+      'bootstrap_context_pool_connect',
+      () => configuredPool.connect(),
+    );
+    client = connectedClient;
+    return await atLifecycleInitializerFailureStage('bootstrap_context_catalog_query', () =>
+      loadTask1BootstrapContext(connectedClient),
+    );
   } finally {
-    client?.release();
-    await pool.end();
+    try {
+      client?.release();
+      await pool?.end();
+    } catch (error) {
+      throw lifecycleInitializerFailure(error, 'bootstrap_context_pool_close');
+    }
+  }
+}
+
+async function loadOwnerBootstrapContext(
+  loadContext: (env: NodeJS.ProcessEnv) => Promise<Task1CatalogBootstrapContext>,
+  env: NodeJS.ProcessEnv,
+): Promise<Task1CatalogBootstrapContext> {
+  try {
+    return await loadContext(env);
+  } catch (error) {
+    throw lifecycleInitializerFailure(error);
   }
 }
 
@@ -542,9 +696,10 @@ export function instantiateTask1BaselineManifestSha256(
 
 function assertExactLegacyLedger(inventory: PrebootstrapInventoryV1): void {
   if (inventory.ledger === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
-  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({ id, checksum })).sort(
-    (left, right) => left.id.localeCompare(right.id),
-  );
+  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({
+    id,
+    checksum,
+  })).sort((left, right) => left.id.localeCompare(right.id));
   const actual = inventory.ledger
     .map((row) => ({ id: String(row.id), checksum: String(row.checksum) }))
     .sort((left, right) => left.id.localeCompare(right.id));
@@ -579,9 +734,10 @@ async function exactLedgerRows(
 }
 
 function assertExactLedgerRows(rows: Array<{ id: string; checksum: string }>): void {
-  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({ id, checksum })).sort(
-    (left, right) => left.id.localeCompare(right.id),
-  );
+  const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({
+    id,
+    checksum,
+  })).sort((left, right) => left.id.localeCompare(right.id));
   const actual = [...rows].sort((left, right) => left.id.localeCompare(right.id));
   if (canonicalBootstrapJson(actual) !== canonicalBootstrapJson(expected)) {
     throw new Error('MIGRATION_LEDGER_TAMPERED');
@@ -593,10 +749,18 @@ async function collectReadOnlySnapshot(
   context: Task1CatalogBootstrapContext | null,
   collectInventory: typeof collectTask1PrebootstrapInventory,
 ): Promise<PrebootstrapInventoryV1> {
-  await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  try {
+    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+  } catch (error) {
+    throw lifecycleSnapshotTransactionFailure(error, 'begin');
+  }
   try {
     const snapshot = await collectInventory(client, context, { transaction: 'caller' });
-    await client.query('COMMIT');
+    try {
+      await client.query('COMMIT');
+    } catch (error) {
+      throw lifecycleSnapshotTransactionFailure(error, 'commit');
+    }
     return snapshot;
   } catch (error) {
     await client.query('ROLLBACK').catch(() => undefined);
@@ -604,22 +768,45 @@ async function collectReadOnlySnapshot(
   }
 }
 
-function assertExactPendingLedgerRows(rows: Array<{ id: string; checksum: string }>): void {
-  const lifecycle = KERNEL_TASK1_CLOSURE_MIGRATIONS[0]!;
-  const expected = [...KERNEL_TASK1_BASELINE_MIGRATIONS, lifecycle]
-    .map(({ id, checksum }) => ({ id, checksum }))
-    .sort((left, right) => left.id.localeCompare(right.id));
+function assertExactPendingLedgerRows(
+  rows: Array<{ id: string; checksum: string }>,
+  command: Task1OwnerPreparedRequest['command'],
+): void {
+  const phaseClosureCount = command === 'expand' ? 2 : 3;
+  const expected = [1, phaseClosureCount].map((closureCount) =>
+    [...KERNEL_TASK1_BASELINE_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, closureCount)]
+      .map(({ id, checksum }) => ({ id, checksum }))
+      .sort((left, right) => left.id.localeCompare(right.id)),
+  );
   const actual = [...rows].sort((left, right) => left.id.localeCompare(right.id));
-  if (canonicalBootstrapJson(actual) !== canonicalBootstrapJson(expected)) {
+  if (
+    !expected.some(
+      (candidate) => canonicalBootstrapJson(actual) === canonicalBootstrapJson(candidate),
+    )
+  ) {
     throw new Error('MIGRATION_LEDGER_TAMPERED');
   }
 }
+
+const TASK1_MIGRATION_LEDGER_LOCK_SQL =
+  'LOCK TABLE public.commander_kernel_migrations IN ACCESS EXCLUSIVE MODE';
 
 async function applyHistoricalBaseline(
   client: SqlClient,
   classification: 'fresh' | 'legacy',
 ): Promise<void> {
   if (classification === 'fresh') {
+    const table = await client.query<{ exists: boolean }>(
+      "SELECT pg_catalog.to_regclass('public.commander_kernel_migrations') IS NOT NULL AS exists",
+    );
+    if (table.rows[0]?.exists) {
+      await client.query(TASK1_MIGRATION_LEDGER_LOCK_SQL);
+      const existing = await exactLedgerRows(client);
+      if (existing.length > 0) {
+        assertExactLedgerRows(existing);
+        return;
+      }
+    }
     await client.query(`
         CREATE TABLE public.commander_kernel_migrations (
           id TEXT PRIMARY KEY,
@@ -744,32 +931,41 @@ export async function initializeTask1LifecycleBoundary(input: {
   const instantiateManifest =
     dependencies.instantiateManifestSha256 ?? instantiateTask1BaselineManifestSha256;
   const createInstallationUuid = dependencies.createInstallationUuid ?? randomUUID;
-  assertPinnedTask1LifecycleManifests();
-  if (
-    canonicalBootstrapSha256(input.prepared.configuration) !== input.prepared.configurationSha256 ||
-    canonicalBootstrapJson(input.prepared.configuration) !==
-      canonicalBootstrapJson({
-        ...input.prepared.businessConfiguration,
-        operationAuditNonce: input.prepared.configuration.operationAuditNonce,
-      })
-  )
-    throw new Error('TENANT_CUTOVER_STATE_INVALID');
-
-  const existing = await input.client.query<{
-    state_table: string | null;
-    operation_table: string | null;
-    proof_table: string | null;
-  }>(`
-    SELECT pg_catalog.to_regclass('public.commander_tenant_cutover_state')::text AS state_table,
-           pg_catalog.to_regclass('public.commander_tenant_cutover_operations')::text AS operation_table,
-           pg_catalog.to_regclass('public.commander_tenant_cutover_rollout_proofs')::text AS proof_table
-  `);
-  const tables = existing.rows[0];
-  if (!tables) throw new Error('TENANT_CUTOVER_STATE_INVALID');
+  await atLifecycleInitializerFailureStage('lifecycle_pinned_manifest_validation', async () => {
+    assertPinnedTask1LifecycleManifests();
+  });
+  await atLifecycleInitializerFailureStage('lifecycle_prepared_request_validation', async () => {
+    if (
+      canonicalBootstrapSha256(input.prepared.configuration) !== input.prepared.configurationSha256 ||
+      canonicalBootstrapJson(input.prepared.configuration) !==
+        canonicalBootstrapJson({
+          ...input.prepared.businessConfiguration,
+          operationAuditNonce: input.prepared.configuration.operationAuditNonce,
+        })
+    )
+      throw new Error('TENANT_CUTOVER_STATE_INVALID');
+  });
+  const tables = await atLifecycleInitializerFailureStage('lifecycle_table_discovery', async () => {
+    const existing = await input.client.query<{
+      state_table: string | null;
+      operation_table: string | null;
+      proof_table: string | null;
+    }>(`
+      SELECT pg_catalog.to_regclass('public.commander_tenant_cutover_state')::text AS state_table,
+             pg_catalog.to_regclass('public.commander_tenant_cutover_operations')::text AS operation_table,
+             pg_catalog.to_regclass('public.commander_tenant_cutover_rollout_proofs')::text AS proof_table
+    `);
+    const tables = existing.rows[0];
+    if (!tables) throw new Error('TENANT_CUTOVER_STATE_INVALID');
+    const tableCount = [tables.state_table, tables.operation_table, tables.proof_table].filter(
+      Boolean,
+    ).length;
+    if (tableCount !== 0 && tableCount !== 3) throw new Error('TENANT_CUTOVER_STATE_INVALID');
+    return tables;
+  });
   const tableCount = [tables.state_table, tables.operation_table, tables.proof_table].filter(
     Boolean,
   ).length;
-  if (tableCount !== 0 && tableCount !== 3) throw new Error('TENANT_CUTOVER_STATE_INVALID');
   if (tableCount === 3) {
     const state = await input.client.query<{
       state: 'fresh_pending' | 'legacy_pending' | 'expanded' | 'enforced';
@@ -842,7 +1038,7 @@ export async function initializeTask1LifecycleBoundary(input: {
       if (operation.rowCount !== 1 || operation.rows[0]?.operation_count !== '0') {
         throw new Error('MIGRATION_LEDGER_TAMPERED');
       }
-      assertExactPendingLedgerRows(await exactLedgerRows(input.client));
+      assertExactPendingLedgerRows(await exactLedgerRows(input.client), input.prepared.command);
       let snapshots: unknown;
       let origin: unknown;
       let persistedPeer: unknown;
@@ -880,7 +1076,7 @@ export async function initializeTask1LifecycleBoundary(input: {
         throw new Error('MIGRATION_LEDGER_TAMPERED');
       if (row.state === 'fresh_pending') {
         if (identities === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
-        const context = await loadContext(env);
+        const context = await loadOwnerBootstrapContext(loadContext, env);
         if (
           canonicalBootstrapJson(context.authority) !==
             canonicalBootstrapJson(identities.authority) ||
@@ -891,59 +1087,126 @@ export async function initializeTask1LifecycleBoundary(input: {
       } else if (identities !== null) {
         throw new Error('MIGRATION_LEDGER_TAMPERED');
       }
-      const candidate = await observeCandidate(input.client, env);
-      assertPreparedPeerInput(input.prepared, candidate.input);
-      const observed = await observePeers(env);
-      if (
-        candidate.input &&
-        observed.input &&
-        canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
-      )
-        throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
-      verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding);
-      verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding);
-      if (
-        canonicalBootstrapJson(candidate.binding) !== row.database_peer_binding_jcs ||
-        canonicalBootstrapJson(observed.binding) !== row.database_peer_binding_jcs
-      )
-        throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+      const candidate = await atLifecycleInitializerFailureStage(
+        'lifecycle_candidate_peer_observation',
+        () => observeCandidate(input.client, env),
+      );
+      await atLifecycleInitializerFailureStage('lifecycle_candidate_peer_validation', async () =>
+        assertPreparedPeerInput(input.prepared, candidate.input),
+      );
+      const observed = await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation',
+        () => observePeers(env),
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_input_consistency',
+        async () => {
+          if (
+            candidate.input &&
+            observed.input &&
+            canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
+          )
+            throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+        },
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_candidate_binding_validation',
+        async () =>
+          verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding),
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_observed_binding_validation',
+        async () => verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding),
+      );
+      await atLifecycleInitializerFailureStage(
+        'lifecycle_peer_reobservation_binding_consistency',
+        async () => {
+          if (
+            canonicalBootstrapJson(candidate.binding) !== row.database_peer_binding_jcs ||
+            canonicalBootstrapJson(observed.binding) !== row.database_peer_binding_jcs
+          )
+            throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+        },
+      );
     }
     return;
   }
 
   const fresh = input.prepared.command === 'install_enforce';
-  const context = fresh ? await loadContext(env) : null;
-  const candidate = await observeCandidate(input.client, env);
-  assertPreparedPeerInput(input.prepared, candidate.input);
-  const s0 = await collectReadOnlySnapshot(input.client, context, collectInventory);
-  const s1 = await collectReadOnlySnapshot(input.client, context, collectInventory);
-  const snapshots = createPrebootstrapSnapshots(s0, s1);
-  const initialization = planTask1LifecycleInitialization({
-    command: input.prepared.command,
-    comparisonKind: snapshots.comparisonKind,
-    configurationSha256: input.prepared.configurationSha256,
-    existing: null,
+  const context = fresh ? await loadOwnerBootstrapContext(loadContext, env) : null;
+  const candidate = await atLifecycleInitializerFailureStage(
+    'lifecycle_candidate_peer_observation',
+    () => observeCandidate(input.client, env),
+  );
+  await atLifecycleInitializerFailureStage('lifecycle_candidate_peer_validation', async () =>
+    assertPreparedPeerInput(input.prepared, candidate.input),
+  );
+  const s0 = await atLifecyclePrebootstrapSnapshot('s0', () =>
+    collectReadOnlySnapshot(input.client, context, collectInventory),
+  );
+  const s1 = await atLifecyclePrebootstrapSnapshot('s1', () =>
+    collectReadOnlySnapshot(input.client, context, collectInventory),
+  );
+  const snapshots = await atLifecycleInitializerFailureStage(
+    'lifecycle_prebootstrap_snapshot_comparison',
+    async () => createPrebootstrapSnapshots(s0, s1),
+  );
+  const {
+    initialization,
+    origin,
+    prebootstrapSnapshotsJcs,
+    originBindingJcs,
+    peerBindingJcs,
+    identities,
+    historicalManifestSha256,
+    hardenedManifestSha256,
+    selectedProofKeySha256,
+    catalogOrigin,
+  } = await atLifecycleInitializerFailureStage('lifecycle_initialization_planning', async () => {
+    const initialization = planTask1LifecycleInitialization({
+      command: input.prepared.command,
+      comparisonKind: snapshots.comparisonKind,
+      configurationSha256: input.prepared.configurationSha256,
+      existing: null,
+    });
+    const origin = createOriginBinding(snapshots);
+    const prebootstrapSnapshotsJcs = canonicalBootstrapJson(snapshots);
+    const originBindingJcs = canonicalBootstrapJson(origin);
+    const peerBindingJcs = canonicalBootstrapJson(candidate.binding);
+    const classification = fresh ? snapshots.s0.bootstrapIdentities!.envelope : 'legacy';
+    verifyCatalogBaseline({ classification: fresh ? 'fresh' : 'legacy', snapshots });
+    const identities = snapshots.s0.bootstrapIdentities;
+    const historicalManifestSha256 = instantiateManifest('historical', identities);
+    const hardenedManifestSha256 = instantiateManifest('hardened', identities);
+    const selectedProofKeySha256 = readProofKeySha256(env);
+    let catalogOrigin: Parameters<typeof collectTask1LockedCatalogInventory>[1];
+    if (classification === 'legacy') {
+      catalogOrigin = { classification, bootstrapIdentities: null };
+    } else {
+      if (identities === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
+      catalogOrigin = {
+        classification,
+        bootstrapIdentities: identities,
+        catalogVersion: context?.catalogVersion,
+      };
+    }
+    return {
+      initialization,
+      origin,
+      prebootstrapSnapshotsJcs,
+      originBindingJcs,
+      peerBindingJcs,
+      identities,
+      historicalManifestSha256,
+      hardenedManifestSha256,
+      selectedProofKeySha256,
+      catalogOrigin,
+    };
   });
-  const origin = createOriginBinding(snapshots);
-  const prebootstrapSnapshotsJcs = canonicalBootstrapJson(snapshots);
-  const originBindingJcs = canonicalBootstrapJson(origin);
-  const peerBindingJcs = canonicalBootstrapJson(candidate.binding);
-  const classification = fresh ? snapshots.s0.bootstrapIdentities!.envelope : 'legacy';
-  verifyCatalogBaseline({ classification: fresh ? 'fresh' : 'legacy', snapshots });
-  const identities = snapshots.s0.bootstrapIdentities;
-  const historicalManifestSha256 = instantiateManifest('historical', identities);
-  const hardenedManifestSha256 = instantiateManifest('hardened', identities);
-  const selectedProofKeySha256 = readProofKeySha256(env);
-  let catalogOrigin: Parameters<typeof collectTask1LockedCatalogInventory>[1];
-  if (classification === 'legacy') {
-    catalogOrigin = { classification, bootstrapIdentities: null };
-  } else {
-    if (identities === null) throw new Error('MIGRATION_LEDGER_TAMPERED');
-    catalogOrigin = { classification, bootstrapIdentities: identities };
-  }
-  await runTask1LifecycleDescriptorStateTransaction(
-    input.client,
-    async () => {
+  await atLifecycleInitializerFailureStage('lifecycle_descriptor_transaction', () =>
+    runTask1LifecycleDescriptorStateTransaction(
+      input.client,
+      async () => {
       await input.client.query(
         `INSERT INTO public.commander_tenant_cutover_state
          (singleton, installation_uuid, state, state_version, platform_kind,
@@ -978,28 +1241,45 @@ export async function initializeTask1LifecycleBoundary(input: {
           input.prepared.configurationSha256,
         ],
       );
-    },
-    fresh ? 'fresh' : 'legacy',
-    () => applyRoleCredentials(input.client, env),
-    {
-      origin: catalogOrigin,
-      databasePeerBinding: candidate.binding,
-      collectInventory: dependencies.collectLockedInventory,
-      verifyState: dependencies.verifyLockedCatalogState,
-      applyHardening: dependencies.applyCatalogHardening,
-    },
+      },
+      fresh ? 'fresh' : 'legacy',
+      () => applyRoleCredentials(input.client, env),
+      {
+        origin: catalogOrigin,
+        databasePeerBinding: candidate.binding,
+        collectInventory: dependencies.collectLockedInventory,
+        verifyState: dependencies.verifyLockedCatalogState,
+        applyHardening: dependencies.applyCatalogHardening,
+      },
+    ),
   );
 
-  const observed = await observePeers(env);
-  if (
-    candidate.input &&
-    observed.input &&
-    canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
-  )
-    throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
-  verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding);
-  verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding);
-  if (canonicalBootstrapJson(candidate.binding) !== canonicalBootstrapJson(observed.binding)) {
-    throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
-  }
+  const observed = await atLifecycleInitializerFailureStage(
+    'lifecycle_peer_reobservation',
+    () => observePeers(env),
+  );
+  await atLifecycleInitializerFailureStage('lifecycle_peer_reobservation_input_consistency', async () => {
+    if (
+      candidate.input &&
+      observed.input &&
+      canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
+    )
+      throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+  });
+  await atLifecycleInitializerFailureStage(
+    'lifecycle_peer_reobservation_candidate_binding_validation',
+    async () => verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding),
+  );
+  await atLifecycleInitializerFailureStage(
+    'lifecycle_peer_reobservation_observed_binding_validation',
+    async () => verifyDatabasePeerBinding(candidate.input ?? observed.input!, observed.binding),
+  );
+  await atLifecycleInitializerFailureStage(
+    'lifecycle_peer_reobservation_binding_consistency',
+    async () => {
+      if (canonicalBootstrapJson(candidate.binding) !== canonicalBootstrapJson(observed.binding)) {
+        throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+      }
+    },
+  );
 }

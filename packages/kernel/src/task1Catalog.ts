@@ -11,18 +11,79 @@ import {
   type DatabasePeerBindingV1,
   type PrebootstrapInventoryV1,
 } from './canonicalBootstrap.js';
-import {
-  KERNEL_TASK1_BASELINE_MIGRATIONS,
-  KERNEL_TASK1_CLOSURE_MIGRATIONS,
-} from './migrations.js';
+import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
 import type { SqlClient } from './postgres.js';
 
 type JsonRecord = Record<string, unknown>;
+
+export const TASK1_CATALOG_COLLECTION_STEPS = [
+  'search_path',
+  'identity',
+  'ledger',
+  'namespaces',
+  'relations',
+  'functions',
+  'types',
+  'extensions',
+  'policies',
+  'triggers',
+  'roles',
+  'memberships',
+  'role_settings',
+  'database_acl',
+  'schema_acls',
+  'default_acls',
+  'product_has_rows',
+] as const;
+export type Task1CatalogCollectionStep = (typeof TASK1_CATALOG_COLLECTION_STEPS)[number];
+
+export const TASK1_CATALOG_SNAPSHOT_VALIDATIONS = [
+  'bootstrap_validation',
+  'identity_validation',
+  'product_source_validation',
+  'catalog_version_validation',
+  'origin_classification',
+] as const;
+export type Task1CatalogSnapshotValidation = (typeof TASK1_CATALOG_SNAPSHOT_VALIDATIONS)[number];
+
+export const TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS = [
+  'fresh_catalog_shape',
+  'role_envelope',
+  'role_attributes',
+  'memberships',
+  'public_acl',
+] as const;
+export type Task1CatalogOriginClassificationStep =
+  (typeof TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS)[number];
+
+function isTask1CatalogCollectionStep(value: unknown): value is Task1CatalogCollectionStep {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_COLLECTION_STEPS as readonly string[]).includes(value)
+  );
+}
+
+function isTask1CatalogSnapshotValidation(value: unknown): value is Task1CatalogSnapshotValidation {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_SNAPSHOT_VALIDATIONS as readonly string[]).includes(value)
+  );
+}
+
+function isTask1CatalogOriginClassificationStep(
+  value: unknown,
+): value is Task1CatalogOriginClassificationStep {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS as readonly string[]).includes(value)
+  );
+}
 
 export interface Task1CatalogBootstrapContext {
   sessionUser: string;
   authority: BootstrapIdentityV1;
   bootstrapSuperuser: BootstrapIdentityV1;
+  catalogVersion?: string;
 }
 
 export type Task1CatalogOriginKind = 'E1' | 'E2' | 'legacy';
@@ -116,12 +177,14 @@ export const TASK1_CATALOG_QUERIES = Object.freeze({
   identity: `/* task1-catalog:identity */
 SELECT (current_setting('server_version_num')::integer / 10000)::text || '.' ||
          (current_setting('server_version_num')::integer % 100)::text AS postgres_version,
-       control.catalog_version_no::text AS catalog_version,
+       CASE current_setting('server_version_num')::integer / 10000
+         WHEN 16 THEN '202307071'
+         ELSE NULL
+       END AS catalog_version,
        database.oid::text AS database_oid,
        database.datname::text AS database_name,
        pg_catalog.to_regclass('public.commander_kernel_migrations') IS NOT NULL AS ledger_exists
 FROM pg_catalog.pg_database AS database
-CROSS JOIN pg_catalog.pg_control_system() AS control
 WHERE database.datname = pg_catalog.current_database()`,
 
   ledger: `/* task1-catalog:ledger */
@@ -518,44 +581,116 @@ function validateBootstrap(context: Task1CatalogBootstrapContext): void {
   }
 }
 
-async function queryRows(client: SqlClient, sql: string): Promise<JsonRecord[]> {
-  const result = await client.query(sql);
-  return normalizedRows(result.rows);
+async function atCatalogCollectionStep<T>(
+  catalogStep: Task1CatalogCollectionStep,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { catalogStep });
+  }
+}
+
+async function atCatalogSnapshotValidation<T>(
+  snapshotValidation: Task1CatalogSnapshotValidation,
+  operation: () => T | Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    const originClassificationStep =
+      error && typeof error === 'object'
+        ? (error as { originClassificationStep?: unknown }).originClassificationStep
+        : undefined;
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), {
+      snapshotValidation,
+      ...(snapshotValidation === 'origin_classification' &&
+      isTask1CatalogOriginClassificationStep(originClassificationStep)
+        ? { originClassificationStep }
+        : {}),
+    });
+  }
+}
+
+function catalogCollectionFailure(error: unknown): never {
+  const catalogStep =
+    error && typeof error === 'object'
+      ? (error as { catalogStep?: unknown }).catalogStep
+      : undefined;
+  if (isTask1CatalogCollectionStep(catalogStep)) {
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), { catalogStep });
+  }
+  const snapshotValidation =
+    error && typeof error === 'object'
+      ? (error as { snapshotValidation?: unknown }).snapshotValidation
+      : undefined;
+  if (isTask1CatalogSnapshotValidation(snapshotValidation)) {
+    const originClassificationStep =
+      error && typeof error === 'object'
+        ? (error as { originClassificationStep?: unknown }).originClassificationStep
+        : undefined;
+    throw Object.assign(new Error('TASK1_CATALOG_COLLECTION_FAILED'), {
+      snapshotValidation,
+      ...(snapshotValidation === 'origin_classification' &&
+      isTask1CatalogOriginClassificationStep(originClassificationStep)
+        ? { originClassificationStep }
+        : {}),
+    });
+  }
+  fail('TASK1_CATALOG_COLLECTION_FAILED');
+}
+
+async function queryRows(
+  client: SqlClient,
+  catalogStep: Task1CatalogCollectionStep,
+  sql: string,
+): Promise<JsonRecord[]> {
+  return atCatalogCollectionStep(catalogStep, async () => {
+    const result = await client.query(sql);
+    return normalizedRows(result.rows);
+  });
 }
 
 export async function collectTask1PrebootstrapInventory(
   client: SqlClient,
   bootstrap: Task1CatalogBootstrapContext | null,
-  options: { transaction?: 'managed' | 'caller' } = {},
+  options: { transaction?: 'managed' | 'caller'; catalogVersion?: string } = {},
 ): Promise<PrebootstrapInventoryV1> {
   let open = false;
   try {
-    if (bootstrap) validateBootstrap(bootstrap);
+    if (bootstrap) {
+      await atCatalogSnapshotValidation('bootstrap_validation', () => validateBootstrap(bootstrap));
+    }
     if (options.transaction !== 'caller') {
       await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
       open = true;
     }
-    await client.query('SET LOCAL search_path = pg_catalog');
-    const identityRows = await queryRows(client, TASK1_CATALOG_QUERIES.identity);
-    if (identityRows.length !== 1) fail('TASK1_CATALOG_IDENTITY_INVALID');
-    const identity = identityRows[0]!;
+    await atCatalogCollectionStep('search_path', () =>
+      client.query('SET LOCAL search_path = pg_catalog'),
+    );
+    const identityRows = await queryRows(client, 'identity', TASK1_CATALOG_QUERIES.identity);
+    const identity = await atCatalogSnapshotValidation('identity_validation', () => {
+      if (identityRows.length !== 1) fail('TASK1_CATALOG_IDENTITY_INVALID');
+      return identityRows[0]!;
+    });
     const ledgerExists = identity.ledger_exists === true;
-    const ledger = ledgerExists ? await queryRows(client, TASK1_CATALOG_QUERIES.ledger) : null;
-    const namespaces = await queryRows(client, TASK1_CATALOG_QUERIES.namespaces);
-    const relations = await queryRows(client, TASK1_CATALOG_QUERIES.relations);
-    const functions = (await queryRows(client, TASK1_CATALOG_QUERIES.functions)).map(
+    const ledger = ledgerExists ? await queryRows(client, 'ledger', TASK1_CATALOG_QUERIES.ledger) : null;
+    const namespaces = await queryRows(client, 'namespaces', TASK1_CATALOG_QUERIES.namespaces);
+    const relations = await queryRows(client, 'relations', TASK1_CATALOG_QUERIES.relations);
+    const functions = (await queryRows(client, 'functions', TASK1_CATALOG_QUERIES.functions)).map(
       normalizeFunction,
     );
-    const types = await queryRows(client, TASK1_CATALOG_QUERIES.types);
-    const extensions = await queryRows(client, TASK1_CATALOG_QUERIES.extensions);
-    const policies = await queryRows(client, TASK1_CATALOG_QUERIES.policies);
-    const triggers = await queryRows(client, TASK1_CATALOG_QUERIES.triggers);
-    const roles = await queryRows(client, TASK1_CATALOG_QUERIES.roles);
-    const memberships = await queryRows(client, TASK1_CATALOG_QUERIES.memberships);
-    const roleSettings = await queryRows(client, TASK1_CATALOG_QUERIES.roleSettings);
-    const databaseAcl = await queryRows(client, TASK1_CATALOG_QUERIES.databaseAcl);
-    const schemaAcls = await queryRows(client, TASK1_CATALOG_QUERIES.schemaAcls);
-    const defaultAcls = await queryRows(client, TASK1_CATALOG_QUERIES.defaultAcls);
+    const types = await queryRows(client, 'types', TASK1_CATALOG_QUERIES.types);
+    const extensions = await queryRows(client, 'extensions', TASK1_CATALOG_QUERIES.extensions);
+    const policies = await queryRows(client, 'policies', TASK1_CATALOG_QUERIES.policies);
+    const triggers = await queryRows(client, 'triggers', TASK1_CATALOG_QUERIES.triggers);
+    const roles = await queryRows(client, 'roles', TASK1_CATALOG_QUERIES.roles);
+    const memberships = await queryRows(client, 'memberships', TASK1_CATALOG_QUERIES.memberships);
+    const roleSettings = await queryRows(client, 'role_settings', TASK1_CATALOG_QUERIES.roleSettings);
+    const databaseAcl = await queryRows(client, 'database_acl', TASK1_CATALOG_QUERIES.databaseAcl);
+    const schemaAcls = await queryRows(client, 'schema_acls', TASK1_CATALOG_QUERIES.schemaAcls);
+    const defaultAcls = await queryRows(client, 'default_acls', TASK1_CATALOG_QUERIES.defaultAcls);
     const productRelations = relations.filter(
       (relation) => relation.kind === 'r' || relation.kind === 'p',
     );
@@ -565,22 +700,32 @@ export async function collectTask1PrebootstrapInventory(
     const productHasRows: Array<{ relation: string; hasRows: boolean }> = [];
     for (const relation of productRelations) {
       const qualified = `${quoteIdentifier(String(relation.schema))}.${quoteIdentifier(String(relation.name))}`;
-      const result = await client.query<{ has_rows: boolean }>(
-        `/* task1-catalog:product-has-rows */ SELECT EXISTS (SELECT 1 FROM ${qualified} LIMIT 1) AS has_rows`,
+      const result = await atCatalogCollectionStep('product_has_rows', () =>
+        client.query<{ has_rows: boolean }>(
+          `/* task1-catalog:product-has-rows */ SELECT EXISTS (SELECT 1 FROM ${qualified} LIMIT 1) AS has_rows`,
+        ),
       );
-      if (result.rowCount !== 1 || typeof result.rows[0]?.has_rows !== 'boolean') {
-        fail('TASK1_CATALOG_PRODUCT_SOURCE_INVALID');
-      }
+      await atCatalogSnapshotValidation('product_source_validation', () => {
+        if (result.rowCount !== 1 || typeof result.rows[0]?.has_rows !== 'boolean') {
+          fail('TASK1_CATALOG_PRODUCT_SOURCE_INVALID');
+        }
+      });
       productHasRows.push({
         relation: `${String(relation.schema)}.${String(relation.name)}`,
         hasRows: result.rows[0].has_rows,
       });
     }
 
+    const catalogVersion = options.catalogVersion ?? bootstrap?.catalogVersion ?? identity.catalog_version;
+    await atCatalogSnapshotValidation('catalog_version_validation', () => {
+      if (typeof catalogVersion !== 'string' || !/^[0-9]+$/.test(catalogVersion)) {
+        fail('TASK1_CATALOG_IDENTITY_INVALID');
+      }
+    });
     const inventory = {
       format: 'prebootstrap_inventory/v1' as const,
       postgresVersion: String(identity.postgres_version),
-      catalogVersion: String(identity.catalog_version),
+      catalogVersion,
       databaseIdentity: {
         oid: String(identity.database_oid),
         name: String(identity.database_name),
@@ -603,7 +748,9 @@ export async function collectTask1PrebootstrapInventory(
       defaultAcls,
       bootstrapIdentities: null,
     } as PrebootstrapInventoryV1;
-    const classification = classifyTask1CatalogOrigin(inventory, bootstrap);
+    const classification = await atCatalogSnapshotValidation('origin_classification', () =>
+      classifyTask1CatalogOrigin(inventory, bootstrap),
+    );
     if (classification.kind !== 'legacy')
       inventory.bootstrapIdentities = classification.bootstrapIdentities;
     if (open) {
@@ -611,7 +758,7 @@ export async function collectTask1PrebootstrapInventory(
       open = false;
     }
     return inventory;
-  } catch {
+  } catch (error) {
     if (open) {
       try {
         await client.query('ROLLBACK');
@@ -619,15 +766,16 @@ export async function collectTask1PrebootstrapInventory(
         // Preserve the sanitized collector failure.
       }
     }
-    fail('TASK1_CATALOG_COLLECTION_FAILED');
+    catalogCollectionFailure(error);
   }
 }
 
 export async function collectTask1LockedCatalogInventory(
   client: SqlClient,
-  origin:
+  origin: (
     | { classification: 'E1' | 'E2'; bootstrapIdentities: BootstrapIdentitiesV1 }
-    | { classification: 'legacy'; bootstrapIdentities: null },
+    | { classification: 'legacy'; bootstrapIdentities: null }
+  ) & { catalogVersion?: string },
 ): Promise<PrebootstrapInventoryV1> {
   if (
     (origin.classification === 'legacy' && origin.bootstrapIdentities !== null) ||
@@ -639,6 +787,7 @@ export async function collectTask1LockedCatalogInventory(
   }
   const inventory = await collectTask1PrebootstrapInventory(client, null, {
     transaction: 'caller',
+    catalogVersion: origin.catalogVersion,
   });
   inventory.bootstrapIdentities = origin.bootstrapIdentities;
   return inventory;
@@ -698,14 +847,28 @@ function freshCatalogIsEmpty(inventory: PrebootstrapInventoryV1): boolean {
       'triggers',
       'productSources',
       'productHasRows',
-      'roleSettings',
       'defaultAcls',
-    ].every((key) => Array.isArray(inventory[key]) && (inventory[key] as unknown[]).length === 0)
+    ].every((key) => Array.isArray(inventory[key]) && (inventory[key] as unknown[]).length === 0) &&
+    (inventory.roleSettings.length === 0 ||
+      exactRows(inventory.roleSettings, [
+        {
+          database: '*',
+          role: 'commander_app',
+          settings: [
+            { name: 'idle_in_transaction_session_timeout', value: '10s' },
+            { name: 'statement_timeout', value: '55s' },
+          ],
+        },
+      ]))
   );
 }
 
 function exactRows(actual: unknown, expected: unknown): boolean {
   return canonicalBootstrapJson(actual) === canonicalBootstrapJson(expected);
+}
+
+function originClassificationFailure(step: Task1CatalogOriginClassificationStep): never {
+  throw Object.assign(new Error('MIGRATION_LEDGER_TAMPERED'), { originClassificationStep: step });
 }
 
 export function classifyTask1CatalogOrigin(
@@ -719,7 +882,7 @@ export function classifyTask1CatalogOrigin(
         inventory.relations.length === 0 &&
         inventory.roles.length === 0)
     ) {
-      fail('MIGRATION_LEDGER_TAMPERED');
+      originClassificationFailure('fresh_catalog_shape');
     }
     return { kind: 'legacy', bootstrapIdentities: null };
   }
@@ -737,11 +900,11 @@ export function classifyTask1CatalogOrigin(
     : exactRows(actualRoleNames, E2_ROLES)
       ? 'E2'
       : null;
-  if (!envelope) fail('MIGRATION_LEDGER_TAMPERED');
+  if (!envelope) originClassificationFailure('role_envelope');
   const expectedRoles = (envelope === 'E1' ? E1_ROLES : E2_ROLES)
     .map(expectedRole)
     .sort((left, right) => byteCompare(String(left.name), String(right.name)));
-  if (!exactRows(roles, expectedRoles)) fail('MIGRATION_LEDGER_TAMPERED');
+  if (!exactRows(roles, expectedRoles)) originClassificationFailure('role_attributes');
   const memberRoles = (envelope === 'E1' ? E1_ROLES : E2_ROLES).filter((name) => name !== OWNER);
   const expectedMemberships = memberRoles
     .map((role) => ({
@@ -753,12 +916,12 @@ export function classifyTask1CatalogOrigin(
       setOption: true,
     }))
     .sort((left, right) => byteCompare(left.role, right.role));
-  if (!exactRows(memberships, expectedMemberships)) fail('MIGRATION_LEDGER_TAMPERED');
+  if (!exactRows(memberships, expectedMemberships)) originClassificationFailure('memberships');
   if (
     inventory.databaseAcl.some((entry) => entry.grantee === 'PUBLIC') ||
     inventory.schemaAcls.some((entry) => entry.grantee === 'PUBLIC')
   ) {
-    fail('MIGRATION_LEDGER_TAMPERED');
+    originClassificationFailure('public_acl');
   }
   const bootstrapIdentities: BootstrapIdentitiesV1 = {
     format: 'bootstrap_identities/v1',
