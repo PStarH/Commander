@@ -32,12 +32,148 @@ import type {
   HelmReleaseProjection,
 } from './helm-recover-tenant-authority.js';
 
+const commandOutputLimit = 1024 * 1024;
+
 const digest = (value: string): string => value.repeat(64).slice(0, 64);
 const image = `sha256:${digest('a')}`;
 const chart = digest('b');
 const nonce = 'n'.repeat(43);
 
 describe('Helm owner Job diagnostics', () => {
+  it('uses bounded trusted timeout policies for long-running Helm operations', () => {
+    const timeout = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        commandExecutionTimeoutMs?: (policy: string) => number;
+      }
+    ).commandExecutionTimeoutMs;
+    assert.equal(typeof timeout, 'function');
+    assert.equal(timeout!('standard'), 60_000);
+    assert.ok(timeout!('owner_job_wait') > 5 * 60_000);
+    assert.ok(timeout!('helm_rollout') > 10 * 60_000);
+    assert.ok(timeout!('proof_job_wait') > 10 * 60_000);
+    assert.ok(timeout!('helm_rollout') <= 11 * 60_000);
+    assert.throws(
+      () => timeout!('caller-supplied'),
+      /TENANT_CUTOVER_COMMAND_TIMEOUT_POLICY_INVALID/,
+    );
+  });
+
+  for (const stream of ['stdout', 'stderr'] as const) {
+    it(
+      'fails closed when kubectl logs ' + stream + ' exceeds the command output limit',
+      async () => {
+        const root = await mkdtemp(join(tmpdir(), 'commander-helm-command-output-'));
+        const kubectl = join(root, 'kubectl');
+        const previousPath = process.env.PATH;
+        const writer = stream === 'stdout' ? 'process.stdout.write' : 'process.stderr.write';
+        await writeFile(
+          kubectl,
+          ['#!/usr/bin/env node', writer + "('x'.repeat(" + (commandOutputLimit + 1) + '));'].join(
+            '\n',
+          ),
+          { mode: 0o700 },
+        );
+        await chmod(kubectl, 0o700);
+        process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+        try {
+          const command = (
+            helmTenantCutover as typeof helmTenantCutover & {
+              defaultCommand?: (program: string, args: readonly string[]) => Promise<string>;
+            }
+          ).defaultCommand;
+          assert.equal(typeof command, 'function');
+          await assert.rejects(
+            () => command!('kubectl', ['logs', 'owner-job']),
+            /TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT/,
+          );
+        } finally {
+          if (previousPath === undefined) delete process.env.PATH;
+          else process.env.PATH = previousPath;
+          await rm(root, { recursive: true, force: true });
+        }
+      },
+    );
+  }
+
+  it('terminates the process group before rejecting an output overflow', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-command-group-'));
+    const kubectl = join(root, 'kubectl');
+    const descendantPidPath = join(root, 'descendant.pid');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      [
+        '#!/usr/bin/env node',
+        "const { spawn: launch } = require('node:child_process');",
+        "const { writeFileSync } = require('node:fs');",
+        "const child = launch(process.execPath, ['-e', \"process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1000)\"], { stdio: ['ignore', 'pipe', 'ignore'] });",
+        'writeFileSync(' + JSON.stringify(descendantPidPath) + ', String(child.pid));',
+        "child.stdout.once('data', () => process.stdout.write('x'.repeat(" +
+          (commandOutputLimit + 1) +
+          ')));',
+        'setInterval(() => {}, 1000);',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    await chmod(kubectl, 0o700);
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    let descendantPid: number | undefined;
+    try {
+      await assert.rejects(
+        () => helmTenantCutover.defaultCommand('kubectl', ['get', 'pods']),
+        /TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT/,
+      );
+      descendantPid = Number(await readFile(descendantPidPath, 'utf8'));
+      assert.throws(() => process.kill(descendantPid!, 0), /ESRCH/);
+    } finally {
+      if (descendantPid !== undefined) {
+        try {
+          process.kill(descendantPid, 'SIGKILL');
+        } catch {
+          // The expected path already terminated the descendant.
+        }
+      }
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('fails closed with a bounded code when process-group confirmation is EPERM', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-command-eperm-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    const originalKill = process.kill;
+    await writeFile(
+      kubectl,
+      [
+        '#!/usr/bin/env node',
+        "process.stdout.write('x'.repeat(" + (commandOutputLimit + 1) + '));',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    process.kill = ((pid: number, signal?: NodeJS.Signals | number) => {
+      if (signal === 0) {
+        const error = new Error('operation not permitted') as NodeJS.ErrnoException;
+        error.code = 'EPERM';
+        throw error;
+      }
+      return originalKill(pid, signal);
+    }) as typeof process.kill;
+    try {
+      await assert.rejects(
+        () => helmTenantCutover.defaultCommand('kubectl', ['get', 'pods']),
+        /TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED/,
+      );
+    } finally {
+      process.kill = originalKill;
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('retains a sanitized error code and hash without reflecting owner Job logs', () => {
     const diagnostic = (
       helmTenantCutover as typeof helmTenantCutover & {
@@ -1127,7 +1263,12 @@ data: { owner-url: c2VjcmV0 }
   });
 
   it('reads an exact retained proof hook and creates the proof-only Kubernetes resources', async () => {
-    const commands: Array<{ program: string; args: readonly string[]; stdin?: string }> = [];
+    const commands: Array<{
+      program: string;
+      args: readonly string[];
+      stdin?: string;
+      executionPolicy?: string;
+    }> = [];
     let configMap = '';
     const receipt = {
       proven: true,
@@ -1137,8 +1278,8 @@ data: { owner-url: c2VjcmV0 }
       rolloutProofSha256: digest('9'),
     };
     const nodePorts = createNodePorts({
-      command: async (program, args, stdin) => {
-        commands.push({ program, args, stdin });
+      command: async (program, args, stdin, executionPolicy) => {
+        commands.push({ program, args, stdin, executionPolicy });
         if (program === 'helm') return retainedProofJobManifest('7');
         if (args[0] === 'create') {
           const object = JSON.parse(stdin!) as { kind: string; metadata: { name: string } };
@@ -1184,6 +1325,7 @@ data: { owner-url: c2VjcmV0 }
       program: 'helm',
       args: ['get', 'hooks', 'commander', '--namespace', 'commander', '--revision', '7'],
       stdin: undefined,
+      executionPolicy: undefined,
     });
     assert.deepEqual(commands.find((call) => call.args[0] === 'wait')?.args, [
       'wait',
@@ -1193,6 +1335,10 @@ data: { owner-url: c2VjcmV0 }
       'commander',
       '--timeout=10m',
     ]);
+    assert.equal(
+      commands.find((call) => call.args[0] === 'wait')?.executionPolicy,
+      'proof_job_wait',
+    );
     const jobCreate = commands.find(
       (call) => call.args[0] === 'create' && JSON.parse(call.stdin!).kind === 'Job',
     );
