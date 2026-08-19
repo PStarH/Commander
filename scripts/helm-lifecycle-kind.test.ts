@@ -18,6 +18,7 @@ import {
   namespaceCleanupArgs,
   postgresImageForArchitecture,
   productionImageReferences,
+  productionImageBuildArguments,
   reusableProductionImageDigest,
   controlPlaneReadinessSelectors,
   proofReaderName,
@@ -25,11 +26,151 @@ import {
   sanitizeEvidence,
   kindClusterExists,
   proofTemplatesPresent,
+  parseOwnerFailureEvidence,
+  productionImageSourceRevision,
   KIND_NODE_IMAGE,
   CALICO_URL,
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('retains only a parsed allowlisted owner failure record and source revision', () => {
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=owner_pool_connect;log_sha256=' +
+          'a'.repeat(64),
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'owner_pool_connect',
+        logSha256: 'a'.repeat(64),
+      },
+    );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=TASK1_CLOSURE_BASELINE_REQUIRED;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+          '9'.repeat(64) +
+          '\nNAME READY STATUS secret raw detail',
+      ),
+      {
+        code: 'TASK1_CLOSURE_BASELINE_REQUIRED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        logSha256: '9'.repeat(64),
+      },
+    );
+    for (const ownerStage of [
+      'lifecycle_pinned_manifest_validation',
+      'lifecycle_prepared_request_validation',
+      'lifecycle_table_discovery',
+      'lifecycle_initialization_planning',
+      'lifecycle_descriptor_transaction',
+      'lifecycle_peer_reobservation',
+      'lifecycle_peer_reobservation_input_consistency',
+      'lifecycle_peer_reobservation_candidate_binding_validation',
+      'lifecycle_peer_reobservation_observed_binding_validation',
+      'lifecycle_peer_reobservation_binding_consistency',
+    ] as const) {
+      assert.deepEqual(
+        parseOwnerFailureEvidence(
+          'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=' +
+            ownerStage +
+            ';log_sha256=' +
+            'f'.repeat(64),
+        ),
+        {
+          code: 'COMMANDER_MIGRATION_FAILED',
+          producer: 'owner_entrypoint',
+          transport: 'kubectl_logs',
+          ownerStage,
+          logSha256: 'f'.repeat(64),
+        },
+      );
+    }
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=origin_classification;origin_classification_step=role_envelope;log_sha256=' +
+          'e'.repeat(64) +
+          '\nNAME   READY   STATUS\npod/postgres-0   1/1   Running',
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'lifecycle_prebootstrap_snapshot',
+        snapshot: 's0',
+        snapshotValidation: 'origin_classification',
+        originClassificationStep: 'role_envelope',
+        logSha256: 'e'.repeat(64),
+      },
+    );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=identity_validation;log_sha256=' +
+          'd'.repeat(64) +
+          '\nNAME   READY   STATUS\npod/postgres-0   1/1   Running',
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'lifecycle_prebootstrap_snapshot',
+        snapshot: 's0',
+        snapshotValidation: 'identity_validation',
+        logSha256: 'd'.repeat(64),
+      },
+    );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_transaction=begin;log_sha256=' +
+          'c'.repeat(64) +
+          '\nNAME   READY   STATUS\npod/postgres-0   1/1   Running',
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'lifecycle_prebootstrap_snapshot',
+        snapshot: 's0',
+        snapshotTransaction: 'begin',
+        logSha256: 'c'.repeat(64),
+      },
+    );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;catalog_step=functions;log_sha256=' +
+          'b'.repeat(64) +
+          '\nNAME   READY   STATUS\npod/postgres-0   1/1   Running',
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'lifecycle_prebootstrap_snapshot',
+        snapshot: 's0',
+        catalogStep: 'functions',
+        logSha256: 'b'.repeat(64),
+      },
+    );
+    assert.equal(
+      productionImageSourceRevision({ GITHUB_SHA: 'b'.repeat(40) }, () => 'c'.repeat(40)),
+      'b'.repeat(40),
+    );
+    assert.equal(
+      productionImageSourceRevision({}, () => 'c'.repeat(40)),
+      'c'.repeat(40),
+    );
+    assert.equal(
+      parseOwnerFailureEvidence(
+        'code=PRIVATE_SECRET_VALUE;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+          'f'.repeat(64),
+      ),
+      undefined,
+    );
+    assert.equal(parseOwnerFailureEvidence('postgres://owner:secret@db private detail'), undefined);
+  });
+
   it('pins Kubernetes 1.33.2 and the expected digest', () => {
     assert.match(KIND_NODE_IMAGE, /kindest\/node:v1\.33\.2/);
     assert.match(KIND_NODE_IMAGE, /sha256:[a-f0-9]{64}/);
@@ -324,6 +465,16 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.throws(() => productionImageReferences('sha256:bad'), /PRODUCTION_IMAGE_DIGEST_INVALID/);
   });
 
+  it('passes the checked-out source revision into the production image build', () => {
+    const args = productionImageBuildArguments('a'.repeat(40));
+    assert.ok(args.includes('--build-arg'));
+    assert.ok(args.includes('COMMANDER_SOURCE_REVISION=' + 'a'.repeat(40)));
+    assert.throws(
+      () => productionImageBuildArguments('not-a-revision'),
+      /PRODUCTION_IMAGE_SOURCE_REVISION_INVALID/,
+    );
+  });
+
   it('reuses a local production image only when its exact repo digest matches its image ID', () => {
     const digest = `sha256:${'a'.repeat(64)}`;
     assert.equal(
@@ -345,6 +496,22 @@ describe('helm-lifecycle-kind helpers', () => {
       () => reusableProductionImageDigest({ imageId: digest, repoDigests: [] }),
       /PRODUCTION_IMAGE_REUSE_INVALID/,
     );
+  });
+
+  it('omits a source revision claim for a reused image digest', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/chart',
+      calicoUrl: CALICO_URL,
+      image: { digest: 'sha256:' + 'a'.repeat(64) },
+      scenarios: [],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.image, { digest: 'sha256:' + 'a'.repeat(64) });
   });
 
   it('skips a Kind image import only when every node has the exact digest reference', () => {
@@ -467,37 +634,123 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(workflow, /run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts run/);
   });
 
-  it('sanitizes DSNs and PEM blocks from evidence', () => {
+  it('fails closed when sanitized Kind evidence cannot be uploaded', () => {
+    const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
+    const uploadStep = workflow.match(/- name: Upload sanitized evidence\n[\s\S]*$/)?.[0];
+
+    assert.ok(uploadStep, 'the Kind lifecycle workflow must upload sanitized evidence');
+    assert.match(uploadStep, /uses: actions\/upload-artifact@v4/);
+    assert.match(uploadStep, /if: always\(\)/);
+    assert.match(uploadStep, /name: kind-lifecycle-evidence/);
+    assert.match(uploadStep, /path: kind-lifecycle-evidence\.json/);
+    assert.match(uploadStep, /if-no-files-found: error/);
+    assert.match(uploadStep, /retention-days: 30/);
+  });
+
+  it('omits raw scenario diagnostics and retains only canonical safe evidence fields', () => {
     const evidence = {
       generatedAt: '2024-01-01T00:00:00Z',
       cluster: 'test',
       kindNodeImage: KIND_NODE_IMAGE,
-      chartPath: '/chart',
+      chartPath: '/private/secret/chart',
+      calicoUrl: CALICO_URL,
+      image: { digest: `sha256:${'a'.repeat(64)}`, sourceRevision: 'b'.repeat(40) },
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [{ message: 'kubectl event secret-token private SQL SELECT' }],
+          assertions: [
+            {
+              description: 'raw assertion',
+              passed: false,
+              detail: 'postgres://owner:secret@db:5432/commander SELECT private_value',
+            },
+          ],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=TASK1_CLOSURE_BASELINE_REQUIRED;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+            'd'.repeat(64) +
+            '\nNAME READY STATUS COMMANDER_PRIVATE_SECRET_VALUE raw SQL SELECT private_value',
+        },
+      ],
+      ownerFailureEvidence: [
+        {
+          code: 'COMMANDER_MIGRATION_FAILED' as const,
+          producer: 'owner_entrypoint' as const,
+          transport: 'kubectl_logs' as const,
+          ownerStage: 'lifecycle_prebootstrap_snapshot',
+          snapshot: 's0',
+          catalogStep: 'functions',
+          logSha256: 'c'.repeat(64),
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    } satisfies Parameters<typeof sanitizeEvidence>[0];
+    const sanitized = sanitizeEvidence(evidence);
+    assert.deepEqual(sanitized, {
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      calicoUrl: CALICO_URL,
+      image: { digest: `sha256:${'a'.repeat(64)}`, sourceRevision: 'b'.repeat(40) },
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          failureCodes: [
+            'HELM_TENANT_CUTOVER_FAILED',
+            'TENANT_CUTOVER_OWNER_JOB_FAILED',
+            'TASK1_CLOSURE_BASELINE_REQUIRED',
+          ],
+        },
+      ],
+      ownerFailureEvidence: evidence.ownerFailureEvidence,
+      passed: false,
+      sanitized: true,
+    });
+    assert.doesNotMatch(
+      JSON.stringify(sanitized),
+      /secret|private|SELECT|event|assertion|postgres/i,
+    );
+  });
+
+  it('rejects unallowlisted and oversized prefixed diagnostic candidates', () => {
+    const oversized = 'COMMANDER_' + 'A'.repeat(512);
+    const evidence = {
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/secret/chart',
       calicoUrl: CALICO_URL,
       scenarios: [
         {
           name: 'fresh-bundled',
-          passed: true,
+          passed: false,
           durationMs: 100,
           events: [],
-          assertions: [
-            {
-              description: 'contains a DSN',
-              passed: true,
-              detail: 'postgres://owner:secret@db:5432/commander',
-            },
-          ],
+          assertions: [],
+          error:
+            'COMMANDER_EXFILTRATED_BASE32_PAYLOAD ' + oversized + ' HELM_TENANT_CUTOVER_FAILED',
         },
-      ] as any[],
-      passed: true,
+      ],
+      ownerFailureEvidence: [],
+      passed: false,
       sanitized: false,
-    };
-    const sanitized = sanitizeEvidence(evidence);
-    assert.equal(sanitized.sanitized, true);
-    const detail = sanitized.scenarios[0].assertions[0].detail;
-    assert.ok(detail !== undefined);
-    assert.ok(!detail.includes('secret'), 'password should be redacted');
-    assert.ok(detail.startsWith('postgres://'), 'DSN prefix preserved for diagnostics');
+    } satisfies Parameters<typeof sanitizeEvidence>[0];
+
+    assert.deepEqual(sanitizeEvidence(evidence).scenarios[0]?.failureCodes, [
+      'HELM_TENANT_CUTOVER_FAILED',
+    ]);
+    assert.equal(
+      parseOwnerFailureEvidence(
+        'code=COMMANDER_EXFILTRATED_BASE32_PAYLOAD;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+          'a'.repeat(64),
+      ),
+      undefined,
+    );
   });
 
   it('reports cluster existence without throwing', () => {
