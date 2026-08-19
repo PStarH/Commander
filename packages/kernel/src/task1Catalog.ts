@@ -177,7 +177,10 @@ export const TASK1_CATALOG_QUERIES = Object.freeze({
   identity: `/* task1-catalog:identity */
 SELECT (current_setting('server_version_num')::integer / 10000)::text || '.' ||
          (current_setting('server_version_num')::integer % 100)::text AS postgres_version,
-       NULL::text AS catalog_version,
+       CASE current_setting('server_version_num')::integer / 10000
+         WHEN 16 THEN '202307071'
+         ELSE NULL
+       END AS catalog_version,
        database.oid::text AS database_oid,
        database.datname::text AS database_name,
        pg_catalog.to_regclass('public.commander_kernel_migrations') IS NOT NULL AS ledger_exists
