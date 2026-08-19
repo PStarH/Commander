@@ -365,30 +365,16 @@ function runExecPolicySmoke(): void {
   // packages/core as cwd so vitest resolves its config and the test
   // file path is relative to the package root.
   const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
-  // Resolve the local vitest binary explicitly. The npx vitest command re-resolves
-  // the package from a nested node_modules/.pnpm path that does not exist
-  // in pnpm workspaces (worktree + CI argv-replay), so the smoke test
-  // would always fail with MODULE_NOT_FOUND even though the binary works.
-  const vitestBin = [
-    path.join(vitestCwd, 'node_modules', '.bin', 'vitest'),
-    path.join(REPO_ROOT, 'node_modules', '.bin', 'vitest'),
-  ].find((p) => {
-    try {
-      fs.accessSync(p, fs.constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  if (!vitestBin) {
-    throw new Error('precommit ExecPolicy smoke failed — vitest binary not found');
-  }
   try {
-    execFileSync(vitestBin, ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'], {
-      cwd: vitestCwd,
-      stdio: 'inherit',
-      env: { ...process.env, NODE_ENV: 'test' },
-    });
+    execFileSync(
+      'pnpm',
+      ['exec', 'vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
+      {
+        cwd: vitestCwd,
+        stdio: 'inherit',
+        env: { ...process.env, NODE_ENV: 'test' },
+      },
+    );
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
     reportSilentFailure(err, 'precommitHook:335');
