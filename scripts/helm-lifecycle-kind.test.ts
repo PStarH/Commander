@@ -654,7 +654,10 @@ describe('helm-lifecycle-kind helpers', () => {
               detail: 'postgres://owner:secret@db:5432/commander SELECT private_value',
             },
           ],
-          error: 'raw scenario failure secret SQL SELECT private_value',
+          error:
+            'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=TASK1_CLOSURE_BASELINE_REQUIRED;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+            'd'.repeat(64) +
+            '\nNAME READY STATUS COMMANDER_PRIVATE_SECRET_VALUE raw SQL SELECT private_value',
         },
       ],
       ownerFailureEvidence: [
@@ -678,7 +681,18 @@ describe('helm-lifecycle-kind helpers', () => {
       kindNodeImage: KIND_NODE_IMAGE,
       calicoUrl: CALICO_URL,
       image: { digest: `sha256:${'a'.repeat(64)}`, sourceRevision: 'b'.repeat(40) },
-      scenarios: [{ name: 'fresh-bundled', passed: false, durationMs: 100 }],
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          failureCodes: [
+            'HELM_TENANT_CUTOVER_FAILED',
+            'TENANT_CUTOVER_OWNER_JOB_FAILED',
+            'TASK1_CLOSURE_BASELINE_REQUIRED',
+          ],
+        },
+      ],
       ownerFailureEvidence: evidence.ownerFailureEvidence,
       passed: false,
       sanitized: true,

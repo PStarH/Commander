@@ -547,6 +547,7 @@ export interface SanitizedScenarioEvidence {
   name: string;
   passed: boolean;
   durationMs: number;
+  failureCodes?: string[];
 }
 
 export interface SanitizedHarnessEvidence {
@@ -673,6 +674,14 @@ const OWNER_FAILURE_RECORD = new RegExp(
 const GENERIC_OWNER_FAILURE_RECORD = new RegExp(
   '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]+);producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
+const SCENARIO_FAILURE_CODE = /\b(?:COMMANDER|TASK1|TENANT_CUTOVER|HELM)_[A-Z0-9_]+\b/g;
+
+function scenarioFailureCodes(error: string | undefined): string[] | undefined {
+  if (!error) return undefined;
+  const firstLine = error.split('\n', 1)[0] ?? '';
+  const codes = [...new Set(firstLine.match(SCENARIO_FAILURE_CODE) ?? [])].slice(0, 8);
+  return codes.length > 0 ? codes : undefined;
+}
 
 /** Extract only the canonical owner diagnostic record, never the original error text. */
 export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
@@ -759,11 +768,15 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
           },
         }
       : {}),
-    scenarios: evidence.scenarios.map(({ name, passed, durationMs }) => ({
-      name,
-      passed,
-      durationMs,
-    })),
+    scenarios: evidence.scenarios.map(({ name, passed, durationMs, error }) => {
+      const failureCodes = scenarioFailureCodes(error);
+      return {
+        name,
+        passed,
+        durationMs,
+        ...(failureCodes ? { failureCodes } : {}),
+      };
+    }),
     ...(evidence.ownerFailureEvidence
       ? {
           ownerFailureEvidence: evidence.ownerFailureEvidence.map((failure) => ({
