@@ -565,7 +565,7 @@ export interface SanitizedHarnessEvidence {
 }
 
 export interface OwnerFailureEvidence {
-  code: 'COMMANDER_MIGRATION_FAILED';
+  code: string;
   producer: 'owner_entrypoint';
   transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
   ownerStage?: OwnerMigrationFailureStage;
@@ -670,11 +670,23 @@ const OWNER_FAILURE_RECORD = new RegExp(
     ')' +
     ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
+const GENERIC_OWNER_FAILURE_RECORD = new RegExp(
+  '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]+);producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
+);
 
 /** Extract only the canonical owner diagnostic record, never the original error text. */
 export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
   const match = OWNER_FAILURE_RECORD.exec(error);
-  if (!match) return undefined;
+  if (!match) {
+    const generic = error.match(GENERIC_OWNER_FAILURE_RECORD);
+    if (!generic) return undefined;
+    return {
+      code: generic[1] as OwnerFailureEvidence['code'],
+      producer: 'owner_entrypoint',
+      transport: generic[2] as OwnerFailureEvidence['transport'],
+      logSha256: generic[3]!,
+    };
+  }
   const [
     ,
     transport,
