@@ -47,6 +47,19 @@ describe('helm-lifecycle-kind helpers', () => {
         logSha256: 'a'.repeat(64),
       },
     );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED: TENANT_CUTOVER_OWNER_JOB_FAILED:code=TASK1_CLOSURE_BASELINE_REQUIRED;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+          '9'.repeat(64) +
+          '\nNAME READY STATUS secret raw detail',
+      ),
+      {
+        code: 'TASK1_CLOSURE_BASELINE_REQUIRED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        logSha256: '9'.repeat(64),
+      },
+    );
     for (const ownerStage of [
       'lifecycle_pinned_manifest_validation',
       'lifecycle_prepared_request_validation',
@@ -147,6 +160,13 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(
       productionImageSourceRevision({}, () => 'c'.repeat(40)),
       'c'.repeat(40),
+    );
+    assert.equal(
+      parseOwnerFailureEvidence(
+        'code=PRIVATE_SECRET_VALUE;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+          'f'.repeat(64),
+      ),
+      undefined,
     );
     assert.equal(parseOwnerFailureEvidence('postgres://owner:secret@db private detail'), undefined);
   });
