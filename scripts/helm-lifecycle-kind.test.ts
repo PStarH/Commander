@@ -498,6 +498,22 @@ describe('helm-lifecycle-kind helpers', () => {
     );
   });
 
+  it('omits a source revision claim for a reused image digest', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/chart',
+      calicoUrl: CALICO_URL,
+      image: { digest: 'sha256:' + 'a'.repeat(64) },
+      scenarios: [],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.image, { digest: 'sha256:' + 'a'.repeat(64) });
+  });
+
   it('skips a Kind image import only when every node has the exact digest reference', () => {
     const exact = `docker.io/library/postgres:16-alpine@sha256:${'a'.repeat(64)}`;
     assert.equal(
@@ -620,9 +636,7 @@ describe('helm-lifecycle-kind helpers', () => {
 
   it('fails closed when sanitized Kind evidence cannot be uploaded', () => {
     const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
-    const uploadStep = workflow.match(
-      /- name: Upload sanitized evidence\n[\s\S]*$/,
-    )?.[0];
+    const uploadStep = workflow.match(/- name: Upload sanitized evidence\n[\s\S]*$/)?.[0];
 
     assert.ok(uploadStep, 'the Kind lifecycle workflow must upload sanitized evidence');
     assert.match(uploadStep, /uses: actions\/upload-artifact@v4/);
@@ -697,7 +711,46 @@ describe('helm-lifecycle-kind helpers', () => {
       passed: false,
       sanitized: true,
     });
-    assert.doesNotMatch(JSON.stringify(sanitized), /secret|private|SELECT|event|assertion|postgres/i);
+    assert.doesNotMatch(
+      JSON.stringify(sanitized),
+      /secret|private|SELECT|event|assertion|postgres/i,
+    );
+  });
+
+  it('rejects unallowlisted and oversized prefixed diagnostic candidates', () => {
+    const oversized = 'COMMANDER_' + 'A'.repeat(512);
+    const evidence = {
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/secret/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'COMMANDER_EXFILTRATED_BASE32_PAYLOAD ' + oversized + ' HELM_TENANT_CUTOVER_FAILED',
+        },
+      ],
+      ownerFailureEvidence: [],
+      passed: false,
+      sanitized: false,
+    } satisfies Parameters<typeof sanitizeEvidence>[0];
+
+    assert.deepEqual(sanitizeEvidence(evidence).scenarios[0]?.failureCodes, [
+      'HELM_TENANT_CUTOVER_FAILED',
+    ]);
+    assert.equal(
+      parseOwnerFailureEvidence(
+        'code=COMMANDER_EXFILTRATED_BASE32_PAYLOAD;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
+          'a'.repeat(64),
+      ),
+      undefined,
+    );
   });
 
   it('reports cluster existence without throwing', () => {

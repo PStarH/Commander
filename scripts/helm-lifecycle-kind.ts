@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { arch, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isAllowedHelmDiagnosticCode } from './helm-diagnostic-policy.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -536,7 +537,7 @@ export interface HarnessEvidence {
   rolloutRecovery?: ScenarioEvidence;
   image?: {
     digest: string;
-    sourceRevision: string;
+    sourceRevision?: string;
   };
   ownerFailureEvidence?: OwnerFailureEvidence[];
   passed: boolean;
@@ -558,7 +559,7 @@ export interface SanitizedHarnessEvidence {
   scenarios: SanitizedScenarioEvidence[];
   image?: {
     digest: string;
-    sourceRevision: string;
+    sourceRevision?: string;
   };
   ownerFailureEvidence?: OwnerFailureEvidence[];
   passed: boolean;
@@ -640,11 +641,7 @@ type OwnerMigrationSnapshotValidation =
   | 'origin_classification';
 
 type OwnerMigrationOriginClassificationStep =
-  | 'fresh_catalog_shape'
-  | 'role_envelope'
-  | 'role_attributes'
-  | 'memberships'
-  | 'public_acl';
+  'fresh_catalog_shape' | 'role_envelope' | 'role_attributes' | 'memberships' | 'public_acl';
 
 const OWNER_FAILURE_STAGE =
   '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_pinned_manifest_validation|lifecycle_prepared_request_validation|lifecycle_table_discovery|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_prebootstrap_snapshot_comparison|lifecycle_initialization_planning|lifecycle_descriptor_transaction|lifecycle_peer_reobservation|lifecycle_peer_reobservation_input_consistency|lifecycle_peer_reobservation_candidate_binding_validation|lifecycle_peer_reobservation_observed_binding_validation|lifecycle_peer_reobservation_binding_consistency|lifecycle_transaction|current_read|rollout_proof)';
@@ -672,14 +669,16 @@ const OWNER_FAILURE_RECORD = new RegExp(
     ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
 const GENERIC_OWNER_FAILURE_RECORD = new RegExp(
-  '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]+);producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
+  '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]{1,80});producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
-const SCENARIO_FAILURE_CODE = /\b(?:COMMANDER|TASK1|TENANT_CUTOVER|HELM)_[A-Z0-9_]+\b/g;
+const SCENARIO_FAILURE_CODE = /\b(?:COMMANDER|TASK1|TENANT_CUTOVER|HELM)_[A-Z0-9_]{1,80}\b/g;
 
 function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   if (!error) return undefined;
   const firstLine = error.split('\n', 1)[0] ?? '';
-  const codes = [...new Set(firstLine.match(SCENARIO_FAILURE_CODE) ?? [])].slice(0, 8);
+  const codes = [
+    ...new Set((firstLine.match(SCENARIO_FAILURE_CODE) ?? []).filter(isAllowedHelmDiagnosticCode)),
+  ].slice(0, 8);
   return codes.length > 0 ? codes : undefined;
 }
 
@@ -689,6 +688,7 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
   if (!match) {
     const generic = error.match(GENERIC_OWNER_FAILURE_RECORD);
     if (!generic) return undefined;
+    if (!isAllowedHelmDiagnosticCode(generic[1]!)) return undefined;
     return {
       code: generic[1] as OwnerFailureEvidence['code'],
       producer: 'owner_entrypoint',
@@ -722,7 +722,8 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
     evidence.catalogStep = catalogStep as OwnerMigrationCatalogStep;
   } else if (snapshot && snapshotTransaction) {
     evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
-    evidence.snapshotTransaction = snapshotTransaction as OwnerFailureEvidence['snapshotTransaction'];
+    evidence.snapshotTransaction =
+      snapshotTransaction as OwnerFailureEvidence['snapshotTransaction'];
   } else if (snapshot && snapshotValidation) {
     evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
     evidence.snapshotValidation = snapshotValidation as OwnerMigrationSnapshotValidation;
@@ -764,7 +765,9 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
       ? {
           image: {
             digest: evidence.image.digest,
-            sourceRevision: evidence.image.sourceRevision,
+            ...(evidence.image.sourceRevision
+              ? { sourceRevision: evidence.image.sourceRevision }
+              : {}),
           },
         }
       : {}),
@@ -2264,14 +2267,14 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   const imageDigest = opts.reuseProductionImage
     ? await inspectReusableProductionImage()
     : await buildProductionImage();
-  const imageSourceRevision =
-    process.env.COMMANDER_LIFECYCLE_IMAGE_SOURCE_REVISION ??
-    productionImageSourceRevision(process.env, () =>
-      requireCommand(
-        runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
-        'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
-      ),
-    );
+  const imageSourceRevision = opts.reuseProductionImage
+    ? undefined
+    : productionImageSourceRevision(process.env, () =>
+        requireCommand(
+          runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
+          'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
+        ),
+      );
 
   if (!kindClusterExists(CLUSTER_NAME)) {
     await createKindCluster(CLUSTER_NAME);
@@ -2312,7 +2315,10 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
     rbac,
     networkPolicy,
     rolloutRecovery,
-    image: { digest: imageDigest, sourceRevision: imageSourceRevision },
+    image: {
+      digest: imageDigest,
+      ...(imageSourceRevision ? { sourceRevision: imageSourceRevision } : {}),
+    },
     ownerFailureEvidence: scenarios.flatMap(({ error }) =>
       typeof error === 'string' ? [parseOwnerFailureEvidence(error)].filter(Boolean) : [],
     ),
