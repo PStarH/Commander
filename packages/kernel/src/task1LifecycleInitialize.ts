@@ -788,6 +788,9 @@ function assertExactPendingLedgerRows(
   }
 }
 
+const TASK1_MIGRATION_LEDGER_LOCK_SQL =
+  'LOCK TABLE public.commander_kernel_migrations IN ACCESS EXCLUSIVE MODE';
+
 async function applyHistoricalBaseline(
   client: SqlClient,
   classification: 'fresh' | 'legacy',
@@ -797,6 +800,7 @@ async function applyHistoricalBaseline(
       "SELECT pg_catalog.to_regclass('public.commander_kernel_migrations') IS NOT NULL AS exists",
     );
     if (table.rows[0]?.exists) {
+      await client.query(TASK1_MIGRATION_LEDGER_LOCK_SQL);
       const existing = await exactLedgerRows(client);
       if (existing.length > 0) {
         assertExactLedgerRows(existing);

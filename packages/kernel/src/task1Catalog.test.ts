@@ -457,6 +457,38 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     assert.doesNotMatch(TASK1_CATALOG_QUERIES.identity, /pg_control_system/);
   });
 
+  it('projects a numeric catalog version for populated legacy inventory', async () => {
+    assert.match(
+      TASK1_CATALOG_QUERIES.identity,
+      /CASE current_setting\('server_version_num'\)::integer \/ 10000\s+WHEN 16 THEN '202307071'\s+ELSE NULL\s+END AS catalog_version/i,
+    );
+    const projectedCatalogVersion = TASK1_CATALOG_QUERIES.identity.includes(
+      "WHEN 16 THEN '202307071'",
+    )
+      ? '202307071'
+      : null;
+    const client = new CatalogClient({
+      identity: [
+        {
+          postgres_version: '16.14',
+          catalog_version: projectedCatalogVersion,
+          database_oid: '16384',
+          database_name: 'commander',
+          ledger_exists: true,
+        },
+      ],
+      ledger: [{ id: '2026-07-21.16.schema', checksum: 'a'.repeat(64) }],
+      relations: [{ schema: 'public', name: 'commander_runs', kind: 'r', columns: [] }],
+      roles: roleNames.map(role),
+      memberships: [],
+    });
+
+    const observed = await collectTask1PrebootstrapInventory(client, null);
+
+    assert.equal(observed.catalogVersion, '202307071');
+    assert.equal(classifyTask1CatalogOrigin(observed, null).kind, 'legacy');
+  });
+
   it('uses the catalog version captured by the bootstrap connection for owner inventory', async () => {
     const client = new CatalogClient({
       identity: [

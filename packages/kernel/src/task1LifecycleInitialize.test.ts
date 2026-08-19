@@ -1117,6 +1117,17 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
       undefined,
       testCatalogTransaction(),
     );
+    const lockIndex = client.statements.indexOf(
+      'LOCK TABLE public.commander_kernel_migrations IN ACCESS EXCLUSIVE MODE',
+    );
+    const ledgerReadIndex = client.statements.findIndex(
+      (sql) => sql.includes('SELECT id, checksum') && sql.includes('commander_kernel_migrations'),
+    );
+    assert.ok(lockIndex >= 0, 'exact baseline reuse must acquire the migration ledger lock');
+    assert.ok(
+      lockIndex < ledgerReadIndex,
+      'exact baseline reuse must lock the migration ledger before validating its rows',
+    );
     assert.equal(
       client.bindings.filter(
         (values) =>
