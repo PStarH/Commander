@@ -304,7 +304,12 @@ describe('Helm post-rendered release projection', () => {
         projection,
       );
 
-      for (const failAt of ['history', 'get']) {
+      for (const [failAt, code] of [
+        ['template', 'TENANT_CUTOVER_HELM_COMMAND_FAILED'],
+        ['upgrade', 'TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED'],
+        ['history', 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'],
+        ['get', 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'],
+      ]) {
         writeFileSync(
           dataPath,
           JSON.stringify({
@@ -341,7 +346,7 @@ describe('Helm post-rendered release projection', () => {
               ],
               rendererValues: values,
             }),
-          /TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED/,
+          new RegExp(code),
         );
         assert.equal(existsSync(statePath), false);
       }
