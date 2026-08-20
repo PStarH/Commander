@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
@@ -140,6 +148,7 @@ describe('Helm post-rendered release projection', () => {
     const kubectlPath = join(temporary, 'kubectl');
     const dataPath = join(temporary, 'helm-data.json');
     const statePath = join(temporary, 'projection.json');
+    const chartPath = join(temporary, 'chart');
     const originalPath = process.env.PATH;
     const originalData = process.env.COMMANDER_FAKE_HELM_DATA;
     const originalState = process.env.COMMANDER_FAKE_KUBECTL_STATE;
@@ -155,14 +164,33 @@ describe('Helm post-rendered release projection', () => {
       ]) +
       '\n# ' +
       'x'.repeat(1024 * 1024 + 1);
-    const values = dump({ tenantAuthority: { chartContentSha256: chartDigest } });
+    const values = dump({
+      api: { terminationGracePeriodSeconds: null },
+      tenantAuthority: {
+        allowedTenants: ['tenant-a'],
+        chartContentSha256: chartDigest,
+      },
+    });
+    const chartDefaults = load(
+      readFileSync(resolve(root, 'deploy/helm/commander/values.yaml'), 'utf8'),
+    ) as Record<string, unknown>;
     const storedHooks = renderedHooks()
       .replace('commander-migration-r1', 'commander-migration-r8')
       .replace('commander-tenant-cutover-prove-r1', 'commander-tenant-cutover-prove-r8');
     try {
+      mkdirSync(chartPath);
+      writeFileSync(
+        join(chartPath, 'values.yaml'),
+        readFileSync(resolve(root, 'deploy/helm/commander/values.yaml')),
+      );
       writeFileSync(
         dataPath,
-        JSON.stringify({ ordinary, renderedHooks: renderedHooks(), storedHooks, values }),
+        JSON.stringify({
+          ordinary,
+          renderedHooks: renderedHooks(),
+          storedHooks,
+          values,
+        }),
       );
       writeFileSync(
         helmPath,
@@ -184,7 +212,10 @@ describe('Helm post-rendered release projection', () => {
           '  execFileSync(renderer, rendererArgs, { input: data.ordinary, maxBuffer: 64 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });',
           '}',
           'else if (args[0] === "history") process.stdout.write("[{\\"revision\\":\\"8\\"}]");',
-          'else if (args[0] === "get" && args[1] === "values") process.stdout.write(data.values);',
+          'else if (args[0] === "get" && args[1] === "values") {',
+          '  if (args.includes("--all")) process.exit(5);',
+          '  process.stdout.write(data.values);',
+          '}',
           'else if (args[0] === "get" && args[1] === "manifest") process.stdout.write(data.ordinary);',
           'else if (args[0] === "get" && args[1] === "hooks") process.stdout.write(data.storedHooks);',
           'else process.exit(2);',
@@ -206,6 +237,13 @@ describe('Helm post-rendered release projection', () => {
       process.argv[1] = resolve(root, 'scripts/helm-tenant-cutover.ts');
       const ports = createNodePorts({
         command: async (program, args, stdin) => {
+          if (program === 'helm') {
+            return execFileSync(helmPath, args, {
+              encoding: 'utf8',
+              input: stdin,
+              maxBuffer: 64 * 1024 * 1024,
+            });
+          }
           if (program !== 'kubectl') throw new Error('unexpected program');
           if (args[0] === 'delete') {
             rmSync(statePath, { force: true });
@@ -230,7 +268,7 @@ describe('Helm post-rendered release projection', () => {
           'upgrade',
           '--install',
           'commander',
-          '/retained/chart',
+          chartPath,
           '--namespace',
           'commander',
           '--values',
@@ -250,7 +288,20 @@ describe('Helm post-rendered release projection', () => {
         projection.hooks.map((hook) => hook.identity.name),
         ['commander-migration-r8', 'commander-tenant-cutover-prove-r8'],
       );
+      const projectedValues = projection.rendererInput.values as Record<string, unknown>;
+      assert.deepEqual(projectedValues.migration, chartDefaults.migration);
+      assert.deepEqual(projectedValues.podSecurityContext, chartDefaults.podSecurityContext);
+      assert.deepEqual(projectedValues.api, { terminationGracePeriodSeconds: null });
+      assert.equal(Object.hasOwn(projectedValues, 'web'), false);
+      const projectedTenantAuthority = projectedValues.tenantAuthority as Record<string, unknown>;
+      const defaultTenantAuthority = chartDefaults.tenantAuthority as Record<string, unknown>;
+      assert.deepEqual(projectedTenantAuthority.allowedTenants, ['tenant-a']);
+      assert.deepEqual(projectedTenantAuthority.apiProof, defaultTenantAuthority.apiProof);
       assert.equal(existsSync(statePath), false);
+      assert.deepEqual(
+        await ports.helm.projectRevision('commander', 'commander', '8', chartPath),
+        projection,
+      );
 
       for (const failAt of ['history', 'get']) {
         writeFileSync(
@@ -274,7 +325,7 @@ describe('Helm post-rendered release projection', () => {
                 'upgrade',
                 '--install',
                 'commander',
-                '/retained/chart',
+                chartPath,
                 '--namespace',
                 'commander',
                 '--values',
