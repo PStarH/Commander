@@ -3182,7 +3182,7 @@ async function runHelmPostRendered(
   postRender: (manifest: string, rendererValues: string) => Promise<string>,
 ): Promise<void> {
   const renderContext = projectionRenderContext(helmArgs);
-  const hookManifest = await renderProjectionHooks(renderContext);
+  const hookManifest = await renderProjectionHooks(renderContext, rendererValues);
   const projectionValues = await projectionRendererValues(
     renderContext.chart,
     rendererValues,
