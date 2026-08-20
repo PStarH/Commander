@@ -97,6 +97,109 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
   });
 
+  it('does not inherit an unresolved destructured command when its source changes', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    for (const binding of ['{ command }', '[command]']) {
+      const baseline =
+        'function run() {\n  const ' +
+        binding +
+        ' = safeSource;\n  const child = ' +
+        processCreationCall +
+        'command, []);\n}\n';
+      const changed = baseline.replace('safeSource', 'process.argv');
+
+      const inherited = evaluateIndexedWarnings(
+        await enumerateHighWarnings(baseline, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+
+      assert.equal(inherited.inherited.length, 1);
+      assert.equal(inherited.violations.length, 0);
+      assert.equal(result.inherited.length, 0);
+      assert.equal(result.violations.length, 1);
+      assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+    }
+  });
+
+  it('does not inherit when a nested destructuring fallback write changes', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  let fallback = { command: 'node' };\n  fallback = { command: 'node' };\n  const source = {};\n  const { nested: { command } = fallback } = source;\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace("fallback = { command: 'node' };", 'fallback = process.argv;');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('binds an unresolved call to its lexical scope, statement, and guard', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const note = 'before';\n  if (externalGuard) { const child = " +
+      processCreationCall +
+      'externalCommand, []); }\n}\n';
+    const unrelated = baseline.replace("const note = 'before';", "const note = 'after';");
+    const changedGuard = baseline.replace('externalGuard', '!externalGuard');
+
+    const inherited = evaluateIndexedWarnings(
+      await enumerateHighWarnings(unrelated, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+    const rejected = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changedGuard, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(inherited.violations.length, 0);
+    assert.equal(inherited.inherited.length, 1);
+    assert.equal(rejected.inherited.length, 0);
+    assert.equal(rejected.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
   it('does not inherit when a command variable is reassigned before an unchanged call', async () => {
     const processCreationCall = ['sp', 'awn', '('].join('');
     const scan = (content: string): readonly ScannerWarning[] =>
@@ -269,6 +372,40 @@ describe('pre-commit scanner index policy', () => {
 
     assert.equal(result.inherited.length, 0);
     assert.equal(result.violations.length, 1);
+  });
+
+  it('binds an anonymous callback warning to its parent call and argument position', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      'function run() { return new Promise((resolve) => { const child = ' +
+      processCreationCall +
+      "'node', []); resolve(child); }); }\n";
+    const moved = baseline.replace('new Promise((resolve)', 'wrapper(0, (resolve)');
+
+    const inherited = evaluateIndexedWarnings(
+      await enumerateHighWarnings(baseline, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+    const rejected = evaluateIndexedWarnings(
+      await enumerateHighWarnings(moved, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(inherited.violations.length, 0);
+    assert.equal(inherited.inherited.length, 1);
+    assert.equal(rejected.inherited.length, 0);
+    assert.equal(rejected.violations[0]!.reason, 'duplicate_high_warning');
   });
 
   it('fails closed when warning evidence has no stable enclosing source unit', async () => {

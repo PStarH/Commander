@@ -125,6 +125,39 @@ function enclosingCall(node: ts.Node): ts.CallExpression | ts.NewExpression | un
   return undefined;
 }
 
+function bindingElementForName(
+  bindingName: ts.BindingName,
+  name: string,
+): ts.BindingElement | undefined {
+  if (ts.isIdentifier(bindingName)) return undefined;
+  for (const element of bindingName.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    if (ts.isIdentifier(element.name) && element.name.text === name) return element;
+    const nested = bindingElementForName(element.name, name);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
+function declarationForName(
+  declaration: ts.VariableDeclaration | ts.ParameterDeclaration,
+  name: string,
+): ts.Declaration | undefined {
+  if (ts.isIdentifier(declaration.name)) {
+    return declaration.name.text === name ? declaration : undefined;
+  }
+  return bindingElementForName(declaration.name, name);
+}
+
+function bindingOwnerDeclaration(
+  binding: ts.BindingElement,
+): ts.VariableDeclaration | ts.ParameterDeclaration | undefined {
+  for (let current: ts.Node | undefined = binding; current; current = current.parent) {
+    if (ts.isVariableDeclaration(current) || ts.isParameter(current)) return current;
+  }
+  return undefined;
+}
+
 function declarationFromStatements(
   sourceFile: ts.SourceFile,
   statements: ts.NodeArray<ts.Statement>,
@@ -158,9 +191,8 @@ function declarationFromStatements(
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
-        result = declaration;
-      }
+      const match = declarationForName(declaration, name);
+      if (match !== undefined) result = match;
     }
   }
   return result;
@@ -176,31 +208,31 @@ function findLocalDeclaration(
     if (ts.isVariableDeclaration(scope) && ts.isVariableDeclarationList(scope.parent)) {
       for (const declaration of scope.parent.declarations) {
         if (declaration.getStart(sourceFile) >= position) break;
-        if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
-          return declaration;
-        }
+        const match = declarationForName(declaration, name);
+        if (match !== undefined) return match;
       }
     }
     if (ts.isCatchClause(scope)) {
       const variableDeclaration = scope.variableDeclaration;
-      if (variableDeclaration !== undefined && ts.isIdentifier(variableDeclaration.name)) {
-        if (variableDeclaration.name.text === name) return variableDeclaration;
+      if (variableDeclaration !== undefined) {
+        const match = declarationForName(variableDeclaration, name);
+        if (match !== undefined) return match;
       }
     }
     if (ts.isForStatement(scope) && scope.initializer !== undefined) {
       if (ts.isVariableDeclarationList(scope.initializer)) {
         const declaration = scope.initializer.declarations.find(
-          (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
+          (candidate) => declarationForName(candidate, name) !== undefined,
         );
-        if (declaration !== undefined) return declaration;
+        if (declaration !== undefined) return declarationForName(declaration, name);
       }
     }
     if (ts.isForInStatement(scope) || ts.isForOfStatement(scope)) {
       if (ts.isVariableDeclarationList(scope.initializer)) {
         const declaration = scope.initializer.declarations.find(
-          (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
+          (candidate) => declarationForName(candidate, name) !== undefined,
         );
-        if (declaration !== undefined) return declaration;
+        if (declaration !== undefined) return declarationForName(declaration, name);
       }
     }
     if (ts.isBlock(scope) || ts.isSourceFile(scope)) {
@@ -209,9 +241,9 @@ function findLocalDeclaration(
     }
     if (isExecutableFunction(scope)) {
       const parameter = scope.parameters.find(
-        (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
+        (candidate) => declarationForName(candidate, name) !== undefined,
       );
-      if (parameter !== undefined) return parameter;
+      if (parameter !== undefined) return declarationForName(parameter, name);
     }
   }
   return undefined;
@@ -330,15 +362,37 @@ function declarationText(sourceFile: ts.SourceFile, declaration: ts.Declaration)
       if (ts.isImportDeclaration(current)) return current.getText(sourceFile);
     }
   }
+  if (ts.isBindingElement(declaration)) {
+    const owner = bindingOwnerDeclaration(declaration);
+    if (owner !== undefined) return owner.getText(sourceFile);
+  }
   return declaration.getText(sourceFile);
 }
 
+function bindingInitializerInputs(binding: ts.BindingElement): ts.Identifier[] {
+  const inputs: ts.Identifier[] = [];
+  for (let current: ts.Node | undefined = binding; current; current = current.parent) {
+    if (ts.isBindingElement(current) && current.initializer !== undefined) {
+      inputs.push(...referencedIdentifiers(current.initializer));
+    }
+    if (ts.isVariableDeclaration(current) || ts.isParameter(current)) {
+      if (current.initializer !== undefined) {
+        inputs.push(...referencedIdentifiers(current.initializer));
+      }
+      return inputs;
+    }
+  }
+  return inputs;
+}
+
 function declarationInputs(declaration: ts.Declaration): ts.Identifier[] {
+  if (ts.isBindingElement(declaration)) {
+    return bindingInitializerInputs(declaration);
+  }
   if (
     ts.isVariableDeclaration(declaration) ||
     ts.isParameter(declaration) ||
-    ts.isPropertyDeclaration(declaration) ||
-    ts.isBindingElement(declaration)
+    ts.isPropertyDeclaration(declaration)
   ) {
     return declaration.initializer === undefined
       ? []
@@ -394,6 +448,10 @@ function stableBindingIdentity(
   }
   if (ts.isPropertyAssignment(parent) || ts.isPropertyDeclaration(parent)) {
     return 'property:' + parent.name.getText(sourceFile);
+  }
+  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+    const index = parent.arguments?.findIndex((argument) => argument === node) ?? -1;
+    if (index >= 0) return 'argument:' + index + ':' + parent.expression.getText(sourceFile);
   }
   return undefined;
 }
@@ -571,7 +629,6 @@ function sourceOccurrenceFingerprint(
     [...argumentReferences, ...controls.roots],
     call.getStart(sourceFile),
   );
-  if (dependencies === undefined) return undefined;
 
   return createHash('sha256')
     .update(
@@ -579,7 +636,7 @@ function sourceOccurrenceFingerprint(
         scopeIdentity,
         warningStatement: warningStatementText(sourceFile, call, functionScope),
         controls: controls.descriptors,
-        dependencies,
+        dependencies: dependencies ?? ['unresolved'],
       }),
     )
     .digest('hex');
