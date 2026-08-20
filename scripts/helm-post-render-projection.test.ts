@@ -203,6 +203,7 @@ describe('Helm post-rendered release projection', () => {
           'if (data.failAt === args[0]) process.exit(3);',
           'if (args[0] === "template") {',
           '  if (!args.includes("--is-upgrade")) process.exit(4);',
+          '  if (readFileSync(0, "utf8") !== data.values) process.exit(6);',
           '  process.stdout.write(data.renderedHooks);',
           '}',
           'else if (args[0] === "upgrade") {',
