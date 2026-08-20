@@ -2158,11 +2158,11 @@ const COMMAND_TERMINATION_GRACE_MS = 250;
 const COMMAND_TERMINATION_CONFIRMATION_TIMEOUT_MS = 2_000;
 
 export type CommandExecutionPolicy =
-  'standard' | 'helm_rollout' | 'owner_job_wait' | 'proof_job_wait';
+  'standard' | 'helm_read' | 'helm_rollout' | 'owner_job_wait' | 'proof_job_wait';
 
 export function commandExecutionTimeoutMs(policy: CommandExecutionPolicy | string): number {
   const timeout =
-    policy === 'standard'
+    policy === 'standard' || policy === 'helm_read'
       ? 60_000
       : policy === 'owner_job_wait'
         ? 5 * 60_000 + COMMAND_TIMEOUT_MARGIN_MS
@@ -2201,6 +2201,12 @@ export async function defaultCommand(
     });
     const output: Buffer[] = [];
     const errorOutput: Buffer[] = [];
+    const maximumBytes =
+      executionPolicy === 'helm_read' ? RESTORE_STREAM_LIMIT : COMMAND_OUTPUT_LIMIT;
+    const outputLimitCode =
+      executionPolicy === 'helm_read'
+        ? 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT'
+        : 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT';
     let bytes = 0;
     let settled = false;
     let childClosed = false;
@@ -2272,8 +2278,8 @@ export async function defaultCommand(
       if (terminatingError) return;
       const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       bytes += value.length;
-      if (bytes > COMMAND_OUTPUT_LIMIT) {
-        terminate('TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT');
+      if (bytes > maximumBytes) {
+        terminate(outputLimitCode);
         return;
       }
       destination.push(value);
@@ -2641,25 +2647,20 @@ async function readBoundedStream(
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function processResult(child: ReturnType<typeof spawn>, code: string): Promise<void> {
-  if (!isAllowedHelmDiagnosticCode(code)) fail('TENANT_CUTOVER_COMMAND_FAILED');
-  return new Promise((resolveProcess, reject) => {
-    child.once('error', () => reject(new Error(code)));
-    child.once('close', (status) => (status === 0 ? resolveProcess() : reject(new Error(code))));
-  });
-}
-
 async function readHelmBounded(args: readonly string[], maximumBytes: number): Promise<string> {
-  const child = spawn('helm', [...args], { shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
+  if (maximumBytes !== RESTORE_STREAM_LIMIT) fail('TENANT_CUTOVER_RESTORE_STREAM_LIMIT');
   try {
-    const [output] = await Promise.all([
-      readBoundedStream(child.stdout, maximumBytes, 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT'),
-      processResult(child, 'TENANT_CUTOVER_HELM_RESTORE_COMMAND_FAILED'),
-    ]);
-    return output;
+    return await defaultCommand('helm', args, undefined, 'helm_read');
   } catch (error) {
-    child.kill();
-    throw error;
+    const code = error instanceof Error ? error.message : '';
+    if (
+      code === 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+    ) {
+      throw error;
+    }
+    return fail('TENANT_CUTOVER_HELM_RESTORE_COMMAND_FAILED');
   }
 }
 
@@ -2741,12 +2742,291 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 }
 
+type ProjectionContext = 'rollout' | 'restore';
+
+interface ProjectionRenderContext {
+  namespace: string;
+  release: string;
+  revision: string;
+  chart: string;
+  projectionConfigMapName: string;
+  hookRenderArgs: string[];
+}
+
+function projectionRenderContext(helmArgs: readonly string[]): ProjectionRenderContext {
+  if (helmArgs[0] !== 'upgrade') fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  let cursor = 1;
+  const install = helmArgs[cursor] === '--install';
+  if (install) cursor += 1;
+  const release = helmArgs[cursor];
+  const chart = helmArgs[cursor + 1];
+  if (
+    typeof release !== 'string' ||
+    !NAME.test(release) ||
+    typeof chart !== 'string' ||
+    !chart ||
+    chart.includes('\0')
+  ) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const remaining = helmArgs.slice(cursor + 2);
+  const namespaces = remaining.flatMap((value, index) =>
+    value === '--namespace' && remaining[index + 1] ? [remaining[index + 1]!] : [],
+  );
+  const projectionPrefix = 'tenantAuthority.releaseProjectionConfigMap=';
+  const projections = remaining.flatMap((value, index) => {
+    const candidate = value === '--set' ? remaining[index + 1] : undefined;
+    return candidate?.startsWith(projectionPrefix)
+      ? [candidate.slice(projectionPrefix.length)]
+      : [];
+  });
+  if (namespaces.length !== 1 || projections.length !== 1) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const namespace = namespaces[0]!;
+  const projectionConfigMapName = projections[0]!;
+  const revisionMatch = projectionConfigMapName.match(/-r([1-9][0-9]*)$/);
+  if (
+    !NAME.test(namespace) ||
+    !NAME.test(projectionConfigMapName) ||
+    projectionConfigMapName.length > 63 ||
+    !revisionMatch
+  ) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const renderOptions: string[] = [];
+  for (let index = 0; index < remaining.length; index += 1) {
+    const value = remaining[index]!;
+    if (value === '--atomic' || value === '--wait' || value === '--wait-for-jobs') continue;
+    if (value === '--timeout') {
+      index += 1;
+      if (index >= remaining.length) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      continue;
+    }
+    renderOptions.push(value);
+  }
+  return {
+    namespace,
+    release,
+    revision: revisionMatch[1]!,
+    chart,
+    projectionConfigMapName,
+    hookRenderArgs: [
+      'template',
+      release,
+      chart,
+      ...renderOptions,
+      '--show-only',
+      'templates/migration-job.yaml',
+      '--show-only',
+      'templates/tenant-cutover-prove-job.yaml',
+      ...(install ? [] : ['--is-upgrade']),
+    ],
+  };
+}
+
+async function renderProjectionHooks(
+  context: ProjectionRenderContext,
+  values?: string,
+): Promise<string> {
+  try {
+    return await defaultCommand('helm', context.hookRenderArgs, values);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (
+      code === 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+    ) {
+      throw error;
+    }
+    return fail('TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED');
+  }
+}
+
+function latestHelmRevision(history: string, context: ProjectionContext): string {
+  const invalidCode =
+    context === 'rollout'
+      ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+      : 'TENANT_CUTOVER_RESTORE_HISTORY_INVALID';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(history);
+  } catch {
+    return fail(invalidCode);
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) fail(invalidCode);
+  const revisions = parsed.map((entry) => {
+    const record = jsonRecord(entry, invalidCode);
+    const revision =
+      typeof record.revision === 'number' ? String(record.revision) : record.revision;
+    if (typeof revision !== 'string' || !/^[1-9][0-9]*$/.test(revision)) {
+      return fail(invalidCode);
+    }
+    return revision;
+  });
+  if (new Set(revisions).size !== revisions.length) fail(invalidCode);
+  return revisions.reduce((latest, revision) =>
+    BigInt(revision) > BigInt(latest) ? revision : latest,
+  );
+}
+
+function failStoredProjectionHelmCommand(error: unknown, context: ProjectionContext): never {
+  const code = error instanceof Error ? error.message : '';
+  if (
+    code === 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT' ||
+    code === 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT' ||
+    code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+    code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+  ) {
+    throw error;
+  }
+  return fail(
+    context === 'rollout'
+      ? 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'
+      : 'TENANT_CUTOVER_HELM_RESTORE_COMMAND_FAILED',
+  );
+}
+
+async function verifyStoredProjection(
+  renderContext: ProjectionRenderContext,
+  context: ProjectionContext,
+): Promise<void> {
+  const invalidCode =
+    context === 'rollout'
+      ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+      : 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID';
+  const liveText = await defaultCommand('kubectl', [
+    'get',
+    'configmap',
+    renderContext.projectionConfigMapName,
+    '--namespace',
+    renderContext.namespace,
+    '--output',
+    'json',
+  ]);
+  const live = parseJsonObject(liveText, invalidCode);
+  const data = jsonRecord(live.data, invalidCode);
+  const projectionText = data['projection.json'];
+  if (typeof projectionText !== 'string') fail(invalidCode);
+  let expected: HelmReleaseProjection;
+  try {
+    expected = JSON.parse(projectionText) as HelmReleaseProjection;
+  } catch {
+    return fail(invalidCode);
+  }
+  let history: string;
+  try {
+    history = await defaultCommand('helm', [
+      'history',
+      renderContext.release,
+      '--namespace',
+      renderContext.namespace,
+      '--output',
+      'json',
+      '--max',
+      '256',
+    ]);
+  } catch (error) {
+    return failStoredProjectionHelmCommand(error, context);
+  }
+  if (latestHelmRevision(history, context) !== renderContext.revision) {
+    fail(context === 'rollout' ? invalidCode : 'TENANT_CUTOVER_RESTORE_HISTORY_INVALID');
+  }
+  let values: string;
+  let manifest: string;
+  let hooks: string;
+  try {
+    [values, manifest, hooks] = await Promise.all([
+      readHelmBounded(
+        [
+          'get',
+          'values',
+          renderContext.release,
+          '--namespace',
+          renderContext.namespace,
+          '--revision',
+          renderContext.revision,
+          '--output',
+          'yaml',
+        ],
+        RESTORE_STREAM_LIMIT,
+      ),
+      readHelmBounded(
+        [
+          'get',
+          'manifest',
+          renderContext.release,
+          '--namespace',
+          renderContext.namespace,
+          '--revision',
+          renderContext.revision,
+        ],
+        RESTORE_STREAM_LIMIT,
+      ),
+      readHelmBounded(
+        [
+          'get',
+          'hooks',
+          renderContext.release,
+          '--namespace',
+          renderContext.namespace,
+          '--revision',
+          renderContext.revision,
+        ],
+        RESTORE_STREAM_LIMIT,
+      ),
+    ]);
+  } catch (error) {
+    return failStoredProjectionHelmCommand(error, context);
+  }
+  let stored: HelmReleaseProjection;
+  try {
+    stored = projectHelmReleaseRevision({
+      namespace: renderContext.namespace,
+      releaseName: renderContext.release,
+      revision: renderContext.revision,
+      manifest: hooks.trim() ? manifest + '\n---\n' + hooks : manifest,
+      values,
+    });
+  } catch {
+    return fail(invalidCode);
+  }
+  if (canonicalBootstrapJson(stored) !== canonicalBootstrapJson(expected)) fail(invalidCode);
+}
+
+async function runProjectedHelmCommand(
+  args: readonly string[],
+  stdin: string | undefined,
+  context: ProjectionContext,
+): Promise<void> {
+  try {
+    await defaultCommand('helm', args, stdin, 'helm_rollout');
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (
+      code === 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+    ) {
+      throw error;
+    }
+    return fail(
+      context === 'rollout'
+        ? 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'
+        : 'TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED',
+    );
+  }
+}
+
 async function streamValuesToHelm(input: {
   values: string;
   helmArgs: readonly string[];
   postRender(manifest: string): string;
   afterPostRender?(manifest: string): Promise<void>;
 }): Promise<void> {
+  const renderContext = projectionRenderContext(input.helmArgs);
+  const hookManifest = await renderProjectionHooks(renderContext, input.values);
   const socketDirectory = await mkdtemp(join(tmpdir(), 'commander-restore-'));
   await chmod(socketDirectory, 0o700);
   const socketPath = join(socketDirectory, 'post-render.sock');
@@ -2771,7 +3051,15 @@ async function streamValuesToHelm(input: {
         'TENANT_CUTOVER_RESTORE_STREAM_LIMIT',
       );
       const rendered = input.postRender(manifest);
-      await input.afterPostRender?.(rendered);
+      const projectionManifest = mergePostRenderedHelmHooks({
+        namespace: renderContext.namespace,
+        releaseName: renderContext.release,
+        revision: renderContext.revision,
+        projectionConfigMapName: renderContext.projectionConfigMapName,
+        manifest: rendered,
+        hookManifest,
+      });
+      await input.afterPostRender?.(projectionManifest);
       response.writeHead(200, { 'content-type': 'application/yaml' });
       response.end(rendered);
     } catch {
@@ -2791,17 +3079,15 @@ async function streamValuesToHelm(input: {
   if (Buffer.byteLength(input.values) > RESTORE_STREAM_LIMIT) {
     fail('TENANT_CUTOVER_RESTORE_STREAM_LIMIT');
   }
-  const helm = spawn(
-    'helm',
-    [...input.helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
-    { shell: false, stdio: ['pipe', 'ignore', 'ignore'] },
-  );
-  helm.stdin.end(input.values);
   try {
-    await Promise.all([processResult(helm, 'TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED')]);
+    await runProjectedHelmCommand(
+      [...input.helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
+      input.values,
+      'restore',
+    );
     if (requests !== 1) fail('TENANT_CUTOVER_RESTORE_SECRET_RENDER_INVALID');
+    await verifyStoredProjection(renderContext, 'restore');
   } finally {
-    helm.kill();
     await closeServer(server);
     await rm(socketDirectory, { recursive: true, force: true });
   }
@@ -2811,6 +3097,8 @@ async function runHelmPostRendered(
   helmArgs: readonly string[],
   postRender: (manifest: string) => Promise<string>,
 ): Promise<void> {
+  const renderContext = projectionRenderContext(helmArgs);
+  const hookManifest = await renderProjectionHooks(renderContext);
   const socketDirectory = await mkdtemp(join(tmpdir(), 'commander-projection-'));
   await chmod(socketDirectory, 0o700);
   const socketPath = join(socketDirectory, 'post-render.sock');
@@ -2834,9 +3122,18 @@ async function runHelmPostRendered(
         RESTORE_STREAM_LIMIT,
         'TENANT_CUTOVER_RESTORE_STREAM_LIMIT',
       );
-      const rendered = await postRender(manifest);
+      await postRender(
+        mergePostRenderedHelmHooks({
+          namespace: renderContext.namespace,
+          releaseName: renderContext.release,
+          revision: renderContext.revision,
+          projectionConfigMapName: renderContext.projectionConfigMapName,
+          manifest,
+          hookManifest,
+        }),
+      );
       response.writeHead(200, { 'content-type': 'application/yaml' });
-      response.end(rendered);
+      response.end(manifest);
     } catch {
       response.writeHead(400);
       response.end();
@@ -2851,16 +3148,15 @@ async function runHelmPostRendered(
     socketPath,
     token,
   ].flatMap((argument) => [`--post-renderer-args=${argument}`]);
-  const helm = spawn(
-    'helm',
-    [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
-    { shell: false, stdio: ['ignore', 'ignore', 'ignore'] },
-  );
   try {
-    await processResult(helm, 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED');
+    await runProjectedHelmCommand(
+      [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
+      undefined,
+      'rollout',
+    );
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    await verifyStoredProjection(renderContext, 'rollout');
   } finally {
-    helm.kill();
     await closeServer(server);
     await rm(socketDirectory, { recursive: true, force: true });
   }
@@ -4254,7 +4550,171 @@ if (process.argv[1]?.match(/helm-tenant-cutover\.(?:ts|js)$/)) {
         }
       : main;
   run().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : 'TENANT_CUTOVER_FAILED'}\n`);
+    process.stderr.write((error instanceof Error ? error.message : 'TENANT_CUTOVER_FAILED') + '\n');
     process.exitCode = 1;
   });
+}
+function revisionHookName(release: string, kind: 'migration' | 'proof', revision: string): string {
+  const suffix =
+    kind === 'migration' ? '-migration-r' + revision : '-tenant-cutover-prove-r' + revision;
+  return release.slice(0, 63 - suffix.length).replace(/-$/, '') + suffix;
+}
+
+export function projectPostRenderedHelmReleaseRevision(input: {
+  namespace: string;
+  releaseName: string;
+  revision: string;
+  projectionConfigMapName: string;
+  manifest: string;
+  hookManifest: string;
+  values: string;
+}): HelmReleaseProjection {
+  const combined = mergePostRenderedHelmHooks(input);
+  return projectHelmReleaseRevision({
+    namespace: input.namespace,
+    releaseName: input.releaseName,
+    revision: input.revision,
+    manifest: combined,
+    values: input.values,
+  });
+}
+
+function mergePostRenderedHelmHooks(input: {
+  namespace: string;
+  releaseName: string;
+  revision: string;
+  projectionConfigMapName: string;
+  manifest: string;
+  hookManifest: string;
+}): string {
+  if (
+    !input.namespace ||
+    !input.releaseName ||
+    !/^[1-9][0-9]*$/.test(input.revision) ||
+    !NAME.test(input.projectionConfigMapName) ||
+    input.projectionConfigMapName.length > 63
+  ) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const documents: JsonRecord[] = [];
+  try {
+    loadAll(input.hookManifest, (document) => {
+      if (document === undefined || document === null) return;
+      const object = jsonRecord(document, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const metadata = jsonRecord(object.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      if (
+        object.apiVersion !== 'batch/v1' ||
+        object.kind !== 'Job' ||
+        (metadata.namespace !== undefined && metadata.namespace !== input.namespace)
+      ) {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+      documents.push(object);
+    });
+  } catch {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  if (documents.length !== 2) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+
+  const allowed = new Map([
+    [revisionHookName(input.releaseName, 'migration', '1'), 'migration'],
+    [revisionHookName(input.releaseName, 'proof', '1'), 'proof'],
+  ] as const);
+  const hooks: JsonRecord[] = [];
+  for (const hook of documents) {
+    const metadata = jsonRecord(hook.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    const sourceName = metadata.name;
+    if (typeof sourceName !== 'string') fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    const kind = allowed.get(sourceName);
+    if (!kind) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    allowed.delete(sourceName);
+    const targetName = revisionHookName(input.releaseName, kind, input.revision);
+    metadata.name = targetName;
+    metadata.namespace = input.namespace;
+    const annotations = jsonRecord(
+      metadata.annotations,
+      'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+    );
+    const hookEvents = annotations['helm.sh/hook'];
+    const expectedEvents =
+      kind === 'migration' ? 'pre-install,pre-upgrade,pre-rollback' : 'post-install,post-upgrade';
+    const expectedWeight = kind === 'migration' ? '-10' : '10';
+    if (hookEvents === undefined && kind === 'migration') {
+      let ordinaryMigration = false;
+      try {
+        loadAll(input.manifest, (document) => {
+          if (!document || typeof document !== 'object' || Array.isArray(document)) return;
+          const object = document as JsonRecord;
+          const objectMetadata = jsonRecord(
+            object.metadata,
+            'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+          );
+          if (
+            object.apiVersion === 'batch/v1' &&
+            object.kind === 'Job' &&
+            objectMetadata.name === targetName
+          ) {
+            ordinaryMigration = true;
+          }
+        });
+      } catch {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+      if (
+        !ordinaryMigration ||
+        annotations['helm.sh/hook-weight'] !== undefined ||
+        annotations['helm.sh/hook-delete-policy'] !== 'before-hook-creation,hook-succeeded'
+      ) {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+      continue;
+    }
+    if (
+      hookEvents !== expectedEvents ||
+      annotations['helm.sh/hook-weight'] !== expectedWeight ||
+      annotations['helm.sh/hook-delete-policy'] !== 'before-hook-creation,hook-succeeded'
+    ) {
+      fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    }
+    if (kind === 'proof') {
+      const spec = jsonRecord(hook.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const template = jsonRecord(spec.template, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const podSpec = jsonRecord(template.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const volumes = Array.isArray(podSpec.volumes)
+        ? podSpec.volumes.map((value) =>
+            jsonRecord(value, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'),
+          )
+        : [];
+      const projectionVolumes = volumes.filter((value) => value.name === 'release-projection');
+      if (projectionVolumes.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const configMap = jsonRecord(
+        projectionVolumes[0]!.configMap,
+        'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+      );
+      if (configMap.name !== input.projectionConfigMapName) {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+    }
+    hooks.push(hook);
+  }
+  if (allowed.size !== 0) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+
+  const combined = [
+    input.manifest.trimEnd(),
+    ...hooks.map((hook) =>
+      dump(hook, {
+        noRefs: true,
+        lineWidth: -1,
+      }).trimEnd(),
+    ),
+  ]
+    .filter(Boolean)
+    .join('\n---\n');
+  assertProjectionConsumer(
+    combined,
+    input.releaseName,
+    input.revision,
+    input.projectionConfigMapName,
+  );
+  return combined;
 }
