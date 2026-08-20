@@ -253,6 +253,9 @@ describe('Helm post-rendered release projection', () => {
           if (args[0] === 'get')
             return existsSync(statePath) ? readFileSync(statePath, 'utf8') : '';
           if (args[0] === 'create' && stdin) {
+            if ((JSON.parse(readFileSync(dataPath, 'utf8')) as { failCreate?: boolean }).failCreate) {
+              return '';
+            }
             writeFileSync(statePath, stdin);
             return 'configmap/commander-proof-projection-v7-r8';
           }
@@ -350,6 +353,45 @@ describe('Helm post-rendered release projection', () => {
         );
         assert.equal(existsSync(statePath), false);
       }
+
+      writeFileSync(
+        dataPath,
+        JSON.stringify({
+          ordinary,
+          renderedHooks: renderedHooks(),
+          storedHooks,
+          values,
+          failCreate: true,
+        }),
+      );
+      await assert.rejects(
+        () =>
+          ports.helm.runProjectedRevision({
+            namespace: 'commander',
+            release: 'commander',
+            revision: '8',
+            projectionConfigMapName: 'commander-proof-projection-v7-r8',
+            args: [
+              'upgrade',
+              '--install',
+              'commander',
+              chartPath,
+              '--namespace',
+              'commander',
+              '--values',
+              '-',
+              '--set',
+              'tenantAuthority.releaseProjectionConfigMap=commander-proof-projection-v7-r8',
+              '--atomic',
+              '--wait',
+              '--wait-for-jobs',
+              '--timeout',
+              '10m',
+            ],
+            rendererValues: values,
+          }),
+        /TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED/,
+      );
     } finally {
       process.env.PATH = originalPath;
       if (originalData === undefined) delete process.env.COMMANDER_FAKE_HELM_DATA;
