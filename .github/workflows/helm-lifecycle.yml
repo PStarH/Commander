@@ -59,12 +59,22 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.17.3
+      - run: pnpm install --frozen-lockfile
+      - name: Build Kind lifecycle runtime packages
+        run: |
+          pnpm --filter @commander/postgres-runtime build
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/action-adapters build
+          pnpm --filter @commander/core build
+          pnpm --filter @commander/worker-plane build
       - uses: helm/kind-action@v1
         with:
           cluster_name: commander-helm-lifecycle
           node_image: kindest/node:v1.33.2@sha256:18e6c8f260d51cda4bc32d9f1a4852f9e693c7b667aa14321996ed7c411fc121
           config: scripts/fixtures/helm-lifecycle/kind-config.yaml
-      - run: pnpm install --frozen-lockfile
       - name: Run Kind lifecycle harness
         run: pnpm exec tsx scripts/helm-lifecycle-kind.ts run
       - name: Upload sanitized evidence

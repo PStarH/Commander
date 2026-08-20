@@ -634,6 +634,21 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(workflow, /run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts run/);
   });
 
+  it('builds Kind lifecycle workspace runtime dependencies before the harness', () => {
+    const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
+    const kindJob = workflow.match(/  kind:\n[\s\S]*?(?=\n  [a-z]|$)/)?.[0];
+
+    assert.ok(kindJob, 'the Kind lifecycle job must exist');
+    const build = kindJob.indexOf('pnpm --filter @commander/postgres-runtime build');
+    const harness = kindJob.indexOf('pnpm exec tsx scripts/helm-lifecycle-kind.ts run');
+    assert.ok(build >= 0, 'the Kind lifecycle job must build workspace runtime dependencies');
+    assert.ok(build < harness, 'workspace runtime dependencies must build before the harness');
+    assert.match(
+      kindJob,
+      /pnpm --filter @commander\/postgres-runtime build\n          pnpm --filter @commander\/contracts build\n          pnpm --filter @commander\/plugin-sdk build\n          pnpm --filter @commander\/effect-broker build\n          pnpm --filter @commander\/kernel build\n          pnpm --filter @commander\/action-adapters build\n          pnpm --filter @commander\/core build\n          pnpm --filter @commander\/worker-plane build/,
+    );
+  });
+
   it('fails closed when sanitized Kind evidence cannot be uploaded', () => {
     const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
     const uploadStep = workflow.match(/- name: Upload sanitized evidence\n[\s\S]*$/)?.[0];
