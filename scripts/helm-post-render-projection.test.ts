@@ -173,7 +173,10 @@ describe('Helm post-rendered release projection', () => {
           'const args = process.argv.slice(2);',
           'const data = JSON.parse(readFileSync(process.env.COMMANDER_FAKE_HELM_DATA, "utf8"));',
           'if (data.failAt === args[0]) process.exit(3);',
-          'if (args[0] === "template") process.stdout.write(data.renderedHooks);',
+          'if (args[0] === "template") {',
+          '  if (!args.includes("--is-upgrade")) process.exit(4);',
+          '  process.stdout.write(data.renderedHooks);',
+          '}',
           'else if (args[0] === "upgrade") {',
           '  const renderer = args[args.indexOf("--post-renderer") + 1];',
           '  const prefix = "--post-renderer-args=";',
@@ -225,6 +228,7 @@ describe('Helm post-rendered release projection', () => {
         projectionConfigMapName: 'commander-proof-projection-v7-r8',
         args: [
           'upgrade',
+          '--install',
           'commander',
           '/retained/chart',
           '--namespace',
@@ -268,6 +272,7 @@ describe('Helm post-rendered release projection', () => {
               projectionConfigMapName: 'commander-proof-projection-v7-r8',
               args: [
                 'upgrade',
+                '--install',
                 'commander',
                 '/retained/chart',
                 '--namespace',
