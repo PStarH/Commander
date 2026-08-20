@@ -2820,7 +2820,7 @@ function projectionRenderContext(helmArgs: readonly string[]): ProjectionRenderC
       'templates/migration-job.yaml',
       '--show-only',
       'templates/tenant-cutover-prove-job.yaml',
-      ...(install ? [] : ['--is-upgrade']),
+      ...(revisionMatch[1] === '1' ? [] : ['--is-upgrade']),
     ],
   };
 }
