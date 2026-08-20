@@ -155,6 +155,7 @@ export interface HelmProcessPort {
     namespace: string,
     release: string,
     revision: string,
+    chart: string,
   ): Promise<HelmReleaseProjection>;
   proofJobManifest(namespace: string, release: string, revision: string): Promise<string>;
   restoreRevision(request: {
@@ -616,6 +617,79 @@ function yamlRecord(value: unknown): Record<string, unknown> {
     fail('TENANT_CUTOVER_VALUES_INVALID');
   }
   return value as Record<string, unknown>;
+}
+
+function cloneHelmValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneHelmValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, child]) => [
+      key,
+      cloneHelmValue(child),
+    ]),
+  );
+}
+
+function mergeProjectionRendererValues(
+  defaults: Record<string, unknown>,
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = cloneHelmValue(defaults) as Record<string, unknown>;
+  for (const [key, override] of Object.entries(overrides)) {
+    if (override === null) {
+      result[key] = null;
+      continue;
+    }
+    const inherited = result[key];
+    result[key] =
+      override &&
+      typeof override === 'object' &&
+      !Array.isArray(override) &&
+      inherited &&
+      typeof inherited === 'object' &&
+      !Array.isArray(inherited)
+        ? mergeProjectionRendererValues(
+            inherited as Record<string, unknown>,
+            override as Record<string, unknown>,
+          )
+        : cloneHelmValue(override);
+  }
+  return result;
+}
+
+const PROJECTION_RENDERER_DEFAULT_KEYS = [
+  'image',
+  'database',
+  'databaseTls',
+  'migration',
+  'tenantAuthority',
+  'podSecurityContext',
+] as const;
+
+async function projectionRendererValues(
+  chart: string,
+  overrides: string,
+  context: 'rollout' | 'restore',
+): Promise<string> {
+  try {
+    const chartDefaults = yamlRecord(load(await readFile(join(chart, 'values.yaml'), 'utf8')));
+    const supplied = yamlRecord(load(overrides));
+    const projectionDefaults: Record<string, unknown> = {};
+    for (const key of PROJECTION_RENDERER_DEFAULT_KEYS) {
+      if (!Object.hasOwn(chartDefaults, key)) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      projectionDefaults[key] = chartDefaults[key];
+    }
+    return dump(mergeProjectionRendererValues(projectionDefaults, supplied), {
+      noRefs: true,
+      sortKeys: true,
+    });
+  } catch {
+    return fail(
+      context === 'rollout'
+        ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+        : 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID',
+    );
+  }
 }
 
 function databaseOwnerSecretReference(
@@ -1542,6 +1616,7 @@ async function runFreshCurrentProofChallenge(input: {
       input.request.namespace,
       input.request.release,
       evidence.revision,
+      input.chartPackage,
     );
     if (
       canonicalBootstrapSha256(projected) !== evidence.releaseProjectionSha256 ||
@@ -1659,6 +1734,7 @@ export async function runHelmTenantCutover(
       request.namespace,
       request.release,
       evidence.revision,
+      chartPackage,
     );
     if (
       canonicalBootstrapSha256(projectedCurrent) !== evidence.releaseProjectionSha256 ||
@@ -1671,6 +1747,7 @@ export async function runHelmTenantCutover(
       request.namespace,
       request.release,
       failedRevision,
+      chartPackage,
     );
     if (
       failedTarget.namespace !== request.namespace ||
@@ -2571,7 +2648,7 @@ export interface HelmRevisionRestoreRuntime {
     values: string;
     helmArgs: readonly string[];
     postRender(manifest: string): string;
-    afterPostRender?(manifest: string): Promise<void>;
+    afterPostRender?(manifest: string, rendererValues: string): Promise<void>;
   }): Promise<void>;
 }
 
@@ -2982,12 +3059,13 @@ async function verifyStoredProjection(
   }
   let stored: HelmReleaseProjection;
   try {
+    const rendererValues = await projectionRendererValues(renderContext.chart, values, context);
     stored = projectHelmReleaseRevision({
       namespace: renderContext.namespace,
       releaseName: renderContext.release,
       revision: renderContext.revision,
       manifest: hooks.trim() ? manifest + '\n---\n' + hooks : manifest,
-      values,
+      values: rendererValues,
     });
   } catch {
     return fail(invalidCode);
@@ -3023,10 +3101,15 @@ async function streamValuesToHelm(input: {
   values: string;
   helmArgs: readonly string[];
   postRender(manifest: string): string;
-  afterPostRender?(manifest: string): Promise<void>;
+  afterPostRender?(manifest: string, rendererValues: string): Promise<void>;
 }): Promise<void> {
   const renderContext = projectionRenderContext(input.helmArgs);
   const hookManifest = await renderProjectionHooks(renderContext, input.values);
+  const projectionValues = await projectionRendererValues(
+    renderContext.chart,
+    input.values,
+    'restore',
+  );
   const socketDirectory = await mkdtemp(join(tmpdir(), 'commander-restore-'));
   await chmod(socketDirectory, 0o700);
   const socketPath = join(socketDirectory, 'post-render.sock');
@@ -3059,7 +3142,7 @@ async function streamValuesToHelm(input: {
         manifest: rendered,
         hookManifest,
       });
-      await input.afterPostRender?.(projectionManifest);
+      await input.afterPostRender?.(projectionManifest, projectionValues);
       response.writeHead(200, { 'content-type': 'application/yaml' });
       response.end(rendered);
     } catch {
@@ -3075,7 +3158,7 @@ async function streamValuesToHelm(input: {
     '--tenant-cutover-post-render',
     socketPath,
     token,
-  ].flatMap((argument) => [`--post-renderer-args=${argument}`]);
+  ].flatMap((argument) => ['--post-renderer-args=' + argument]);
   if (Buffer.byteLength(input.values) > RESTORE_STREAM_LIMIT) {
     fail('TENANT_CUTOVER_RESTORE_STREAM_LIMIT');
   }
@@ -3095,10 +3178,16 @@ async function streamValuesToHelm(input: {
 
 async function runHelmPostRendered(
   helmArgs: readonly string[],
-  postRender: (manifest: string) => Promise<string>,
+  rendererValues: string,
+  postRender: (manifest: string, rendererValues: string) => Promise<string>,
 ): Promise<void> {
   const renderContext = projectionRenderContext(helmArgs);
   const hookManifest = await renderProjectionHooks(renderContext);
+  const projectionValues = await projectionRendererValues(
+    renderContext.chart,
+    rendererValues,
+    'rollout',
+  );
   const socketDirectory = await mkdtemp(join(tmpdir(), 'commander-projection-'));
   await chmod(socketDirectory, 0o700);
   const socketPath = join(socketDirectory, 'post-render.sock');
@@ -3131,6 +3220,7 @@ async function runHelmPostRendered(
           manifest,
           hookManifest,
         }),
+        projectionValues,
       );
       response.writeHead(200, { 'content-type': 'application/yaml' });
       response.end(manifest);
@@ -3147,7 +3237,7 @@ async function runHelmPostRendered(
     '--tenant-cutover-post-render',
     socketPath,
     token,
-  ].flatMap((argument) => [`--post-renderer-args=${argument}`]);
+  ].flatMap((argument) => ['--post-renderer-args=' + argument]);
   try {
     await runProjectedHelmCommand(
       [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
@@ -3567,7 +3657,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       await chmod(path, 0o700);
     },
     writeFileAtomic: async (path, contents) => {
-      const temporary = `${path}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`;
+      const temporary = path + '.tmp-' + process.pid + '-' + randomBytes(8).toString('hex');
       let file;
       try {
         file = await open(temporary, 'wx', 0o600);
@@ -3584,11 +3674,12 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
     },
     readFile: (path) => readFile(path, 'utf8'),
     retainedChartPackage: async (stateDirectory, namespace, release, digest) =>
-      `${stateDirectory}/${namespace}/${release}/charts/${digest}/commander`,
+      stateDirectory + '/' + namespace + '/' + release + '/charts/' + digest + '/commander',
     retainChartPackage: async (source, stateDirectory, namespace, release, digest) => {
-      const target = `${stateDirectory}/${namespace}/${release}/charts/${digest}/commander`;
+      const target =
+        stateDirectory + '/' + namespace + '/' + release + '/charts/' + digest + '/commander';
       try {
-        await readFile(`${target}/Chart.yaml`);
+        await readFile(target + '/Chart.yaml');
         return target;
       } catch {
         // The retained chart is created below; any existing partial path is not reused.
@@ -3597,7 +3688,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       const parent = dirname(target);
       await mkdir(parent, { recursive: true, mode: 0o700 });
       await chmod(parent, 0o700);
-      const temporary = `${target}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`;
+      const temporary = target + '.tmp-' + process.pid + '-' + randomBytes(8).toString('hex');
       try {
         await cp(source, temporary, { recursive: true, force: false, errorOnExist: true });
         await chmod(temporary, 0o700);
@@ -3605,7 +3696,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           await rename(temporary, target);
         } catch (error) {
           try {
-            await readFile(`${target}/Chart.yaml`);
+            await readFile(target + '/Chart.yaml');
           } catch {
             throw error;
           }
@@ -3635,7 +3726,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           canonicalBootstrapJson(bundle.configMap),
         )
       ).trim();
-      if (createdConfigMap !== `configmap/${bundle.configMapName}`) {
+      if (createdConfigMap !== 'configmap/' + bundle.configMapName) {
         fail('TENANT_CUTOVER_OWNER_JOB_CREATE_FAILED');
       }
       const createdJob = (
@@ -3645,7 +3736,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           canonicalBootstrapJson(bundle.job),
         )
       ).trim();
-      if (createdJob !== `job.batch/${bundle.jobName}`) {
+      if (createdJob !== 'job.batch/' + bundle.jobName) {
         fail('TENANT_CUTOVER_OWNER_JOB_CREATE_FAILED');
       }
       try {
@@ -3887,67 +3978,74 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
         let projection: HelmReleaseProjection | undefined;
         await deleteProjectionConfigMap();
         try {
-          await runHelmPostRendered(request.args, async (manifest) => {
-            assertProjectionConsumer(
-              manifest,
-              request.release,
-              request.revision,
-              request.projectionConfigMapName,
-            );
-            projection = projectHelmReleaseRevision({
-              namespace: request.namespace,
-              releaseName: request.release,
-              revision: request.revision,
-              manifest,
-              values: request.rendererValues,
-            });
-            const projectionBytes = `${canonicalBootstrapJson(projection)}\n`;
-            const desired = {
-              apiVersion: 'v1',
-              kind: 'ConfigMap',
-              metadata: {
-                name: request.projectionConfigMapName,
+          await runHelmPostRendered(
+            request.args,
+            request.rendererValues,
+            async (manifest, rendererValues) => {
+              assertProjectionConsumer(
+                manifest,
+                request.release,
+                request.revision,
+                request.projectionConfigMapName,
+              );
+              projection = projectHelmReleaseRevision({
                 namespace: request.namespace,
-                labels,
-                annotations,
-              },
-              immutable: true,
-              data: { 'projection.json': projectionBytes },
-            };
-            try {
-              const created = (
-                await command(
-                  'kubectl',
-                  ['create', '--filename', '-', '--output', 'name'],
-                  canonicalBootstrapJson(desired),
-                )
-              ).trim();
-              if (created !== `configmap/${request.projectionConfigMapName}`) {
-                fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
+                releaseName: request.release,
+                revision: request.revision,
+                manifest,
+                values: rendererValues,
+              });
+              const projectionBytes = canonicalBootstrapJson(projection) + '\n';
+              const desired = {
+                apiVersion: 'v1',
+                kind: 'ConfigMap',
+                metadata: {
+                  name: request.projectionConfigMapName,
+                  namespace: request.namespace,
+                  labels,
+                  annotations,
+                },
+                immutable: true,
+                data: { 'projection.json': projectionBytes },
+              };
+              try {
+                const created = (
+                  await command(
+                    'kubectl',
+                    ['create', '--filename', '-', '--output', 'name'],
+                    canonicalBootstrapJson(desired),
+                  )
+                ).trim();
+                if (created !== 'configmap/' + request.projectionConfigMapName) {
+                  fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
+                }
+              } catch {
+                // Lost success responses and create races converge only through an exact live reread.
               }
-            } catch {
-              // Lost success responses and create races converge only through an exact live reread.
-            }
-            const live = await readProjectionConfigMap();
-            if (!live) fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
-            const metadata = jsonRecord(live.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-            if (
-              live.apiVersion !== 'v1' ||
-              live.kind !== 'ConfigMap' ||
-              live.immutable !== true ||
-              metadata.name !== request.projectionConfigMapName ||
-              metadata.namespace !== request.namespace ||
-              canonicalBootstrapJson(metadata.labels) !== canonicalBootstrapJson(labels) ||
-              canonicalBootstrapJson(metadata.annotations) !==
-                canonicalBootstrapJson(annotations) ||
-              canonicalBootstrapJson(live.data) !==
-                canonicalBootstrapJson({ 'projection.json': projectionBytes }) ||
-              Object.hasOwn(live, 'binaryData')
-            ) {
-              fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-            }
-            return manifest;
-          });
+              const live = await readProjectionConfigMap();
+              if (!live) fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
+              const metadata = jsonRecord(
+                live.metadata,
+                'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+              );
+              if (
+                live.apiVersion !== 'v1' ||
+                live.kind !== 'ConfigMap' ||
+                live.immutable !== true ||
+                metadata.name !== request.projectionConfigMapName ||
+                metadata.namespace !== request.namespace ||
+                canonicalBootstrapJson(metadata.labels) !== canonicalBootstrapJson(labels) ||
+                canonicalBootstrapJson(metadata.annotations) !==
+                  canonicalBootstrapJson(annotations) ||
+                canonicalBootstrapJson(live.data) !==
+                  canonicalBootstrapJson({ 'projection.json': projectionBytes }) ||
+                Object.hasOwn(live, 'binaryData')
+              ) {
+                fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+              }
+              return manifest;
+            },
+          );
           if (!projection) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
           return projection;
         } finally {
@@ -4026,7 +4124,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           BigInt(revision) > BigInt(latest) ? revision : latest,
         );
       },
-      projectRevision: async (namespace, release, revision) => {
+      projectRevision: async (namespace, release, revision, chart) => {
         const [values, manifest, hooks] = await Promise.all([
           boundedHelmRead(
             [
@@ -4051,12 +4149,13 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             RESTORE_STREAM_LIMIT,
           ),
         ]);
+        const rendererValues = await projectionRendererValues(chart, values, 'restore');
         return projectHelmReleaseRevision({
           namespace,
           releaseName: release,
           revision,
-          manifest: hooks.trim() ? `${manifest}\n---\n${hooks}` : manifest,
-          values,
+          manifest: hooks.trim() ? manifest + '\n---\n' + hooks : manifest,
+          values: rendererValues,
         });
       },
       proofJobManifest: (namespace, release, revision) => {
@@ -4090,7 +4189,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
               streamValuesToHelm: (input) =>
                 streamValuesToHelm({
                   ...input,
-                  afterPostRender: async (manifest) => {
+                  afterPostRender: async (manifest, rendererValues) => {
                     assertProjectionConsumer(
                       manifest,
                       request.release,
@@ -4102,7 +4201,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
                       releaseName: request.release,
                       revision: request.targetRevision,
                       manifest,
-                      values: request.rendererValues,
+                      values: rendererValues,
                     });
                     await prepareReleaseProjectionConfigMap(command, {
                       namespace: request.namespace,
@@ -4187,7 +4286,17 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           postgres: password(),
         };
         const dsn = (role: string, secret: string) =>
-          `postgres://${role}:${encodeURIComponent(secret)}@${hostname}:${port}/${database}?sslmode=verify-full`;
+          'postgres://' +
+          role +
+          ':' +
+          encodeURIComponent(secret) +
+          '@' +
+          hostname +
+          ':' +
+          port +
+          '/' +
+          database +
+          '?sslmode=verify-full';
         const values: Record<string, string> = {
           'owner-url': dsn('commander_owner', passwords.owner),
           'app-url': dsn('commander_app', passwords.app),
@@ -4224,7 +4333,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           const created = (
             await command('kubectl', ['create', '--filename', '-', '--output', 'name'], manifest)
           ).trim();
-          if (created !== `secret/${name}`) fail('TENANT_CUTOVER_DATABASE_SECRET_CREATE_FAILED');
+          if (created !== 'secret/' + name) fail('TENANT_CUTOVER_DATABASE_SECRET_CREATE_FAILED');
         } catch {
           // A create race or a lost success response is resolved only by an exact live re-read.
         }
@@ -4284,7 +4393,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           const created = (
             await command('kubectl', ['create', '--filename', '-', '--output', 'name'], manifest)
           ).trim();
-          if (created !== `secret/${targetName}`) {
+          if (created !== 'secret/' + targetName) {
             fail('TENANT_CUTOVER_PROOF_OWNER_SECRET_CREATE_FAILED');
           }
         } catch {
@@ -4373,7 +4482,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             request.manifest,
           )
         ).trim();
-        if (created !== `job.batch/${request.name}`) {
+        if (created !== 'job.batch/' + request.name) {
           fail('TENANT_CUTOVER_PROOF_JOB_CREATE_FAILED');
         }
         await command(
@@ -4439,7 +4548,8 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           return;
         }
         const desired = desiredObject(object);
-        const manager = `commander-restore-${process.pid}-${randomBytes(12).toString('hex')}`;
+        const manager =
+          'commander-restore-' + process.pid + '-' + randomBytes(12).toString('hex');
         const dryRun = parseJsonObject(
           await command(
             'kubectl',
@@ -4449,7 +4559,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
               '--dry-run=server',
               '--validate=strict',
               '--force-conflicts',
-              `--field-manager=${manager}`,
+              '--field-manager=' + manager,
               '--filename',
               '-',
               '--output',
@@ -4536,7 +4646,10 @@ async function main(): Promise<void> {
   const request = parseHelmTenantCutoverArgs(process.argv.slice(2), process.cwd());
   const result = await runHelmTenantCutover(request, createNodePorts());
   process.stdout.write(
-    `${canonicalBootstrapJson({ action: result.action, operationVersion: result.operation.operationVersion })}\n`,
+    canonicalBootstrapJson({
+      action: result.action,
+      operationVersion: result.operation.operationVersion,
+    }) + '\n',
   );
 }
 
