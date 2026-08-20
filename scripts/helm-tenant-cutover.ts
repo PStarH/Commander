@@ -3189,6 +3189,7 @@ async function runHelmPostRendered(
   const socketPath = join(socketDirectory, 'post-render.sock');
   const token = randomBytes(32).toString('hex');
   let requests = 0;
+  let postRenderFailureCode: string | undefined;
   const server = createServer(async (request, response) => {
     try {
       const supplied = request.headers['x-commander-restore-token'];
@@ -3220,7 +3221,14 @@ async function runHelmPostRendered(
       );
       response.writeHead(200, { 'content-type': 'application/yaml' });
       response.end(manifest);
-    } catch {
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (
+        code === 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID' ||
+        code === 'TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED'
+      ) {
+        postRenderFailureCode = code;
+      }
       response.writeHead(400);
       response.end();
     }
@@ -3235,11 +3243,16 @@ async function runHelmPostRendered(
     token,
   ].flatMap((argument) => ['--post-renderer-args=' + argument]);
   try {
-    await runProjectedHelmCommand(
-      [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
-      undefined,
-      'rollout',
-    );
+    try {
+      await runProjectedHelmCommand(
+        [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
+        undefined,
+        'rollout',
+      );
+    } catch (error) {
+      if (postRenderFailureCode) fail(postRenderFailureCode);
+      throw error;
+    }
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
     await verifyStoredProjection(renderContext, 'rollout');
   } finally {
