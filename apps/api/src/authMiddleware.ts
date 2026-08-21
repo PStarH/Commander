@@ -63,7 +63,7 @@ const startupAuthFailureStore = getAuthFailureStore();
 // Cleanup old entries every 5 minutes
 setInterval(() => {
   startupAuthFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
-    process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
+    process.stderr.write('[Auth] Failed to cleanup auth failure entries: ' + String(err) + '\n');
   });
 }, 300_000).unref();
 
@@ -106,7 +106,7 @@ function parseTenantApiKeys(raw: string | undefined): Map<string, StoredKey> {
       if (!key) continue;
       keys.set(sha256(key).toString('hex'), {
         hash: sha256(key),
-        name: `${tenantId}:${key.slice(0, 8)}`,
+        name: tenantId + ':' + key.slice(0, 8),
         scopes: ['read', 'write'],
         tenantId,
       });
@@ -149,9 +149,23 @@ function getCachedKeys(): Map<string, StoredKey> {
  * O(1) Map lookup by hex digest. The matched candidate is verified with
  * crypto.timingSafeEqual to guard against timing side-channels.
  */
-function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
+async function findKey(
+  token: string,
+  storedKeys: Map<string, StoredKey>,
+): Promise<StoredKey | null> {
   const tokenHash = sha256(token);
-  // O(1) lookup by hex digest; timing of Map.get is independent of token content.
+  const storeRecord = await getApiKeyStore().findByHash(tokenHash.toString('hex'));
+  if (storeRecord) {
+    return {
+      hash: Buffer.from(storeRecord.hash, 'hex'),
+      name: storeRecord.name,
+      scopes: storeRecord.scopes,
+      tenantId: storeRecord.tenantId,
+    };
+  }
+
+  // Environment keys remain an explicitly configured development mechanism,
+  // but a healthy PostgreSQL authority is required before they can authenticate.
   const stored = storedKeys.get(tokenHash.toString('hex'));
   if (stored) {
     try {
@@ -164,16 +178,6 @@ function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey |
     } catch {
       // Length mismatch or other error — fall through
     }
-  }
-  // Fallback to the persistent API key store (created via /api/admin/api-keys).
-  const storeRecord = getApiKeyStore().findByHash(tokenHash.toString('hex'));
-  if (storeRecord) {
-    return {
-      hash: Buffer.from(storeRecord.hash, 'hex'),
-      name: storeRecord.name,
-      scopes: storeRecord.scopes,
-      tenantId: storeRecord.tenantId,
-    };
   }
   return null;
 }
@@ -204,7 +208,7 @@ async function recordAuthFailure(ip: string): Promise<void> {
     try {
       getGlobalLogger().warn(
         'AuthMiddleware',
-        `IP ${ip} locked out after ${entry.count} failures`,
+        'IP ' + ip + ' locked out after ' + entry.count + ' failures',
         {
           ip,
           count: entry.count,
@@ -213,7 +217,13 @@ async function recordAuthFailure(ip: string): Promise<void> {
       );
     } catch {
       process.stderr.write(
-        `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
+        '[Auth] IP ' +
+          ip +
+          ' locked out after ' +
+          entry.count +
+          ' failures for ' +
+          LOCKOUT_DURATION_MS / 1000 +
+          's\n',
       );
     }
   }
@@ -244,7 +254,9 @@ if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDis
   } catch {
     // eslint-disable-next-line no-console
     console.warn(
-      `[authMiddleware] AUTH_DISABLED=true in production (signal=${describeProdSignal()}) — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.`,
+      '[authMiddleware] AUTH_DISABLED=true in production (signal=' +
+        describeProdSignal() +
+        ') — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.',
     );
   }
 }
@@ -252,10 +264,10 @@ if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDis
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   try {
     await authMiddlewareInternal(req, res, next);
-  } catch (err) {
-    process.stderr.write(`[Auth] Unhandled error in auth middleware: ${String(err)}\n`);
+  } catch {
+    process.stderr.write('[Auth] Authentication authority unavailable\n');
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(503).json({ error: 'Authentication service unavailable' });
     }
   }
 }
@@ -330,7 +342,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
       });
       return;
     } catch (err) {
-      process.stderr.write(`[Auth] Failed to read lockout entry: ${String(err)}\n`);
+      process.stderr.write('[Auth] Failed to read lockout entry: ' + String(err) + '\n');
       res.status(429).json({
         error: 'Too many authentication failures. Try again later.',
       });
@@ -347,13 +359,13 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   let matchedKey: StoredKey | null = null;
 
   if (apiKeyHeader) {
-    const matched = findKey(apiKeyHeader, apiKeys);
+    const matched = await findKey(apiKeyHeader, apiKeys);
     if (!matched) {
       await recordAuthFailure(clientIp);
       try {
         getGlobalLogger().warn('AuthMiddleware', 'Invalid API key', { ip: clientIp, path });
       } catch {
-        process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
+        process.stderr.write('[Auth] Invalid API key from IP=' + clientIp + ' path=' + path + '\n');
       }
       res.status(401).json({ error: 'Invalid API key' });
       return;
@@ -363,13 +375,15 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
     matchedKey = matched;
   } else if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
-    const matched = findKey(token, apiKeys);
+    const matched = await findKey(token, apiKeys);
     if (!matched) {
       await recordAuthFailure(clientIp);
       try {
         getGlobalLogger().warn('AuthMiddleware', 'Invalid bearer token', { ip: clientIp, path });
       } catch {
-        process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
+        process.stderr.write(
+          '[Auth] Invalid bearer token from IP=' + clientIp + ' path=' + path + '\n',
+        );
       }
       res.status(401).json({ error: 'Invalid bearer token' });
       return;
@@ -380,7 +394,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   } else if (
     apiKeys.size > 0 ||
     isProductionEnv() ||
-    getApiKeyStore().list().length > 0 ||
+    (await getApiKeyStore().list()).length > 0 ||
     // Non-production with no keys previously fell open. Require an explicit
     // opt-in so local/dev deploys are not anonymously writable by default.
     process.env.COMMANDER_ALLOW_ANON !== '1'
