@@ -255,6 +255,8 @@ spec:
             {{- if .Values.redis.enabled }}
             - name: REDIS_URL
               value: redis://{{ include "commander.fullname" . }}-redis:{{ .Values.redis.port }}
+            - name: AUTH_FAILURE_REDIS_URL
+              value: redis://{{ include "commander.fullname" . }}-redis:{{ .Values.redis.port }}
             {{- end }}
             {{- if include "commander.postgresBackend" . }}
             - name: DATABASE_URL

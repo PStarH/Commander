@@ -96,6 +96,15 @@ function resource(rendered: string, kind: string, name: string): string {
 }
 
 describe('Helm lifecycle static contract', () => {
+  it('binds production auth-failure authority to the enabled Redis service', () => {
+    const api = deployment(render(false, ['--set', 'redis.enabled=true']), 'api');
+    assert.match(api, /- name: REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/);
+    assert.match(
+      api,
+      /- name: AUTH_FAILURE_REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/,
+    );
+  });
+
   it('limits controller transport bootstrap to the three bundled PostgreSQL objects', () => {
     const rendered = render(false, [
       '--set',
