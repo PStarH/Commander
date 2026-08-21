@@ -22,10 +22,7 @@ import {
   type UserRole,
 } from './userStore';
 import { signAccessToken, signRefreshToken } from './jwtMiddleware';
-import {
-  getRefreshTokenRepository,
-  type RefreshTokenRepository,
-} from './refreshTokenStore';
+import { getRefreshTokenRepository, type RefreshTokenRepository } from './refreshTokenStore';
 import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
 import { isMultiTenantEnabled, validateTenantId } from '@commander/core/runtime/tenantContext';
 
@@ -239,6 +236,10 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
   const router = Router();
   const refreshTokens = options.refreshTokens ?? getRefreshTokenRepository();
 
+  function authorityUnavailable(res: Response): void {
+    res.status(503).json({ error: 'Authentication service unavailable' });
+  }
+
   /**
    * GET /api/auth/oidc/config
    *
@@ -322,48 +323,91 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
 
     // Resolve by the durable IdP identity. A verified email may bootstrap a
     // one-time link for an existing local account, but is never the login key.
-    let localUser = findUserByOidcIdentity(issuer, subject);
+    let localUser;
+    try {
+      localUser = await findUserByOidcIdentity(issuer, subject);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
     if (!localUser) {
       const oidcEmail = result.claims?.email;
       const emailVerified = result.claims?.email_verified === true;
-      const emailUser =
-        typeof oidcEmail === 'string' && oidcEmail.length > 0
-          ? findUserByEmail(oidcEmail)
-          : undefined;
+      let emailUser;
+      try {
+        emailUser =
+          typeof oidcEmail === 'string' && oidcEmail.length > 0
+            ? await findUserByEmail(oidcEmail)
+            : undefined;
+      } catch {
+        authorityUnavailable(res);
+        return;
+      }
 
       if (emailUser) {
         if (!emailVerified) {
           res.status(409).json({ error: 'OIDC email must be verified before account linking' });
           return;
         }
-        const linked = bindUserToOidcIdentity(emailUser.id, issuer, subject);
+        let linked;
+        try {
+          linked = await bindUserToOidcIdentity(emailUser.id, issuer, subject);
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
         if ('error' in linked) {
           res.status(409).json({ error: linked.error });
           return;
         }
-        localUser = findUserByOidcIdentity(issuer, subject);
+        try {
+          localUser = await findUserByOidcIdentity(issuer, subject);
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
       } else {
-        const created = createUser({
-          username: result.username,
-          email: result.username,
-          // Random local password; authentication always happens via OIDC.
-          password: randomUUID(),
-          role: result.role as UserRole,
-          oidcIssuer: issuer,
-          oidcSubject: subject,
-        });
+        let created;
+        try {
+          created = await createUser({
+            username: result.username,
+            email: result.username,
+            // Random local password; authentication always happens via OIDC.
+            password: randomUUID(),
+            role: result.role as UserRole,
+            oidcIssuer: issuer,
+            oidcSubject: subject,
+          });
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
         if ('error' in created) {
           res.status(409).json({ error: created.error });
           return;
         }
-        localUser = findUserByOidcIdentity(issuer, subject);
+        try {
+          localUser = await findUserByOidcIdentity(issuer, subject);
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
       }
     }
 
     // If the OIDC provider changed the linked user's role, keep it in sync.
     if (localUser && localUser.role !== result.role) {
-      updateUser(localUser.id, { role: result.role as UserRole });
-      localUser = findUserByOidcIdentity(issuer, subject);
+      try {
+        const updated = await updateUser(localUser.id, { role: result.role as UserRole });
+        if ('error' in updated) {
+          authorityUnavailable(res);
+          return;
+        }
+        localUser = await findUserByOidcIdentity(issuer, subject);
+      } catch {
+        authorityUnavailable(res);
+        return;
+      }
     }
 
     if (!localUser) {
@@ -371,7 +415,12 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       return;
     }
 
-    updateLastLogin(localUser.id);
+    try {
+      await updateLastLogin(localUser.id);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
 
     const authUser = {
       id: localUser.id,
@@ -388,7 +437,7 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
         user: toSafeUserPublic(localUser),
       });
     } catch {
-      res.status(503).json({ error: 'Authentication service unavailable' });
+      authorityUnavailable(res);
     }
   });
 
