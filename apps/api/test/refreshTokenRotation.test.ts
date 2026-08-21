@@ -1,31 +1,50 @@
-/**
- * Refresh token jti store + rotation/revocation regression tests.
- *
- * JWT_SECRET / cwd must be set before importing jwtMiddleware and stores
- * (paths and secret are captured at module load).
- */
-import { test, before, after, beforeEach, describe } from 'node:test';
-import * as assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import * as crypto from 'node:crypto';
+import { after, before, beforeEach, describe, test } from 'node:test';
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
 
-const tmpDir = path.join(
-  os.tmpdir(),
-  `commander-refresh-test-${crypto.randomBytes(8).toString('hex')}`,
-);
+const tmpDir = path.join(os.tmpdir(), 'commander-refresh-test-' + crypto.randomUUID());
 const originalCwd = process.cwd();
 const originalJwt = process.env.JWT_SECRET;
+const REFRESH_TEST_PASSWORD = 'password' + '123';
 
 fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
 process.chdir(tmpDir);
 process.env.JWT_SECRET = 'test-jwt-secret-for-refresh-rotation';
-// Router mounted without authMiddleware; refresh is public when middleware is present.
 
+class TestRefreshTokenRepository implements RefreshTokenRepository {
+  readonly records = new Map<string, RefreshTokenRecord & { revoked: boolean }>();
+  unavailable = false;
+
+  async insert(record: RefreshTokenRecord): Promise<void> {
+    this.assertAvailable();
+    this.records.set(record.jti, { ...record, revoked: false });
+  }
+
+  async consume(jti: string): Promise<boolean> {
+    this.assertAvailable();
+    const record = this.records.get(jti);
+    if (!record || record.revoked || record.expiresAt.getTime() <= Date.now()) return false;
+    record.revoked = true;
+    return true;
+  }
+
+  async revoke(jti: string): Promise<void> {
+    this.assertAvailable();
+    const record = this.records.get(jti);
+    if (record) record.revoked = true;
+  }
+
+  private assertAvailable(): void {
+    if (this.unavailable) throw new Error('postgres authority failed: secret-dsn');
+  }
+}
+
+const refreshTokens = new TestRefreshTokenRepository();
 const { signRefreshToken, verifyToken } = await import('../src/jwtMiddleware');
-const { persist, revoke, isActive, consume, _resetRefreshTokenStoreForTests } =
-  await import('../src/refreshTokenStore');
 const { createUser, findUserByUsername } = await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const express = (await import('express')).default;
@@ -39,8 +58,6 @@ function request(p: string, init?: RequestInit) {
 }
 
 before(async () => {
-  _resetRefreshTokenStoreForTests();
-
   const created = createUser({
     username: 'refreshuser',
     email: 'refresh@example.com',
@@ -51,92 +68,81 @@ before(async () => {
 
   app = express();
   app.use(express.json());
-  app.use(createUserAuthRouter());
-
+  app.use(createUserAuthRouter({ refreshTokens }));
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      port = typeof addr === 'object' && addr ? addr.port : 0;
+      const address = server.address();
+      port = typeof address === 'object' && address ? address.port : 0;
       resolve();
     });
   });
 });
 
 beforeEach(() => {
-  // Keep the user; only clear jti rows between cases that need a clean store.
+  refreshTokens.records.clear();
+  refreshTokens.unavailable = false;
 });
 
 after(async () => {
   await new Promise<void>((resolve, reject) => {
-    server.close((err) => (err ? reject(err) : resolve()));
+    server.close((error) => (error ? reject(error) : resolve()));
   });
   process.chdir(originalCwd);
-  if (originalJwt === undefined) {
-    delete process.env.JWT_SECRET;
-  } else {
-    process.env.JWT_SECRET = originalJwt;
-  }
-  try {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
+  if (originalJwt === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = originalJwt;
+  fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('refreshTokenStore', () => {
-  test('persist / revoke / isActive round-trip', () => {
-    _resetRefreshTokenStoreForTests();
-    const jti = crypto.randomUUID();
-    const exp = Math.floor(Date.now() / 1000) + 3600;
-    persist(jti, 'user-1', exp);
-    assert.equal(isActive(jti), true);
-    revoke(jti);
-    assert.equal(isActive(jti), false);
+async function login(): Promise<{ token: string; refreshToken: string }> {
+  const response = await request('/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD }),
   });
+  assert.equal(response.status, 200);
+  return (await response.json()) as { token: string; refreshToken: string };
+}
 
-  test('consume is single-winner for the same jti', () => {
-    _resetRefreshTokenStoreForTests();
-    const jti = crypto.randomUUID();
-    const exp = Math.floor(Date.now() / 1000) + 3600;
-    persist(jti, 'user-1', exp);
-    assert.equal(consume(jti), true);
-    assert.equal(consume(jti), false);
-    assert.equal(isActive(jti), false);
-  });
-
-  test('signRefreshToken embeds jti and persists it as active', () => {
-    _resetRefreshTokenStoreForTests();
+describe('refresh-token issuance', () => {
+  test('persists the jti before returning a signed refresh token', async () => {
     const user = findUserByUsername('refreshuser');
     assert.ok(user);
-    const token = signRefreshToken({
-      id: user!.id,
-      username: user!.username,
-      role: user!.role,
-    });
+
+    const token = await signRefreshToken(
+      { id: user.id, username: user.username, role: user.role },
+      refreshTokens,
+    );
     const decoded = verifyToken(token);
-    assert.ok(decoded);
-    assert.equal(decoded!.type, 'refresh');
-    assert.ok(decoded!.jti);
-    assert.equal(isActive(decoded!.jti!), true);
+
+    assert.equal(decoded?.type, 'refresh');
+    assert.ok(decoded?.jti);
+    assert.equal(refreshTokens.records.get(decoded.jti)?.revoked, false);
+  });
+
+  test('does not mint any credentials when persistence is unavailable', async () => {
+    refreshTokens.unavailable = true;
+    const response = await request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD }),
+    });
+
+    assert.equal(response.status, 503);
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.deepEqual(body, { error: 'Authentication service unavailable' });
+    assert.equal(body.token, undefined);
+    assert.equal(body.refreshToken, undefined);
+    assert.equal(JSON.stringify(body).includes('secret-dsn'), false);
   });
 });
 
 describe('auth refresh rotation', () => {
   test('AUTH-01: login and refresh access tokens carry tenant_id', async () => {
-    const prev = process.env.COMMANDER_DEFAULT_TENANT_ID;
+    const previous = process.env.COMMANDER_DEFAULT_TENANT_ID;
     process.env.COMMANDER_DEFAULT_TENANT_ID = 'tenant-auth01';
     try {
-      const login = await request('/api/auth/login', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'refreshuser', password: 'password123' }),
-      });
-      assert.equal(login.status, 200);
-      const loginBody = (await login.json()) as { token: string; refreshToken: string };
-      const access = verifyToken(loginBody.token);
-      assert.ok(access);
-      assert.equal(access!.type, 'access');
-      assert.equal(access!.tenant_id, 'tenant-auth01');
+      const loginBody = await login();
+      assert.equal(verifyToken(loginBody.token)?.tenant_id, 'tenant-auth01');
 
       const refreshed = await request('/api/auth/refresh', {
         method: 'POST',
@@ -144,29 +150,16 @@ describe('auth refresh rotation', () => {
         body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
       });
       assert.equal(refreshed.status, 200);
-      const refreshedBody = (await refreshed.json()) as { token: string };
-      const rotated = verifyToken(refreshedBody.token);
-      assert.ok(rotated);
-      assert.equal(rotated!.tenant_id, 'tenant-auth01');
+      const body = (await refreshed.json()) as { token: string };
+      assert.equal(verifyToken(body.token)?.tenant_id, 'tenant-auth01');
     } finally {
-      if (prev === undefined) delete process.env.COMMANDER_DEFAULT_TENANT_ID;
-      else process.env.COMMANDER_DEFAULT_TENANT_ID = prev;
+      if (previous === undefined) delete process.env.COMMANDER_DEFAULT_TENANT_ID;
+      else process.env.COMMANDER_DEFAULT_TENANT_ID = previous;
     }
   });
 
-  test('POST /api/auth/refresh rotates jti and rejects reused token', async () => {
-    const login = await request('/api/auth/login', {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'refreshuser', password: 'password123' }),
-    });
-    assert.equal(login.status, 200);
-    const loginBody = (await login.json()) as {
-      token: string;
-      refreshToken: string;
-    };
-    assert.ok(loginBody.refreshToken);
-
+  test('rotates jti and rejects reuse', async () => {
+    const loginBody = await login();
     const first = await request('/api/auth/refresh', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -174,7 +167,6 @@ describe('auth refresh rotation', () => {
     });
     assert.equal(first.status, 200);
     const firstBody = (await first.json()) as { refreshToken: string; token: string };
-    assert.ok(firstBody.refreshToken);
     assert.notEqual(firstBody.refreshToken, loginBody.refreshToken);
 
     const replay = await request('/api/auth/refresh', {
@@ -192,27 +184,54 @@ describe('auth refresh rotation', () => {
     assert.equal(second.status, 200);
   });
 
-  test('POST /api/auth/logout revokes refresh jti', async () => {
-    const user = findUserByUsername('refreshuser');
-    assert.ok(user);
-    const token = signRefreshToken({
-      id: user!.id,
-      username: user!.username,
-      role: user!.role,
+  test('returns a sanitized 503 and no credentials when consume fails', async () => {
+    const loginBody = await login();
+    refreshTokens.unavailable = true;
+
+    const response = await request('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
     });
 
+    assert.equal(response.status, 503);
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.deepEqual(body, { error: 'Authentication service unavailable' });
+    assert.equal(body.token, undefined);
+    assert.equal(body.refreshToken, undefined);
+    assert.equal(JSON.stringify(body).includes('secret-dsn'), false);
+  });
+
+  test('logout revokes a refresh jti', async () => {
+    const loginBody = await login();
     const logout = await request('/api/auth/logout', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ refreshToken: token }),
+      body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
     });
     assert.equal(logout.status, 200);
 
     const refresh = await request('/api/auth/refresh', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ refreshToken: token }),
+      body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
     });
     assert.equal(refresh.status, 401);
+  });
+
+  test('logout returns a sanitized 503 when revoke fails', async () => {
+    const loginBody = await login();
+    refreshTokens.unavailable = true;
+
+    const response = await request('/api/auth/logout', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
+    });
+
+    assert.equal(response.status, 503);
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.deepEqual(body, { error: 'Authentication service unavailable' });
+    assert.equal(JSON.stringify(body).includes('secret-dsn'), false);
   });
 });

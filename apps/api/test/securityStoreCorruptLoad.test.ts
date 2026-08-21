@@ -22,8 +22,6 @@ fs.mkdirSync(commanderDir, { recursive: true });
 process.chdir(tmpDir);
 
 const { getApiKeyStore, resetApiKeyStore } = await import('../src/apiKeyStore');
-const { persist, isActive, _resetRefreshTokenStoreForTests } =
-  await import('../src/refreshTokenStore');
 const { listUsers, _resetUserStoreForTests } = await import('../src/userStore');
 
 after(() => {
@@ -80,25 +78,6 @@ describe('security store corrupt-load fail-closed (REL-4)', () => {
     assert.ok(fs.existsSync(keysFile), 'fresh write recreates the store file');
     assert.equal(fs.readFileSync(sidecar, 'utf8'), corruptBody);
     assert.ok(store.list().length >= 1);
-  });
-
-  test('refreshTokenStore quarantines corrupt refresh_tokens.json before empty persist', () => {
-    _resetRefreshTokenStoreForTests();
-    clearCorruptSidecars('refresh_tokens.json');
-    const storeFile = path.join(commanderDir, 'refresh_tokens.json');
-    const corruptBody = '{"broken": true,';
-    fs.writeFileSync(storeFile, corruptBody, 'utf8');
-
-    assert.equal(isActive('missing-jti'), false);
-
-    const sidecar = assertSidecarPreserves('refresh_tokens.json', corruptBody);
-    assert.equal(fs.existsSync(storeFile), false);
-
-    const jti = crypto.randomUUID();
-    const exp = Math.floor(Date.now() / 1000) + 3600;
-    persist(jti, 'user-corrupt-load', exp);
-    assert.equal(isActive(jti), true);
-    assert.equal(fs.readFileSync(sidecar, 'utf8'), corruptBody);
   });
 });
 
@@ -165,25 +144,5 @@ describe('security store wrong-shape fail-closed (REL-4)', () => {
     store.create('after-quarantine', ['read']);
     assert.equal(fs.readFileSync(sidecar, 'utf8'), wrongShapeBody);
     assert.ok(Array.isArray(JSON.parse(fs.readFileSync(keysFile, 'utf8'))));
-  });
-
-  test('refreshTokenStore quarantines unexpected object shape (sibling baseline)', () => {
-    _resetRefreshTokenStoreForTests();
-    clearCorruptSidecars('refresh_tokens.json');
-    const storeFile = path.join(commanderDir, 'refresh_tokens.json');
-    const wrongShapeBody = JSON.stringify({
-      tokens: [{ jti: 'jti-old', userId: 'u1', exp: 9999999999, revoked: false }],
-    });
-    fs.writeFileSync(storeFile, wrongShapeBody, 'utf8');
-
-    assert.equal(isActive('jti-old'), false);
-
-    const sidecar = assertSidecarPreserves('refresh_tokens.json', wrongShapeBody);
-
-    const jti = crypto.randomUUID();
-    const exp = Math.floor(Date.now() / 1000) + 3600;
-    persist(jti, 'user-wrong-shape', exp);
-    assert.equal(isActive(jti), true);
-    assert.equal(fs.readFileSync(sidecar, 'utf8'), wrongShapeBody);
   });
 });
