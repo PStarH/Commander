@@ -211,6 +211,7 @@ describe('Helm post-rendered release projection', () => {
           '  const prefix = "--post-renderer-args=";',
           '  const rendererArgs = args.filter((value) => value.startsWith(prefix)).map((value) => value.slice(prefix.length));',
           '  execFileSync(renderer, rendererArgs, { input: data.ordinary, maxBuffer: 64 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });',
+          '  if (data.failAfterPostRenderer) process.exit(3);',
           '}',
           'else if (args[0] === "history") process.stdout.write("[{\\"revision\\":\\"8\\"}]");',
           'else if (args[0] === "get" && args[1] === "values") {',
@@ -309,7 +310,7 @@ describe('Helm post-rendered release projection', () => {
 
       for (const [failAt, code] of [
         ['template', 'TENANT_CUTOVER_HELM_COMMAND_FAILED'],
-        ['upgrade', 'TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED'],
+        ['upgrade', 'TENANT_CUTOVER_HELM_COMMAND_FAILED'],
         ['history', 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'],
         ['get', 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'],
       ]) {
@@ -353,6 +354,46 @@ describe('Helm post-rendered release projection', () => {
         );
         assert.equal(existsSync(statePath), false);
       }
+
+      writeFileSync(
+        dataPath,
+        JSON.stringify({
+          ordinary,
+          renderedHooks: renderedHooks(),
+          storedHooks,
+          values,
+          failAfterPostRenderer: true,
+        }),
+      );
+      await assert.rejects(
+        () =>
+          ports.helm.runProjectedRevision({
+            namespace: 'commander',
+            release: 'commander',
+            revision: '8',
+            projectionConfigMapName: 'commander-proof-projection-v7-r8',
+            args: [
+              'upgrade',
+              '--install',
+              'commander',
+              chartPath,
+              '--namespace',
+              'commander',
+              '--values',
+              '-',
+              '--set',
+              'tenantAuthority.releaseProjectionConfigMap=commander-proof-projection-v7-r8',
+              '--atomic',
+              '--wait',
+              '--wait-for-jobs',
+              '--timeout',
+              '10m',
+            ],
+            rendererValues: values,
+          }),
+        /TENANT_CUTOVER_HELM_COMMAND_FAILED/,
+      );
+      assert.equal(existsSync(statePath), false);
 
       writeFileSync(
         dataPath,

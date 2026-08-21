@@ -3089,7 +3089,7 @@ async function runProjectedHelmCommand(
     ) {
       throw error;
     }
-    return fail('TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED');
+    return fail('TENANT_CUTOVER_HELM_COMMAND_FAILED');
   }
 }
 
