@@ -506,6 +506,7 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  errorCode?: string;
 }
 
 export interface ScenarioEvidence {
@@ -550,6 +551,7 @@ export interface SanitizedScenarioEvidence {
   durationMs: number;
   failureCodes?: string[];
   rolloutFailure?: RolloutFailureEvidence;
+  rolloutObservation?: RolloutNonterminalEvidence | RolloutQueryEvidence;
 }
 
 export interface SanitizedHarnessEvidence {
@@ -602,12 +604,42 @@ export type RolloutReasonCode =
   | 'POD_CONTAINER_CONFIG_ERROR'
   | 'POD_CONTAINER_START_FAILED'
   | 'POD_CRASH_LOOP_BACKOFF';
+export type RolloutNonterminalReasonCode =
+  'DEPLOYMENT_UNAVAILABLE' | 'JOB_ACTIVE' | 'POD_NOT_READY';
 
 export interface RolloutFailureEvidence {
   code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED';
   resourceKind: RolloutResourceKind;
   component: RolloutComponent;
   reasonCode: RolloutReasonCode;
+}
+
+export interface RolloutEmptyEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_EMPTY';
+}
+
+export interface RolloutNonterminalResourceEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL';
+  resourceKind: RolloutResourceKind;
+  component: RolloutComponent;
+  reasonCode: RolloutNonterminalReasonCode;
+}
+
+export type RolloutNonterminalEvidence = RolloutEmptyEvidence | RolloutNonterminalResourceEvidence;
+
+export interface RolloutQueryEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' | 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT';
+}
+
+export type RolloutObservation =
+  | { kind: 'terminal'; evidence: RolloutFailureEvidence }
+  | { kind: 'success'; evidence?: RolloutNonterminalEvidence }
+  | { kind: 'query-failure'; code: RolloutQueryEvidence['code'] };
+
+export interface RolloutObservationState {
+  terminal?: RolloutFailureEvidence;
+  nonterminal?: RolloutNonterminalEvidence;
+  queryFailure?: RolloutQueryEvidence;
 }
 
 const ROLLOUT_OBSERVATION_MAX_BYTES = 64 * 1024;
@@ -633,8 +665,19 @@ const ROLLOUT_REASON_CODES: readonly RolloutReasonCode[] = [
   'POD_CONTAINER_START_FAILED',
   'POD_CRASH_LOOP_BACKOFF',
 ];
+const ROLLOUT_NONTERMINAL_REASON_CODES: readonly RolloutNonterminalReasonCode[] = [
+  'DEPLOYMENT_UNAVAILABLE',
+  'JOB_ACTIVE',
+  'POD_NOT_READY',
+];
 const ROLLOUT_FAILURE_RECORD = new RegExp(
   '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_CRASH_LOOP_BACKOFF)(?=\\n|$)',
+);
+const ROLLOUT_NONTERMINAL_RECORD = new RegExp(
+  '(?:^|:)TENANT_CUTOVER_ROLLOUT_NONTERMINAL:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_UNAVAILABLE|JOB_ACTIVE|POD_NOT_READY)(?=\\n|$)',
+);
+const ROLLOUT_OBSERVATION_CODE_RECORD = new RegExp(
+  '(?:^|:)(TENANT_CUTOVER_ROLLOUT_QUERY_FAILED|TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT|TENANT_CUTOVER_ROLLOUT_EMPTY)(?=\\n|$)',
 );
 
 type OwnerMigrationFailureStage =
@@ -785,6 +828,20 @@ function conditionReason(
   return undefined;
 }
 
+function hasCondition(
+  status: Record<string, unknown> | undefined,
+  type: string,
+  state: string,
+): boolean {
+  const conditions = jsonArray(status?.conditions);
+  return (
+    conditions?.some((candidate) => {
+      const condition = jsonRecord(candidate);
+      return condition?.type === type && condition.status === state;
+    }) ?? false
+  );
+}
+
 function podWaitingReason(status: Record<string, unknown> | undefined): string | undefined {
   for (const field of ['initContainerStatuses', 'containerStatuses']) {
     const containers = jsonArray(status?.[field]);
@@ -833,6 +890,19 @@ function rolloutReasonForItem(
   }
 }
 
+function rolloutNonterminalReasonForItem(
+  resourceKind: RolloutResourceKind,
+  status: Record<string, unknown> | undefined,
+): RolloutNonterminalReasonCode | undefined {
+  if (resourceKind === 'Deployment') {
+    return hasCondition(status, 'Available', 'False') ? 'DEPLOYMENT_UNAVAILABLE' : undefined;
+  }
+  if (resourceKind === 'Job') {
+    return typeof status?.active === 'number' && status.active > 0 ? 'JOB_ACTIVE' : undefined;
+  }
+  return hasCondition(status, 'Ready', 'False') ? 'POD_NOT_READY' : undefined;
+}
+
 function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | undefined {
   const item = jsonRecord(value);
   if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
@@ -841,6 +911,22 @@ function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | un
   if (!component || !reasonCode) return undefined;
   return {
     code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+    resourceKind: item.kind,
+    component,
+    reasonCode,
+  };
+}
+
+function classifyRolloutNonterminalItem(
+  value: unknown,
+): RolloutNonterminalResourceEvidence | undefined {
+  const item = jsonRecord(value);
+  if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
+  const component = rolloutComponent(jsonRecord(item.metadata));
+  const reasonCode = rolloutNonterminalReasonForItem(item.kind, jsonRecord(item.status));
+  if (!component || !reasonCode) return undefined;
+  return {
+    code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
     resourceKind: item.kind,
     component,
     reasonCode,
@@ -872,6 +958,44 @@ function rolloutFailureKey(value: RolloutFailureEvidence): string {
   return value.resourceKind + '/' + value.component + '/' + value.reasonCode;
 }
 
+function rolloutResourcePriority(value: { resourceKind: RolloutResourceKind }): number {
+  switch (value.resourceKind) {
+    case 'Pod':
+      return 0;
+    case 'Job':
+      return 1;
+    case 'Deployment':
+      return 2;
+  }
+}
+
+function compareRolloutEvidence(
+  left: { resourceKind: RolloutResourceKind; component: RolloutComponent; reasonCode: string },
+  right: { resourceKind: RolloutResourceKind; component: RolloutComponent; reasonCode: string },
+): number {
+  return (
+    rolloutResourcePriority(left) - rolloutResourcePriority(right) ||
+    left.component.localeCompare(right.component) ||
+    left.reasonCode.localeCompare(right.reasonCode)
+  );
+}
+
+function selectRolloutEvidence<
+  T extends {
+    resourceKind: RolloutResourceKind;
+    component: RolloutComponent;
+    reasonCode: string;
+  },
+>(values: readonly T[]): T | undefined {
+  return values.reduce<T | undefined>(
+    (selected, candidate) =>
+      selected === undefined || compareRolloutEvidence(candidate, selected) < 0
+        ? candidate
+        : selected,
+    undefined,
+  );
+}
+
 /** Retains a single canonical observation across Helm's atomic rollback window. */
 export function retainRolloutFailureEvidence(
   previous: RolloutFailureEvidence | undefined,
@@ -888,20 +1012,65 @@ export function retainRolloutFailureEvidence(
 
 /** Parses Kubernetes status JSON and returns only a fixed rollout-failure vocabulary. */
 export function classifyRolloutFailureJson(value: string): RolloutFailureEvidence | undefined {
-  if (Buffer.byteLength(value) > ROLLOUT_OBSERVATION_MAX_BYTES) return undefined;
+  const observation = classifyRolloutObservation({ exitCode: 0, stdout: value, stderr: '' });
+  return observation.kind === 'terminal' ? observation.evidence : undefined;
+}
+
+/** Classifies one bounded kubectl observation into a finite safe vocabulary. */
+export function classifyRolloutObservation(result: CommandResult): RolloutObservation {
+  if (result.exitCode !== 0) {
+    return {
+      kind: 'query-failure',
+      code:
+        result.errorCode === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+          ? 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT'
+          : 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED',
+    };
+  }
+  if (Buffer.byteLength(result.stdout) > ROLLOUT_OBSERVATION_MAX_BYTES) {
+    return { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT' };
+  }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(value);
+    parsed = JSON.parse(result.stdout);
   } catch {
-    return undefined;
+    return { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' };
   }
   const root = jsonRecord(parsed);
   const items = jsonArray(root?.items);
-  if (!items || items.length > ROLLOUT_OBSERVATION_MAX_ITEMS) return undefined;
-  return items.reduce<RolloutFailureEvidence | undefined>(
-    (selected, item) => retainRolloutFailureEvidence(selected, classifyRolloutFailureItem(item)),
-    undefined,
+  if (!items || items.length > ROLLOUT_OBSERVATION_MAX_ITEMS) {
+    return { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' };
+  }
+  if (items.length === 0) {
+    return { kind: 'success', evidence: { code: 'TENANT_CUTOVER_ROLLOUT_EMPTY' } };
+  }
+  const terminal = selectRolloutEvidence(
+    items.flatMap((item) => {
+      const evidence = classifyRolloutFailureItem(item);
+      return evidence === undefined ? [] : [evidence];
+    }),
   );
+  if (terminal) return { kind: 'terminal', evidence: terminal };
+  const nonterminal = selectRolloutEvidence(
+    items.flatMap((item) => {
+      const evidence = classifyRolloutNonterminalItem(item);
+      return evidence === undefined ? [] : [evidence];
+    }),
+  );
+  return { kind: 'success', ...(nonterminal ? { evidence: nonterminal } : {}) };
+}
+
+/** Retains terminal evidence; successful polls replace all nonterminal state. */
+export function retainRolloutObservation(
+  previous: RolloutObservationState | undefined,
+  candidate: RolloutObservation,
+): RolloutObservationState {
+  if (previous?.terminal) return previous;
+  if (candidate.kind === 'terminal') return { terminal: candidate.evidence };
+  if (candidate.kind === 'success') {
+    return candidate.evidence ? { nonterminal: candidate.evidence } : {};
+  }
+  return { queryFailure: { code: candidate.code } };
 }
 
 /** Extracts the strict rollout record and never returns raw Kubernetes fields. */
@@ -924,6 +1093,33 @@ export function parseRolloutFailureEvidence(error: string): RolloutFailureEviden
   };
 }
 
+function parseRolloutObservationEvidence(
+  error: string,
+): RolloutNonterminalEvidence | RolloutQueryEvidence | undefined {
+  const nonterminal = error.match(ROLLOUT_NONTERMINAL_RECORD);
+  if (nonterminal) {
+    const [, resourceKind, component, reasonCode] = nonterminal;
+    if (
+      hasExactValue(resourceKind, ROLLOUT_RESOURCE_KINDS) &&
+      hasExactValue(component, ROLLOUT_COMPONENTS) &&
+      hasExactValue(reasonCode, ROLLOUT_NONTERMINAL_REASON_CODES)
+    ) {
+      return {
+        code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+        resourceKind,
+        component,
+        reasonCode,
+      };
+    }
+  }
+  const code = error.match(ROLLOUT_OBSERVATION_CODE_RECORD)?.[1];
+  return code === 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' ||
+    code === 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT' ||
+    code === 'TENANT_CUTOVER_ROLLOUT_EMPTY'
+    ? { code }
+    : undefined;
+}
+
 function rolloutFailureRecord(value: RolloutFailureEvidence): string {
   return (
     'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=' +
@@ -933,6 +1129,20 @@ function rolloutFailureRecord(value: RolloutFailureEvidence): string {
     ';reason_code=' +
     value.reasonCode
   );
+}
+
+function rolloutObservationRecord(
+  value: RolloutNonterminalEvidence | RolloutQueryEvidence,
+): string {
+  return value.code === 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL'
+    ? value.code +
+        ':resource_kind=' +
+        value.resourceKind +
+        ';component=' +
+        value.component +
+        ';reason_code=' +
+        value.reasonCode
+    : value.code;
 }
 
 /** Extract only the canonical owner diagnostic record, never the original error text. */
@@ -1027,6 +1237,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
     scenarios: evidence.scenarios.map(({ name, passed, durationMs, error }) => {
       const failureCodes = scenarioFailureCodes(error);
       const rolloutFailure = error ? parseRolloutFailureEvidence(error) : undefined;
+      const rolloutObservation = error ? parseRolloutObservationEvidence(error) : undefined;
       return {
         name,
         passed,
@@ -1040,6 +1251,19 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
                 component: rolloutFailure.component,
                 reasonCode: rolloutFailure.reasonCode,
               },
+            }
+          : {}),
+        ...(rolloutObservation
+          ? {
+              rolloutObservation:
+                rolloutObservation.code === 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL'
+                  ? {
+                      code: rolloutObservation.code,
+                      resourceKind: rolloutObservation.resourceKind,
+                      component: rolloutObservation.component,
+                      reasonCode: rolloutObservation.reasonCode,
+                    }
+                  : { code: rolloutObservation.code },
             }
           : {}),
       };
@@ -1085,6 +1309,7 @@ function runCmd(
         stdout: stdout ?? '',
         stderr: stderr ?? '',
         exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+        ...(error && typeof error.code === 'string' ? { errorCode: error.code } : {}),
       });
     });
   });
@@ -1816,9 +2041,7 @@ async function inspectLiveProofPod(release: string, imageDigest: string): Promis
   return true;
 }
 
-async function observeLiveRolloutFailure(
-  release: string,
-): Promise<RolloutFailureEvidence | undefined> {
+async function observeLiveRolloutFailure(release: string): Promise<RolloutObservation> {
   const result = await kubectl(
     [
       'get',
@@ -1832,8 +2055,7 @@ async function observeLiveRolloutFailure(
     ],
     { maxBuffer: ROLLOUT_OBSERVATION_MAX_BYTES },
   );
-  if (result.exitCode !== 0) return undefined;
-  return classifyRolloutFailureJson(result.stdout);
+  return classifyRolloutObservation(result);
 }
 
 async function runCutoverCommand(
@@ -1878,23 +2100,27 @@ async function runCutoverCommand(
     });
   });
   let proofPodObserved = false;
-  let rolloutFailure: RolloutFailureEvidence | undefined;
+  let rolloutObservation: RolloutObservationState | undefined;
   while (!finished) {
     const [proofPod, observedFailure] = await Promise.all([
       inspectLiveProofPod(release, digest),
       observeLiveRolloutFailure(release),
     ]);
     proofPodObserved = proofPod || proofPodObserved;
-    rolloutFailure = retainRolloutFailureEvidence(rolloutFailure, observedFailure);
+    rolloutObservation = retainRolloutObservation(rolloutObservation, observedFailure);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
   if (exitCode !== 0) {
     const childCodes = scenarioFailureCodes(Buffer.concat(stderr).toString('utf8')) ?? [];
     const failureCodes = [...new Set(['HELM_TENANT_CUTOVER_FAILED', ...childCodes])];
-    const diagnostic = rolloutFailure
-      ? rolloutFailureRecord(rolloutFailure)
-      : 'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED';
+    const diagnostic = rolloutObservation?.terminal
+      ? rolloutFailureRecord(rolloutObservation.terminal)
+      : rolloutObservation?.nonterminal
+        ? rolloutObservationRecord(rolloutObservation.nonterminal)
+        : rolloutObservation?.queryFailure
+          ? rolloutObservationRecord(rolloutObservation.queryFailure)
+          : 'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED';
     throw new Error(failureCodes.join(':') + ':' + diagnostic);
   }
   if (requireLiveProofPod && !proofPodObserved) {
