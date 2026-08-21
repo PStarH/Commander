@@ -42,6 +42,9 @@ interface StoredKey {
 const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
 const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
+const AUTH_FAILURE_CLEANUP_INTERVAL_MS = 300_000;
+const AUTH_FAILURE_CLEANUP_BATCH_SIZE = 1_000;
+let authFailureCleanupTimer: ReturnType<typeof setInterval> | undefined;
 
 function sha256(input: string): Buffer {
   return crypto.createHash('sha256').update(input).digest();
@@ -69,6 +72,7 @@ function getClientIp(req: Request): string {
 
 async function recordAuthFailure(ip: string): Promise<void> {
   const authFailureStore = getAuthFailureStore();
+  ensureAuthFailureCleanup(authFailureStore);
   const now = Date.now();
   const entry = await authFailureStore.recordFailure(
     ip,
@@ -104,9 +108,20 @@ async function recordAuthFailure(ip: string): Promise<void> {
 
 async function isLockedOut(ip: string): Promise<boolean> {
   const authFailureStore = getAuthFailureStore();
+  ensureAuthFailureCleanup(authFailureStore);
   const entry = await authFailureStore.get(ip);
   if (!entry) return false;
   return entry.lockedUntil > Date.now();
+}
+
+function ensureAuthFailureCleanup(authFailureStore: ReturnType<typeof getAuthFailureStore>): void {
+  if (authFailureCleanupTimer) return;
+  authFailureCleanupTimer = setInterval(() => {
+    authFailureStore
+      .cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS, AUTH_FAILURE_CLEANUP_BATCH_SIZE)
+      .catch((error) => process.stderr.write('[Auth] Failed to cleanup auth failures: ' + String(error) + '\n'));
+  }, AUTH_FAILURE_CLEANUP_INTERVAL_MS);
+  authFailureCleanupTimer.unref();
 }
 
 // Module-load one-shot warning if AUTH_DISABLED=true in production.

@@ -40,6 +40,36 @@ function createPoolHarness(failBucketKey?: string): {
   return { entries, queries, pool: { connect: async () => client } };
 }
 
+function createGlobalBucketHarness(): { pool: SqlPool; advance(milliseconds: number): void } {
+  let now = 0;
+  let debt = 0;
+  let lastRefillAt = 0;
+  const client: SqlClient = {
+    async query<T>(sql: string, values: readonly unknown[] = []) {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] as T[], rowCount: null };
+      if (sql.includes('FOR UPDATE')) {
+        return {
+          rows: debt === 0 && lastRefillAt === 0 ? [] as T[] : [{ count: debt, resetAt: lastRefillAt, now }] as T[],
+          rowCount: debt === 0 && lastRefillAt === 0 ? 0 : 1,
+        };
+      }
+      if (sql.startsWith('INSERT INTO commander_auth_rate_limits')) {
+        debt = 1;
+        lastRefillAt = now;
+        return { rows: [{ resetAt: lastRefillAt } as T], rowCount: 1 };
+      }
+      if (sql.startsWith('UPDATE commander_auth_rate_limits')) {
+        debt = Number(values[1]);
+        lastRefillAt = now;
+        return { rows: [] as T[], rowCount: 1 };
+      }
+      throw new Error('Unexpected SQL: ' + sql);
+    },
+    release() {},
+  };
+  return { pool: { connect: async () => client }, advance: (milliseconds) => { now += milliseconds; } };
+}
+
 describe('PostgreSQL rate-limit authority', () => {
   it('requires the commander_app PostgreSQL authority without a local fallback', () => {
     assert.throws(() => createRateLimitStoreFromEnvironment({}), /RATE_LIMIT_DATABASE_URL_REQUIRED/);
@@ -70,5 +100,20 @@ describe('PostgreSQL rate-limit authority', () => {
 
     assert.equal(harness.entries.get('global:write'), undefined);
     assert.deepEqual(harness.queries.map(({ sql }) => sql), ['BEGIN', harness.queries[1].sql, harness.queries[2].sql, 'ROLLBACK']);
+  });
+
+  it('refills a global bucket at the configured rate after a burst', async () => {
+    const harness = createGlobalBucketHarness();
+    const store = new PostgresRateLimitStore(harness.pool);
+    const bucket = { key: 'global:read', windowMs: 1_000, max: 3, refillPerSecond: 1 };
+
+    assert.equal((await store.consume([bucket])).at(0)?.count, 1);
+    assert.equal((await store.consume([bucket])).at(0)?.count, 2);
+    assert.equal((await store.consume([bucket])).at(0)?.count, 3);
+    assert.equal((await store.consume([bucket])).at(0)?.count, 4);
+
+    harness.advance(1_000);
+    assert.equal((await store.consume([bucket])).at(0)?.count, 3);
+    assert.equal((await store.consume([bucket])).at(0)?.count, 4);
   });
 });
