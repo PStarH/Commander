@@ -50,4 +50,16 @@ describe('PostgreSQL auth-failure authority', () => {
 
     assert.match(harness.queries[0].sql, /CASE WHEN \$4 <= 1 THEN to_timestamp\(\(\$2 \+ \$5\) \/ 1000\.0\)/);
   });
+
+  it('bounds cleanup of expired unlocked failures', async () => {
+    const harness = createPoolHarness();
+    const store = new PostgresAuthFailureStore(harness.pool);
+
+    await store.cleanup(120_000, 60_000, 250);
+
+    assert.match(harness.queries[0].sql, /DELETE FROM commander_auth_failures/);
+    assert.match(harness.queries[0].sql, /ORDER BY last_failure_at ASC/);
+    assert.match(harness.queries[0].sql, /LIMIT \$3/);
+    assert.deepEqual(harness.queries[0].values, [120_000, 60_000, 250]);
+  });
 });

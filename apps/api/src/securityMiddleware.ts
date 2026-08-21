@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Request, Response, NextFunction } from 'express';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
-import type { SqlPool } from '@commander/kernel';
+import type { SqlClient, SqlPool } from '@commander/kernel';
 
 declare global {
   namespace Express {
@@ -30,7 +30,12 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
 }
 
 interface RateLimitEntry { count: number; resetAt: number; }
-export interface RateLimitBucket { key: string; windowMs: number; }
+export interface RateLimitBucket {
+  key: string;
+  windowMs: number;
+  max?: number;
+  refillPerSecond?: number;
+}
 export interface RateLimitStore { consume(buckets: readonly RateLimitBucket[]): Promise<RateLimitEntry[]>; }
 type VerifiedPoolFactory = (input: { connectionString: string }, env?: NodeJS.ProcessEnv) => SqlPool;
 
@@ -42,6 +47,19 @@ const CONSUME_RATE_LIMIT_SQL = [
   "reset_at = CASE WHEN commander_auth_rate_limits.reset_at <= clock_timestamp() THEN clock_timestamp() + ($2 * interval '1 millisecond') ELSE commander_auth_rate_limits.reset_at END",
   'RETURNING count, EXTRACT(EPOCH FROM reset_at) * 1000 AS "resetAt"',
 ].join('\n');
+
+const READ_GLOBAL_RATE_LIMIT_SQL =
+  'SELECT count, EXTRACT(EPOCH FROM reset_at) * 1000 AS "resetAt", EXTRACT(EPOCH FROM clock_timestamp()) * 1000 AS "now" FROM commander_auth_rate_limits WHERE bucket_key = $1 FOR UPDATE';
+const INSERT_GLOBAL_RATE_LIMIT_SQL =
+  'INSERT INTO commander_auth_rate_limits (bucket_key, count, reset_at) VALUES ($1, 1, clock_timestamp()) ON CONFLICT (bucket_key) DO NOTHING RETURNING EXTRACT(EPOCH FROM reset_at) * 1000 AS "resetAt"';
+const UPDATE_GLOBAL_RATE_LIMIT_SQL =
+  'UPDATE commander_auth_rate_limits SET count = $2, reset_at = to_timestamp($3 / 1000.0) WHERE bucket_key = $1';
+
+interface GlobalRateLimitRow {
+  count: number;
+  resetAt: number;
+  now: number;
+}
 
 export class PostgresRateLimitStore implements RateLimitStore {
   constructor(private readonly pool: SqlPool) {}
@@ -56,10 +74,11 @@ export class PostgresRateLimitStore implements RateLimitStore {
       transactionStarted = true;
       const entries: RateLimitEntry[] = [];
       for (const bucket of buckets) {
-        const result = await client.query<RateLimitEntry>(CONSUME_RATE_LIMIT_SQL, [bucket.key, bucket.windowMs]);
-        const row = result.rows[0];
-        if (!row) throw new Error('RATE_LIMIT_RECORD_MISSING');
-        entries.push({ count: Number(row.count), resetAt: Number(row.resetAt) });
+        entries.push(
+          bucket.refillPerSecond === undefined
+            ? await this.consumeFixedWindow(client, bucket)
+            : await this.consumeGlobalBucket(client, bucket),
+        );
       }
       await client.query('COMMIT');
       transactionStarted = false;
@@ -77,6 +96,52 @@ export class PostgresRateLimitStore implements RateLimitStore {
     } finally {
       await client.release(releaseError);
     }
+  }
+
+  private async consumeFixedWindow(client: SqlClient, bucket: RateLimitBucket): Promise<RateLimitEntry> {
+    const result = await client.query<RateLimitEntry>(CONSUME_RATE_LIMIT_SQL, [bucket.key, bucket.windowMs]);
+    const row = result.rows[0];
+    if (!row) throw new Error('RATE_LIMIT_RECORD_MISSING');
+    return { count: Number(row.count), resetAt: Number(row.resetAt) };
+  }
+
+  private async consumeGlobalBucket(client: SqlClient, bucket: RateLimitBucket): Promise<RateLimitEntry> {
+    const max = bucket.max;
+    const refillPerSecond = bucket.refillPerSecond;
+    if (
+      typeof max !== 'number' ||
+      !Number.isInteger(max) ||
+      max < 1 ||
+      typeof refillPerSecond !== 'number' ||
+      !Number.isFinite(refillPerSecond) ||
+      refillPerSecond <= 0
+    ) {
+      throw new Error('RATE_LIMIT_GLOBAL_BUCKET_INVALID');
+    }
+
+    const snapshot = await client.query<GlobalRateLimitRow>(READ_GLOBAL_RATE_LIMIT_SQL, [bucket.key]);
+    const row = snapshot.rows[0];
+    if (!row) {
+      const inserted = await client.query<{ resetAt: number }>(INSERT_GLOBAL_RATE_LIMIT_SQL, [bucket.key]);
+      const insertedRow = inserted.rows[0];
+      if (insertedRow) {
+        return { count: 1, resetAt: Number(insertedRow.resetAt) + 1_000 / refillPerSecond };
+      }
+      return this.consumeGlobalBucket(client, bucket);
+    }
+
+    const now = Number(row.now);
+    const previous = Number(row.resetAt);
+    const recovered = Math.floor(Math.max(0, now - previous) * refillPerSecond / 1_000);
+    const debt = Math.max(0, Number(row.count) - recovered);
+    const allowed = debt < max;
+    const nextDebt = allowed ? debt + 1 : debt;
+    const nextTimestamp = previous + recovered * 1_000 / refillPerSecond;
+    await client.query(UPDATE_GLOBAL_RATE_LIMIT_SQL, [bucket.key, nextDebt, nextTimestamp]);
+    return {
+      count: allowed ? nextDebt : max + 1,
+      resetAt: nextTimestamp + 1_000 / refillPerSecond,
+    };
   }
 }
 
@@ -119,7 +184,13 @@ export function _resetRateLimitStoreForTesting(): void {
 }
 
 interface RateLimitIdentity { ip: string; userId?: string; tenantId?: string; }
-interface RateLimitScope { key: string; prefix: 'global' | 'tenant' | 'user' | 'ip'; max: number; windowMs: number; }
+interface RateLimitScope {
+  key: string;
+  prefix: 'global' | 'tenant' | 'user' | 'ip';
+  max: number;
+  windowMs: number;
+  refillPerSecond?: number;
+}
 type RateLimitTier = 'health' | 'read' | 'write';
 const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 const TIER_MULTIPLIER: Record<RateLimitTier, number> = { health: 10, read: 1, write: 0.25 };
@@ -128,6 +199,7 @@ const RATE_LIMIT_MAX = Number.parseInt(process.env.API_RATE_LIMIT ?? '120', 10);
 const RATE_LIMIT_USER_MAX = Number.parseInt(process.env.API_RATE_LIMIT_USER ?? String(RATE_LIMIT_MAX), 10);
 const RATE_LIMIT_TENANT_MAX = Number.parseInt(process.env.API_RATE_LIMIT_TENANT ?? String(RATE_LIMIT_MAX), 10);
 const GLOBAL_RATE_LIMIT_MAX = Math.max(1000, Number.parseInt(process.env.API_GLOBAL_RATE_LIMIT ?? String(RATE_LIMIT_MAX * 2), 10));
+const GLOBAL_RATE_LIMIT_REFILL_PER_SEC = Number.parseInt(process.env.API_GLOBAL_RATE_REFILL_PER_SEC ?? '1000', 10);
 
 function classifyTier(url: string, method = 'GET'): RateLimitTier {
   if (/\/(health|metrics|ready|system\/status)/.test(url)) return 'health';
@@ -145,7 +217,7 @@ function buildRateLimitIdentity(req: Request): RateLimitIdentity {
   return { ip: getClientIp(req), userId: req.user?.id ?? req.apiKeyId, tenantId: extractTenantId(req) };
 }
 function buildScopes(identity: RateLimitIdentity, tier: RateLimitTier): RateLimitScope[] {
-  const scopes: RateLimitScope[] = [{ key: 'global:' + tier, prefix: 'global', max: GLOBAL_RATE_LIMIT_MAX, windowMs: 1_000 }];
+  const scopes: RateLimitScope[] = [{ key: 'global:' + tier, prefix: 'global', max: GLOBAL_RATE_LIMIT_MAX, windowMs: 1_000, refillPerSecond: GLOBAL_RATE_LIMIT_REFILL_PER_SEC }];
   if (identity.tenantId) scopes.push({ key: 'tenant:' + identity.tenantId + ':' + tier, prefix: 'tenant', max: Math.max(1, Math.floor(RATE_LIMIT_TENANT_MAX * TIER_MULTIPLIER[tier])), windowMs: RATE_LIMIT_WINDOW_MS });
   if (identity.userId) scopes.push({ key: 'user:' + identity.userId + ':' + tier, prefix: 'user', max: Math.max(1, Math.floor(RATE_LIMIT_USER_MAX * TIER_MULTIPLIER[tier])), windowMs: RATE_LIMIT_WINDOW_MS });
   if (!identity.tenantId && !identity.userId) scopes.push({ key: 'ip:' + identity.ip + ':' + tier, prefix: 'ip', max: Math.max(1, Math.floor(RATE_LIMIT_MAX * TIER_MULTIPLIER[tier])), windowMs: RATE_LIMIT_WINDOW_MS });

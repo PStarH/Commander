@@ -11,7 +11,7 @@ export interface AuthFailureEntry {
 export interface AuthFailureStore {
   get(failureKey: string): Promise<AuthFailureEntry | undefined>;
   recordFailure(failureKey: string, now: number, maxFailures: number, windowMs: number, lockoutMs: number): Promise<AuthFailureEntry>;
-  cleanup(now: number, windowMs: number): Promise<void>;
+  cleanup(now: number, windowMs: number, maxRows?: number): Promise<void>;
 }
 
 type VerifiedPoolFactory = (input: { connectionString: string }, env?: NodeJS.ProcessEnv) => SqlPool;
@@ -65,12 +65,12 @@ export class PostgresAuthFailureStore implements AuthFailureStore {
     }
   }
 
-  async cleanup(now: number, windowMs: number): Promise<void> {
+  async cleanup(now: number, windowMs: number, maxRows = 1_000): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query(
-        'DELETE FROM commander_auth_failures WHERE locked_until IS NULL AND last_failure_at < to_timestamp(($1 - $2) / 1000.0)',
-        [now, windowMs],
+        'DELETE FROM commander_auth_failures WHERE failure_key IN (SELECT failure_key FROM commander_auth_failures WHERE locked_until IS NULL AND last_failure_at < to_timestamp(($1 - $2) / 1000.0) ORDER BY last_failure_at ASC LIMIT $3)',
+        [now, windowMs, maxRows],
       );
     } finally {
       await client.release();
