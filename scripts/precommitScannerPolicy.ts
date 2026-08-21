@@ -478,14 +478,7 @@ function lexicalScopeIdentity(
       if (body === undefined) return undefined;
       const binding = stableBindingIdentity(current, sourceFile);
       if (binding === undefined) return undefined;
-      identities.push(
-        'function:' +
-          current.kind +
-          ':' +
-          binding +
-          ':' +
-          sourceFile.text.slice(current.getStart(sourceFile), body.getStart(sourceFile)),
-      );
+      identities.push('function:' + current.kind + ':' + binding);
     } else if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
       const identity = classIdentity(current, sourceFile);
       if (identity === undefined) return undefined;
@@ -503,13 +496,13 @@ function containsNode(container: ts.Node, node: ts.Node): boolean {
 
 function controlFlowDependencies(
   sourceFile: ts.SourceFile,
-  call: ts.CallExpression | ts.NewExpression,
+  warning: ts.Node,
   boundary: ts.Node,
 ): { descriptors: string[]; roots: ts.Identifier[] } {
   const descriptors: string[] = [];
   const roots: ts.Identifier[] = [];
   for (
-    let current: ts.Node | undefined = call.parent;
+    let current: ts.Node | undefined = warning.parent;
     current && current !== boundary;
     current = current.parent
   ) {
@@ -517,31 +510,31 @@ function controlFlowDependencies(
     let branch = '';
     if (ts.isIfStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call)
+      branch = containsNode(current.expression, warning)
         ? 'condition'
-        : containsNode(current.thenStatement, call)
+        : containsNode(current.thenStatement, warning)
           ? 'then'
           : 'else';
     } else if (ts.isWhileStatement(current) || ts.isDoStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call) ? 'condition' : 'body';
+      branch = containsNode(current.expression, warning) ? 'condition' : 'body';
     } else if (ts.isForStatement(current) && current.condition !== undefined) {
       expression = current.condition;
-      branch = containsNode(current.condition, call) ? 'condition' : 'body';
+      branch = containsNode(current.condition, warning) ? 'condition' : 'body';
     } else if (ts.isForInStatement(current) || ts.isForOfStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call) ? 'expression' : 'body';
+      branch = containsNode(current.expression, warning) ? 'expression' : 'body';
     } else if (ts.isSwitchStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call) ? 'expression' : 'clause';
+      branch = containsNode(current.expression, warning) ? 'expression' : 'clause';
     } else if (ts.isCaseClause(current)) {
       expression = current.expression;
       branch = 'case';
     } else if (ts.isConditionalExpression(current)) {
       expression = current.condition;
-      branch = containsNode(current.whenTrue, call)
+      branch = containsNode(current.whenTrue, warning)
         ? 'true'
-        : containsNode(current.whenFalse, call)
+        : containsNode(current.whenFalse, warning)
           ? 'false'
           : 'condition';
     } else if (
@@ -549,7 +542,7 @@ function controlFlowDependencies(
       (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
         current.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
         current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) &&
-      containsNode(current.right, call)
+      containsNode(current.right, warning)
     ) {
       expression = current.left;
       branch = 'right:' + current.operatorToken.getText(sourceFile);
@@ -564,11 +557,11 @@ function controlFlowDependencies(
 
 function warningStatementText(
   sourceFile: ts.SourceFile,
-  call: ts.CallExpression | ts.NewExpression,
+  warning: ts.Node,
   scope: ExecutableFunction,
 ): string {
   for (
-    let current: ts.Node | undefined = call;
+    let current: ts.Node | undefined = warning;
     current && current !== scope;
     current = current.parent
   ) {
@@ -581,7 +574,7 @@ function warningStatementText(
       return current.getText(sourceFile);
     }
   }
-  return call.getText(sourceFile);
+  return warning.getText(sourceFile);
 }
 
 function sourceOccurrenceFingerprint(
@@ -599,12 +592,36 @@ function sourceOccurrenceFingerprint(
   const located = nodeAtPosition(sourceFile, index);
   const call = located === undefined ? undefined : enclosingCall(located);
   if (call === undefined) {
-    const topLevelStatement =
-      located === undefined ? undefined : enclosingTopLevelStatement(located);
-    if (topLevelStatement === undefined) return undefined;
+    const functionScope = located === undefined ? undefined : enclosingFunction(located);
+    if (functionScope === undefined || located === undefined) {
+      const topLevelStatement =
+        located === undefined ? undefined : enclosingTopLevelStatement(located);
+      if (topLevelStatement === undefined) return undefined;
+      return createHash('sha256')
+        .update(
+          JSON.stringify({ scope: 'top-level', statement: topLevelStatement.getText(sourceFile) }),
+        )
+        .digest('hex');
+    }
+
+    const scopeIdentity = lexicalScopeIdentity(sourceFile, functionScope);
+    if (scopeIdentity === undefined) return undefined;
+    const controls = controlFlowDependencies(sourceFile, located, functionScope);
+    const warningStatement = warningStatementText(sourceFile, located, functionScope);
+    const dependencies = collectDependencyClosure(
+      sourceFile,
+      [...referencedIdentifiers(located.parent), ...controls.roots],
+      located.getStart(sourceFile),
+    );
+
     return createHash('sha256')
       .update(
-        JSON.stringify({ scope: 'top-level', statement: topLevelStatement.getText(sourceFile) }),
+        JSON.stringify({
+          scopeIdentity,
+          warningStatement,
+          controls: controls.descriptors,
+          dependencies: dependencies ?? ['unresolved'],
+        }),
       )
       .digest('hex');
   }

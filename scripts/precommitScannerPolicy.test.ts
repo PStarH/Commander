@@ -289,6 +289,99 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations.length, 0);
   });
 
+  it('inherits a template warning when an unrelated function body statement changes', async () => {
+    const evidence = String.fromCharCode(96) + 'safe ';
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function render(value) {\n  const label = 'before';\n  return " + evidence + ';\n}\n';
+    const changed = baseline.replace("const label = 'before';", "const label = 'after';");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a template warning when an unrelated parameter default changes', async () => {
+    const evidence = String.fromCharCode(96) + 'safe ${value}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function render(value, diagnostic = 'before') {\n  return " + evidence + ';\n}\n';
+    const changed = baseline.replace("diagnostic = 'before'", "diagnostic = 'after'");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('rejects template warnings when their dependencies, guard, or statement change', async () => {
+    const evidence = String.fromCharCode(96) + 'safe ';
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function render(value = 'safe') {\n  const trusted = true;\n  if (trusted) {\n    return " +
+      evidence +
+      '${value}' +
+      String.fromCharCode(96) +
+      ';\n  }\n}\n';
+    const changedSources = [
+      baseline.replace('${value}', '${other}'),
+      baseline.replace("value = 'safe'", 'value = process.argv[2]'),
+      baseline.replace('if (trusted)', 'if (!trusted)'),
+      baseline.replace(
+        'return ' + evidence + '${value}' + String.fromCharCode(96) + ';',
+        'return ' + evidence + '${value}' + String.fromCharCode(96) + '.trim();',
+      ),
+    ];
+
+    for (const changed of changedSources) {
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+
+      assert.equal(result.inherited.length, 0);
+      assert.equal(result.violations.length, 1);
+      assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+    }
+  });
+
   it('does not inherit when an unchanged call moves to another lexical scope', async () => {
     const processCreationCall = ['sp', 'awn', '('].join('');
     const scan = (content: string): readonly ScannerWarning[] =>
