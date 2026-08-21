@@ -27,12 +27,317 @@ import {
   kindClusterExists,
   proofTemplatesPresent,
   parseOwnerFailureEvidence,
+  classifyRolloutFailureJson,
+  retainRolloutFailureEvidence,
   productionImageSourceRevision,
   KIND_NODE_IMAGE,
   CALICO_URL,
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('classifies exact controller rollout failures without retaining object data', () => {
+    for (const [item, expected] of [
+      [
+        {
+          apiVersion: 'apps/v1',
+          kind: 'Deployment',
+          metadata: {
+            name: 'tenant-secret-deployment',
+            namespace: 'tenant-secret-namespace',
+            uid: 'sensitive-uid',
+            labels: { 'app.kubernetes.io/component': 'api' },
+          },
+          status: {
+            conditions: [
+              {
+                type: 'Progressing',
+                status: 'False',
+                reason: 'ProgressDeadlineExceeded',
+                message: 'private probe endpoint failed',
+              },
+            ],
+          },
+        },
+        {
+          code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+          resourceKind: 'Deployment',
+          component: 'api',
+          reasonCode: 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED',
+        },
+      ],
+      [
+        {
+          apiVersion: 'batch/v1',
+          kind: 'Job',
+          metadata: {
+            name: 'tenant-migration-secret',
+            labels: { 'app.kubernetes.io/component': 'migration' },
+          },
+          status: { conditions: [{ type: 'Failed', status: 'True', reason: 'DeadlineExceeded' }] },
+        },
+        {
+          code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+          resourceKind: 'Job',
+          component: 'migration',
+          reasonCode: 'JOB_DEADLINE_EXCEEDED',
+        },
+      ],
+      [
+        {
+          apiVersion: 'batch/v1',
+          kind: 'Job',
+          metadata: {
+            name: 'tenant-proof-secret',
+            labels: { 'commander.io/tenant-authority-proof-reader': 'true' },
+          },
+          status: {
+            conditions: [{ type: 'Failed', status: 'True', reason: 'BackoffLimitExceeded' }],
+          },
+        },
+        {
+          code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+          resourceKind: 'Job',
+          component: 'tenant-cutover-proof',
+          reasonCode: 'JOB_BACKOFF_LIMIT_EXCEEDED',
+        },
+      ],
+    ] as const) {
+      const classified = classifyRolloutFailureJson(
+        JSON.stringify({ kind: 'List', items: [item] }),
+      );
+      assert.deepEqual(classified, expected);
+      assert.doesNotMatch(
+        JSON.stringify(classified),
+        /tenant-secret|tenant-secret-namespace|sensitive-uid|private probe/i,
+      );
+    }
+  });
+
+  it('classifies exact pod rollout failures without container detail', () => {
+    for (const [status, expectedReason] of [
+      [
+        { conditions: [{ type: 'PodScheduled', status: 'False', reason: 'Unschedulable' }] },
+        'POD_UNSCHEDULABLE',
+      ],
+      [
+        { containerStatuses: [{ state: { waiting: { reason: 'ImagePullBackOff' } } }] },
+        'POD_IMAGE_PULL_FAILED',
+      ],
+      [
+        {
+          initContainerStatuses: [{ state: { waiting: { reason: 'CreateContainerConfigError' } } }],
+        },
+        'POD_CONTAINER_CONFIG_ERROR',
+      ],
+      [
+        { containerStatuses: [{ state: { waiting: { reason: 'RunContainerError' } } }] },
+        'POD_CONTAINER_START_FAILED',
+      ],
+      [
+        { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] },
+        'POD_CRASH_LOOP_BACKOFF',
+      ],
+    ] as const) {
+      assert.deepEqual(
+        classifyRolloutFailureJson(
+          JSON.stringify({
+            kind: 'List',
+            items: [
+              {
+                kind: 'Pod',
+                metadata: {
+                  name: 'tenant-pod-secret',
+                  labels: { 'app.kubernetes.io/component': 'worker' },
+                },
+                status: { ...status, message: 'secret SQL detail' },
+              },
+            ],
+          }),
+        ),
+        {
+          code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+          resourceKind: 'Pod',
+          component: 'worker',
+          reasonCode: expectedReason,
+        },
+      );
+    }
+  });
+
+  it('maps migration and proof Pods from fixed labels rather than names', () => {
+    const migration = classifyRolloutFailureJson(
+      JSON.stringify({
+        items: [
+          {
+            kind: 'Pod',
+            metadata: {
+              name: 'sensitive-randomized-name',
+              labels: { 'commander.io/migration-client-v2': 'true' },
+            },
+            status: { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] },
+          },
+        ],
+      }),
+    );
+    const proof = classifyRolloutFailureJson(
+      JSON.stringify({
+        items: [
+          {
+            kind: 'Pod',
+            metadata: {
+              name: 'sensitive-proof-name',
+              labels: { 'commander.io/tenant-authority-proof-reader': 'true' },
+            },
+            status: { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] },
+          },
+        ],
+      }),
+    );
+    assert.equal(migration?.component, 'migration');
+    assert.equal(proof?.component, 'tenant-cutover-proof');
+  });
+
+  it('rejects malformed, unknown, and oversized rollout observations', () => {
+    assert.equal(classifyRolloutFailureJson('not-json'), undefined);
+    assert.equal(
+      classifyRolloutFailureJson(
+        JSON.stringify({
+          items: [
+            {
+              kind: 'Pod',
+              metadata: { labels: { 'app.kubernetes.io/component': 'unknown' } },
+              status: { containerStatuses: [{ state: { waiting: { reason: 'PrivateReason' } } }] },
+            },
+          ],
+        }),
+      ),
+      undefined,
+    );
+    assert.equal(
+      classifyRolloutFailureJson(JSON.stringify({ items: Array.from({ length: 65 }) })),
+      undefined,
+    );
+    assert.equal(classifyRolloutFailureJson('x'.repeat(65 * 1024)), undefined);
+  });
+
+  it('selects one deterministic highest-priority rollout failure', () => {
+    const classified = classifyRolloutFailureJson(
+      JSON.stringify({
+        items: [
+          {
+            kind: 'Deployment',
+            metadata: { labels: { 'app.kubernetes.io/component': 'api' } },
+            status: {
+              conditions: [
+                { type: 'Progressing', status: 'False', reason: 'ProgressDeadlineExceeded' },
+              ],
+            },
+          },
+          {
+            kind: 'Pod',
+            metadata: { labels: { 'app.kubernetes.io/component': 'worker' } },
+            status: { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] },
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(classified, {
+      code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+      resourceKind: 'Pod',
+      component: 'worker',
+      reasonCode: 'POD_CRASH_LOOP_BACKOFF',
+    });
+  });
+
+  it('retains observed evidence when a later atomic rollback observation is empty', () => {
+    const observed = classifyRolloutFailureJson(
+      JSON.stringify({
+        items: [
+          {
+            kind: 'Job',
+            metadata: { labels: { 'app.kubernetes.io/component': 'migration' } },
+            status: {
+              conditions: [{ type: 'Failed', status: 'True', reason: 'DeadlineExceeded' }],
+            },
+          },
+        ],
+      }),
+    );
+    assert.deepEqual(retainRolloutFailureEvidence(observed, undefined), observed);
+  });
+
+  it('sanitizes a valid rollout record and excludes hostile raw content', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/tenant-secret/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [{ message: 'private event' }],
+          assertions: [],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_HELM_COMMAND_FAILED:TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=Job;component=migration;reason_code=JOB_DEADLINE_EXCEEDED\nname=tenant-secret;message=private SQL SELECT;stderr=secret',
+        },
+      ],
+      ownerFailureEvidence: [],
+      passed: false,
+      sanitized: false,
+    });
+    assert.deepEqual(sanitized.scenarios[0], {
+      name: 'fresh-bundled',
+      passed: false,
+      durationMs: 100,
+      failureCodes: [
+        'HELM_TENANT_CUTOVER_FAILED',
+        'TENANT_CUTOVER_HELM_COMMAND_FAILED',
+        'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+      ],
+      rolloutFailure: {
+        code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+        resourceKind: 'Job',
+        component: 'migration',
+        reasonCode: 'JOB_DEADLINE_EXCEEDED',
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(sanitized), /tenant-secret|private|SELECT|stderr|secret/i);
+  });
+
+  it('rejects malformed rollout records and preserves existing Helm failure codes', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_HELM_COMMAND_FAILED:TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED:TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=Pod;component=api;reason_code=POD_CRASH_LOOP_BACKOFF;name=tenant-secret',
+        },
+      ],
+      ownerFailureEvidence: [],
+      passed: false,
+      sanitized: false,
+    });
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, [
+      'HELM_TENANT_CUTOVER_FAILED',
+      'TENANT_CUTOVER_HELM_COMMAND_FAILED',
+      'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED',
+      'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+    ]);
+    assert.equal(sanitized.scenarios[0]?.rolloutFailure, undefined);
+  });
+
   it('retains only a parsed allowlisted owner failure record and source revision', () => {
     assert.deepEqual(
       parseOwnerFailureEvidence(

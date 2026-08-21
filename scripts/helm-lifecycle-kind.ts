@@ -549,6 +549,7 @@ export interface SanitizedScenarioEvidence {
   passed: boolean;
   durationMs: number;
   failureCodes?: string[];
+  rolloutFailure?: RolloutFailureEvidence;
 }
 
 export interface SanitizedHarnessEvidence {
@@ -581,6 +582,60 @@ export interface OwnerFailureEvidence {
   sqlstate?: string;
   logSha256: string;
 }
+
+export type RolloutResourceKind = 'Deployment' | 'Job' | 'Pod';
+export type RolloutComponent =
+  | 'api'
+  | 'worker'
+  | 'kernel-ops'
+  | 'adapter-ops'
+  | 'postgres'
+  | 'redis'
+  | 'migration'
+  | 'tenant-cutover-proof';
+export type RolloutReasonCode =
+  | 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED'
+  | 'JOB_DEADLINE_EXCEEDED'
+  | 'JOB_BACKOFF_LIMIT_EXCEEDED'
+  | 'POD_UNSCHEDULABLE'
+  | 'POD_IMAGE_PULL_FAILED'
+  | 'POD_CONTAINER_CONFIG_ERROR'
+  | 'POD_CONTAINER_START_FAILED'
+  | 'POD_CRASH_LOOP_BACKOFF';
+
+export interface RolloutFailureEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED';
+  resourceKind: RolloutResourceKind;
+  component: RolloutComponent;
+  reasonCode: RolloutReasonCode;
+}
+
+const ROLLOUT_OBSERVATION_MAX_BYTES = 64 * 1024;
+const ROLLOUT_OBSERVATION_MAX_ITEMS = 64;
+const ROLLOUT_COMPONENTS: readonly RolloutComponent[] = [
+  'api',
+  'worker',
+  'kernel-ops',
+  'adapter-ops',
+  'postgres',
+  'redis',
+  'migration',
+  'tenant-cutover-proof',
+];
+const ROLLOUT_RESOURCE_KINDS: readonly RolloutResourceKind[] = ['Deployment', 'Job', 'Pod'];
+const ROLLOUT_REASON_CODES: readonly RolloutReasonCode[] = [
+  'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED',
+  'JOB_DEADLINE_EXCEEDED',
+  'JOB_BACKOFF_LIMIT_EXCEEDED',
+  'POD_UNSCHEDULABLE',
+  'POD_IMAGE_PULL_FAILED',
+  'POD_CONTAINER_CONFIG_ERROR',
+  'POD_CONTAINER_START_FAILED',
+  'POD_CRASH_LOOP_BACKOFF',
+];
+const ROLLOUT_FAILURE_RECORD = new RegExp(
+  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_CRASH_LOOP_BACKOFF)(?=\\n|$)',
+);
 
 type OwnerMigrationFailureStage =
   | 'input'
@@ -682,6 +737,204 @@ function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   return codes.length > 0 ? codes : undefined;
 }
 
+function jsonRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function jsonArray(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function hasExactValue<T extends string>(value: unknown, values: readonly T[]): value is T {
+  return typeof value === 'string' && values.includes(value as T);
+}
+
+function rolloutComponent(
+  metadata: Record<string, unknown> | undefined,
+): RolloutComponent | undefined {
+  const labels = jsonRecord(metadata?.labels);
+  if (!labels) return undefined;
+  if (labels['commander.io/migration-client-v2'] === 'true') return 'migration';
+  if (labels['commander.io/tenant-authority-proof-reader'] === 'true') {
+    return 'tenant-cutover-proof';
+  }
+  return hasExactValue(labels['app.kubernetes.io/component'], ROLLOUT_COMPONENTS)
+    ? labels['app.kubernetes.io/component']
+    : undefined;
+}
+
+function conditionReason(
+  status: Record<string, unknown> | undefined,
+  type: string,
+  state: string,
+): string | undefined {
+  const conditions = jsonArray(status?.conditions);
+  if (!conditions) return undefined;
+  for (const candidate of conditions) {
+    const condition = jsonRecord(candidate);
+    if (
+      condition?.type === type &&
+      condition.status === state &&
+      typeof condition.reason === 'string'
+    ) {
+      return condition.reason;
+    }
+  }
+  return undefined;
+}
+
+function podWaitingReason(status: Record<string, unknown> | undefined): string | undefined {
+  for (const field of ['initContainerStatuses', 'containerStatuses']) {
+    const containers = jsonArray(status?.[field]);
+    if (!containers) continue;
+    for (const candidate of containers) {
+      const container = jsonRecord(candidate);
+      const state = jsonRecord(container?.state);
+      const waiting = jsonRecord(state?.waiting);
+      if (typeof waiting?.reason === 'string') return waiting.reason;
+    }
+  }
+  return undefined;
+}
+
+function rolloutReasonForItem(
+  resourceKind: RolloutResourceKind,
+  status: Record<string, unknown> | undefined,
+): RolloutReasonCode | undefined {
+  if (resourceKind === 'Deployment') {
+    return conditionReason(status, 'Progressing', 'False') === 'ProgressDeadlineExceeded'
+      ? 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED'
+      : undefined;
+  }
+  if (resourceKind === 'Job') {
+    const reason = conditionReason(status, 'Failed', 'True');
+    if (reason === 'DeadlineExceeded') return 'JOB_DEADLINE_EXCEEDED';
+    if (reason === 'BackoffLimitExceeded') return 'JOB_BACKOFF_LIMIT_EXCEEDED';
+    return undefined;
+  }
+  if (conditionReason(status, 'PodScheduled', 'False') === 'Unschedulable') {
+    return 'POD_UNSCHEDULABLE';
+  }
+  switch (podWaitingReason(status)) {
+    case 'ErrImagePull':
+    case 'ImagePullBackOff':
+      return 'POD_IMAGE_PULL_FAILED';
+    case 'CreateContainerConfigError':
+    case 'CreateContainerError':
+      return 'POD_CONTAINER_CONFIG_ERROR';
+    case 'RunContainerError':
+      return 'POD_CONTAINER_START_FAILED';
+    case 'CrashLoopBackOff':
+      return 'POD_CRASH_LOOP_BACKOFF';
+    default:
+      return undefined;
+  }
+}
+
+function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | undefined {
+  const item = jsonRecord(value);
+  if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
+  const component = rolloutComponent(jsonRecord(item.metadata));
+  const reasonCode = rolloutReasonForItem(item.kind, jsonRecord(item.status));
+  if (!component || !reasonCode) return undefined;
+  return {
+    code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+    resourceKind: item.kind,
+    component,
+    reasonCode,
+  };
+}
+
+function rolloutFailurePriority(value: RolloutFailureEvidence): number {
+  switch (value.reasonCode) {
+    case 'POD_UNSCHEDULABLE':
+      return 0;
+    case 'POD_IMAGE_PULL_FAILED':
+      return 1;
+    case 'POD_CONTAINER_CONFIG_ERROR':
+      return 2;
+    case 'POD_CONTAINER_START_FAILED':
+      return 3;
+    case 'POD_CRASH_LOOP_BACKOFF':
+      return 4;
+    case 'JOB_DEADLINE_EXCEEDED':
+      return 5;
+    case 'JOB_BACKOFF_LIMIT_EXCEEDED':
+      return 6;
+    case 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED':
+      return 7;
+  }
+}
+
+function rolloutFailureKey(value: RolloutFailureEvidence): string {
+  return value.resourceKind + '/' + value.component + '/' + value.reasonCode;
+}
+
+/** Retains a single canonical observation across Helm's atomic rollback window. */
+export function retainRolloutFailureEvidence(
+  previous: RolloutFailureEvidence | undefined,
+  candidate: RolloutFailureEvidence | undefined,
+): RolloutFailureEvidence | undefined {
+  if (!candidate) return previous;
+  if (!previous) return candidate;
+  const candidatePriority = rolloutFailurePriority(candidate);
+  const previousPriority = rolloutFailurePriority(previous);
+  if (candidatePriority < previousPriority) return candidate;
+  if (candidatePriority > previousPriority) return previous;
+  return rolloutFailureKey(candidate) < rolloutFailureKey(previous) ? candidate : previous;
+}
+
+/** Parses Kubernetes status JSON and returns only a fixed rollout-failure vocabulary. */
+export function classifyRolloutFailureJson(value: string): RolloutFailureEvidence | undefined {
+  if (Buffer.byteLength(value) > ROLLOUT_OBSERVATION_MAX_BYTES) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+  const root = jsonRecord(parsed);
+  const items = jsonArray(root?.items);
+  if (!items || items.length > ROLLOUT_OBSERVATION_MAX_ITEMS) return undefined;
+  return items.reduce<RolloutFailureEvidence | undefined>(
+    (selected, item) => retainRolloutFailureEvidence(selected, classifyRolloutFailureItem(item)),
+    undefined,
+  );
+}
+
+/** Extracts the strict rollout record and never returns raw Kubernetes fields. */
+export function parseRolloutFailureEvidence(error: string): RolloutFailureEvidence | undefined {
+  const match = error.match(ROLLOUT_FAILURE_RECORD);
+  if (!match) return undefined;
+  const [, resourceKind, component, reasonCode] = match;
+  if (
+    !hasExactValue(resourceKind, ROLLOUT_RESOURCE_KINDS) ||
+    !hasExactValue(component, ROLLOUT_COMPONENTS) ||
+    !hasExactValue(reasonCode, ROLLOUT_REASON_CODES)
+  ) {
+    return undefined;
+  }
+  return {
+    code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+    resourceKind,
+    component,
+    reasonCode,
+  };
+}
+
+function rolloutFailureRecord(value: RolloutFailureEvidence): string {
+  return (
+    'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=' +
+    value.resourceKind +
+    ';component=' +
+    value.component +
+    ';reason_code=' +
+    value.reasonCode
+  );
+}
+
 /** Extract only the canonical owner diagnostic record, never the original error text. */
 export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
   const match = OWNER_FAILURE_RECORD.exec(error);
@@ -773,11 +1026,22 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
       : {}),
     scenarios: evidence.scenarios.map(({ name, passed, durationMs, error }) => {
       const failureCodes = scenarioFailureCodes(error);
+      const rolloutFailure = error ? parseRolloutFailureEvidence(error) : undefined;
       return {
         name,
         passed,
         durationMs,
         ...(failureCodes ? { failureCodes } : {}),
+        ...(rolloutFailure
+          ? {
+              rolloutFailure: {
+                code: rolloutFailure.code,
+                resourceKind: rolloutFailure.resourceKind,
+                component: rolloutFailure.component,
+                reasonCode: rolloutFailure.reasonCode,
+              },
+            }
+          : {}),
       };
     }),
     ...(evidence.ownerFailureEvidence
@@ -1103,8 +1367,8 @@ export async function buildAndLoadProductionImage(): Promise<void> {
   await loadProductionImage(await buildProductionImage());
 }
 
-function kubectl(args: string[]): Promise<CommandResult> {
-  return runCmd('kubectl', args);
+function kubectl(args: string[], options: ExecFileOptions = {}): Promise<CommandResult> {
+  return runCmd('kubectl', args, options);
 }
 
 function helm(args: string[]): Promise<CommandResult> {
@@ -1552,6 +1816,26 @@ async function inspectLiveProofPod(release: string, imageDigest: string): Promis
   return true;
 }
 
+async function observeLiveRolloutFailure(
+  release: string,
+): Promise<RolloutFailureEvidence | undefined> {
+  const result = await kubectl(
+    [
+      'get',
+      'deployments,jobs,pods',
+      '-n',
+      NAMESPACE,
+      '-l',
+      'app.kubernetes.io/instance=' + release,
+      '-o',
+      'json',
+    ],
+    { maxBuffer: ROLLOUT_OBSERVATION_MAX_BYTES },
+  );
+  if (result.exitCode !== 0) return undefined;
+  return classifyRolloutFailureJson(result.stdout);
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -1594,14 +1878,24 @@ async function runCutoverCommand(
     });
   });
   let proofPodObserved = false;
+  let rolloutFailure: RolloutFailureEvidence | undefined;
   while (!finished) {
-    proofPodObserved = (await inspectLiveProofPod(release, digest)) || proofPodObserved;
+    const [proofPod, observedFailure] = await Promise.all([
+      inspectLiveProofPod(release, digest),
+      observeLiveRolloutFailure(release),
+    ]);
+    proofPodObserved = proofPod || proofPodObserved;
+    rolloutFailure = retainRolloutFailureEvidence(rolloutFailure, observedFailure);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
   if (exitCode !== 0) {
-    const detail = Buffer.concat(stderr).toString('utf8').trim().slice(-4_000);
-    throw new Error(`HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}`);
+    const childCodes = scenarioFailureCodes(Buffer.concat(stderr).toString('utf8')) ?? [];
+    const failureCodes = [...new Set(['HELM_TENANT_CUTOVER_FAILED', ...childCodes])];
+    const diagnostic = rolloutFailure
+      ? rolloutFailureRecord(rolloutFailure)
+      : 'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED';
+    throw new Error(failureCodes.join(':') + ':' + diagnostic);
   }
   if (requireLiveProofPod && !proofPodObserved) {
     throw new Error('LIVE_PROOF_POD_NOT_OBSERVED');
