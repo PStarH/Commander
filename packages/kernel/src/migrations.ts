@@ -46,6 +46,7 @@ import {
 } from './compensationSchema.js';
 import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import { KERNEL_AUTH_PERSISTENCE_SQL } from './authPersistenceSchema.js';
 
 export interface KernelMigration {
   id: string;
@@ -437,6 +438,14 @@ export const KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS: readonly KernelMig
   },
 ];
 
+export const KERNEL_AUTH_PERSISTENCE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-21.1.p0_auth_persistence',
+    sql: KERNEL_AUTH_PERSISTENCE_SQL,
+    checksum: checksum(KERNEL_AUTH_PERSISTENCE_SQL),
+  },
+];
+
 export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_TASK1_FORWARD_MIGRATIONS,
   ...KERNEL_TASK2_FORWARD_MIGRATIONS,
@@ -453,6 +462,7 @@ export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
 ];
 
 export const KERNEL_TASK1_BASELINE_MIGRATIONS: readonly KernelMigration[] = [
@@ -491,6 +501,7 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';
