@@ -118,6 +118,10 @@ describe('Helm lifecycle static contract', () => {
         api,
         /- name: COMMANDER_ACTION_RATIONALE_FILE\n\s+value: \/tmp\/commander-api\/action-rationales.json/,
       );
+      assert.match(
+        api,
+        /- name: API_RATE_LIMIT_DB_PATH\n\s+value: \/tmp\/commander-api\/rate-limit.sqlite/,
+      );
       assert.match(api, /- name: tmp\n\s+mountPath: \/tmp/);
     }
   });
