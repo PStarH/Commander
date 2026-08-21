@@ -642,7 +642,9 @@ export interface RolloutObservationState {
   queryFailure?: RolloutQueryEvidence;
 }
 
-const ROLLOUT_OBSERVATION_MAX_BYTES = 64 * 1024;
+// A rendered release's status response legitimately exceeds 64 KiB. The observer
+// retains it only in-process and emits a finite classification, never the response.
+const ROLLOUT_OBSERVATION_MAX_BYTES = 1024 * 1024;
 const ROLLOUT_OBSERVATION_MAX_ITEMS = 64;
 const ROLLOUT_COMPONENTS: readonly RolloutComponent[] = [
   'api',
