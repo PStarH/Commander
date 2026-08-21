@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import type { AuthPluginResult } from '@commander/core';
+import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
 
 const originalCwd = process.cwd();
 const originalEnv = {
@@ -39,6 +40,32 @@ let result: AuthPluginResult;
 let server: ReturnType<ReturnType<typeof express>['listen']>;
 let baseUrl: string;
 
+class TestRefreshTokenRepository implements RefreshTokenRepository {
+  readonly records = new Map<string, RefreshTokenRecord & { revoked: boolean }>();
+  unavailable = false;
+
+  async insert(record: RefreshTokenRecord): Promise<void> {
+    if (this.unavailable) throw new Error('postgres authority failed: secret-dsn');
+    this.records.set(record.jti, { ...record, revoked: false });
+  }
+
+  async consume(jti: string): Promise<boolean> {
+    if (this.unavailable) throw new Error('postgres authority failed: secret-dsn');
+    const record = this.records.get(jti);
+    if (!record || record.revoked || record.expiresAt.getTime() <= Date.now()) return false;
+    record.revoked = true;
+    return true;
+  }
+
+  async revoke(jti: string): Promise<void> {
+    if (this.unavailable) throw new Error('postgres authority failed: secret-dsn');
+    const record = this.records.get(jti);
+    if (record) record.revoked = true;
+  }
+}
+
+const refreshTokens = new TestRefreshTokenRepository();
+
 function oidcResult(overrides: Partial<AuthPluginResult> = {}): AuthPluginResult {
   return {
     userId: 'subject-alice',
@@ -70,9 +97,10 @@ before(async () => {
   app.use(
     createOIDCAuthRouter({
       authenticate: async () => result,
+      refreshTokens,
     }),
   );
-  app.use(createUserAuthRouter());
+  app.use(createUserAuthRouter({ refreshTokens }));
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.on('listening', resolve));
   const address = server.address();
@@ -87,6 +115,8 @@ beforeEach(() => {
   process.env.COMMANDER_DEFAULT_TENANT_ID = 'deployment-default';
   fs.writeFileSync(path.join(tmpDir, '.commander', 'users.json'), '[]');
   _resetUserStoreForTests();
+  refreshTokens.records.clear();
+  refreshTokens.unavailable = false;
   result = oidcResult();
 });
 
@@ -297,5 +327,18 @@ describe('OIDC exchange identity and tenant binding', () => {
     assert.equal(rotatedResponse.status, 200);
     assert.equal(verifyToken(rotated.token)?.tenant_id, 'tenant-a');
     assert.equal(verifyToken(rotated.refreshToken)?.tenant_id, 'tenant-a');
+  });
+
+  it('returns a sanitized 503 and no credentials when refresh authority is unavailable', async () => {
+    refreshTokens.unavailable = true;
+
+    const response = await exchange();
+
+    assert.equal(response.status, 503);
+    const body = (await response.json()) as Record<string, unknown>;
+    assert.deepEqual(body, { error: 'Authentication service unavailable' });
+    assert.equal(body.token, undefined);
+    assert.equal(body.refreshToken, undefined);
+    assert.equal(JSON.stringify(body).includes('secret-dsn'), false);
   });
 });

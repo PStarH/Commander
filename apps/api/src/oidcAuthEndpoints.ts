@@ -22,6 +22,10 @@ import {
   type UserRole,
 } from './userStore';
 import { signAccessToken, signRefreshToken } from './jwtMiddleware';
+import {
+  getRefreshTokenRepository,
+  type RefreshTokenRepository,
+} from './refreshTokenStore';
 import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
 import { isMultiTenantEnabled, validateTenantId } from '@commander/core/runtime/tenantContext';
 
@@ -228,10 +232,12 @@ function resolveOIDCTenantId(
 
 export interface OIDCAuthRouterOptions {
   authenticate?: (idToken: string, config: OIDCRuntimeConfig) => Promise<AuthPluginResult | null>;
+  refreshTokens?: RefreshTokenRepository;
 }
 
 export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Router {
   const router = Router();
+  const refreshTokens = options.refreshTokens ?? getRefreshTokenRepository();
 
   /**
    * GET /api/auth/oidc/config
@@ -374,11 +380,16 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       tenantId,
     };
 
-    res.json({
-      token: signAccessToken(authUser),
-      refreshToken: signRefreshToken(authUser),
-      user: toSafeUserPublic(localUser),
-    });
+    try {
+      const refreshToken = await signRefreshToken(authUser, refreshTokens);
+      res.json({
+        token: signAccessToken(authUser),
+        refreshToken,
+        user: toSafeUserPublic(localUser),
+      });
+    } catch {
+      res.status(503).json({ error: 'Authentication service unavailable' });
+    }
   });
 
   /**

@@ -40,13 +40,13 @@ function makeUser(overrides: Partial<AuthUser> = {}): AuthUser {
 }
 
 function bearer(token: string): Record<string, string> {
-  return { authorization: `Bearer ${token}` };
+  return { authorization: 'Bearer ' + token };
 }
 
 /**
  * Mount the guard with the same relative ordering as production:
  *   jwtMiddleware → (stub apiKey simulation) → v1TenantGuard → handler
- * authMiddleware is stubbed: when `simulateApiKey` is set it pre-populates
+ * authMiddleware is stubbed: when simulateApiKey is set it pre-populates
  * req.apiKeyId + req.tenantId as if a tenant-bound API key had validated.
  */
 async function withGuard(
@@ -83,7 +83,7 @@ async function withGuard(
   try {
     const address = server.address();
     assert.ok(address && typeof address !== 'string');
-    await action(`http://127.0.0.1:${address.port}`);
+    await action('http://127.0.0.1:' + address.port);
   } finally {
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve())),
@@ -92,7 +92,7 @@ async function withGuard(
 }
 
 async function getRun(base: string, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> {
-  const res = await fetch(`${base}/v1/runs/run-xyz`, { headers });
+  const res = await fetch(base + '/v1/runs/run-xyz', { headers });
   const body = (await res.json()) as any;
   return { status: res.status, body };
 }
@@ -164,7 +164,14 @@ describe('v1TenantGuard — spec §3.2 fail-closed table (enterprise profile)', 
   it('row 2: refresh token used in place of access token → 401 INVALID_TOKEN', async () => {
     // Sign a refresh token (type: 'refresh') — guard must reject as non-access.
     const { signRefreshToken } = await import('../src/jwtMiddleware.js');
-    const refresh = (signRefreshToken as (u: AuthUser) => string)(makeUser({ tenantId: KNOWN_TENANT }));
+    const refreshTokens = {
+      async insert() {},
+      async consume() {
+        return false;
+      },
+      async revoke() {},
+    };
+    const refresh = await signRefreshToken(makeUser({ tenantId: KNOWN_TENANT }), refreshTokens);
     await withGuard({}, async (base) => {
       const { status, body } = await getRun(base, bearer(refresh));
       assert.equal(status, 401);

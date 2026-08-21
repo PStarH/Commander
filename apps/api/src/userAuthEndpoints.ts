@@ -25,7 +25,10 @@ import {
   type AuthUser,
   resolveAccessTenantId,
 } from './jwtMiddleware';
-import { consume as consumeRefreshJti, revoke as revokeRefreshJti } from './refreshTokenStore';
+import {
+  getRefreshTokenRepository,
+  type RefreshTokenRepository,
+} from './refreshTokenStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -33,7 +36,7 @@ import { consume as consumeRefreshJti, revoke as revokeRefreshJti } from './refr
  * Computed once at module load (of a value no user can hold) so its work factor
  * matches the real comparison; it is never a valid credential.
  */
-const DUMMY_PASSWORD_HASH = hashSync(`invalid:${process.pid}:no-such-user`, 10);
+const DUMMY_PASSWORD_HASH = hashSync('invalid:' + process.pid + ':no-such-user', 10);
 
 // ── Validation schemas ──────────────────────────────────────────────────────
 
@@ -104,7 +107,7 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
 
 /**
  * Returns middleware that requires the authenticated user to meet or exceed
- * `requiredRole` in the role hierarchy (defaults to 'admin', so both
+ * requiredRole in the role hierarchy (defaults to 'admin', so both
  * 'super_admin' and 'admin' satisfy an unparameterised check). Must be
  * mounted after requireAuth.
  */
@@ -126,7 +129,10 @@ interface AuthResponseBody {
   user: SafeUser;
 }
 
-function buildAuthResponse(user: AuthUser): AuthResponseBody {
+async function buildAuthResponse(
+  user: AuthUser,
+  refreshTokens: RefreshTokenRepository,
+): Promise<AuthResponseBody> {
   // Look up the fresh user record so lastLoginAt / createdAt are current.
   const full = findUserById(user.id);
   const safeUser: SafeUser = full
@@ -139,20 +145,30 @@ function buildAuthResponse(user: AuthUser): AuthResponseBody {
         createdAt: new Date().toISOString(),
         lastLoginAt: null,
       };
+  const refreshToken = await signRefreshToken(user, refreshTokens);
   return {
     token: signAccessToken(user),
-    refreshToken: signRefreshToken(user),
+    refreshToken,
     user: safeUser,
   };
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
 
-export function createUserAuthRouter(): Router {
+export interface UserAuthRouterOptions {
+  refreshTokens?: RefreshTokenRepository;
+}
+
+export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Router {
   const router = Router();
+  const refreshTokens = options.refreshTokens ?? getRefreshTokenRepository();
+
+  function authorityUnavailable(res: Response): void {
+    res.status(503).json({ error: 'Authentication service unavailable' });
+  }
 
   // ── POST /api/auth/register ──────────────────────────────────────────────
-  router.post('/api/auth/register', (req: Request, res: Response) => {
+  router.post('/api/auth/register', async (req: Request, res: Response) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -179,11 +195,15 @@ export function createUserAuthRouter(): Router {
       tenantId: resolveAccessTenantId(),
     };
     updateLastLogin(result.user.id);
-    res.status(201).json(buildAuthResponse(authUser));
+    try {
+      res.status(201).json(await buildAuthResponse(authUser, refreshTokens));
+    } catch {
+      authorityUnavailable(res);
+    }
   });
 
   // ── POST /api/auth/login ─────────────────────────────────────────────────
-  router.post('/api/auth/login', (req: Request, res: Response) => {
+  router.post('/api/auth/login', async (req: Request, res: Response) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -216,7 +236,11 @@ export function createUserAuthRouter(): Router {
       tenantId: resolveAccessTenantId(),
     };
     updateLastLogin(user.id);
-    res.json(buildAuthResponse(authUser));
+    try {
+      res.json(await buildAuthResponse(authUser, refreshTokens));
+    } catch {
+      authorityUnavailable(res);
+    }
   });
 
   // ── GET /api/auth/me ─────────────────────────────────────────────────────
@@ -231,7 +255,7 @@ export function createUserAuthRouter(): Router {
 
   // ── POST /api/auth/refresh ───────────────────────────────────────────────
   // Rotates refresh tokens: validate jti → revoke old → mint new pair.
-  router.post('/api/auth/refresh', (req: Request, res: Response) => {
+  router.post('/api/auth/refresh', async (req: Request, res: Response) => {
     const parsed = refreshSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -251,7 +275,14 @@ export function createUserAuthRouter(): Router {
     }
 
     // Atomic consume: first concurrent refresh wins; replay / race → 401.
-    if (!consumeRefreshJti(decoded.jti)) {
+    let consumed: boolean;
+    try {
+      consumed = await refreshTokens.consume(decoded.jti);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
+    if (!consumed) {
       res.status(401).json({ error: 'Refresh token revoked or unknown' });
       return;
     }
@@ -269,12 +300,16 @@ export function createUserAuthRouter(): Router {
       role: user.role,
       tenantId: decoded.tenant_id ?? resolveAccessTenantId(),
     };
-    res.json(buildAuthResponse(authUser));
+    try {
+      res.json(await buildAuthResponse(authUser, refreshTokens));
+    } catch {
+      authorityUnavailable(res);
+    }
   });
 
   // ── POST /api/auth/logout ────────────────────────────────────────────────
   // Revokes the presented refresh jti (access token TTL still applies).
-  router.post('/api/auth/logout', (req: Request, res: Response) => {
+  router.post('/api/auth/logout', async (req: Request, res: Response) => {
     const parsed = refreshSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -289,7 +324,12 @@ export function createUserAuthRouter(): Router {
 
     const decoded = verifyToken(parsed.data.refreshToken);
     if (decoded?.type === 'refresh' && decoded.jti) {
-      revokeRefreshJti(decoded.jti);
+      try {
+        await refreshTokens.revoke(decoded.jti);
+      } catch {
+        authorityUnavailable(res);
+        return;
+      }
     }
     res.json({ success: true });
   });
