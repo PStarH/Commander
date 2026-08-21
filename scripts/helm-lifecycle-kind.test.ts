@@ -58,10 +58,37 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.deepEqual(
       classifyRolloutObservation({
         exitCode: 0,
-        stdout: 'x'.repeat(64 * 1024 + 1),
+        stdout: 'x'.repeat(1024 * 1024 + 1),
         stderr: '',
       }),
       { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT' },
+    );
+    assert.deepEqual(
+      classifyRolloutObservation({
+        exitCode: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          items: [
+            {
+              kind: 'Pod',
+              metadata: {
+                labels: { 'app.kubernetes.io/component': 'worker' },
+                annotations: { ignored: 'x'.repeat(128 * 1024) },
+              },
+              status: { conditions: [{ type: 'Ready', status: 'False' }] },
+            },
+          ],
+        }),
+      }),
+      {
+        kind: 'success',
+        evidence: {
+          code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+          resourceKind: 'Pod',
+          component: 'worker',
+          reasonCode: 'POD_NOT_READY',
+        },
+      },
     );
     assert.deepEqual(
       classifyRolloutObservation({
