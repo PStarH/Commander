@@ -43,15 +43,6 @@ const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
 const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
-const startupAuthFailureStore = getAuthFailureStore();
-
-// Cleanup old entries every 5 minutes
-setInterval(() => {
-  startupAuthFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
-    process.stderr.write('[Auth] Failed to cleanup auth failure entries: ' + String(err) + '\n');
-  });
-}, 300_000).unref();
-
 function sha256(input: string): Buffer {
   return crypto.createHash('sha256').update(input).digest();
 }
@@ -79,14 +70,14 @@ function getClientIp(req: Request): string {
 async function recordAuthFailure(ip: string): Promise<void> {
   const authFailureStore = getAuthFailureStore();
   const now = Date.now();
-  let entry = await authFailureStore.get(ip);
-  if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-    entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
-  }
-  entry.count++;
-  entry.lastFailureAt = now;
-  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
-    entry.lockedUntil = now + LOCKOUT_DURATION_MS;
+  const entry = await authFailureStore.recordFailure(
+    ip,
+    now,
+    MAX_AUTH_FAILURES,
+    AUTH_FAILURE_WINDOW_MS,
+    LOCKOUT_DURATION_MS,
+  );
+  if (entry.count === MAX_AUTH_FAILURES) {
     try {
       getGlobalLogger().warn(
         'AuthMiddleware',
@@ -109,7 +100,6 @@ async function recordAuthFailure(ip: string): Promise<void> {
       );
     }
   }
-  await authFailureStore.set(ip, entry);
 }
 
 async function isLockedOut(ip: string): Promise<boolean> {
@@ -212,24 +202,15 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
 
   // Check lockout BEFORE processing auth — fail fast for locked IPs
   if (await isLockedOut(clientIp)) {
-    try {
-      const authFailureStore = getAuthFailureStore();
-      const entry = await authFailureStore.get(clientIp);
-      const lockedUntil = entry?.lockedUntil ?? 0;
-      const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
-      res.setHeader('Retry-After', String(retryAfter));
-      res.status(429).json({
-        error: 'Too many authentication failures. Try again later.',
-        retryAfter,
-      });
-      return;
-    } catch (err) {
-      process.stderr.write('[Auth] Failed to read lockout entry: ' + String(err) + '\n');
-      res.status(429).json({
-        error: 'Too many authentication failures. Try again later.',
-      });
-      return;
-    }
+    const entry = await getAuthFailureStore().get(clientIp);
+    const lockedUntil = entry?.lockedUntil ?? 0;
+    const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({
+      error: 'Too many authentication failures. Try again later.',
+      retryAfter,
+    });
+    return;
   }
 
   const authHeader = readHeader(req.headers.authorization);

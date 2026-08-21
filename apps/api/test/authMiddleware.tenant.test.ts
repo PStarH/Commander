@@ -7,6 +7,7 @@ import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { authMiddleware } from '../src/authMiddleware';
 import { setApiKeyStoreForTesting } from '../src/apiKeyStore';
+import { resetAuthFailureStoreForTesting, setAuthFailureStore } from '../src/authFailureStore';
 import { TestApiKeyStore } from './authRepositories';
 
 let app: express.Express;
@@ -29,6 +30,16 @@ before(async () => {
   fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
   process.chdir(tmpDir);
   setApiKeyStoreForTesting(apiKeys);
+  setAuthFailureStore({
+    get: async () => undefined,
+    recordFailure: async (_key, now) => ({
+      count: 1,
+      firstFailureAt: now,
+      lastFailureAt: now,
+      lockedUntil: 0,
+    }),
+    cleanup: async () => undefined,
+  });
 
   app = express();
   app.use(authMiddleware);
@@ -55,6 +66,7 @@ before(async () => {
 after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   setApiKeyStoreForTesting(undefined);
+  resetAuthFailureStoreForTesting();
   process.chdir(originalCwd);
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });

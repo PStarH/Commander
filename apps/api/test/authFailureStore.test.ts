@@ -1,174 +1,53 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { createAuthFailureStore } from '../src/authFailureStore.js';
+import type { SqlClient, SqlPool } from '@commander/kernel';
+import {
+  PostgresAuthFailureStore,
+  createAuthFailureStore,
+} from '../src/authFailureStore.js';
 
-async function withEnvironment(
-  values: Record<string, string | undefined>,
-  run: () => void | Promise<void>,
-): Promise<void> {
-  const previous = new Map<string, string | undefined>();
-  for (const [key, value] of Object.entries(values)) {
-    previous.set(key, process.env[key]);
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  try {
-    await run();
-  } finally {
-    for (const [key, value] of previous) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
+function createPoolHarness(): { pool: SqlPool; queries: Array<{ sql: string; values: readonly unknown[] }> } {
+  const queries: Array<{ sql: string; values: readonly unknown[] }> = [];
+  const client: SqlClient = {
+    async query<T>(sql: string, values: readonly unknown[] = []) {
+      queries.push({ sql, values });
+      if (sql.startsWith('SELECT')) return { rows: [] as T[], rowCount: 0 };
+      return {
+        rows: [{ count: 1, firstFailureAt: 100, lastFailureAt: 100, lockedUntil: 0 }] as T[],
+        rowCount: 1,
+      };
+    },
+    release() {},
+  };
+  return { queries, pool: { connect: async () => client } };
 }
 
-describe('AuthFailureStore authority selection', () => {
-  it('fails production startup when AUTH_FAILURE_REDIS_URL is absent', async () => {
-    await withEnvironment(
-      {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: undefined,
-        AUTH_FAILURE_STORE_PATH: undefined,
-      },
-      () => {
-        assert.throws(
-          () => createAuthFailureStore(),
-          /AUTH_FAILURE_REDIS_URL is required in production/,
-        );
-      },
+describe('PostgreSQL auth-failure authority', () => {
+  it('requires the commander_app PostgreSQL authority with no development fallback', () => {
+    assert.throws(() => createAuthFailureStore({ environment: {} }), /AUTH_FAILURE_DATABASE_URL_REQUIRED/);
+    assert.throws(
+      () => createAuthFailureStore({ environment: { DATABASE_URL: 'postgresql://postgres:secret@db.example.test/commander' } }),
+      /AUTH_FAILURE_DATABASE_ROLE_INVALID/,
     );
   });
 
-  for (const commanderEnv of ['production', 'prod']) {
-    it(`fails startup for COMMANDER_ENV=${commanderEnv} without Redis`, () => {
-      assert.throws(
-        () =>
-          createAuthFailureStore({
-            environment: {
-              NODE_ENV: 'development',
-              COMMANDER_ENV: commanderEnv,
-            },
-          }),
-        /AUTH_FAILURE_REDIS_URL is required in production/,
-      );
-    });
-  }
+  it('uses one conditional PostgreSQL upsert to record and lock failures', async () => {
+    const harness = createPoolHarness();
+    const store = new PostgresAuthFailureStore(harness.pool);
+    await store.recordFailure('127.0.0.1', 100, 5, 60_000, 300_000);
 
-  it('uses explicit in-memory state outside production when Redis is not configured', async () => {
-    const store = createAuthFailureStore({
-      environment: { NODE_ENV: 'test' },
-    });
-    const entry = {
-      count: 2,
-      firstFailureAt: 100,
-      lastFailureAt: 200,
-      lockedUntil: 300,
-    };
-
-    await store.set('127.0.0.1', entry);
-    assert.deepEqual(await store.get('127.0.0.1'), entry);
+    assert.equal(harness.queries.length, 1);
+    assert.match(harness.queries[0].sql, /INSERT INTO commander_auth_failures/);
+    assert.match(harness.queries[0].sql, /ON CONFLICT \(failure_key\) DO UPDATE/);
+    assert.match(harness.queries[0].sql, /CASE WHEN commander_auth_failures\.last_failure_at/);
+    assert.match(harness.queries[0].sql, /locked_until/);
   });
 
-  it('does not fall back when the Redis module loader fails', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => {
-        throw new Error('redis loader unavailable');
-      },
-    });
+  it('locks the initial failure when the configured threshold is one', async () => {
+    const harness = createPoolHarness();
+    const store = new PostgresAuthFailureStore(harness.pool);
+    await store.recordFailure('127.0.0.1', 100, 1, 60_000, 300_000);
 
-    await assert.rejects(() => store.get('127.0.0.1'), /redis loader unavailable/);
-  });
-
-  it('does not fall back when Redis connection fails', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: () => ({
-          connect: async () => {
-            throw new Error('redis connection unavailable');
-          },
-          get: async () => null,
-          set: async () => 'OK',
-          del: async () => 0,
-        }),
-      }),
-    });
-
-    await assert.rejects(() => store.get('127.0.0.1'), /redis connection unavailable/);
-  });
-
-  it('configures Redis to fail requests promptly while unavailable', async () => {
-    let receivedOptions: unknown;
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: (options) => {
-          receivedOptions = options;
-          return {
-            connect: async () => undefined,
-            get: async () => null,
-            set: async () => 'OK',
-            del: async () => 0,
-          };
-        },
-      }),
-    });
-
-    assert.equal(await store.get('127.0.0.1'), undefined);
-    assert.deepEqual(receivedOptions, {
-      url: 'redis://authority.invalid:6379',
-      disableOfflineQueue: true,
-      socket: { connectTimeout: 5_000, reconnectStrategy: false },
-    });
-  });
-
-  it('propagates Redis command failures', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: () => ({
-          connect: async () => undefined,
-          get: async () => {
-            throw new Error('redis command failed');
-          },
-          set: async () => 'OK',
-          del: async () => 0,
-        }),
-      }),
-    });
-
-    await assert.rejects(() => store.get('127.0.0.1'), /redis command failed/);
-  });
-
-  it('rejects malformed Redis authority entries', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: () => ({
-          connect: async () => undefined,
-          get: async () => '{"count":"invalid"}',
-          set: async () => 'OK',
-          del: async () => 0,
-        }),
-      }),
-    });
-
-    await assert.rejects(() => store.get('127.0.0.1'), /Redis auth failure entry is malformed/);
+    assert.match(harness.queries[0].sql, /CASE WHEN \$4 <= 1 THEN to_timestamp\(\(\$2 \+ \$5\) \/ 1000\.0\)/);
   });
 });
