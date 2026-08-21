@@ -14,8 +14,6 @@ let server: ReturnType<typeof app.listen>;
 let port: number;
 let tmpDir: string;
 let originalCwd: string;
-let originalApiKeys: string | undefined;
-let originalTenantApiKeys: string | undefined;
 const apiKeys = new TestApiKeyStore();
 
 function request(p: string, init?: RequestInit) {
@@ -24,9 +22,6 @@ function request(p: string, init?: RequestInit) {
 
 before(async () => {
   originalCwd = process.cwd();
-  originalApiKeys = process.env.API_KEYS;
-  originalTenantApiKeys = process.env.TENANT_API_KEYS;
-
   tmpDir = path.join(
     os.tmpdir(),
     `commander-auth-tenant-test-${crypto.randomBytes(8).toString('hex')}`,
@@ -59,8 +54,6 @@ before(async () => {
 
 after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
-  process.env.API_KEYS = originalApiKeys;
-  process.env.TENANT_API_KEYS = originalTenantApiKeys;
   setApiKeyStoreForTesting(undefined);
   process.chdir(originalCwd);
   try {
@@ -70,12 +63,11 @@ after(async () => {
   }
 });
 
-test('TENANT_API_KEYS static mapping sets req.tenantId', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'acme-corp:acme-secret-key';
+test('PostgreSQL API key tenant binding sets req.tenantId', async () => {
+  const { key } = await apiKeys.create('acme-corp-key', ['read', 'write'], 'acme-corp');
 
   const res = await request('/context', {
-    headers: { 'X-API-Key': 'acme-secret-key' },
+    headers: { 'X-API-Key': key },
   });
   assert.equal(res.status, 200);
   const body = (await res.json()) as { apiKeyId: string; tenantId: string };
@@ -83,31 +75,30 @@ test('TENANT_API_KEYS static mapping sets req.tenantId', async () => {
   assert.equal(body.tenantId, 'acme-corp');
 });
 
-test('TENANT_API_KEYS multiple keys per tenant', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'acme-corp:key1,key2;globex:key3';
+test('PostgreSQL API keys retain their individual tenant bindings', async () => {
+  const { key: key1 } = await apiKeys.create('acme-key', ['read'], 'acme-corp');
+  const { key: key3 } = await apiKeys.create('globex-key', ['read'], 'globex');
 
   const res1 = await request('/context', {
-    headers: { 'X-API-Key': 'key1' },
+    headers: { 'X-API-Key': key1 },
   });
   assert.equal(res1.status, 200);
   const body1 = (await res1.json()) as { tenantId: string };
   assert.equal(body1.tenantId, 'acme-corp');
 
   const res2 = await request('/context', {
-    headers: { 'X-API-Key': 'key3' },
+    headers: { 'X-API-Key': key3 },
   });
   assert.equal(res2.status, 200);
   const body2 = (await res2.json()) as { tenantId: string };
   assert.equal(body2.tenantId, 'globex');
 });
 
-test('tenant binding preserves explicit API key scopes with colon names', async () => {
-  process.env.API_KEYS = 'shared-key:cell-e2e:admin;actions:approve';
-  process.env.TENANT_API_KEYS = 'cell-tenant:shared-key';
+test('PostgreSQL API key scopes and tenant binding are authoritative', async () => {
+  const { key } = await apiKeys.create('cell-key', ['admin', 'actions:approve'], 'cell-tenant');
 
   const res = await request('/context', {
-    headers: { 'X-API-Key': 'shared-key' },
+    headers: { 'X-API-Key': key },
   });
   assert.equal(res.status, 200);
   const body = (await res.json()) as { apiScopes: string[]; tenantId: string };
@@ -116,8 +107,6 @@ test('tenant binding preserves explicit API key scopes with colon names', async 
 });
 
 test('persistent API key with tenantId sets req.tenantId', async () => {
-  delete process.env.API_KEYS;
-  delete process.env.TENANT_API_KEYS;
   const { key } = await apiKeys.create('tenant-key', ['read', 'write'], 'wayne-ind');
 
   const res = await request('/context', {
@@ -129,34 +118,29 @@ test('persistent API key with tenantId sets req.tenantId', async () => {
   assert.equal(body.tenantId, 'wayne-ind');
 });
 
-test('legacy API_KEYS without tenant still works and leaves tenantId unset', async () => {
-  delete process.env.TENANT_API_KEYS;
+test('static API_KEYS do not bypass PostgreSQL authority', async () => {
   process.env.API_KEYS = 'legacy-api-key:legacy-key';
 
   const res = await request('/context', {
     headers: { 'X-API-Key': 'legacy-api-key' },
   });
-  assert.equal(res.status, 200);
-  const body = (await res.json()) as { apiKeyId: string; tenantId: string | undefined };
-  assert.equal(body.apiKeyId, 'legacy-key');
-  assert.equal(body.tenantId, undefined);
+  assert.equal(res.status, 401);
+  assert.deepEqual(await res.json(), { error: 'Invalid API key' });
 });
 
-test('Authorization Bearer token resolves tenant from TENANT_API_KEYS', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'stark:stark-bearer-token';
+test('Authorization Bearer token resolves tenant from PostgreSQL API key', async () => {
+  const { key } = await apiKeys.create('stark-key', ['read'], 'stark');
 
   const res = await request('/context', {
-    headers: { Authorization: 'Bearer stark-bearer-token' },
+    headers: { Authorization: 'Bearer ' + key },
   });
   assert.equal(res.status, 200);
   const body = (await res.json()) as { tenantId: string };
   assert.equal(body.tenantId, 'stark');
 });
 
-test('invalid API key is rejected regardless of tenant mapping', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'acme-corp:valid-key';
+test('invalid API key is rejected when PostgreSQL authority has other keys', async () => {
+  await apiKeys.create('valid-key', ['read'], 'acme-corp');
 
   const res = await request('/context', {
     headers: { 'X-API-Key': 'invalid-key' },
@@ -164,9 +148,8 @@ test('invalid API key is rejected regardless of tenant mapping', async () => {
   assert.equal(res.status, 401);
 });
 
-test('/ready stays public when API keys are configured', async () => {
-  process.env.API_KEYS = 'configured-api-key:cell-e2e';
-  delete process.env.TENANT_API_KEYS;
+test('/ready stays public when PostgreSQL API keys are configured', async () => {
+  await apiKeys.create('configured-key', ['read']);
 
   const res = await request('/ready');
   assert.equal(res.status, 200);
@@ -174,8 +157,6 @@ test('/ready stays public when API keys are configured', async () => {
 });
 
 test('tenant-scoped persistent key does not leak tenant to other keys', async () => {
-  delete process.env.API_KEYS;
-  delete process.env.TENANT_API_KEYS;
   const { key: keyA } = await apiKeys.create('key-a', ['read'], 'tenant-a');
   const { key: keyB } = await apiKeys.create('key-b', ['read'], 'tenant-b');
 
