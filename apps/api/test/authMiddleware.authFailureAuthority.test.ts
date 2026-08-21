@@ -2,15 +2,21 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { afterEach, describe, it } from 'node:test';
 import express from 'express';
+import { resetApiKeyStore, setApiKeyStoreForTesting } from '../src/apiKeyStore.js';
 import {
   resetAuthFailureStoreForTesting,
   setAuthFailureStore,
   type AuthFailureStore,
 } from '../src/authFailureStore.js';
+import { TestApiKeyStore } from './authRepositories.js';
 
-afterEach(() => resetAuthFailureStoreForTesting());
+afterEach(() => {
+  resetApiKeyStore();
+  resetAuthFailureStoreForTesting();
+});
 
 async function requestWith(store: AuthFailureStore, headers: Record<string, string> = {}) {
+  setApiKeyStoreForTesting(new TestApiKeyStore());
   setAuthFailureStore(store);
   const { authMiddleware } = await import('../src/authMiddleware.js');
   const app = express();
