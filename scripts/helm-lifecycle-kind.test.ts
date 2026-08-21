@@ -27,7 +27,9 @@ import {
   kindClusterExists,
   proofTemplatesPresent,
   parseOwnerFailureEvidence,
+  classifyRolloutObservation,
   classifyRolloutFailureJson,
+  retainRolloutObservation,
   retainRolloutFailureEvidence,
   productionImageSourceRevision,
   KIND_NODE_IMAGE,
@@ -35,6 +37,282 @@ import {
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('classifies finite rollout query, output-limit, empty, and nonterminal outcomes', () => {
+    assert.deepEqual(
+      classifyRolloutObservation({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'private query failure',
+      }),
+      { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' },
+    );
+    assert.deepEqual(
+      classifyRolloutObservation({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'private oversized output',
+        errorCode: 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER',
+      }),
+      { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT' },
+    );
+    assert.deepEqual(
+      classifyRolloutObservation({
+        exitCode: 0,
+        stdout: 'x'.repeat(64 * 1024 + 1),
+        stderr: '',
+      }),
+      { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT' },
+    );
+    assert.deepEqual(
+      classifyRolloutObservation({
+        exitCode: 0,
+        stdout: JSON.stringify({ items: [] }),
+        stderr: '',
+      }),
+      { kind: 'success', evidence: { code: 'TENANT_CUTOVER_ROLLOUT_EMPTY' } },
+    );
+    assert.deepEqual(
+      classifyRolloutObservation({
+        exitCode: 0,
+        stderr: '',
+        stdout: JSON.stringify({
+          items: [
+            {
+              kind: 'Pod',
+              metadata: { labels: { 'app.kubernetes.io/component': 'worker' } },
+              status: { conditions: [{ type: 'Ready', status: 'False', message: 'private' }] },
+            },
+          ],
+        }),
+      }),
+      {
+        kind: 'success',
+        evidence: {
+          code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+          resourceKind: 'Pod',
+          component: 'worker',
+          reasonCode: 'POD_NOT_READY',
+        },
+      },
+    );
+  });
+
+  it('selects terminal then pod, job, deployment and fixed component tie-breaks', () => {
+    const observation = classifyRolloutObservation({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        items: [
+          {
+            kind: 'Deployment',
+            metadata: { labels: { 'app.kubernetes.io/component': 'api' } },
+            status: { conditions: [{ type: 'Available', status: 'False' }] },
+          },
+          {
+            kind: 'Job',
+            metadata: { labels: { 'app.kubernetes.io/component': 'migration' } },
+            status: { active: 1 },
+          },
+          {
+            kind: 'Pod',
+            metadata: { labels: { 'app.kubernetes.io/component': 'worker' } },
+            status: { conditions: [{ type: 'Ready', status: 'False' }] },
+          },
+          {
+            kind: 'Pod',
+            metadata: { labels: { 'app.kubernetes.io/component': 'api' } },
+            status: { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] },
+          },
+        ],
+      }),
+    });
+    assert.deepEqual(observation, {
+      kind: 'terminal',
+      evidence: {
+        code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+        resourceKind: 'Pod',
+        component: 'api',
+        reasonCode: 'POD_CRASH_LOOP_BACKOFF',
+      },
+    });
+  });
+
+  it('maps every nonterminal resource kind to its fixed reason code', () => {
+    for (const [item, expected] of [
+      [
+        {
+          kind: 'Deployment',
+          metadata: { labels: { 'app.kubernetes.io/component': 'api' } },
+          status: { conditions: [{ type: 'Available', status: 'False', message: 'private' }] },
+        },
+        {
+          code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+          resourceKind: 'Deployment',
+          component: 'api',
+          reasonCode: 'DEPLOYMENT_UNAVAILABLE',
+        },
+      ],
+      [
+        {
+          kind: 'Job',
+          metadata: { labels: { 'app.kubernetes.io/component': 'migration' } },
+          status: { active: 1 },
+        },
+        {
+          code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+          resourceKind: 'Job',
+          component: 'migration',
+          reasonCode: 'JOB_ACTIVE',
+        },
+      ],
+      [
+        {
+          kind: 'Pod',
+          metadata: { labels: { 'app.kubernetes.io/component': 'worker' } },
+          status: { conditions: [{ type: 'Ready', status: 'False', message: 'private' }] },
+        },
+        {
+          code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+          resourceKind: 'Pod',
+          component: 'worker',
+          reasonCode: 'POD_NOT_READY',
+        },
+      ],
+    ] as const) {
+      assert.deepEqual(
+        classifyRolloutObservation({
+          exitCode: 0,
+          stderr: '',
+          stdout: JSON.stringify({ items: [item] }),
+        }),
+        { kind: 'success', evidence: expected },
+      );
+    }
+  });
+
+  it('retains terminal evidence but replaces nonterminal state on successful healthy and empty polls', () => {
+    const unready = classifyRolloutObservation({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        items: [
+          {
+            kind: 'Job',
+            metadata: { labels: { 'app.kubernetes.io/component': 'migration' } },
+            status: { active: 1 },
+          },
+        ],
+      }),
+    });
+    const healthy = classifyRolloutObservation({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        items: [
+          {
+            kind: 'Deployment',
+            metadata: { labels: { 'app.kubernetes.io/component': 'api' } },
+            status: { conditions: [{ type: 'Available', status: 'True' }] },
+          },
+        ],
+      }),
+    });
+    const disappeared = classifyRolloutObservation({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({ items: [] }),
+    });
+    const terminal = classifyRolloutObservation({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        items: [
+          {
+            kind: 'Job',
+            metadata: { labels: { 'app.kubernetes.io/component': 'migration' } },
+            status: {
+              conditions: [{ type: 'Failed', status: 'True', reason: 'DeadlineExceeded' }],
+            },
+          },
+        ],
+      }),
+    });
+
+    const earlyUnready = retainRolloutObservation(undefined, unready);
+    assert.deepEqual(earlyUnready, {
+      nonterminal: {
+        code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+        resourceKind: 'Job',
+        component: 'migration',
+        reasonCode: 'JOB_ACTIVE',
+      },
+    });
+    assert.deepEqual(retainRolloutObservation(earlyUnready, healthy), {});
+    assert.deepEqual(retainRolloutObservation(earlyUnready, disappeared), {
+      nonterminal: { code: 'TENANT_CUTOVER_ROLLOUT_EMPTY' },
+    });
+    const terminalState = retainRolloutObservation(earlyUnready, terminal);
+    assert.deepEqual(retainRolloutObservation(terminalState, disappeared), terminalState);
+  });
+
+  it('sanitizes finite rollout observation records and rejects malicious extra fields', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_ROLLOUT_NONTERMINAL:resource_kind=Job;component=migration;reason_code=JOB_ACTIVE\nsecret=private',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+    assert.deepEqual(sanitized.scenarios[0], {
+      name: 'fresh-bundled',
+      passed: false,
+      durationMs: 100,
+      failureCodes: ['HELM_TENANT_CUTOVER_FAILED', 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL'],
+      rolloutObservation: {
+        code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+        resourceKind: 'Job',
+        component: 'migration',
+        reasonCode: 'JOB_ACTIVE',
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(sanitized), /private|secret/i);
+
+    const malformed = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_ROLLOUT_NONTERMINAL:resource_kind=Job;component=migration;reason_code=JOB_ACTIVE;secret=private',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+    assert.equal(malformed.scenarios[0]?.rolloutObservation, undefined);
+  });
+
   it('classifies exact controller rollout failures without retaining object data', () => {
     for (const [item, expected] of [
       [
