@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
+import { TestUserRepository } from './authRepositories'; import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
 
 const tmpDir = path.join(os.tmpdir(), 'commander-refresh-test-' + crypto.randomUUID());
 const originalCwd = process.cwd();
@@ -45,26 +45,27 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
 
 const refreshTokens = new TestRefreshTokenRepository();
 const { signRefreshToken, verifyToken } = await import('../src/jwtMiddleware');
-const { createUser, findUserByUsername } = await import('../src/userStore');
+const { createUser, findUserByUsername, setUserRepositoryForTesting } = await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const express = (await import('express')).default;
 
 let app: ReturnType<typeof express>;
 let server: ReturnType<typeof app.listen>;
 let port: number;
-
+const users = new TestUserRepository();
 function request(p: string, init?: RequestInit) {
   return fetch(`http://127.0.0.1:${port}${p}`, init);
 }
 
 before(async () => {
+  setUserRepositoryForTesting(users);
   const created = createUser({
     username: 'refreshuser',
     email: 'refresh@example.com',
     password: 'password123',
     role: 'viewer',
   });
-  assert.ok(!('error' in created), 'user create should succeed');
+  assert.ok(!('error' in (await created)), 'user create should succeed');
 
   app = express();
   app.use(express.json());
@@ -90,6 +91,7 @@ after(async () => {
   process.chdir(originalCwd);
   if (originalJwt === undefined) delete process.env.JWT_SECRET;
   else process.env.JWT_SECRET = originalJwt;
+  setUserRepositoryForTesting(undefined);
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -105,7 +107,7 @@ async function login(): Promise<{ token: string; refreshToken: string }> {
 
 describe('refresh-token issuance', () => {
   test('persists the jti before returning a signed refresh token', async () => {
-    const user = findUserByUsername('refreshuser');
+    const user = await findUserByUsername('refreshuser');
     assert.ok(user);
 
     const token = await signRefreshToken(

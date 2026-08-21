@@ -6,7 +6,8 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { authMiddleware } from '../src/authMiddleware';
-import { getApiKeyStore, resetApiKeyStore } from '../src/apiKeyStore';
+import { setApiKeyStoreForTesting } from '../src/apiKeyStore';
+import { TestApiKeyStore } from './authRepositories';
 
 let app: express.Express;
 let server: ReturnType<typeof app.listen>;
@@ -15,6 +16,7 @@ let tmpDir: string;
 let originalCwd: string;
 let originalApiKeys: string | undefined;
 let originalTenantApiKeys: string | undefined;
+const apiKeys = new TestApiKeyStore();
 
 function request(p: string, init?: RequestInit) {
   return fetch(`http://127.0.0.1:${port}${p}`, init);
@@ -31,6 +33,7 @@ before(async () => {
   );
   fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
   process.chdir(tmpDir);
+  setApiKeyStoreForTesting(apiKeys);
 
   app = express();
   app.use(authMiddleware);
@@ -58,7 +61,7 @@ after(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
   process.env.API_KEYS = originalApiKeys;
   process.env.TENANT_API_KEYS = originalTenantApiKeys;
-  resetApiKeyStore();
+  setApiKeyStoreForTesting(undefined);
   process.chdir(originalCwd);
   try {
     fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -70,7 +73,6 @@ after(async () => {
 test('TENANT_API_KEYS static mapping sets req.tenantId', async () => {
   delete process.env.API_KEYS;
   process.env.TENANT_API_KEYS = 'acme-corp:acme-secret-key';
-  resetApiKeyStore();
 
   const res = await request('/context', {
     headers: { 'X-API-Key': 'acme-secret-key' },
@@ -84,7 +86,6 @@ test('TENANT_API_KEYS static mapping sets req.tenantId', async () => {
 test('TENANT_API_KEYS multiple keys per tenant', async () => {
   delete process.env.API_KEYS;
   process.env.TENANT_API_KEYS = 'acme-corp:key1,key2;globex:key3';
-  resetApiKeyStore();
 
   const res1 = await request('/context', {
     headers: { 'X-API-Key': 'key1' },
@@ -104,7 +105,6 @@ test('TENANT_API_KEYS multiple keys per tenant', async () => {
 test('tenant binding preserves explicit API key scopes with colon names', async () => {
   process.env.API_KEYS = 'shared-key:cell-e2e:admin;actions:approve';
   process.env.TENANT_API_KEYS = 'cell-tenant:shared-key';
-  resetApiKeyStore();
 
   const res = await request('/context', {
     headers: { 'X-API-Key': 'shared-key' },
@@ -118,9 +118,7 @@ test('tenant binding preserves explicit API key scopes with colon names', async 
 test('persistent API key with tenantId sets req.tenantId', async () => {
   delete process.env.API_KEYS;
   delete process.env.TENANT_API_KEYS;
-  resetApiKeyStore();
-
-  const { key } = getApiKeyStore().create('tenant-key', ['read', 'write'], 'wayne-ind');
+  const { key } = await apiKeys.create('tenant-key', ['read', 'write'], 'wayne-ind');
 
   const res = await request('/context', {
     headers: { 'X-API-Key': key },
@@ -134,7 +132,6 @@ test('persistent API key with tenantId sets req.tenantId', async () => {
 test('legacy API_KEYS without tenant still works and leaves tenantId unset', async () => {
   delete process.env.TENANT_API_KEYS;
   process.env.API_KEYS = 'legacy-api-key:legacy-key';
-  resetApiKeyStore();
 
   const res = await request('/context', {
     headers: { 'X-API-Key': 'legacy-api-key' },
@@ -148,7 +145,6 @@ test('legacy API_KEYS without tenant still works and leaves tenantId unset', asy
 test('Authorization Bearer token resolves tenant from TENANT_API_KEYS', async () => {
   delete process.env.API_KEYS;
   process.env.TENANT_API_KEYS = 'stark:stark-bearer-token';
-  resetApiKeyStore();
 
   const res = await request('/context', {
     headers: { Authorization: 'Bearer stark-bearer-token' },
@@ -161,7 +157,6 @@ test('Authorization Bearer token resolves tenant from TENANT_API_KEYS', async ()
 test('invalid API key is rejected regardless of tenant mapping', async () => {
   delete process.env.API_KEYS;
   process.env.TENANT_API_KEYS = 'acme-corp:valid-key';
-  resetApiKeyStore();
 
   const res = await request('/context', {
     headers: { 'X-API-Key': 'invalid-key' },
@@ -172,7 +167,6 @@ test('invalid API key is rejected regardless of tenant mapping', async () => {
 test('/ready stays public when API keys are configured', async () => {
   process.env.API_KEYS = 'configured-api-key:cell-e2e';
   delete process.env.TENANT_API_KEYS;
-  resetApiKeyStore();
 
   const res = await request('/ready');
   assert.equal(res.status, 200);
@@ -182,11 +176,8 @@ test('/ready stays public when API keys are configured', async () => {
 test('tenant-scoped persistent key does not leak tenant to other keys', async () => {
   delete process.env.API_KEYS;
   delete process.env.TENANT_API_KEYS;
-  resetApiKeyStore();
-
-  const store = getApiKeyStore();
-  const { key: keyA } = store.create('key-a', ['read'], 'tenant-a');
-  const { key: keyB } = store.create('key-b', ['read'], 'tenant-b');
+  const { key: keyA } = await apiKeys.create('key-a', ['read'], 'tenant-a');
+  const { key: keyB } = await apiKeys.create('key-b', ['read'], 'tenant-b');
 
   const resA = await request('/context', { headers: { 'X-API-Key': keyA } });
   const bodyA = (await resA.json()) as { tenantId: string };

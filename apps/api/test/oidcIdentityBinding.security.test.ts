@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import type { AuthPluginResult } from '@commander/core';
-import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
+import { TestUserRepository } from './authRepositories'; import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
 
 const originalCwd = process.cwd();
 const originalEnv = {
@@ -30,7 +30,7 @@ process.env.COMMANDER_DEFAULT_TENANT_ID = 'deployment-default';
 
 const { createOIDCAuthRouter } = await import('../src/oidcAuthEndpoints');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
-const { _resetUserStoreForTests, createUser, findUserByEmail, findUserByOidcIdentity } =
+const { createUser, findUserByEmail, findUserByOidcIdentity, setUserRepositoryForTesting } =
   await import('../src/userStore');
 const { verifyToken } = await import('../src/jwtMiddleware');
 const { SimpleTenantProvider, setGlobalTenantProvider, resetGlobalTenantProvider } =
@@ -39,7 +39,7 @@ const { SimpleTenantProvider, setGlobalTenantProvider, resetGlobalTenantProvider
 let result: AuthPluginResult;
 let server: ReturnType<ReturnType<typeof express>['listen']>;
 let baseUrl: string;
-
+let users: TestUserRepository;
 class TestRefreshTokenRepository implements RefreshTokenRepository {
   readonly records = new Map<string, RefreshTokenRecord & { revoked: boolean }>();
   unavailable = false;
@@ -113,8 +113,8 @@ beforeEach(() => {
   delete process.env.OIDC_DEFAULT_TENANT_ID;
   delete process.env.OIDC_TENANT_CLAIM;
   process.env.COMMANDER_DEFAULT_TENANT_ID = 'deployment-default';
-  fs.writeFileSync(path.join(tmpDir, '.commander', 'users.json'), '[]');
-  _resetUserStoreForTests();
+  users = new TestUserRepository();
+  setUserRepositoryForTesting(users);
   refreshTokens.records.clear();
   refreshTokens.unavailable = false;
   result = oidcResult();
@@ -122,6 +122,7 @@ beforeEach(() => {
 
 after(async () => {
   resetGlobalTenantProvider();
+  setUserRepositoryForTesting(undefined);
   await new Promise<void>((resolve, reject) =>
     server.close((error) => (error ? reject(error) : resolve())),
   );
@@ -151,7 +152,7 @@ describe('OIDC exchange identity and tenant binding', () => {
     const body = (await response.json()) as { token?: string; refreshToken?: string };
     assert.equal(body.token, undefined);
     assert.equal(body.refreshToken, undefined);
-    assert.equal(findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
   });
 
   it('accepts a valid explicit tenant claim in multi-tenant mode', async () => {
@@ -197,7 +198,7 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     const rejected = await exchange();
     assert.equal(rejected.status, 401);
-    assert.equal(findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
 
     process.env.OIDC_DEFAULT_TENANT_ID = 'single-tenant-default';
     const accepted = await exchange();
@@ -214,7 +215,7 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     assert.equal(token?.tenant_id, 'tenant-a');
     assert.equal(
-      findUserByOidcIdentity('https://idp.example.test', 'subject-alice')?.id,
+      (await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'))?.id,
       body.user.id,
     );
   });
@@ -246,13 +247,14 @@ describe('OIDC exchange identity and tenant binding', () => {
       password: 'local-password',
       role: 'viewer',
     });
-    assert.ok(!('error' in created));
+    const resolved = await created;
+    assert.ok(!('error' in resolved));
 
     const response = await exchange();
     assert.equal(response.status, 200);
     assert.equal(
-      findUserByOidcIdentity('https://idp.example.test', 'subject-alice')?.id,
-      created.user.id,
+      (await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'))?.id,
+      resolved.user.id,
     );
   });
 
@@ -263,7 +265,8 @@ describe('OIDC exchange identity and tenant binding', () => {
       password: 'local-password',
       role: 'admin',
     });
-    assert.ok(!('error' in created));
+    const resolved = await created;
+    assert.ok(!('error' in resolved));
     result = oidcResult({
       role: 'viewer',
       claims: {
@@ -277,8 +280,8 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     const response = await exchange();
     assert.equal(response.status, 409);
-    assert.equal(findUserByEmail('alice@example.test')?.role, 'admin');
-    assert.equal(findUserByOidcIdentity('https://idp.example.test', 'attacker-subject'), undefined);
+    assert.equal((await findUserByEmail('alice@example.test'))?.role, 'admin');
+    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'attacker-subject'), undefined);
   });
 
   it('rejects a second subject attempting to claim an already-bound email', async () => {
@@ -294,7 +297,7 @@ describe('OIDC exchange identity and tenant binding', () => {
     });
 
     assert.equal((await exchange()).status, 409);
-    assert.equal(findUserByOidcIdentity('https://idp.example.test', 'subject-attacker'), undefined);
+    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-attacker'), undefined);
   });
 
   it('rejects an invalid tenant claim instead of minting a fallback tenant', async () => {
@@ -311,7 +314,7 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     const response = await exchange();
     assert.equal(response.status, 401);
-    assert.equal(findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
   });
 
   it('preserves the OIDC tenant when rotating the refresh token', async () => {

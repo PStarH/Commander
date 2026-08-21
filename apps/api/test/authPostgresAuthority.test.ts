@@ -11,6 +11,7 @@ import {
 import { authMiddleware } from '../src/authMiddleware';
 import {
   PostgresUserRepository,
+  bootstrapDefaultAdmin,
   setUserRepositoryForTesting,
   type UserRepository,
 } from '../src/userStore';
@@ -104,7 +105,70 @@ class FakePool implements SqlPool {
   }
 }
 
+class BootstrapPool implements SqlPool {
+  readonly queries: Query[] = [];
+  private hasUsers = false;
+
+  async connect(): Promise<SqlClient> {
+    return {
+      query: async <T>(sql: string, values?: readonly unknown[]): Promise<SqlQueryResult<T>> => {
+        this.queries.push({ sql, values });
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+          return { rows: [], rowCount: 0 };
+        }
+        if (sql.includes('pg_advisory_xact_lock')) {
+          return { rows: [], rowCount: 1 };
+        }
+        if (sql.includes('SELECT count(*)::text AS count FROM commander_auth_users')) {
+          return { rows: [{ count: this.hasUsers ? '1' : '0' } as T], rowCount: 1 };
+        }
+        if (sql.startsWith('INSERT INTO commander_auth_users')) {
+          this.hasUsers = true;
+          return { rows: [], rowCount: 1 };
+        }
+        throw new Error('Unexpected SQL: ' + sql);
+      },
+      release: () => undefined,
+    };
+  }
+}
+
 describe('PostgreSQL auth authorities', () => {
+  test('bootstraps the configured default admin exactly once under a PostgreSQL lock', async () => {
+    const pool = new BootstrapPool();
+    const repository = new PostgresUserRepository(pool);
+
+    await bootstrapDefaultAdmin(
+      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password' },
+      repository,
+    );
+    await bootstrapDefaultAdmin(
+      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password' },
+      repository,
+    );
+
+    const inserts = pool.queries.filter((query) =>
+      query.sql.startsWith('INSERT INTO commander_auth_users'),
+    );
+    assert.equal(inserts.length, 1);
+    assert.deepEqual(inserts[0]?.values?.slice(1, 3), ['admin', 'admin@commander.local']);
+    assert.equal(inserts[0]?.values?.[4], 'admin');
+    assert.equal(inserts[0]?.values?.[3] === 'operator-supplied-password', false);
+    assert.equal(
+      pool.queries.filter((query) => query.sql.includes('pg_advisory_xact_lock')).length,
+      2,
+    );
+  });
+
+  test('refuses production bootstrap without an operator-supplied password', async () => {
+    const pool = new BootstrapPool();
+    await assert.rejects(
+      () => bootstrapDefaultAdmin({ NODE_ENV: 'production' }, new PostgresUserRepository(pool)),
+      /ADMIN_PASSWORD_REQUIRED/,
+    );
+    assert.equal(pool.queries.length, 0);
+  });
+
   test('uses a database uniqueness constraint for usernames', async () => {
     const repository = new PostgresUserRepository(new FakePool());
     const testPassword = 'test-password';
@@ -234,6 +298,9 @@ describe('PostgreSQL auth authorities', () => {
         throw new Error('unavailable');
       },
       countAdmins: async () => {
+        throw new Error('unavailable');
+      },
+      bootstrapDefaultAdmin: async () => {
         throw new Error('unavailable');
       },
     };
