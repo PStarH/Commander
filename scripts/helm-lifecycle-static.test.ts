@@ -123,6 +123,10 @@ describe('Helm lifecycle static contract', () => {
         /- name: API_RATE_LIMIT_DB_PATH\n\s+value: \/tmp\/commander-api\/rate-limit.sqlite/,
       );
       assert.match(api, /- name: tmp\n\s+mountPath: \/tmp/);
+      assert.match(
+        api,
+        /startupProbe:[\s\S]*path: \/health[\s\S]*port: http[\s\S]*failureThreshold: 30[\s\S]*periodSeconds: 2/,
+      );
     }
   });
 
