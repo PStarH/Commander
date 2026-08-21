@@ -606,11 +606,54 @@ function warningExpressionStatementText(
   return warningStatementText(sourceFile, expression, scope);
 }
 
+function commentAtPosition(
+  content: string,
+  position: number,
+  evidence: string,
+): string | undefined {
+  const inlineCodeDelimiter = String.fromCharCode(96);
+  if (
+    !evidence.startsWith(inlineCodeDelimiter) ||
+    !evidence.endsWith(inlineCodeDelimiter)
+  ) {
+    return undefined;
+  }
+  const scanner = ts.createScanner(
+    ts.ScriptTarget.Latest,
+    false,
+    ts.LanguageVariant.Standard,
+    content,
+  );
+  for (
+    let token = scanner.scan();
+    token !== ts.SyntaxKind.EndOfFileToken;
+    token = scanner.scan()
+  ) {
+    const start = scanner.getTokenPos();
+    const end = scanner.getTextPos();
+    if (position < start || position >= end) continue;
+    if (
+      token === ts.SyntaxKind.SingleLineCommentTrivia ||
+      token === ts.SyntaxKind.MultiLineCommentTrivia
+    ) {
+      return content.slice(start, end);
+    }
+    return undefined;
+  }
+  return undefined;
+}
+
 function sourceOccurrenceFingerprint(
   content: string,
   index: number,
   evidence: string,
 ): string | undefined {
+  const comment = commentAtPosition(content, index, evidence);
+  if (comment !== undefined) {
+    return createHash('sha256')
+      .update(JSON.stringify({ scope: 'comment', text: comment }))
+      .digest('hex');
+  }
   const sourceFile = ts.createSourceFile(
     'precommit-scanner-source.ts',
     content,
