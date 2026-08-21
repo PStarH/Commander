@@ -30,7 +30,8 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
 }
 
 interface RateLimitEntry { count: number; resetAt: number; }
-export interface RateLimitStore { consume(bucketKey: string, windowMs: number): Promise<RateLimitEntry>; }
+export interface RateLimitBucket { key: string; windowMs: number; }
+export interface RateLimitStore { consume(buckets: readonly RateLimitBucket[]): Promise<RateLimitEntry[]>; }
 type VerifiedPoolFactory = (input: { connectionString: string }, env?: NodeJS.ProcessEnv) => SqlPool;
 
 const CONSUME_RATE_LIMIT_SQL = [
@@ -45,15 +46,36 @@ const CONSUME_RATE_LIMIT_SQL = [
 export class PostgresRateLimitStore implements RateLimitStore {
   constructor(private readonly pool: SqlPool) {}
 
-  async consume(bucketKey: string, windowMs: number): Promise<RateLimitEntry> {
+  async consume(buckets: readonly RateLimitBucket[]): Promise<RateLimitEntry[]> {
+    if (buckets.length === 0) return [];
     const client = await this.pool.connect();
+    let transactionStarted = false;
+    let releaseError: Error | boolean | undefined;
     try {
-      const result = await client.query<RateLimitEntry>(CONSUME_RATE_LIMIT_SQL, [bucketKey, windowMs]);
-      const row = result.rows[0];
-      if (!row) throw new Error('RATE_LIMIT_RECORD_MISSING');
-      return { count: Number(row.count), resetAt: Number(row.resetAt) };
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const entries: RateLimitEntry[] = [];
+      for (const bucket of buckets) {
+        const result = await client.query<RateLimitEntry>(CONSUME_RATE_LIMIT_SQL, [bucket.key, bucket.windowMs]);
+        const row = result.rows[0];
+        if (!row) throw new Error('RATE_LIMIT_RECORD_MISSING');
+        entries.push({ count: Number(row.count), resetAt: Number(row.resetAt) });
+      }
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return entries;
+    } catch (error) {
+      releaseError = error instanceof Error ? error : true;
+      if (transactionStarted) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          releaseError = rollbackError instanceof Error ? rollbackError : true;
+        }
+      }
+      throw error;
     } finally {
-      await client.release();
+      await client.release(releaseError);
     }
   }
 }
@@ -136,8 +158,12 @@ export async function rateLimitMiddleware(req: Request, res: Response, next: Nex
   let primary: { scope: RateLimitScope; entry: RateLimitEntry } | undefined;
   let blocking: { scope: RateLimitScope; entry: RateLimitEntry } | undefined;
   try {
-    for (const scope of buildScopes(identity, tier)) {
-      const entry = await getRateLimitStore().consume(scope.key, scope.windowMs);
+    const scopes = buildScopes(identity, tier);
+    const entries = await getRateLimitStore().consume(scopes);
+    if (entries.length !== scopes.length) throw new Error('RATE_LIMIT_BATCH_RESULT_MISMATCH');
+    for (const [index, scope] of scopes.entries()) {
+      const entry = entries[index];
+      if (!entry) throw new Error('RATE_LIMIT_BATCH_RECORD_MISSING');
       if (scope.prefix !== 'global' && (!primary || (scope.prefix === 'user' && primary.scope.prefix !== 'user') || (scope.prefix === 'tenant' && primary.scope.prefix === 'ip'))) primary = { scope, entry };
       if (!blocking && entry.count > scope.max) blocking = { scope, entry };
     }

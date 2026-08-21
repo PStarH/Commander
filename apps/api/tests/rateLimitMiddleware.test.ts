@@ -2,12 +2,13 @@ import { before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Request, Response } from 'express';
 import type { AuthUser } from '../src/jwtMiddleware';
+import type { RateLimitBucket, RateLimitStore } from '../src/securityMiddleware';
 import type { UserRole } from '../src/userStore';
 
 process.env.API_RATE_LIMIT = '2';
 
 let rateLimitMiddleware: (req: Request, res: Response, next: () => void) => Promise<void>;
-let setRateLimitStoreForTesting: (store: { consume(bucketKey: string, windowMs: number): Promise<{ count: number; resetAt: number }> }) => void;
+let setRateLimitStoreForTesting: (store: RateLimitStore) => void;
 let _resetRateLimitStoreForTesting: () => void;
 
 function makeAuthUser(id: string, role: UserRole = 'user'): AuthUser { return { id, username: id, role }; }
@@ -22,13 +23,15 @@ function makeMockResponse(): Response & { _status: number; _json: unknown; _head
     setHeader(name: string, value: string | number) { this._headers[name] = value; return this; },
   } as never;
 }
-function authority() {
+function authority(): RateLimitStore {
   const entries = new Map<string, number>();
   return {
-    async consume(bucketKey: string, _windowMs: number) {
-      const count = (entries.get(bucketKey) ?? 0) + 1;
-      entries.set(bucketKey, count);
-      return { count, resetAt: Date.now() + 60_000 };
+    async consume(buckets: readonly RateLimitBucket[]) {
+      return buckets.map((bucket) => {
+        const count = (entries.get(bucket.key) ?? 0) + 1;
+        entries.set(bucket.key, count);
+        return { count, resetAt: Date.now() + 60_000 };
+      });
     },
   };
 }
