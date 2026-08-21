@@ -4,13 +4,10 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import * as crypto from 'node:crypto';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { createApiKeyRouter } from '../src/apiKeyEndpoints';
-import { resetApiKeyStore, getApiKeyStore } from '../src/apiKeyStore';
+import { setApiKeyStoreForTesting } from '../src/apiKeyStore';
+import { TestApiKeyStore } from './authRepositories';
 
 type FakeUser = {
   id: string;
@@ -115,30 +112,17 @@ function makeReq(
 }
 
 describe('API key tenant scope (AUTH-02)', () => {
-  let tmpDir: string;
-  let originalCwd: string;
   let router: ReturnType<typeof createApiKeyRouter>;
+  let apiKeys: TestApiKeyStore;
 
   beforeEach(() => {
-    originalCwd = process.cwd();
-    tmpDir = path.join(
-      os.tmpdir(),
-      `commander-apikey-scope-${crypto.randomBytes(6).toString('hex')}`,
-    );
-    fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
-    process.chdir(tmpDir);
-    resetApiKeyStore();
+    apiKeys = new TestApiKeyStore();
+    setApiKeyStoreForTesting(apiKeys);
     router = createApiKeyRouter();
   });
 
   afterEach(() => {
-    resetApiKeyStore();
-    process.chdir(originalCwd);
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      /* best-effort */
-    }
+    setApiKeyStoreForTesting(undefined);
   });
 
   it('admin cannot mint a key for another tenant', async () => {
@@ -178,11 +162,10 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin list only shows own tenant keys', async () => {
-    // Unique tenants so a shared KEYS_FILE (module-load cwd) cannot pollute the filter check.
-    const tenantA = `tenant-a-${crypto.randomBytes(4).toString('hex')}`;
-    const tenantB = `tenant-b-${crypto.randomBytes(4).toString('hex')}`;
-    getApiKeyStore().create('a-key', ['read'], tenantA);
-    getApiKeyStore().create('b-key', ['read'], tenantB);
+    const tenantA = 'tenant-a';
+    const tenantB = 'tenant-b';
+    await apiKeys.create('a-key', ['read'], tenantA);
+    await apiKeys.create('b-key', ['read'], tenantB);
 
     const res = mockRes();
     await invoke(
@@ -224,8 +207,7 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin without JWT tenant claim cannot mint even with ambient X-Tenant-ID (403)', async () => {
-    const before = getApiKeyStore()
-      .list()
+    const before = (await apiKeys.list())
       .map((k) => k.id);
     const res = mockRes();
     await invoke(
@@ -241,7 +223,7 @@ describe('API key tenant scope (AUTH-02)', () => {
     );
     assert.equal(res.statusCode, 403);
     assert.match(String((res.body as { error: string }).error), /tenant-bound identity/i);
-    const after = getApiKeyStore().list();
+    const after = await apiKeys.list();
     assert.ok(
       !after.some((k) => k.name === 'forged-ambient-mint' && !before.includes(k.id)),
       'ambient header must not mint a key',
@@ -249,7 +231,7 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin without JWT tenant claim cannot list even with ambient tenant (403)', async () => {
-    getApiKeyStore().create('a-key', ['read'], 'victim-tenant');
+    await apiKeys.create('a-key', ['read'], 'victim-tenant');
     const res = mockRes();
     await invoke(
       router,
@@ -263,7 +245,7 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin without JWT tenant claim cannot revoke via ambient tenant (404)', async () => {
-    const { record } = getApiKeyStore().create('victim-key', ['read'], 'victim-tenant');
+    const { record } = await apiKeys.create('victim-key', ['read'], 'victim-tenant');
     const res = mockRes();
     await invoke(
       router,
@@ -276,8 +258,7 @@ describe('API key tenant scope (AUTH-02)', () => {
     );
     assert.equal(res.statusCode, 404);
     assert.equal(
-      getApiKeyStore()
-        .list()
+      (await apiKeys.list())
         .find((k) => k.id === record.id)?.enabled,
       true,
     );
@@ -328,15 +309,14 @@ describe('API key tenant scope (AUTH-02)', () => {
     );
     assert.equal(revRes.statusCode, 404);
     assert.equal(
-      getApiKeyStore()
-        .list()
+      (await apiKeys.list())
         .find((k) => k.id === body.record.id)?.enabled,
       true,
     );
   });
 
   it('admin cannot revoke another tenant key (404)', async () => {
-    const { record } = getApiKeyStore().create('b-key', ['read'], 'tenant-b');
+    const { record } = await apiKeys.create('b-key', ['read'], 'tenant-b');
     const res = mockRes();
     await invoke(
       router,
@@ -351,8 +331,7 @@ describe('API key tenant scope (AUTH-02)', () => {
       res,
     );
     assert.equal(res.statusCode, 404);
-    const listed = getApiKeyStore()
-      .list()
+    const listed = (await apiKeys.list())
       .find((k) => k.id === record.id);
     assert.equal(listed?.enabled, true);
   });

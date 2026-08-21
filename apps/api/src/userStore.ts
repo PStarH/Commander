@@ -135,6 +135,7 @@ export interface UserRepository {
   resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null>;
   deleteUser(userId: string): Promise<{ success: boolean; error?: string }>;
   countAdmins(): Promise<number>;
+  bootstrapDefaultAdmin(password: string): Promise<void>;
 }
 
 export class PostgresUserRepository implements UserRepository {
@@ -403,6 +404,20 @@ export class PostgresUserRepository implements UserRepository {
       return Number(result.rows[0]?.count ?? 0);
     });
   }
+
+  async bootstrapDefaultAdmin(password: string): Promise<void> {
+    await this.withAdminInvariant(async (client) => {
+      const users = await client.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM commander_auth_users',
+      );
+      if (Number(users.rows[0]?.count ?? 0) > 0) return;
+
+      await client.query(
+        'INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at) VALUES ($1, $2, $3, $4, $5, NULL, NULL, clock_timestamp(), NULL)',
+        [randomUUID(), 'admin', 'admin@commander.local', hashSync(password, 10), 'admin'],
+      );
+    });
+  }
 }
 
 export function createUserRepositoryFromEnvironment(
@@ -430,6 +445,18 @@ export function getUserRepository(): UserRepository {
 
 export function setUserRepositoryForTesting(repository: UserRepository | undefined): void {
   defaultRepository = repository;
+}
+
+export async function bootstrapDefaultAdmin(
+  env: NodeJS.ProcessEnv = process.env,
+  repository?: UserRepository,
+): Promise<void> {
+  const password = env.ADMIN_PASSWORD;
+  if (!password) {
+    if (env.NODE_ENV === 'production') throw new Error('AUTH_USERS_ADMIN_PASSWORD_REQUIRED');
+    return;
+  }
+  await (repository ?? getUserRepository()).bootstrapDefaultAdmin(password);
 }
 
 export function isInitialized(): boolean {
