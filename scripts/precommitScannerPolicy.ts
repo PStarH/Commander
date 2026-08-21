@@ -353,6 +353,9 @@ function writesToDeclaration(
 }
 
 function declarationText(sourceFile: ts.SourceFile, declaration: ts.Declaration): string {
+  if (ts.isFunctionDeclaration(declaration)) {
+    return 'function:' + (declaration.name?.text ?? 'anonymous');
+  }
   if (
     ts.isImportClause(declaration) ||
     ts.isImportSpecifier(declaration) ||
@@ -577,6 +580,32 @@ function warningStatementText(
   return warning.getText(sourceFile);
 }
 
+function warningExpressionAnchor(
+  node: ts.Node,
+): ts.TemplateExpression | ts.NoSubstitutionTemplateLiteral | ts.StringLiteral | undefined {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (
+      ts.isTemplateExpression(current) ||
+      ts.isNoSubstitutionTemplateLiteral(current) ||
+      ts.isStringLiteral(current)
+    ) {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+function warningExpressionStatementText(
+  sourceFile: ts.SourceFile,
+  expression: ts.Node,
+  scope: ExecutableFunction,
+): string {
+  for (let current: ts.Node | undefined = expression.parent; current && current !== scope; current = current.parent) {
+    if (ts.isPropertyAssignment(current)) return current.getText(sourceFile);
+  }
+  return warningStatementText(sourceFile, expression, scope);
+}
+
 function sourceOccurrenceFingerprint(
   content: string,
   index: number,
@@ -591,45 +620,31 @@ function sourceOccurrenceFingerprint(
   );
   const located = nodeAtPosition(sourceFile, index);
   const call = located === undefined ? undefined : enclosingCall(located);
-  if (call === undefined) {
-    const functionScope = located === undefined ? undefined : enclosingFunction(located);
-    if (functionScope === undefined || located === undefined) {
-      const topLevelStatement =
-        located === undefined ? undefined : enclosingTopLevelStatement(located);
-      if (topLevelStatement === undefined) return undefined;
+  const expressionAnchor = located === undefined ? undefined : warningExpressionAnchor(located);
+  const anchor = expressionAnchor ?? call ?? located;
+  if (anchor === undefined) return undefined;
+  const functionScope = enclosingFunction(anchor);
+  const topLevelStatement = enclosingTopLevelStatement(anchor);
+  if (functionScope === undefined) {
+    if (topLevelStatement === undefined) return undefined;
+    if (expressionAnchor !== undefined) {
+      const controls = controlFlowDependencies(sourceFile, anchor, sourceFile);
+      const dependencies = collectDependencyClosure(
+        sourceFile,
+        [...referencedIdentifiers(anchor), ...controls.roots],
+        anchor.getStart(sourceFile),
+      );
       return createHash('sha256')
         .update(
-          JSON.stringify({ scope: 'top-level', statement: topLevelStatement.getText(sourceFile) }),
+          JSON.stringify({
+            scope: 'top-level',
+            warning: anchor.getText(sourceFile),
+            controls: controls.descriptors,
+            dependencies: dependencies ?? ['unresolved'],
+          }),
         )
         .digest('hex');
     }
-
-    const scopeIdentity = lexicalScopeIdentity(sourceFile, functionScope);
-    if (scopeIdentity === undefined) return undefined;
-    const controls = controlFlowDependencies(sourceFile, located, functionScope);
-    const warningStatement = warningStatementText(sourceFile, located, functionScope);
-    const dependencies = collectDependencyClosure(
-      sourceFile,
-      [...referencedIdentifiers(located.parent), ...controls.roots],
-      located.getStart(sourceFile),
-    );
-
-    return createHash('sha256')
-      .update(
-        JSON.stringify({
-          scopeIdentity,
-          warningStatement,
-          controls: controls.descriptors,
-          dependencies: dependencies ?? ['unresolved'],
-        }),
-      )
-      .digest('hex');
-  }
-
-  const functionScope = enclosingFunction(call);
-  const topLevelStatement = enclosingTopLevelStatement(call);
-  if (functionScope === undefined) {
-    if (topLevelStatement === undefined) return undefined;
     return createHash('sha256')
       .update(
         JSON.stringify({ scope: 'top-level', statement: topLevelStatement.getText(sourceFile) }),
@@ -639,19 +654,27 @@ function sourceOccurrenceFingerprint(
 
   const scopeIdentity = lexicalScopeIdentity(sourceFile, functionScope);
   if (scopeIdentity === undefined) return undefined;
-  const controls = controlFlowDependencies(sourceFile, call, functionScope);
-  const argumentReferences = call.arguments?.flatMap(referencedIdentifiers) ?? [];
+  const controls = controlFlowDependencies(sourceFile, anchor, functionScope);
+  const argumentReferences =
+    expressionAnchor !== undefined
+      ? referencedIdentifiers(anchor)
+      : ts.isCallExpression(anchor) || ts.isNewExpression(anchor)
+        ? (anchor.arguments?.flatMap(referencedIdentifiers) ?? [])
+        : referencedIdentifiers(anchor.parent);
   const dependencies = collectDependencyClosure(
     sourceFile,
     [...argumentReferences, ...controls.roots],
-    call.getStart(sourceFile),
+    anchor.getStart(sourceFile),
   );
 
   return createHash('sha256')
     .update(
       JSON.stringify({
         scopeIdentity,
-        warningStatement: warningStatementText(sourceFile, call, functionScope),
+        warningStatement:
+          expressionAnchor === undefined
+            ? warningStatementText(sourceFile, anchor, functionScope)
+            : warningExpressionStatementText(sourceFile, expressionAnchor, functionScope),
         controls: controls.descriptors,
         dependencies: dependencies ?? ['unresolved'],
       }),
