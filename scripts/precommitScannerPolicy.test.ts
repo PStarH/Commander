@@ -341,6 +341,119 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations.length, 0);
   });
 
+  it('inherits a template warning nested in an unchanged call after an unrelated edit', async () => {
+    const evidence = String.fromCharCode(96) + 'endpoint/${path}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function request(path) {\n  headers.set('authorization', token);\n  return fetch(" +
+      evidence +
+      ');\n}\n';
+    const changed = baseline.replace(
+      "headers.set('authorization', token);",
+      "headers.set('x-api-key', token);",
+    );
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a template warning in an unchanged table entry after another entry changes', async () => {
+    const evidence = String.fromCharCode(96) + '--data=${JSON.stringify(proposal)}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function routes(proposal) {\n  return it.each([\n    { args: ['simulate', " +
+      evidence +
+      "] },\n    { args: ['get', 'run-1'] },\n  ]);\n}\n";
+    const changed = baseline.replace("['get', 'run-1']", "['get', 'run-2']");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a response template when an unrelated request header changes', async () => {
+    const evidence = String.fromCharCode(96) + 'failed (${response.status}): ${body}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function request(config) {\n  const headers = new Headers();\n  headers.set('authorization', config.apiKey);\n  return fetch(config.url, { headers });\n}\n\nasync function render(config) {\n  const response = await request(config);\n  const body = await response.text();\n  throw new Error(" +
+      evidence +
+      ');\n}\n';
+    const changed = baseline.replace("'authorization'", "'x-api-key'");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a path warning when unrelated import specifiers change', async () => {
+    const evidence = ['..', '/..', '/src/cli/commands/action'].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.path_traversal',
+              message: 'Path traversal detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline = "import { cmdAction } from '" + evidence + "';\n";
+    const changed =
+      "import {\n  cmdAction,\n  resolveActionApiConfig,\n} from '" + evidence + "';\n";
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
   it('rejects template warnings when their dependencies, guard, or statement change', async () => {
     const evidence = String.fromCharCode(96) + 'safe ';
     const scan = (content: string): readonly ScannerWarning[] =>
