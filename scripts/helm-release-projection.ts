@@ -290,7 +290,11 @@ function credentialBearingValue(key: string, value: string): boolean {
 }
 
 function credentialEnvironmentName(value: string): boolean {
-  if (/(?:_SECRET_(?:KEY|NAME|REFERENCE)|_(?:CERT|KEY|CA)_FILE|_CREDENTIAL_FILE)$/.test(value))
+  if (
+    /(?:_SECRET_(?:KEY|NAME|REFERENCE)|_(?:CERT|KEY|CA)_FILE|_CREDENTIAL_FILE|_SECRET_DIR)$/.test(
+      value,
+    )
+  )
     return false;
   return /(?:^|_)(?:API_KEY|AUTHORIZATION|DATABASE_URL|DSN|PASSWORD|PRIVATE_KEY|SECRET|TOKEN)(?:$|_)/.test(
     value,

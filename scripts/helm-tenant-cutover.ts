@@ -3225,9 +3225,13 @@ async function runHelmPostRendered(
       const code = error instanceof Error ? error.message : '';
       if (
         code === 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID' ||
+        code === 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID' ||
         code === 'TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED'
       ) {
-        postRenderFailureCode = code;
+        postRenderFailureCode =
+          code === 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID'
+            ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+            : code;
       }
       response.writeHead(400);
       response.end();
@@ -4557,8 +4561,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           return;
         }
         const desired = desiredObject(object);
-        const manager =
-          'commander-restore-' + process.pid + '-' + randomBytes(12).toString('hex');
+        const manager = 'commander-restore-' + process.pid + '-' + randomBytes(12).toString('hex');
         const dryRun = parseJsonObject(
           await command(
             'kubectl',
