@@ -41,7 +41,7 @@ jobs:
         with:
           version: v3.17.3
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec node --import tsx --test scripts/chart-content-digest.test.ts scripts/helm-cell-assert.test.ts scripts/helm-post-render-projection.test.ts scripts/helm-release-projection-claim-directory.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts
+      - run: pnpm exec node --import tsx --test packages/kernel/src/migrationGate.test.ts scripts/chart-content-digest.test.ts scripts/helm-cell-assert.test.ts scripts/helm-post-render-projection.test.ts scripts/helm-release-projection-claim-directory.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts
       - run: pnpm exec tsx scripts/chart-content-digest.ts verify deploy/helm/commander
       - run: helm lint deploy/helm/commander -f deploy/helm/commander/values-demo.yaml
       - run: pnpm exec tsx scripts/helm-lifecycle-static.ts
