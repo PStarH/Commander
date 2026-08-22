@@ -37,6 +37,9 @@ export default defineConfig({
       'tests/recovery/kill9.test.ts',
       // --- runtime ---
       'tests/runtime/agentHandoff.test.ts',
+      'tests/runtime/tenantManagerFailClosed.test.ts',
+      'tests/security/productionKeyGate.test.ts',
+      'tests/security/workspaceRootIsolation.test.ts',
       'tests/runtime/incrementalSCC.integration.test.ts',
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',

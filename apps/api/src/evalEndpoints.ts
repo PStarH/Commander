@@ -83,7 +83,9 @@ const createDatasetSchema = z.object({
         expected: z.string().optional(),
       }),
     )
-    .min(1),
+    .min(1)
+    // AUDIT-API9: bound compute inputs against CPU-DoS.
+    .max(1000),
 });
 
 const compareABSchema = z.object({
@@ -100,11 +102,12 @@ const compareABSchema = z.object({
         b: z.object({ score: z.number() }),
       }),
     )
-    .min(1),
+    .min(1)
+    .max(10000),
 });
 
 const wilcoxonSchema = z.object({
-  deltas: z.array(z.number()).min(1),
+  deltas: z.array(z.number()).min(1).max(10000),
   alpha: z.number().min(0).max(1).optional(),
 });
 
@@ -166,7 +169,13 @@ export function createEvalRouter(): Router {
 
   // ── Data plane ───────────────────────────────────────────────────────
 
-  router.post('/api/eval/judge', validateBody(judgeSchema), async (req: Request, res: Response) => {
+  // AUDIT-API9: judge spends provider budget — require a tenant-bound
+  // principal like the rest of the eval data plane.
+  router.post(
+    '/api/eval/judge',
+    requireEvalTenant,
+    validateBody(judgeSchema),
+    async (req: Request, res: Response) => {
     try {
       const engine = getSharedJudgeEngine() ?? getGlobalLLMJudgeEngine();
       if (!engine) {

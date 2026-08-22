@@ -15,6 +15,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { TenantConfig } from './tenantProvider';
+import { isMultiTenantEnabled } from './tenantContext';
 import { SamplesStore } from './samplesStore';
 import { PersistentTraceStore } from './traceStore';
 import { StateCheckpointer } from './stateCheckpointer';
@@ -73,6 +74,18 @@ export class TenantManager {
     },
   ): TenantResolutionResult {
     if (!tenantId || !tenantCfg?.enabled) {
+      // AUDIT-CORE4: in multi-tenant mode an unknown/unconfigured tenant must
+      // fail closed — previously it bypassed rate limits, concurrency caps and
+      // storage quotas entirely (spoofed tenant id = unlimited tenant). In
+      // single-tenant mode there is nothing to isolate, so stay permissive.
+      if (isMultiTenantEnabled()) {
+        return {
+          allowed: false,
+          error: !tenantId
+            ? 'TENANT_REQUIRED: multi-tenant mode requires a tenant context'
+            : 'TENANT_NOT_PROVISIONED: tenant is not configured or enabled',
+        };
+      }
       return { allowed: true };
     }
 

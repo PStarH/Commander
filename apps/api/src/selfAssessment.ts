@@ -205,6 +205,11 @@ export class SelfAssessmentManager {
     return assessor.assess(task);
   }
 
+  /** AUDIT-R4F2: read-only lookup — GET must not allocate a permanent assessor. */
+  peek(agentId: string): AgentSelfAssessment | undefined {
+    return this.assessors.get(agentId);
+  }
+
   record(agentId: string, skill: string, success: boolean): void {
     const assessor = this.assessors.get(agentId);
     if (assessor) {
