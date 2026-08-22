@@ -38,7 +38,9 @@ export default defineConfig({
       // --- runtime ---
       'tests/runtime/agentHandoff.test.ts',
       'tests/runtime/tenantManagerFailClosed.test.ts',
+      'tests/runtime/tenantBucketFailClosed.test.ts',
       'tests/security/productionKeyGate.test.ts',
+      'tests/security/pluginSandboxTraversal.test.ts',
       'tests/security/workspaceRootIsolation.test.ts',
       'tests/runtime/incrementalSCC.integration.test.ts',
       'tests/runtime/agentInbox.test.ts',

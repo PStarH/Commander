@@ -23,7 +23,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { mkdir, readFile, writeFile, access, unlink } from 'fs/promises';
 import { join, dirname } from 'node:path';
-import { getCurrentTenantId } from '../runtime/tenantContext';
+import { getCurrentTenantId, tenantBucketOrThrow } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 // ============================================================================
@@ -617,7 +617,7 @@ export class UserModelManager {
   }
 
   private getTenantId(): string {
-    return getCurrentTenantId() ?? '__default__';
+    return tenantBucketOrThrow();
   }
 
   private getModelPath(userId: string): string {

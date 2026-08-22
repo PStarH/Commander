@@ -11,6 +11,7 @@ import type {
 import { URL } from 'node:url';
 import * as path from 'node:path';
 import { hasRole, type UserRole } from './userStore';
+import { getCurrentTenantId } from '@commander/core/runtime/tenantContext';
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
 // Block requests to private/internal IP ranges and cloud metadata endpoints.
@@ -184,6 +185,40 @@ export interface McpRouterOptions {
   localRuntime?: boolean;
 }
 
+/**
+ * AUDIT-C1: MCP tools/call executes with the configured service credential
+ * against the Action Gateway — the caller's own authority must gate which
+ * gateway tools are reachable, otherwise a low-privilege principal obtains the
+ * service credential's powers through MCP (confused deputy). Mirrors the
+ * role/scope model of actionGatewayEndpoints.
+ */
+const MCP_ACTION_TOOL_AUTHORITY: Record<string, { minRole: UserRole; scopes: string[] }> = {
+  commander_action_propose: { minRole: 'developer', scopes: ['actions:propose', 'write', 'admin', '*'] },
+  commander_action_approve: { minRole: 'admin', scopes: ['actions:approve', 'admin', '*'] },
+  commander_action_compensation_request: {
+    minRole: 'developer',
+    scopes: ['actions:compensation', 'write', 'admin', '*'],
+  },
+  commander_action_compensation_approve: { minRole: 'admin', scopes: ['actions:approve', 'admin', '*'] },
+  commander_action_reconcile: { minRole: 'admin', scopes: ['actions:reconcile', 'admin', '*'] },
+};
+
+function toolNameFromJsonRpc(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const rpc = body as { method?: unknown; params?: { name?: unknown } };
+  if (rpc.method !== 'tools/call') return undefined;
+  const name = rpc.params?.name;
+  return typeof name === 'string' ? name : undefined;
+}
+
+function callerMayInvokeActionTool(req: Request, tool: string): boolean {
+  const authority = MCP_ACTION_TOOL_AUTHORITY[tool];
+  if (!authority) return true; // read-only gateway tools stay for any principal
+  if (req.user) return hasRole(req.user.role, authority.minRole);
+  const scopes = req.apiScopes ?? [];
+  return scopes.some((sc) => authority.scopes.includes(sc));
+}
+
 export function createMCPRouter(options: McpRouterOptions = {}): Router {
   const router = express.Router();
   // Security: express.json() with limit is applied globally in index.ts.
@@ -198,6 +233,17 @@ export function createMCPRouter(options: McpRouterOptions = {}): Router {
 
   // POST /mcp — JSON-RPC 2.0 endpoint for all MCP methods
   router.post('/', async (req, res) => {
+    // AUDIT-C1: authorize gateway tool invocation with the CALLER's
+    // authority before dispatch — the executor signs with the service key.
+    const tool = toolNameFromJsonRpc(req.body);
+    if (tool && !callerMayInvokeActionTool(req, tool)) {
+      res.status(403).json({
+        jsonrpc: '2.0',
+        id: (req.body as { id?: unknown })?.id ?? null,
+        error: { code: -32603, message: `Insufficient authority for MCP tool: ${tool}` },
+      });
+      return;
+    }
     const response = await server.handleRequest(req.body);
     res.json(response);
   });
@@ -579,6 +625,11 @@ export function createFetchActionGatewayExecutor(options: {
       headers.set('accept', 'application/json');
       if (input.body) headers.set('content-type', 'application/json');
       if (options.apiKey) headers.set('authorization', `Bearer ${options.apiKey}`);
+      // AUDIT-C1: attribute the caller's tenant on the forwarded request so
+      // the gateway can scope the action instead of seeing only the service
+      // credential (confused-deputy mitigation).
+      const callerTenant = getCurrentTenantId();
+      if (callerTenant) headers.set('x-commander-caller-tenant', callerTenant);
       const response = await fetchImpl(`${baseUrl}${input.path}`, {
         method: input.method,
         headers,
