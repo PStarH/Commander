@@ -615,6 +615,7 @@ const API_POD_STARTUP_CODES = [
   'TASK1_READINESS_TLS_MATERIAL_INVALID',
   'TASK1_DATABASE_IDENTITY_INVALID',
   'COMMANDER_API_STARTUP_FAILED',
+  'COMMANDER_API_RUNTIME_MODULE_NOT_FOUND',
   'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED',
 ] as const;
 
@@ -1287,13 +1288,16 @@ export function apiPodStartupFailureDiagnostic(
   transport: ApiPodStartupFailureEvidence['transport'] = 'kubectl_logs',
 ): string {
   const tail = logs.slice(-4_096);
-  const code = [
+  const startupCode = [
     ...(tail.match(/\b(?:(?:COMMANDER|TASK1)_[A-Z0-9_]{1,80}|DATABASE_URL_REQUIRED)\b/g) ?? []),
   ]
     .reverse()
     .find((candidate): candidate is ApiPodStartupCode =>
       API_POD_STARTUP_CODES.includes(candidate as ApiPodStartupCode),
     );
+  const code =
+    startupCode ??
+    (tail.includes('ERR_MODULE_NOT_FOUND') ? 'COMMANDER_API_RUNTIME_MODULE_NOT_FOUND' : undefined);
   return (
     'code=' +
     (code ?? 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED') +
