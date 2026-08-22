@@ -552,6 +552,7 @@ export interface SanitizedScenarioEvidence {
   failureCodes?: string[];
   rolloutFailure?: RolloutFailureEvidence;
   rolloutObservation?: RolloutNonterminalEvidence | RolloutQueryEvidence;
+  apiStartupFailure?: ApiPodStartupFailureEvidence;
 }
 
 export interface SanitizedHarnessEvidence {
@@ -582,6 +583,46 @@ export interface OwnerFailureEvidence {
   migration?: string;
   phase?: 'baseline' | 'lifecycle' | 'expand' | 'enforce';
   sqlstate?: string;
+  logSha256: string;
+}
+
+const API_POD_STARTUP_CODES = [
+  'COMMANDER_TENANT_AUTHORITY_PROOF_PORT_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE_INVALID',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_PORT_INVALID',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_CERT_FILE_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_KEY_FILE_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_DNS_NAME_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256_REQUIRED',
+  'DATABASE_URL_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_DATABASE_URL_REQUIRED',
+  'TASK1_READINESS_TLS_PATH_INVALID',
+  'TASK1_READINESS_PROOF_DNS_NAME_INVALID',
+  'TASK1_READINESS_RUNTIME_IDENTITY_INVALID',
+  'TASK1_READINESS_DATABASE_URLS_MUST_BE_DISTINCT',
+  'TASK1_READINESS_APP_DATABASE_URL_INVALID',
+  'TASK1_READINESS_APP_DATABASE_ROLE_INVALID',
+  'TASK1_READINESS_AUTHORITY_DATABASE_URL_INVALID',
+  'TASK1_READINESS_AUTHORITY_DATABASE_ROLE_INVALID',
+  'TASK1_READINESS_FILE_OWNERSHIP_UNSUPPORTED',
+  'TASK1_READINESS_CERT_FILE_INVALID',
+  'TASK1_READINESS_KEY_FILE_INVALID',
+  'TASK1_READINESS_CERT_FILE_MODE_INVALID',
+  'TASK1_READINESS_KEY_FILE_MODE_INVALID',
+  'TASK1_READINESS_CERT_FILE_OWNER_INVALID',
+  'TASK1_READINESS_KEY_FILE_OWNER_INVALID',
+  'TASK1_READINESS_TLS_MATERIAL_INVALID',
+  'TASK1_DATABASE_IDENTITY_INVALID',
+  'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED',
+] as const;
+
+type ApiPodStartupCode = (typeof API_POD_STARTUP_CODES)[number];
+
+export interface ApiPodStartupFailureEvidence {
+  code: ApiPodStartupCode;
+  producer: 'api_entrypoint';
+  transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
   logSha256: string;
 }
 
@@ -772,6 +813,11 @@ const OWNER_FAILURE_RECORD = new RegExp(
 );
 const GENERIC_OWNER_FAILURE_RECORD = new RegExp(
   '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]{1,80});producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
+);
+const API_POD_STARTUP_FAILURE_RECORD = new RegExp(
+  '(?:^|:)TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=(' +
+    API_POD_STARTUP_CODES.join('|') +
+    ');producer=api_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
 const SCENARIO_FAILURE_CODE = /\b(?:COMMANDER|TASK1|TENANT_CUTOVER|HELM)_[A-Z0-9_]{1,80}\b/g;
 
@@ -1223,6 +1269,57 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
   return evidence;
 }
 
+/** Converts the prior API container output to a fixed code and digest without retaining the output. */
+export function apiPodStartupFailureDiagnostic(
+  logs: string,
+  transport: ApiPodStartupFailureEvidence['transport'] = 'kubectl_logs',
+): string {
+  const tail = logs.slice(-4_096);
+  const code = [
+    ...(tail.match(/\b(?:(?:COMMANDER|TASK1)_[A-Z0-9_]{1,80}|DATABASE_URL_REQUIRED)\b/g) ?? []),
+  ]
+    .reverse()
+    .find((candidate): candidate is ApiPodStartupCode =>
+      API_POD_STARTUP_CODES.includes(candidate as ApiPodStartupCode),
+    );
+  return (
+    'code=' +
+    (code ?? 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED') +
+    ';producer=api_entrypoint;transport=' +
+    transport +
+    ';log_sha256=' +
+    createHash('sha256').update(tail).digest('hex')
+  );
+}
+
+function parseApiPodStartupFailureEvidence(
+  error: string,
+): ApiPodStartupFailureEvidence | undefined {
+  const match = error.match(API_POD_STARTUP_FAILURE_RECORD);
+  if (!match) return undefined;
+  const [, code, transport, logSha256] = match;
+  if (!hasExactValue(code, API_POD_STARTUP_CODES)) return undefined;
+  return {
+    code,
+    producer: 'api_entrypoint',
+    transport: transport as ApiPodStartupFailureEvidence['transport'],
+    logSha256,
+  };
+}
+
+function apiPodStartupFailureRecord(value: ApiPodStartupFailureEvidence): string {
+  return (
+    'TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=' +
+    value.code +
+    ';producer=' +
+    value.producer +
+    ';transport=' +
+    value.transport +
+    ';log_sha256=' +
+    value.logSha256
+  );
+}
+
 interface HarnessOptions {
   chart: string;
   keepCluster: boolean;
@@ -1258,6 +1355,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
       const failureCodes = scenarioFailureCodes(error);
       const rolloutFailure = error ? parseRolloutFailureEvidence(error) : undefined;
       const rolloutObservation = error ? parseRolloutObservationEvidence(error) : undefined;
+      const apiStartupFailure = error ? parseApiPodStartupFailureEvidence(error) : undefined;
       return {
         name,
         passed,
@@ -1286,6 +1384,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
                   : { code: rolloutObservation.code },
             }
           : {}),
+        ...(apiStartupFailure ? { apiStartupFailure } : {}),
       };
     }),
     ...(evidence.ownerFailureEvidence
@@ -2078,6 +2177,57 @@ async function observeLiveRolloutFailure(release: string): Promise<RolloutObserv
   return classifyRolloutObservation(result);
 }
 
+async function captureApiPodStartupFailure(
+  release: string,
+  observation: RolloutObservation,
+): Promise<ApiPodStartupFailureEvidence | undefined> {
+  if (
+    observation.kind !== 'terminal' ||
+    observation.evidence.resourceKind !== 'Pod' ||
+    observation.evidence.component !== 'api' ||
+    observation.evidence.reasonCode !== 'POD_CRASH_LOOP_BACKOFF'
+  ) {
+    return undefined;
+  }
+  const pods = await kubectl(
+    [
+      'get',
+      'pods',
+      '-n',
+      NAMESPACE,
+      '-l',
+      'app.kubernetes.io/instance=' + release + ',app.kubernetes.io/component=api',
+      '-o',
+      'json',
+    ],
+    { maxBuffer: ROLLOUT_OBSERVATION_MAX_BYTES },
+  );
+  if (pods.exitCode !== 0) return undefined;
+  let parsed: Record<string, unknown> | undefined;
+  try {
+    parsed = jsonRecord(JSON.parse(pods.stdout));
+  } catch {
+    return undefined;
+  }
+  const podName = (jsonArray(parsed?.items) ?? [])
+    .map((item) => jsonRecord(item))
+    .map((item) => jsonRecord(item?.metadata)?.name)
+    .filter((name): name is string => typeof name === 'string' && name.length > 0)
+    .sort()[0];
+  if (!podName) return undefined;
+  const logs = await kubectl(
+    ['logs', podName, '-c', 'api', '--previous', '-n', NAMESPACE, '--tail=80'],
+    { maxBuffer: 16 * 1024 },
+  );
+  const transport: ApiPodStartupFailureEvidence['transport'] =
+    logs.exitCode === 0 ? 'kubectl_logs' : 'kubectl_logs_unavailable';
+  const diagnostic = apiPodStartupFailureDiagnostic(
+    logs.exitCode === 0 ? logs.stdout : '',
+    transport,
+  );
+  return parseApiPodStartupFailureEvidence('TENANT_CUTOVER_API_POD_STARTUP_FAILED:' + diagnostic);
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -2121,6 +2271,7 @@ async function runCutoverCommand(
   });
   let proofPodObserved = false;
   let rolloutObservation: RolloutObservationState | undefined;
+  let apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
   while (!finished) {
     const [proofPod, observedFailure] = await Promise.all([
       inspectLiveProofPod(release, digest),
@@ -2128,6 +2279,7 @@ async function runCutoverCommand(
     ]);
     proofPodObserved = proofPod || proofPodObserved;
     rolloutObservation = retainRolloutObservation(rolloutObservation, observedFailure);
+    apiStartupFailure ??= await captureApiPodStartupFailure(release, observedFailure);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
@@ -2141,7 +2293,12 @@ async function runCutoverCommand(
         : rolloutObservation?.queryFailure
           ? rolloutObservationRecord(rolloutObservation.queryFailure)
           : 'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED';
-    throw new Error(failureCodes.join(':') + ':' + diagnostic);
+    throw new Error(
+      failureCodes.join(':') +
+        ':' +
+        diagnostic +
+        (apiStartupFailure ? ':' + apiPodStartupFailureRecord(apiStartupFailure) : ''),
+    );
   }
   if (requireLiveProofPod && !proofPodObserved) {
     throw new Error('LIVE_PROOF_POD_NOT_OBSERVED');

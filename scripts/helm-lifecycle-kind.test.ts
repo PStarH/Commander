@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import * as lifecycleHarness from './helm-lifecycle-kind.js';
 import {
   aggregateScenarioPass,
   aggregateScenarioChecks,
@@ -37,6 +38,69 @@ import {
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('retains only an allowlisted API startup code and hash from pod logs', () => {
+    const diagnostic = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        apiPodStartupFailureDiagnostic?: (
+          logs: string,
+          transport?: 'kubectl_logs' | 'kubectl_logs_unavailable',
+        ) => string;
+      }
+    ).apiPodStartupFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const logs = [
+      'Error: TASK1_READINESS_CERT_FILE_OWNER_INVALID',
+      'postgres://api:secret@database/commander',
+      'opaque-api-startup-marker-3281',
+    ].join('\n');
+    const result = diagnostic!(logs);
+
+    assert.match(
+      result,
+      /^code=TASK1_READINESS_CERT_FILE_OWNER_INVALID;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /secret|opaque-api-startup-marker-3281/);
+    assert.match(
+      diagnostic!('opaque-api-startup-marker-9142'),
+      /^code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.match(
+      diagnostic!('Error: DATABASE_URL_REQUIRED'),
+      /^code=DATABASE_URL_REQUIRED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+    );
+
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 1,
+          events: [],
+          assertions: [],
+          error:
+            'TENANT_CUTOVER_API_POD_STARTUP_FAILED:' +
+            result +
+            '\npostgres://api:secret@database/commander opaque-api-startup-marker-3281',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+    assert.deepEqual(sanitized.scenarios[0]?.apiStartupFailure, {
+      code: 'TASK1_READINESS_CERT_FILE_OWNER_INVALID',
+      producer: 'api_entrypoint',
+      transport: 'kubectl_logs',
+      logSha256: result.match(/log_sha256=([a-f0-9]{64})$/)?.[1],
+    });
+    assert.equal(JSON.stringify(sanitized).includes('opaque-api-startup-marker-3281'), false);
+  });
+
   it('classifies finite rollout query, output-limit, empty, and nonterminal outcomes', () => {
     assert.deepEqual(
       classifyRolloutObservation({
