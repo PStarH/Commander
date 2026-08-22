@@ -446,6 +446,28 @@ export const KERNEL_AUTH_PERSISTENCE_MIGRATIONS: readonly KernelMigration[] = [
   },
 ];
 
+const KERNEL_AUTH_USER_TENANT_MEMBERSHIP_SQL = [
+  'CREATE TABLE commander_auth_user_tenants (',
+  '  user_id TEXT NOT NULL REFERENCES commander_auth_users(id) ON DELETE CASCADE,',
+  '  tenant_id TEXT NOT NULL,',
+  "  role TEXT NOT NULL CHECK (role IN ('super_admin','admin','developer','operator','auditor','viewer')),",
+  '  created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),',
+  '  PRIMARY KEY (user_id, tenant_id)',
+  ');',
+  'CREATE INDEX commander_auth_user_tenants_tenant_user_idx ON commander_auth_user_tenants (tenant_id, user_id);',
+  'ALTER TABLE commander_auth_user_tenants OWNER TO commander_owner;',
+  'REVOKE ALL PRIVILEGES ON TABLE commander_auth_user_tenants FROM PUBLIC, commander_scheduler, commander_worker, commander_adapter_ops, commander_tenant_authority;',
+  'GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE commander_auth_user_tenants TO commander_app;',
+].join('\n');
+
+export const KERNEL_AUTH_USER_TENANT_MEMBERSHIP_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-22.1.p0_auth_user_tenant_membership',
+    sql: KERNEL_AUTH_USER_TENANT_MEMBERSHIP_SQL,
+    checksum: checksum(KERNEL_AUTH_USER_TENANT_MEMBERSHIP_SQL),
+  },
+];
+
 export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_TASK1_FORWARD_MIGRATIONS,
   ...KERNEL_TASK2_FORWARD_MIGRATIONS,
@@ -463,6 +485,7 @@ export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
   ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_AUTH_USER_TENANT_MEMBERSHIP_MIGRATIONS,
 ];
 
 export const KERNEL_TASK1_BASELINE_MIGRATIONS: readonly KernelMigration[] = [
@@ -502,6 +525,7 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
   ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_AUTH_USER_TENANT_MEMBERSHIP_MIGRATIONS,
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';

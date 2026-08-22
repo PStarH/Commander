@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { hashSync } from 'bcryptjs';
 import type { ApiKeyCreationResult, ApiKeyRecord, ApiKeyStore } from '../src/apiKeyStore';
-import type { SafeUser, User, UserRepository, UserRole } from '../src/userStore';
+import type { SafeUser, User, UserRepository, UserRole, UserTenantMembership } from '../src/userStore';
 
 function safeUser(user: User): SafeUser {
   const { passwordHash: _passwordHash, oidcIssuer: _oidcIssuer, oidcSubject: _oidcSubject, ...safe } =
@@ -11,6 +11,11 @@ function safeUser(user: User): SafeUser {
 
 export class TestUserRepository implements UserRepository {
   private readonly users = new Map<string, User>();
+  private readonly memberships = new Map<string, UserTenantMembership>();
+
+  grantMembership(userId: string, tenantId: string, role: UserRole): void {
+    this.memberships.set(userId + ':' + tenantId, { userId, tenantId, role });
+  }
 
   async findUserById(id: string): Promise<User | undefined> {
     return this.users.get(id);
@@ -30,6 +35,10 @@ export class TestUserRepository implements UserRepository {
     );
   }
 
+  async findUserTenantMembership(userId: string, tenantId: string): Promise<UserTenantMembership | undefined> {
+    return this.memberships.get(userId + ':' + tenantId);
+  }
+
   async listUsers(): Promise<SafeUser[]> {
     return [...this.users.values()].map(safeUser);
   }
@@ -41,6 +50,7 @@ export class TestUserRepository implements UserRepository {
     role?: UserRole;
     oidcIssuer?: string;
     oidcSubject?: string;
+    tenantId: string;
   }): Promise<{ user: SafeUser } | { error: string }> {
     if ((args.oidcIssuer === undefined) !== (args.oidcSubject === undefined)) {
       return { error: 'OIDC issuer and subject must be provided together' };
@@ -62,6 +72,7 @@ export class TestUserRepository implements UserRepository {
       lastLoginAt: null,
     };
     this.users.set(user.id, user);
+    this.grantMembership(user.id, args.tenantId, args.role ?? 'viewer');
     return { user: safeUser(user) };
   }
 

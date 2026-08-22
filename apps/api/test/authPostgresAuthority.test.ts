@@ -29,6 +29,12 @@ class FakePool implements SqlPool {
     return {
       query: async <T>(sql: string, values?: readonly unknown[]): Promise<SqlQueryResult<T>> => {
         this.queries.push({ sql, values });
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') {
+          return { rows: [] as T[], rowCount: 0 };
+        }
+        if (sql.startsWith('INSERT INTO commander_auth_user_tenants')) {
+          return { rows: [] as T[], rowCount: 1 };
+        }
         if (sql.startsWith('INSERT INTO commander_auth_users')) {
           const [id, username, email, passwordHash, role, issuer, subject] = values!;
           if (
@@ -126,6 +132,9 @@ class BootstrapPool implements SqlPool {
           this.hasUsers = true;
           return { rows: [], rowCount: 1 };
         }
+        if (sql.startsWith('INSERT INTO commander_auth_user_tenants')) {
+          return { rows: [], rowCount: 1 };
+        }
         throw new Error('Unexpected SQL: ' + sql);
       },
       release: () => undefined,
@@ -139,11 +148,11 @@ describe('PostgreSQL auth authorities', () => {
     const repository = new PostgresUserRepository(pool);
 
     await bootstrapDefaultAdmin(
-      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password' },
+      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password', ADMIN_TENANT_ID: 'tenant-a' },
       repository,
     );
     await bootstrapDefaultAdmin(
-      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password' },
+      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password', ADMIN_TENANT_ID: 'tenant-a' },
       repository,
     );
 
@@ -154,6 +163,10 @@ describe('PostgreSQL auth authorities', () => {
     assert.deepEqual(inserts[0]?.values?.slice(1, 3), ['admin', 'admin@commander.local']);
     assert.equal(inserts[0]?.values?.[4], 'admin');
     assert.equal(inserts[0]?.values?.[3] === 'operator-supplied-password', false);
+    const membership = pool.queries.find((query) =>
+      query.sql.startsWith('INSERT INTO commander_auth_user_tenants'),
+    );
+    assert.deepEqual(membership?.values?.slice(1), ['tenant-a', 'admin']);
     assert.equal(
       pool.queries.filter((query) => query.sql.includes('pg_advisory_xact_lock')).length,
       2,
@@ -169,6 +182,15 @@ describe('PostgreSQL auth authorities', () => {
     assert.equal(pool.queries.length, 0);
   });
 
+  test('refuses bootstrap without an explicit operator tenant', async () => {
+    const pool = new BootstrapPool();
+    await assert.rejects(
+      () => bootstrapDefaultAdmin({ NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password' }, new PostgresUserRepository(pool)),
+      /ADMIN_TENANT_REQUIRED/,
+    );
+    assert.equal(pool.queries.length, 0);
+  });
+
   test('uses a database uniqueness constraint for usernames', async () => {
     const repository = new PostgresUserRepository(new FakePool());
     const testPassword = 'test-password';
@@ -177,11 +199,13 @@ describe('PostgreSQL auth authorities', () => {
       username: 'Alice',
       email: 'alice@example.test',
       password: testPassword,
+      tenantId: 'tenant-a',
     });
     const duplicate = await repository.createUser({
       username: 'alice',
       email: 'other@example.test',
       password: testPassword,
+      tenantId: 'tenant-a',
     });
 
     assert.ok(!('error' in first));
@@ -273,6 +297,9 @@ describe('PostgreSQL auth authorities', () => {
       findUserByOidcIdentity: async () => {
         throw new Error('unavailable');
       },
+      findUserTenantMembership: async () => {
+        throw new Error('unavailable');
+      },
       listUsers: async () => {
         throw new Error('unavailable');
       },
@@ -321,13 +348,11 @@ describe('PostgreSQL auth authorities', () => {
       try {
         const address = server.address();
         const port = typeof address === 'object' && address ? address.port : 0;
-        const response = await fetch('http://127.0.0.1:' + port + '/api/auth/register', {
+        const response = await fetch('http://127.0.0.1:' + port + '/api/auth/login', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            username: 'alice',
-            email: 'alice@example.test',
-            password: testPassword,
+            username: 'alice', password: testPassword, tenantId: 'tenant-a',
           }),
         });
         const body = (await response.json()) as Record<string, unknown>;
