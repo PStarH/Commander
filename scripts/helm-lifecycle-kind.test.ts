@@ -95,6 +95,10 @@ describe('helm-lifecycle-kind helpers', () => {
       /^code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
     );
     assert.match(
+      diagnostic!('Error [ERR_MODULE_NOT_FOUND]: Cannot find package'),
+      /^code=COMMANDER_API_RUNTIME_MODULE_NOT_FOUND;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.match(
       diagnostic!('Error: DATABASE_URL_REQUIRED'),
       /^code=DATABASE_URL_REQUIRED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
     );
