@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { KernelRepository } from './repository.js';
+import { mustRefuseMissingAppRole } from './productionSignal.js';
 import {
   assertEvidenceRecordBoundToEffect,
   type AdapterOpsCompensationTerminalEvidenceBinding,
@@ -219,12 +220,9 @@ function enforceAppRole(pool: SqlPool): SqlPool {
         // Fail closed in production rather than degrade to a cross-tenant read.
         // COMMANDER_ALLOW_RLS_BYPASS=1 is an explicit, documented escape hatch
         // for single-tenant/legacy deployments that intentionally lack the role.
-        const bypassAllowed =
-          process.env.NODE_ENV !== 'production' ||
-          ['1', 'true', 'yes'].includes(
-            (process.env.COMMANDER_ALLOW_RLS_BYPASS ?? '').toLowerCase(),
-          );
-        if (!bypassAllowed) {
+        // AUDIT-K1: production is detected by the shared multi-signal check —
+        // losing NODE_ENV alone must not silently re-enable the bypass.
+        if (mustRefuseMissingAppRole(process.env)) {
           await client.release();
           throw new Error(
             '[PostgresKernelRepository] commander_app role not found in production. ' +

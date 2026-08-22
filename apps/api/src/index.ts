@@ -116,6 +116,7 @@ import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
 import { isProductionEnv } from './envSignal';
 import { resolveTrustProxySetting, TrustProxyConfigError } from './trustProxyConfig';
+import { assertDurableStoreConfigured } from './storeBackendGate';
 import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
 
 import { getDirname, getRequire } from './esmCompat';
@@ -178,6 +179,9 @@ function validateEnvironment(): void {
 
   const storeBackend = process.env.API_STORE_BACKEND;
   if (!storeBackend && !process.env.DATABASE_URL) {
+    // AUDIT-K2 (api leg): fail closed in production — an ephemeral in-memory
+    // store must never be a silent fallback for a production deployment.
+    assertDurableStoreConfigured(process.env);
     getGlobalLogger().warn(
       'Startup',
       'Neither API_STORE_BACKEND nor DATABASE_URL is set. The API will fall back to an in-memory store, which is ephemeral and only suitable for single-node development/testing. Set DATABASE_URL for production persistence.',
