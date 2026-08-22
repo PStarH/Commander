@@ -14,7 +14,6 @@ import {
   updateUser,
   resetUserPassword,
   deleteUser,
-  countAdmins,
   hasRole,
   type UserRole,
   type SafeUser,
@@ -458,7 +457,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
 
       let updated;
       try {
-        updated = await updateUserRole(id, parsed.data.role as UserRole);
+        updated = await updateUserRole(id, req.user!.tenantId!, parsed.data.role as UserRole);
       } catch {
         authorityUnavailable(res);
         return;
@@ -551,22 +550,6 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       }
       if (!(await targetIsInPrincipalTenant(req, res, id))) return;
 
-      // Prevent removing admin role from the last admin.
-      try {
-        if (
-          parsed.data.role !== undefined &&
-          !hasRole(parsed.data.role, 'admin') &&
-          targetUser.role === 'admin' &&
-          (await countAdmins()) <= 1
-        ) {
-          res.status(400).json({ error: 'Cannot demote the last admin account' });
-          return;
-        }
-      } catch {
-        authorityUnavailable(res);
-        return;
-      }
-
       // AUTH-5: an actor may only assign a role at or below their own level.
       if (
         parsed.data.role !== undefined &&
@@ -578,7 +561,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
 
       let updated;
       try {
-        updated = await updateUser(id, parsed.data);
+        updated = await updateUser(id, req.user!.tenantId!, parsed.data);
       } catch {
         authorityUnavailable(res);
         return;
