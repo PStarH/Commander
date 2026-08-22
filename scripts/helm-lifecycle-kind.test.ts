@@ -442,6 +442,17 @@ describe('helm-lifecycle-kind helpers', () => {
         { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] },
         'POD_CRASH_LOOP_BACKOFF',
       ],
+      [
+        {
+          containerStatuses: [
+            {
+              lastState: { terminated: { reason: 'OOMKilled' } },
+              state: { waiting: { reason: 'CrashLoopBackOff' } },
+            },
+          ],
+        },
+        'POD_OOM_KILLED',
+      ],
     ] as const) {
       assert.deepEqual(
         classifyRolloutFailureJson(
