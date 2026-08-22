@@ -32,6 +32,7 @@ import {
 } from './evidenceSchema.js';
 import { KERNEL_COMPENSATION_PERSISTENCE_SQL } from './compensationSchema.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import { assertSafeSqlIdentifier } from './sqlSafety.js';
 
 export interface KernelMigration {
   id: string;
@@ -535,6 +536,10 @@ export async function runKernelMigrations(
       'SELECT rolbypassrls, rolname FROM pg_roles WHERE rolname = current_user',
     );
     if (!ownerInfo.rows[0]?.rolbypassrls) {
+      // AUDIT-K5: role names may contain double quotes; interpolating one into
+      // this DDL would execute attacker SQL via the simple-query protocol.
+      // Migration-owner roles are always plain identifiers — anything else refuses.
+      assertSafeSqlIdentifier(ownerInfo.rows[0].rolname, 'migration owner rolname');
       await client.query(`ALTER ROLE "${ownerInfo.rows[0].rolname}" BYPASSRLS`);
     }
 

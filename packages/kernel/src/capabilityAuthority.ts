@@ -71,8 +71,11 @@ interface JwkOkp {
 }
 
 function isProductionOrEnterprise(env: CapabilityAuthorityEnv): boolean {
+  // AUDIT-K1: COMMANDER_ENV joins the signal set — production detection must
+  // not hinge on NODE_ENV surviving the deployment env plumbing.
   return (
     env.NODE_ENV === 'production' ||
+    env.COMMANDER_ENV === 'production' ||
     env.COMMANDER_PROFILE === 'enterprise' ||
     env.COMMANDER_CELL_TIER === 'enterprise' ||
     env.COMMANDER_REQUIRE_CAPABILITY_AUTHORITY === '1'

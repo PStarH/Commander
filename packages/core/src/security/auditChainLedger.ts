@@ -57,6 +57,7 @@ import { getCurrentTenantId } from '../runtime/tenantContext';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { SecurityEvent, SecurityEventType, SecuritySeverity } from './securityAuditLogger';
+import { isProductionCryptoEnv } from './productionEnv.js';
 
 // ============================================================================
 // Public types
@@ -566,7 +567,7 @@ export function resolveMasterKey(env: NodeJS.ProcessEnv = process.env): Buffer {
   if (v && v.length >= 32) {
     return Buffer.from(v, 'utf-8');
   }
-  if (env.NODE_ENV === 'production') {
+  if (isProductionCryptoEnv(env)) {
     throw new Error(
       `[auditChainLedger] ${AUDIT_CHAIN_KEY_ENV} must be set (>= 32 chars) in production. ` +
         'Refusing to start with a weak default key — tamper-evidence would be cryptographically invalid.',
