@@ -25,7 +25,11 @@ import {
   type AuthUser,
   resolveAccessTenantId,
 } from './jwtMiddleware';
-import { consume as consumeRefreshJti, revoke as revokeRefreshJti } from './refreshTokenStore';
+import {
+  consume as consumeRefreshJti,
+  revoke as revokeRefreshJti,
+  revokeAllForUser,
+} from './refreshTokenStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -116,6 +120,15 @@ function requireRole(requiredRole: UserRole = 'admin') {
     }
     next();
   };
+}
+
+/**
+ * AUDIT-A: an actor may only administer users whose current role is at or
+ * below the actor's own level. Without this, a same-realm `admin` could reset
+ * a `super_admin` password (account takeover) or delete/demote them.
+ */
+function canActOnTarget(actorRole: UserRole, target: { role: UserRole }): boolean {
+  return hasRole(actorRole, target.role);
 }
 
 // ── Response helpers ────────────────────────────────────────────────────────
@@ -324,6 +337,12 @@ export function createUserAuthRouter(): Router {
         return;
       }
 
+      // AUDIT-A: may only change the role of a user at or below your own level.
+      if (!canActOnTarget(req.user!.role, targetUser)) {
+        res.status(403).json({ error: 'You cannot modify a user above your own level' });
+        return;
+      }
+
       // Prevent a user from demoting themselves below admin level (would risk
       // locking out the last admin-level account).
       if (req.user!.id === id && !hasRole(parsed.data.role, 'admin')) {
@@ -395,6 +414,12 @@ export function createUserAuthRouter(): Router {
       return;
     }
 
+    // AUDIT-A: may only update a user at or below your own level.
+    if (!canActOnTarget(req.user!.role, targetUser)) {
+      res.status(403).json({ error: 'You cannot modify a user above your own level' });
+      return;
+    }
+
     // Prevent removing admin role from the last admin.
     if (
       parsed.data.role !== undefined &&
@@ -432,6 +457,17 @@ export function createUserAuthRouter(): Router {
         return;
       }
 
+      const targetUser = findUserById(id);
+      if (!targetUser) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      // AUDIT-A: may only delete a user at or below your own level.
+      if (!canActOnTarget(req.user!.role, targetUser)) {
+        res.status(403).json({ error: 'You cannot delete a user above your own level' });
+        return;
+      }
+
       const result = deleteUser(id);
       if (!result.success) {
         res.status(result.error === 'User not found' ? 404 : 400).json({ error: result.error });
@@ -460,11 +496,26 @@ export function createUserAuthRouter(): Router {
       }
 
       const id = String(req.params.id);
+      const targetUser = findUserById(id);
+      if (!targetUser) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      // AUDIT-A: password reset is account takeover — a lower-privileged admin
+      // must never be able to reset a higher-privileged user's credential.
+      if (!canActOnTarget(req.user!.role, targetUser)) {
+        res.status(403).json({ error: 'You cannot reset the password of a user above your own level' });
+        return;
+      }
+
       const updated = resetUserPassword(id, parsed.data.newPassword);
       if (!updated) {
         res.status(404).json({ error: 'User not found' });
         return;
       }
+      // AUDIT-D: a credential change invalidates every outstanding session —
+      // pre-reset refresh tokens must not keep rotating for the token lifetime.
+      revokeAllForUser(id);
       res.json({ user: updated });
     },
   );
