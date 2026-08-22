@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import jwt, { type JwtPayload } from 'jsonwebtoken';
 import type { UserRole } from './userStore';
 import { isProductionEnv } from './envSignal';
-import { persist as persistRefreshJti } from './refreshTokenStore';
+import type { RefreshTokenRepository } from './refreshTokenStore';
 import { isEnterpriseProfile } from './profileSignal';
 
 // ── Express type augmentation ───────────────────────────────────────────────
@@ -123,8 +123,12 @@ export function signAccessToken(user: AuthUser): string {
  * Each token carries a unique `jti` that is persisted so it can be rotated
  * and revoked (see refreshTokenStore / /api/auth/refresh).
  */
-export function signRefreshToken(user: AuthUser): string {
+export async function signRefreshToken(
+  user: AuthUser,
+  refreshTokens: RefreshTokenRepository,
+): Promise<string> {
   const jti = randomUUID();
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
   const payload: CommanderJwtPayload = {
     id: user.id,
     username: user.username,
@@ -137,15 +141,12 @@ export function signRefreshToken(user: AuthUser): string {
   if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
     payload.tenant_id = user.tenantId;
   }
-  const token = jwt.sign(payload, JWT_SECRET, {
+
+  await refreshTokens.insert({ jti, userId: user.id, expiresAt });
+  return jwt.sign(payload, JWT_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
-  const decoded = jwt.decode(token) as CommanderJwtPayload | null;
-  const exp =
-    typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
-  persistRefreshJti(jti, user.id, exp);
-  return token;
 }
 
 /**

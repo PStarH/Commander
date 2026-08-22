@@ -434,6 +434,7 @@ export async function initializeV1KernelGateway(): Promise<void> {
     });
     repositoryHandle = handle;
     gateway = new RepositoryV1KernelGateway(handle.repository);
+    await (await import('./userStore')).bootstrapDefaultAdmin();
   })();
   return initializePromise;
 }

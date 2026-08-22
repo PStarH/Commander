@@ -2,81 +2,60 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { afterEach, describe, it } from 'node:test';
 import express from 'express';
+import { resetApiKeyStore, setApiKeyStoreForTesting } from '../src/apiKeyStore.js';
 import {
   resetAuthFailureStoreForTesting,
   setAuthFailureStore,
   type AuthFailureStore,
 } from '../src/authFailureStore.js';
+import { TestApiKeyStore } from './authRepositories.js';
 
 afterEach(() => {
+  resetApiKeyStore();
   resetAuthFailureStoreForTesting();
 });
 
+async function requestWith(store: AuthFailureStore, headers: Record<string, string> = {}) {
+  setApiKeyStoreForTesting(new TestApiKeyStore());
+  setAuthFailureStore(store);
+  const { authMiddleware } = await import('../src/authMiddleware.js');
+  const app = express();
+  app.use(authMiddleware);
+  app.get('/private', (_req, res) => res.status(200).json({ ok: true }));
+  const server = createServer(app);
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address();
+    assert.ok(address && typeof address === 'object');
+    return await fetch('http://127.0.0.1:' + address.port + '/private', { headers });
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+  }
+}
+
 describe('auth middleware failure-authority boundary', () => {
-  it('returns 500 when lockout authority cannot be read', async () => {
-    const unavailableStore: AuthFailureStore = {
-      get: async () => {
-        throw new Error('lockout authority unavailable');
-      },
-      set: async () => undefined,
-      delete: async () => undefined,
+  it('fails closed with a sanitized 503 when lockout authority cannot be read', async () => {
+    const response = await requestWith({
+      get: async () => { throw new Error('postgres authority unavailable: secret-dsn'); },
+      recordFailure: async () => { throw new Error('unreachable'); },
       cleanup: async () => undefined,
-    };
-    setAuthFailureStore(unavailableStore);
-    const { authMiddleware } = await import('../src/authMiddleware.js');
-
-    const app = express();
-    app.use(authMiddleware);
-    app.get('/private', (_req, res) => res.status(200).json({ ok: true }));
-    const server = createServer(app);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-
-    try {
-      const address = server.address();
-      assert.ok(address && typeof address === 'object');
-      const response = await fetch(`http://127.0.0.1:${address.port}/private`);
-      assert.equal(response.status, 500);
-      assert.deepEqual(await response.json(), { error: 'Internal server error' });
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'Authentication service unavailable' });
   });
 
-  it('returns 500 when an invalid credential failure cannot be recorded', async () => {
-    let setCalls = 0;
-    const unavailableStore: AuthFailureStore = {
-      get: async () => undefined,
-      set: async () => {
-        setCalls += 1;
-        throw new Error('lockout authority write unavailable');
+  it('fails closed with a sanitized 503 when an invalid credential cannot be recorded', async () => {
+    let recordCalls = 0;
+    const response = await requestWith(
+      {
+        get: async () => undefined,
+        recordFailure: async () => { recordCalls += 1; throw new Error('postgres authority unavailable: secret-dsn'); },
+        cleanup: async () => undefined,
       },
-      delete: async () => undefined,
-      cleanup: async () => undefined,
-    };
-    setAuthFailureStore(unavailableStore);
-    const { authMiddleware } = await import('../src/authMiddleware.js');
-
-    const app = express();
-    app.use(authMiddleware);
-    app.get('/private', (_req, res) => res.status(200).json({ ok: true }));
-    const server = createServer(app);
-    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-
-    try {
-      const address = server.address();
-      assert.ok(address && typeof address === 'object');
-      const response = await fetch(`http://127.0.0.1:${address.port}/private`, {
-        headers: { 'x-api-key': 'invalid-key' },
-      });
-      assert.equal(response.status, 500);
-      assert.equal(setCalls, 1);
-      assert.deepEqual(await response.json(), { error: 'Internal server error' });
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()));
-      });
-    }
+      { 'x-api-key': 'invalid-key' },
+    );
+    assert.equal(response.status, 503);
+    assert.equal(recordCalls, 1);
+    assert.deepEqual(await response.json(), { error: 'Authentication service unavailable' });
   });
 });

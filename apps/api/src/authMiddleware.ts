@@ -10,7 +10,7 @@ declare global {
     interface Request {
       apiKeyId?: string;
       apiScopes?: string[];
-      /** Tenant associated with the authenticated API key or static key mapping. */
+      /** Tenant associated with the authenticated API key. */
       tenantId?: string;
     }
   }
@@ -33,22 +33,7 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/logout',
 ]);
 
-// ── Timing-safe API key storage ──────────────────────────────────────────────
-//
-// SECURITY FIX: Previous implementation stored raw API keys in a Map and used
-// Map.has() for lookup. While Map.has() is hash-based, the keys were stored in
-// plaintext in memory, making them extractable via memory dumps. Additionally,
-// the comparison path leaked timing information through early-exit branching.
-//
-// New approach:
-// 1. Keys are SHA-256 hashed at parse time; plaintext is never retained.
-// 2. Lookup uses timingSafeEqual on hashes — constant-time comparison.
-// 3. Auth-failure lockout: after MAX_AUTH_FAILURES within the window, the
-//    source IP is locked out for LOCKOUT_DURATION_MS, preventing brute-force.
-// 4. All auth failures are logged to stderr for SIEM ingestion.
-
 interface StoredKey {
-  hash: Buffer; // SHA-256 hash of the raw key
   name: string;
   scopes: string[];
   tenantId?: string;
@@ -57,125 +42,20 @@ interface StoredKey {
 const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
 const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
-
-const startupAuthFailureStore = getAuthFailureStore();
-
-// Cleanup old entries every 5 minutes
-setInterval(() => {
-  startupAuthFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
-    process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
-  });
-}, 300_000).unref();
+const AUTH_FAILURE_CLEANUP_INTERVAL_MS = 300_000;
+const AUTH_FAILURE_CLEANUP_BATCH_SIZE = 1_000;
+let authFailureCleanupTimer: ReturnType<typeof setInterval> | undefined;
 
 function sha256(input: string): Buffer {
   return crypto.createHash('sha256').update(input).digest();
 }
 
-function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
-  const keys = new Map<string, StoredKey>();
-  if (!raw) return keys;
-  for (const entry of raw.split(',')) {
-    const [rawKey, configuredName, ...scopeParts] = entry.trim().split(':');
-    if (rawKey) {
-      const name = configuredName || rawKey.slice(0, 8);
-      const scopeSpec = scopeParts.join(':');
-      const scopes = scopeSpec ? scopeSpec.split(';').filter(Boolean) : ['read', 'write'];
-      // Store only the hash — plaintext key is discarded after hashing
-      keys.set(sha256(rawKey).toString('hex'), { hash: sha256(rawKey), name, scopes });
-    }
-  }
-  return keys;
-}
-
-// Tenant-scoped static API keys: TENANT_API_KEYS=tenantId:key1,key2;tenantId2:key3
-const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
-
-function parseTenantApiKeys(raw: string | undefined): Map<string, StoredKey> {
-  const keys = new Map<string, StoredKey>();
-  if (!raw) return keys;
-  for (const entry of raw.split(';')) {
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    const parts = trimmed.split(':');
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue;
-    const tenantId = parts[0];
-    if (!TENANT_ID_RE.test(tenantId)) continue;
-    const rawKeys = parts[1].split(',');
-    for (const rawKey of rawKeys) {
-      const key = rawKey.trim();
-      if (!key) continue;
-      keys.set(sha256(key).toString('hex'), {
-        hash: sha256(key),
-        name: `${tenantId}:${key.slice(0, 8)}`,
-        scopes: ['read', 'write'],
-        tenantId,
-      });
-    }
-  }
-  return keys;
-}
-
-// ── API key parse cache ──────────────────────────────────────────────────────
-//
-// PERFORMANCE FIX: parseApiKeys() performs two SHA-256 hashes per configured
-// key. Calling it on every request wastes CPU under load. We cache the parsed
-// result at module scope and only re-parse when the raw API_KEYS env var
-// changes value (e.g. hot-reload of configuration), so the expensive hashing
-// happens at most once per distinct configuration.
-let cachedApiKeys: Map<string, StoredKey> | null = null;
-let cachedApiKeysRaw: string | undefined = undefined;
-let cachedTenantApiKeysRaw: string | undefined = undefined;
-
-function getCachedKeys(): Map<string, StoredKey> {
-  const raw = process.env.API_KEYS;
-  const tenantRaw = process.env.TENANT_API_KEYS;
-  if (cachedApiKeys === null || raw !== cachedApiKeysRaw || tenantRaw !== cachedTenantApiKeysRaw) {
-    cachedApiKeysRaw = raw;
-    cachedTenantApiKeysRaw = tenantRaw;
-    cachedApiKeys = parseApiKeys(raw);
-    for (const [hash, tenantBinding] of parseTenantApiKeys(tenantRaw)) {
-      const configured = cachedApiKeys.get(hash);
-      cachedApiKeys.set(
-        hash,
-        configured ? { ...configured, tenantId: tenantBinding.tenantId } : tenantBinding,
-      );
-    }
-  }
-  return cachedApiKeys;
-}
-
-/**
- * Timing-safe key lookup. Hashes the provided token once, then performs an
- * O(1) Map lookup by hex digest. The matched candidate is verified with
- * crypto.timingSafeEqual to guard against timing side-channels.
- */
-function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
+async function findKey(token: string): Promise<StoredKey | null> {
   const tokenHash = sha256(token);
-  // O(1) lookup by hex digest; timing of Map.get is independent of token content.
-  const stored = storedKeys.get(tokenHash.toString('hex'));
-  if (stored) {
-    try {
-      if (
-        stored.hash.length === tokenHash.length &&
-        crypto.timingSafeEqual(stored.hash, tokenHash)
-      ) {
-        return stored;
-      }
-    } catch {
-      // Length mismatch or other error — fall through
-    }
-  }
-  // Fallback to the persistent API key store (created via /api/admin/api-keys).
-  const storeRecord = getApiKeyStore().findByHash(tokenHash.toString('hex'));
-  if (storeRecord) {
-    return {
-      hash: Buffer.from(storeRecord.hash, 'hex'),
-      name: storeRecord.name,
-      scopes: storeRecord.scopes,
-      tenantId: storeRecord.tenantId,
-    };
-  }
-  return null;
+  const storeRecord = await getApiKeyStore().findByHash(tokenHash.toString('hex'));
+  return storeRecord
+    ? { name: storeRecord.name, scopes: storeRecord.scopes, tenantId: storeRecord.tenantId }
+    : null;
 }
 
 function isPublicPath(path: string): boolean {
@@ -192,19 +72,20 @@ function getClientIp(req: Request): string {
 
 async function recordAuthFailure(ip: string): Promise<void> {
   const authFailureStore = getAuthFailureStore();
+  ensureAuthFailureCleanup(authFailureStore);
   const now = Date.now();
-  let entry = await authFailureStore.get(ip);
-  if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-    entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
-  }
-  entry.count++;
-  entry.lastFailureAt = now;
-  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
-    entry.lockedUntil = now + LOCKOUT_DURATION_MS;
+  const entry = await authFailureStore.recordFailure(
+    ip,
+    now,
+    MAX_AUTH_FAILURES,
+    AUTH_FAILURE_WINDOW_MS,
+    LOCKOUT_DURATION_MS,
+  );
+  if (entry.count === MAX_AUTH_FAILURES) {
     try {
       getGlobalLogger().warn(
         'AuthMiddleware',
-        `IP ${ip} locked out after ${entry.count} failures`,
+        'IP ' + ip + ' locked out after ' + entry.count + ' failures',
         {
           ip,
           count: entry.count,
@@ -213,18 +94,34 @@ async function recordAuthFailure(ip: string): Promise<void> {
       );
     } catch {
       process.stderr.write(
-        `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
+        '[Auth] IP ' +
+          ip +
+          ' locked out after ' +
+          entry.count +
+          ' failures for ' +
+          LOCKOUT_DURATION_MS / 1000 +
+          's\n',
       );
     }
   }
-  await authFailureStore.set(ip, entry);
 }
 
 async function isLockedOut(ip: string): Promise<boolean> {
   const authFailureStore = getAuthFailureStore();
+  ensureAuthFailureCleanup(authFailureStore);
   const entry = await authFailureStore.get(ip);
   if (!entry) return false;
   return entry.lockedUntil > Date.now();
+}
+
+function ensureAuthFailureCleanup(authFailureStore: ReturnType<typeof getAuthFailureStore>): void {
+  if (authFailureCleanupTimer) return;
+  authFailureCleanupTimer = setInterval(() => {
+    authFailureStore
+      .cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS, AUTH_FAILURE_CLEANUP_BATCH_SIZE)
+      .catch((error) => process.stderr.write('[Auth] Failed to cleanup auth failures: ' + String(error) + '\n'));
+  }, AUTH_FAILURE_CLEANUP_INTERVAL_MS);
+  authFailureCleanupTimer.unref();
 }
 
 // Module-load one-shot warning if AUTH_DISABLED=true in production.
@@ -244,7 +141,9 @@ if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDis
   } catch {
     // eslint-disable-next-line no-console
     console.warn(
-      `[authMiddleware] AUTH_DISABLED=true in production (signal=${describeProdSignal()}) — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.`,
+      '[authMiddleware] AUTH_DISABLED=true in production (signal=' +
+        describeProdSignal() +
+        ') — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.',
     );
   }
 }
@@ -252,10 +151,10 @@ if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDis
 export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
   try {
     await authMiddlewareInternal(req, res, next);
-  } catch (err) {
-    process.stderr.write(`[Auth] Unhandled error in auth middleware: ${String(err)}\n`);
+  } catch {
+    process.stderr.write('[Auth] Authentication authority unavailable\n');
     if (!res.headersSent) {
-      res.status(500).json({ error: 'Internal server error' });
+      res.status(503).json({ error: 'Authentication service unavailable' });
     }
   }
 }
@@ -318,27 +217,17 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
 
   // Check lockout BEFORE processing auth — fail fast for locked IPs
   if (await isLockedOut(clientIp)) {
-    try {
-      const authFailureStore = getAuthFailureStore();
-      const entry = await authFailureStore.get(clientIp);
-      const lockedUntil = entry?.lockedUntil ?? 0;
-      const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
-      res.setHeader('Retry-After', String(retryAfter));
-      res.status(429).json({
-        error: 'Too many authentication failures. Try again later.',
-        retryAfter,
-      });
-      return;
-    } catch (err) {
-      process.stderr.write(`[Auth] Failed to read lockout entry: ${String(err)}\n`);
-      res.status(429).json({
-        error: 'Too many authentication failures. Try again later.',
-      });
-      return;
-    }
+    const entry = await getAuthFailureStore().get(clientIp);
+    const lockedUntil = entry?.lockedUntil ?? 0;
+    const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({
+      error: 'Too many authentication failures. Try again later.',
+      retryAfter,
+    });
+    return;
   }
 
-  const apiKeys = getCachedKeys();
   const authHeader = readHeader(req.headers.authorization);
   const apiKeyHeader = readHeader(req.headers['x-api-key']);
 
@@ -347,13 +236,13 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   let matchedKey: StoredKey | null = null;
 
   if (apiKeyHeader) {
-    const matched = findKey(apiKeyHeader, apiKeys);
+    const matched = await findKey(apiKeyHeader);
     if (!matched) {
       await recordAuthFailure(clientIp);
       try {
         getGlobalLogger().warn('AuthMiddleware', 'Invalid API key', { ip: clientIp, path });
       } catch {
-        process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
+        process.stderr.write('[Auth] Invalid API key from IP=' + clientIp + ' path=' + path + '\n');
       }
       res.status(401).json({ error: 'Invalid API key' });
       return;
@@ -363,13 +252,15 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
     matchedKey = matched;
   } else if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
-    const matched = findKey(token, apiKeys);
+    const matched = await findKey(token);
     if (!matched) {
       await recordAuthFailure(clientIp);
       try {
         getGlobalLogger().warn('AuthMiddleware', 'Invalid bearer token', { ip: clientIp, path });
       } catch {
-        process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
+        process.stderr.write(
+          '[Auth] Invalid bearer token from IP=' + clientIp + ' path=' + path + '\n',
+        );
       }
       res.status(401).json({ error: 'Invalid bearer token' });
       return;
@@ -378,17 +269,14 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
     matchedScopes = matched.scopes;
     matchedKey = matched;
   } else if (
-    apiKeys.size > 0 ||
+    (await getApiKeyStore().list()).length > 0 ||
     isProductionEnv() ||
-    getApiKeyStore().list().length > 0 ||
     // Non-production with no keys previously fell open. Require an explicit
     // opt-in so local/dev deploys are not anonymously writable by default.
     process.env.COMMANDER_ALLOW_ANON !== '1'
   ) {
-    // Default-deny: require authentication whenever any API key is configured —
-    // in the env cache OR the persistent store — or whenever we are in
-    // production. Outside production, anonymous access is only allowed when
-    // COMMANDER_ALLOW_ANON=1 is set explicitly (dev escape hatch).
+    // Default-deny: only a PostgreSQL API-key authority can authenticate API
+    // key requests. Outside production, anonymous access requires explicit opt-in.
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',
