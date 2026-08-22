@@ -163,6 +163,7 @@ function validateEnvironment(): void {
 
   if (missingCritical.length > 0) {
     getGlobalLogger().error('Startup', `Aborting startup: missing ${missingCritical.join(', ')}`);
+    process.stderr.write('COMMANDER_API_STARTUP_FAILED: missing required environment variables\n');
     process.exit(1);
   }
 
