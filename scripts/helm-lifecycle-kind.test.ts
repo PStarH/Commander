@@ -105,6 +105,24 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(JSON.stringify(sanitized).includes('opaque-api-startup-marker-3281'), false);
   });
 
+  it('uses current API logs when the previous container has no classified startup failure', () => {
+    const selectLogs = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        selectApiPodStartupLogs?: (previousLogs: string, currentLogs: string) => string;
+      }
+    ).selectApiPodStartupLogs;
+    assert.equal(typeof selectLogs, 'function');
+
+    assert.equal(
+      selectLogs!('opaque previous output', 'COMMANDER_API_STARTUP_FAILED: database unavailable'),
+      'COMMANDER_API_STARTUP_FAILED: database unavailable',
+    );
+    assert.equal(
+      selectLogs!('DATABASE_URL_REQUIRED', 'COMMANDER_API_STARTUP_FAILED: database unavailable'),
+      'DATABASE_URL_REQUIRED',
+    );
+  });
+
   it('classifies finite rollout query, output-limit, empty, and nonterminal outcomes', () => {
     assert.deepEqual(
       classifyRolloutObservation({
