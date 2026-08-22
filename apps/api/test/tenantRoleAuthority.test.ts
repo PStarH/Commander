@@ -10,7 +10,7 @@ process.env.JWT_SECRET = 'tenant-role-authority-test-secret-32';
 const users = new TestUserRepository();
 const { createUser, setUserRepositoryForTesting, updateUserRole } = await import('../src/userStore.js');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints.js');
-const { verifyToken } = await import('../src/jwtMiddleware.js');
+const { jwtMiddleware, verifyToken } = await import('../src/jwtMiddleware.js');
 
 class TestRefreshTokenRepository implements RefreshTokenRepository {
   async insert(_record: RefreshTokenRecord): Promise<void> {}
@@ -27,6 +27,7 @@ before(async () => {
   setUserRepositoryForTesting(users);
   const app = express();
   app.use(express.json());
+  app.use(jwtMiddleware);
   app.use(createUserAuthRouter({ refreshTokens: new TestRefreshTokenRepository() }));
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((resolve) => server.on('listening', resolve));
@@ -69,4 +70,56 @@ test('tenant role updates are observed by the next login only in that tenant', a
 
   assert.equal(verifyToken((await login('tenant-a')).token)?.role, 'admin');
   assert.equal(verifyToken((await login('tenant-b')).token)?.role, 'viewer');
+});
+
+test('tenant user listings do not disclose other tenants and use membership roles', async () => {
+  const admin = await createUser({
+    username: 'listing-admin',
+    email: 'listing-admin@example.test',
+    password: TEST_PASSWORD,
+    tenantId: 'tenant-a',
+    role: 'viewer',
+  });
+  const localUser = await createUser({
+    username: 'tenant-a-user',
+    email: 'tenant-a-user@example.test',
+    password: TEST_PASSWORD,
+    tenantId: 'tenant-a',
+    role: 'viewer',
+  });
+  const foreignUser = await createUser({
+    username: 'tenant-b-user',
+    email: 'tenant-b-user@example.test',
+    password: TEST_PASSWORD,
+    tenantId: 'tenant-b',
+    role: 'viewer',
+  });
+  assert.ok(!('error' in admin));
+  assert.ok(!('error' in localUser));
+  assert.ok(!('error' in foreignUser));
+  users.grantMembership(admin.user.id, 'tenant-a', 'admin');
+
+  const login = await fetch(baseUrl + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      username: 'listing-admin',
+      password: TEST_PASSWORD,
+      tenantId: 'tenant-a',
+    }),
+  });
+  assert.equal(login.status, 200);
+  const token = ((await login.json()) as { token: string }).token;
+
+  const response = await fetch(baseUrl + '/api/auth/users', {
+    headers: { authorization: 'Bearer ' + token },
+  });
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as {
+    users: Array<{ id: string; role: string }>;
+  };
+
+  assert.equal(body.users.find((user) => user.id === admin.user.id)?.role, 'admin');
+  assert.ok(body.users.some((user) => user.id === localUser.user.id));
+  assert.equal(body.users.some((user) => user.id === foreignUser.user.id), false);
 });
