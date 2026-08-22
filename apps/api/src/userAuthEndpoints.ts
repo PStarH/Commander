@@ -18,12 +18,7 @@ import {
   type UserRole,
   type SafeUser,
 } from './userStore';
-import {
-  signAccessToken,
-  signRefreshToken,
-  verifyToken,
-  type AuthUser,
-} from './jwtMiddleware';
+import { signAccessToken, signRefreshToken, verifyToken, type AuthUser } from './jwtMiddleware';
 import { getRefreshTokenRepository, type RefreshTokenRepository } from './refreshTokenStore';
 
 /**
@@ -167,7 +162,11 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
     res.status(503).json({ error: 'Authentication service unavailable' });
   }
 
-  async function targetIsInPrincipalTenant(req: Request, res: Response, userId: string): Promise<boolean> {
+  async function targetIsInPrincipalTenant(
+    req: Request,
+    res: Response,
+    userId: string,
+  ): Promise<boolean> {
     const tenantId = req.user?.tenantId;
     if (!tenantId) {
       res.status(403).json({ error: 'Tenant-bound authentication required' });
@@ -391,18 +390,13 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
   });
 
   // ── GET /api/auth/users  (admin only) ────────────────────────────────────
-  router.get(
-    '/api/auth/users',
-    requireAuth,
-    requireRole(),
-    async (req: Request, res: Response) => {
-      try {
-        res.json({ users: await listUsers(req.user!.tenantId!) });
-      } catch {
-        authorityUnavailable(res);
-      }
-    },
-  );
+  router.get('/api/auth/users', requireAuth, requireRole(), async (req: Request, res: Response) => {
+    try {
+      res.json({ users: await listUsers(req.user!.tenantId!) });
+    } catch {
+      authorityUnavailable(res);
+    }
+  });
 
   // ── PUT /api/auth/users/:id/role  (admin only) ───────────────────────────
   router.put(
@@ -583,7 +577,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
 
       let result;
       try {
-        result = await deleteUser(id);
+        result = await deleteUser(id, req.user!.tenantId!);
       } catch {
         authorityUnavailable(res);
         return;

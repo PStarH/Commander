@@ -8,7 +8,8 @@ const originalJwtSecret = process.env.JWT_SECRET;
 const TEST_PASSWORD = ['tenant', 'password'].join('-');
 process.env.JWT_SECRET = 'tenant-role-authority-test-secret-32';
 const users = new TestUserRepository();
-const { createUser, setUserRepositoryForTesting, updateUserRole } = await import('../src/userStore.js');
+const { createUser, setUserRepositoryForTesting, updateUserRole } =
+  await import('../src/userStore.js');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints.js');
 const { jwtMiddleware, verifyToken } = await import('../src/jwtMiddleware.js');
 
@@ -121,5 +122,60 @@ test('tenant user listings do not disclose other tenants and use membership role
 
   assert.equal(body.users.find((user) => user.id === admin.user.id)?.role, 'admin');
   assert.ok(body.users.some((user) => user.id === localUser.user.id));
-  assert.equal(body.users.some((user) => user.id === foreignUser.user.id), false);
+  assert.equal(
+    body.users.some((user) => user.id === foreignUser.user.id),
+    false,
+  );
+});
+
+test('deleting a tenant user preserves that user in other tenants', async () => {
+  const admin = await createUser({
+    username: 'delete-tenant-admin',
+    email: 'delete-tenant-admin@example.test',
+    password: TEST_PASSWORD,
+    tenantId: 'tenant-a',
+    role: 'admin',
+  });
+  const target = await createUser({
+    username: 'delete-tenant-target',
+    email: 'delete-tenant-target@example.test',
+    password: TEST_PASSWORD,
+    tenantId: 'tenant-a',
+    role: 'viewer',
+  });
+  assert.ok(!('error' in admin));
+  assert.ok(!('error' in target));
+  users.grantMembership(target.user.id, 'tenant-b', 'viewer');
+
+  const adminLogin = await fetch(baseUrl + '/api/auth/login', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      username: 'delete-tenant-admin',
+      password: TEST_PASSWORD,
+      tenantId: 'tenant-a',
+    }),
+  });
+  assert.equal(adminLogin.status, 200);
+  const token = ((await adminLogin.json()) as { token: string }).token;
+
+  const deletion = await fetch(baseUrl + '/api/auth/users/' + target.user.id, {
+    method: 'DELETE',
+    headers: { authorization: 'Bearer ' + token },
+  });
+  assert.equal(deletion.status, 200);
+
+  const login = async (tenantId: string) =>
+    fetch(baseUrl + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        username: 'delete-tenant-target',
+        password: TEST_PASSWORD,
+        tenantId,
+      }),
+    });
+
+  assert.equal((await login('tenant-a')).status, 401);
+  assert.equal((await login('tenant-b')).status, 200);
 });
