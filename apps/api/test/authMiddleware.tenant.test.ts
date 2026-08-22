@@ -76,14 +76,14 @@ after(async () => {
 });
 
 test('PostgreSQL API key tenant binding sets req.tenantId', async () => {
-  const { key } = await apiKeys.create('acme-corp-key', ['read', 'write'], 'acme-corp');
+  const { key, record } = await apiKeys.create('acme-corp-key', ['read', 'write'], 'acme-corp');
 
   const res = await request('/context', {
     headers: { 'X-API-Key': key },
   });
   assert.equal(res.status, 200);
   const body = (await res.json()) as { apiKeyId: string; tenantId: string };
-  assert.ok(body.apiKeyId.includes('acme-corp'));
+  assert.equal(body.apiKeyId, record.id);
   assert.equal(body.tenantId, 'acme-corp');
 });
 
@@ -119,15 +119,29 @@ test('PostgreSQL API key scopes and tenant binding are authoritative', async () 
 });
 
 test('persistent API key with tenantId sets req.tenantId', async () => {
-  const { key } = await apiKeys.create('tenant-key', ['read', 'write'], 'wayne-ind');
+  const { key, record } = await apiKeys.create('tenant-key', ['read', 'write'], 'wayne-ind');
 
   const res = await request('/context', {
     headers: { 'X-API-Key': key },
   });
   assert.equal(res.status, 200);
   const body = (await res.json()) as { apiKeyId: string; tenantId: string };
-  assert.equal(body.apiKeyId, 'tenant-key');
+  assert.equal(body.apiKeyId, record.id);
   assert.equal(body.tenantId, 'wayne-ind');
+});
+
+test('same-named API keys retain distinct persisted request identities', async () => {
+  const first = await apiKeys.create('automation', ['read'], 'tenant-a');
+  const second = await apiKeys.create('automation', ['read'], 'tenant-a');
+
+  const firstResponse = await request('/context', { headers: { 'X-API-Key': first.key } });
+  const secondResponse = await request('/context', { headers: { 'X-API-Key': second.key } });
+  const firstBody = (await firstResponse.json()) as { apiKeyId: string };
+  const secondBody = (await secondResponse.json()) as { apiKeyId: string };
+
+  assert.equal(firstBody.apiKeyId, first.record.id);
+  assert.equal(secondBody.apiKeyId, second.record.id);
+  assert.notEqual(firstBody.apiKeyId, secondBody.apiKeyId);
 });
 
 test('static API_KEYS do not bypass PostgreSQL authority', async () => {

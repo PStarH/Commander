@@ -34,6 +34,7 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 interface StoredKey {
+  id: string;
   name: string;
   scopes: string[];
   tenantId?: string;
@@ -54,7 +55,12 @@ async function findKey(token: string): Promise<StoredKey | null> {
   const tokenHash = sha256(token);
   const storeRecord = await getApiKeyStore().findByHash(tokenHash.toString('hex'));
   return storeRecord
-    ? { name: storeRecord.name, scopes: storeRecord.scopes, tenantId: storeRecord.tenantId }
+    ? {
+        id: storeRecord.id,
+        name: storeRecord.name,
+        scopes: storeRecord.scopes,
+        tenantId: storeRecord.tenantId,
+      }
     : null;
 }
 
@@ -119,7 +125,9 @@ function ensureAuthFailureCleanup(authFailureStore: ReturnType<typeof getAuthFai
   authFailureCleanupTimer = setInterval(() => {
     authFailureStore
       .cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS, AUTH_FAILURE_CLEANUP_BATCH_SIZE)
-      .catch((error) => process.stderr.write('[Auth] Failed to cleanup auth failures: ' + String(error) + '\n'));
+      .catch((error) =>
+        process.stderr.write('[Auth] Failed to cleanup auth failures: ' + String(error) + '\n'),
+      );
   }, AUTH_FAILURE_CLEANUP_INTERVAL_MS);
   authFailureCleanupTimer.unref();
 }
@@ -247,7 +255,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
       res.status(401).json({ error: 'Invalid API key' });
       return;
     }
-    keyId = matched.name;
+    keyId = matched.id;
     matchedScopes = matched.scopes;
     matchedKey = matched;
   } else if (authHeader?.startsWith('Bearer ')) {
@@ -265,7 +273,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
       res.status(401).json({ error: 'Invalid bearer token' });
       return;
     }
-    keyId = matched.name;
+    keyId = matched.id;
     matchedScopes = matched.scopes;
     matchedKey = matched;
   } else if (
