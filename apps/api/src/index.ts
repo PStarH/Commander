@@ -1056,7 +1056,7 @@ async function startServer(): Promise<void> {
 }
 
 startServer().catch(async (err: Error) => {
-  process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+  process.stderr.write('COMMANDER_API_STARTUP_FAILED: ' + err.message + '\n');
   try {
     await closeTask1ReadinessService();
   } catch (closeErr) {

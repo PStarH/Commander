@@ -289,6 +289,59 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations.length, 0);
   });
 
+  it('inherits unchanged comment warnings across executable changes', async () => {
+    const evidence = String.fromCharCode(96) + 'user' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Backtick command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      'function token() {\n  // The ' + evidence + " field is a claim.\n  return issue('before');\n}\n";
+    const changed = baseline.replace("issue('before')", "issue('after')");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('rejects a comment warning when its comment context changes', async () => {
+    const evidence = String.fromCharCode(96) + 'user' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Backtick command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      'function token() {\n  // The ' + evidence + " field is a claim.\n  return issue();\n}\n";
+    const changed = baseline.replace('is a claim', 'must be verified');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
   it('inherits a template warning when an unrelated function body statement changes', async () => {
     const evidence = String.fromCharCode(96) + 'safe ';
     const scan = (content: string): readonly ScannerWarning[] =>
