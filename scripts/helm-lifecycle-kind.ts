@@ -603,6 +603,7 @@ export type RolloutReasonCode =
   | 'POD_IMAGE_PULL_FAILED'
   | 'POD_CONTAINER_CONFIG_ERROR'
   | 'POD_CONTAINER_START_FAILED'
+  | 'POD_OOM_KILLED'
   | 'POD_CRASH_LOOP_BACKOFF';
 export type RolloutNonterminalReasonCode =
   'DEPLOYMENT_UNAVAILABLE' | 'JOB_ACTIVE' | 'POD_NOT_READY';
@@ -665,6 +666,7 @@ const ROLLOUT_REASON_CODES: readonly RolloutReasonCode[] = [
   'POD_IMAGE_PULL_FAILED',
   'POD_CONTAINER_CONFIG_ERROR',
   'POD_CONTAINER_START_FAILED',
+  'POD_OOM_KILLED',
   'POD_CRASH_LOOP_BACKOFF',
 ];
 const ROLLOUT_NONTERMINAL_REASON_CODES: readonly RolloutNonterminalReasonCode[] = [
@@ -673,7 +675,7 @@ const ROLLOUT_NONTERMINAL_REASON_CODES: readonly RolloutNonterminalReasonCode[] 
   'POD_NOT_READY',
 ];
 const ROLLOUT_FAILURE_RECORD = new RegExp(
-  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_CRASH_LOOP_BACKOFF)(?=\\n|$)',
+  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_OOM_KILLED|POD_CRASH_LOOP_BACKOFF)(?=\\n|$)',
 );
 const ROLLOUT_NONTERMINAL_RECORD = new RegExp(
   '(?:^|:)TENANT_CUTOVER_ROLLOUT_NONTERMINAL:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_UNAVAILABLE|JOB_ACTIVE|POD_NOT_READY)(?=\\n|$)',
@@ -858,6 +860,20 @@ function podWaitingReason(status: Record<string, unknown> | undefined): string |
   return undefined;
 }
 
+function podLastTerminationReason(status: Record<string, unknown> | undefined): string | undefined {
+  for (const field of ['initContainerStatuses', 'containerStatuses'] as const) {
+    const containers = status?.[field];
+    if (!Array.isArray(containers)) continue;
+    for (const candidate of containers) {
+      const container = jsonRecord(candidate);
+      const lastState = jsonRecord(container?.lastState);
+      const terminated = jsonRecord(lastState?.terminated);
+      if (typeof terminated?.reason === 'string') return terminated.reason;
+    }
+  }
+  return undefined;
+}
+
 function rolloutReasonForItem(
   resourceKind: RolloutResourceKind,
   status: Record<string, unknown> | undefined,
@@ -886,7 +902,9 @@ function rolloutReasonForItem(
     case 'RunContainerError':
       return 'POD_CONTAINER_START_FAILED';
     case 'CrashLoopBackOff':
-      return 'POD_CRASH_LOOP_BACKOFF';
+      return podLastTerminationReason(status) === 'OOMKilled'
+        ? 'POD_OOM_KILLED'
+        : 'POD_CRASH_LOOP_BACKOFF';
     default:
       return undefined;
   }
