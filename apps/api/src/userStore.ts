@@ -31,6 +31,11 @@ export interface User {
 }
 
 export type SafeUser = Omit<User, 'passwordHash' | 'oidcIssuer' | 'oidcSubject'>;
+export interface UserTenantMembership {
+  userId: string;
+  tenantId: string;
+  role: UserRole;
+}
 
 type UserRow = {
   id: string;
@@ -112,6 +117,7 @@ type CreateUserArgs = {
   role?: UserRole;
   oidcIssuer?: string;
   oidcSubject?: string;
+  tenantId: string;
 };
 
 export interface UserRepository {
@@ -119,6 +125,7 @@ export interface UserRepository {
   findUserByUsername(username: string): Promise<User | undefined>;
   findUserByEmail(email: string): Promise<User | undefined>;
   findUserByOidcIdentity(issuer: string, subject: string): Promise<User | undefined>;
+  findUserTenantMembership(userId: string, tenantId: string): Promise<UserTenantMembership | undefined>;
   listUsers(): Promise<SafeUser[]>;
   createUser(args: CreateUserArgs): Promise<{ user: SafeUser } | { error: string }>;
   bindUserToOidcIdentity(
@@ -135,7 +142,7 @@ export interface UserRepository {
   resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null>;
   deleteUser(userId: string): Promise<{ success: boolean; error?: string }>;
   countAdmins(): Promise<number>;
-  bootstrapDefaultAdmin(password: string): Promise<void>;
+  bootstrapDefaultAdmin(password: string, tenantId: string): Promise<void>;
 }
 
 export class PostgresUserRepository implements UserRepository {
@@ -207,6 +214,19 @@ export class PostgresUserRepository implements UserRepository {
     });
   }
 
+  async findUserTenantMembership(
+    userId: string,
+    tenantId: string,
+  ): Promise<UserTenantMembership | undefined> {
+    return this.withClient(async (client) => {
+      const result = await client.query<UserTenantMembership>(
+        'SELECT user_id AS "userId", tenant_id AS "tenantId", role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2',
+        [userId, tenantId],
+      );
+      return result.rows[0];
+    });
+  }
+
   async listUsers(): Promise<SafeUser[]> {
     return this.withClient(async (client) => {
       const result = await client.query<UserRow>(
@@ -222,6 +242,8 @@ export class PostgresUserRepository implements UserRepository {
     }
     try {
       return await this.withClient(async (client) => {
+        await client.query('BEGIN');
+        try {
         const result = await client.query<UserRow>(
           'INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at) VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp(), NULL) RETURNING ' +
             USER_COLUMNS,
@@ -235,7 +257,17 @@ export class PostgresUserRepository implements UserRepository {
             args.oidcSubject ?? null,
           ],
         );
-        return { user: toSafeUser(fromRow(result.rows[0]!)) };
+        const user = fromRow(result.rows[0]!);
+        await client.query(
+          'INSERT INTO commander_auth_user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)',
+          [user.id, args.tenantId, args.role ?? 'viewer'],
+        );
+        await client.query('COMMIT');
+        return { user: toSafeUser(user) };
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => undefined);
+          throw error;
+        }
       });
     } catch (error) {
       const message = uniqueViolation(error);
@@ -405,16 +437,21 @@ export class PostgresUserRepository implements UserRepository {
     });
   }
 
-  async bootstrapDefaultAdmin(password: string): Promise<void> {
+  async bootstrapDefaultAdmin(password: string, tenantId: string): Promise<void> {
     await this.withAdminInvariant(async (client) => {
       const users = await client.query<{ count: string }>(
         'SELECT count(*)::text AS count FROM commander_auth_users',
       );
       if (Number(users.rows[0]?.count ?? 0) > 0) return;
 
+      const userId = randomUUID();
       await client.query(
         'INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at) VALUES ($1, $2, $3, $4, $5, NULL, NULL, clock_timestamp(), NULL)',
-        [randomUUID(), 'admin', 'admin@commander.local', hashSync(password, 10), 'admin'],
+        [userId, 'admin', 'admin@commander.local', hashSync(password, 10), 'admin'],
+      );
+      await client.query(
+        'INSERT INTO commander_auth_user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)',
+        [userId, tenantId, 'admin'],
       );
     });
   }
@@ -456,7 +493,9 @@ export async function bootstrapDefaultAdmin(
     if (env.NODE_ENV === 'production') throw new Error('AUTH_USERS_ADMIN_PASSWORD_REQUIRED');
     return;
   }
-  await (repository ?? getUserRepository()).bootstrapDefaultAdmin(password);
+  const tenantId = env.ADMIN_TENANT_ID;
+  if (!tenantId) throw new Error('AUTH_USERS_ADMIN_TENANT_REQUIRED');
+  await (repository ?? getUserRepository()).bootstrapDefaultAdmin(password, tenantId);
 }
 
 export function isInitialized(): boolean {
@@ -480,6 +519,13 @@ export async function findUserByOidcIdentity(
   subject: string,
 ): Promise<User | undefined> {
   return getUserRepository().findUserByOidcIdentity(issuer, subject);
+}
+
+export async function findUserTenantMembership(
+  userId: string,
+  tenantId: string,
+): Promise<UserTenantMembership | undefined> {
+  return getUserRepository().findUserTenantMembership(userId, tenantId);
 }
 
 export async function listUsers(): Promise<SafeUser[]> {

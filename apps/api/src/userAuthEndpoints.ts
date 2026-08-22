@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   findUserById,
   findUserByUsername,
+  findUserTenantMembership,
   createUser,
   listUsers,
   updateUserRole,
@@ -23,7 +24,6 @@ import {
   signRefreshToken,
   verifyToken,
   type AuthUser,
-  resolveAccessTenantId,
 } from './jwtMiddleware';
 import { getRefreshTokenRepository, type RefreshTokenRepository } from './refreshTokenStore';
 
@@ -53,6 +53,7 @@ const registerSchema = z.object({
 const loginSchema = z.object({
   username: z.string().min(1, 'Username is required').max(32),
   password: z.string().min(1, 'Password is required').max(128),
+  tenantId: z.string().min(1, 'tenantId is required').max(128),
 });
 
 const refreshSchema = z.object({
@@ -109,9 +110,20 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
  * mounted after requireAuth.
  */
 function requireRole(requiredRole: UserRole = 'admin') {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    if (!req.user || !hasRole(req.user.role, requiredRole)) {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    if (!req.user || !req.user.tenantId) {
       res.status(403).json({ error: 'Insufficient privileges' });
+      return;
+    }
+    try {
+      const membership = await findUserTenantMembership(req.user.id, req.user.tenantId);
+      if (!membership || !hasRole(membership.role, requiredRole)) {
+        res.status(403).json({ error: 'Insufficient privileges' });
+        return;
+      }
+      req.user.role = membership.role;
+    } catch {
+      res.status(503).json({ error: 'Authentication service unavailable' });
       return;
     }
     next();
@@ -156,6 +168,22 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
     res.status(503).json({ error: 'Authentication service unavailable' });
   }
 
+  async function targetIsInPrincipalTenant(req: Request, res: Response, userId: string): Promise<boolean> {
+    const tenantId = req.user?.tenantId;
+    if (!tenantId) {
+      res.status(403).json({ error: 'Tenant-bound authentication required' });
+      return false;
+    }
+    try {
+      if (await findUserTenantMembership(userId, tenantId)) return true;
+      res.status(404).json({ error: 'User not found' });
+      return false;
+    } catch {
+      authorityUnavailable(res);
+      return false;
+    }
+  }
+
   // ── POST /api/auth/register ──────────────────────────────────────────────
   router.post('/api/auth/register', async (req: Request, res: Response) => {
     const parsed = registerSchema.safeParse(req.body);
@@ -170,31 +198,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       return;
     }
 
-    const { username, email, password } = parsed.data;
-    let result;
-    try {
-      result = await createUser({ username, email, password, role: 'viewer' });
-    } catch {
-      authorityUnavailable(res);
-      return;
-    }
-    if ('error' in result) {
-      res.status(409).json({ error: result.error });
-      return;
-    }
-
-    const authUser: AuthUser = {
-      id: result.user.id,
-      username: result.user.username,
-      role: result.user.role,
-      tenantId: resolveAccessTenantId(),
-    };
-    try {
-      await updateLastLogin(result.user.id);
-      res.status(201).json(await buildAuthResponse(authUser, refreshTokens));
-    } catch {
-      authorityUnavailable(res);
-    }
+    res.status(403).json({ error: 'Tenant-bound administrator provisioning is required' });
   });
 
   // ── POST /api/auth/login ─────────────────────────────────────────────────
@@ -211,7 +215,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       return;
     }
 
-    const { username, password } = parsed.data;
+    const { username, password, tenantId } = parsed.data;
     let user;
     try {
       user = await findUserByUsername(username);
@@ -230,11 +234,23 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       return;
     }
 
+    let membership;
+    try {
+      membership = await findUserTenantMembership(user.id, tenantId);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
+    if (!membership) {
+      res.status(401).json({ error: 'Invalid username or password' });
+      return;
+    }
+
     const authUser: AuthUser = {
       id: user.id,
       username: user.username,
-      role: user.role,
-      tenantId: resolveAccessTenantId(),
+      role: membership.role,
+      tenantId: membership.tenantId,
     };
     try {
       await updateLastLogin(user.id);
@@ -255,6 +271,19 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
     }
     if (!user) {
       res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    if (!req.user!.tenantId) {
+      res.status(401).json({ error: 'Tenant-bound authentication required' });
+      return;
+    }
+    try {
+      if (!(await findUserTenantMembership(user.id, req.user!.tenantId))) {
+        res.status(401).json({ error: 'Tenant membership is no longer authorized' });
+        return;
+      }
+    } catch {
+      authorityUnavailable(res);
       return;
     }
     res.json({ user: toSafeUserPublic(user) });
@@ -307,11 +336,26 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       return;
     }
 
+    if (!decoded.tenant_id) {
+      res.status(401).json({ error: 'Refresh token tenant is required' });
+      return;
+    }
+    let membership;
+    try {
+      membership = await findUserTenantMembership(user.id, decoded.tenant_id);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
+    if (!membership) {
+      res.status(401).json({ error: 'Refresh token tenant is no longer authorized' });
+      return;
+    }
     const authUser: AuthUser = {
       id: user.id,
       username: user.username,
-      role: user.role,
-      tenantId: decoded.tenant_id ?? resolveAccessTenantId(),
+      role: membership.role,
+      tenantId: membership.tenantId,
     };
     try {
       res.json(await buildAuthResponse(authUser, refreshTokens));
@@ -354,7 +398,13 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
     requireRole(),
     async (_req: Request, res: Response) => {
       try {
-        res.json({ users: await listUsers() });
+        const users = await listUsers();
+        const tenantId = _req.user!.tenantId!;
+        const visible = [];
+        for (const user of users) {
+          if (await findUserTenantMembership(user.id, tenantId)) visible.push(user);
+        }
+        res.json({ users: visible });
       } catch {
         authorityUnavailable(res);
       }
@@ -391,6 +441,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
         res.status(404).json({ error: 'User not found' });
         return;
       }
+      if (!(await targetIsInPrincipalTenant(req, res, id))) return;
 
       // Prevent a user from demoting themselves below admin level (would risk
       // locking out the last admin-level account).
@@ -451,7 +502,11 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
 
       let result;
       try {
-        result = await createUser(parsed.data);
+        if (!req.user!.tenantId) {
+          res.status(403).json({ error: 'Tenant-bound authentication required' });
+          return;
+        }
+        result = await createUser({ ...parsed.data, tenantId: req.user!.tenantId });
       } catch {
         authorityUnavailable(res);
         return;
@@ -494,6 +549,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
         res.status(404).json({ error: 'User not found' });
         return;
       }
+      if (!(await targetIsInPrincipalTenant(req, res, id))) return;
 
       // Prevent removing admin role from the last admin.
       try {
@@ -546,6 +602,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
         res.status(400).json({ error: 'You cannot delete your own account' });
         return;
       }
+      if (!(await targetIsInPrincipalTenant(req, res, id))) return;
 
       let result;
       try {
@@ -581,6 +638,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       }
 
       const id = String(req.params.id);
+      if (!(await targetIsInPrincipalTenant(req, res, id))) return;
       let updated;
       try {
         updated = await resetUserPassword(id, parsed.data.newPassword);

@@ -13,6 +13,7 @@ import {
 import {
   findUserByEmail,
   findUserByOidcIdentity,
+  findUserTenantMembership,
   createUser,
   bindUserToOidcIdentity,
   updateLastLogin,
@@ -24,7 +25,7 @@ import {
 import { signAccessToken, signRefreshToken } from './jwtMiddleware';
 import { getRefreshTokenRepository, type RefreshTokenRepository } from './refreshTokenStore';
 import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
-import { isMultiTenantEnabled, validateTenantId } from '@commander/core/runtime/tenantContext';
+import { validateTenantId } from '@commander/core/runtime/tenantContext';
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
@@ -214,13 +215,7 @@ function resolveOIDCTenantId(
   config: OIDCRuntimeConfig,
 ): string | undefined {
   const claimedTenant = result.claims?.[config.tenantClaim];
-  if (claimedTenant !== undefined) {
-    return typeof claimedTenant === 'string' && claimedTenant.length > 0
-      ? claimedTenant
-      : undefined;
-  }
-  if (isMultiTenantEnabled()) return undefined;
-  return config.defaultTenantId;
+  return typeof claimedTenant === 'string' && claimedTenant.length > 0 ? claimedTenant : undefined;
 }
 
 // ============================================================================
@@ -377,6 +372,7 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
             role: result.role as UserRole,
             oidcIssuer: issuer,
             oidcSubject: subject,
+            tenantId,
           });
         } catch {
           authorityUnavailable(res);
@@ -415,6 +411,18 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       return;
     }
 
+    let membership;
+    try {
+      membership = await findUserTenantMembership(localUser.id, tenantId);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
+    if (!membership) {
+      res.status(403).json({ error: 'OIDC identity is not authorized for this tenant' });
+      return;
+    }
+
     try {
       await updateLastLogin(localUser.id);
     } catch {
@@ -425,8 +433,8 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
     const authUser = {
       id: localUser.id,
       username: localUser.username,
-      role: localUser.role as AuthRole,
-      tenantId,
+      role: membership.role as AuthRole,
+      tenantId: membership.tenantId,
     };
 
     try {

@@ -13,6 +13,16 @@ function authMigrationSql(): string {
 }
 
 describe('PostgreSQL-authoritative authentication schema', () => {
+  it('publishes a checksummed user-tenant membership migration', () => {
+    const migration = KERNEL_MIGRATIONS.find(
+      (candidate) => candidate.id === '2026-08-22.1.p0_auth_user_tenant_membership',
+    );
+    assert.ok(migration);
+    assert.equal(migration.checksum, createHash('sha256').update(migration.sql).digest('hex'));
+    assert.match(migration.sql, /CREATE TABLE commander_auth_user_tenants/i);
+    assert.match(migration.sql, /PRIMARY KEY \(user_id, tenant_id\)/i);
+    assert.match(migration.sql, /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE commander_auth_user_tenants TO commander_app/i);
+  });
   it('publishes one checksummed forward migration descriptor', () => {
     const matching = KERNEL_MIGRATIONS.filter((migration) => migration.id === MIGRATION_ID);
     assert.equal(matching.length, 1);

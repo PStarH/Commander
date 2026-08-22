@@ -62,8 +62,9 @@ before(async () => {
   const created = createUser({
     username: 'refreshuser',
     email: 'refresh@example.com',
-    password: 'password123',
+    password: REFRESH_TEST_PASSWORD,
     role: 'viewer',
+    tenantId: 'tenant-a',
   });
   assert.ok(!('error' in (await created)), 'user create should succeed');
 
@@ -99,7 +100,7 @@ async function login(): Promise<{ token: string; refreshToken: string }> {
   const response = await request('/api/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD }),
+    body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD, tenantId: 'tenant-a' }),
   });
   assert.equal(response.status, 200);
   return (await response.json()) as { token: string; refreshToken: string };
@@ -126,7 +127,7 @@ describe('refresh-token issuance', () => {
     const response = await request('/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD }),
+      body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD, tenantId: 'tenant-a' }),
     });
 
     assert.equal(response.status, 503);
@@ -139,25 +140,44 @@ describe('refresh-token issuance', () => {
 });
 
 describe('auth refresh rotation', () => {
-  test('AUTH-01: login and refresh access tokens carry tenant_id', async () => {
-    const previous = process.env.COMMANDER_DEFAULT_TENANT_ID;
-    process.env.COMMANDER_DEFAULT_TENANT_ID = 'tenant-auth01';
+  test('does not mint or refresh a token for a tenant without durable membership', async () => {
+    const prior = process.env.COMMANDER_DEFAULT_TENANT_ID;
+    process.env.COMMANDER_DEFAULT_TENANT_ID = 'tenant-b';
     try {
-      const loginBody = await login();
-      assert.equal(verifyToken(loginBody.token)?.tenant_id, 'tenant-auth01');
-
-      const refreshed = await request('/api/auth/refresh', {
+      const response = await request('/api/auth/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
+        body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD, tenantId: 'tenant-b' }),
       });
-      assert.equal(refreshed.status, 200);
-      const body = (await refreshed.json()) as { token: string };
-      assert.equal(verifyToken(body.token)?.tenant_id, 'tenant-auth01');
+      assert.equal(response.status, 401);
+      const valid = await login();
+      const forged = await signRefreshToken(
+        { id: (await findUserByUsername('refreshuser'))!.id, username: 'refreshuser', role: 'viewer', tenantId: 'tenant-b' },
+        refreshTokens,
+      );
+      const refresh = await request('/api/auth/refresh', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ refreshToken: forged }),
+      });
+      assert.equal(refresh.status, 401);
+      assert.equal(verifyToken(valid.token)?.tenant_id, 'tenant-a');
     } finally {
-      if (previous === undefined) delete process.env.COMMANDER_DEFAULT_TENANT_ID;
-      else process.env.COMMANDER_DEFAULT_TENANT_ID = previous;
+      if (prior === undefined) delete process.env.COMMANDER_DEFAULT_TENANT_ID;
+      else process.env.COMMANDER_DEFAULT_TENANT_ID = prior;
     }
+  });
+
+  test('AUTH-01: login and refresh access tokens carry tenant_id', async () => {
+    const loginBody = await login();
+    assert.equal(verifyToken(loginBody.token)?.tenant_id, 'tenant-a');
+
+    const refreshed = await request('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: loginBody.refreshToken }),
+    });
+    assert.equal(refreshed.status, 200);
+    const body = (await refreshed.json()) as { token: string };
+    assert.equal(verifyToken(body.token)?.tenant_id, 'tenant-a');
   });
 
   test('rotates jti and rejects reuse', async () => {

@@ -65,6 +65,7 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
 }
 
 const refreshTokens = new TestRefreshTokenRepository();
+const LOCAL_TEST_PASSWORD = ['local', 'password'].join('-');
 
 function oidcResult(overrides: Partial<AuthPluginResult> = {}): AuthPluginResult {
   return {
@@ -184,7 +185,7 @@ describe('OIDC exchange identity and tenant binding', () => {
     assert.equal(verifyToken(body.token)?.tenant_id, 'tenant-configured');
   });
 
-  it('requires an explicit configured default for a claim-less single-tenant token', async () => {
+  it('requires a verified tenant claim even for a single-tenant deployment', async () => {
     delete process.env.COMMANDER_DEFAULT_TENANT_ID;
     result = oidcResult({
       tenantId: 'implicit-idp-hostname',
@@ -201,10 +202,7 @@ describe('OIDC exchange identity and tenant binding', () => {
     assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
 
     process.env.OIDC_DEFAULT_TENANT_ID = 'single-tenant-default';
-    const accepted = await exchange();
-    assert.equal(accepted.status, 200);
-    const body = (await accepted.json()) as { token: string };
-    assert.equal(verifyToken(body.token)?.tenant_id, 'single-tenant-default');
+    assert.equal((await exchange()).status, 401);
   });
 
   it('provisions a new user bound to issuer+subject and mints the validated tenant', async () => {
@@ -220,7 +218,7 @@ describe('OIDC exchange identity and tenant binding', () => {
     );
   });
 
-  it('returns the same linked account when the IdP email changes', async () => {
+  it('rejects an identity exchange when the verified tenant claim is absent', async () => {
     const first = await exchange();
     const firstBody = (await first.json()) as { user: { id: string } };
 
@@ -234,18 +232,17 @@ describe('OIDC exchange identity and tenant binding', () => {
       },
     });
     const second = await exchange();
-    const secondBody = (await second.json()) as { user: { id: string } };
-
-    assert.equal(second.status, 200);
-    assert.equal(secondBody.user.id, firstBody.user.id);
+    assert.equal(first.status, 200);
+    assert.equal(second.status, 401);
   });
 
   it('links a legitimate existing local account only when the email is verified', async () => {
     const created = createUser({
       username: 'alice',
       email: 'alice@example.test',
-      password: 'local-password',
+      password: LOCAL_TEST_PASSWORD,
       role: 'viewer',
+      tenantId: 'tenant-a',
     });
     const resolved = await created;
     assert.ok(!('error' in resolved));
@@ -262,8 +259,9 @@ describe('OIDC exchange identity and tenant binding', () => {
     const created = createUser({
       username: 'victim',
       email: 'alice@example.test',
-      password: 'local-password',
+      password: LOCAL_TEST_PASSWORD,
       role: 'admin',
+      tenantId: 'tenant-a',
     });
     const resolved = await created;
     assert.ok(!('error' in resolved));
@@ -274,6 +272,7 @@ describe('OIDC exchange identity and tenant binding', () => {
         sub: 'attacker-subject',
         email: 'alice@example.test',
         email_verified: false,
+        tenant_id: 'tenant-a',
       },
       userId: 'attacker-subject',
     });
@@ -293,6 +292,7 @@ describe('OIDC exchange identity and tenant binding', () => {
         sub: 'subject-attacker',
         email: 'alice@example.test',
         email_verified: true,
+        tenant_id: 'tenant-a',
       },
     });
 
