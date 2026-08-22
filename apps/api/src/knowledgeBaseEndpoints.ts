@@ -125,9 +125,17 @@ function requestKnowledgeStore(req: Request): KnowledgeStore {
   return getKnowledgeStore(requestTenantId(req));
 }
 
-/** Preserve JWT behavior while enforcing explicit write authority for API-key mutations. */
+/**
+ * AUDIT-API4: JWT writers need a role floor — previously ANY JWT role
+ * (including viewer) could upload and delete tenant knowledge documents.
+ * developer+ may write; admins and above always pass.
+ */
 function requireKnowledgeWriter(req: Request, res: Response, next: NextFunction): void {
   if (req.user) {
+    if (!hasRole(req.user.role, 'developer')) {
+      res.status(403).json({ error: 'Knowledge-base write authority is required' });
+      return;
+    }
     next();
     return;
   }

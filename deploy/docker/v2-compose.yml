@@ -23,7 +23,10 @@ services:
       POSTGRES_PASSWORD: commander
       POSTGRES_DB: commander
     ports:
-      - "5432:5432"
+      # Audit: bind to loopback only — this harness ships well-known
+      # credentials; publishing 5432 on all interfaces exposes a
+      # commander/commander superuser to the host network.
+      - "127.0.0.1:5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
       - ./postgres-init.bench.sql:/docker-entrypoint-initdb.d/01-commander-roles.sql:ro
@@ -56,7 +59,8 @@ services:
   nginx:
     image: nginx:alpine
     ports:
-      - "8080:8080"
+      # Bench entry point; documented usage is http://127.0.0.1:8080.
+      - "127.0.0.1:8080:8080"
     volumes:
       - ./nginx-v2.conf:/etc/nginx/nginx.conf:ro
     depends_on:

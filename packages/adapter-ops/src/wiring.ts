@@ -283,10 +283,15 @@ async function persistClaimSecret(
 }
 
 function isProductionOrEnterprise(): boolean {
+  // AUDIT-F3: COMMANDER_ENV joins the signal set (kernel treats it as
+  // authoritative); REQUIRE_WORKLOAD_BINDING=1 is also honored so the
+  // hollow-PEP gate cannot be skipped by signal fragmentation.
   return (
     process.env.NODE_ENV === 'production' ||
+    process.env.COMMANDER_ENV === 'production' ||
     process.env.COMMANDER_PROFILE === 'enterprise' ||
-    process.env.COMMANDER_CELL_TIER === 'enterprise'
+    process.env.COMMANDER_CELL_TIER === 'enterprise' ||
+    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
   );
 }
 

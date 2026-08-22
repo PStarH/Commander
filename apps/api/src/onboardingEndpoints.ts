@@ -619,6 +619,9 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   // ── POST /api/onboarding/run-first-task ─────────────────────────────────
   router.post(
     '/api/onboarding/run-first-task',
+    // AUDIT-API1: this endpoint spends the operator's stored provider key on
+    // a real LLM call — it needs the same admin guard as save-config.
+    requireOnboardingConfigAdmin,
     validateBody(runFirstTaskBody),
     async (req: Request, res: Response) => {
       try {

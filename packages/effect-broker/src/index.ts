@@ -645,6 +645,13 @@ export class CapabilityTokenVerifier {
       throw new Error('Expired or not-yet-valid capability grant');
     if (await this.options.revocations?.isRevoked(grant.jti, grant.tenantId))
       throw new Error('Capability grant revoked');
+    // AUDIT-F2: replay protection must not silently skip grants without a
+    // nonce — a correctly-signed nonce-less grant could be replayed until
+    // expiry with no marker ever consumed. Fail closed in production/enterprise
+    // profiles; non-production keeps permissive behaviour for legacy fixtures.
+    if (isProductionProfile() && !grant.nonce) {
+      throw new Error('Capability grant rejected: replay nonce required in production profile');
+    }
     if (
       grant.nonce &&
       (await this.options.replay?.consume(`${grant.jti}:${grant.nonce}`, grant.expiresAt))
@@ -819,9 +826,14 @@ class InMemoryAdmissionStore implements AdmissionStore {
 export const PERMIT_DEFAULT_DECISION_ID = 'permit' + '-default';
 
 function isProductionProfile(): boolean {
+  // AUDIT-F3: align with the kernel's production signal set — COMMANDER_ENV
+  // and CELL_TIER must not be silently ignored here (admit() would skip the
+  // workload/request-binding requirements the kernel considers mandatory).
   return (
     process.env.NODE_ENV === 'production' ||
+    process.env.COMMANDER_ENV === 'production' ||
     process.env.COMMANDER_PROFILE === 'enterprise' ||
+    process.env.COMMANDER_CELL_TIER === 'enterprise' ||
     process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
   );
 }
