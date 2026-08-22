@@ -1344,7 +1344,10 @@ export function apiPodStartupFailureDiagnostic(
     ';producer=api_entrypoint;transport=' +
     transport +
     (termination
-      ? ';termination_reason=' + termination.terminationReason + ';exit_code=' + termination.exitCode
+      ? ';termination_reason=' +
+        termination.terminationReason +
+        ';exit_code=' +
+        termination.exitCode
       : '') +
     ';log_sha256=' +
     createHash('sha256').update(tail).digest('hex')
@@ -1369,12 +1372,23 @@ function parseApiPodStartupFailureEvidence(
   if (!match) return undefined;
   const [, code, transport, terminationReason, exitCode, logSha256] = match;
   if (!hasExactValue(code, API_POD_STARTUP_CODES)) return undefined;
+  const parsedExitCode = exitCode === undefined ? undefined : Number(exitCode);
+  if (
+    (terminationReason === undefined) !== (parsedExitCode === undefined) ||
+    (terminationReason !== undefined &&
+      (!hasExactValue(terminationReason, API_POD_TERMINATION_REASONS) ||
+        !Number.isInteger(parsedExitCode) ||
+        parsedExitCode < 0 ||
+        parsedExitCode > 255))
+  ) {
+    return undefined;
+  }
   return {
     code,
     producer: 'api_entrypoint',
     transport: transport as ApiPodStartupFailureEvidence['transport'],
     ...(terminationReason !== undefined && exitCode !== undefined
-      ? { terminationReason: terminationReason as ApiPodTerminationReason, exitCode: Number(exitCode) }
+      ? { terminationReason, exitCode: parsedExitCode! }
       : {}),
     logSha256,
   };

@@ -159,6 +159,18 @@ describe('helm-lifecycle-kind helpers', () => {
             'a'.repeat(64) +
             ';message=postgres://api:secret@database/commander',
         },
+        {
+          name: 'fresh-external',
+          passed: false,
+          durationMs: 1,
+          events: [],
+          assertions: [],
+          error:
+            'TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;' +
+            'producer=api_entrypoint;transport=kubectl_logs;termination_reason=Error;exit_code=999;' +
+            'log_sha256=' +
+            'b'.repeat(64),
+        },
       ],
       passed: false,
       sanitized: false,
@@ -173,6 +185,7 @@ describe('helm-lifecycle-kind helpers', () => {
       logSha256: 'a'.repeat(64),
     });
     assert.equal(JSON.stringify(sanitized).includes('postgres://'), false);
+    assert.equal(sanitized.scenarios[1]?.apiStartupFailure, undefined);
   });
 
   it('extracts only an allowlisted terminated API container state', () => {
