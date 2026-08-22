@@ -218,6 +218,16 @@ describe('OIDC exchange identity and tenant binding', () => {
     );
   });
 
+  it('synchronizes a verified OIDC role into the tenant membership', async () => {
+    assert.equal((await exchange()).status, 200);
+    result = oidcResult({ role: 'admin' });
+
+    const response = await exchange();
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { token: string };
+    assert.equal(verifyToken(body.token)?.role, 'admin');
+  });
+
   it('rejects an identity exchange when the verified tenant claim is absent', async () => {
     const first = await exchange();
     const firstBody = (await first.json()) as { user: { id: string } };

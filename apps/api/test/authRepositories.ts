@@ -94,18 +94,26 @@ export class TestUserRepository implements UserRepository {
     if (user) user.lastLoginAt = new Date().toISOString();
   }
 
-  async updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null> {
+  async updateUserRole(userId: string, tenantId: string, role: UserRole): Promise<SafeUser | null> {
     const user = this.users.get(userId);
     if (!user) return null;
-    user.role = role;
-    return safeUser(user);
+    const membership = await this.findUserTenantMembership(userId, tenantId);
+    if (!membership) return null;
+    membership.role = role;
+    return { ...safeUser(user), role: membership.role };
   }
 
-  async updateUser(userId: string, updates: Partial<Pick<User, 'email' | 'role' | 'username'>>): Promise<SafeUser | { error: string }> {
+  async updateUser(userId: string, tenantId: string, updates: Partial<Pick<User, 'email' | 'role' | 'username'>>): Promise<SafeUser | { error: string }> {
     const user = this.users.get(userId);
     if (!user) return { error: 'User not found' };
-    Object.assign(user, updates);
-    return safeUser(user);
+    const membership = await this.findUserTenantMembership(userId, tenantId);
+    if (!membership) return { error: 'User not found' };
+    const { role, ...identityUpdates } = updates;
+    if (role !== undefined) {
+      membership.role = role;
+    }
+    Object.assign(user, identityUpdates);
+    return { ...safeUser(user), role: membership.role };
   }
 
   async resetUserPassword(userId: string, password: string): Promise<SafeUser | null> {

@@ -134,9 +134,10 @@ export interface UserRepository {
     subject: string,
   ): Promise<SafeUser | { error: string }>;
   updateLastLogin(userId: string): Promise<void>;
-  updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null>;
+  updateUserRole(userId: string, tenantId: string, role: UserRole): Promise<SafeUser | null>;
   updateUser(
     userId: string,
+    tenantId: string,
     updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
   ): Promise<SafeUser | { error: string }>;
   resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null>;
@@ -316,29 +317,35 @@ export class PostgresUserRepository implements UserRepository {
     });
   }
 
-  async updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null> {
+  async updateUserRole(userId: string, tenantId: string, role: UserRole): Promise<SafeUser | null> {
     return this.withAdminInvariant(async (client) => {
-      const current = await client.query<Pick<UserRow, 'role'>>(
-        'SELECT role FROM commander_auth_users WHERE id = $1 FOR UPDATE',
-        [userId],
+      const current = await client.query<Pick<UserTenantMembership, 'role'>>(
+        'SELECT role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE',
+        [userId, tenantId],
       );
       if (!current.rows[0]) return null;
       if (current.rows[0].role === 'admin' && !hasRole(role, 'admin')) {
         const admins = await client.query<{ count: string }>(
-          "SELECT count(*)::text AS count FROM commander_auth_users WHERE role = 'admin'",
+          "SELECT count(*)::text AS count FROM commander_auth_user_tenants WHERE tenant_id = $1 AND role = 'admin'",
+          [tenantId],
         );
         if (Number(admins.rows[0]?.count ?? 0) <= 1) return null;
       }
-      const updated = await client.query<UserRow>(
-        'UPDATE commander_auth_users SET role = $2 WHERE id = $1 RETURNING ' + USER_COLUMNS,
-        [userId, role],
+      await client.query(
+        'UPDATE commander_auth_user_tenants SET role = $3 WHERE user_id = $1 AND tenant_id = $2',
+        [userId, tenantId, role],
       );
-      return toSafeUser(fromRow(updated.rows[0]!));
+      const user = await client.query<UserRow>(
+        'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE id = $1',
+        [userId],
+      );
+      return user.rows[0] ? toSafeUser({ ...fromRow(user.rows[0]), role }) : null;
     });
   }
 
   async updateUser(
     userId: string,
+    tenantId: string,
     updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
   ): Promise<SafeUser | { error: string }> {
     const fields: Array<{ column: 'username' | 'email'; value: string }> = [];
@@ -347,18 +354,19 @@ export class PostgresUserRepository implements UserRepository {
     if (updates.email !== undefined) fields.push({ column: 'email', value: updates.email });
     try {
       return await this.withAdminInvariant(async (client) => {
-        const current = await client.query<Pick<UserRow, 'role'>>(
-          'SELECT role FROM commander_auth_users WHERE id = $1 FOR UPDATE',
-          [userId],
+        const membership = await client.query<Pick<UserTenantMembership, 'role'>>(
+          'SELECT role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE',
+          [userId, tenantId],
         );
-        if (!current.rows[0]) return { error: 'User not found' };
+        if (!membership.rows[0]) return { error: 'User not found' };
         if (
           updates.role !== undefined &&
-          current.rows[0].role === 'admin' &&
+          membership.rows[0].role === 'admin' &&
           !hasRole(updates.role, 'admin')
         ) {
           const admins = await client.query<{ count: string }>(
-            "SELECT count(*)::text AS count FROM commander_auth_users WHERE role = 'admin'",
+            "SELECT count(*)::text AS count FROM commander_auth_user_tenants WHERE tenant_id = $1 AND role = 'admin'",
+            [tenantId],
           );
           if (Number(admins.rows[0]?.count ?? 0) <= 1) {
             return { error: 'Cannot demote the last admin account' };
@@ -367,8 +375,10 @@ export class PostgresUserRepository implements UserRepository {
         const values: unknown[] = [userId];
         const setters: string[] = [];
         if (updates.role !== undefined) {
-          values.push(updates.role);
-          setters.push('role = $' + values.length);
+          await client.query(
+            'UPDATE commander_auth_user_tenants SET role = $3 WHERE user_id = $1 AND tenant_id = $2',
+            [userId, tenantId, updates.role],
+          );
         }
         for (const field of fields) {
           values.push(field.value);
@@ -379,7 +389,11 @@ export class PostgresUserRepository implements UserRepository {
             'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE id = $1',
             [userId],
           );
-          return toSafeUser(fromRow(existing.rows[0]!));
+          if (!existing.rows[0]) return { error: 'User not found' };
+          return toSafeUser({
+            ...fromRow(existing.rows[0]),
+            role: updates.role ?? membership.rows[0].role,
+          });
         }
         const updated = await client.query<UserRow>(
           'UPDATE commander_auth_users SET ' +
@@ -388,7 +402,11 @@ export class PostgresUserRepository implements UserRepository {
             USER_COLUMNS,
           values,
         );
-        return toSafeUser(fromRow(updated.rows[0]!));
+        if (!updated.rows[0]) return { error: 'User not found' };
+        return toSafeUser({
+          ...fromRow(updated.rows[0]),
+          role: updates.role ?? membership.rows[0].role,
+        });
       });
     } catch (error) {
       const message = uniqueViolation(error);
@@ -550,15 +568,16 @@ export async function updateLastLogin(userId: string): Promise<void> {
   await getUserRepository().updateLastLogin(userId);
 }
 
-export async function updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null> {
-  return getUserRepository().updateUserRole(userId, role);
+export async function updateUserRole(userId: string, tenantId: string, role: UserRole): Promise<SafeUser | null> {
+  return getUserRepository().updateUserRole(userId, tenantId, role);
 }
 
 export async function updateUser(
   userId: string,
+  tenantId: string,
   updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
 ): Promise<SafeUser | { error: string }> {
-  return getUserRepository().updateUser(userId, updates);
+  return getUserRepository().updateUser(userId, tenantId, updates);
 }
 
 export async function resetUserPassword(

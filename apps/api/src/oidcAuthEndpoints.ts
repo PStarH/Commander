@@ -391,21 +391,6 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       }
     }
 
-    // If the OIDC provider changed the linked user's role, keep it in sync.
-    if (localUser && localUser.role !== result.role) {
-      try {
-        const updated = await updateUser(localUser.id, { role: result.role as UserRole });
-        if ('error' in updated) {
-          authorityUnavailable(res);
-          return;
-        }
-        localUser = await findUserByOidcIdentity(issuer, subject);
-      } catch {
-        authorityUnavailable(res);
-        return;
-      }
-    }
-
     if (!localUser) {
       res.status(500).json({ error: 'Failed to resolve local user' });
       return;
@@ -421,6 +406,21 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
     if (!membership) {
       res.status(403).json({ error: 'OIDC identity is not authorized for this tenant' });
       return;
+    }
+
+    // The verified OIDC role is effective only in this tenant membership.
+    if (membership.role !== result.role) {
+      try {
+        const updated = await updateUser(localUser.id, tenantId, { role: result.role as UserRole });
+        if ('error' in updated) {
+          authorityUnavailable(res);
+          return;
+        }
+        membership = { ...membership, role: result.role as UserRole };
+      } catch {
+        authorityUnavailable(res);
+        return;
+      }
     }
 
     try {
