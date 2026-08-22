@@ -1293,6 +1293,17 @@ export function apiPodStartupFailureDiagnostic(
   );
 }
 
+function apiPodLogsAreUnclassified(logs: string): boolean {
+  return apiPodStartupFailureDiagnostic(logs).startsWith(
+    'code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;',
+  );
+}
+
+/** Prefers the current container output only when the terminated container has no safe startup code. */
+export function selectApiPodStartupLogs(previousLogs: string, currentLogs: string): string {
+  return apiPodLogsAreUnclassified(previousLogs) ? currentLogs : previousLogs;
+}
+
 function parseApiPodStartupFailureEvidence(
   error: string,
 ): ApiPodStartupFailureEvidence | undefined {
@@ -2216,10 +2227,22 @@ async function captureApiPodStartupFailure(
     .filter((name): name is string => typeof name === 'string' && name.length > 0)
     .sort()[0];
   if (!podName) return undefined;
-  const logs = await kubectl(
+  let logs = await kubectl(
     ['logs', podName, '-c', 'api', '--previous', '-n', NAMESPACE, '--tail=80'],
     { maxBuffer: 16 * 1024 },
   );
+  if (logs.exitCode !== 0 || apiPodLogsAreUnclassified(logs.stdout)) {
+    const currentLogs = await kubectl(
+      ['logs', podName, '-c', 'api', '-n', NAMESPACE, '--tail=80'],
+      { maxBuffer: 16 * 1024 },
+    );
+    if (currentLogs.exitCode === 0) {
+      logs = {
+        ...currentLogs,
+        stdout: selectApiPodStartupLogs(logs.exitCode === 0 ? logs.stdout : '', currentLogs.stdout),
+      };
+    }
+  }
   const transport: ApiPodStartupFailureEvidence['transport'] =
     logs.exitCode === 0 ? 'kubectl_logs' : 'kubectl_logs_unavailable';
   const diagnostic = apiPodStartupFailureDiagnostic(
