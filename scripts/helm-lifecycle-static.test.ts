@@ -122,6 +122,7 @@ describe('Helm lifecycle static contract', () => {
         api,
         /- name: API_RATE_LIMIT_DB_PATH\n\s+value: \/tmp\/commander-api\/rate-limit.sqlite/,
       );
+      assert.match(api, /- name: COMMANDER_TRACE_DIR\n\s+value: \/tmp\/commander-api\/traces/);
       assert.match(api, /- name: tmp\n\s+mountPath: \/tmp/);
       assert.match(
         api,
