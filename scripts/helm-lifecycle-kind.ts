@@ -620,11 +620,25 @@ const API_POD_STARTUP_CODES = [
 ] as const;
 
 type ApiPodStartupCode = (typeof API_POD_STARTUP_CODES)[number];
+const API_POD_TERMINATION_REASONS = [
+  'ContainerCannotRun',
+  'Error',
+  'OOMKilled',
+  'StartError',
+] as const;
+type ApiPodTerminationReason = (typeof API_POD_TERMINATION_REASONS)[number];
+
+interface ApiPodTerminationFacts {
+  terminationReason: ApiPodTerminationReason;
+  exitCode: number;
+}
 
 export interface ApiPodStartupFailureEvidence {
   code: ApiPodStartupCode;
   producer: 'api_entrypoint';
   transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
+  terminationReason?: ApiPodTerminationReason;
+  exitCode?: number;
   logSha256: string;
 }
 
@@ -819,7 +833,9 @@ const GENERIC_OWNER_FAILURE_RECORD = new RegExp(
 const API_POD_STARTUP_FAILURE_RECORD = new RegExp(
   '(?:^|:)TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=(' +
     API_POD_STARTUP_CODES.join('|') +
-    ');producer=api_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
+    ');producer=api_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)(?:;termination_reason=(' +
+    API_POD_TERMINATION_REASONS.join('|') +
+    ');exit_code=([0-9]{1,3}))?;log_sha256=([a-f0-9]{64})(?=;|\\n|$)',
 );
 const SCENARIO_FAILURE_CODE = /\b(?:COMMANDER|TASK1|TENANT_CUTOVER|HELM)_[A-Z0-9_]{1,80}\b/g;
 
@@ -920,6 +936,29 @@ function podLastTerminationReason(status: Record<string, unknown> | undefined): 
     }
   }
   return undefined;
+}
+
+/** Extracts the fixed, non-sensitive termination facts for the API container only. */
+export function apiPodTerminationFacts(status: unknown): ApiPodTerminationFacts | undefined {
+  const containerStatuses = jsonArray(jsonRecord(status)?.containerStatuses);
+  const apiContainer = containerStatuses
+    ?.map((candidate) => jsonRecord(candidate))
+    .find((candidate) => candidate?.name === 'api');
+  const lastState = jsonRecord(apiContainer?.lastState);
+  const currentState = jsonRecord(apiContainer?.state);
+  const terminated = jsonRecord(lastState?.terminated) ?? jsonRecord(currentState?.terminated);
+  const reason = terminated?.reason;
+  const exitCode = terminated?.exitCode;
+  if (
+    !hasExactValue(reason, API_POD_TERMINATION_REASONS) ||
+    typeof exitCode !== 'number' ||
+    !Number.isInteger(exitCode) ||
+    exitCode < 0 ||
+    exitCode > 255
+  ) {
+    return undefined;
+  }
+  return { terminationReason: reason, exitCode };
 }
 
 function rolloutReasonForItem(
@@ -1286,6 +1325,7 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
 export function apiPodStartupFailureDiagnostic(
   logs: string,
   transport: ApiPodStartupFailureEvidence['transport'] = 'kubectl_logs',
+  termination?: ApiPodTerminationFacts,
 ): string {
   const tail = logs.slice(-4_096);
   const startupCode = [
@@ -1303,6 +1343,9 @@ export function apiPodStartupFailureDiagnostic(
     (code ?? 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED') +
     ';producer=api_entrypoint;transport=' +
     transport +
+    (termination
+      ? ';termination_reason=' + termination.terminationReason + ';exit_code=' + termination.exitCode
+      : '') +
     ';log_sha256=' +
     createHash('sha256').update(tail).digest('hex')
   );
@@ -1324,12 +1367,15 @@ function parseApiPodStartupFailureEvidence(
 ): ApiPodStartupFailureEvidence | undefined {
   const match = error.match(API_POD_STARTUP_FAILURE_RECORD);
   if (!match) return undefined;
-  const [, code, transport, logSha256] = match;
+  const [, code, transport, terminationReason, exitCode, logSha256] = match;
   if (!hasExactValue(code, API_POD_STARTUP_CODES)) return undefined;
   return {
     code,
     producer: 'api_entrypoint',
     transport: transport as ApiPodStartupFailureEvidence['transport'],
+    ...(terminationReason !== undefined && exitCode !== undefined
+      ? { terminationReason: terminationReason as ApiPodTerminationReason, exitCode: Number(exitCode) }
+      : {}),
     logSha256,
   };
 }
@@ -1342,6 +1388,9 @@ function apiPodStartupFailureRecord(value: ApiPodStartupFailureEvidence): string
     value.producer +
     ';transport=' +
     value.transport +
+    (value.terminationReason !== undefined && value.exitCode !== undefined
+      ? ';termination_reason=' + value.terminationReason + ';exit_code=' + value.exitCode
+      : '') +
     ';log_sha256=' +
     value.logSha256
   );
@@ -2236,8 +2285,13 @@ async function captureApiPodStartupFailure(
   } catch {
     return undefined;
   }
-  const podName = selectFailingApiPodName(jsonArray(parsed?.items) ?? []);
+  const podItems = jsonArray(parsed?.items) ?? [];
+  const podName = selectFailingApiPodName(podItems);
   if (!podName) return undefined;
+  const pod = podItems
+    .map((item) => jsonRecord(item))
+    .find((item) => jsonRecord(item?.metadata)?.name === podName);
+  const termination = apiPodTerminationFacts(pod?.status);
   let logs = await kubectl(
     ['logs', podName, '-c', 'api', '--previous', '-n', NAMESPACE, '--tail=80'],
     { maxBuffer: 16 * 1024 },
@@ -2259,6 +2313,7 @@ async function captureApiPodStartupFailure(
   const diagnostic = apiPodStartupFailureDiagnostic(
     logs.exitCode === 0 ? logs.stdout : '',
     transport,
+    termination,
   );
   return parseApiPodStartupFailureEvidence('TENANT_CUTOVER_API_POD_STARTUP_FAILED:' + diagnostic);
 }

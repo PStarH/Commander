@@ -138,6 +138,78 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(JSON.stringify(sanitized).includes('opaque-api-startup-marker-3281'), false);
   });
 
+  it('retains only allowlisted API container termination facts', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 1,
+          events: [],
+          assertions: [],
+          error:
+            'TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;' +
+            'producer=api_entrypoint;transport=kubectl_logs;termination_reason=Error;exit_code=1;' +
+            'log_sha256=' +
+            'a'.repeat(64) +
+            ';message=postgres://api:secret@database/commander',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.apiStartupFailure, {
+      code: 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED',
+      producer: 'api_entrypoint',
+      transport: 'kubectl_logs',
+      terminationReason: 'Error',
+      exitCode: 1,
+      logSha256: 'a'.repeat(64),
+    });
+    assert.equal(JSON.stringify(sanitized).includes('postgres://'), false);
+  });
+
+  it('extracts only an allowlisted terminated API container state', () => {
+    const facts = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        apiPodTerminationFacts?: (status: unknown) => unknown;
+      }
+    ).apiPodTerminationFacts;
+    assert.equal(typeof facts, 'function');
+
+    assert.deepEqual(
+      facts!({
+        containerStatuses: [
+          {
+            name: 'api',
+            lastState: {
+              terminated: {
+                reason: 'Error',
+                exitCode: 1,
+                message: 'postgres://api:secret@database/commander',
+              },
+            },
+          },
+        ],
+      }),
+      { terminationReason: 'Error', exitCode: 1 },
+    );
+    assert.equal(
+      facts!({
+        containerStatuses: [
+          { name: 'api', lastState: { terminated: { reason: 'SecretValue', exitCode: 1 } } },
+        ],
+      }),
+      undefined,
+    );
+  });
+
   it('uses current API logs when the previous container has no classified startup failure', () => {
     const selectLogs = (
       lifecycleHarness as typeof lifecycleHarness & {
