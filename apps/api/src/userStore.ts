@@ -125,7 +125,10 @@ export interface UserRepository {
   findUserByUsername(username: string): Promise<User | undefined>;
   findUserByEmail(email: string): Promise<User | undefined>;
   findUserByOidcIdentity(issuer: string, subject: string): Promise<User | undefined>;
-  findUserTenantMembership(userId: string, tenantId: string): Promise<UserTenantMembership | undefined>;
+  findUserTenantMembership(
+    userId: string,
+    tenantId: string,
+  ): Promise<UserTenantMembership | undefined>;
   listUsers(tenantId: string): Promise<SafeUser[]>;
   createUser(args: CreateUserArgs): Promise<{ user: SafeUser } | { error: string }>;
   bindUserToOidcIdentity(
@@ -141,7 +144,7 @@ export interface UserRepository {
     updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
   ): Promise<SafeUser | { error: string }>;
   resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null>;
-  deleteUser(userId: string): Promise<{ success: boolean; error?: string }>;
+  deleteUser(userId: string, tenantId: string): Promise<{ success: boolean; error?: string }>;
   countAdmins(): Promise<number>;
   bootstrapDefaultAdmin(password: string, tenantId: string): Promise<void>;
 }
@@ -248,26 +251,26 @@ export class PostgresUserRepository implements UserRepository {
       return await this.withClient(async (client) => {
         await client.query('BEGIN');
         try {
-        const result = await client.query<UserRow>(
-          'INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at) VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp(), NULL) RETURNING ' +
-            USER_COLUMNS,
-          [
-            randomUUID(),
-            args.username,
-            args.email,
-            hashSync(args.password, 10),
-            args.role ?? 'viewer',
-            args.oidcIssuer ?? null,
-            args.oidcSubject ?? null,
-          ],
-        );
-        const user = fromRow(result.rows[0]!);
-        await client.query(
-          'INSERT INTO commander_auth_user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)',
-          [user.id, args.tenantId, args.role ?? 'viewer'],
-        );
-        await client.query('COMMIT');
-        return { user: toSafeUser(user) };
+          const result = await client.query<UserRow>(
+            'INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at) VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp(), NULL) RETURNING ' +
+              USER_COLUMNS,
+            [
+              randomUUID(),
+              args.username,
+              args.email,
+              hashSync(args.password, 10),
+              args.role ?? 'viewer',
+              args.oidcIssuer ?? null,
+              args.oidcSubject ?? null,
+            ],
+          );
+          const user = fromRow(result.rows[0]!);
+          await client.query(
+            'INSERT INTO commander_auth_user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)',
+            [user.id, args.tenantId, args.role ?? 'viewer'],
+          );
+          await client.query('COMMIT');
+          return { user: toSafeUser(user) };
         } catch (error) {
           await client.query('ROLLBACK').catch(() => undefined);
           throw error;
@@ -429,22 +432,36 @@ export class PostgresUserRepository implements UserRepository {
     });
   }
 
-  async deleteUser(userId: string): Promise<{ success: boolean; error?: string }> {
+  async deleteUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ success: boolean; error?: string }> {
     return this.withAdminInvariant(async (client) => {
-      const current = await client.query<Pick<UserRow, 'role'>>(
-        'SELECT role FROM commander_auth_users WHERE id = $1 FOR UPDATE',
-        [userId],
+      const membership = await client.query<Pick<UserTenantMembership, 'role'>>(
+        'SELECT role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE',
+        [userId, tenantId],
       );
-      if (!current.rows[0]) return { success: false, error: 'User not found' };
-      if (current.rows[0].role === 'admin') {
+      if (!membership.rows[0]) return { success: false, error: 'User not found' };
+      if (membership.rows[0].role === 'admin') {
         const admins = await client.query<{ count: string }>(
-          "SELECT count(*)::text AS count FROM commander_auth_users WHERE role = 'admin'",
+          "SELECT count(*)::text AS count FROM commander_auth_user_tenants WHERE tenant_id = $1 AND role = 'admin'",
+          [tenantId],
         );
         if (Number(admins.rows[0]?.count ?? 0) <= 1) {
           return { success: false, error: 'Cannot delete the last admin account' };
         }
       }
-      await client.query('DELETE FROM commander_auth_users WHERE id = $1', [userId]);
+      await client.query(
+        'DELETE FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2',
+        [userId, tenantId],
+      );
+      const remaining = await client.query<{ exists: boolean }>(
+        'SELECT EXISTS (SELECT 1 FROM commander_auth_user_tenants WHERE user_id = $1) AS exists',
+        [userId],
+      );
+      if (!remaining.rows[0]?.exists) {
+        await client.query('DELETE FROM commander_auth_users WHERE id = $1', [userId]);
+      }
       return { success: true };
     });
   }
@@ -571,7 +588,11 @@ export async function updateLastLogin(userId: string): Promise<void> {
   await getUserRepository().updateLastLogin(userId);
 }
 
-export async function updateUserRole(userId: string, tenantId: string, role: UserRole): Promise<SafeUser | null> {
+export async function updateUserRole(
+  userId: string,
+  tenantId: string,
+  role: UserRole,
+): Promise<SafeUser | null> {
   return getUserRepository().updateUserRole(userId, tenantId, role);
 }
 
@@ -590,8 +611,11 @@ export async function resetUserPassword(
   return getUserRepository().resetUserPassword(userId, newPassword);
 }
 
-export async function deleteUser(userId: string): Promise<{ success: boolean; error?: string }> {
-  return getUserRepository().deleteUser(userId);
+export async function deleteUser(
+  userId: string,
+  tenantId: string,
+): Promise<{ success: boolean; error?: string }> {
+  return getUserRepository().deleteUser(userId, tenantId);
 }
 
 export async function countAdmins(): Promise<number> {
