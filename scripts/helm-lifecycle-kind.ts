@@ -970,6 +970,17 @@ function rolloutNonterminalReasonForItem(
   return hasCondition(status, 'Ready', 'False') ? 'POD_NOT_READY' : undefined;
 }
 
+/** Selects a failed API pod deterministically so diagnostics never use a healthy replica. */
+export function selectFailingApiPodName(items: readonly unknown[]): string | undefined {
+  return items
+    .map((item) => jsonRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== undefined)
+    .filter((item) => rolloutReasonForItem('Pod', jsonRecord(item.status)) !== undefined)
+    .map((item) => jsonRecord(item.metadata)?.name)
+    .filter((name): name is string => typeof name === 'string' && name.length > 0)
+    .sort()[0];
+}
+
 function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | undefined {
   const item = jsonRecord(value);
   if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
@@ -2221,11 +2232,7 @@ async function captureApiPodStartupFailure(
   } catch {
     return undefined;
   }
-  const podName = (jsonArray(parsed?.items) ?? [])
-    .map((item) => jsonRecord(item))
-    .map((item) => jsonRecord(item?.metadata)?.name)
-    .filter((name): name is string => typeof name === 'string' && name.length > 0)
-    .sort()[0];
+  const podName = selectFailingApiPodName(jsonArray(parsed?.items) ?? []);
   if (!podName) return undefined;
   let logs = await kubectl(
     ['logs', podName, '-c', 'api', '--previous', '-n', NAMESPACE, '--tail=80'],
