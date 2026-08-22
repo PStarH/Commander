@@ -115,6 +115,23 @@ export function isMultiTenantEnabled(): boolean {
 }
 
 /**
+ * AUDIT-CORE3: tenant bucket for store persistence with fail-closed
+ * semantics. Unlike requireCurrentTenantId (which throws whenever no context
+ * is active), this preserves the implicit `__default__` bucket in single-tenant
+ * mode — multi-tenant mode must never silently share it.
+ */
+export function tenantBucketOrThrow(): string {
+  const current = getCurrentTenantId();
+  if (current) return current;
+  if (isMultiTenantEnabled()) {
+    throw new TenantIsolationError(
+      'Tenant context required in multi-tenant mode; refusing the shared default bucket',
+    );
+  }
+  return '__default__';
+}
+
+/**
  * Validate a tenant identifier. Throws TenantIsolationError if invalid.
  */
 export function validateTenantId(tenantId: string): void {
