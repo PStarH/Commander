@@ -125,6 +125,10 @@ describe('Helm lifecycle static contract', () => {
       assert.match(api, /- name: tmp\n\s+mountPath: \/tmp/);
       assert.match(
         api,
+        /- name: api-runtime-state\n\s+image:.*\n\s+imagePullPolicy:.*\n\s+command: \["node", "-e"\][\s\S]*\/tmp\/commander-api[\s\S]*runAsUser: 0[\s\S]*- name: tmp\n\s+mountPath: \/tmp/,
+      );
+      assert.match(
+        api,
         /startupProbe:[\s\S]*path: \/health[\s\S]*port: http[\s\S]*failureThreshold: 30[\s\S]*periodSeconds: 2/,
       );
     }

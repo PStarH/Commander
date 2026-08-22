@@ -46,8 +46,31 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if include "commander.postgresBackend" . }}
       initContainers:
+        - name: api-runtime-state
+          image: {{ include "commander.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "-e"]
+          args:
+            - |
+              const fs = require('node:fs');
+              const directory = '/tmp/commander-api';
+              fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+              fs.chownSync(directory, {{ .Values.podSecurityContext.runAsUser }}, {{ .Values.podSecurityContext.runAsGroup }});
+              fs.chmodSync(directory, 0o700);
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      {{- if include "commander.postgresBackend" . }}
         - name: api-proof-tls-materialize
           image: {{ include "commander.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
