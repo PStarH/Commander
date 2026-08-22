@@ -395,15 +395,9 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
     '/api/auth/users',
     requireAuth,
     requireRole(),
-    async (_req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       try {
-        const users = await listUsers();
-        const tenantId = _req.user!.tenantId!;
-        const visible = [];
-        for (const user of users) {
-          if (await findUserTenantMembership(user.id, tenantId)) visible.push(user);
-        }
-        res.json({ users: visible });
+        res.json({ users: await listUsers(req.user!.tenantId!) });
       } catch {
         authorityUnavailable(res);
       }

@@ -39,8 +39,14 @@ export class TestUserRepository implements UserRepository {
     return this.memberships.get(userId + ':' + tenantId);
   }
 
-  async listUsers(): Promise<SafeUser[]> {
-    return [...this.users.values()].map(safeUser);
+  async listUsers(tenantId: string): Promise<SafeUser[]> {
+    const memberships = [...this.memberships.values()].filter(
+      (membership) => membership.tenantId === tenantId,
+    );
+    return memberships.flatMap((membership) => {
+      const user = this.users.get(membership.userId);
+      return user ? [{ ...safeUser(user), role: membership.role }] : [];
+    });
   }
 
   async createUser(args: {

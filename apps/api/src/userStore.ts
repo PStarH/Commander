@@ -126,7 +126,7 @@ export interface UserRepository {
   findUserByEmail(email: string): Promise<User | undefined>;
   findUserByOidcIdentity(issuer: string, subject: string): Promise<User | undefined>;
   findUserTenantMembership(userId: string, tenantId: string): Promise<UserTenantMembership | undefined>;
-  listUsers(): Promise<SafeUser[]>;
+  listUsers(tenantId: string): Promise<SafeUser[]>;
   createUser(args: CreateUserArgs): Promise<{ user: SafeUser } | { error: string }>;
   bindUserToOidcIdentity(
     userId: string,
@@ -228,10 +228,13 @@ export class PostgresUserRepository implements UserRepository {
     });
   }
 
-  async listUsers(): Promise<SafeUser[]> {
+  async listUsers(tenantId: string): Promise<SafeUser[]> {
     return this.withClient(async (client) => {
       const result = await client.query<UserRow>(
-        'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users ORDER BY created_at ASC',
+        'SELECT u.id, u.username, u.email, u.password_hash, t.role, u.oidc_issuer, u.oidc_subject, u.created_at, u.last_login_at ' +
+          'FROM commander_auth_user_tenants t JOIN commander_auth_users u ON u.id = t.user_id ' +
+          'WHERE t.tenant_id = $1 ORDER BY u.created_at ASC',
+        [tenantId],
       );
       return result.rows.map(fromRow).map(toSafeUser);
     });
@@ -546,8 +549,8 @@ export async function findUserTenantMembership(
   return getUserRepository().findUserTenantMembership(userId, tenantId);
 }
 
-export async function listUsers(): Promise<SafeUser[]> {
-  return getUserRepository().listUsers();
+export async function listUsers(tenantId: string): Promise<SafeUser[]> {
+  return getUserRepository().listUsers(tenantId);
 }
 
 export async function createUser(
