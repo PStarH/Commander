@@ -114,6 +114,8 @@ import {
 } from './v1GatewayKernel';
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
+import { isProductionEnv } from './envSignal';
+import { resolveTrustProxySetting, TrustProxyConfigError } from './trustProxyConfig';
 import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
 
 import { getDirname, getRequire } from './esmCompat';
@@ -217,9 +219,27 @@ const scimStore = getDefaultScimStore();
 app.disable('x-powered-by');
 
 // Security: Configure trust proxy for reverse proxy deployments.
-// Per Express behind-proxies docs: set to hop count or trusted IP range.
-// '1' trusts the first proxy (typical Nginx/ALB setup). Set via env for flexibility.
-app.set('trust proxy', process.env.TRUST_PROXY_HOPS ?? '1');
+// AUDIT-E2: no proxy is trusted by default. A default of '1' trusted one hop
+// even when the API is directly exposed, making req.ip (auth-failure lockout,
+// per-IP rate bucket) spoofable via client-controlled X-Forwarded-For.
+// Deployments behind a proxy MUST set TRUST_PROXY_HOPS explicitly; malformed
+// values abort startup instead of silently meaning something else.
+try {
+  app.set('trust proxy', resolveTrustProxySetting(process.env));
+} catch (err) {
+  if (err instanceof TrustProxyConfigError) {
+    process.stderr.write(`[startup] ${err.message}\n`);
+    throw err;
+  }
+  throw err;
+}
+if (process.env.TRUST_PROXY_HOPS === undefined && isProductionEnv()) {
+  process.stderr.write(
+    '[startup] TRUST_PROXY_HOPS is unset — no proxy trusted (client X-Forwarded-For is ignored). ' +
+      'Set it to your proxy hop count when deploying behind a reverse proxy, or auth-failure ' +
+      'lockout and per-IP rate limits will key on the proxy address.\n',
+  );
+}
 
 // 1. Request ID tracking
 app.use(requestIdMiddleware);
