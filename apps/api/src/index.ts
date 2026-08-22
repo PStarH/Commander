@@ -163,6 +163,7 @@ function validateEnvironment(): void {
 
   if (missingCritical.length > 0) {
     getGlobalLogger().error('Startup', `Aborting startup: missing ${missingCritical.join(', ')}`);
+    process.stderr.write('COMMANDER_API_STARTUP_FAILED: missing required environment variables\n');
     process.exit(1);
   }
 
@@ -1056,7 +1057,7 @@ async function startServer(): Promise<void> {
 }
 
 startServer().catch(async (err: Error) => {
-  process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+  process.stderr.write('COMMANDER_API_STARTUP_FAILED: ' + err.message + '\n');
   try {
     await closeTask1ReadinessService();
   } catch (closeErr) {

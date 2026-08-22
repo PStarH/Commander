@@ -96,6 +96,54 @@ function resource(rendered: string, kind: string, name: string): string {
 }
 
 describe('Helm lifecycle static contract', () => {
+  it('keeps API file stores on the writable tmp volume', () => {
+    const apiDeployments = [
+      deployment(render(), 'api'),
+      deployment(
+        render(false, [
+          '--set',
+          'database.enabled=false',
+          '--set',
+          'database.backend=sqlite',
+          '--set',
+          'database.postgres.bundled=false',
+        ]),
+        'api',
+      ),
+    ];
+    for (const api of apiDeployments) {
+      assert.match(api, /- name: COMMANDER_WARROOM_FILE\n\s+value: \/tmp\/commander-api\/war-room.json/);
+      assert.match(api, /- name: COMMANDER_AGENT_STATE_FILE\n\s+value: \/tmp\/commander-api\/agent-state.json/);
+      assert.match(
+        api,
+        /- name: COMMANDER_ACTION_RATIONALE_FILE\n\s+value: \/tmp\/commander-api\/action-rationales.json/,
+      );
+      assert.match(
+        api,
+        /- name: API_RATE_LIMIT_DB_PATH\n\s+value: \/tmp\/commander-api\/rate-limit.sqlite/,
+      );
+      assert.match(api, /- name: COMMANDER_TRACE_DIR\n\s+value: \/tmp\/commander-api\/traces/);
+      assert.match(api, /- name: tmp\n\s+mountPath: \/tmp/);
+      assert.match(
+        api,
+        /- name: api-runtime-state\n\s+image:.*\n\s+imagePullPolicy:.*\n\s+command: \["node", "-e"\][\s\S]*\/tmp\/commander-api[\s\S]*runAsUser: 0[\s\S]*- name: tmp\n\s+mountPath: \/tmp/,
+      );
+      assert.match(
+        api,
+        /startupProbe:[\s\S]*path: \/health[\s\S]*port: http[\s\S]*failureThreshold: 30[\s\S]*periodSeconds: 2/,
+      );
+    }
+  });
+
+  it('binds production auth-failure authority to the enabled Redis service', () => {
+    const api = deployment(render(false, ['--set', 'redis.enabled=true']), 'api');
+    assert.match(api, /- name: REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/);
+    assert.match(
+      api,
+      /- name: AUTH_FAILURE_REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/,
+    );
+  });
+
   it('limits controller transport bootstrap to the three bundled PostgreSQL objects', () => {
     const rendered = render(false, [
       '--set',
@@ -340,6 +388,12 @@ describe('Helm lifecycle static contract', () => {
       assert.match(manifest, /name: migration-gate/);
       assert.match(manifest, /migrationGate\.js[\s\S]*await/);
       assert.match(manifest, new RegExp(`key: ["']?${key}["']?`));
+      assert.match(manifest, /COMMANDER_DATABASE_TLS_CA_FILE/);
+      assert.match(manifest, /COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256/);
+      assert.match(
+        manifest,
+        /name: database-public-ca[\s\S]*mountPath: \/run\/commander\/database-tls/,
+      );
       assert.doesNotMatch(manifest, /owner-url|BOOTSTRAP_AUTHORITY/);
     }
   });

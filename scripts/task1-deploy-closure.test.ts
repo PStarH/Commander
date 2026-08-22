@@ -61,6 +61,29 @@ describe('Task 1 deployment closure', () => {
     assert.ok(postgresRuntimeBuild < coreBuild, 'postgres-runtime must be built before core');
   });
 
+  it('makes COMMANDER_SOURCE_REVISION optional for ordinary API builds but validates supplied revisions', () => {
+    const dockerfile = read('apps/api/Dockerfile');
+    assert.match(dockerfile, /ARG COMMANDER_SOURCE_REVISION/);
+    assert.match(dockerfile, /if \[ -n "\$COMMANDER_SOURCE_REVISION" \]; then/);
+    assert.match(dockerfile, /case "\$COMMANDER_SOURCE_REVISION" in/);
+    assert.match(dockerfile, /\[ "\$\{#COMMANDER_SOURCE_REVISION\}" -eq 40 \]/);
+    assert.match(dockerfile, /\*\[!0-9a-f\]\*/);
+    assert.doesNotMatch(dockerfile, /RUN test -n "\$COMMANDER_SOURCE_REVISION"/);
+    for (const file of [
+      'docker-compose.yml',
+      'docker-compose.v2.yml',
+      '.github/workflows/cd.yml',
+      'scripts/deploy.sh',
+      'scripts/deploy-vm.sh',
+    ]) {
+      assert.doesNotMatch(
+        read(file),
+        /COMMANDER_SOURCE_REVISION/,
+        file + ': build arg should remain caller-optional',
+      );
+    }
+  });
+
   it('packages every checksum-pinned kernel manifest used by the production image', () => {
     const dockerfile = read('apps/api/Dockerfile');
     const lifecycle = read('packages/kernel/src/task1LifecycleInitialize.ts');

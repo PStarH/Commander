@@ -25,6 +25,7 @@ import {
   type HelmReleaseProjection,
 } from './helm-recover-tenant-authority.js';
 import { createTask1DatabasePeerBindingInput } from './task1-database-peer-input.js';
+import { isAllowedHelmDiagnosticCode } from './helm-diagnostic-policy.js';
 
 export const HELM_VERSION = '3.17.3';
 export type HelmCutoverCommand = 'install' | 'expand' | 'enforce' | 'rollback-recorded-expand';
@@ -154,6 +155,7 @@ export interface HelmProcessPort {
     namespace: string,
     release: string,
     revision: string,
+    chart: string,
   ): Promise<HelmReleaseProjection>;
   proofJobManifest(namespace: string, release: string, revision: string): Promise<string>;
   restoreRevision(request: {
@@ -222,6 +224,95 @@ const SECRET_KEY = /^[A-Za-z0-9._-]+$/;
 
 function fail(code: string): never {
   throw new Error(code);
+}
+
+const OWNER_MIGRATION_FAILURE_STAGE =
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_pinned_manifest_validation|lifecycle_prepared_request_validation|lifecycle_table_discovery|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_prebootstrap_snapshot_comparison|lifecycle_initialization_planning|lifecycle_descriptor_transaction|lifecycle_peer_reobservation|lifecycle_peer_reobservation_input_consistency|lifecycle_peer_reobservation_candidate_binding_validation|lifecycle_peer_reobservation_observed_binding_validation|lifecycle_peer_reobservation_binding_consistency|lifecycle_transaction|current_read|rollout_proof)';
+const OWNER_MIGRATION_CATALOG_STEP =
+  '(search_path|identity|ledger|namespaces|relations|functions|types|extensions|policies|triggers|roles|memberships|role_settings|database_acl|schema_acls|default_acls|product_has_rows)';
+const OWNER_MIGRATION_SNAPSHOT_TRANSACTION = '(begin|commit)';
+const OWNER_MIGRATION_SNAPSHOT_VALIDATION =
+  '(bootstrap_validation|identity_validation|product_source_validation|catalog_version_validation|origin_classification)';
+const OWNER_MIGRATION_ORIGIN_CLASSIFICATION_STEP =
+  '(fresh_catalog_shape|role_envelope|role_attributes|memberships|public_acl)';
+
+/** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
+export function ownerJobFailureDiagnostic(
+  logs: string,
+  transport: 'kubectl_logs' | 'kubectl_logs_unavailable' = 'kubectl_logs',
+): string {
+  const tail = logs.slice(-4_096);
+  const migrationDiagnostic = [
+    ...tail.matchAll(
+      new RegExp(
+        '\\bCOMMANDER_MIGRATION_FAILED;owner_stage=' +
+          OWNER_MIGRATION_FAILURE_STAGE +
+          '(?:;snapshot=(s0|s1)(?:;catalog_step=' +
+          OWNER_MIGRATION_CATALOG_STEP +
+          '|;snapshot_transaction=' +
+          OWNER_MIGRATION_SNAPSHOT_TRANSACTION +
+          '|;snapshot_validation=' +
+          OWNER_MIGRATION_SNAPSHOT_VALIDATION +
+          '(?:;origin_classification_step=' +
+          OWNER_MIGRATION_ORIGIN_CLASSIFICATION_STEP +
+          ')?' +
+          ')' +
+          ')?' +
+          '(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?\\b',
+        'g',
+      ),
+    ),
+  ].at(-1);
+  const codes = (
+    tail.match(/\b(?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]{1,80}\b/g) ?? []
+  ).filter(isAllowedHelmDiagnosticCode);
+  const code = codes.at(-1) ?? 'TENANT_CUTOVER_OWNER_JOB_LOG_UNCLASSIFIED';
+  const digest = createHash('sha256').update(tail).digest('hex');
+  if (migrationDiagnostic) {
+    const diagnostic =
+      'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=' +
+      transport +
+      ';owner_stage=' +
+      migrationDiagnostic[1];
+    const snapshotDiagnostic = migrationDiagnostic[2]
+      ? migrationDiagnostic[3]
+        ? diagnostic +
+          ';snapshot=' +
+          migrationDiagnostic[2] +
+          ';catalog_step=' +
+          migrationDiagnostic[3]
+        : migrationDiagnostic[4]
+          ? diagnostic +
+            ';snapshot=' +
+            migrationDiagnostic[2] +
+            ';snapshot_transaction=' +
+            migrationDiagnostic[4]
+          : migrationDiagnostic[5]
+            ? diagnostic +
+              ';snapshot=' +
+              migrationDiagnostic[2] +
+              ';snapshot_validation=' +
+              migrationDiagnostic[5] +
+              (migrationDiagnostic[5] === 'origin_classification' && migrationDiagnostic[6]
+                ? ';origin_classification_step=' + migrationDiagnostic[6]
+                : '')
+            : diagnostic
+      : diagnostic;
+    return migrationDiagnostic[7]
+      ? snapshotDiagnostic +
+          ';migration=' +
+          migrationDiagnostic[7] +
+          ';phase=' +
+          migrationDiagnostic[8] +
+          ';sqlstate=' +
+          migrationDiagnostic[9] +
+          ';log_sha256=' +
+          digest
+      : snapshotDiagnostic + ';log_sha256=' + digest;
+  }
+  return (
+    'code=' + code + ';producer=owner_entrypoint;transport=' + transport + ';log_sha256=' + digest
+  );
 }
 
 function phase(command: HelmCutoverCommand): HelmPhase {
@@ -526,6 +617,79 @@ function yamlRecord(value: unknown): Record<string, unknown> {
     fail('TENANT_CUTOVER_VALUES_INVALID');
   }
   return value as Record<string, unknown>;
+}
+
+function cloneHelmValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(cloneHelmValue);
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>).map(([key, child]) => [
+      key,
+      cloneHelmValue(child),
+    ]),
+  );
+}
+
+function mergeProjectionRendererValues(
+  defaults: Record<string, unknown>,
+  overrides: Record<string, unknown>,
+): Record<string, unknown> {
+  const result = cloneHelmValue(defaults) as Record<string, unknown>;
+  for (const [key, override] of Object.entries(overrides)) {
+    if (override === null) {
+      result[key] = null;
+      continue;
+    }
+    const inherited = result[key];
+    result[key] =
+      override &&
+      typeof override === 'object' &&
+      !Array.isArray(override) &&
+      inherited &&
+      typeof inherited === 'object' &&
+      !Array.isArray(inherited)
+        ? mergeProjectionRendererValues(
+            inherited as Record<string, unknown>,
+            override as Record<string, unknown>,
+          )
+        : cloneHelmValue(override);
+  }
+  return result;
+}
+
+const PROJECTION_RENDERER_DEFAULT_KEYS = [
+  'image',
+  'database',
+  'databaseTls',
+  'migration',
+  'tenantAuthority',
+  'podSecurityContext',
+] as const;
+
+async function projectionRendererValues(
+  chart: string,
+  overrides: string,
+  context: 'rollout' | 'restore',
+): Promise<string> {
+  try {
+    const chartDefaults = yamlRecord(load(await readFile(join(chart, 'values.yaml'), 'utf8')));
+    const supplied = yamlRecord(load(overrides));
+    const projectionDefaults: Record<string, unknown> = {};
+    for (const key of PROJECTION_RENDERER_DEFAULT_KEYS) {
+      if (!Object.hasOwn(chartDefaults, key)) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      projectionDefaults[key] = chartDefaults[key];
+    }
+    return dump(mergeProjectionRendererValues(projectionDefaults, supplied), {
+      noRefs: true,
+      sortKeys: true,
+    });
+  } catch {
+    return fail(
+      context === 'rollout'
+        ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+        : 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID',
+    );
+  }
 }
 
 function databaseOwnerSecretReference(
@@ -1452,6 +1616,7 @@ async function runFreshCurrentProofChallenge(input: {
       input.request.namespace,
       input.request.release,
       evidence.revision,
+      input.chartPackage,
     );
     if (
       canonicalBootstrapSha256(projected) !== evidence.releaseProjectionSha256 ||
@@ -1569,6 +1734,7 @@ export async function runHelmTenantCutover(
       request.namespace,
       request.release,
       evidence.revision,
+      chartPackage,
     );
     if (
       canonicalBootstrapSha256(projectedCurrent) !== evidence.releaseProjectionSha256 ||
@@ -1581,6 +1747,7 @@ export async function runHelmTenantCutover(
       request.namespace,
       request.release,
       failedRevision,
+      chartPackage,
     );
     if (
       failedTarget.namespace !== request.namespace ||
@@ -2061,21 +2228,159 @@ export function buildHelmOwnerJobBundle(input: {
   };
 }
 
-async function defaultCommand(
+export const COMMAND_OUTPUT_LIMIT = 1024 * 1024;
+export const COMMAND_TIMEOUT_ABSOLUTE_CAP_MS = 11 * 60_000;
+const COMMAND_TIMEOUT_MARGIN_MS = 15_000;
+const COMMAND_TERMINATION_GRACE_MS = 250;
+const COMMAND_TERMINATION_CONFIRMATION_TIMEOUT_MS = 2_000;
+
+export type CommandExecutionPolicy =
+  'standard' | 'helm_read' | 'helm_rollout' | 'owner_job_wait' | 'proof_job_wait';
+
+export function commandExecutionTimeoutMs(policy: CommandExecutionPolicy | string): number {
+  const timeout =
+    policy === 'standard' || policy === 'helm_read'
+      ? 60_000
+      : policy === 'owner_job_wait'
+        ? 5 * 60_000 + COMMAND_TIMEOUT_MARGIN_MS
+        : policy === 'helm_rollout' || policy === 'proof_job_wait'
+          ? 10 * 60_000 + COMMAND_TIMEOUT_MARGIN_MS
+          : fail('TENANT_CUTOVER_COMMAND_TIMEOUT_POLICY_INVALID');
+  return Math.min(timeout, COMMAND_TIMEOUT_ABSOLUTE_CAP_MS);
+}
+
+function commandFailureCode(program: string, args: readonly string[]): string {
+  const code =
+    program === 'helm'
+      ? 'TENANT_CUTOVER_HELM_COMMAND_FAILED'
+      : program === 'kubectl' && args[0] === 'logs'
+        ? 'TENANT_CUTOVER_KUBECTL_LOGS_COMMAND_FAILED'
+        : program === 'kubectl'
+          ? 'TENANT_CUTOVER_KUBECTL_COMMAND_FAILED'
+          : 'TENANT_CUTOVER_COMMAND_FAILED';
+  if (!isAllowedHelmDiagnosticCode(code)) fail('TENANT_CUTOVER_COMMAND_FAILED');
+  return code;
+}
+
+export async function defaultCommand(
   program: string,
   args: readonly string[],
   stdin?: string,
+  executionPolicy: CommandExecutionPolicy = 'standard',
 ): Promise<string> {
   return new Promise((resolveCommand, reject) => {
-    const child = spawn(program, [...args], { shell: false, stdio: ['pipe', 'pipe', 'ignore'] });
+    const captureStderr = program === 'kubectl' && args[0] === 'logs';
+    const processGroup = process.platform !== 'win32';
+    const child = spawn(program, [...args], {
+      detached: processGroup,
+      shell: false,
+      stdio: ['pipe', 'pipe', captureStderr ? 'pipe' : 'ignore'],
+    });
     const output: Buffer[] = [];
-    child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
-    child.once('error', () => reject(new Error('TENANT_CUTOVER_COMMAND_FAILED')));
-    child.once('close', (code) =>
-      code === 0
-        ? resolveCommand(Buffer.concat(output).toString('utf8'))
-        : reject(new Error('TENANT_CUTOVER_COMMAND_FAILED')),
+    const errorOutput: Buffer[] = [];
+    const maximumBytes =
+      executionPolicy === 'helm_read' ? RESTORE_STREAM_LIMIT : COMMAND_OUTPUT_LIMIT;
+    const outputLimitCode =
+      executionPolicy === 'helm_read'
+        ? 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT'
+        : 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT';
+    let bytes = 0;
+    let settled = false;
+    let childClosed = false;
+    let terminatingError: Error | undefined;
+    let forceKill: NodeJS.Timeout | undefined;
+    let terminationPoll: NodeJS.Timeout | undefined;
+    let terminationConfirmationDeadline = 0;
+    const timeout = setTimeout(
+      () => terminate('TENANT_CUTOVER_COMMAND_TIMEOUT'),
+      commandExecutionTimeoutMs(executionPolicy),
     );
+    timeout.unref();
+
+    const signal = (value: NodeJS.Signals): void => {
+      if (!child.pid) return;
+      try {
+        if (processGroup) process.kill(-child.pid, value);
+        else child.kill(value);
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code !== 'ESRCH' && code !== 'EPERM') {
+          terminatingError = new Error('TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED');
+        }
+      }
+    };
+    const processGroupAlive = (): boolean => {
+      if (!processGroup || !child.pid) return false;
+      try {
+        process.kill(-child.pid, 0);
+        return true;
+      } catch (error) {
+        // EPERM means the process group may still exist but is not probeable;
+        // only ESRCH is a portable proof that it has exited.
+        return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+      }
+    };
+    const finishReject = (error: Error): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      if (terminationPoll) clearTimeout(terminationPoll);
+      reject(error);
+    };
+    const finishTerminationWhenGone = (): void => {
+      if (!terminatingError || !childClosed || settled) return;
+      if (processGroupAlive()) {
+        if (Date.now() >= terminationConfirmationDeadline) {
+          finishReject(new Error('TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'));
+          return;
+        }
+        terminationPoll = setTimeout(finishTerminationWhenGone, 10);
+        return;
+      }
+      finishReject(terminatingError);
+    };
+    function terminate(code: string): void {
+      if (settled || terminatingError) return;
+      terminatingError = new Error(code);
+      terminationConfirmationDeadline = Date.now() + COMMAND_TERMINATION_CONFIRMATION_TIMEOUT_MS;
+      clearTimeout(timeout);
+      signal('SIGTERM');
+      forceKill = setTimeout(() => {
+        signal('SIGKILL');
+        finishTerminationWhenGone();
+      }, COMMAND_TERMINATION_GRACE_MS);
+    }
+    const capture = (destination: Buffer[]) => (chunk: Buffer) => {
+      if (terminatingError) return;
+      const value = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      bytes += value.length;
+      if (bytes > maximumBytes) {
+        terminate(outputLimitCode);
+        return;
+      }
+      destination.push(value);
+    };
+    child.stdout.on('data', capture(output));
+    if (captureStderr) child.stderr?.on('data', capture(errorOutput));
+    child.once('error', () => {
+      childClosed = true;
+      if (terminatingError) {
+        finishTerminationWhenGone();
+        return;
+      }
+      finishReject(new Error(commandFailureCode(program, args)));
+    });
+    child.once('close', (code) => {
+      if (settled) return;
+      childClosed = true;
+      if (terminatingError) return finishTerminationWhenGone();
+      if (code !== 0) return finishReject(new Error(commandFailureCode(program, args)));
+      settled = true;
+      clearTimeout(timeout);
+      if (forceKill) clearTimeout(forceKill);
+      resolveCommand(Buffer.concat([...output, ...errorOutput]).toString('utf8'));
+    });
     child.stdin.end(stdin ?? '');
   });
 }
@@ -2343,7 +2648,7 @@ export interface HelmRevisionRestoreRuntime {
     values: string;
     helmArgs: readonly string[];
     postRender(manifest: string): string;
-    afterPostRender?(manifest: string): Promise<void>;
+    afterPostRender?(manifest: string, rendererValues: string): Promise<void>;
   }): Promise<void>;
 }
 
@@ -2419,24 +2724,20 @@ async function readBoundedStream(
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function processResult(child: ReturnType<typeof spawn>, code: string): Promise<void> {
-  return new Promise((resolveProcess, reject) => {
-    child.once('error', () => reject(new Error(code)));
-    child.once('close', (status) => (status === 0 ? resolveProcess() : reject(new Error(code))));
-  });
-}
-
 async function readHelmBounded(args: readonly string[], maximumBytes: number): Promise<string> {
-  const child = spawn('helm', [...args], { shell: false, stdio: ['ignore', 'pipe', 'ignore'] });
+  if (maximumBytes !== RESTORE_STREAM_LIMIT) fail('TENANT_CUTOVER_RESTORE_STREAM_LIMIT');
   try {
-    const [output] = await Promise.all([
-      readBoundedStream(child.stdout, maximumBytes, 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT'),
-      processResult(child, 'TENANT_CUTOVER_COMMAND_FAILED'),
-    ]);
-    return output;
+    return await defaultCommand('helm', args, undefined, 'helm_read');
   } catch (error) {
-    child.kill();
-    throw error;
+    const code = error instanceof Error ? error.message : '';
+    if (
+      code === 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+    ) {
+      throw error;
+    }
+    return fail('TENANT_CUTOVER_HELM_RESTORE_COMMAND_FAILED');
   }
 }
 
@@ -2518,12 +2819,293 @@ async function closeServer(server: ReturnType<typeof createServer>): Promise<voi
   await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
 }
 
+type ProjectionContext = 'rollout' | 'restore';
+
+interface ProjectionRenderContext {
+  namespace: string;
+  release: string;
+  revision: string;
+  chart: string;
+  projectionConfigMapName: string;
+  hookRenderArgs: string[];
+}
+
+function projectionRenderContext(helmArgs: readonly string[]): ProjectionRenderContext {
+  if (helmArgs[0] !== 'upgrade') fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  let cursor = 1;
+  const install = helmArgs[cursor] === '--install';
+  if (install) cursor += 1;
+  const release = helmArgs[cursor];
+  const chart = helmArgs[cursor + 1];
+  if (
+    typeof release !== 'string' ||
+    !NAME.test(release) ||
+    typeof chart !== 'string' ||
+    !chart ||
+    chart.includes('\0')
+  ) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const remaining = helmArgs.slice(cursor + 2);
+  const namespaces = remaining.flatMap((value, index) =>
+    value === '--namespace' && remaining[index + 1] ? [remaining[index + 1]!] : [],
+  );
+  const projectionPrefix = 'tenantAuthority.releaseProjectionConfigMap=';
+  const projections = remaining.flatMap((value, index) => {
+    const candidate = value === '--set' ? remaining[index + 1] : undefined;
+    return candidate?.startsWith(projectionPrefix)
+      ? [candidate.slice(projectionPrefix.length)]
+      : [];
+  });
+  if (namespaces.length !== 1 || projections.length !== 1) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const namespace = namespaces[0]!;
+  const projectionConfigMapName = projections[0]!;
+  const revisionMatch = projectionConfigMapName.match(/-r([1-9][0-9]*)$/);
+  if (
+    !NAME.test(namespace) ||
+    !NAME.test(projectionConfigMapName) ||
+    projectionConfigMapName.length > 63 ||
+    !revisionMatch
+  ) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const renderOptions: string[] = [];
+  for (let index = 0; index < remaining.length; index += 1) {
+    const value = remaining[index]!;
+    if (value === '--atomic' || value === '--wait' || value === '--wait-for-jobs') continue;
+    if (value === '--timeout') {
+      index += 1;
+      if (index >= remaining.length) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      continue;
+    }
+    renderOptions.push(value);
+  }
+  return {
+    namespace,
+    release,
+    revision: revisionMatch[1]!,
+    chart,
+    projectionConfigMapName,
+    hookRenderArgs: [
+      'template',
+      release,
+      chart,
+      ...renderOptions,
+      '--show-only',
+      'templates/migration-job.yaml',
+      '--show-only',
+      'templates/tenant-cutover-prove-job.yaml',
+      ...(revisionMatch[1] === '1' ? [] : ['--is-upgrade']),
+    ],
+  };
+}
+
+async function renderProjectionHooks(
+  context: ProjectionRenderContext,
+  values?: string,
+): Promise<string> {
+  try {
+    return await defaultCommand('helm', context.hookRenderArgs, values);
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (
+      code === 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+    ) {
+      throw error;
+    }
+    return fail('TENANT_CUTOVER_HELM_COMMAND_FAILED');
+  }
+}
+
+function latestHelmRevision(history: string, context: ProjectionContext): string {
+  const invalidCode =
+    context === 'rollout'
+      ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+      : 'TENANT_CUTOVER_RESTORE_HISTORY_INVALID';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(history);
+  } catch {
+    return fail(invalidCode);
+  }
+  if (!Array.isArray(parsed) || parsed.length === 0) fail(invalidCode);
+  const revisions = parsed.map((entry) => {
+    const record = jsonRecord(entry, invalidCode);
+    const revision =
+      typeof record.revision === 'number' ? String(record.revision) : record.revision;
+    if (typeof revision !== 'string' || !/^[1-9][0-9]*$/.test(revision)) {
+      return fail(invalidCode);
+    }
+    return revision;
+  });
+  if (new Set(revisions).size !== revisions.length) fail(invalidCode);
+  return revisions.reduce((latest, revision) =>
+    BigInt(revision) > BigInt(latest) ? revision : latest,
+  );
+}
+
+function failStoredProjectionHelmCommand(error: unknown, context: ProjectionContext): never {
+  const code = error instanceof Error ? error.message : '';
+  if (
+    code === 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT' ||
+    code === 'TENANT_CUTOVER_RESTORE_STREAM_LIMIT' ||
+    code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+    code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+  ) {
+    throw error;
+  }
+  return fail(
+    context === 'rollout'
+      ? 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'
+      : 'TENANT_CUTOVER_HELM_RESTORE_COMMAND_FAILED',
+  );
+}
+
+async function verifyStoredProjection(
+  renderContext: ProjectionRenderContext,
+  context: ProjectionContext,
+): Promise<void> {
+  const invalidCode =
+    context === 'rollout'
+      ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+      : 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID';
+  const liveText = await defaultCommand('kubectl', [
+    'get',
+    'configmap',
+    renderContext.projectionConfigMapName,
+    '--namespace',
+    renderContext.namespace,
+    '--output',
+    'json',
+  ]);
+  const live = parseJsonObject(liveText, invalidCode);
+  const data = jsonRecord(live.data, invalidCode);
+  const projectionText = data['projection.json'];
+  if (typeof projectionText !== 'string') fail(invalidCode);
+  let expected: HelmReleaseProjection;
+  try {
+    expected = JSON.parse(projectionText) as HelmReleaseProjection;
+  } catch {
+    return fail(invalidCode);
+  }
+  let history: string;
+  try {
+    history = await defaultCommand('helm', [
+      'history',
+      renderContext.release,
+      '--namespace',
+      renderContext.namespace,
+      '--output',
+      'json',
+      '--max',
+      '256',
+    ]);
+  } catch (error) {
+    return failStoredProjectionHelmCommand(error, context);
+  }
+  if (latestHelmRevision(history, context) !== renderContext.revision) {
+    fail(context === 'rollout' ? invalidCode : 'TENANT_CUTOVER_RESTORE_HISTORY_INVALID');
+  }
+  let values: string;
+  let manifest: string;
+  let hooks: string;
+  try {
+    [values, manifest, hooks] = await Promise.all([
+      readHelmBounded(
+        [
+          'get',
+          'values',
+          renderContext.release,
+          '--namespace',
+          renderContext.namespace,
+          '--revision',
+          renderContext.revision,
+          '--output',
+          'yaml',
+        ],
+        RESTORE_STREAM_LIMIT,
+      ),
+      readHelmBounded(
+        [
+          'get',
+          'manifest',
+          renderContext.release,
+          '--namespace',
+          renderContext.namespace,
+          '--revision',
+          renderContext.revision,
+        ],
+        RESTORE_STREAM_LIMIT,
+      ),
+      readHelmBounded(
+        [
+          'get',
+          'hooks',
+          renderContext.release,
+          '--namespace',
+          renderContext.namespace,
+          '--revision',
+          renderContext.revision,
+        ],
+        RESTORE_STREAM_LIMIT,
+      ),
+    ]);
+  } catch (error) {
+    return failStoredProjectionHelmCommand(error, context);
+  }
+  let stored: HelmReleaseProjection;
+  try {
+    const rendererValues = await projectionRendererValues(renderContext.chart, values, context);
+    stored = projectHelmReleaseRevision({
+      namespace: renderContext.namespace,
+      releaseName: renderContext.release,
+      revision: renderContext.revision,
+      manifest: hooks.trim() ? manifest + '\n---\n' + hooks : manifest,
+      values: rendererValues,
+    });
+  } catch {
+    return fail(invalidCode);
+  }
+  if (canonicalBootstrapJson(stored) !== canonicalBootstrapJson(expected)) fail(invalidCode);
+}
+
+async function runProjectedHelmCommand(
+  args: readonly string[],
+  stdin: string | undefined,
+  context: ProjectionContext,
+): Promise<void> {
+  try {
+    await defaultCommand('helm', args, stdin, 'helm_rollout');
+  } catch (error) {
+    const code = error instanceof Error ? error.message : '';
+    if (
+      code === 'TENANT_CUTOVER_COMMAND_OUTPUT_LIMIT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TIMEOUT' ||
+      code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
+    ) {
+      throw error;
+    }
+    return fail('TENANT_CUTOVER_HELM_COMMAND_FAILED');
+  }
+}
+
 async function streamValuesToHelm(input: {
   values: string;
   helmArgs: readonly string[];
   postRender(manifest: string): string;
-  afterPostRender?(manifest: string): Promise<void>;
+  afterPostRender?(manifest: string, rendererValues: string): Promise<void>;
 }): Promise<void> {
+  const renderContext = projectionRenderContext(input.helmArgs);
+  const hookManifest = await renderProjectionHooks(renderContext, input.values);
+  const projectionValues = await projectionRendererValues(
+    renderContext.chart,
+    input.values,
+    'restore',
+  );
   const socketDirectory = await mkdtemp(join(tmpdir(), 'commander-restore-'));
   await chmod(socketDirectory, 0o700);
   const socketPath = join(socketDirectory, 'post-render.sock');
@@ -2548,7 +3130,15 @@ async function streamValuesToHelm(input: {
         'TENANT_CUTOVER_RESTORE_STREAM_LIMIT',
       );
       const rendered = input.postRender(manifest);
-      await input.afterPostRender?.(rendered);
+      const projectionManifest = mergePostRenderedHelmHooks({
+        namespace: renderContext.namespace,
+        releaseName: renderContext.release,
+        revision: renderContext.revision,
+        projectionConfigMapName: renderContext.projectionConfigMapName,
+        manifest: rendered,
+        hookManifest,
+      });
+      await input.afterPostRender?.(projectionManifest, projectionValues);
       response.writeHead(200, { 'content-type': 'application/yaml' });
       response.end(rendered);
     } catch {
@@ -2564,21 +3154,19 @@ async function streamValuesToHelm(input: {
     '--tenant-cutover-post-render',
     socketPath,
     token,
-  ].flatMap((argument) => [`--post-renderer-args=${argument}`]);
+  ].flatMap((argument) => ['--post-renderer-args=' + argument]);
   if (Buffer.byteLength(input.values) > RESTORE_STREAM_LIMIT) {
     fail('TENANT_CUTOVER_RESTORE_STREAM_LIMIT');
   }
-  const helm = spawn(
-    'helm',
-    [...input.helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
-    { shell: false, stdio: ['pipe', 'ignore', 'ignore'] },
-  );
-  helm.stdin.end(input.values);
   try {
-    await Promise.all([processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED')]);
+    await runProjectedHelmCommand(
+      [...input.helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
+      input.values,
+      'restore',
+    );
     if (requests !== 1) fail('TENANT_CUTOVER_RESTORE_SECRET_RENDER_INVALID');
+    await verifyStoredProjection(renderContext, 'restore');
   } finally {
-    helm.kill();
     await closeServer(server);
     await rm(socketDirectory, { recursive: true, force: true });
   }
@@ -2586,13 +3174,22 @@ async function streamValuesToHelm(input: {
 
 async function runHelmPostRendered(
   helmArgs: readonly string[],
-  postRender: (manifest: string) => Promise<string>,
+  rendererValues: string,
+  postRender: (manifest: string, rendererValues: string) => Promise<string>,
 ): Promise<void> {
+  const renderContext = projectionRenderContext(helmArgs);
+  const hookManifest = await renderProjectionHooks(renderContext, rendererValues);
+  const projectionValues = await projectionRendererValues(
+    renderContext.chart,
+    rendererValues,
+    'rollout',
+  );
   const socketDirectory = await mkdtemp(join(tmpdir(), 'commander-projection-'));
   await chmod(socketDirectory, 0o700);
   const socketPath = join(socketDirectory, 'post-render.sock');
   const token = randomBytes(32).toString('hex');
   let requests = 0;
+  let postRenderFailureCode: string | undefined;
   const server = createServer(async (request, response) => {
     try {
       const supplied = request.headers['x-commander-restore-token'];
@@ -2611,10 +3208,31 @@ async function runHelmPostRendered(
         RESTORE_STREAM_LIMIT,
         'TENANT_CUTOVER_RESTORE_STREAM_LIMIT',
       );
-      const rendered = await postRender(manifest);
+      await postRender(
+        mergePostRenderedHelmHooks({
+          namespace: renderContext.namespace,
+          releaseName: renderContext.release,
+          revision: renderContext.revision,
+          projectionConfigMapName: renderContext.projectionConfigMapName,
+          manifest,
+          hookManifest,
+        }),
+        projectionValues,
+      );
       response.writeHead(200, { 'content-type': 'application/yaml' });
-      response.end(rendered);
-    } catch {
+      response.end(manifest);
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      if (
+        code === 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID' ||
+        code === 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID' ||
+        code === 'TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED'
+      ) {
+        postRenderFailureCode =
+          code === 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID'
+            ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+            : code;
+      }
       response.writeHead(400);
       response.end();
     }
@@ -2627,17 +3245,21 @@ async function runHelmPostRendered(
     '--tenant-cutover-post-render',
     socketPath,
     token,
-  ].flatMap((argument) => [`--post-renderer-args=${argument}`]);
-  const helm = spawn(
-    'helm',
-    [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
-    { shell: false, stdio: ['ignore', 'ignore', 'ignore'] },
-  );
+  ].flatMap((argument) => ['--post-renderer-args=' + argument]);
   try {
-    await processResult(helm, 'TENANT_CUTOVER_COMMAND_FAILED');
+    try {
+      await runProjectedHelmCommand(
+        [...helmArgs, '--post-renderer', process.execPath, ...postRendererArgs],
+        undefined,
+        'rollout',
+      );
+    } catch (error) {
+      if (postRenderFailureCode) fail(postRenderFailureCode);
+      throw error;
+    }
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    await verifyStoredProjection(renderContext, 'rollout');
   } finally {
-    helm.kill();
     await closeServer(server);
     await rm(socketDirectory, { recursive: true, force: true });
   }
@@ -2797,7 +3419,12 @@ async function prepareReleaseProjectionConfigMap(
 }
 
 export interface NodePortsRuntime {
-  command?(program: string, args: readonly string[], stdin?: string): Promise<string>;
+  command?(
+    program: string,
+    args: readonly string[],
+    stdin?: string,
+    executionPolicy?: CommandExecutionPolicy,
+  ): Promise<string>;
   restoreRuntime?: HelmRevisionRestoreRuntime;
 }
 
@@ -3043,7 +3670,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       await chmod(path, 0o700);
     },
     writeFileAtomic: async (path, contents) => {
-      const temporary = `${path}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`;
+      const temporary = path + '.tmp-' + process.pid + '-' + randomBytes(8).toString('hex');
       let file;
       try {
         file = await open(temporary, 'wx', 0o600);
@@ -3060,11 +3687,12 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
     },
     readFile: (path) => readFile(path, 'utf8'),
     retainedChartPackage: async (stateDirectory, namespace, release, digest) =>
-      `${stateDirectory}/${namespace}/${release}/charts/${digest}/commander`,
+      stateDirectory + '/' + namespace + '/' + release + '/charts/' + digest + '/commander',
     retainChartPackage: async (source, stateDirectory, namespace, release, digest) => {
-      const target = `${stateDirectory}/${namespace}/${release}/charts/${digest}/commander`;
+      const target =
+        stateDirectory + '/' + namespace + '/' + release + '/charts/' + digest + '/commander';
       try {
-        await readFile(`${target}/Chart.yaml`);
+        await readFile(target + '/Chart.yaml');
         return target;
       } catch {
         // The retained chart is created below; any existing partial path is not reused.
@@ -3073,7 +3701,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       const parent = dirname(target);
       await mkdir(parent, { recursive: true, mode: 0o700 });
       await chmod(parent, 0o700);
-      const temporary = `${target}.tmp-${process.pid}-${randomBytes(8).toString('hex')}`;
+      const temporary = target + '.tmp-' + process.pid + '-' + randomBytes(8).toString('hex');
       try {
         await cp(source, temporary, { recursive: true, force: false, errorOnExist: true });
         await chmod(temporary, 0o700);
@@ -3081,7 +3709,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           await rename(temporary, target);
         } catch (error) {
           try {
-            await readFile(`${target}/Chart.yaml`);
+            await readFile(target + '/Chart.yaml');
           } catch {
             throw error;
           }
@@ -3111,7 +3739,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           canonicalBootstrapJson(bundle.configMap),
         )
       ).trim();
-      if (createdConfigMap !== `configmap/${bundle.configMapName}`) {
+      if (createdConfigMap !== 'configmap/' + bundle.configMapName) {
         fail('TENANT_CUTOVER_OWNER_JOB_CREATE_FAILED');
       }
       const createdJob = (
@@ -3121,17 +3749,42 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           canonicalBootstrapJson(bundle.job),
         )
       ).trim();
-      if (createdJob !== `job.batch/${bundle.jobName}`) {
+      if (createdJob !== 'job.batch/' + bundle.jobName) {
         fail('TENANT_CUTOVER_OWNER_JOB_CREATE_FAILED');
       }
-      await command('kubectl', [
-        'wait',
-        '--for=condition=complete',
-        `job/${bundle.jobName}`,
-        '--namespace',
-        context.namespace,
-        '--timeout=5m',
-      ]);
+      try {
+        const ownerJob = 'job/' + bundle.jobName;
+        await command(
+          'kubectl',
+          [
+            'wait',
+            '--for=condition=complete',
+            ownerJob,
+            '--namespace',
+            context.namespace,
+            '--timeout=5m',
+          ],
+          undefined,
+          'owner_job_wait',
+        );
+      } catch {
+        const ownerJob = 'job/' + bundle.jobName;
+        let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        let logTransport: 'kubectl_logs' | 'kubectl_logs_unavailable' = 'kubectl_logs_unavailable';
+        try {
+          logs = await command('kubectl', [
+            'logs',
+            ownerJob,
+            '--namespace',
+            context.namespace,
+            '--tail=40',
+          ]);
+          logTransport = 'kubectl_logs';
+        } catch {
+          logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        }
+        fail('TENANT_CUTOVER_OWNER_JOB_FAILED:' + ownerJobFailureDiagnostic(logs, logTransport));
+      }
       const output = (
         await command('kubectl', [
           'logs',
@@ -3233,7 +3886,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
     },
     helm: {
       version: () => command('helm', ['version', '--short']),
-      run: (args, stdin) => command('helm', args, stdin),
+      run: (args, stdin) => command('helm', args, stdin, 'helm_rollout'),
       nextRevision: async (namespace, release) => {
         let listed: unknown;
         try {
@@ -3338,67 +3991,74 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
         let projection: HelmReleaseProjection | undefined;
         await deleteProjectionConfigMap();
         try {
-          await runHelmPostRendered(request.args, async (manifest) => {
-            assertProjectionConsumer(
-              manifest,
-              request.release,
-              request.revision,
-              request.projectionConfigMapName,
-            );
-            projection = projectHelmReleaseRevision({
-              namespace: request.namespace,
-              releaseName: request.release,
-              revision: request.revision,
-              manifest,
-              values: request.rendererValues,
-            });
-            const projectionBytes = `${canonicalBootstrapJson(projection)}\n`;
-            const desired = {
-              apiVersion: 'v1',
-              kind: 'ConfigMap',
-              metadata: {
-                name: request.projectionConfigMapName,
+          await runHelmPostRendered(
+            request.args,
+            request.rendererValues,
+            async (manifest, rendererValues) => {
+              assertProjectionConsumer(
+                manifest,
+                request.release,
+                request.revision,
+                request.projectionConfigMapName,
+              );
+              projection = projectHelmReleaseRevision({
                 namespace: request.namespace,
-                labels,
-                annotations,
-              },
-              immutable: true,
-              data: { 'projection.json': projectionBytes },
-            };
-            try {
-              const created = (
-                await command(
-                  'kubectl',
-                  ['create', '--filename', '-', '--output', 'name'],
-                  canonicalBootstrapJson(desired),
-                )
-              ).trim();
-              if (created !== `configmap/${request.projectionConfigMapName}`) {
-                fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
+                releaseName: request.release,
+                revision: request.revision,
+                manifest,
+                values: rendererValues,
+              });
+              const projectionBytes = canonicalBootstrapJson(projection) + '\n';
+              const desired = {
+                apiVersion: 'v1',
+                kind: 'ConfigMap',
+                metadata: {
+                  name: request.projectionConfigMapName,
+                  namespace: request.namespace,
+                  labels,
+                  annotations,
+                },
+                immutable: true,
+                data: { 'projection.json': projectionBytes },
+              };
+              try {
+                const created = (
+                  await command(
+                    'kubectl',
+                    ['create', '--filename', '-', '--output', 'name'],
+                    canonicalBootstrapJson(desired),
+                  )
+                ).trim();
+                if (created !== 'configmap/' + request.projectionConfigMapName) {
+                  fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
+                }
+              } catch {
+                // Lost success responses and create races converge only through an exact live reread.
               }
-            } catch {
-              // Lost success responses and create races converge only through an exact live reread.
-            }
-            const live = await readProjectionConfigMap();
-            if (!live) fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
-            const metadata = jsonRecord(live.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-            if (
-              live.apiVersion !== 'v1' ||
-              live.kind !== 'ConfigMap' ||
-              live.immutable !== true ||
-              metadata.name !== request.projectionConfigMapName ||
-              metadata.namespace !== request.namespace ||
-              canonicalBootstrapJson(metadata.labels) !== canonicalBootstrapJson(labels) ||
-              canonicalBootstrapJson(metadata.annotations) !==
-                canonicalBootstrapJson(annotations) ||
-              canonicalBootstrapJson(live.data) !==
-                canonicalBootstrapJson({ 'projection.json': projectionBytes }) ||
-              Object.hasOwn(live, 'binaryData')
-            ) {
-              fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-            }
-            return manifest;
-          });
+              const live = await readProjectionConfigMap();
+              if (!live) fail('TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED');
+              const metadata = jsonRecord(
+                live.metadata,
+                'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+              );
+              if (
+                live.apiVersion !== 'v1' ||
+                live.kind !== 'ConfigMap' ||
+                live.immutable !== true ||
+                metadata.name !== request.projectionConfigMapName ||
+                metadata.namespace !== request.namespace ||
+                canonicalBootstrapJson(metadata.labels) !== canonicalBootstrapJson(labels) ||
+                canonicalBootstrapJson(metadata.annotations) !==
+                  canonicalBootstrapJson(annotations) ||
+                canonicalBootstrapJson(live.data) !==
+                  canonicalBootstrapJson({ 'projection.json': projectionBytes }) ||
+                Object.hasOwn(live, 'binaryData')
+              ) {
+                fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+              }
+              return manifest;
+            },
+          );
           if (!projection) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
           return projection;
         } finally {
@@ -3477,7 +4137,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           BigInt(revision) > BigInt(latest) ? revision : latest,
         );
       },
-      projectRevision: async (namespace, release, revision) => {
+      projectRevision: async (namespace, release, revision, chart) => {
         const [values, manifest, hooks] = await Promise.all([
           boundedHelmRead(
             [
@@ -3502,12 +4162,13 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             RESTORE_STREAM_LIMIT,
           ),
         ]);
+        const rendererValues = await projectionRendererValues(chart, values, 'restore');
         return projectHelmReleaseRevision({
           namespace,
           releaseName: release,
           revision,
-          manifest: hooks.trim() ? `${manifest}\n---\n${hooks}` : manifest,
-          values,
+          manifest: hooks.trim() ? manifest + '\n---\n' + hooks : manifest,
+          values: rendererValues,
         });
       },
       proofJobManifest: (namespace, release, revision) => {
@@ -3541,7 +4202,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
               streamValuesToHelm: (input) =>
                 streamValuesToHelm({
                   ...input,
-                  afterPostRender: async (manifest) => {
+                  afterPostRender: async (manifest, rendererValues) => {
                     assertProjectionConsumer(
                       manifest,
                       request.release,
@@ -3553,7 +4214,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
                       releaseName: request.release,
                       revision: request.targetRevision,
                       manifest,
-                      values: request.rendererValues,
+                      values: rendererValues,
                     });
                     await prepareReleaseProjectionConfigMap(command, {
                       namespace: request.namespace,
@@ -3638,7 +4299,17 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           postgres: password(),
         };
         const dsn = (role: string, secret: string) =>
-          `postgres://${role}:${encodeURIComponent(secret)}@${hostname}:${port}/${database}?sslmode=verify-full`;
+          'postgres://' +
+          role +
+          ':' +
+          encodeURIComponent(secret) +
+          '@' +
+          hostname +
+          ':' +
+          port +
+          '/' +
+          database +
+          '?sslmode=verify-full';
         const values: Record<string, string> = {
           'owner-url': dsn('commander_owner', passwords.owner),
           'app-url': dsn('commander_app', passwords.app),
@@ -3675,7 +4346,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           const created = (
             await command('kubectl', ['create', '--filename', '-', '--output', 'name'], manifest)
           ).trim();
-          if (created !== `secret/${name}`) fail('TENANT_CUTOVER_DATABASE_SECRET_CREATE_FAILED');
+          if (created !== 'secret/' + name) fail('TENANT_CUTOVER_DATABASE_SECRET_CREATE_FAILED');
         } catch {
           // A create race or a lost success response is resolved only by an exact live re-read.
         }
@@ -3735,7 +4406,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           const created = (
             await command('kubectl', ['create', '--filename', '-', '--output', 'name'], manifest)
           ).trim();
-          if (created !== `secret/${targetName}`) {
+          if (created !== 'secret/' + targetName) {
             fail('TENANT_CUTOVER_PROOF_OWNER_SECRET_CREATE_FAILED');
           }
         } catch {
@@ -3824,17 +4495,22 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             request.manifest,
           )
         ).trim();
-        if (created !== `job.batch/${request.name}`) {
+        if (created !== 'job.batch/' + request.name) {
           fail('TENANT_CUTOVER_PROOF_JOB_CREATE_FAILED');
         }
-        await command('kubectl', [
-          'wait',
-          '--for=condition=complete',
-          `job/${request.name}`,
-          '--namespace',
-          request.namespace,
-          '--timeout=10m',
-        ]);
+        await command(
+          'kubectl',
+          [
+            'wait',
+            '--for=condition=complete',
+            `job/${request.name}`,
+            '--namespace',
+            request.namespace,
+            '--timeout=10m',
+          ],
+          undefined,
+          'proof_job_wait',
+        );
         const output = (
           await command('kubectl', [
             'logs',
@@ -3885,7 +4561,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           return;
         }
         const desired = desiredObject(object);
-        const manager = `commander-restore-${process.pid}-${randomBytes(12).toString('hex')}`;
+        const manager = 'commander-restore-' + process.pid + '-' + randomBytes(12).toString('hex');
         const dryRun = parseJsonObject(
           await command(
             'kubectl',
@@ -3895,7 +4571,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
               '--dry-run=server',
               '--validate=strict',
               '--force-conflicts',
-              `--field-manager=${manager}`,
+              '--field-manager=' + manager,
               '--filename',
               '-',
               '--output',
@@ -3982,7 +4658,10 @@ async function main(): Promise<void> {
   const request = parseHelmTenantCutoverArgs(process.argv.slice(2), process.cwd());
   const result = await runHelmTenantCutover(request, createNodePorts());
   process.stdout.write(
-    `${canonicalBootstrapJson({ action: result.action, operationVersion: result.operation.operationVersion })}\n`,
+    canonicalBootstrapJson({
+      action: result.action,
+      operationVersion: result.operation.operationVersion,
+    }) + '\n',
   );
 }
 
@@ -3996,7 +4675,171 @@ if (process.argv[1]?.match(/helm-tenant-cutover\.(?:ts|js)$/)) {
         }
       : main;
   run().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : 'TENANT_CUTOVER_FAILED'}\n`);
+    process.stderr.write((error instanceof Error ? error.message : 'TENANT_CUTOVER_FAILED') + '\n');
     process.exitCode = 1;
   });
+}
+function revisionHookName(release: string, kind: 'migration' | 'proof', revision: string): string {
+  const suffix =
+    kind === 'migration' ? '-migration-r' + revision : '-tenant-cutover-prove-r' + revision;
+  return release.slice(0, 63 - suffix.length).replace(/-$/, '') + suffix;
+}
+
+export function projectPostRenderedHelmReleaseRevision(input: {
+  namespace: string;
+  releaseName: string;
+  revision: string;
+  projectionConfigMapName: string;
+  manifest: string;
+  hookManifest: string;
+  values: string;
+}): HelmReleaseProjection {
+  const combined = mergePostRenderedHelmHooks(input);
+  return projectHelmReleaseRevision({
+    namespace: input.namespace,
+    releaseName: input.releaseName,
+    revision: input.revision,
+    manifest: combined,
+    values: input.values,
+  });
+}
+
+function mergePostRenderedHelmHooks(input: {
+  namespace: string;
+  releaseName: string;
+  revision: string;
+  projectionConfigMapName: string;
+  manifest: string;
+  hookManifest: string;
+}): string {
+  if (
+    !input.namespace ||
+    !input.releaseName ||
+    !/^[1-9][0-9]*$/.test(input.revision) ||
+    !NAME.test(input.projectionConfigMapName) ||
+    input.projectionConfigMapName.length > 63
+  ) {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  const documents: JsonRecord[] = [];
+  try {
+    loadAll(input.hookManifest, (document) => {
+      if (document === undefined || document === null) return;
+      const object = jsonRecord(document, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const metadata = jsonRecord(object.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      if (
+        object.apiVersion !== 'batch/v1' ||
+        object.kind !== 'Job' ||
+        (metadata.namespace !== undefined && metadata.namespace !== input.namespace)
+      ) {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+      documents.push(object);
+    });
+  } catch {
+    fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+  }
+  if (documents.length !== 2) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+
+  const allowed = new Map([
+    [revisionHookName(input.releaseName, 'migration', '1'), 'migration'],
+    [revisionHookName(input.releaseName, 'proof', '1'), 'proof'],
+  ] as const);
+  const hooks: JsonRecord[] = [];
+  for (const hook of documents) {
+    const metadata = jsonRecord(hook.metadata, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    const sourceName = metadata.name;
+    if (typeof sourceName !== 'string') fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    const kind = allowed.get(sourceName);
+    if (!kind) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    allowed.delete(sourceName);
+    const targetName = revisionHookName(input.releaseName, kind, input.revision);
+    metadata.name = targetName;
+    metadata.namespace = input.namespace;
+    const annotations = jsonRecord(
+      metadata.annotations,
+      'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+    );
+    const hookEvents = annotations['helm.sh/hook'];
+    const expectedEvents =
+      kind === 'migration' ? 'pre-install,pre-upgrade,pre-rollback' : 'post-install,post-upgrade';
+    const expectedWeight = kind === 'migration' ? '-10' : '10';
+    if (hookEvents === undefined && kind === 'migration') {
+      let ordinaryMigration = false;
+      try {
+        loadAll(input.manifest, (document) => {
+          if (!document || typeof document !== 'object' || Array.isArray(document)) return;
+          const object = document as JsonRecord;
+          const objectMetadata = jsonRecord(
+            object.metadata,
+            'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+          );
+          if (
+            object.apiVersion === 'batch/v1' &&
+            object.kind === 'Job' &&
+            objectMetadata.name === targetName
+          ) {
+            ordinaryMigration = true;
+          }
+        });
+      } catch {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+      if (
+        !ordinaryMigration ||
+        annotations['helm.sh/hook-weight'] !== undefined ||
+        annotations['helm.sh/hook-delete-policy'] !== 'before-hook-creation,hook-succeeded'
+      ) {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+      continue;
+    }
+    if (
+      hookEvents !== expectedEvents ||
+      annotations['helm.sh/hook-weight'] !== expectedWeight ||
+      annotations['helm.sh/hook-delete-policy'] !== 'before-hook-creation,hook-succeeded'
+    ) {
+      fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    }
+    if (kind === 'proof') {
+      const spec = jsonRecord(hook.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const template = jsonRecord(spec.template, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const podSpec = jsonRecord(template.spec, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const volumes = Array.isArray(podSpec.volumes)
+        ? podSpec.volumes.map((value) =>
+            jsonRecord(value, 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'),
+          )
+        : [];
+      const projectionVolumes = volumes.filter((value) => value.name === 'release-projection');
+      if (projectionVolumes.length !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      const configMap = jsonRecord(
+        projectionVolumes[0]!.configMap,
+        'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID',
+      );
+      if (configMap.name !== input.projectionConfigMapName) {
+        fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+      }
+    }
+    hooks.push(hook);
+  }
+  if (allowed.size !== 0) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+
+  const combined = [
+    input.manifest.trimEnd(),
+    ...hooks.map((hook) =>
+      dump(hook, {
+        noRefs: true,
+        lineWidth: -1,
+      }).trimEnd(),
+    ),
+  ]
+    .filter(Boolean)
+    .join('\n---\n');
+  assertProjectionConsumer(
+    combined,
+    input.releaseName,
+    input.revision,
+    input.projectionConfigMapName,
+  );
+  return combined;
 }
