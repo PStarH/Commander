@@ -618,7 +618,13 @@ function commentAtPosition(
   const lineStart = content.lastIndexOf('\n', position) + 1;
   const nextLine = content.indexOf('\n', position);
   const line = content.slice(lineStart, nextLine < 0 ? content.length : nextLine);
-  return line.trimStart().startsWith('//') ? line : undefined;
+  if (line.trimStart().startsWith('//')) return line;
+
+  const blockStart = content.lastIndexOf('/*', position);
+  const priorBlockEnd = content.lastIndexOf('*/', position);
+  if (blockStart <= priorBlockEnd) return undefined;
+  const blockEnd = content.indexOf('*/', position);
+  return blockEnd < 0 ? undefined : content.slice(blockStart, blockEnd + 2);
 }
 
 function sourceOccurrenceFingerprint(

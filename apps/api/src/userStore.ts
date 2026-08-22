@@ -1,19 +1,10 @@
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { hashSync } from 'bcryptjs';
-import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
-import { isProductionEnv } from './envSignal';
-
-// ── Types ───────────────────────────────────────────────────────────────────
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import type { SqlClient, SqlPool } from '@commander/kernel';
 
 export type UserRole = 'super_admin' | 'admin' | 'developer' | 'operator' | 'auditor' | 'viewer';
 
-/**
- * Numeric hierarchy for each role (higher = more privileged).
- * Used for level-based permission checks so that, e.g., a `super_admin`
- * satisfies an `admin` requirement. Mirrors the core AuthManager hierarchy.
- */
 export const ROLE_HIERARCHY: Record<UserRole, number> = {
   super_admin: 6,
   admin: 5,
@@ -23,9 +14,6 @@ export const ROLE_HIERARCHY: Record<UserRole, number> = {
   viewer: 1,
 };
 
-/**
- * Returns true when `userRole` meets or exceeds the level of `requiredRole`.
- */
 export function hasRole(userRole: UserRole, requiredRole: UserRole): boolean {
   return (ROLE_HIERARCHY[userRole] ?? 0) >= (ROLE_HIERARCHY[requiredRole] ?? 0);
 }
@@ -36,17 +24,53 @@ export interface User {
   email: string;
   passwordHash: string;
   role: UserRole;
-  /** Durable external identity binding for OIDC-provisioned users. */
   oidcIssuer?: string;
   oidcSubject?: string;
   createdAt: string;
   lastLoginAt: string | null;
 }
 
-/**
- * The user object returned to clients — never includes the password hash.
- */
 export type SafeUser = Omit<User, 'passwordHash' | 'oidcIssuer' | 'oidcSubject'>;
+export interface UserTenantMembership {
+  userId: string;
+  tenantId: string;
+  role: UserRole;
+}
+
+type UserRow = {
+  id: string;
+  username: string;
+  email: string;
+  password_hash: string;
+  role: UserRole;
+  oidc_issuer: string | null;
+  oidc_subject: string | null;
+  created_at: Date | string;
+  last_login_at: Date | string | null;
+};
+
+type VerifiedPoolFactory = (
+  input: { connectionString: string },
+  env?: NodeJS.ProcessEnv,
+) => SqlPool;
+
+function timestamp(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function fromRow(row: UserRow): User {
+  return {
+    id: row.id,
+    username: row.username,
+    email: row.email,
+    passwordHash: row.password_hash,
+    role: row.role,
+    oidcIssuer: row.oidc_issuer ?? undefined,
+    oidcSubject: row.oidc_subject ?? undefined,
+    createdAt: timestamp(row.created_at),
+    lastLoginAt: row.last_login_at === null ? null : timestamp(row.last_login_at),
+  };
+}
 
 function toSafeUser(user: User): SafeUser {
   const {
@@ -58,293 +82,550 @@ function toSafeUser(user: User): SafeUser {
   return safe;
 }
 
-// ── Persistence ─────────────────────────────────────────────────────────────
-//
-// Users are stored in a JSON file at <cwd>/.commander/users.json. An in-memory
-// cache is kept for fast lookups; writes flush to disk synchronously so a
-// crash never loses a freshly created account. The store auto-initializes a
-// default admin user on first load.
-
-const USERS_DIR = path.resolve(process.cwd(), '.commander');
-const USERS_FILE = path.join(USERS_DIR, 'users.json');
-
-let cache: User[] | null = null;
-let initialized = false;
-
-function loadFromDisk(): User[] {
-  // REL-4: 损坏或错形（如 {"users":[...]}）均隔离到 .corrupt-*，禁止 silent [] →
-  // ensureDefaultAdmin 原地抹掉 passwordHash（与 refreshTokenStore 对齐）。
-  const parsed = readJsonFileSafe<User[] | null>(USERS_FILE, null, Array.isArray);
-  return parsed ?? [];
-}
-
-function saveToDisk(users: User[]): void {
-  try {
-    // REL-3: atomic write so a crash mid-write cannot truncate password hashes.
-    atomicWriteFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-  } catch (err) {
-    process.stderr.write(`[userStore] Failed to write users.json: ${err}\n`);
+function uniqueViolation(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const postgres = error as { code?: unknown; constraint?: unknown };
+  if (postgres.code !== '23505' || typeof postgres.constraint !== 'string') return undefined;
+  if (postgres.constraint === 'commander_auth_users_username_ci_uidx') {
+    return 'Username already exists';
   }
-}
-
-/**
- * Creates the default admin user if no users exist yet.
- * Username: admin
- * Password: ADMIN_PASSWORD env var, or 'commander-admin' as a dev default.
- */
-function ensureDefaultAdmin(users: User[]): User[] {
-  if (users.length > 0) {
-    return users;
+  if (postgres.constraint === 'commander_auth_users_email_ci_uidx') {
+    return 'Email already registered';
   }
-  const configuredPassword = process.env.ADMIN_PASSWORD;
-  if (!configuredPassword && isProductionEnv()) {
-    // AUTH-4: never seed a default admin with a well-known password in
-    // production. Fail hard so the operator must provide ADMIN_PASSWORD.
-    throw new Error(
-      '[userStore] ADMIN_PASSWORD must be set in production before the default admin account ' +
-        'can be created. Refusing to seed the well-known admin/commander-admin credential.',
-    );
+  if (postgres.constraint === 'commander_auth_users_oidc_uidx') {
+    return 'OIDC identity already registered';
   }
-  const adminPassword = configuredPassword ?? 'commander-admin';
-  const now = new Date().toISOString();
-  const admin: User = {
-    id: randomUUID(),
-    username: 'admin',
-    email: 'admin@commander.local',
-    passwordHash: hashSync(adminPassword, 10),
-    role: 'admin',
-    createdAt: now,
-    lastLoginAt: null,
-  };
-  users.push(admin);
-  saveToDisk(users);
-  process.stdout.write(
-    `[userStore] Created default admin user (username=admin). ` +
-      `Change the password immediately in production.\n`,
-  );
-  return users;
+  return undefined;
 }
 
-/**
- * Loads users from disk (or cache) and ensures the default admin exists.
- * Called lazily on first access so import-time side effects are avoided.
- */
-function getUsers(): User[] {
-  if (cache !== null) {
-    return cache;
-  }
-  cache = loadFromDisk();
-  cache = ensureDefaultAdmin(cache);
-  initialized = true;
-  return cache;
-}
+const USER_COLUMNS = [
+  'id',
+  'username',
+  'email',
+  'password_hash',
+  'role',
+  'oidc_issuer',
+  'oidc_subject',
+  'created_at',
+  'last_login_at',
+].join(', ');
 
-/**
- * Persists the current cache to disk.
- */
-function persist(users: User[]): void {
-  cache = users;
-  saveToDisk(users);
-}
-
-// ── Public API ──────────────────────────────────────────────────────────────
-
-export function isInitialized(): boolean {
-  return initialized;
-}
-
-export function findUserById(id: string): User | undefined {
-  return getUsers().find((u) => u.id === id);
-}
-
-export function findUserByUsername(username: string): User | undefined {
-  const lower = username.toLowerCase();
-  return getUsers().find((u) => u.username.toLowerCase() === lower);
-}
-
-export function findUserByEmail(email: string): User | undefined {
-  const lower = email.toLowerCase();
-  return getUsers().find((u) => u.email.toLowerCase() === lower);
-}
-
-export function findUserByOidcIdentity(issuer: string, subject: string): User | undefined {
-  return getUsers().find((u) => u.oidcIssuer === issuer && u.oidcSubject === subject);
-}
-
-export function listUsers(): SafeUser[] {
-  return getUsers().map(toSafeUser);
-}
-
-export function createUser(args: {
+type CreateUserArgs = {
   username: string;
   email: string;
   password: string;
   role?: UserRole;
   oidcIssuer?: string;
   oidcSubject?: string;
-}): { user: SafeUser } | { error: string } {
-  const users = getUsers();
+  tenantId: string;
+};
 
-  if ((args.oidcIssuer === undefined) !== (args.oidcSubject === undefined)) {
-    return { error: 'OIDC issuer and subject must be provided together' };
-  }
-
-  if (users.some((u) => u.username.toLowerCase() === args.username.toLowerCase())) {
-    return { error: 'Username already exists' };
-  }
-  if (users.some((u) => u.email.toLowerCase() === args.email.toLowerCase())) {
-    return { error: 'Email already registered' };
-  }
-  if (
-    args.oidcIssuer !== undefined &&
-    users.some((u) => u.oidcIssuer === args.oidcIssuer && u.oidcSubject === args.oidcSubject)
-  ) {
-    return { error: 'OIDC identity already registered' };
-  }
-
-  const now = new Date().toISOString();
-  const user: User = {
-    id: randomUUID(),
-    username: args.username,
-    email: args.email,
-    passwordHash: hashSync(args.password, 10),
-    role: args.role ?? 'viewer',
-    oidcIssuer: args.oidcIssuer,
-    oidcSubject: args.oidcSubject,
-    createdAt: now,
-    lastLoginAt: null,
-  };
-  users.push(user);
-  persist(users);
-  return { user: toSafeUser(user) };
+export interface UserRepository {
+  findUserById(id: string): Promise<User | undefined>;
+  findUserByUsername(username: string): Promise<User | undefined>;
+  findUserByEmail(email: string): Promise<User | undefined>;
+  findUserByOidcIdentity(issuer: string, subject: string): Promise<User | undefined>;
+  findUserTenantMembership(
+    userId: string,
+    tenantId: string,
+  ): Promise<UserTenantMembership | undefined>;
+  listUsers(tenantId: string): Promise<SafeUser[]>;
+  createUser(args: CreateUserArgs): Promise<{ user: SafeUser } | { error: string }>;
+  bindUserToOidcIdentity(
+    userId: string,
+    issuer: string,
+    subject: string,
+  ): Promise<SafeUser | { error: string }>;
+  updateLastLogin(userId: string): Promise<void>;
+  updateUserRole(userId: string, tenantId: string, role: UserRole): Promise<SafeUser | null>;
+  updateUser(
+    userId: string,
+    tenantId: string,
+    updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
+  ): Promise<SafeUser | { error: string }>;
+  resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null>;
+  deleteUser(userId: string, tenantId: string): Promise<{ success: boolean; error?: string }>;
+  countAdmins(): Promise<number>;
+  bootstrapDefaultAdmin(password: string, tenantId: string): Promise<void>;
 }
 
-export function bindUserToOidcIdentity(
+export class PostgresUserRepository implements UserRepository {
+  constructor(private readonly pool: SqlPool) {}
+
+  private async withClient<T>(operation: (client: SqlClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      return await operation(client);
+    } finally {
+      await client.release();
+    }
+  }
+
+  private async withAdminInvariant<T>(operation: (client: SqlClient) => Promise<T>): Promise<T> {
+    return this.withClient(async (client) => {
+      await client.query('BEGIN');
+      try {
+        await client.query("SELECT pg_advisory_xact_lock(hashtext('commander_auth_users.admin'))");
+        const result = await operation(client);
+        await client.query('COMMIT');
+        return result;
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined);
+        throw error;
+      }
+    });
+  }
+
+  async findUserById(id: string): Promise<User | undefined> {
+    return this.withClient(async (client) => {
+      const result = await client.query<UserRow>(
+        'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE id = $1',
+        [id],
+      );
+      return result.rows[0] ? fromRow(result.rows[0]) : undefined;
+    });
+  }
+
+  async findUserByUsername(username: string): Promise<User | undefined> {
+    return this.withClient(async (client) => {
+      const result = await client.query<UserRow>(
+        'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE lower(username) = lower($1)',
+        [username],
+      );
+      return result.rows[0] ? fromRow(result.rows[0]) : undefined;
+    });
+  }
+
+  async findUserByEmail(email: string): Promise<User | undefined> {
+    return this.withClient(async (client) => {
+      const result = await client.query<UserRow>(
+        'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE lower(email) = lower($1)',
+        [email],
+      );
+      return result.rows[0] ? fromRow(result.rows[0]) : undefined;
+    });
+  }
+
+  async findUserByOidcIdentity(issuer: string, subject: string): Promise<User | undefined> {
+    return this.withClient(async (client) => {
+      const result = await client.query<UserRow>(
+        'SELECT ' +
+          USER_COLUMNS +
+          ' FROM commander_auth_users WHERE oidc_issuer = $1 AND oidc_subject = $2',
+        [issuer, subject],
+      );
+      return result.rows[0] ? fromRow(result.rows[0]) : undefined;
+    });
+  }
+
+  async findUserTenantMembership(
+    userId: string,
+    tenantId: string,
+  ): Promise<UserTenantMembership | undefined> {
+    return this.withClient(async (client) => {
+      const result = await client.query<UserTenantMembership>(
+        'SELECT user_id AS "userId", tenant_id AS "tenantId", role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2',
+        [userId, tenantId],
+      );
+      return result.rows[0];
+    });
+  }
+
+  async listUsers(tenantId: string): Promise<SafeUser[]> {
+    return this.withClient(async (client) => {
+      const result = await client.query<UserRow>(
+        'SELECT u.id, u.username, u.email, u.password_hash, t.role, u.oidc_issuer, u.oidc_subject, u.created_at, u.last_login_at ' +
+          'FROM commander_auth_user_tenants t JOIN commander_auth_users u ON u.id = t.user_id ' +
+          'WHERE t.tenant_id = $1 ORDER BY u.created_at ASC',
+        [tenantId],
+      );
+      return result.rows.map(fromRow).map(toSafeUser);
+    });
+  }
+
+  async createUser(args: CreateUserArgs): Promise<{ user: SafeUser } | { error: string }> {
+    if ((args.oidcIssuer === undefined) !== (args.oidcSubject === undefined)) {
+      return { error: 'OIDC issuer and subject must be provided together' };
+    }
+    try {
+      return await this.withClient(async (client) => {
+        await client.query('BEGIN');
+        try {
+          const result = await client.query<UserRow>(
+            'INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at) VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp(), NULL) RETURNING ' +
+              USER_COLUMNS,
+            [
+              randomUUID(),
+              args.username,
+              args.email,
+              hashSync(args.password, 10),
+              args.role ?? 'viewer',
+              args.oidcIssuer ?? null,
+              args.oidcSubject ?? null,
+            ],
+          );
+          const user = fromRow(result.rows[0]!);
+          await client.query(
+            'INSERT INTO commander_auth_user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)',
+            [user.id, args.tenantId, args.role ?? 'viewer'],
+          );
+          await client.query('COMMIT');
+          return { user: toSafeUser(user) };
+        } catch (error) {
+          await client.query('ROLLBACK').catch(() => undefined);
+          throw error;
+        }
+      });
+    } catch (error) {
+      const message = uniqueViolation(error);
+      if (message) return { error: message };
+      throw error;
+    }
+  }
+
+  async bindUserToOidcIdentity(
+    userId: string,
+    issuer: string,
+    subject: string,
+  ): Promise<SafeUser | { error: string }> {
+    try {
+      return await this.withClient(async (client) => {
+        const linked = await client.query<UserRow>(
+          'UPDATE commander_auth_users SET oidc_issuer = $2, oidc_subject = $3 WHERE id = $1 AND oidc_issuer IS NULL AND oidc_subject IS NULL RETURNING ' +
+            USER_COLUMNS,
+          [userId, issuer, subject],
+        );
+        if (linked.rows[0]) return toSafeUser(fromRow(linked.rows[0]));
+        const existing = await client.query<UserRow>(
+          'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE id = $1',
+          [userId],
+        );
+        const user = existing.rows[0];
+        if (!user) return { error: 'User not found' };
+        if (user.oidc_issuer === issuer && user.oidc_subject === subject) {
+          return toSafeUser(fromRow(user));
+        }
+        return { error: 'User is already linked to a different OIDC identity' };
+      });
+    } catch (error) {
+      const message = uniqueViolation(error);
+      if (message) return { error: message };
+      throw error;
+    }
+  }
+
+  async updateLastLogin(userId: string): Promise<void> {
+    await this.withClient(async (client) => {
+      await client.query(
+        'UPDATE commander_auth_users SET last_login_at = clock_timestamp() WHERE id = $1',
+        [userId],
+      );
+    });
+  }
+
+  async updateUserRole(userId: string, tenantId: string, role: UserRole): Promise<SafeUser | null> {
+    return this.withAdminInvariant(async (client) => {
+      const current = await client.query<Pick<UserTenantMembership, 'role'>>(
+        'SELECT role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE',
+        [userId, tenantId],
+      );
+      if (!current.rows[0]) return null;
+      if (current.rows[0].role === 'admin' && !hasRole(role, 'admin')) {
+        const admins = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM commander_auth_user_tenants WHERE tenant_id = $1 AND role = 'admin'",
+          [tenantId],
+        );
+        if (Number(admins.rows[0]?.count ?? 0) <= 1) return null;
+      }
+      await client.query(
+        'UPDATE commander_auth_user_tenants SET role = $3 WHERE user_id = $1 AND tenant_id = $2',
+        [userId, tenantId, role],
+      );
+      const user = await client.query<UserRow>(
+        'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE id = $1',
+        [userId],
+      );
+      return user.rows[0] ? toSafeUser({ ...fromRow(user.rows[0]), role }) : null;
+    });
+  }
+
+  async updateUser(
+    userId: string,
+    tenantId: string,
+    updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
+  ): Promise<SafeUser | { error: string }> {
+    const fields: Array<{ column: 'username' | 'email'; value: string }> = [];
+    if (updates.username !== undefined)
+      fields.push({ column: 'username', value: updates.username });
+    if (updates.email !== undefined) fields.push({ column: 'email', value: updates.email });
+    try {
+      return await this.withAdminInvariant(async (client) => {
+        const membership = await client.query<Pick<UserTenantMembership, 'role'>>(
+          'SELECT role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE',
+          [userId, tenantId],
+        );
+        if (!membership.rows[0]) return { error: 'User not found' };
+        if (
+          updates.role !== undefined &&
+          membership.rows[0].role === 'admin' &&
+          !hasRole(updates.role, 'admin')
+        ) {
+          const admins = await client.query<{ count: string }>(
+            "SELECT count(*)::text AS count FROM commander_auth_user_tenants WHERE tenant_id = $1 AND role = 'admin'",
+            [tenantId],
+          );
+          if (Number(admins.rows[0]?.count ?? 0) <= 1) {
+            return { error: 'Cannot demote the last admin account' };
+          }
+        }
+        const values: unknown[] = [userId];
+        const setters: string[] = [];
+        if (updates.role !== undefined) {
+          await client.query(
+            'UPDATE commander_auth_user_tenants SET role = $3 WHERE user_id = $1 AND tenant_id = $2',
+            [userId, tenantId, updates.role],
+          );
+        }
+        for (const field of fields) {
+          values.push(field.value);
+          setters.push(field.column + ' = $' + values.length);
+        }
+        if (setters.length === 0) {
+          const existing = await client.query<UserRow>(
+            'SELECT ' + USER_COLUMNS + ' FROM commander_auth_users WHERE id = $1',
+            [userId],
+          );
+          if (!existing.rows[0]) return { error: 'User not found' };
+          return toSafeUser({
+            ...fromRow(existing.rows[0]),
+            role: updates.role ?? membership.rows[0].role,
+          });
+        }
+        const updated = await client.query<UserRow>(
+          'UPDATE commander_auth_users SET ' +
+            setters.join(', ') +
+            ' WHERE id = $1 RETURNING ' +
+            USER_COLUMNS,
+          values,
+        );
+        if (!updated.rows[0]) return { error: 'User not found' };
+        return toSafeUser({
+          ...fromRow(updated.rows[0]),
+          role: updates.role ?? membership.rows[0].role,
+        });
+      });
+    } catch (error) {
+      const message = uniqueViolation(error);
+      if (message) return { error: message };
+      throw error;
+    }
+  }
+
+  async resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null> {
+    return this.withClient(async (client) => {
+      const updated = await client.query<UserRow>(
+        'UPDATE commander_auth_users SET password_hash = $2 WHERE id = $1 RETURNING ' +
+          USER_COLUMNS,
+        [userId, hashSync(newPassword, 10)],
+      );
+      return updated.rows[0] ? toSafeUser(fromRow(updated.rows[0])) : null;
+    });
+  }
+
+  async deleteUser(
+    userId: string,
+    tenantId: string,
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.withAdminInvariant(async (client) => {
+      const membership = await client.query<Pick<UserTenantMembership, 'role'>>(
+        'SELECT role FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2 FOR UPDATE',
+        [userId, tenantId],
+      );
+      if (!membership.rows[0]) return { success: false, error: 'User not found' };
+      if (membership.rows[0].role === 'admin') {
+        const admins = await client.query<{ count: string }>(
+          "SELECT count(*)::text AS count FROM commander_auth_user_tenants WHERE tenant_id = $1 AND role = 'admin'",
+          [tenantId],
+        );
+        if (Number(admins.rows[0]?.count ?? 0) <= 1) {
+          return { success: false, error: 'Cannot delete the last admin account' };
+        }
+      }
+      await client.query(
+        'DELETE FROM commander_auth_user_tenants WHERE user_id = $1 AND tenant_id = $2',
+        [userId, tenantId],
+      );
+      const remaining = await client.query<{ exists: boolean }>(
+        'SELECT EXISTS (SELECT 1 FROM commander_auth_user_tenants WHERE user_id = $1) AS exists',
+        [userId],
+      );
+      if (!remaining.rows[0]?.exists) {
+        await client.query('DELETE FROM commander_auth_users WHERE id = $1', [userId]);
+      }
+      return { success: true };
+    });
+  }
+
+  async countAdmins(): Promise<number> {
+    return this.withClient(async (client) => {
+      const result = await client.query<{ count: string }>(
+        "SELECT count(*)::text AS count FROM commander_auth_users WHERE role = 'admin'",
+      );
+      return Number(result.rows[0]?.count ?? 0);
+    });
+  }
+
+  async bootstrapDefaultAdmin(password: string, tenantId: string): Promise<void> {
+    await this.withAdminInvariant(async (client) => {
+      const users = await client.query<{ count: string }>(
+        'SELECT count(*)::text AS count FROM commander_auth_users',
+      );
+      if (Number(users.rows[0]?.count ?? 0) > 0) return;
+
+      const userId = randomUUID();
+      await client.query(
+        'INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at) VALUES ($1, $2, $3, $4, $5, NULL, NULL, clock_timestamp(), NULL)',
+        [userId, 'admin', 'admin@commander.local', hashSync(password, 10), 'admin'],
+      );
+      await client.query(
+        'INSERT INTO commander_auth_user_tenants (user_id, tenant_id, role) VALUES ($1, $2, $3)',
+        [userId, tenantId, 'admin'],
+      );
+    });
+  }
+}
+
+export function createUserRepositoryFromEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  createPool: VerifiedPoolFactory = createVerifiedPostgresPool,
+): UserRepository {
+  const connectionString = env.DATABASE_URL?.trim();
+  if (!connectionString) throw new Error('AUTH_USERS_DATABASE_URL_REQUIRED');
+  let role: string;
+  try {
+    role = decodeURIComponent(new URL(connectionString).username);
+  } catch {
+    throw new Error('AUTH_USERS_DATABASE_URL_INVALID');
+  }
+  if (role !== 'commander_app') throw new Error('AUTH_USERS_DATABASE_ROLE_INVALID');
+  return new PostgresUserRepository(createPool({ connectionString }, env));
+}
+
+let defaultRepository: UserRepository | undefined;
+
+export function getUserRepository(): UserRepository {
+  defaultRepository ??= createUserRepositoryFromEnvironment();
+  return defaultRepository;
+}
+
+export function setUserRepositoryForTesting(repository: UserRepository | undefined): void {
+  defaultRepository = repository;
+}
+
+export async function bootstrapDefaultAdmin(
+  env: NodeJS.ProcessEnv = process.env,
+  repository?: UserRepository,
+): Promise<void> {
+  const password = env.ADMIN_PASSWORD;
+  if (!password) {
+    if (env.NODE_ENV === 'production') throw new Error('AUTH_USERS_ADMIN_PASSWORD_REQUIRED');
+    return;
+  }
+  const tenantId = env.ADMIN_TENANT_ID;
+  if (!tenantId) throw new Error('AUTH_USERS_ADMIN_TENANT_REQUIRED');
+  await (repository ?? getUserRepository()).bootstrapDefaultAdmin(password, tenantId);
+}
+
+export function isInitialized(): boolean {
+  return defaultRepository !== undefined;
+}
+
+export async function findUserById(id: string): Promise<User | undefined> {
+  return getUserRepository().findUserById(id);
+}
+
+export async function findUserByUsername(username: string): Promise<User | undefined> {
+  return getUserRepository().findUserByUsername(username);
+}
+
+export async function findUserByEmail(email: string): Promise<User | undefined> {
+  return getUserRepository().findUserByEmail(email);
+}
+
+export async function findUserByOidcIdentity(
+  issuer: string,
+  subject: string,
+): Promise<User | undefined> {
+  return getUserRepository().findUserByOidcIdentity(issuer, subject);
+}
+
+export async function findUserTenantMembership(
+  userId: string,
+  tenantId: string,
+): Promise<UserTenantMembership | undefined> {
+  return getUserRepository().findUserTenantMembership(userId, tenantId);
+}
+
+export async function listUsers(tenantId: string): Promise<SafeUser[]> {
+  return getUserRepository().listUsers(tenantId);
+}
+
+export async function createUser(
+  args: CreateUserArgs,
+): Promise<{ user: SafeUser } | { error: string }> {
+  return getUserRepository().createUser(args);
+}
+
+export async function bindUserToOidcIdentity(
   userId: string,
   issuer: string,
   subject: string,
-): SafeUser | { error: string } {
-  const users = getUsers();
-  const user = users.find((candidate) => candidate.id === userId);
-  if (!user) return { error: 'User not found' };
-
-  const conflict = users.find(
-    (candidate) =>
-      candidate.id !== userId &&
-      candidate.oidcIssuer === issuer &&
-      candidate.oidcSubject === subject,
-  );
-  if (conflict) return { error: 'OIDC identity already registered' };
-
-  if (user.oidcIssuer !== undefined || user.oidcSubject !== undefined) {
-    if (user.oidcIssuer !== issuer || user.oidcSubject !== subject) {
-      return { error: 'User is already linked to a different OIDC identity' };
-    }
-    return toSafeUser(user);
-  }
-
-  user.oidcIssuer = issuer;
-  user.oidcSubject = subject;
-  persist(users);
-  return toSafeUser(user);
+): Promise<SafeUser | { error: string }> {
+  return getUserRepository().bindUserToOidcIdentity(userId, issuer, subject);
 }
 
-export function updateLastLogin(userId: string): void {
-  const users = getUsers();
-  const user = users.find((u) => u.id === userId);
-  if (user) {
-    user.lastLoginAt = new Date().toISOString();
-    persist(users);
-  }
+export async function updateLastLogin(userId: string): Promise<void> {
+  await getUserRepository().updateLastLogin(userId);
 }
 
-export function updateUserRole(userId: string, role: UserRole): SafeUser | null {
-  const users = getUsers();
-  const user = users.find((u) => u.id === userId);
-  if (!user) {
-    return null;
-  }
-  user.role = role;
-  persist(users);
-  return toSafeUser(user);
-}
-
-export function updateUser(
+export async function updateUserRole(
   userId: string,
+  tenantId: string,
+  role: UserRole,
+): Promise<SafeUser | null> {
+  return getUserRepository().updateUserRole(userId, tenantId, role);
+}
+
+export async function updateUser(
+  userId: string,
+  tenantId: string,
   updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
-): SafeUser | { error: string } {
-  const users = getUsers();
-  const user = users.find((u) => u.id === userId);
-  if (!user) {
-    return { error: 'User not found' };
-  }
-
-  if (updates.username !== undefined) {
-    const conflict = users.find(
-      (u) => u.id !== userId && u.username.toLowerCase() === updates.username!.toLowerCase(),
-    );
-    if (conflict) {
-      return { error: 'Username already exists' };
-    }
-    user.username = updates.username;
-  }
-
-  if (updates.email !== undefined) {
-    const conflict = users.find(
-      (u) => u.id !== userId && u.email.toLowerCase() === updates.email!.toLowerCase(),
-    );
-    if (conflict) {
-      return { error: 'Email already registered' };
-    }
-    user.email = updates.email;
-  }
-
-  if (updates.role !== undefined) {
-    user.role = updates.role;
-  }
-
-  persist(users);
-  return toSafeUser(user);
+): Promise<SafeUser | { error: string }> {
+  return getUserRepository().updateUser(userId, tenantId, updates);
 }
 
-export function resetUserPassword(userId: string, newPassword: string): SafeUser | null {
-  const users = getUsers();
-  const user = users.find((u) => u.id === userId);
-  if (!user) {
-    return null;
-  }
-  user.passwordHash = hashSync(newPassword, 10);
-  persist(users);
-  return toSafeUser(user);
+export async function resetUserPassword(
+  userId: string,
+  newPassword: string,
+): Promise<SafeUser | null> {
+  return getUserRepository().resetUserPassword(userId, newPassword);
 }
 
-export function deleteUser(userId: string): { success: boolean; error?: string } {
-  const users = getUsers();
-  const user = users.find((u) => u.id === userId);
-  if (!user) {
-    return { success: false, error: 'User not found' };
-  }
-
-  const adminCount = users.filter((u) => u.role === 'admin').length;
-  if (user.role === 'admin' && adminCount <= 1) {
-    return { success: false, error: 'Cannot delete the last admin account' };
-  }
-
-  const remaining = users.filter((u) => u.id !== userId);
-  persist(remaining);
-  return { success: true };
+export async function deleteUser(
+  userId: string,
+  tenantId: string,
+): Promise<{ success: boolean; error?: string }> {
+  return getUserRepository().deleteUser(userId, tenantId);
 }
 
-export function countAdmins(): number {
-  return getUsers().filter((u) => u.role === 'admin').length;
+export async function countAdmins(): Promise<number> {
+  return getUserRepository().countAdmins();
 }
 
 export function toSafeUserPublic(user: User): SafeUser {
   return toSafeUser(user);
 }
 
-/** Test helper: clear in-memory cache so the next access re-reads disk. */
 export function _resetUserStoreForTests(): void {
-  cache = null;
-  initialized = false;
+  defaultRepository = undefined;
 }

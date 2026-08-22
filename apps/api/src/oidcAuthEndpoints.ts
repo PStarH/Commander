@@ -13,6 +13,7 @@ import {
 import {
   findUserByEmail,
   findUserByOidcIdentity,
+  findUserTenantMembership,
   createUser,
   bindUserToOidcIdentity,
   updateLastLogin,
@@ -22,8 +23,9 @@ import {
   type UserRole,
 } from './userStore';
 import { signAccessToken, signRefreshToken } from './jwtMiddleware';
+import { getRefreshTokenRepository, type RefreshTokenRepository } from './refreshTokenStore';
 import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
-import { isMultiTenantEnabled, validateTenantId } from '@commander/core/runtime/tenantContext';
+import { validateTenantId } from '@commander/core/runtime/tenantContext';
 
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {
@@ -213,13 +215,7 @@ function resolveOIDCTenantId(
   config: OIDCRuntimeConfig,
 ): string | undefined {
   const claimedTenant = result.claims?.[config.tenantClaim];
-  if (claimedTenant !== undefined) {
-    return typeof claimedTenant === 'string' && claimedTenant.length > 0
-      ? claimedTenant
-      : undefined;
-  }
-  if (isMultiTenantEnabled()) return undefined;
-  return config.defaultTenantId;
+  return typeof claimedTenant === 'string' && claimedTenant.length > 0 ? claimedTenant : undefined;
 }
 
 // ============================================================================
@@ -228,10 +224,16 @@ function resolveOIDCTenantId(
 
 export interface OIDCAuthRouterOptions {
   authenticate?: (idToken: string, config: OIDCRuntimeConfig) => Promise<AuthPluginResult | null>;
+  refreshTokens?: RefreshTokenRepository;
 }
 
 export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Router {
   const router = Router();
+  const refreshTokens = options.refreshTokens ?? getRefreshTokenRepository();
+
+  function authorityUnavailable(res: Response): void {
+    res.status(503).json({ error: 'Authentication service unavailable' });
+  }
 
   /**
    * GET /api/auth/oidc/config
@@ -316,48 +318,77 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
 
     // Resolve by the durable IdP identity. A verified email may bootstrap a
     // one-time link for an existing local account, but is never the login key.
-    let localUser = findUserByOidcIdentity(issuer, subject);
+    let localUser;
+    try {
+      localUser = await findUserByOidcIdentity(issuer, subject);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
     if (!localUser) {
       const oidcEmail = result.claims?.email;
       const emailVerified = result.claims?.email_verified === true;
-      const emailUser =
-        typeof oidcEmail === 'string' && oidcEmail.length > 0
-          ? findUserByEmail(oidcEmail)
-          : undefined;
+      let emailUser;
+      try {
+        emailUser =
+          typeof oidcEmail === 'string' && oidcEmail.length > 0
+            ? await findUserByEmail(oidcEmail)
+            : undefined;
+      } catch {
+        authorityUnavailable(res);
+        return;
+      }
 
       if (emailUser) {
         if (!emailVerified) {
           res.status(409).json({ error: 'OIDC email must be verified before account linking' });
           return;
         }
-        const linked = bindUserToOidcIdentity(emailUser.id, issuer, subject);
+        let linked;
+        try {
+          linked = await bindUserToOidcIdentity(emailUser.id, issuer, subject);
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
         if ('error' in linked) {
           res.status(409).json({ error: linked.error });
           return;
         }
-        localUser = findUserByOidcIdentity(issuer, subject);
+        try {
+          localUser = await findUserByOidcIdentity(issuer, subject);
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
       } else {
-        const created = createUser({
-          username: result.username,
-          email: result.username,
-          // Random local password; authentication always happens via OIDC.
-          password: randomUUID(),
-          role: result.role as UserRole,
-          oidcIssuer: issuer,
-          oidcSubject: subject,
-        });
+        let created;
+        try {
+          created = await createUser({
+            username: result.username,
+            email: result.username,
+            // Random local password; authentication always happens via OIDC.
+            password: randomUUID(),
+            role: result.role as UserRole,
+            oidcIssuer: issuer,
+            oidcSubject: subject,
+            tenantId,
+          });
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
         if ('error' in created) {
           res.status(409).json({ error: created.error });
           return;
         }
-        localUser = findUserByOidcIdentity(issuer, subject);
+        try {
+          localUser = await findUserByOidcIdentity(issuer, subject);
+        } catch {
+          authorityUnavailable(res);
+          return;
+        }
       }
-    }
-
-    // If the OIDC provider changed the linked user's role, keep it in sync.
-    if (localUser && localUser.role !== result.role) {
-      updateUser(localUser.id, { role: result.role as UserRole });
-      localUser = findUserByOidcIdentity(issuer, subject);
     }
 
     if (!localUser) {
@@ -365,20 +396,57 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       return;
     }
 
-    updateLastLogin(localUser.id);
+    let membership;
+    try {
+      membership = await findUserTenantMembership(localUser.id, tenantId);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
+    if (!membership) {
+      res.status(403).json({ error: 'OIDC identity is not authorized for this tenant' });
+      return;
+    }
+
+    // The verified OIDC role is effective only in this tenant membership.
+    if (membership.role !== result.role) {
+      try {
+        const updated = await updateUser(localUser.id, tenantId, { role: result.role as UserRole });
+        if ('error' in updated) {
+          authorityUnavailable(res);
+          return;
+        }
+        membership = { ...membership, role: result.role as UserRole };
+      } catch {
+        authorityUnavailable(res);
+        return;
+      }
+    }
+
+    try {
+      await updateLastLogin(localUser.id);
+    } catch {
+      authorityUnavailable(res);
+      return;
+    }
 
     const authUser = {
       id: localUser.id,
       username: localUser.username,
-      role: localUser.role as AuthRole,
-      tenantId,
+      role: membership.role as AuthRole,
+      tenantId: membership.tenantId,
     };
 
-    res.json({
-      token: signAccessToken(authUser),
-      refreshToken: signRefreshToken(authUser),
-      user: toSafeUserPublic(localUser),
-    });
+    try {
+      const refreshToken = await signRefreshToken(authUser, refreshTokens);
+      res.json({
+        token: signAccessToken(authUser),
+        refreshToken,
+        user: toSafeUserPublic(localUser),
+      });
+    } catch {
+      authorityUnavailable(res);
+    }
   });
 
   /**

@@ -1,0 +1,123 @@
+import assert from 'node:assert/strict';
+import { describe, it } from 'node:test';
+import type { SqlClient, SqlPool } from '@commander/kernel';
+import {
+  PostgresRefreshTokenRepository,
+  createRefreshTokenRepositoryFromEnvironment,
+} from '../src/refreshTokenStore';
+
+const CONSUME_SQL =
+  'UPDATE commander_auth_refresh_tokens SET revoked_at = clock_timestamp() WHERE jti = $1 AND revoked_at IS NULL AND expires_at > clock_timestamp() RETURNING jti';
+
+interface StoredToken {
+  userId: string;
+  expiresAt: Date;
+  revoked: boolean;
+}
+
+function createPoolHarness(): {
+  pool: SqlPool;
+  records: Map<string, StoredToken>;
+  queries: Array<{ sql: string; values: readonly unknown[] }>;
+} {
+  const records = new Map<string, StoredToken>();
+  const queries: Array<{ sql: string; values: readonly unknown[] }> = [];
+  const client: SqlClient = {
+    async query<T>(sql: string, values: readonly unknown[] = []) {
+      queries.push({ sql, values });
+      if (sql.startsWith('INSERT INTO commander_auth_refresh_tokens')) {
+        records.set(String(values[0]), {
+          userId: String(values[1]),
+          expiresAt: values[2] as Date,
+          revoked: false,
+        });
+        return { rows: [], rowCount: 1 };
+      }
+      if (sql === CONSUME_SQL) {
+        const jti = String(values[0]);
+        const record = records.get(jti);
+        if (!record || record.revoked || record.expiresAt.getTime() <= Date.now()) {
+          return { rows: [], rowCount: 0 };
+        }
+        record.revoked = true;
+        return { rows: [{ jti }] as T[], rowCount: 1 };
+      }
+      throw new Error('unexpected query: ' + sql);
+    },
+    release() {},
+  };
+  return {
+    records,
+    queries,
+    pool: { connect: async () => client },
+  };
+}
+
+describe('PostgreSQL refresh-token repository', () => {
+  it('inserts a new unrevoked refresh-token authority record', async () => {
+    const harness = createPoolHarness();
+    const repository = new PostgresRefreshTokenRepository(harness.pool);
+    const expiresAt = new Date(Date.now() + 60_000);
+
+    await repository.insert({ jti: 'jti-1', userId: 'user-1', expiresAt });
+
+    assert.deepEqual(harness.records.get('jti-1'), {
+      userId: 'user-1',
+      expiresAt,
+      revoked: false,
+    });
+  });
+
+  it('atomically allows exactly one concurrent consumer', async () => {
+    const harness = createPoolHarness();
+    const repository = new PostgresRefreshTokenRepository(harness.pool);
+    await repository.insert({
+      jti: 'jti-race',
+      userId: 'user-1',
+      expiresAt: new Date(Date.now() + 60_000),
+    });
+
+    const results = await Promise.all([
+      repository.consume('jti-race'),
+      repository.consume('jti-race'),
+    ]);
+
+    assert.deepEqual(results.sort(), [false, true]);
+    const consumeQueries = harness.queries.filter((query) => query.sql.startsWith('UPDATE'));
+    assert.equal(consumeQueries.length, 2);
+    assert.ok(consumeQueries.every((query) => query.sql === CONSUME_SQL));
+  });
+
+  it('requires DATABASE_URL with the commander_app role and verified pool factory', () => {
+    const pool = createPoolHarness().pool;
+    let factoryInput: { connectionString: string } | undefined;
+    let factoryEnv: NodeJS.ProcessEnv | undefined;
+    const env = {
+      DATABASE_URL: 'postgresql://commander_app:secret@db.example.test/commander',
+      COMMANDER_DATABASE_CA_PEM: 'test-ca',
+      COMMANDER_DATABASE_SERVER_SPKI_SHA256: 'test-pin',
+    };
+
+    const repository = createRefreshTokenRepositoryFromEnvironment(env, (input, receivedEnv) => {
+      factoryInput = input;
+      factoryEnv = receivedEnv;
+      return pool;
+    });
+
+    assert.ok(repository instanceof PostgresRefreshTokenRepository);
+    assert.deepEqual(factoryInput, { connectionString: env.DATABASE_URL });
+    assert.equal(factoryEnv, env);
+    assert.throws(
+      () => createRefreshTokenRepositoryFromEnvironment({}, () => pool),
+      /AUTH_REFRESH_DATABASE_URL_REQUIRED/,
+    );
+    assert.throws(
+      () =>
+        createRefreshTokenRepositoryFromEnvironment(
+          { DATABASE_URL: 'postgresql://postgres:secret@db.example.test/commander' },
+          () => pool,
+        ),
+      /AUTH_REFRESH_DATABASE_ROLE_INVALID/,
+    );
+  });
+});

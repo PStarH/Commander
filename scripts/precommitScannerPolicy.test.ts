@@ -342,6 +342,38 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
   });
 
+  it('binds JSDoc warnings to their complete block comment', async () => {
+    const evidence = String.fromCharCode(96) + 'requiredRole' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Backtick command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      '/**\n * Uses ' + evidence + ' for authorization.\n */\nfunction gate() { return before(); }\n';
+    const unchangedComment = baseline.replace('before()', 'after()');
+    const changedComment = baseline.replace('for authorization', 'for auditing');
+
+    const inherited = evaluateIndexedWarnings(
+      await enumerateHighWarnings(unchangedComment, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+    const rejected = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changedComment, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(inherited.violations.length, 0);
+    assert.equal(rejected.violations.length, 1);
+    assert.equal(rejected.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
   it('inherits a template warning when an unrelated function body statement changes', async () => {
     const evidence = String.fromCharCode(96) + 'safe ';
     const scan = (content: string): readonly ScannerWarning[] =>
