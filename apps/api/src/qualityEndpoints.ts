@@ -46,15 +46,25 @@ export function createQualityRouter(): Router {
   const router = Router();
   const hallucinationDetector = new HallucinationDetector();
 
-  router.post('/api/quality/hallucination-check', (req, res) => {
+  // AUDIT-R4F3: same tenant+writer gates as the consistency routes — these
+  // run ~12 regex detectors over caller-sized strings.
+  router.post(
+    '/api/quality/hallucination-check',
+    requireConsistencyTenant,
+    requireConsistencyWriter,
+    (req, res) => {
     const { input, output } = req.body;
     if (!input || !output) {
       return res.status(400).json({ error: 'Both input and output are required' });
     }
-    const report = hallucinationDetector.analyze(
-      typeof input === 'string' ? input : JSON.stringify(input),
-      typeof output === 'string' ? output : JSON.stringify(output),
-    );
+    // AUDIT-R4F3: bound detector input (regex CPU per request).
+    const MAX_QA_INPUT = 200_000;
+    const inStr = typeof input === 'string' ? input : JSON.stringify(input);
+    const outStr = typeof output === 'string' ? output : JSON.stringify(output);
+    if (inStr.length > MAX_QA_INPUT || outStr.length > MAX_QA_INPUT) {
+      return res.status(413).json({ error: `Input/output exceed ${MAX_QA_INPUT} characters` });
+    }
+    const report = hallucinationDetector.analyze(inStr, outStr);
     res.json(report);
   });
 
@@ -76,7 +86,11 @@ export function createQualityRouter(): Router {
     });
   });
 
-  router.post('/api/quality/check', (req, res) => {
+  router.post(
+    '/api/quality/check',
+    requireConsistencyTenant,
+    requireConsistencyWriter,
+    (req, res) => {
     const { input, output } = req.body ?? {};
     if (!output) {
       return res.status(400).json({ error: 'output is required' });

@@ -61,7 +61,9 @@ export function createOrchestratorRouter(): Router {
     });
   });
 
-  router.post('/orchestrator/deliberate', async (req, res) => {
+  // AUDIT-R4F6: deliberate mirrors /execute's authz (admin role) — it runs
+  // the planner over caller-supplied goals.
+  router.post('/orchestrator/deliberate', requireAuth, requireRole('admin'), async (req, res) => {
     const { goal } = req.body ?? {};
     if (!goal) return res.status(400).json({ error: 'goal is required' });
 
@@ -75,7 +77,8 @@ export function createOrchestratorRouter(): Router {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
+      // AUDIT-R4F6: wildcard CORS removed — the global CORS allowlist governs
+      // which origins may consume this event stream.
     });
 
     const sse = new SSEStream();

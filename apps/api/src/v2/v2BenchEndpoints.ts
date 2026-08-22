@@ -24,11 +24,27 @@ interface Effect {
 const runs = new Map<string, Run>();
 const effects = new Map<string, Effect>();
 
+/** AUDIT-R4F1: hard caps so a runaway harness cannot exhaust memory. */
+const MAX_LEDGER_ENTRIES = 10_000;
+const MAX_BATCH_SIZE = 1_000;
+
+export function isV2BenchHarnessEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.COMMANDER_V2_BENCH_HARNESS === '1';
+}
+
 export function createV2BenchRouter(): Router {
   const router = Router();
 
   router.post('/runs/batch', (req: Request, res: Response) => {
     const batch = Array.isArray(req.body) ? req.body : [];
+    if (batch.length > MAX_BATCH_SIZE) {
+      res.status(413).json({ error: `Batch exceeds ${MAX_BATCH_SIZE} entries` });
+      return;
+    }
+    if (runs.size >= MAX_LEDGER_ENTRIES) {
+      res.status(507).json({ error: `Bench ledger full (${MAX_LEDGER_ENTRIES} entries)` });
+      return;
+    }
     for (const item of batch) {
       if (!item || typeof item.runId !== 'string') continue;
       runs.set(item.runId, {
@@ -52,12 +68,18 @@ export function createV2BenchRouter(): Router {
     res.json({ pending, completed, total: runs.size });
   });
 
-  router.get('/runs', (_req: Request, res: Response) => {
-    res.json(Array.from(runs.values()));
+  router.get('/runs', (req: Request, res: Response) => {
+    // AUDIT-R4F1: scope ledger reads to the caller's tenant when a binding
+    // exists — the ledger previously disclosed every tenant's runs.
+    const tenantId = (req as Request & { tenantId?: string }).tenantId;
+    const all = Array.from(runs.values());
+    res.json(typeof tenantId === 'string' ? all.filter((r) => r.tenantId === tenantId) : all);
   });
 
-  router.get('/effects', (_req: Request, res: Response) => {
-    res.json(Array.from(effects.values()));
+  router.get('/effects', (req: Request, res: Response) => {
+    const tenantId = (req as Request & { tenantId?: string }).tenantId;
+    const all = Array.from(effects.values());
+    res.json(typeof tenantId === 'string' ? all.filter((e) => e.tenantId === tenantId) : all);
   });
 
   router.get('/bench/anomalies', (_req: Request, res: Response) => {

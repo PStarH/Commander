@@ -606,12 +606,17 @@ registerRouter({
   },
 });
 
-// V2 live benchmark harness routes (in-memory ledger for Layer B topology tests)
-registerRouter({
-  name: 'v2-bench',
-  mountPath: '/v2',
-  factory: () => createV2BenchRouter(),
-});
+// V2 live benchmark harness routes (in-memory ledger for Layer B topology tests).
+// AUDIT-R4F1: opt-in only — the harness ledger is tenant-spoofable,
+// unauthenticated-role-accessible and in-memory; it must never be mounted in a
+// production topology by default.
+if (process.env.COMMANDER_V2_BENCH_HARNESS === '1') {
+  registerRouter({
+    name: 'v2-bench',
+    mountPath: '/v2',
+    factory: () => createV2BenchRouter(),
+  });
+}
 
 // Observability routes must be mounted before the legacy execution routers
 // (pipeline/orchestrator) because those routers' compatibility middleware

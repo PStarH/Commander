@@ -28,7 +28,8 @@ const renderSchema = z.object({
   operationCodename: z.string().min(1),
   health: z.enum(['GREEN', 'AMBER', 'RED']).optional(),
   metrics: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
-  narrative: z.string().optional(),
+  // AUDIT-R4F8: bounded narrative (rendered into HTML reports).
+  narrative: z.string().max(50_000).optional(),
   topAgents: z
     .array(
       z.object({
@@ -46,6 +47,8 @@ const renderSchema = z.object({
         message: z.string(),
       }),
     )
+    // AUDIT-R4F8: bound render input.
+    .max(1000)
     .optional(),
 });
 
