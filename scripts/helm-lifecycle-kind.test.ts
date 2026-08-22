@@ -38,6 +38,35 @@ import {
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('selects an API pod with a startup failure before a lexically earlier healthy pod', () => {
+    const selectPod = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        selectFailingApiPodName?: (items: unknown[]) => string | undefined;
+      }
+    ).selectFailingApiPodName;
+    assert.equal(typeof selectPod, 'function');
+
+    assert.equal(
+      selectPod!([
+        {
+          metadata: { name: 'api-healthy-a' },
+          status: {
+            containerStatuses: [{ state: { running: {} }, lastState: {} }],
+          },
+        },
+        {
+          metadata: { name: 'api-crashing-z' },
+          status: {
+            containerStatuses: [
+              { state: { waiting: { reason: 'CrashLoopBackOff' } }, lastState: {} },
+            ],
+          },
+        },
+      ]),
+      'api-crashing-z',
+    );
+  });
+
   it('retains only an allowlisted API startup code and hash from pod logs', () => {
     const diagnostic = (
       lifecycleHarness as typeof lifecycleHarness & {
