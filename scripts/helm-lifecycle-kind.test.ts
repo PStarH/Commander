@@ -69,6 +69,10 @@ describe('helm-lifecycle-kind helpers', () => {
       diagnostic!('Error: DATABASE_URL_REQUIRED'),
       /^code=DATABASE_URL_REQUIRED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
     );
+    assert.match(
+      diagnostic!('COMMANDER_API_STARTUP_FAILED: opaque startup detail'),
+      /^code=COMMANDER_API_STARTUP_FAILED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+    );
 
     const sanitized = sanitizeEvidence({
       generatedAt: '2024-01-01T00:00:00Z',

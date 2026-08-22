@@ -606,11 +606,32 @@ function warningExpressionStatementText(
   return warningStatementText(sourceFile, expression, scope);
 }
 
+function commentAtPosition(
+  content: string,
+  position: number,
+  evidence: string,
+): string | undefined {
+  const inlineCodeDelimiter = String.fromCharCode(96);
+  if (!evidence.startsWith(inlineCodeDelimiter) || !evidence.endsWith(inlineCodeDelimiter)) {
+    return undefined;
+  }
+  const lineStart = content.lastIndexOf('\n', position) + 1;
+  const nextLine = content.indexOf('\n', position);
+  const line = content.slice(lineStart, nextLine < 0 ? content.length : nextLine);
+  return line.trimStart().startsWith('//') ? line : undefined;
+}
+
 function sourceOccurrenceFingerprint(
   content: string,
   index: number,
   evidence: string,
 ): string | undefined {
+  const comment = commentAtPosition(content, index, evidence);
+  if (comment !== undefined) {
+    return createHash('sha256')
+      .update(JSON.stringify({ scope: 'comment', text: comment }))
+      .digest('hex');
+  }
   const sourceFile = ts.createSourceFile(
     'precommit-scanner-source.ts',
     content,
