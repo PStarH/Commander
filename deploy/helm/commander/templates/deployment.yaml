@@ -153,6 +153,8 @@ spec:
               value: /tmp/commander-api/action-rationales.json
             - name: API_RATE_LIMIT_DB_PATH
               value: /tmp/commander-api/rate-limit.sqlite
+            - name: COMMANDER_TRACE_DIR
+              value: /tmp/commander-api/traces
             {{- if include "commander.postgresBackend" . }}
             - name: COMMANDER_MEMORY_STORE
               value: in-memory
