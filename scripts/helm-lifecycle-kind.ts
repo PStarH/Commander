@@ -202,6 +202,7 @@ export function buildLifecycleValues(input: {
   imageDigest: string;
   databaseSpkiSha256: string;
   logLevel: 'info' | 'warn';
+  kubernetesApiServiceIp: string;
   database?:
     | { kind: 'bundled' }
     | {
@@ -216,7 +217,8 @@ export function buildLifecycleValues(input: {
 }): string {
   if (
     !/^sha256:[a-f0-9]{64}$/.test(input.imageDigest) ||
-    !/^[a-f0-9]{64}$/.test(input.databaseSpkiSha256)
+    !/^[a-f0-9]{64}$/.test(input.databaseSpkiSha256) ||
+    !isIpv4Address(input.kubernetesApiServiceIp)
   ) {
     throw new Error('LIFECYCLE_VALUES_INVALID');
   }
@@ -262,7 +264,7 @@ export function buildLifecycleValues(input: {
           app.kubernetes.io/component: postgres`;
   const databaseCidrs =
     database.kind === 'external'
-      ? `  egress:\n    databaseCidrs:\n      - ${database.serviceClusterIp}/32\n`
+      ? `    databaseCidrs:\n      - ${database.serviceClusterIp}/32\n`
       : '';
   return `tier: demo
 web:
@@ -303,7 +305,10 @@ ${bootstrapAuthority}  apiProof:
     privateSecret: ${input.release}-api-proof-private
 networkPolicy:
   enabled: true
-${databaseCidrs}  databaseEndpoints:
+  egress:
+${databaseCidrs}    kubernetesApiCidrs:
+      - ${input.kubernetesApiServiceIp}/32
+  databaseEndpoints:
     - roles:
         - owner
         - app
@@ -1860,6 +1865,23 @@ async function kubectlJson(args: string[]): Promise<Record<string, unknown>> {
   return parsed as Record<string, unknown>;
 }
 
+function isIpv4Address(value: string): boolean {
+  const octets = value.split('.');
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^(?:0|[1-9][0-9]{0,2})$/.test(octet) && Number(octet) <= 255)
+  );
+}
+
+async function kubernetesApiServiceIp(): Promise<string> {
+  const service = await kubectlJson(['get', 'service', 'kubernetes', '-n', 'default']);
+  const clusterIp = (service.spec as { clusterIP?: unknown } | undefined)?.clusterIP;
+  if (typeof clusterIp !== 'string' || !isIpv4Address(clusterIp)) {
+    throw new Error('KUBERNETES_API_SERVICE_INVALID');
+  }
+  return clusterIp;
+}
+
 async function ensureControlPlaneReady(): Promise<void> {
   for (const selector of controlPlaneReadinessSelectors()) {
     requireCommand(
@@ -2674,7 +2696,10 @@ async function assertReleaseCleanup(release: string): Promise<void> {
   }
 }
 
-async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvidence> {
+async function runRealBundledLifecycle(
+  imageDigest: string,
+  kubernetesApiIp: string,
+): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-live');
   const assertions: AssertionResult[] = [];
@@ -2695,6 +2720,7 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
+        kubernetesApiServiceIp: kubernetesApiIp,
       }),
       { mode: 0o600 },
     );
@@ -2706,6 +2732,7 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
+        kubernetesApiServiceIp: kubernetesApiIp,
       }),
       { mode: 0o600 },
     );
@@ -2801,7 +2828,10 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
   }
 }
 
-async function runRealExternalTlsLifecycle(imageDigest: string): Promise<ScenarioEvidence> {
+async function runRealExternalTlsLifecycle(
+  imageDigest: string,
+  kubernetesApiIp: string,
+): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-external');
   const assertions: AssertionResult[] = [];
@@ -2842,6 +2872,7 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
+        kubernetesApiServiceIp: kubernetesApiIp,
         database,
       }),
       { mode: 0o600 },
@@ -2854,6 +2885,7 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
+        kubernetesApiServiceIp: kubernetesApiIp,
         database,
       }),
       { mode: 0o600 },
@@ -2955,7 +2987,10 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
   }
 }
 
-async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEvidence> {
+async function runFailedRolloutRecovery(
+  imageDigest: string,
+  kubernetesApiIp: string,
+): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-recovery');
   const assertions: AssertionResult[] = [];
@@ -2975,6 +3010,7 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
+        kubernetesApiServiceIp: kubernetesApiIp,
       }),
       { mode: 0o600 },
     );
@@ -3084,9 +3120,10 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   await installCalico();
   await loadProductionImage(imageDigest);
   await ensureControlPlaneReady();
+  const kubernetesApiIp = await kubernetesApiServiceIp();
   const runners: Record<
     LifecycleScenarioName,
-    (selectedDigest: string) => Promise<ScenarioEvidence>
+    (selectedDigest: string, selectedKubernetesApiIp: string) => Promise<ScenarioEvidence>
   > = {
     'real-bundled': runRealBundledLifecycle,
     'real-external-tls': runRealExternalTlsLifecycle,
@@ -3094,7 +3131,7 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   };
   const scenarios: ScenarioEvidence[] = [];
   for (const scenario of selectedScenarios) {
-    scenarios.push(await runners[scenario](imageDigest));
+    scenarios.push(await runners[scenario](imageDigest, kubernetesApiIp));
   }
   const rbac = scenarios.flatMap((scenario) => scenario.rbac ?? []);
   const networkPolicy = scenarios.flatMap((scenario) => scenario.networkPolicy ?? []);
