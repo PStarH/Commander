@@ -146,6 +146,39 @@ describe('kernel owner migration entrypoint', () => {
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
   });
 
+  it('retains only the allowlisted Kubernetes proof invariant diagnostic', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
+        ownerStage: 'rollout_proof',
+        code: 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+        diagnostic: 'task1KubernetesProofObserver.ts:1012:7',
+      }),
+    );
+    assert.equal(
+      result,
+      'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.ts:1012:7',
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+
+    assert.equal(
+      formatter!(
+        Object.assign(new Error('private'), {
+          ownerStage: 'rollout_proof',
+          code: 'PRIVATE_FAILURE',
+          diagnostic: 'postgres://owner:secret@postgres/commander',
+        }),
+      ),
+      'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof',
+    );
+  });
+
   it('formats every allowlisted owner boundary without reflecting failure details', () => {
     const formatter = (
       migrationEntrypoint as typeof migrationEntrypoint & {

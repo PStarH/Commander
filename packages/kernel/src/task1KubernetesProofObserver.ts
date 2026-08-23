@@ -1,5 +1,6 @@
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
 import { createHash } from 'node:crypto';
+import { setTimeout as delay } from 'node:timers/promises';
 import type { Task1LifecycleOperation } from './task1LifecycleLedger.js';
 import type { Task1AuthoritativePlatformFacts } from './task1RolloutProof.js';
 
@@ -17,6 +18,8 @@ const PROOF_WINDOW_SECONDS = 600;
 const SHA256 = /^[0-9a-f]{64}$/;
 const KUBERNETES_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const SECRET_KEY = /^[A-Za-z0-9._-]+$/;
+const KUBERNETES_PROOF_INVALID_CODE = 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID';
+const PROOF_STATUS_ATTEMPTS = 100;
 
 interface ProofPodContract {
   apiProof: { secretName: string; caKey: string; certKey: string };
@@ -54,10 +57,19 @@ export interface Task1KubernetesProofObserverOptions {
   readProjectedTokenIdentity(): Promise<Task1ProjectedTokenIdentity>;
   readReleaseProjection(): Promise<unknown>;
   now?: () => Date;
+  waitForProofStatus?: () => Promise<void>;
 }
 
 function invalid(): never {
-  throw new Error('TENANT_CUTOVER_KUBERNETES_PROOF_INVALID');
+  const caller = new Error().stack
+    ?.split('\n')
+    .slice(2)
+    .find((line) => /task1KubernetesProofObserver\.(?:ts|js):\d+:\d+/.test(line));
+  const diagnostic = caller?.match(/task1KubernetesProofObserver\.(?:ts|js):\d+:\d+/)?.[0];
+  throw Object.assign(new Error(KUBERNETES_PROOF_INVALID_CODE), {
+    code: KUBERNETES_PROOF_INVALID_CODE,
+    diagnostic: diagnostic ?? 'task1KubernetesProofObserver:unknown',
+  });
 }
 
 function record(value: unknown): JsonRecord {
@@ -256,6 +268,59 @@ function conditionTrue(conditions: unknown, type: string): boolean {
   return array(conditions)
     .map(record)
     .some((condition) => condition.type === type && condition.status === 'True');
+}
+
+function proofPodReady(pod: JsonRecord, imageDigest: string): boolean {
+  const status = record(pod.status);
+  if (status.phase !== 'Running') {
+    if (status.phase === 'Pending') return false;
+    invalid();
+  }
+  const statuses = Array.isArray(status.containerStatuses)
+    ? status.containerStatuses.map(record).filter((value) => value.name === 'tenant-cutover-prove')
+    : [];
+  if (statuses.length > 1) invalid();
+  const containerStatus = statuses[0];
+  if (!conditionTrue(status.conditions, 'Ready') || containerStatus?.ready !== true) return false;
+  if (
+    integer(containerStatus.restartCount, true) !== 0 ||
+    !string(containerStatus.imageID).includes(imageDigest)
+  ) {
+    invalid();
+  }
+  return true;
+}
+
+async function waitForReadyProofPod(input: {
+  initialPod: JsonRecord;
+  identity: Task1ProjectedTokenIdentity;
+  proofController: { kind: string; name: string; uid: string };
+  proofSelector: Readonly<Record<string, string>>;
+  imageDigest: string;
+  readProofPods(): Promise<unknown>;
+  wait(): Promise<void>;
+}): Promise<void> {
+  // The proof process can start before kubelet publishes its Ready status.
+  let pod = input.initialPod;
+  for (let attempt = 0; attempt < PROOF_STATUS_ATTEMPTS; attempt += 1) {
+    if (proofPodReady(pod, input.imageDigest)) return;
+    if (attempt === PROOF_STATUS_ATTEMPTS - 1) invalid();
+    await input.wait();
+    const pods = array(field(await input.readProofPods(), 'items')).map(record);
+    if (pods.length !== 1) invalid();
+    pod = pods[0]!;
+    const metadata = record(pod.metadata);
+    if (
+      metadata.name !== input.identity.podName ||
+      metadata.uid !== input.identity.podUid ||
+      metadata.namespace !== input.identity.namespace ||
+      Object.hasOwn(metadata, 'deletionTimestamp')
+    ) {
+      invalid();
+    }
+    requiredLabels(metadata, input.proofSelector);
+    controllerOwner(metadata, input.proofController);
+  }
 }
 
 function projectedTokenVolume(podSpec: JsonRecord, proofContainer: JsonRecord): void {
@@ -949,16 +1014,15 @@ export function createTask1KubernetesProofObserver(
       proofJobRevision,
     );
     validateProofPodContract(proofSpec, proofContainer, proofVolumes, proofMounts, contract);
-    const proofStatus = record(proofPod.status);
-    const proofContainerStatus = oneNamed(proofStatus.containerStatuses, 'tenant-cutover-prove');
-    if (
-      proofStatus.phase !== 'Running' ||
-      !conditionTrue(proofStatus.conditions, 'Ready') ||
-      proofContainerStatus.ready !== true ||
-      integer(proofContainerStatus.restartCount, true) !== 0 ||
-      !string(proofContainerStatus.imageID).includes(binding.apiImageDigest)
-    )
-      invalid();
+    await waitForReadyProofPod({
+      initialPod: proofPod,
+      identity,
+      proofController,
+      proofSelector,
+      imageDigest: binding.apiImageDigest,
+      readProofPods: () => request('pods', { selector: proofSelector }),
+      wait: options.waitForProofStatus ?? (() => delay(100)),
+    });
 
     releaseProjectionVolume(
       proofSpec,
