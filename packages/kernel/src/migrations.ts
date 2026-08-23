@@ -47,6 +47,17 @@ import {
 import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
 
+export const KERNEL_AUTH_FAILURE_AUTHORITY_SQL = `
+CREATE TABLE IF NOT EXISTS commander_auth_failures (
+  ip TEXT PRIMARY KEY,
+  entry JSONB NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS commander_auth_failures_expires_idx
+  ON commander_auth_failures (expires_at);
+GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app;
+`;
+
 export interface KernelMigration {
   id: string;
   checksum: string;
@@ -364,6 +375,14 @@ export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigr
   },
 ];
 
+export const KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-22.1.auth_failure_authority',
+    sql: KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+    checksum: checksum(KERNEL_AUTH_FAILURE_AUTHORITY_SQL),
+  },
+];
+
 /** Must follow campaign2's public five-argument claim wrapper creation. */
 export const KERNEL_COMPENSATION_APPROVAL_BINDING_MIGRATIONS: readonly KernelMigration[] = [
   {
@@ -453,6 +472,7 @@ export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
 ];
 
 export const KERNEL_TASK1_BASELINE_MIGRATIONS: readonly KernelMigration[] = [
@@ -491,6 +511,7 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';

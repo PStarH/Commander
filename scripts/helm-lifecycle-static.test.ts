@@ -135,13 +135,10 @@ describe('Helm lifecycle static contract', () => {
     }
   });
 
-  it('binds production auth-failure authority to the enabled Redis service', () => {
+  it('does not bind authentication-failure authority to Redis', () => {
     const api = deployment(render(false, ['--set', 'redis.enabled=true']), 'api');
     assert.match(api, /- name: REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/);
-    assert.match(
-      api,
-      /- name: AUTH_FAILURE_REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/,
-    );
+    assert.doesNotMatch(api, /AUTH_FAILURE_REDIS_URL/);
   });
 
   it('limits controller transport bootstrap to the three bundled PostgreSQL objects', () => {
