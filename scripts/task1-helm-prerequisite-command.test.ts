@@ -125,7 +125,9 @@ function readyDeployment(
                   value: loaded.configurationSha256,
                 },
               ],
-              readinessProbe: { httpGet: { path: '/ready/tenant-authority/v1' } },
+              readinessProbe: {
+                exec: { command: ['node', '-e', "https.get('/ready/tenant-authority/v1')"] },
+              },
             },
           ],
         },

@@ -329,10 +329,15 @@ spec:
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
           readinessProbe:
-            httpGet:
-              path: /ready/tenant-authority/v1
-              port: tenant-proof
-              scheme: HTTPS
+            exec:
+              command:
+                - node
+                - -e
+                - >-
+                  const https = require('node:https');
+                  const req = https.get({ hostname: '127.0.0.1', port: {{ .Values.tenantAuthority.apiProof.port }}, path: '/ready/tenant-authority/v1', rejectUnauthorized: false }, (res) => process.exit(res.statusCode === 200 ? 0 : 1));
+                  req.on('error', () => process.exit(1));
+                  req.setTimeout(1500, () => { req.destroy(); process.exit(1); });
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
           volumeMounts:
