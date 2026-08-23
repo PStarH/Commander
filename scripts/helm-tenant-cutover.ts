@@ -11,6 +11,10 @@ import {
   canonicalBootstrapJson,
   canonicalBootstrapSha256,
 } from '../packages/kernel/src/canonicalBootstrap.js';
+import {
+  KERNEL_MIGRATIONS,
+  KERNEL_TASK1_CLOSURE_MIGRATIONS,
+} from '../packages/kernel/src/migrations.js';
 import { verifyChartContentDigest } from './chart-content-digest.js';
 import {
   materializeRetainedRendererValues,
@@ -466,6 +470,29 @@ function assertOperation(
     fail('TENANT_CUTOVER_OWNER_RESPONSE_INVALID');
 }
 
+function runtimeMigrationDescriptors(phase: HelmOperation['phase']): string {
+  const task1ClosureDescriptors = KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(
+    0,
+    phase === 'expand' ? 2 : KERNEL_TASK1_CLOSURE_MIGRATIONS.length,
+  );
+  return JSON.stringify(
+    Object.fromEntries(
+      [...KERNEL_MIGRATIONS, ...task1ClosureDescriptors].map(({ id, checksum }) => [
+        id,
+        checksum,
+      ]),
+    ),
+  );
+}
+
+function escapeHelmString(value: string): string {
+  return value
+    .replaceAll('\\', '\\\\')
+    .replaceAll('{', '\\{')
+    .replaceAll('}', '\\}')
+    .replaceAll(',', '\\,');
+}
+
 export function buildHelmRolloutArgs(
   operation: HelmOperation,
   request: {
@@ -503,6 +530,8 @@ export function buildHelmRolloutArgs(
       : []),
     '--set-string',
     `tenantAuthority.chartContentSha256=${operation.platformBinding.chartContentSha256}`,
+    '--set-string',
+    `tenantAuthority.expectedMigrationDescriptors=${escapeHelmString(runtimeMigrationDescriptors(operation.phase))}`,
     ...(request.setValues ?? []).flatMap((value) => ['--set', value]),
     '--atomic',
     '--wait',
@@ -598,6 +627,7 @@ function rendererValues(
     proofOwnerSecretName(operation.platformBinding.releaseName, operation.operationVersion),
   );
   apply('tenantAuthority.chartContentSha256', operation.platformBinding.chartContentSha256);
+  apply('tenantAuthority.expectedMigrationDescriptors', runtimeMigrationDescriptors(operation.phase));
   apply('tenantAuthority.releaseProjectionConfigMap', projectionConfigMapName);
   for (const entry of setValues) {
     const separator = entry.indexOf('=');
