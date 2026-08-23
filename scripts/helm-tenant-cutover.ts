@@ -1333,11 +1333,14 @@ function proofJobForRevision(input: {
   const tokenSources = Array.isArray(tokenProjection.sources)
     ? tokenProjection.sources.map((value) => jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'))
     : [];
-  const serviceAccountToken = tokenSources[0]
+  const identityToken = tokenSources[0]
     ? jsonRecord(tokenSources[0].serviceAccountToken, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
     : {};
-  const rootCa = tokenSources[1]
-    ? jsonRecord(tokenSources[1].configMap, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
+  const apiToken = tokenSources[1]
+    ? jsonRecord(tokenSources[1].serviceAccountToken, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
+    : {};
+  const rootCa = tokenSources[2]
+    ? jsonRecord(tokenSources[2].configMap, 'TENANT_CUTOVER_PROOF_JOB_INVALID')
     : {};
   const rootCaItems = Array.isArray(rootCa.items)
     ? rootCa.items.map((value) => jsonRecord(value, 'TENANT_CUTOVER_PROOF_JOB_INVALID'))
@@ -1519,13 +1522,17 @@ function proofJobForRevision(input: {
     !exactObjectKeys(proofToken ?? {}, ['name', 'projected']) ||
     !exactObjectKeys(tokenProjection, ['defaultMode', 'sources']) ||
     tokenProjection.defaultMode !== 0o400 ||
-    tokenSources.length !== 2 ||
+    tokenSources.length !== 3 ||
     !exactObjectKeys(tokenSources[0] ?? {}, ['serviceAccountToken']) ||
-    !exactObjectKeys(serviceAccountToken, ['audience', 'expirationSeconds', 'path']) ||
-    serviceAccountToken.audience !== 'commander-tenant-cutover-proof/v1' ||
-    serviceAccountToken.expirationSeconds !== 300 ||
-    serviceAccountToken.path !== 'token' ||
-    !exactObjectKeys(tokenSources[1] ?? {}, ['configMap']) ||
+    !exactObjectKeys(identityToken, ['audience', 'expirationSeconds', 'path']) ||
+    identityToken.audience !== 'commander-tenant-cutover-proof/v1' ||
+    identityToken.expirationSeconds !== 300 ||
+    identityToken.path !== 'identity-token' ||
+    !exactObjectKeys(tokenSources[1] ?? {}, ['serviceAccountToken']) ||
+    !exactObjectKeys(apiToken, ['expirationSeconds', 'path']) ||
+    apiToken.expirationSeconds !== 300 ||
+    apiToken.path !== 'api-token' ||
+    !exactObjectKeys(tokenSources[2] ?? {}, ['configMap']) ||
     !exactObjectKeys(rootCa, ['name', 'items']) ||
     rootCa.name !== 'kube-root-ca.crt' ||
     canonicalBootstrapJson(rootCaItems) !==

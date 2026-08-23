@@ -661,7 +661,10 @@ spec:
               - serviceAccountToken:
                   audience: commander-tenant-cutover-proof/v1
                   expirationSeconds: 300
-                  path: token
+                  path: identity-token
+              - serviceAccountToken:
+                  expirationSeconds: 300
+                  path: api-token
               - configMap:
                   name: kube-root-ca.crt
                   items: [{ key: ca.crt, path: ca.crt }]

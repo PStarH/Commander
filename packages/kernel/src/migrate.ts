@@ -704,7 +704,9 @@ export function createTask1ComposeProofRuntime(
   });
 }
 
-const KUBERNETES_PROOF_TOKEN_FILE = '/var/run/secrets/commander.io/proof-api/token';
+const KUBERNETES_PROOF_IDENTITY_TOKEN_FILE =
+  '/var/run/secrets/commander.io/proof-api/identity-token';
+const KUBERNETES_API_TOKEN_FILE = '/var/run/secrets/commander.io/proof-api/api-token';
 const KUBERNETES_PROOF_CA_FILE = '/var/run/secrets/commander.io/proof-api/ca.crt';
 const KUBERNETES_API_PROOF_CA_FILE = '/run/commander/api-proof-public/ca.crt';
 const KUBERNETES_RELEASE_PROJECTION_FILE = '/run/commander/release-projection/projection.json';
@@ -724,17 +726,20 @@ export function createTask1KubernetesProofRuntime(
   if (!Number.isSafeInteger(port) || port > 65535) {
     throw new Error('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
   }
-  const readToken = async (): Promise<string> =>
-    (await readFile(KUBERNETES_PROOF_TOKEN_FILE, 'utf8')).trim();
+  const readIdentityToken = async (): Promise<string> =>
+    (await readFile(KUBERNETES_PROOF_IDENTITY_TOKEN_FILE, 'utf8')).trim();
+  const readApiToken = async (): Promise<string> =>
+    (await readFile(KUBERNETES_API_TOKEN_FILE, 'utf8')).trim();
   const api = createTask1KubernetesProofApi({
     hostname: host,
     port,
-    readToken,
+    readToken: readApiToken,
     readCa: () => readTask1ProofCa(KUBERNETES_PROOF_CA_FILE),
   });
   const observer = createTask1KubernetesProofObserver({
     api,
-    readProjectedTokenIdentity: async () => parseTask1ProjectedTokenIdentity(await readToken()),
+    readProjectedTokenIdentity: async () =>
+      parseTask1ProjectedTokenIdentity(await readIdentityToken()),
     readReleaseProjection: async () => {
       const bytes = await readFile(KUBERNETES_RELEASE_PROJECTION_FILE, 'utf8');
       if (Buffer.byteLength(bytes, 'utf8') > 16 * 1024 * 1024 || !bytes.endsWith('\n')) {
