@@ -10,7 +10,8 @@ const PROOF_PATH = '/ready/tenant-authority/v1';
 const PROOF_PORT_NAME = 'tenant-proof';
 const PROOF_TOKEN_VOLUME = 'proof-api-token';
 const PROOF_TOKEN_MOUNT = '/var/run/secrets/commander.io/proof-api';
-const PROOF_TOKEN_PATH = 'token';
+const PROOF_IDENTITY_TOKEN_PATH = 'identity-token';
+const KUBERNETES_API_TOKEN_PATH = 'api-token';
 const KUBERNETES_CA_PATH = 'ca.crt';
 const PROOF_WINDOW_SECONDS = 5 * 60;
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -259,7 +260,8 @@ function conditionTrue(conditions: unknown, type: string): boolean {
 
 function projectedTokenVolume(podSpec: JsonRecord, proofContainer: JsonRecord): void {
   if (podSpec.automountServiceAccountToken !== false) invalid();
-  const candidates: Array<{ volumeName: string; expirationSeconds: number }> = [];
+  const identityTokens: string[] = [];
+  const apiTokens: string[] = [];
   for (const volume of array(podSpec.volumes).map(record)) {
     if (!volume.projected) continue;
     const projected = record(volume.projected);
@@ -267,14 +269,19 @@ function projectedTokenVolume(podSpec: JsonRecord, proofContainer: JsonRecord): 
     for (const source of sources) {
       if (!source.serviceAccountToken) continue;
       const token = record(source.serviceAccountToken);
-      if (token.audience !== AUDIENCE || token.path !== PROOF_TOKEN_PATH) invalid();
       const expirationSeconds = integer(token.expirationSeconds);
       if (expirationSeconds > PROOF_WINDOW_SECONDS) invalid();
-      candidates.push({ volumeName: string(volume.name), expirationSeconds });
+      if (token.audience === AUDIENCE && token.path === PROOF_IDENTITY_TOKEN_PATH) {
+        identityTokens.push(string(volume.name));
+      } else if (!Object.hasOwn(token, 'audience') && token.path === KUBERNETES_API_TOKEN_PATH) {
+        apiTokens.push(string(volume.name));
+      } else {
+        invalid();
+      }
     }
     if (volume.name === PROOF_TOKEN_VOLUME) {
       const caSources = sources.filter((source) => source.configMap !== undefined);
-      if (projected.defaultMode !== 0o400 || sources.length !== 2 || caSources.length !== 1)
+      if (projected.defaultMode !== 0o400 || sources.length !== 3 || caSources.length !== 1)
         invalid();
       const configMap = record(caSources[0]!.configMap);
       const items = array(configMap.items).map(record);
@@ -287,10 +294,16 @@ function projectedTokenVolume(podSpec: JsonRecord, proofContainer: JsonRecord): 
         invalid();
     }
   }
-  if (candidates.length !== 1 || candidates[0]!.volumeName !== PROOF_TOKEN_VOLUME) invalid();
+  if (
+    identityTokens.length !== 1 ||
+    identityTokens[0] !== PROOF_TOKEN_VOLUME ||
+    apiTokens.length !== 1 ||
+    apiTokens[0] !== PROOF_TOKEN_VOLUME
+  )
+    invalid();
   const mounts = array(proofContainer.volumeMounts)
     .map(record)
-    .filter((mount) => mount.name === candidates[0]!.volumeName);
+    .filter((mount) => mount.name === PROOF_TOKEN_VOLUME);
   if (
     mounts.length !== 1 ||
     mounts[0]!.readOnly !== true ||

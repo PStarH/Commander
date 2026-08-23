@@ -90,6 +90,7 @@ describe('Task 1 Kubernetes proof runtime', () => {
 
   it('reads exact Kubernetes resources over authenticated cluster-CA HTTPS', async () => {
     const fixture = tlsFixture();
+    const kubernetesApiToken = token({ aud: ['https://kubernetes.default.svc'] });
     const requests: Array<{ url: string; authorization: string | undefined }> = [];
     const server = createServer({ cert: fixture.cert, key: fixture.key }, (request, response) => {
       requests.push({
@@ -107,7 +108,7 @@ describe('Task 1 Kubernetes proof runtime', () => {
       const api = createTask1KubernetesProofApi({
         hostname: 'localhost',
         port: address.port,
-        readToken: async () => token(),
+        readToken: async () => kubernetesApiToken,
         readCa: async () => fixture.cert,
       });
       assert.deepEqual(
@@ -134,11 +135,11 @@ describe('Task 1 Kubernetes proof runtime', () => {
       assert.deepEqual(requests, [
         {
           url: '/api/v1/namespaces/commander/services/release-a-api-proof',
-          authorization: `Bearer ${token()}`,
+          authorization: `Bearer ${kubernetesApiToken}`,
         },
         {
           url: '/api/v1/namespaces/commander/pods?labelSelector=app.kubernetes.io%2Fcomponent%3Dapi%2Capp.kubernetes.io%2Finstance%3Drelease-a',
-          authorization: `Bearer ${token()}`,
+          authorization: `Bearer ${kubernetesApiToken}`,
         },
       ]);
       await assert.rejects(

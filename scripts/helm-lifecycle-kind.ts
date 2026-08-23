@@ -483,19 +483,25 @@ export function assertProofPodContract(pod: unknown, expectedServiceAccount: str
   const sources = Array.isArray(tokenVolume?.projected?.sources)
     ? tokenVolume.projected.sources
     : [];
-  const token = sources
+  const tokens = sources
     .map((source) =>
       source && typeof source === 'object'
         ? (source as { serviceAccountToken?: Record<string, unknown> }).serviceAccountToken
         : undefined,
     )
-    .find(Boolean);
+    .filter((token): token is Record<string, unknown> => token !== undefined);
+  const identityToken = tokens.find(
+    (token) => token.audience === 'commander-tenant-cutover-proof/v1',
+  );
+  const apiToken = tokens.find((token) => !Object.hasOwn(token, 'audience'));
   if (
     spec?.serviceAccountName !== expectedServiceAccount ||
     spec.automountServiceAccountToken !== false ||
-    token?.audience !== 'commander-tenant-cutover-proof/v1' ||
-    token.expirationSeconds !== 300 ||
-    token.path !== 'token'
+    tokens.length !== 2 ||
+    identityToken?.expirationSeconds !== 300 ||
+    identityToken.path !== 'identity-token' ||
+    apiToken?.expirationSeconds !== 300 ||
+    apiToken.path !== 'api-token'
   ) {
     throw new Error('PROOF_POD_CONTRACT_INVALID');
   }

@@ -287,7 +287,14 @@ function resources(): Record<string, any> {
                 projected: {
                   defaultMode: 256,
                   sources: [
-                    { serviceAccountToken: { audience, expirationSeconds: 300, path: 'token' } },
+                    {
+                      serviceAccountToken: {
+                        audience,
+                        expirationSeconds: 300,
+                        path: 'identity-token',
+                      },
+                    },
+                    { serviceAccountToken: { expirationSeconds: 300, path: 'api-token' } },
                     {
                       configMap: {
                         name: 'kube-root-ca.crt',
@@ -679,6 +686,13 @@ describe('Task 1 Kubernetes proof observer', () => {
         },
       ],
       [
+        'Kubernetes API token audience drift',
+        (values) => {
+          values.proofPods.items[0].spec.volumes[0].projected.sources[1].serviceAccountToken.audience =
+            audience;
+        },
+      ],
+      [
         'proof token mode drift',
         (values) => {
           values.proofPods.items[0].spec.volumes[0].projected.defaultMode = 420;
@@ -691,7 +705,7 @@ describe('Task 1 Kubernetes proof observer', () => {
         },
       ],
       [
-        'second projected token',
+        'extra projected token',
         (values) => {
           values.proofPods.items[0].spec.volumes[0].projected.sources.push({
             serviceAccountToken: { audience, expirationSeconds: 300, path: 'other-token' },
