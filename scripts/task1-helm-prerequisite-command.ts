@@ -471,7 +471,7 @@ function workloadGuardValidations(
   const release = context.request.release.replaceAll("'", "\\'");
   return [
     {
-      expression: `object.metadata.name != '${release}-api' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'api' && object.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.spec.template.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.metadata.annotations['commander.io/tenant-authority-phase'] in ['expand', 'enforce'] && object.metadata.annotations['commander.io/tenant-authority-phase'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-phase'] && object.metadata.annotations['commander.io/tenant-authority-image-digest'].matches('^sha256:[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-image-digest'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-image-digest'] && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'].matches('^[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] && object.spec.template.spec.containers.filter(c, c.name == 'api').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'api' && c.image.endsWith('@' + object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST' && e.value == object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256' && e.value == object.metadata.annotations['commander.io/tenant-authority-configuration-sha256']) && c.readinessProbe.httpGet.path == '/ready/tenant-authority/v1'))`,
+      expression: `object.metadata.name != '${release}-api' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'api' && object.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.spec.template.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.metadata.annotations['commander.io/tenant-authority-phase'] in ['expand', 'enforce'] && object.metadata.annotations['commander.io/tenant-authority-phase'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-phase'] && object.metadata.annotations['commander.io/tenant-authority-image-digest'].matches('^sha256:[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-image-digest'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-image-digest'] && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'].matches('^[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] && object.spec.template.spec.containers.filter(c, c.name == 'api').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'api' && c.image.endsWith('@' + object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST' && e.value == object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256' && e.value == object.metadata.annotations['commander.io/tenant-authority-configuration-sha256']) && c.readinessProbe.exec.command.exists(a, a == '/ready/tenant-authority/v1'))))`,
       message: 'tenant-authority API workload must preserve exact context-aware metadata',
     },
     {
@@ -641,7 +641,8 @@ function deploymentReady(
     if (!Array.isArray(api.env)) return false;
     const environment = new Map(api.env.map(record).map((item) => [item.name, item.value]));
     const readinessProbe = record(api.readinessProbe);
-    const httpGet = record(readinessProbe.httpGet);
+    const execProbe = record(readinessProbe.exec);
+    const execCommand = Array.isArray(execProbe.command) ? execProbe.command : [];
     const replicas = spec.replicas;
     return (
       metadata.name === `${context.request.release}-api` &&
@@ -671,7 +672,7 @@ function deploymentReady(
       environment.get('COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST') === context.imageDigest &&
       environment.get('COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256') ===
         context.configurationSha256 &&
-      httpGet.path === '/ready/tenant-authority/v1'
+      execCommand.some((value) => typeof value === 'string' && value.includes('/ready/tenant-authority/v1'))
     );
   } catch {
     return false;
