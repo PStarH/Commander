@@ -1526,11 +1526,11 @@ function proofJobForRevision(input: {
     !exactObjectKeys(tokenSources[0] ?? {}, ['serviceAccountToken']) ||
     !exactObjectKeys(identityToken, ['audience', 'expirationSeconds', 'path']) ||
     identityToken.audience !== 'commander-tenant-cutover-proof/v1' ||
-    identityToken.expirationSeconds !== 300 ||
+    identityToken.expirationSeconds !== 600 ||
     identityToken.path !== 'identity-token' ||
     !exactObjectKeys(tokenSources[1] ?? {}, ['serviceAccountToken']) ||
     !exactObjectKeys(apiToken, ['expirationSeconds', 'path']) ||
-    apiToken.expirationSeconds !== 300 ||
+    apiToken.expirationSeconds !== 600 ||
     apiToken.path !== 'api-token' ||
     !exactObjectKeys(tokenSources[2] ?? {}, ['configMap']) ||
     !exactObjectKeys(rootCa, ['name', 'items']) ||

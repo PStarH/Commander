@@ -15,7 +15,7 @@ const audience = 'commander-tenant-cutover-proof/v1';
 function token(overrides: Record<string, unknown> = {}): string {
   const payload = {
     aud: [audience],
-    exp: 1785258300,
+    exp: 1785258600,
     iat: 1785258000,
     iss: 'https://kubernetes.default.svc.cluster.local',
     sub: 'system:serviceaccount:commander:commander-proof-reader-c48e77f6d68ea66c',
@@ -71,7 +71,7 @@ describe('Task 1 Kubernetes proof runtime', () => {
   it('derives only the bound proof-reader Pod identity from the projected JWT', () => {
     assert.deepEqual(parseTask1ProjectedTokenIdentity(token()), {
       audience,
-      expiresAt: '2026-07-28T17:05:00.000Z',
+      expiresAt: '2026-07-28T17:10:00.000Z',
       namespace: 'commander',
       serviceAccountName: 'commander-proof-reader-c48e77f6d68ea66c',
       podName: 'proof-pod',

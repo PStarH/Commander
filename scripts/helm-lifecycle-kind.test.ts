@@ -1388,13 +1388,13 @@ describe('helm-lifecycle-kind helpers', () => {
                     {
                       serviceAccountToken: {
                         audience: 'commander-tenant-cutover-proof/v1',
-                        expirationSeconds: 300,
+                        expirationSeconds: 600,
                         path: 'identity-token',
                       },
                     },
                     {
                       serviceAccountToken: {
-                        expirationSeconds: 300,
+                        expirationSeconds: 600,
                         path: 'api-token',
                       },
                     },

@@ -303,7 +303,9 @@ describe('pre-commit scanner index policy', () => {
           ]
         : [];
     const baseline =
-      'function token() {\n  // The ' + evidence + " field is a claim.\n  return issue('before');\n}\n";
+      'function token() {\n  // The ' +
+      evidence +
+      " field is a claim.\n  return issue('before');\n}\n";
     const changed = baseline.replace("issue('before')", "issue('after')");
 
     const result = evaluateIndexedWarnings(
@@ -329,7 +331,7 @@ describe('pre-commit scanner index policy', () => {
           ]
         : [];
     const baseline =
-      'function token() {\n  // The ' + evidence + " field is a claim.\n  return issue();\n}\n";
+      'function token() {\n  // The ' + evidence + ' field is a claim.\n  return issue();\n}\n';
     const changed = baseline.replace('is a claim', 'must be verified');
 
     const result = evaluateIndexedWarnings(
@@ -426,7 +428,8 @@ describe('pre-commit scanner index policy', () => {
   });
 
   it('inherits a template warning in an unchanged table entry after another entry changes', async () => {
-    const evidence = String.fromCharCode(96) + '--data=${JSON.stringify(proposal)}' + String.fromCharCode(96);
+    const evidence =
+      String.fromCharCode(96) + '--data=${JSON.stringify(proposal)}' + String.fromCharCode(96);
     const scan = (content: string): readonly ScannerWarning[] =>
       content.includes(evidence)
         ? [
@@ -453,8 +456,40 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations.length, 0);
   });
 
+  it('inherits warnings in returned and assigned callbacks after unrelated sibling edits', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const sources = [
+      'function factory(value) {\n  return async () => {\n    const duration = 300;\n    return ' +
+        evidence +
+        ';\n  };\n}\n',
+      'function configure(fixture, value) {\n  fixture.read = async () => {\n    const duration = 300;\n    return ' +
+        evidence +
+        ';\n  };\n}\n',
+    ];
+
+    for (const baseline of sources) {
+      const changed = baseline.replace('const duration = 300;', 'const duration = 600;');
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+
+      assert.equal(result.inherited.length, 1);
+      assert.equal(result.violations.length, 0);
+    }
+  });
+
   it('inherits a response template when an unrelated request header changes', async () => {
-    const evidence = String.fromCharCode(96) + 'failed (${response.status}): ${body}' + String.fromCharCode(96);
+    const evidence =
+      String.fromCharCode(96) + 'failed (${response.status}): ${body}' + String.fromCharCode(96);
     const scan = (content: string): readonly ScannerWarning[] =>
       content.includes(evidence)
         ? [
@@ -913,5 +948,110 @@ describe('pre-commit scanner index policy', () => {
         fs.rmSync(tempRoot, { recursive: true, force: true });
       }
     }
+  });
+
+  it('does not inherit a template warning relocated between table entries', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline =
+      "function commands(value) {\n  return [\n    { name: 'preview', args: [" +
+      evidence +
+      "] },\n    { name: 'apply', args: [] },\n  ];\n}\n";
+    const changed =
+      "function commands(value) {\n  return [\n    { name: 'preview', args: [] },\n    { name: 'apply', args: [" +
+      evidence +
+      '] },\n  ];\n}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit a top-level template warning when its binding kind changes', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline = 'const command = ' + evidence + ';\n';
+    const changed = 'let command = ' + evidence + ';\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit a warning moved from a static method to an instance method', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline =
+      'class Runner {\n  static execute(value) {\n    return ' + evidence + ';\n  }\n}\n';
+    const changed = 'class Runner {\n  execute(value) {\n    return ' + evidence + ';\n  }\n}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit a warning moved between same-name nested functions in guarded blocks', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline =
+      'function dispatch(value, preview) {\n  if (preview) {\n    function execute() {\n      return ' +
+      evidence +
+      ";\n    }\n    return execute();\n  }\n  if (!preview) {\n    function execute() {\n      return 'safe';\n    }\n    return execute();\n  }\n}\n";
+    const changed =
+      "function dispatch(value, preview) {\n  if (preview) {\n    function execute() {\n      return 'safe';\n    }\n    return execute();\n  }\n  if (!preview) {\n    function execute() {\n      return " +
+      evidence +
+      ';\n    }\n    return execute();\n  }\n}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
   });
 });

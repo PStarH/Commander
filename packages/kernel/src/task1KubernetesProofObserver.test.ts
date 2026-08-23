@@ -290,11 +290,11 @@ function resources(): Record<string, any> {
                     {
                       serviceAccountToken: {
                         audience,
-                        expirationSeconds: 300,
+                        expirationSeconds: 600,
                         path: 'identity-token',
                       },
                     },
-                    { serviceAccountToken: { expirationSeconds: 300, path: 'api-token' } },
+                    { serviceAccountToken: { expirationSeconds: 600, path: 'api-token' } },
                     {
                       configMap: {
                         name: 'kube-root-ca.crt',
@@ -708,7 +708,7 @@ describe('Task 1 Kubernetes proof observer', () => {
         'extra projected token',
         (values) => {
           values.proofPods.items[0].spec.volumes[0].projected.sources.push({
-            serviceAccountToken: { audience, expirationSeconds: 300, path: 'other-token' },
+            serviceAccountToken: { audience, expirationSeconds: 600, path: 'other-token' },
           });
         },
       ],
