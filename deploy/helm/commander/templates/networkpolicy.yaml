@@ -252,6 +252,14 @@ spec:
       ports:
         - protocol: TCP
           port: 6443
+    {{- range .Values.networkPolicy.egress.kubernetesApiCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: 443
+    {{- end }}
     - to:
         - podSelector:
             matchLabels:

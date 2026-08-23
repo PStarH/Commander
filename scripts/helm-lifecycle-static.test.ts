@@ -524,7 +524,10 @@ describe('Helm lifecycle static contract', () => {
   });
 
   it('isolates proof pod ingress and allows only database, DNS, and proof-port egress', () => {
-    const rendered = render();
+    const rendered = render(false, [
+      '--set',
+      'networkPolicy.egress.kubernetesApiCidrs[0]=10.96.0.1/32',
+    ]);
     const proofPolicy = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-tenant-cutover-prove');
     assert.match(proofPolicy, /commander\.io\/tenant-authority-proof-reader: "true"/);
     assert.match(proofPolicy, /policyTypes:[\s\S]*- Ingress[\s\S]*- Egress/);
@@ -537,6 +540,7 @@ describe('Helm lifecycle static contract', () => {
       proofPolicy,
       /kubernetes\.io\/metadata\.name: kube-system[\s\S]*component: kube-apiserver[\s\S]*port: 6443/,
     );
+    assert.match(proofPolicy, /ipBlock:[\s\S]*cidr: "10\.96\.0\.1\/32"[\s\S]*port: 443/);
     assert.doesNotMatch(proofPolicy, /namespaceSelector: \{\}/);
     assert.match(proofPolicy, /port: 9443/);
     assert.doesNotMatch(proofPolicy, /port: 4000/);
