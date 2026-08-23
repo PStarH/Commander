@@ -141,6 +141,12 @@ describe('Helm lifecycle static contract', () => {
     assert.doesNotMatch(api, /AUTH_FAILURE_REDIS_URL/);
   });
 
+  it('uses a local TCP readiness probe for the non-authoritative Redis cache', () => {
+    const redis = resource(render(false, ['--set', 'redis.enabled=true']), 'StatefulSet', 'lifecycle-demo-redis');
+    assert.match(redis, /readinessProbe:\n\s+tcpSocket:\n\s+port: redis/);
+    assert.doesNotMatch(redis, /redis-cli/);
+  });
+
   it('limits controller transport bootstrap to the three bundled PostgreSQL objects', () => {
     const rendered = render(false, [
       '--set',
