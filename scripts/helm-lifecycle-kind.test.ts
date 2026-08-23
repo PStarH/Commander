@@ -1069,13 +1069,17 @@ describe('helm-lifecycle-kind helpers', () => {
       databaseSpkiSha256: 'b'.repeat(64),
       logLevel: 'info',
       kubernetesApiServiceIp: '10.96.0.1',
+      kubernetesApiEndpointIp: '172.18.0.2',
     });
     assert.match(values, /repository: commander-lifecycle-api/);
     assert.match(values, new RegExp(`digest: sha256:${'a'.repeat(64)}`));
     assert.match(values, /bundled: true\n    user: postgres/);
     assert.match(values, /existingSecret: cmdr-live-database-tls/);
     assert.match(values, /redis:\n  enabled: true/);
-    assert.match(values, /kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32/);
+    assert.match(
+      values,
+      /kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32\n      - 172\.18\.0\.2\/32/,
+    );
     for (const role of ['owner', 'app', 'tenant-authority', 'scheduler', 'worker', 'adapter-ops']) {
       assert.match(values, new RegExp(`- ${role}`));
     }
@@ -1090,6 +1094,7 @@ describe('helm-lifecycle-kind helpers', () => {
       databaseSpkiSha256: 'b'.repeat(64),
       logLevel: 'info',
       kubernetesApiServiceIp: '10.96.0.1',
+      kubernetesApiEndpointIp: '172.18.0.2',
       database: {
         kind: 'external',
         secretName: 'cmdr-external-database',
@@ -1108,7 +1113,7 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(values, /name: external-postgres/);
     assert.match(
       values,
-      /egress:\n    databaseCidrs:\n      - 10\.96\.12\.34\/32\n    kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32/,
+      /egress:\n    databaseCidrs:\n      - 10\.96\.12\.34\/32\n    kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32\n      - 172\.18\.0\.2\/32/,
     );
     assert.doesNotMatch(values, /existingSecret: cmdr-external-database-tls/);
   });

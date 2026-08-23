@@ -540,7 +540,10 @@ describe('Helm lifecycle static contract', () => {
       proofPolicy,
       /kubernetes\.io\/metadata\.name: kube-system[\s\S]*component: kube-apiserver[\s\S]*port: 6443/,
     );
-    assert.match(proofPolicy, /ipBlock:[\s\S]*cidr: "10\.96\.0\.1\/32"[\s\S]*port: 443/);
+    assert.match(
+      proofPolicy,
+      /ipBlock:[\s\S]*cidr: "10\.96\.0\.1\/32"[\s\S]*port: 443[\s\S]*port: 6443/,
+    );
     assert.doesNotMatch(proofPolicy, /namespaceSelector: \{\}/);
     assert.match(proofPolicy, /port: 9443/);
     assert.doesNotMatch(proofPolicy, /port: 4000/);
