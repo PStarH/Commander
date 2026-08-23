@@ -87,6 +87,12 @@ function string(value: unknown): string {
   return value;
 }
 
+function runtimeImageId(value: unknown): string {
+  const imageId = string(value);
+  if (!/(?:^|[@/])sha256:[a-f0-9]{64}$/.test(imageId)) invalid();
+  return imageId;
+}
+
 function integer(value: unknown, allowZero = false): number {
   if (!Number.isSafeInteger(value) || (allowZero ? Number(value) < 0 : Number(value) <= 0))
     invalid();
@@ -270,7 +276,7 @@ function conditionTrue(conditions: unknown, type: string): boolean {
     .some((condition) => condition.type === type && condition.status === 'True');
 }
 
-function proofPodReady(pod: JsonRecord, imageDigest: string): boolean {
+function proofPodReady(pod: JsonRecord): boolean {
   const status = record(pod.status);
   if (status.phase !== 'Running') {
     if (status.phase === 'Pending') return false;
@@ -282,12 +288,8 @@ function proofPodReady(pod: JsonRecord, imageDigest: string): boolean {
   if (statuses.length > 1) invalid();
   const containerStatus = statuses[0];
   if (!conditionTrue(status.conditions, 'Ready') || containerStatus?.ready !== true) return false;
-  if (
-    integer(containerStatus.restartCount, true) !== 0 ||
-    !string(containerStatus.imageID).includes(imageDigest)
-  ) {
-    invalid();
-  }
+  if (integer(containerStatus.restartCount, true) !== 0) invalid();
+  runtimeImageId(containerStatus.imageID);
   return true;
 }
 
@@ -296,14 +298,13 @@ async function waitForReadyProofPod(input: {
   identity: Task1ProjectedTokenIdentity;
   proofController: { kind: string; name: string; uid: string };
   proofSelector: Readonly<Record<string, string>>;
-  imageDigest: string;
   readProofPods(): Promise<unknown>;
   wait(): Promise<void>;
 }): Promise<void> {
   // The proof process can start before kubelet publishes its Ready status.
   let pod = input.initialPod;
   for (let attempt = 0; attempt < PROOF_STATUS_ATTEMPTS; attempt += 1) {
-    if (proofPodReady(pod, input.imageDigest)) return;
+    if (proofPodReady(pod)) return;
     if (attempt === PROOF_STATUS_ATTEMPTS - 1) invalid();
     await input.wait();
     const pods = array(field(await input.readProofPods(), 'items')).map(record);
@@ -954,13 +955,10 @@ export function createTask1KubernetesProofObserver(
         const containerStatus = oneNamed(status.containerStatuses, 'api');
         // Kubernetes may normalize status.image to a local tag; the immutable
         // Pod template and runtime imageID are the digest-bound facts.
-        if (
-          containerStatus.ready !== true ||
-          integer(containerStatus.restartCount, true) !== 0 ||
-          !string(containerStatus.imageID).includes(binding.apiImageDigest)
-        )
+        if (containerStatus.ready !== true || integer(containerStatus.restartCount, true) !== 0) {
           invalid();
-        return { name, uid, imageId: string(containerStatus.imageID) };
+        }
+        return { name, uid, imageId: runtimeImageId(containerStatus.imageID) };
       })
       .sort((left, right) => left.name.localeCompare(right.name));
 
@@ -1019,7 +1017,6 @@ export function createTask1KubernetesProofObserver(
       identity,
       proofController,
       proofSelector,
-      imageDigest: binding.apiImageDigest,
       readProofPods: () => request('pods', { selector: proofSelector }),
       wait: options.waitForProofStatus ?? (() => delay(100)),
     });
