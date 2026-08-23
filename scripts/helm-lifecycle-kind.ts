@@ -203,6 +203,7 @@ export function buildLifecycleValues(input: {
   databaseSpkiSha256: string;
   logLevel: 'info' | 'warn';
   kubernetesApiServiceIp: string;
+  kubernetesApiEndpointIp: string;
   database?:
     | { kind: 'bundled' }
     | {
@@ -218,7 +219,8 @@ export function buildLifecycleValues(input: {
   if (
     !/^sha256:[a-f0-9]{64}$/.test(input.imageDigest) ||
     !/^[a-f0-9]{64}$/.test(input.databaseSpkiSha256) ||
-    !isIpv4Address(input.kubernetesApiServiceIp)
+    !isIpv4Address(input.kubernetesApiServiceIp) ||
+    !isIpv4Address(input.kubernetesApiEndpointIp)
   ) {
     throw new Error('LIFECYCLE_VALUES_INVALID');
   }
@@ -308,6 +310,7 @@ networkPolicy:
   egress:
 ${databaseCidrs}    kubernetesApiCidrs:
       - ${input.kubernetesApiServiceIp}/32
+      - ${input.kubernetesApiEndpointIp}/32
   databaseEndpoints:
     - roles:
         - owner
@@ -1888,6 +1891,29 @@ async function kubernetesApiServiceIp(): Promise<string> {
   return clusterIp;
 }
 
+async function kubernetesApiEndpointIp(): Promise<string> {
+  const nodes = await kubectlJson(['get', 'nodes', '-l', 'node-role.kubernetes.io/control-plane']);
+  const items = Array.isArray(nodes.items) ? nodes.items : [];
+  const addresses = (items[0] as { status?: { addresses?: unknown[] } } | undefined)?.status
+    ?.addresses;
+  const internalIps = Array.isArray(addresses)
+    ? addresses
+        .filter(
+          (address): address is { type: string; address: string } =>
+            !!address &&
+            typeof address === 'object' &&
+            (address as { type?: unknown }).type === 'InternalIP' &&
+            typeof (address as { address?: unknown }).address === 'string',
+        )
+        .map((address) => address.address)
+        .filter(isIpv4Address)
+    : [];
+  if (items.length !== 1 || internalIps.length !== 1) {
+    throw new Error('KUBERNETES_API_ENDPOINT_INVALID');
+  }
+  return internalIps[0]!;
+}
+
 async function ensureControlPlaneReady(): Promise<void> {
   for (const selector of controlPlaneReadinessSelectors()) {
     requireCommand(
@@ -2705,6 +2731,7 @@ async function assertReleaseCleanup(release: string): Promise<void> {
 async function runRealBundledLifecycle(
   imageDigest: string,
   kubernetesApiIp: string,
+  kubernetesApiEndpoint: string,
 ): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-live');
@@ -2727,6 +2754,7 @@ async function runRealBundledLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
       }),
       { mode: 0o600 },
     );
@@ -2739,6 +2767,7 @@ async function runRealBundledLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
       }),
       { mode: 0o600 },
     );
@@ -2837,6 +2866,7 @@ async function runRealBundledLifecycle(
 async function runRealExternalTlsLifecycle(
   imageDigest: string,
   kubernetesApiIp: string,
+  kubernetesApiEndpoint: string,
 ): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-external');
@@ -2879,6 +2909,7 @@ async function runRealExternalTlsLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
         database,
       }),
       { mode: 0o600 },
@@ -2892,6 +2923,7 @@ async function runRealExternalTlsLifecycle(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
         database,
       }),
       { mode: 0o600 },
@@ -2996,6 +3028,7 @@ async function runRealExternalTlsLifecycle(
 async function runFailedRolloutRecovery(
   imageDigest: string,
   kubernetesApiIp: string,
+  kubernetesApiEndpoint: string,
 ): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-recovery');
@@ -3017,6 +3050,7 @@ async function runFailedRolloutRecovery(
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
         kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
       }),
       { mode: 0o600 },
     );
@@ -3127,9 +3161,14 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   await loadProductionImage(imageDigest);
   await ensureControlPlaneReady();
   const kubernetesApiIp = await kubernetesApiServiceIp();
+  const kubernetesApiEndpoint = await kubernetesApiEndpointIp();
   const runners: Record<
     LifecycleScenarioName,
-    (selectedDigest: string, selectedKubernetesApiIp: string) => Promise<ScenarioEvidence>
+    (
+      selectedDigest: string,
+      selectedKubernetesApiIp: string,
+      selectedKubernetesApiEndpoint: string,
+    ) => Promise<ScenarioEvidence>
   > = {
     'real-bundled': runRealBundledLifecycle,
     'real-external-tls': runRealExternalTlsLifecycle,
@@ -3137,7 +3176,7 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   };
   const scenarios: ScenarioEvidence[] = [];
   for (const scenario of selectedScenarios) {
-    scenarios.push(await runners[scenario](imageDigest, kubernetesApiIp));
+    scenarios.push(await runners[scenario](imageDigest, kubernetesApiIp, kubernetesApiEndpoint));
   }
   const rbac = scenarios.flatMap((scenario) => scenario.rbac ?? []);
   const networkPolicy = scenarios.flatMap((scenario) => scenario.networkPolicy ?? []);
