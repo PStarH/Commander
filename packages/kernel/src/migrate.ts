@@ -232,6 +232,8 @@ export function migrationFailureDiagnostic(error: unknown): string {
     originClassificationStep?: unknown;
     phase?: unknown;
     sqlstate?: unknown;
+    code?: unknown;
+    diagnostic?: unknown;
   };
   if (!isOwnerMigrationFailureStage(failure.ownerStage)) return 'COMMANDER_MIGRATION_FAILED';
   let diagnostic = 'COMMANDER_MIGRATION_FAILED;owner_stage=' + failure.ownerStage;
@@ -259,6 +261,14 @@ export function migrationFailureDiagnostic(error: unknown): string {
         diagnostic += ';origin_classification_step=' + failure.originClassificationStep;
       }
     }
+  }
+  if (
+    failure.ownerStage === 'rollout_proof' &&
+    failure.code === 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID' &&
+    typeof failure.diagnostic === 'string' &&
+    /^task1KubernetesProofObserver\.(?:ts|js):[1-9][0-9]*:[1-9][0-9]*$/.test(failure.diagnostic)
+  ) {
+    diagnostic += ';proof_code=' + failure.code + ';proof_invariant=' + failure.diagnostic;
   }
   if (
     typeof failure.migrationId !== 'string' ||

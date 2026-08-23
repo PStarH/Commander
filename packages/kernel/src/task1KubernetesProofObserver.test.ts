@@ -438,6 +438,63 @@ class FixtureApi implements Task1KubernetesProofApi {
 }
 
 describe('Task 1 Kubernetes proof observer', () => {
+  it('waits for kubelet to publish readiness for its own running proof Pod', async () => {
+    const values = resources();
+    const staleProofPods = structuredClone(values.proofPods);
+    staleProofPods.items[0].status.conditions[0].status = 'False';
+    staleProofPods.items[0].status.containerStatuses[0].ready = false;
+    const api = new FixtureApi(values);
+    let proofPodReads = 0;
+    const observer = createTask1KubernetesProofObserver({
+      api: {
+        async read(request) {
+          if (
+            request.resource === 'pods' &&
+            request.selector?.['commander.io/tenant-authority-proof-reader'] === 'true'
+          ) {
+            proofPodReads += 1;
+            return proofPodReads === 1 ? staleProofPods : values.proofPods;
+          }
+          return api.read(request);
+        },
+      },
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+      waitForProofStatus: async () => {},
+    });
+
+    await assert.doesNotReject(() => observer(operation()));
+    assert.equal(proofPodReads, 2);
+  });
+
+  it('retains only the machine code and observer location on invariant failures', async () => {
+    const values = resources();
+    values.service.metadata.name = 'wrong-service';
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await assert.rejects(
+      () => observer(operation()),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.equal(
+          (error as Error & { code?: unknown }).code,
+          'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+        );
+        assert.match(
+          String((error as Error & { diagnostic?: unknown }).diagnostic),
+          /^task1KubernetesProofObserver\.(?:ts|js):\d+:\d+$/,
+        );
+        return true;
+      },
+    );
+  });
+
   it('uses only the frozen proof-reader permissions and binds its own projected-token Pod', async () => {
     const api = new FixtureApi();
     const observer = createTask1KubernetesProofObserver({
@@ -928,6 +985,7 @@ describe('Task 1 Kubernetes proof observer', () => {
         readProjectedTokenIdentity: async () => identity,
         readReleaseProjection: async () => releaseProjection(),
         now: () => now,
+        waitForProofStatus: async () => {},
       });
       await assert.rejects(
         () => observer(operation()),
