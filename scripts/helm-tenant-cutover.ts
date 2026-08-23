@@ -12,7 +12,7 @@ import {
   canonicalBootstrapSha256,
 } from '../packages/kernel/src/canonicalBootstrap.js';
 import {
-  KERNEL_MIGRATIONS,
+  KERNEL_TASK1_BASELINE_MIGRATIONS,
   KERNEL_TASK1_CLOSURE_MIGRATIONS,
 } from '../packages/kernel/src/migrations.js';
 import { verifyChartContentDigest } from './chart-content-digest.js';
@@ -477,7 +477,7 @@ function runtimeMigrationDescriptors(phase: HelmOperation['phase']): string {
   );
   return JSON.stringify(
     Object.fromEntries(
-      [...KERNEL_MIGRATIONS, ...task1ClosureDescriptors].map(({ id, checksum }) => [
+      [...KERNEL_TASK1_BASELINE_MIGRATIONS, ...task1ClosureDescriptors].map(({ id, checksum }) => [
         id,
         checksum,
       ]),

@@ -12,7 +12,7 @@ import {
   canonicalBootstrapSha256,
 } from '../packages/kernel/src/canonicalBootstrap.js';
 import {
-  KERNEL_MIGRATIONS,
+  KERNEL_TASK1_BASELINE_MIGRATIONS,
   KERNEL_TASK1_CLOSURE_MIGRATIONS,
 } from '../packages/kernel/src/migrations.js';
 import {
@@ -2222,10 +2222,9 @@ data: { owner-url: ${payload} }
     );
     const expected = JSON.stringify(
       Object.fromEntries(
-        [...KERNEL_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS].map(({ id, checksum }) => [
-          id,
-          checksum,
-        ]),
+        [...KERNEL_TASK1_BASELINE_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS].map(
+          ({ id, checksum }) => [id, checksum],
+        ),
       ),
     );
     const index = rollout.indexOf('--set-string', rollout.indexOf('--set-string') + 1);
@@ -2253,7 +2252,7 @@ data: { owner-url: ${payload} }
     );
     const expandExpected = JSON.stringify(
       Object.fromEntries(
-        [...KERNEL_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, 2)].map(
+        [...KERNEL_TASK1_BASELINE_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, 2)].map(
           ({ id, checksum }) => [id, checksum],
         ),
       ),
