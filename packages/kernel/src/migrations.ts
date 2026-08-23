@@ -766,6 +766,7 @@ export async function runKernelMigrations(
         END IF;
       END $$;
     `);
+    await client.query('GRANT SELECT ON commander_kernel_migrations TO commander_app');
 
     await client.query('COMMIT');
   } catch (error) {

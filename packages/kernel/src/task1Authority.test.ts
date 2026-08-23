@@ -53,6 +53,7 @@ function sqlResult<T>(rows: T[]): SqlQueryResult<T> {
 
 class MigrationLedgerClient implements SqlClient {
   readonly appliedMigrationIds: string[] = [];
+  readonly statements: string[] = [];
 
   constructor(private readonly ledger: Map<string, string>) {}
 
@@ -61,6 +62,7 @@ class MigrationLedgerClient implements SqlClient {
     values: readonly unknown[] = [],
   ): Promise<SqlQueryResult<T>> {
     const normalized = sql.replace(/\s+/g, ' ').trim();
+    this.statements.push(normalized);
     if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') {
       return sqlResult<T>([]);
     }
@@ -411,6 +413,18 @@ describe('Task 1 authoritative Class A admission', () => {
     assert.deepEqual(
       pool.client.appliedMigrationIds,
       KERNEL_TASK1_FORWARD_MIGRATIONS.map((migration) => migration.id),
+    );
+  });
+
+  it('grants the runtime app role read access to the migration ledger', async () => {
+    const pool = new MigrationLedgerPool(new Map(Object.entries(KERNEL_HISTORICAL_MIGRATION_CHECKSUMS)));
+
+    await runKernelMigrations(pool);
+
+    assert.ok(
+      pool.client.statements.includes(
+        'GRANT SELECT ON commander_kernel_migrations TO commander_app',
+      ),
     );
   });
 
