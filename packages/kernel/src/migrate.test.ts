@@ -10,6 +10,7 @@ import {
   currentTask1Operation,
   createTask1ProofRuntime,
   readTask1OwnerInput,
+  seedTask1ReadinessTenant,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
 import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
@@ -104,6 +105,20 @@ class FailingOwnerBootstrapLedgerPool implements SqlPool {
 
 describe('kernel owner migration entrypoint', () => {
   const digest = (value: string): string => value.repeat(64).slice(0, 64);
+
+  it('seeds the fixed readiness tenant through the owner authority allowlist', async () => {
+    const calls: Array<{ sql: string; values: readonly unknown[] | undefined }> = [];
+    await seedTask1ReadinessTenant({
+      async query(sql, values) {
+        calls.push({ sql, values });
+        return sqlResult([]);
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!.sql, /INSERT INTO commander_tenant_authority_allowed_tenants/i);
+    assert.deepEqual(calls[0]!.values, ['commander/readiness/v1']);
+  });
 
   it('formats only a sanitized PostgreSQL migration failure diagnostic', () => {
     const formatter = (

@@ -7,7 +7,12 @@ import {
   applyTask1ClosureDescriptorSet,
   type Task1ClosurePhase,
 } from './migrations.js';
-import { seedDemoTicketAllowlist, seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
+import {
+  seedDemoTicketAllowlist,
+  seedTenantAuthorityAllowedTenants,
+  seedWorkerAllowedTenants,
+  type ClaimSecretSeedClient,
+} from './seedWorkerClaimSecret.js';
 import {
   runTask1OwnerCommand,
   parseTask1OwnerCommandInput,
@@ -56,6 +61,13 @@ export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0 && t !== '*');
+}
+
+const TASK1_READINESS_TENANT = 'commander/readiness/v1';
+
+/** The API's fixed tenant-context readiness challenge must be authorized by the owner migration. */
+export async function seedTask1ReadinessTenant(client: ClaimSecretSeedClient): Promise<void> {
+  await seedTenantAuthorityAllowedTenants(client, [TASK1_READINESS_TENANT]);
 }
 
 /** Populated-volume upgrade gate: role init scripts only run on first database creation. */
@@ -826,6 +838,7 @@ async function main() {
     await runKernelMigrations(activePool, { requiredRole: 'owner' });
     if (closurePhase) {
       await runTask1ClosureMigrations(activePool, closurePhase);
+      await seedTask1ReadinessTenant(activePool);
     }
     // Seed cell tenants so register_worker can admit worker LOGIN registrations.
     // Prefer COMMANDER_WORKER_ALLOWED_TENANTS; fall back to COMMANDER_WORKER_TENANTS.
