@@ -887,10 +887,11 @@ export function createTask1KubernetesProofObserver(
         const status = record(pod.status);
         if (status.phase !== 'Running' || !conditionTrue(status.conditions, 'Ready')) invalid();
         const containerStatus = oneNamed(status.containerStatuses, 'api');
+        // Kubernetes may normalize status.image to a local tag; the immutable
+        // Pod template and runtime imageID are the digest-bound facts.
         if (
           containerStatus.ready !== true ||
           integer(containerStatus.restartCount, true) !== 0 ||
-          !string(containerStatus.image).endsWith(`@${binding.apiImageDigest}`) ||
           !string(containerStatus.imageID).includes(binding.apiImageDigest)
         )
           invalid();
@@ -955,7 +956,6 @@ export function createTask1KubernetesProofObserver(
       !conditionTrue(proofStatus.conditions, 'Ready') ||
       proofContainerStatus.ready !== true ||
       integer(proofContainerStatus.restartCount, true) !== 0 ||
-      !string(proofContainerStatus.image).endsWith(`@${binding.apiImageDigest}`) ||
       !string(proofContainerStatus.imageID).includes(binding.apiImageDigest)
     )
       invalid();
