@@ -34,6 +34,18 @@ export function warningFingerprint(warning: ScannerWarning): string {
     .digest('hex');
 }
 
+function warningPolicyIdentity(warning: ScannerWarning): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        severity: warning.severity,
+        category: warning.category,
+        message: warning.message,
+      }),
+    )
+    .digest('hex');
+}
+
 function isMalwareOrCritical(warning: ScannerWarning): boolean {
   return warning.severity === 'critical' || warning.category.startsWith('malware.');
 }
@@ -440,7 +452,11 @@ function stableBindingIdentity(
     ts.isGetAccessorDeclaration(node) ||
     ts.isSetAccessorDeclaration(node)
   ) {
-    return node.name.getText(sourceFile);
+    const modifiers = ts.getModifiers(node) ?? [];
+    const dispatch = modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)
+      ? 'static'
+      : 'instance';
+    return dispatch + ':' + node.name.getText(sourceFile);
   }
   if (ts.isConstructorDeclaration(node)) return 'constructor';
   if (ts.isFunctionExpression(node) && node.name !== undefined) return node.name.text;
@@ -455,6 +471,18 @@ function stableBindingIdentity(
   if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
     const index = parent.arguments?.findIndex((argument) => argument === node) ?? -1;
     if (index >= 0) return 'argument:' + index + ':' + parent.expression.getText(sourceFile);
+  }
+  if (ts.isReturnStatement(parent)) return 'return';
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === node
+  ) {
+    return 'assignment:' + parent.left.getText(sourceFile);
+  }
+  if (ts.isArrayLiteralExpression(parent)) {
+    const structure = expressionStructure(sourceFile, node);
+    if (structure.length > 0) return 'array:' + structure.join('/');
   }
   return undefined;
 }
@@ -600,10 +628,54 @@ function warningExpressionStatementText(
   expression: ts.Node,
   scope: ExecutableFunction,
 ): string {
-  for (let current: ts.Node | undefined = expression.parent; current && current !== scope; current = current.parent) {
+  for (
+    let current: ts.Node | undefined = expression.parent;
+    current && current !== scope;
+    current = current.parent
+  ) {
     if (ts.isPropertyAssignment(current)) return current.getText(sourceFile);
   }
   return warningStatementText(sourceFile, expression, scope);
+}
+
+function declarationListKind(declaration: ts.VariableDeclaration): string {
+  const flags = declaration.parent.flags;
+  if ((flags & ts.NodeFlags.Const) !== 0) return 'const';
+  if ((flags & ts.NodeFlags.Let) !== 0) return 'let';
+  return 'var';
+}
+
+function expressionStructure(sourceFile: ts.SourceFile, expression: ts.Node): string[] {
+  const structure: string[] = [];
+  let child = expression;
+  for (
+    let current: ts.Node | undefined = expression.parent;
+    current && !ts.isSourceFile(current);
+    child = current, current = current.parent
+  ) {
+    if (ts.isVariableDeclaration(current)) {
+      structure.push(
+        'binding:' + declarationListKind(current) + ':' + current.name.getText(sourceFile),
+      );
+    } else if (ts.isPropertyAssignment(current)) {
+      structure.push('property:' + current.name.getText(sourceFile));
+    } else if (ts.isArrayLiteralExpression(current)) {
+      const elementIndex = current.elements.findIndex((element) => element === child);
+      if (elementIndex >= 0) structure.push('array-element:' + elementIndex);
+    }
+  }
+  return structure.reverse();
+}
+
+function warningContextText(
+  sourceFile: ts.SourceFile,
+  statement: string,
+  anchor: ts.Node,
+  evidence: string,
+): string {
+  const anchorText = anchor.getText(sourceFile);
+  if (anchorText.length === 0 || !statement.includes(anchorText)) return statement;
+  return statement.replace(anchorText, warningEvidencePrefix(evidence));
 }
 
 function commentAtPosition(
@@ -659,7 +731,15 @@ function sourceOccurrenceFingerprint(
         .update(
           JSON.stringify({
             scope: 'top-level',
-            warning: anchor.getText(sourceFile),
+            warning: ts.isImportDeclaration(topLevelStatement)
+              ? warningEvidencePrefix(evidence)
+              : warningContextText(
+                  sourceFile,
+                  topLevelStatement.getText(sourceFile),
+                  anchor,
+                  evidence,
+                ),
+            structure: expressionStructure(sourceFile, anchor),
             controls: controls.descriptors,
             dependencies: dependencies ?? ['unresolved'],
           }),
@@ -675,7 +755,7 @@ function sourceOccurrenceFingerprint(
 
   const scopeIdentity = lexicalScopeIdentity(sourceFile, functionScope);
   if (scopeIdentity === undefined) return undefined;
-  const controls = controlFlowDependencies(sourceFile, anchor, functionScope);
+  const controls = controlFlowDependencies(sourceFile, anchor, sourceFile);
   const argumentReferences =
     expressionAnchor !== undefined
       ? referencedIdentifiers(anchor)
@@ -695,7 +775,13 @@ function sourceOccurrenceFingerprint(
         warningStatement:
           expressionAnchor === undefined
             ? warningStatementText(sourceFile, anchor, functionScope)
-            : warningExpressionStatementText(sourceFile, expressionAnchor, functionScope),
+            : warningContextText(
+                sourceFile,
+                warningExpressionStatementText(sourceFile, expressionAnchor, functionScope),
+                anchor,
+                evidence,
+              ),
+        structure: expressionStructure(sourceFile, anchor),
         controls: controls.descriptors,
         dependencies: dependencies ?? ['unresolved'],
       }),
@@ -769,15 +855,18 @@ export function evaluateIndexedWarnings(
   const violations: ScannerPolicyViolation[] = [];
   const baselineOccurrences = new Map<string, string[]>();
   const consumedBaselineOccurrences = new Map<string, Set<number>>();
-  const unmatchedStagedWarnings: ScannerPolicyAuditWarning[] = [];
+  const unmatchedStagedWarnings: Array<{
+    audit: ScannerPolicyAuditWarning;
+    policyIdentity: string;
+  }> = [];
 
   for (const warning of headWarnings) {
     if (!isHighWarning(warning) || isMalwareOrCritical(warning)) continue;
     if (warning.sourceFingerprint === undefined) continue;
-    const fingerprint = warningFingerprint(warning);
-    const occurrences = baselineOccurrences.get(fingerprint) ?? [];
+    const policyIdentity = warningPolicyIdentity(warning);
+    const occurrences = baselineOccurrences.get(policyIdentity) ?? [];
     occurrences.push(warning.sourceFingerprint);
-    baselineOccurrences.set(fingerprint, occurrences);
+    baselineOccurrences.set(policyIdentity, occurrences);
   }
 
   for (const warning of stagedWarnings) {
@@ -793,25 +882,26 @@ export function evaluateIndexedWarnings(
       continue;
     }
 
-    const baseline = baselineOccurrences.get(audit.fingerprint) ?? [];
-    const consumed = consumedBaselineOccurrences.get(audit.fingerprint) ?? new Set<number>();
+    const policyIdentity = warningPolicyIdentity(warning);
+    const baseline = baselineOccurrences.get(policyIdentity) ?? [];
+    const consumed = consumedBaselineOccurrences.get(policyIdentity) ?? new Set<number>();
     const match = baseline.findIndex(
       (sourceFingerprint, index) =>
         !consumed.has(index) && sourceFingerprint === warning.sourceFingerprint,
     );
     if (match >= 0) {
       consumed.add(match);
-      consumedBaselineOccurrences.set(audit.fingerprint, consumed);
+      consumedBaselineOccurrences.set(policyIdentity, consumed);
       inherited.push(audit);
     } else {
-      unmatchedStagedWarnings.push(audit);
+      unmatchedStagedWarnings.push({ audit, policyIdentity });
     }
   }
 
-  for (const audit of unmatchedStagedWarnings) {
+  for (const { audit, policyIdentity } of unmatchedStagedWarnings) {
     violations.push({
       ...audit,
-      reason: baselineOccurrences.has(audit.fingerprint)
+      reason: baselineOccurrences.has(policyIdentity)
         ? 'duplicate_high_warning'
         : 'new_high_warning',
     });

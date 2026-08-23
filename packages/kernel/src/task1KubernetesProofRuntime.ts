@@ -70,7 +70,7 @@ export function parseTask1ProjectedTokenIdentity(token: string): Task1ProjectedT
     fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   const expires = safeEpochSeconds(payload.exp);
   const issued = safeEpochSeconds(payload.iat);
-  if (expires <= issued || expires - issued > 5 * 60) {
+  if (expires <= issued || expires - issued > 600) {
     fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   }
   const kubernetes = record(payload['kubernetes.io'], 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');

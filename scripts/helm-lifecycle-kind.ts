@@ -498,9 +498,9 @@ export function assertProofPodContract(pod: unknown, expectedServiceAccount: str
     spec?.serviceAccountName !== expectedServiceAccount ||
     spec.automountServiceAccountToken !== false ||
     tokens.length !== 2 ||
-    identityToken?.expirationSeconds !== 300 ||
+    identityToken?.expirationSeconds !== 600 ||
     identityToken.path !== 'identity-token' ||
-    apiToken?.expirationSeconds !== 300 ||
+    apiToken?.expirationSeconds !== 600 ||
     apiToken.path !== 'api-token'
   ) {
     throw new Error('PROOF_POD_CONTRACT_INVALID');
