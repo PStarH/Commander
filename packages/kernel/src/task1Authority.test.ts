@@ -27,6 +27,8 @@ import {
   KERNEL_TASK2_FORWARD_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
   KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
+  KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
   KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
   KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
   runTask1ClosureMigrations,
@@ -115,6 +117,13 @@ class MigrationLedgerPool implements SqlPool {
 }
 
 describe('Task 1 authoritative Class A admission', () => {
+  it('installs the PostgreSQL authentication-failure authority migration', () => {
+    const id = '2026-08-22.1.auth_failure_authority';
+    assert.equal(KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS[0]?.id, id);
+    assert.equal(KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.sql, KERNEL_AUTH_FAILURE_AUTHORITY_SQL);
+    assert.match(KERNEL_AUTH_FAILURE_AUTHORITY_SQL, /GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app/);
+  });
+
   it('installs the approval-binding claim RPC after the campaign2 public wrapper', () => {
     const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
     const campaign2Index = ids.indexOf('2026-07-29.2.campaign2_critical_authority_hardening');
