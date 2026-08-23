@@ -12,6 +12,10 @@ import {
   canonicalBootstrapSha256,
 } from '../packages/kernel/src/canonicalBootstrap.js';
 import {
+  KERNEL_MIGRATIONS,
+  KERNEL_TASK1_CLOSURE_MIGRATIONS,
+} from '../packages/kernel/src/migrations.js';
+import {
   buildHelmOwnerJobBundle,
   buildHelmRolloutArgs,
   buildHelmTransportBootstrapArgs,
@@ -2208,5 +2212,57 @@ data: { owner-url: ${payload} }
       bootstrap.slice(bootstrap.indexOf('--set-string'), bootstrap.indexOf('--set-string') + 2),
       ['--set-string', `tenantAuthority.chartContentSha256=${chart}`],
     );
+  });
+
+  it('makes API migration gates wait for the full tenant-cutover descriptor set', () => {
+    const rollout = buildHelmRolloutArgs(
+      operation(),
+      { namespace: 'commander', release: 'commander', values: '/v' },
+      'v3.17.3',
+    );
+    const expected = JSON.stringify(
+      Object.fromEntries(
+        [...KERNEL_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS].map(({ id, checksum }) => [
+          id,
+          checksum,
+        ]),
+      ),
+    );
+    const index = rollout.indexOf('--set-string', rollout.indexOf('--set-string') + 1);
+    const escapeHelmString = (value: string): string =>
+      value
+        .replaceAll('\\', '\\\\')
+        .replaceAll('{', '\\{')
+        .replaceAll('}', '\\}')
+        .replaceAll(',', '\\,');
+
+    assert.deepEqual(rollout.slice(index, index + 2), [
+      '--set-string',
+      `tenantAuthority.expectedMigrationDescriptors=${escapeHelmString(expected)}`,
+    ]);
+
+    const expandOperation = operation();
+    const expand = buildHelmRolloutArgs(
+      {
+        ...expandOperation,
+        phase: 'expand',
+        platformBinding: { ...expandOperation.platformBinding, phase: 'expand' },
+      },
+      { namespace: 'commander', release: 'commander', values: '/v' },
+      'v3.17.3',
+    );
+    const expandExpected = JSON.stringify(
+      Object.fromEntries(
+        [...KERNEL_MIGRATIONS, ...KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, 2)].map(
+          ({ id, checksum }) => [id, checksum],
+        ),
+      ),
+    );
+    const expandIndex = expand.indexOf('--set-string', expand.indexOf('--set-string') + 1);
+
+    assert.deepEqual(expand.slice(expandIndex, expandIndex + 2), [
+      '--set-string',
+      `tenantAuthority.expectedMigrationDescriptors=${escapeHelmString(expandExpected)}`,
+    ]);
   });
 });
