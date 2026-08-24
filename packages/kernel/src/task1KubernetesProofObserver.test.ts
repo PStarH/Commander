@@ -354,7 +354,8 @@ function resources(): Record<string, any> {
 function token(): Task1ProjectedTokenIdentity {
   return {
     audience,
-    expiresAt: '2026-07-28T10:03:00.000Z',
+    issuedAt: '2026-07-28T10:00:00.000Z',
+    expiresAt: '2027-07-28T10:00:00.000Z',
     namespace: 'commander',
     serviceAccountName: 'commander-proof-reader-cd49c9ab10cdd15c',
     podName: 'proof-pod',
@@ -991,6 +992,26 @@ describe('Task 1 Kubernetes proof observer', () => {
         () => observer(operation()),
         /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/,
         name,
+      );
+    }
+  });
+
+  it('rejects projected tokens whose issuance is stale or in the future', async () => {
+    for (const issuedAt of ['2026-07-28T09:49:59.000Z', '2026-07-28T10:00:01.000Z']) {
+      const values = resources();
+      const identity = token();
+      identity.issuedAt = issuedAt;
+      const observer = createTask1KubernetesProofObserver({
+        api: new FixtureApi(values),
+        readProjectedTokenIdentity: async () => identity,
+        readReleaseProjection: async () => releaseProjection(),
+        now: () => now,
+        waitForProofStatus: async () => {},
+      });
+      await assert.rejects(
+        () => observer(operation()),
+        /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/,
+        issuedAt,
       );
     }
   });

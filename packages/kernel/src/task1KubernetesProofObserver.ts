@@ -33,6 +33,7 @@ interface ProofPodContract {
 
 export interface Task1ProjectedTokenIdentity {
   audience: string;
+  issuedAt: string;
   expiresAt: string;
   namespace: string;
   serviceAccountName: string;
@@ -779,6 +780,7 @@ export function createTask1KubernetesProofObserver(
     const now = (options.now ?? (() => new Date()))();
     if (!Number.isFinite(now.getTime())) invalid();
     const identity = await options.readProjectedTokenIdentity();
+    const issuedAt = Date.parse(identity.issuedAt);
     const expiresAt = Date.parse(identity.expiresAt);
     if (
       identity.audience !== AUDIENCE ||
@@ -787,9 +789,12 @@ export function createTask1KubernetesProofObserver(
         proofReaderServiceAccount(binding.namespace, binding.releaseName) ||
       !identity.podName ||
       !identity.podUid ||
+      !Number.isFinite(issuedAt) ||
+      issuedAt > now.getTime() ||
+      issuedAt < now.getTime() - PROOF_WINDOW_SECONDS * 1_000 ||
       !Number.isFinite(expiresAt) ||
       expiresAt <= now.getTime() ||
-      expiresAt > now.getTime() + PROOF_WINDOW_SECONDS * 1_000
+      expiresAt <= issuedAt
     )
       invalid();
 
