@@ -2308,11 +2308,12 @@ export function commandFailureCode(
   program: string,
   args: readonly string[],
   stdin?: string,
+  stderr = '',
 ): string {
   let createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED';
   if (args[0] === 'create' && stdin) {
     try {
-      const object = JSON.parse(stdin) as {
+      const object = load(stdin) as {
         kind?: unknown;
         metadata?: { labels?: Record<string, unknown> };
       };
@@ -2332,6 +2333,17 @@ export function commandFailureCode(
       }
     } catch {
       // Non-canonical create input retains the generic fixed code.
+    }
+  }
+  if (args[0] === 'create') {
+    if (/\bAlreadyExists\b/.test(stderr)) {
+      createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_ALREADY_EXISTS';
+    } else if (/\bforbidden\b/i.test(stderr)) {
+      createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FORBIDDEN';
+    } else if (/\binvalid\b/i.test(stderr)) {
+      createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_INVALID';
+    } else if (/\bnot found\b/i.test(stderr)) {
+      createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_NOT_FOUND';
     }
   }
   const kubectlCode =
@@ -2370,7 +2382,8 @@ export async function defaultCommand(
 ): Promise<string> {
   return new Promise((resolveCommand, reject) => {
     const canICheck = program === 'kubectl' && args.includes('auth') && args.includes('can-i');
-    const captureStderr = (program === 'kubectl' && args[0] === 'logs') || canICheck;
+    const captureStderr =
+      (program === 'kubectl' && (args[0] === 'logs' || args[0] === 'create')) || canICheck;
     const processGroup = process.platform !== 'win32';
     const child = launchProcess(program, [...args], {
       detached: processGroup,
@@ -2477,6 +2490,7 @@ export async function defaultCommand(
       childClosed = true;
       if (terminatingError) return finishTerminationWhenGone();
       const stdoutText = Buffer.concat(output).toString('utf8');
+      const stderrText = Buffer.concat(errorOutput).toString('utf8');
       if (
         canICheck &&
         ((code === 0 && stdoutText.trim() === 'yes') || (code === 1 && stdoutText.trim() === 'no'))
@@ -2487,13 +2501,17 @@ export async function defaultCommand(
         resolveCommand(stdoutText);
         return;
       }
-      if (canICheck) return finishReject(new Error(commandFailureCode(program, args, stdin)));
-      if (code !== 0) return finishReject(new Error(commandFailureCode(program, args, stdin)));
+      if (canICheck)
+        return finishReject(new Error(commandFailureCode(program, args, stdin, stderrText)));
+      if (code !== 0)
+        return finishReject(new Error(commandFailureCode(program, args, stdin, stderrText)));
       settled = true;
       clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
       resolveCommand(
-        canICheck ? stdoutText : Buffer.concat([...output, ...errorOutput]).toString('utf8'),
+        canICheck || args[0] === 'create'
+          ? stdoutText
+          : Buffer.concat([...output, ...errorOutput]).toString('utf8'),
       );
     });
     child.stdin.end(stdin ?? '');
