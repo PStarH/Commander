@@ -80,10 +80,12 @@ function resources(): Record<string, any> {
     ],
     ports: [{ name: 'tenant-proof', containerPort: 9443, protocol: 'TCP' }],
     readinessProbe: {
-      httpGet: {
-        scheme: 'HTTPS',
-        path: '/ready/tenant-authority/v1',
-        port: 'tenant-proof',
+      exec: {
+        command: [
+          'node',
+          '-e',
+          "const https = require('node:https'); const req = https.get({ hostname: '127.0.0.1', port: 9443, path: '/ready/tenant-authority/v1', rejectUnauthorized: false }, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(1500, () => { req.destroy(); process.exit(1); });",
+        ],
       },
     },
   };
@@ -694,9 +696,10 @@ describe('Task 1 Kubernetes proof observer', () => {
         },
       ],
       [
-        'readiness port drift',
+        'readiness probe drift',
         (values) => {
-          values.deployment.spec.template.spec.containers[0].readinessProbe.httpGet.port = 9443;
+          values.deployment.spec.template.spec.containers[0].readinessProbe.exec.command[2] =
+            "require('node:https').get('https://127.0.0.1:9443/ready/tenant-authority/v1')";
         },
       ],
       [
@@ -1014,5 +1017,24 @@ describe('Task 1 Kubernetes proof observer', () => {
         issuedAt,
       );
     }
+  });
+
+  it('rejects the superseded Service-routed readiness probe contract', async () => {
+    const values = resources();
+    values.deployment.spec.template.spec.containers[0].readinessProbe = {
+      httpGet: {
+        scheme: 'HTTPS',
+        path: '/ready/tenant-authority/v1',
+        port: 'tenant-proof',
+      },
+    };
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await assert.rejects(() => observer(operation()), /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/);
   });
 });
