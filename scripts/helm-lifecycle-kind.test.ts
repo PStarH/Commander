@@ -1131,6 +1131,10 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(values, /redis:\n  enabled: true/);
     assert.match(
       values,
+      /migrationOperator:\n    subject: system:serviceaccount:commander-lifecycle:tenant-migration-operator/,
+    );
+    assert.match(
+      values,
       /kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32\n      - 172\.18\.0\.2\/32/,
     );
     for (const role of ['owner', 'app', 'tenant-authority', 'scheduler', 'worker', 'adapter-ops']) {

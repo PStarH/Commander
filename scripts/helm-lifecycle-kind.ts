@@ -13,7 +13,15 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { arch, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dump, load } from 'js-yaml';
 import { isAllowedHelmDiagnosticCode } from './helm-diagnostic-policy.js';
+import { defaultCommand } from './helm-tenant-cutover.js';
+import {
+  createTask1KubectlPorts,
+  loadTask1PrerequisiteCommandContext,
+  runTask1AdmissionAdministrator,
+  runTask1PrerequisiteOperator,
+} from './task1-helm-prerequisite-command.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -307,6 +315,8 @@ ${bootstrapAuthority}  apiProof:
     privateSecret: ${input.release}-api-proof-private
 networkPolicy:
   enabled: true
+  migrationOperator:
+    subject: system:serviceaccount:${input.namespace}:tenant-migration-operator
   egress:
 ${databaseCidrs}    kubernetesApiCidrs:
       - ${input.kubernetesApiServiceIp}/32
@@ -1841,6 +1851,108 @@ function helm(args: string[]): Promise<CommandResult> {
   return runCmd('helm', args);
 }
 
+async function prepareNetworkPrerequisites(
+  release: string,
+  valuesPath: string,
+  apiProofSpkiSha256: string,
+): Promise<void> {
+  const subject = 'system:serviceaccount:' + NAMESPACE + ':tenant-migration-operator';
+  const resolvedValuesPath = valuesPath + '.network-prerequisites';
+  try {
+    const resolvedValues = requireCommand(
+      await helm(['get', 'values', release, '-n', NAMESPACE, '--all', '-o', 'yaml']),
+      'TENANT_POLICY_RELEASE_VALUES_FAILED',
+    );
+    const parsedValues = load(resolvedValues) as Record<string, unknown>;
+    const tenantAuthority = parsedValues.tenantAuthority as Record<string, unknown>;
+    const apiProof = tenantAuthority.apiProof as Record<string, unknown>;
+    const networkPolicy = parsedValues.networkPolicy as Record<string, unknown>;
+    const chartContentSha256 = tenantAuthority.chartContentSha256;
+    const proofPort = apiProof.port;
+    if (
+      typeof chartContentSha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(chartContentSha256) ||
+      typeof proofPort !== 'number' ||
+      !Number.isSafeInteger(proofPort) ||
+      proofPort < 1 ||
+      proofPort > 65535 ||
+      !/^[a-f0-9]{64}$/.test(apiProofSpkiSha256)
+    ) {
+      throw new Error('TENANT_POLICY_RELEASE_VALUES_INVALID');
+    }
+    tenantAuthority.platformBinding = { chartContentSha256 };
+    tenantAuthority.apiProof = {
+      ...apiProof,
+      publicCertificateSpkiSha256: apiProofSpkiSha256,
+      serviceName: release + '-api-proof',
+      servicePort: proofPort,
+      targetPort: proofPort,
+      podSelector: {
+        'app.kubernetes.io/name': release,
+        'app.kubernetes.io/instance': release,
+        'app.kubernetes.io/component': 'api',
+      },
+      dnsSan: release + '-api-proof.' + NAMESPACE + '.svc.cluster.local',
+    };
+    networkPolicy.clusterDomain = 'cluster.local';
+    writeFileSync(resolvedValuesPath, dump(parsedValues, { noRefs: true, sortKeys: true }), {
+      mode: 0o600,
+    });
+    const args = [
+      '--namespace',
+      NAMESPACE,
+      '--release',
+      release,
+      '--values',
+      resolvedValuesPath,
+      '--stage',
+      'network',
+      '--migration-operator-subject',
+      subject,
+    ];
+    const context = await loadTask1PrerequisiteCommandContext(args, rootDir());
+    const adminPorts = createTask1KubectlPorts((commandArgs, stdin) =>
+      defaultCommand('kubectl', commandArgs, stdin),
+    );
+    await runTask1AdmissionAdministrator(context, adminPorts);
+
+    const token = requireCommand(
+      await kubectl([
+        'create',
+        'token',
+        'tenant-migration-operator',
+        '-n',
+        NAMESPACE,
+        '--duration=10m',
+      ]),
+      'TENANT_POLICY_OPERATOR_TOKEN_FAILED',
+    ).trim();
+    if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
+    const operatorPorts = createTask1KubectlPorts(
+      (commandArgs, stdin) => defaultCommand('kubectl', ['--as', subject, ...commandArgs], stdin),
+      async () => token,
+    );
+    const deadline = Date.now() + 120_000;
+    while (true) {
+      try {
+        await runTask1PrerequisiteOperator(context, operatorPorts);
+        return;
+      } catch (error) {
+        if (
+          !(error instanceof Error) ||
+          error.message !== 'TENANT_POLICY_ADMISSION_NOT_READY' ||
+          Date.now() >= deadline
+        ) {
+          throw error;
+        }
+        await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+      }
+    }
+  } finally {
+    rmSync(resolvedValuesPath, { force: true });
+  }
+}
+
 async function createNamespace(namespace = NAMESPACE): Promise<void> {
   const result = await kubectl(['create', 'namespace', namespace]);
   if (result.exitCode !== 0 && !result.stderr.includes('AlreadyExists')) {
@@ -1968,7 +2080,7 @@ function generateCertificateMaterial(
   namespace: string,
   release: string,
   databaseDnsNames?: string[],
-): { databaseSpkiSha256: string } {
+): { databaseSpkiSha256: string; apiProofSpkiSha256: string } {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const openssl = (args: string[]) => {
     const result = runCmdSync('openssl', args, { cwd: directory });
@@ -2047,7 +2159,10 @@ function generateCertificateMaterial(
     `${release}-api-proof.${namespace}.svc`,
     `${release}-api-proof.${namespace}.svc.cluster.local`,
   ]);
-  return { databaseSpkiSha256: certificateSpkiSha256(resolve(directory, 'postgres.crt')) };
+  return {
+    databaseSpkiSha256: certificateSpkiSha256(resolve(directory, 'postgres.crt')),
+    apiProofSpkiSha256: certificateSpkiSha256(resolve(directory, 'api-proof.crt')),
+  };
 }
 
 async function createLifecycleTlsSecrets(
@@ -2799,6 +2914,7 @@ async function runRealBundledLifecycle(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
     );
+    await prepareNetworkPrerequisites(release, installValues, material.apiProofSpkiSha256);
     const firstProofCount = await proofRowCount(databaseTarget);
     assertions.push({
       description: 'post-install challenged API proof appended a durable proof row',
@@ -2952,6 +3068,7 @@ async function runRealExternalTlsLifecycle(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
     );
+    await prepareNetworkPrerequisites(release, installValues, material.apiProofSpkiSha256);
     const firstProofCount = await proofRowCount(databaseTarget);
     assertions.push(
       {

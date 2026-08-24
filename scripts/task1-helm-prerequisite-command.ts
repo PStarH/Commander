@@ -645,7 +645,7 @@ function deploymentReady(
     const execCommand = Array.isArray(execProbe.command) ? execProbe.command : [];
     const replicas = spec.replicas;
     return (
-      metadata.name === `${context.request.release}-api` &&
+      metadata.name === context.request.release + '-api' &&
       labels['app.kubernetes.io/instance'] === context.request.release &&
       labels['app.kubernetes.io/component'] === 'api' &&
       metadata.generation === status.observedGeneration &&
@@ -668,11 +668,13 @@ function deploymentReady(
       templateAnnotations['commander.io/tenant-authority-configuration-sha256'] ===
         context.configurationSha256 &&
       typeof api.image === 'string' &&
-      api.image.endsWith(`@${context.imageDigest}`) &&
+      api.image.endsWith('@' + context.imageDigest) &&
       environment.get('COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST') === context.imageDigest &&
       environment.get('COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256') ===
         context.configurationSha256 &&
-      execCommand.some((value) => typeof value === 'string' && value.includes('/ready/tenant-authority/v1'))
+      execCommand.some(
+        (value) => typeof value === 'string' && value.includes('/ready/tenant-authority/v1'),
+      )
     );
   } catch {
     return false;
@@ -907,6 +909,8 @@ export function verifyTask1PublicCertificate(
 
 export function createTask1KubectlPorts(
   runCommand: (args: readonly string[], stdin?: string) => Promise<string> = kubectl,
+  readToken: () => Promise<string> = () =>
+    readFile('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8'),
 ): Task1PrerequisiteCommandPorts {
   return {
     async get(kind, objectName, namespace) {
@@ -932,11 +936,15 @@ export function createTask1KubectlPorts(
       ) as Task1KubernetesObject;
     },
     async tokenReview() {
-      const token = await readFile('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');
+      const token = await readToken();
       const review = JSON.parse(
         await runCommand(
           ['create', '--filename', '-', '--output', 'json'],
-          `${canonicalBootstrapJson({ apiVersion: 'authentication.k8s.io/v1', kind: 'TokenReview', spec: { token: token.trim() } })}\n`,
+          canonicalBootstrapJson({
+            apiVersion: 'authentication.k8s.io/v1',
+            kind: 'TokenReview',
+            spec: { token: token.trim() },
+          }) + '\n',
         ),
       ) as Record<string, unknown>;
       const status = record(review.status);
