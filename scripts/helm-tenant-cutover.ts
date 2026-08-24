@@ -239,6 +239,8 @@ const OWNER_MIGRATION_SNAPSHOT_VALIDATION =
   '(bootstrap_validation|identity_validation|product_source_validation|catalog_version_validation|origin_classification)';
 const OWNER_MIGRATION_ORIGIN_CLASSIFICATION_STEP =
   '(fresh_catalog_shape|role_envelope|role_attributes|memberships|public_acl)';
+const OWNER_MIGRATION_PROOF_RECORD =
+  /\bCOMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=(TENANT_CUTOVER_KUBERNETES_PROOF_INVALID);proof_invariant=(task1KubernetesProofObserver\.(?:ts|js):[1-9][0-9]*:[1-9][0-9]*)\b/g;
 
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(
@@ -246,6 +248,7 @@ export function ownerJobFailureDiagnostic(
   transport: 'kubectl_logs' | 'kubectl_logs_unavailable' = 'kubectl_logs',
 ): string {
   const tail = logs.slice(-4_096);
+  const proofDiagnostic = [...tail.matchAll(OWNER_MIGRATION_PROOF_RECORD)].at(-1);
   const migrationDiagnostic = [
     ...tail.matchAll(
       new RegExp(
@@ -272,6 +275,18 @@ export function ownerJobFailureDiagnostic(
   ).filter(isAllowedHelmDiagnosticCode);
   const code = codes.at(-1) ?? 'TENANT_CUTOVER_OWNER_JOB_LOG_UNCLASSIFIED';
   const digest = createHash('sha256').update(tail).digest('hex');
+  if (proofDiagnostic) {
+    return (
+      'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=' +
+      transport +
+      ';owner_stage=rollout_proof;proof_code=' +
+      proofDiagnostic[1] +
+      ';proof_invariant=' +
+      proofDiagnostic[2] +
+      ';log_sha256=' +
+      digest
+    );
+  }
   if (migrationDiagnostic) {
     const diagnostic =
       'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=' +
@@ -4535,19 +4550,39 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
         if (created !== 'job.batch/' + request.name) {
           fail('TENANT_CUTOVER_PROOF_JOB_CREATE_FAILED');
         }
-        await command(
-          'kubectl',
-          [
-            'wait',
-            '--for=condition=complete',
-            `job/${request.name}`,
-            '--namespace',
-            request.namespace,
-            '--timeout=10m',
-          ],
-          undefined,
-          'proof_job_wait',
-        );
+        const proofJob = 'job/' + request.name;
+        try {
+          await command(
+            'kubectl',
+            [
+              'wait',
+              '--for=condition=complete',
+              proofJob,
+              '--namespace',
+              request.namespace,
+              '--timeout=10m',
+            ],
+            undefined,
+            'proof_job_wait',
+          );
+        } catch {
+          let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+          let logTransport: 'kubectl_logs' | 'kubectl_logs_unavailable' =
+            'kubectl_logs_unavailable';
+          try {
+            logs = await command('kubectl', [
+              'logs',
+              proofJob,
+              '--namespace',
+              request.namespace,
+              '--tail=40',
+            ]);
+            logTransport = 'kubectl_logs';
+          } catch {
+            logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+          }
+          fail('TENANT_CUTOVER_PROOF_JOB_FAILED:' + ownerJobFailureDiagnostic(logs, logTransport));
+        }
         const output = (
           await command('kubectl', [
             'logs',
