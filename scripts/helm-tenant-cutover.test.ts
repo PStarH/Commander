@@ -223,6 +223,47 @@ describe('Helm owner Job diagnostics', () => {
     assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value|opaque-marker-4820/i);
   });
 
+  it('retains only the canonical rollout proof failure location', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (logs: string) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const result = diagnostic!(
+      [
+        'postgres://owner:secret@postgres/commander private proof detail',
+        'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.ts:1012:7',
+      ].join('\n'),
+    );
+
+    assert.match(
+      result,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver\.ts:1012:7;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /postgres:|secret|private proof detail/i);
+  });
+
+  it('does not retain malformed rollout proof diagnostics', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (logs: string) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const result = diagnostic!(
+      'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=PRIVATE_PROOF_CODE;proof_invariant=task1KubernetesProofObserver.ts:0:0',
+    );
+
+    assert.match(
+      result,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=rollout_proof;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /PRIVATE_PROOF_CODE|proof_invariant/);
+  });
+
   for (const ownerStage of [
     'lifecycle_pinned_manifest_validation',
     'lifecycle_prepared_request_validation',
@@ -1219,7 +1260,7 @@ data: { owner-url: c2VjcmV0 }
           });
         }
         if (args[0] === 'delete') return '{}';
-        throw new Error(`unexpected kubectl call: ${args.join(' ')}`);
+        throw new Error('unexpected kubectl call');
       },
     });
     const deployment = releaseProjection('7').objects[0]!;
@@ -1366,6 +1407,50 @@ data: { owner-url: c2VjcmV0 }
       ),
       false,
     );
+  });
+
+  it('carries a sanitized diagnostic when the proof Job fails', async () => {
+    const commands: Array<{ args: readonly string[] }> = [];
+    const nodePorts = createNodePorts({
+      command: async (_program, args) => {
+        commands.push({ args });
+        if (args[0] === 'create') return 'job.batch/commander-tenant-cutover-prove-r7';
+        if (args[0] === 'wait') throw new Error('TENANT_CUTOVER_KUBECTL_COMMAND_FAILED');
+        if (args[0] === 'logs') {
+          return [
+            'postgres://owner:secret@postgres/commander private proof detail',
+            'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.js:812:9',
+          ].join('\n');
+        }
+        throw new Error(`unexpected kubectl call: ${args.join(' ')}`);
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        nodePorts.kubectl.runProofJob({
+          namespace: 'commander',
+          name: 'commander-tenant-cutover-prove-r7',
+          revision: '7',
+          manifest: '{}',
+        }),
+      (error: unknown) => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(
+          message,
+          /TENANT_CUTOVER_PROOF_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver\.js:812:9;log_sha256=[a-f0-9]{64}/,
+        );
+        assert.doesNotMatch(message, /postgres:|secret|private proof detail/i);
+        return true;
+      },
+    );
+    assert.deepEqual(commands.find((call) => call.args[0] === 'logs')?.args, [
+      'logs',
+      'job/commander-tenant-cutover-prove-r7',
+      '--namespace',
+      'commander',
+      '--tail=40',
+    ]);
   });
 
   it('compares live Secret payload bytes in memory', async () => {

@@ -858,6 +858,37 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(sanitized.scenarios[0]?.rolloutFailure, undefined);
   });
 
+  it('retains the fixed proof Job failure code', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_PROOF_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.ts:1012:7;log_sha256=' +
+            '8'.repeat(64),
+        },
+      ],
+      ownerFailureEvidence: [],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, [
+      'HELM_TENANT_CUTOVER_FAILED',
+      'TENANT_CUTOVER_PROOF_JOB_FAILED',
+      'COMMANDER_MIGRATION_FAILED',
+    ]);
+  });
+
   it('retains only a parsed allowlisted owner failure record and source revision', () => {
     assert.deepEqual(
       parseOwnerFailureEvidence(
@@ -870,6 +901,21 @@ describe('helm-lifecycle-kind helpers', () => {
         transport: 'kubectl_logs',
         ownerStage: 'owner_pool_connect',
         logSha256: 'a'.repeat(64),
+      },
+    );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_PROOF_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.js:812:9;log_sha256=' +
+          '8'.repeat(64),
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'rollout_proof',
+        proofCode: 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+        proofInvariant: 'task1KubernetesProofObserver.js:812:9',
+        logSha256: '8'.repeat(64),
       },
     );
     assert.deepEqual(
@@ -990,6 +1036,13 @@ describe('helm-lifecycle-kind helpers', () => {
       parseOwnerFailureEvidence(
         'code=PRIVATE_SECRET_VALUE;producer=owner_entrypoint;transport=kubectl_logs;log_sha256=' +
           'f'.repeat(64),
+      ),
+      undefined,
+    );
+    assert.equal(
+      parseOwnerFailureEvidence(
+        'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=rollout_proof;proof_code=PRIVATE_PROOF_CODE;proof_invariant=task1KubernetesProofObserver.ts:0:0;log_sha256=' +
+          '7'.repeat(64),
       ),
       undefined,
     );
@@ -1541,6 +1594,15 @@ describe('helm-lifecycle-kind helpers', () => {
           snapshot: 's0',
           catalogStep: 'functions',
           logSha256: 'c'.repeat(64),
+        },
+        {
+          code: 'COMMANDER_MIGRATION_FAILED' as const,
+          producer: 'owner_entrypoint' as const,
+          transport: 'kubectl_logs' as const,
+          ownerStage: 'rollout_proof',
+          proofCode: 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID' as const,
+          proofInvariant: 'task1KubernetesProofObserver.ts:1012:7',
+          logSha256: '8'.repeat(64),
         },
       ],
       passed: false,

@@ -589,6 +589,8 @@ export interface OwnerFailureEvidence {
   producer: 'owner_entrypoint';
   transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
   ownerStage?: OwnerMigrationFailureStage;
+  proofCode?: 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID';
+  proofInvariant?: string;
   snapshot?: 's0' | 's1';
   catalogStep?: OwnerMigrationCatalogStep;
   snapshotTransaction?: 'begin' | 'commit';
@@ -825,6 +827,8 @@ const OWNER_FAILURE_SNAPSHOT_VALIDATION =
   '(bootstrap_validation|identity_validation|product_source_validation|catalog_version_validation|origin_classification)';
 const OWNER_FAILURE_ORIGIN_CLASSIFICATION_STEP =
   '(fresh_catalog_shape|role_envelope|role_attributes|memberships|public_acl)';
+const PROOF_OWNER_FAILURE_RECORD =
+  /(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);owner_stage=rollout_proof;proof_code=(TENANT_CUTOVER_KUBERNETES_PROOF_INVALID);proof_invariant=(task1KubernetesProofObserver\.(?:ts|js):[1-9][0-9]*:[1-9][0-9]*);log_sha256=([a-f0-9]{64})(?=\n|$)/;
 const OWNER_FAILURE_RECORD = new RegExp(
   '(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)' +
     '(?:;owner_stage=' +
@@ -1279,6 +1283,18 @@ function rolloutObservationRecord(
 
 /** Extract only the canonical owner diagnostic record, never the original error text. */
 export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
+  const proof = error.match(PROOF_OWNER_FAILURE_RECORD);
+  if (proof) {
+    return {
+      code: 'COMMANDER_MIGRATION_FAILED',
+      producer: 'owner_entrypoint',
+      transport: proof[1] as OwnerFailureEvidence['transport'],
+      ownerStage: 'rollout_proof',
+      proofCode: proof[2] as OwnerFailureEvidence['proofCode'],
+      proofInvariant: proof[3]!,
+      logSha256: proof[4]!,
+    };
+  }
   const match = OWNER_FAILURE_RECORD.exec(error);
   if (!match) {
     const generic = error.match(GENERIC_OWNER_FAILURE_RECORD);
@@ -1498,6 +1514,8 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
             producer: failure.producer,
             transport: failure.transport,
             ...(failure.ownerStage ? { ownerStage: failure.ownerStage } : {}),
+            ...(failure.proofCode ? { proofCode: failure.proofCode } : {}),
+            ...(failure.proofInvariant ? { proofInvariant: failure.proofInvariant } : {}),
             ...(failure.snapshot ? { snapshot: failure.snapshot } : {}),
             ...(failure.catalogStep ? { catalogStep: failure.catalogStep } : {}),
             ...(failure.snapshotTransaction
