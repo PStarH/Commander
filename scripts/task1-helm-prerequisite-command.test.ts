@@ -355,13 +355,11 @@ describe('Task 1 prerequisite command contract', () => {
     assert.equal(reviewedToken, 'short-lived-service-account-token');
   });
 
-  it('checks named access through a structured SelfSubjectAccessReview', async () => {
+  it('addresses a named resource with the kubectl auth can-i TYPE/NAME syntax', async () => {
     let command: readonly string[] = [];
-    let manifest: unknown;
-    const ports = createTask1KubectlPorts(async (args, stdin) => {
+    const ports = createTask1KubectlPorts(async (args) => {
       command = args;
-      manifest = JSON.parse(stdin ?? '{}');
-      return JSON.stringify({ status: { allowed: false } });
+      return 'no\n';
     });
 
     assert.equal(
@@ -372,28 +370,12 @@ describe('Task 1 prerequisite command contract', () => {
       ),
       false,
     );
-    assert.deepEqual(command, ['create', '--filename', '-', '--output', 'json']);
-    assert.deepEqual(manifest, {
-      apiVersion: 'authorization.k8s.io/v1',
-      kind: 'SelfSubjectAccessReview',
-      spec: {
-        resourceAttributes: {
-          group: 'admissionregistration.k8s.io',
-          name: 'tenant-policy-guard',
-          resource: 'validatingadmissionpolicies',
-          verb: 'get',
-        },
-      },
-    });
-  });
-
-  it('rejects a malformed SelfSubjectAccessReview response', async () => {
-    const ports = createTask1KubectlPorts(async () => JSON.stringify({ status: {} }));
-
-    await assert.rejects(
-      ports.canI('get', 'validatingadmissionpolicies.admissionregistration.k8s.io'),
-      /TENANT_POLICY_KUBERNETES_RESPONSE_INVALID/,
-    );
+    assert.deepEqual(command, [
+      'auth',
+      'can-i',
+      'get',
+      'validatingadmissionpolicies.admissionregistration.k8s.io/tenant-policy-guard',
+    ]);
   });
 
   it('uses the canonical projection and renders the exact stable policy set', async () => {

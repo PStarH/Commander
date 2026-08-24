@@ -44,6 +44,52 @@ const chart = digest('b');
 const nonce = 'n'.repeat(43);
 
 describe('Helm owner Job diagnostics', () => {
+  it('accepts kubectl auth can-i denial as a structured negative result', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-can-i-denial-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      ['#!/usr/bin/env node', "process.stdout.write('no\\n');", 'process.exitCode = 1;'].join('\n'),
+      { mode: 0o700 },
+    );
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      assert.equal(
+        await helmTenantCutover.defaultCommand('kubectl', ['auth', 'can-i', 'get', 'pods']),
+        'no\n',
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects malformed kubectl auth can-i output', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-can-i-invalid-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      ['#!/usr/bin/env node', "process.stdout.write('maybe\\n');"].join('\n'),
+      {
+        mode: 0o700,
+      },
+    );
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      await assert.rejects(
+        () => helmTenantCutover.defaultCommand('kubectl', ['auth', 'can-i', 'get', 'pods']),
+        /TENANT_CUTOVER_KUBECTL_COMMAND_FAILED/,
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('uses bounded trusted timeout policies for long-running Helm operations', () => {
     const timeout = (
       helmTenantCutover as typeof helmTenantCutover & {

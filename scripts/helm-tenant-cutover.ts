@@ -1,6 +1,6 @@
 #!/usr/bin/env tsx
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { spawn } from 'node:child_process';
+import { spawn as launchProcess } from 'node:child_process';
 import { chmod, cp, mkdir, mkdtemp, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -642,7 +642,10 @@ function rendererValues(
     proofOwnerSecretName(operation.platformBinding.releaseName, operation.operationVersion),
   );
   apply('tenantAuthority.chartContentSha256', operation.platformBinding.chartContentSha256);
-  apply('tenantAuthority.expectedMigrationDescriptors', runtimeMigrationDescriptors(operation.phase));
+  apply(
+    'tenantAuthority.expectedMigrationDescriptors',
+    runtimeMigrationDescriptors(operation.phase),
+  );
   apply('tenantAuthority.releaseProjectionConfigMap', projectionConfigMapName);
   for (const entry of setValues) {
     const separator = entry.indexOf('=');
@@ -2321,9 +2324,10 @@ export async function defaultCommand(
   executionPolicy: CommandExecutionPolicy = 'standard',
 ): Promise<string> {
   return new Promise((resolveCommand, reject) => {
-    const captureStderr = program === 'kubectl' && args[0] === 'logs';
+    const canICheck = program === 'kubectl' && args.includes('auth') && args.includes('can-i');
+    const captureStderr = (program === 'kubectl' && args[0] === 'logs') || canICheck;
     const processGroup = process.platform !== 'win32';
-    const child = spawn(program, [...args], {
+    const child = launchProcess(program, [...args], {
       detached: processGroup,
       shell: false,
       stdio: ['pipe', 'pipe', captureStderr ? 'pipe' : 'ignore'],
@@ -2427,11 +2431,27 @@ export async function defaultCommand(
       if (settled) return;
       childClosed = true;
       if (terminatingError) return finishTerminationWhenGone();
+      const stdoutText = Buffer.concat(output).toString('utf8');
+      const stderrText = Buffer.concat(errorOutput).toString('utf8');
+      if (
+        canICheck &&
+        ((code === 0 && stdoutText.trim() === 'yes' && stderrText.trim() === '') ||
+          (code === 1 && stdoutText.trim() === 'no' && stderrText.trim() === ''))
+      ) {
+        settled = true;
+        clearTimeout(timeout);
+        if (forceKill) clearTimeout(forceKill);
+        resolveCommand(stdoutText);
+        return;
+      }
+      if (canICheck) return finishReject(new Error(commandFailureCode(program, args)));
       if (code !== 0) return finishReject(new Error(commandFailureCode(program, args)));
       settled = true;
       clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
-      resolveCommand(Buffer.concat([...output, ...errorOutput]).toString('utf8'));
+      resolveCommand(
+        canICheck ? stdoutText : Buffer.concat([...output, ...errorOutput]).toString('utf8'),
+      );
     });
     child.stdin.end(stdin ?? '');
   });
