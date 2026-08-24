@@ -423,6 +423,26 @@ describe('Task 1 prerequisite command contract', () => {
     assert.equal(network.policy.spec.failurePolicy, 'Fail');
     assert.deepEqual(network.binding.spec.validationActions, ['Deny']);
     assert.match(JSON.stringify(network.policy.spec.validations), /migration-operator/);
+    for (const policySpec of [
+      network.policy.spec,
+      loaded.projection.value.admissionGuards.find((guard) => guard.stage === 'network')!
+        .policySpec,
+    ]) {
+      const variables = policySpec.variables as Array<{ name: string; expression: string }>;
+      assert.match(
+        variables.find((variable) => variable.name === 'selectorRequirements')!.expression,
+        /'key': dyn\(k\).*'operator': dyn\('In'\).*'values': dyn\(/,
+      );
+      const validations = policySpec.validations as Array<{ message: string; expression: string }>;
+      assert.match(
+        validations.find(
+          (validation) =>
+            validation.message ===
+            'migration operator may create only an exact rendered stable policy',
+        )!.expression,
+        /\[dyn\(\{"(?:annotations|labels)":dyn\(/,
+      );
+    }
 
     const workload = renderTask1AdmissionPair(loaded, 'workload');
     assert.match(workload.policy.metadata.name, /^commander-tenant-authority-guard-[0-9a-f]{16}$/);

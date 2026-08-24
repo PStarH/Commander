@@ -110,7 +110,7 @@ describe('Task 1 Helm prerequisite policy projection', () => {
     );
     assert.equal(config.jcs, canonicalBootstrapJson(config.value));
     assert.equal(config.sha256, canonicalBootstrapSha256(config.value));
-    assert.equal(config.sha256, '2ba8ebdd2d947b0959f5023fd3cb823aea84dd7e19431a5896c2af09a6cca2d4');
+    assert.equal(config.sha256, '14fe794740b7b82fd0d86fb701364c3b926a29ab2421f671f87e1629812a5a78');
   });
 
   it('changes the sealed digest when a normalized policy or guard input changes', () => {

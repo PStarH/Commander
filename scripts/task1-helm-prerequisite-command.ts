@@ -6,7 +6,10 @@ import { load } from 'js-yaml';
 import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
 import { verifyChartContentDigest } from './chart-content-digest.js';
 import {
+  TASK1_SELECTOR_CAN_MATCH_H_CEL,
+  TASK1_SELECTOR_REQUIREMENTS_CEL,
   createTask1PrerequisitePolicyConfig,
+  task1CelDynLiteral,
   type Task1PrerequisiteInput,
 } from './task1-helm-prerequisite.js';
 
@@ -19,9 +22,7 @@ const LABEL_KEY =
   /^(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?\/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?$/;
 const LABEL_VALUE = /^(?:[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?)?$/;
 
-export const TASK1_SELECTOR_CAN_MATCH_H_CEL =
-  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))" +
-  ')';
+export { TASK1_SELECTOR_CAN_MATCH_H_CEL };
 
 export type Task1PrerequisiteStage = 'network' | 'workload';
 
@@ -427,9 +428,7 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
     annotations: policy.metadata.annotations,
     spec: policy.spec,
   }));
-  const allowedJcs = canonicalBootstrapJson(allowed)
-    .replaceAll('\\', '\\\\')
-    .replaceAll("'", "\\'");
+  const allowedCel = task1CelDynLiteral(allowed);
   const operator = context.request.migrationOperatorSubject.replaceAll("'", "\\'");
   const protectedNames = policies.map((policy) => `'${policy.metadata.name}'`).join(',');
   return [
@@ -438,7 +437,12 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
       message: 'protected stable policies are create-only',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username != '${operator}' || (request.operation == 'CREATE' && ${allowedJcs}.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.annotations == object.metadata.annotations && p.spec == object.spec))`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username != '" +
+        operator +
+        "' || (request.operation == 'CREATE' && " +
+        allowedCel +
+        '.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.annotations == object.metadata.annotations && p.spec == object.spec))',
       message: 'migration operator may create only an exact rendered stable policy',
     },
     {
@@ -532,8 +536,7 @@ export function renderTask1AdmissionPair(
               { name: 'componentKey', expression: "'app.kubernetes.io/component'" },
               {
                 name: 'selectorRequirements',
-                expression:
-                  "request.resource.resource != 'networkpolicies' ? [] : (has(object.spec.podSelector.matchLabels) ? object.spec.podSelector.matchLabels.map(k, {'key': k, 'operator': 'In', 'values': [object.spec.podSelector.matchLabels[k]]}) : []) + (has(object.spec.podSelector.matchExpressions) ? object.spec.podSelector.matchExpressions : [])",
+                expression: TASK1_SELECTOR_REQUIREMENTS_CEL,
               },
             ],
           }
