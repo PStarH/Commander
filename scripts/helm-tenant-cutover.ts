@@ -2304,15 +2304,31 @@ export function commandExecutionTimeoutMs(policy: CommandExecutionPolicy | strin
   return Math.min(timeout, COMMAND_TIMEOUT_ABSOLUTE_CAP_MS);
 }
 
-function commandFailureCode(program: string, args: readonly string[]): string {
+export function commandFailureCode(program: string, args: readonly string[]): string {
+  const kubectlCode =
+    args[0] === 'auth' && args[1] === 'can-i'
+      ? 'TENANT_CUTOVER_KUBECTL_AUTH_CAN_I_FAILED'
+      : args[0] === 'apply'
+        ? 'TENANT_CUTOVER_KUBECTL_APPLY_FAILED'
+        : args[0] === 'create'
+          ? 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED'
+          : args[0] === 'delete'
+            ? 'TENANT_CUTOVER_KUBECTL_DELETE_FAILED'
+            : args[0] === 'get'
+              ? 'TENANT_CUTOVER_KUBECTL_GET_FAILED'
+              : args[0] === 'logs'
+                ? 'TENANT_CUTOVER_KUBECTL_LOGS_COMMAND_FAILED'
+                : args[0] === 'version'
+                  ? 'TENANT_CUTOVER_KUBECTL_VERSION_FAILED'
+                  : args[0] === 'wait'
+                    ? 'TENANT_CUTOVER_KUBECTL_WAIT_FAILED'
+                    : 'TENANT_CUTOVER_KUBECTL_COMMAND_FAILED';
   const code =
     program === 'helm'
       ? 'TENANT_CUTOVER_HELM_COMMAND_FAILED'
-      : program === 'kubectl' && args[0] === 'logs'
-        ? 'TENANT_CUTOVER_KUBECTL_LOGS_COMMAND_FAILED'
-        : program === 'kubectl'
-          ? 'TENANT_CUTOVER_KUBECTL_COMMAND_FAILED'
-          : 'TENANT_CUTOVER_COMMAND_FAILED';
+      : program === 'kubectl'
+        ? kubectlCode
+        : 'TENANT_CUTOVER_COMMAND_FAILED';
   if (!isAllowedHelmDiagnosticCode(code)) fail('TENANT_CUTOVER_COMMAND_FAILED');
   return code;
 }
