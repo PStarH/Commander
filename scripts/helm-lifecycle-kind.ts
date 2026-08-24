@@ -19,6 +19,7 @@ import { defaultCommand } from './helm-tenant-cutover.js';
 import {
   createTask1KubectlPorts,
   loadTask1PrerequisiteCommandContext,
+  renderTask1AdmissionPair,
   runTask1AdmissionAdministrator,
   runTask1PrerequisiteOperator,
 } from './task1-helm-prerequisite-command.js';
@@ -152,6 +153,37 @@ export function namespaceCleanupArgs(namespace: string): string[] {
     '--wait=true',
     '--timeout=120s',
   ];
+}
+
+export function serviceAccountImpersonationArgs(
+  subject: string,
+  commandArgs: readonly string[],
+): string[] {
+  const match = subject.match(
+    /^system:serviceaccount:([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?):[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/,
+  );
+  if (!match) throw new Error('TENANT_POLICY_SUBJECT_INVALID');
+  return [
+    ...commandArgs,
+    '--as',
+    subject,
+    '--as-group',
+    'system:serviceaccounts',
+    '--as-group',
+    'system:serviceaccounts:' + match[1],
+    '--as-group',
+    'system:authenticated',
+  ];
+}
+
+export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
+  if (!/^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$/.test(name)) {
+    throw new Error('TENANT_POLICY_ADMISSION_NAME_INVALID');
+  }
+  return [
+    'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+    'validatingadmissionpolicies.admissionregistration.k8s.io',
+  ].map((resource) => ['delete', resource, name, '--ignore-not-found=true', '--wait=true']);
 }
 
 export function controlPlaneReadinessSelectors(): string[] {
@@ -1855,7 +1887,7 @@ async function prepareNetworkPrerequisites(
   release: string,
   valuesPath: string,
   apiProofSpkiSha256: string,
-): Promise<void> {
+): Promise<() => Promise<void>> {
   const subject = 'system:serviceaccount:' + NAMESPACE + ':tenant-migration-operator';
   const resolvedValuesPath = valuesPath + '.network-prerequisites';
   try {
@@ -1911,42 +1943,54 @@ async function prepareNetworkPrerequisites(
       subject,
     ];
     const context = await loadTask1PrerequisiteCommandContext(args, rootDir());
+    const admissionName = renderTask1AdmissionPair(context, 'network').policy.metadata.name;
+    const cleanupAdmission = async (): Promise<void> => {
+      for (const commandArgs of prerequisiteAdmissionCleanupCommands(admissionName)) {
+        await defaultCommand('kubectl', commandArgs);
+      }
+    };
     const adminPorts = createTask1KubectlPorts((commandArgs, stdin) =>
       defaultCommand('kubectl', commandArgs, stdin),
     );
-    await runTask1AdmissionAdministrator(context, adminPorts);
+    try {
+      await runTask1AdmissionAdministrator(context, adminPorts);
 
-    const token = requireCommand(
-      await kubectl([
-        'create',
-        'token',
-        'tenant-migration-operator',
-        '-n',
-        NAMESPACE,
-        '--duration=10m',
-      ]),
-      'TENANT_POLICY_OPERATOR_TOKEN_FAILED',
-    ).trim();
-    if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
-    const operatorPorts = createTask1KubectlPorts(
-      (commandArgs, stdin) => defaultCommand('kubectl', ['--as', subject, ...commandArgs], stdin),
-      async () => token,
-    );
-    const deadline = Date.now() + 120_000;
-    while (true) {
-      try {
-        await runTask1PrerequisiteOperator(context, operatorPorts);
-        return;
-      } catch (error) {
-        if (
-          !(error instanceof Error) ||
-          error.message !== 'TENANT_POLICY_ADMISSION_NOT_READY' ||
-          Date.now() >= deadline
-        ) {
-          throw error;
+      const token = requireCommand(
+        await kubectl([
+          'create',
+          'token',
+          'tenant-migration-operator',
+          '-n',
+          NAMESPACE,
+          '--duration=10m',
+        ]),
+        'TENANT_POLICY_OPERATOR_TOKEN_FAILED',
+      ).trim();
+      if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
+      const operatorPorts = createTask1KubectlPorts(
+        (commandArgs, stdin) =>
+          defaultCommand('kubectl', serviceAccountImpersonationArgs(subject, commandArgs), stdin),
+        async () => token,
+      );
+      const deadline = Date.now() + 120_000;
+      while (true) {
+        try {
+          await runTask1PrerequisiteOperator(context, operatorPorts);
+          return cleanupAdmission;
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            error.message !== 'TENANT_POLICY_ADMISSION_NOT_READY' ||
+            Date.now() >= deadline
+          ) {
+            throw error;
+          }
+          await new Promise((resolveWait) => setTimeout(resolveWait, 250));
         }
-        await new Promise((resolveWait) => setTimeout(resolveWait, 250));
       }
+    } catch (error) {
+      await cleanupAdmission();
+      throw error;
     }
   } finally {
     rmSync(resolvedValuesPath, { force: true });
@@ -2871,6 +2915,7 @@ async function runRealBundledLifecycle(
   const assertions: AssertionResult[] = [];
   const databaseTarget = { namespace: NAMESPACE, statefulSet: `${release}-postgres` };
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-lifecycle-'));
+  let cleanupNetworkPrerequisites: (() => Promise<void>) | undefined;
   try {
     requireCommand(await kubectl(namespaceCleanupArgs(NAMESPACE)), 'NAMESPACE_RESET_FAILED');
     await createNamespace();
@@ -2914,7 +2959,11 @@ async function runRealBundledLifecycle(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
     );
-    await prepareNetworkPrerequisites(release, installValues, material.apiProofSpkiSha256);
+    cleanupNetworkPrerequisites = await prepareNetworkPrerequisites(
+      release,
+      installValues,
+      material.apiProofSpkiSha256,
+    );
     const firstProofCount = await proofRowCount(databaseTarget);
     assertions.push({
       description: 'post-install challenged API proof appended a durable proof row',
@@ -2957,6 +3006,8 @@ async function runRealBundledLifecycle(
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
+    await cleanupNetworkPrerequisites();
+    cleanupNetworkPrerequisites = undefined;
     assertions.push({
       description: 'owner Jobs, proof Jobs, Pods, ConfigMaps, and owner Secrets were cleaned',
       passed: true,
@@ -2980,7 +3031,15 @@ async function runRealBundledLifecycle(
       rbac,
       networkPolicy,
     };
-  } catch (error) {
+  } catch (caught) {
+    let error = caught;
+    if (cleanupNetworkPrerequisites) {
+      try {
+        await cleanupNetworkPrerequisites();
+      } catch (cleanupError) {
+        error = cleanupError;
+      }
+    }
     const diagnostics = await kubectl(['get', 'pods,jobs', '-n', NAMESPACE, '-o', 'wide']);
     return {
       name: 'real-bundled-install-upgrade-current-uninstall',
@@ -3006,6 +3065,7 @@ async function runRealExternalTlsLifecycle(
   const release = scenarioRelease('cmdr-external');
   const assertions: AssertionResult[] = [];
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-external-'));
+  let cleanupNetworkPrerequisites: (() => Promise<void>) | undefined;
   const databaseTarget = {
     namespace: EXTERNAL_DATABASE_NAMESPACE,
     statefulSet: 'external-postgres',
@@ -3068,7 +3128,11 @@ async function runRealExternalTlsLifecycle(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
     );
-    await prepareNetworkPrerequisites(release, installValues, material.apiProofSpkiSha256);
+    cleanupNetworkPrerequisites = await prepareNetworkPrerequisites(
+      release,
+      installValues,
+      material.apiProofSpkiSha256,
+    );
     const firstProofCount = await proofRowCount(databaseTarget);
     assertions.push(
       {
@@ -3113,6 +3177,8 @@ async function runRealExternalTlsLifecycle(
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
+    await cleanupNetworkPrerequisites();
+    cleanupNetworkPrerequisites = undefined;
     requireCommand(
       await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
       'HELM_UNINSTALL_FAILED',
@@ -3143,7 +3209,15 @@ async function runRealExternalTlsLifecycle(
       rbac,
       networkPolicy,
     };
-  } catch (error) {
+  } catch (caught) {
+    let error = caught;
+    if (cleanupNetworkPrerequisites) {
+      try {
+        await cleanupNetworkPrerequisites();
+      } catch (cleanupError) {
+        error = cleanupError;
+      }
+    }
     const diagnostics = await kubectl(['get', 'pods,jobs', '-A', '-o', 'wide']);
     return {
       name: 'real-external-tls-install-upgrade-current-uninstall',
