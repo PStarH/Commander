@@ -71,6 +71,7 @@ describe('Task 1 Kubernetes proof runtime', () => {
   it('derives only the bound proof-reader Pod identity from the projected JWT', () => {
     assert.deepEqual(parseTask1ProjectedTokenIdentity(token()), {
       audience,
+      issuedAt: '2026-07-28T17:00:00.000Z',
       expiresAt: '2026-07-28T17:10:00.000Z',
       namespace: 'commander',
       serviceAccountName: 'commander-proof-reader-c48e77f6d68ea66c',
@@ -86,6 +87,18 @@ describe('Task 1 Kubernetes proof runtime', () => {
         parseTask1ProjectedTokenIdentity(token({ sub: 'system:serviceaccount:commander:default' })),
       /TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID/,
     );
+  });
+
+  it('accepts a pod-bound token whose expiration Kubernetes extends beyond the requested lifetime', () => {
+    assert.deepEqual(parseTask1ProjectedTokenIdentity(token({ exp: 1816794000 })), {
+      audience,
+      issuedAt: '2026-07-28T17:00:00.000Z',
+      expiresAt: '2027-07-28T17:00:00.000Z',
+      namespace: 'commander',
+      serviceAccountName: 'commander-proof-reader-c48e77f6d68ea66c',
+      podName: 'proof-pod',
+      podUid: 'proof-pod-uid',
+    });
   });
 
   it('reads exact Kubernetes resources over authenticated cluster-CA HTTPS', async () => {
