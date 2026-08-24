@@ -18,6 +18,7 @@ import {
   leafCertificateExtensions,
   nodeInventoriesContainExactReference,
   namespaceCleanupArgs,
+  prerequisiteAdmissionCleanupCommands,
   postgresImageForArchitecture,
   productionImageReferences,
   productionImageBuildArguments,
@@ -34,6 +35,7 @@ import {
   retainRolloutObservation,
   retainRolloutFailureEvidence,
   productionImageSourceRevision,
+  serviceAccountImpersonationArgs,
   KIND_NODE_IMAGE,
   CALICO_URL,
 } from './helm-lifecycle-kind.js';
@@ -1135,6 +1137,46 @@ describe('helm-lifecycle-kind helpers', () => {
       'component=kube-apiserver',
       'component=kube-controller-manager',
       'component=kube-scheduler',
+    ]);
+  });
+
+  it('impersonates the migration ServiceAccount with its canonical authentication groups', () => {
+    assert.deepEqual(
+      serviceAccountImpersonationArgs(
+        'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
+        ['get', 'pods'],
+      ),
+      [
+        'get',
+        'pods',
+        '--as',
+        'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
+        '--as-group',
+        'system:serviceaccounts',
+        '--as-group',
+        'system:serviceaccounts:commander-lifecycle',
+        '--as-group',
+        'system:authenticated',
+      ],
+    );
+  });
+
+  it('removes the prerequisite admission binding before its policy', () => {
+    assert.deepEqual(prerequisiteAdmissionCleanupCommands('tenant-policy-guard'), [
+      [
+        'delete',
+        'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+        'tenant-policy-guard',
+        '--ignore-not-found=true',
+        '--wait=true',
+      ],
+      [
+        'delete',
+        'validatingadmissionpolicies.admissionregistration.k8s.io',
+        'tenant-policy-guard',
+        '--ignore-not-found=true',
+        '--wait=true',
+      ],
     ]);
   });
 
