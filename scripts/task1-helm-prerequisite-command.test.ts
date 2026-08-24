@@ -443,6 +443,22 @@ describe('Task 1 prerequisite command contract', () => {
         /\[dyn\(\{"(?:annotations|labels)":dyn\(/,
       );
     }
+    for (const pair of [network, renderTask1AdmissionPair(loaded, 'workload')]) {
+      const constraints = pair.policy.spec.matchConstraints as {
+        namespaceSelector?: unknown;
+        objectSelector?: unknown;
+        resourceRules: Array<{ scope?: string }>;
+      };
+      assert.deepEqual(constraints.namespaceSelector, {});
+      assert.deepEqual(constraints.objectSelector, {});
+      assert.ok(constraints.resourceRules.every((rule) => rule.scope === '*'));
+      const matchResources = pair.binding.spec.matchResources as {
+        matchPolicy?: string;
+        objectSelector?: unknown;
+      };
+      assert.equal(matchResources.matchPolicy, 'Equivalent');
+      assert.deepEqual(matchResources.objectSelector, {});
+    }
 
     const workload = renderTask1AdmissionPair(loaded, 'workload');
     assert.match(workload.policy.metadata.name, /^commander-tenant-authority-guard-[0-9a-f]{16}$/);

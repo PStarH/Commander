@@ -518,16 +518,28 @@ export function renderTask1AdmissionPair(
                   apiVersions: ['v1'],
                   operations: ['CREATE', 'UPDATE', 'DELETE'],
                   resources: ['networkpolicies'],
+                  scope: '*',
                 },
                 {
                   apiGroups: [''],
                   apiVersions: ['v1'],
                   operations: ['CREATE', 'UPDATE'],
                   resources: ['pods'],
+                  scope: '*',
                 },
               ]
-            : [{ apiGroups, apiVersions: ['v1'], operations: ['CREATE', 'UPDATE'], resources }],
+            : [
+                {
+                  apiGroups,
+                  apiVersions: ['v1'],
+                  operations: ['CREATE', 'UPDATE'],
+                  resources,
+                  scope: '*',
+                },
+              ],
         matchPolicy: 'Equivalent',
+        namespaceSelector: {},
+        objectSelector: {},
       },
       ...(stage === 'network'
         ? {
@@ -553,6 +565,7 @@ export function renderTask1AdmissionPair(
       policyName: nameValue,
       validationActions: ['Deny'],
       matchResources: {
+        matchPolicy: 'Equivalent',
         namespaceSelector:
           stage === 'network'
             ? {
@@ -574,6 +587,7 @@ export function renderTask1AdmissionPair(
             : {
                 matchLabels: { 'kubernetes.io/metadata.name': context.request.namespace },
               },
+        objectSelector: {},
       },
     },
   };

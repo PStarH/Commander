@@ -442,12 +442,14 @@ function createAdmissionGuard(
                 apiVersions: ['v1'],
                 operations: ['CREATE', 'UPDATE', 'DELETE'],
                 resources: ['networkpolicies'],
+                scope: '*',
               },
               {
                 apiGroups: [''],
                 apiVersions: ['v1'],
                 operations: ['CREATE', 'UPDATE'],
                 resources: ['pods'],
+                scope: '*',
               },
             ]
           : [
@@ -456,9 +458,12 @@ function createAdmissionGuard(
                 apiVersions: ['v1'],
                 operations: ['CREATE', 'UPDATE'],
                 resources: ['deployments', 'statefulsets'],
+                scope: '*',
               },
             ],
       matchPolicy: 'Equivalent',
+      namespaceSelector: {},
+      objectSelector: {},
     },
     ...(stage === 'network'
       ? {
@@ -492,6 +497,7 @@ function createAdmissionGuard(
     policyName: guardName,
     validationActions: ['Deny'],
     matchResources: {
+      matchPolicy: 'Equivalent',
       namespaceSelector:
         stage === 'network'
           ? {
@@ -504,6 +510,7 @@ function createAdmissionGuard(
               ],
             }
           : { matchLabels: { 'kubernetes.io/metadata.name': namespace } },
+      objectSelector: {},
     },
   };
   return {
