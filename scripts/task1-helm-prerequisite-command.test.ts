@@ -355,6 +355,29 @@ describe('Task 1 prerequisite command contract', () => {
     assert.equal(reviewedToken, 'short-lived-service-account-token');
   });
 
+  it('addresses a named resource with the kubectl auth can-i TYPE/NAME syntax', async () => {
+    let command: readonly string[] = [];
+    const ports = createTask1KubectlPorts(async (args) => {
+      command = args;
+      return 'yes\n';
+    });
+
+    assert.equal(
+      await ports.canI(
+        'get',
+        'validatingadmissionpolicies.admissionregistration.k8s.io',
+        'tenant-policy-guard',
+      ),
+      true,
+    );
+    assert.deepEqual(command, [
+      'auth',
+      'can-i',
+      'get',
+      'validatingadmissionpolicies.admissionregistration.k8s.io/tenant-policy-guard',
+    ]);
+  });
+
   it('uses the canonical projection and renders the exact stable policy set', async () => {
     const loaded = await context();
     assert.equal(loaded.projection.sha256, loaded.annotationValue);

@@ -953,9 +953,8 @@ export function createTask1KubectlPorts(
       return string(user.username);
     },
     async canI(verb, resource, objectName) {
-      const args = ['auth', 'can-i', verb, resource];
-      if (objectName) args.push('--resource-name', objectName);
-      return (await runCommand(args)).trim() === 'yes';
+      const target = objectName ? resource + '/' + objectName : resource;
+      return (await runCommand(['auth', 'can-i', verb, target])).trim() === 'yes';
     },
     async dryRunCreate(object) {
       try {
