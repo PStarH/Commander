@@ -334,6 +334,27 @@ describe('Task 1 prerequisite command contract', () => {
     );
   });
 
+  it('reviews an explicitly supplied service-account token', async () => {
+    let reviewedToken = '';
+    const ports = createTask1KubectlPorts(
+      async (args, stdin) => {
+        assert.deepEqual(args.slice(0, 2), ['create', '--filename']);
+        reviewedToken =
+          (JSON.parse(stdin ?? '{}') as { spec?: { token?: string } }).spec?.token ?? '';
+        return JSON.stringify({
+          status: {
+            authenticated: true,
+            user: { username: subject },
+          },
+        });
+      },
+      async () => 'short-lived-service-account-token\n',
+    );
+
+    assert.equal(await ports.tokenReview(), subject);
+    assert.equal(reviewedToken, 'short-lived-service-account-token');
+  });
+
   it('uses the canonical projection and renders the exact stable policy set', async () => {
     const loaded = await context();
     assert.equal(loaded.projection.sha256, loaded.annotationValue);
