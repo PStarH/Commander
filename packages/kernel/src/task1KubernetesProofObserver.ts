@@ -266,9 +266,17 @@ function validateApiContainer(
   exactEnv('COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE', operation.runtimePhase);
   const port = oneNamed(container.ports, PROOF_PORT_NAME);
   if (port.protocol !== 'TCP' || port.containerPort !== proofPort) invalid();
-  const httpGet = record(field(field(container, 'readinessProbe'), 'httpGet'));
-  if (httpGet.scheme !== 'HTTPS' || httpGet.path !== PROOF_PATH || httpGet.port !== PROOF_PORT_NAME)
-    invalid();
+  exactJson(record(field(field(container, 'readinessProbe'), 'exec')), {
+    command: [
+      'node',
+      '-e',
+      "const https = require('node:https'); const req = https.get({ hostname: '127.0.0.1', port: " +
+        proofPort +
+        ", path: '" +
+        PROOF_PATH +
+        "', rejectUnauthorized: false }, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(1500, () => { req.destroy(); process.exit(1); });",
+    ],
+  });
 }
 
 function conditionTrue(conditions: unknown, type: string): boolean {
