@@ -2341,7 +2341,10 @@ export function commandFailureCode(
     } else if (/\bforbidden\b/i.test(stderr)) {
       createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FORBIDDEN';
     } else if (/\binvalid\b/i.test(stderr)) {
-      createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_INVALID';
+      createCode =
+        createCode === 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED'
+          ? 'TENANT_CUTOVER_KUBECTL_CREATE_INVALID'
+          : createCode.replace(/_FAILED$/, '_INVALID');
     } else if (/\bnot found\b/i.test(stderr)) {
       createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_NOT_FOUND';
     }
