@@ -66,6 +66,33 @@ describe('Helm owner Job diagnostics', () => {
     }
   });
 
+  it('accepts an auth can-i warning when the authorization result is explicit', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-can-i-warning-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      [
+        '#!/usr/bin/env node',
+        "process.stdout.write('no\\n');",
+        "process.stderr.write('Warning: using configured namespace\\n');",
+        'process.exitCode = 1;',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      assert.equal(
+        await helmTenantCutover.defaultCommand('kubectl', ['auth', 'can-i', 'get', 'pods']),
+        'no\n',
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('rejects malformed kubectl auth can-i output', async () => {
     const root = await mkdtemp(join(tmpdir(), 'commander-helm-can-i-invalid-'));
     const kubectl = join(root, 'kubectl');
