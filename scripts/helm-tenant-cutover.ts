@@ -2432,11 +2432,9 @@ export async function defaultCommand(
       childClosed = true;
       if (terminatingError) return finishTerminationWhenGone();
       const stdoutText = Buffer.concat(output).toString('utf8');
-      const stderrText = Buffer.concat(errorOutput).toString('utf8');
       if (
         canICheck &&
-        ((code === 0 && stdoutText.trim() === 'yes' && stderrText.trim() === '') ||
-          (code === 1 && stdoutText.trim() === 'no' && stderrText.trim() === ''))
+        ((code === 0 && stdoutText.trim() === 'yes') || (code === 1 && stdoutText.trim() === 'no'))
       ) {
         settled = true;
         clearTimeout(timeout);
