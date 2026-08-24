@@ -20,7 +20,8 @@ const LABEL_KEY =
 const LABEL_VALUE = /^(?:[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?)?$/;
 
 export const TASK1_SELECTOR_CAN_MATCH_H_CEL =
-  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))";
+  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))" +
+  ')';
 
 export type Task1PrerequisiteStage = 'network' | 'workload';
 
@@ -441,7 +442,12 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
       message: 'migration operator may create only an exact rendered stable policy',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username == '${operator}' || request.operation == 'DELETE' || !has(object.spec.egress) || size(object.spec.egress) == 0 || !(${TASK1_SELECTOR_CAN_MATCH_H_CEL})`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username == '" +
+        operator +
+        "' || request.operation == 'DELETE' || !has(object.spec.egress) || size(object.spec.egress) == 0 || !(" +
+        TASK1_SELECTOR_CAN_MATCH_H_CEL +
+        ')',
       message: 'non-operator NetworkPolicy must not add egress to a protected hook selector',
     },
     {
