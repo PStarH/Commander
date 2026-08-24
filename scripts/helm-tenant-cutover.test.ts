@@ -73,6 +73,30 @@ describe('Helm owner Job diagnostics', () => {
       helmTenantCutover.commandFailureCode('kubectl', ['auth', 'can-i', 'get', 'secret/name']),
       'TENANT_CUTOVER_KUBECTL_AUTH_CAN_I_FAILED',
     );
+    assert.deepEqual(
+      [
+        { kind: 'ConfigMap', metadata: {} },
+        {
+          kind: 'Job',
+          metadata: { labels: { 'commander.io/tenant-cutover-owner-execution': 'opaque' } },
+        },
+        {
+          kind: 'Job',
+          metadata: { labels: { 'commander.io/tenant-authority-proof-reader': 'true' } },
+        },
+      ].map((object) =>
+        helmTenantCutover.commandFailureCode(
+          'kubectl',
+          ['create', '--filename', '-'],
+          JSON.stringify(object),
+        ),
+      ),
+      [
+        'TENANT_CUTOVER_KUBECTL_CREATE_CONFIGMAP_FAILED',
+        'TENANT_CUTOVER_KUBECTL_CREATE_OWNER_JOB_FAILED',
+        'TENANT_CUTOVER_KUBECTL_CREATE_PROOF_JOB_FAILED',
+      ],
+    );
   });
 
   it('accepts kubectl auth can-i denial as a structured negative result', async () => {

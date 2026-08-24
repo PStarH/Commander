@@ -2304,14 +2304,43 @@ export function commandExecutionTimeoutMs(policy: CommandExecutionPolicy | strin
   return Math.min(timeout, COMMAND_TIMEOUT_ABSOLUTE_CAP_MS);
 }
 
-export function commandFailureCode(program: string, args: readonly string[]): string {
+export function commandFailureCode(
+  program: string,
+  args: readonly string[],
+  stdin?: string,
+): string {
+  let createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED';
+  if (args[0] === 'create' && stdin) {
+    try {
+      const object = JSON.parse(stdin) as {
+        kind?: unknown;
+        metadata?: { labels?: Record<string, unknown> };
+      };
+      const labels = object.metadata?.labels;
+      if (object.kind === 'ConfigMap') {
+        createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_CONFIGMAP_FAILED';
+      } else if (
+        object.kind === 'Job' &&
+        labels?.['commander.io/tenant-cutover-owner-execution'] !== undefined
+      ) {
+        createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_OWNER_JOB_FAILED';
+      } else if (
+        object.kind === 'Job' &&
+        labels?.['commander.io/tenant-authority-proof-reader'] === 'true'
+      ) {
+        createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_PROOF_JOB_FAILED';
+      }
+    } catch {
+      // Non-canonical create input retains the generic fixed code.
+    }
+  }
   const kubectlCode =
     args[0] === 'auth' && args[1] === 'can-i'
       ? 'TENANT_CUTOVER_KUBECTL_AUTH_CAN_I_FAILED'
       : args[0] === 'apply'
         ? 'TENANT_CUTOVER_KUBECTL_APPLY_FAILED'
         : args[0] === 'create'
-          ? 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED'
+          ? createCode
           : args[0] === 'delete'
             ? 'TENANT_CUTOVER_KUBECTL_DELETE_FAILED'
             : args[0] === 'get'
@@ -2441,7 +2470,7 @@ export async function defaultCommand(
         finishTerminationWhenGone();
         return;
       }
-      finishReject(new Error(commandFailureCode(program, args)));
+      finishReject(new Error(commandFailureCode(program, args, stdin)));
     });
     child.once('close', (code) => {
       if (settled) return;
@@ -2458,8 +2487,8 @@ export async function defaultCommand(
         resolveCommand(stdoutText);
         return;
       }
-      if (canICheck) return finishReject(new Error(commandFailureCode(program, args)));
-      if (code !== 0) return finishReject(new Error(commandFailureCode(program, args)));
+      if (canICheck) return finishReject(new Error(commandFailureCode(program, args, stdin)));
+      if (code !== 0) return finishReject(new Error(commandFailureCode(program, args, stdin)));
       settled = true;
       clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
