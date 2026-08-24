@@ -97,6 +97,41 @@ describe('Helm owner Job diagnostics', () => {
         'TENANT_CUTOVER_KUBECTL_CREATE_PROOF_JOB_FAILED',
       ],
     );
+    assert.equal(
+      helmTenantCutover.commandFailureCode(
+        'kubectl',
+        ['create', '--filename', '-'],
+        [
+          'apiVersion: batch/v1',
+          'kind: Job',
+          'metadata:',
+          '  labels:',
+          '    commander.io/tenant-authority-proof-reader: "true"',
+        ].join('\n'),
+      ),
+      'TENANT_CUTOVER_KUBECTL_CREATE_PROOF_JOB_FAILED',
+    );
+    assert.deepEqual(
+      [
+        'Error from server (AlreadyExists)',
+        'Error from server (Forbidden): forbidden',
+        'The Job is invalid',
+        'Error from server (NotFound): not found',
+      ].map((stderr) =>
+        helmTenantCutover.commandFailureCode(
+          'kubectl',
+          ['create', '--filename', '-'],
+          '{}',
+          stderr,
+        ),
+      ),
+      [
+        'TENANT_CUTOVER_KUBECTL_CREATE_ALREADY_EXISTS',
+        'TENANT_CUTOVER_KUBECTL_CREATE_FORBIDDEN',
+        'TENANT_CUTOVER_KUBECTL_CREATE_INVALID',
+        'TENANT_CUTOVER_KUBECTL_CREATE_NOT_FOUND',
+      ],
+    );
   });
 
   it('accepts kubectl auth can-i denial as a structured negative result', async () => {
