@@ -44,6 +44,37 @@ const chart = digest('b');
 const nonce = 'n'.repeat(43);
 
 describe('Helm owner Job diagnostics', () => {
+  it('classifies kubectl failures by fixed subcommand without retaining arguments', () => {
+    assert.deepEqual(
+      [
+        ['apply', 'TENANT_CUTOVER_KUBECTL_APPLY_FAILED'],
+        ['create', 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED'],
+        ['delete', 'TENANT_CUTOVER_KUBECTL_DELETE_FAILED'],
+        ['get', 'TENANT_CUTOVER_KUBECTL_GET_FAILED'],
+        ['logs', 'TENANT_CUTOVER_KUBECTL_LOGS_COMMAND_FAILED'],
+        ['version', 'TENANT_CUTOVER_KUBECTL_VERSION_FAILED'],
+        ['wait', 'TENANT_CUTOVER_KUBECTL_WAIT_FAILED'],
+        ['unknown', 'TENANT_CUTOVER_KUBECTL_COMMAND_FAILED'],
+      ].map(([subcommand]) =>
+        helmTenantCutover.commandFailureCode('kubectl', [subcommand!, 'sensitive-name']),
+      ),
+      [
+        'TENANT_CUTOVER_KUBECTL_APPLY_FAILED',
+        'TENANT_CUTOVER_KUBECTL_CREATE_FAILED',
+        'TENANT_CUTOVER_KUBECTL_DELETE_FAILED',
+        'TENANT_CUTOVER_KUBECTL_GET_FAILED',
+        'TENANT_CUTOVER_KUBECTL_LOGS_COMMAND_FAILED',
+        'TENANT_CUTOVER_KUBECTL_VERSION_FAILED',
+        'TENANT_CUTOVER_KUBECTL_WAIT_FAILED',
+        'TENANT_CUTOVER_KUBECTL_COMMAND_FAILED',
+      ],
+    );
+    assert.equal(
+      helmTenantCutover.commandFailureCode('kubectl', ['auth', 'can-i', 'get', 'secret/name']),
+      'TENANT_CUTOVER_KUBECTL_AUTH_CAN_I_FAILED',
+    );
+  });
+
   it('accepts kubectl auth can-i denial as a structured negative result', async () => {
     const root = await mkdtemp(join(tmpdir(), 'commander-helm-can-i-denial-'));
     const kubectl = join(root, 'kubectl');
@@ -108,7 +139,7 @@ describe('Helm owner Job diagnostics', () => {
     try {
       await assert.rejects(
         () => helmTenantCutover.defaultCommand('kubectl', ['auth', 'can-i', 'get', 'pods']),
-        /TENANT_CUTOVER_KUBECTL_COMMAND_FAILED/,
+        /TENANT_CUTOVER_KUBECTL_AUTH_CAN_I_FAILED/,
       );
     } finally {
       if (previousPath === undefined) delete process.env.PATH;
