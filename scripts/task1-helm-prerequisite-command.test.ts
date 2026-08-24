@@ -140,6 +140,15 @@ function readyDeployment(
 describe('Task 1 prerequisite command contract', () => {
   it('keeps the tracked CEL selector predicate and exact local truth table in lockstep', async () => {
     assert.equal(
+      [...TASK1_SELECTOR_CAN_MATCH_H_CEL].reduce(
+        (depth, character) =>
+          character === '(' ? depth + 1 : character === ')' ? depth - 1 : depth,
+        0,
+      ),
+      0,
+      'tracked CEL predicate must have balanced parentheses',
+    );
+    assert.equal(
       await readFile(
         resolve('scripts/fixtures/task1-prerequisites/selector-can-match-hook.cel'),
         'utf8',
