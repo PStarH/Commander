@@ -324,8 +324,31 @@ function createStablePolicies(
   );
 }
 
-const SELECTOR_CAN_MATCH_H_CEL =
-  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))";
+export const TASK1_SELECTOR_CAN_MATCH_H_CEL =
+  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))" +
+  ')';
+
+export const TASK1_SELECTOR_REQUIREMENTS_CEL =
+  "request.resource.resource != 'networkpolicies' ? [] : (has(object.spec.podSelector.matchLabels) ? object.spec.podSelector.matchLabels.map(k, {'key': dyn(k), 'operator': dyn('In'), 'values': dyn([object.spec.podSelector.matchLabels[k]])}) : []) + (has(object.spec.podSelector.matchExpressions) ? object.spec.podSelector.matchExpressions : [])";
+
+export function task1CelDynLiteral(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'boolean') return String(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (Array.isArray(value))
+    return '[' + value.map((item) => 'dyn(' + task1CelDynLiteral(item) + ')').join(',') + ']';
+  if (typeof value === 'object')
+    return (
+      '{' +
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => JSON.stringify(key) + ':dyn(' + task1CelDynLiteral(item) + ')')
+        .join(',') +
+      '}'
+    );
+  return invalid();
+}
 
 function networkGuardValidations(
   migrationOperatorSubject: string,
@@ -338,9 +361,7 @@ function networkGuardValidations(
     labels: policyLabelSet,
     spec,
   }));
-  const allowedJcs = canonicalBootstrapJson(allowed)
-    .replaceAll('\\', '\\\\')
-    .replaceAll("'", "\\'");
+  const allowedCel = task1CelDynLiteral(allowed);
   const operator = migrationOperatorSubject.replaceAll("'", "\\'");
   const protectedNames = policies.map((policy) => `'${policy.name}'`).join(',');
   const fixed = Object.entries(labels)
@@ -355,11 +376,21 @@ function networkGuardValidations(
       message: 'protected stable policies are create-only',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username != '${operator}' || (request.operation == 'CREATE' && ${allowedJcs}.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.spec == object.spec))`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username != '" +
+        operator +
+        "' || (request.operation == 'CREATE' && " +
+        allowedCel +
+        '.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.spec == object.spec))',
       message: 'migration operator may create only an exact rendered stable policy',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username == '${operator}' || request.operation == 'DELETE' || !has(object.spec.egress) || size(object.spec.egress) == 0 || !(${SELECTOR_CAN_MATCH_H_CEL})`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username == '" +
+        operator +
+        "' || request.operation == 'DELETE' || !has(object.spec.egress) || size(object.spec.egress) == 0 || !(" +
+        TASK1_SELECTOR_CAN_MATCH_H_CEL +
+        ')',
       message: 'non-operator NetworkPolicy must not add egress to a protected hook selector',
     },
     {
@@ -436,8 +467,7 @@ function createAdmissionGuard(
             { name: 'componentKey', expression: "'app.kubernetes.io/component'" },
             {
               name: 'selectorRequirements',
-              expression:
-                "request.resource.resource != 'networkpolicies' ? [] : (has(object.spec.podSelector.matchLabels) ? object.spec.podSelector.matchLabels.map(k, {'key': k, 'operator': 'In', 'values': [object.spec.podSelector.matchLabels[k]]}) : []) + (has(object.spec.podSelector.matchExpressions) ? object.spec.podSelector.matchExpressions : [])",
+              expression: TASK1_SELECTOR_REQUIREMENTS_CEL,
             },
           ],
         }
