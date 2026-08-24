@@ -953,8 +953,40 @@ export function createTask1KubectlPorts(
       return string(user.username);
     },
     async canI(verb, resource, objectName) {
-      const target = objectName ? resource + '/' + objectName : resource;
-      return (await runCommand(['auth', 'can-i', verb, target])).trim() === 'yes';
+      const separator = resource.indexOf('.');
+      const resourceName = separator < 0 ? resource : resource.slice(0, separator);
+      const group = separator < 0 ? undefined : resource.slice(separator + 1);
+      if (!resourceName || group === '') fail('TENANT_POLICY_KUBERNETES_RESOURCE_INVALID');
+
+      const output = await runCommand(
+        ['create', '--filename', '-', '--output', 'json'],
+        canonicalBootstrapJson({
+          apiVersion: 'authorization.k8s.io/v1',
+          kind: 'SelfSubjectAccessReview',
+          spec: {
+            resourceAttributes: {
+              verb,
+              resource: resourceName,
+              ...(group ? { group } : {}),
+              ...(objectName ? { name: objectName } : {}),
+            },
+          },
+        }) + '\n',
+      );
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(output);
+      } catch {
+        fail('TENANT_POLICY_KUBERNETES_RESPONSE_INVALID');
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+        fail('TENANT_POLICY_KUBERNETES_RESPONSE_INVALID');
+      const status = (parsed as Record<string, unknown>).status;
+      if (!status || typeof status !== 'object' || Array.isArray(status))
+        fail('TENANT_POLICY_KUBERNETES_RESPONSE_INVALID');
+      const allowed = (status as Record<string, unknown>).allowed;
+      if (typeof allowed !== 'boolean') fail('TENANT_POLICY_KUBERNETES_RESPONSE_INVALID');
+      return allowed;
     },
     async dryRunCreate(object) {
       try {
