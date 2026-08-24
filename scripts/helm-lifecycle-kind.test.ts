@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import { commandFailureCode } from './helm-tenant-cutover.js';
 import * as lifecycleHarness from './helm-lifecycle-kind.js';
 import {
   aggregateScenarioPass,
@@ -38,6 +39,36 @@ import {
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('retains the rejected Kubernetes object type for invalid creates', () => {
+    const createObjects = [
+      { kind: 'ConfigMap', metadata: {} },
+      {
+        kind: 'Job',
+        metadata: { labels: { 'commander.io/tenant-cutover-owner-execution': 'opaque' } },
+      },
+      {
+        kind: 'Job',
+        metadata: { labels: { 'commander.io/tenant-authority-proof-reader': 'true' } },
+      },
+    ];
+
+    assert.deepEqual(
+      createObjects.map((object) =>
+        commandFailureCode(
+          'kubectl',
+          ['create', '--filename', '-'],
+          JSON.stringify(object),
+          'The ' + object.kind + ' is invalid',
+        ),
+      ),
+      [
+        'TENANT_CUTOVER_KUBECTL_CREATE_CONFIGMAP_INVALID',
+        'TENANT_CUTOVER_KUBECTL_CREATE_OWNER_JOB_INVALID',
+        'TENANT_CUTOVER_KUBECTL_CREATE_PROOF_JOB_INVALID',
+      ],
+    );
+  });
+
   it('selects an API pod with a startup failure before a lexically earlier healthy pod', () => {
     const selectPod = (
       lifecycleHarness as typeof lifecycleHarness & {
