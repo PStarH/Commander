@@ -188,6 +188,25 @@ export function proofReaderName(namespace: string, release: string): string {
   return `commander-proof-reader-${suffix}`;
 }
 
+export function proofReaderCanIArgs(input: {
+  verb: string;
+  resource: string;
+  resourceName: string;
+  identity: string;
+  namespace: string;
+}): string[] {
+  return [
+    'auth',
+    'can-i',
+    input.verb,
+    input.resourceName ? input.resource + '/' + input.resourceName : input.resource,
+    '--as',
+    input.identity,
+    '-n',
+    input.namespace,
+  ];
+}
+
 export function productionImageReferences(digest: string): { source: string; target: string } {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) {
     throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
@@ -2674,17 +2693,9 @@ async function assertProofReaderRbac(release: string): Promise<AssertionResult[]
     ['impersonate', 'users', '', 'no'],
     ['watch', 'pods', '', 'no'],
   ] as const) {
-    const check = await kubectl([
-      'auth',
-      'can-i',
-      verb,
-      resource,
-      ...(resourceName ? [resourceName] : []),
-      '--as',
-      identity,
-      '-n',
-      NAMESPACE,
-    ]);
+    const check = await kubectl(
+      proofReaderCanIArgs({ verb, resource, resourceName, identity, namespace: NAMESPACE }),
+    );
     results.push({
       description: `proof-reader RBAC ${verb} ${resource}${
         resourceName ? `/${resourceName}` : ''
