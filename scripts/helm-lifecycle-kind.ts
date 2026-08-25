@@ -574,10 +574,29 @@ export interface ScenarioEvidence {
   durationMs: number;
   events: Record<string, unknown>[];
   assertions: AssertionResult[];
+  failedStage?: LifecycleFailureStage;
   rbac?: AssertionResult[];
   networkPolicy?: AssertionResult[];
   error?: string;
 }
+
+export type LifecycleFailureStage =
+  | 'namespace-reset'
+  | 'namespace-create'
+  | 'certificate-material'
+  | 'tls-secrets'
+  | 'external-database-fixture'
+  | 'lifecycle-values'
+  | 'cutover-install'
+  | 'api-ready'
+  | 'network-prerequisites'
+  | 'cutover-enforce'
+  | 'current-proof'
+  | 'post-cutover-validation'
+  | 'helm-uninstall'
+  | 'release-cleanup'
+  | 'recovery-failed-install'
+  | 'recovery-retry';
 
 export interface AssertionResult {
   description: string;
@@ -608,6 +627,7 @@ export interface SanitizedScenarioEvidence {
   name: string;
   passed: boolean;
   durationMs: number;
+  failedStage?: LifecycleFailureStage;
   failureCodes?: string[];
   failedChecks?: SanitizedCheckFailure[];
   rolloutFailure?: RolloutFailureEvidence;
@@ -1588,7 +1608,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
         }
       : {}),
     scenarios: evidence.scenarios.map(
-      ({ name, passed, durationMs, assertions, rbac, networkPolicy, error }) => {
+      ({ name, passed, durationMs, failedStage, assertions, rbac, networkPolicy, error }) => {
         const safeFailureCodes = [
           ...new Set([
             ...(rbac?.some(({ passed }) => !passed) ? ['PROOF_READER_RBAC_INVALID'] : []),
@@ -1607,6 +1627,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
           name,
           passed,
           durationMs,
+          ...(failedStage ? { failedStage } : {}),
           ...(safeFailureCodes.length > 0 ? { failureCodes: safeFailureCodes } : {}),
           ...(failedChecks.length > 0 ? { failedChecks } : {}),
           ...(rolloutFailure
@@ -2958,11 +2979,16 @@ async function runRealBundledLifecycle(
   const databaseTarget = { namespace: NAMESPACE, statefulSet: `${release}-postgres` };
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-lifecycle-'));
   let cleanupNetworkPrerequisites: (() => Promise<void>) | undefined;
+  let stage: LifecycleFailureStage = 'namespace-reset';
   try {
     requireCommand(await kubectl(namespaceCleanupArgs(NAMESPACE)), 'NAMESPACE_RESET_FAILED');
+    stage = 'namespace-create';
     await createNamespace();
+    stage = 'certificate-material';
     const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release);
+    stage = 'tls-secrets';
     await createLifecycleTlsSecrets(stateDirectory, NAMESPACE, release);
+    stage = 'lifecycle-values';
     const installValues = resolve(stateDirectory, 'values-install.yaml');
     const upgradeValues = resolve(stateDirectory, 'values-upgrade.yaml');
     writeFileSync(
@@ -2992,11 +3018,14 @@ async function runRealBundledLifecycle(
       { mode: 0o600 },
     );
 
+    stage = 'cutover-install';
     await runCutoverCommand('install', release, installValues);
+    stage = 'api-ready';
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
     );
+    stage = 'network-prerequisites';
     cleanupNetworkPrerequisites = await prepareNetworkPrerequisites(
       release,
       installValues,
@@ -3010,6 +3039,7 @@ async function runRealBundledLifecycle(
     });
     const firstRevision = await helmRevision(release);
 
+    stage = 'cutover-enforce';
     await runCutoverCommand('enforce', release, upgradeValues);
     const secondProofCount = await proofRowCount(databaseTarget);
     const secondRevision = await helmRevision(release);
@@ -3026,6 +3056,7 @@ async function runRealBundledLifecycle(
       },
     );
 
+    stage = 'current-proof';
     await runCutoverCommand('enforce', release, upgradeValues);
     const noOpRevision = await helmRevision(release);
     const noOpProofCount = await proofRowCount(databaseTarget);
@@ -3041,6 +3072,7 @@ async function runRealBundledLifecycle(
       },
     );
 
+    stage = 'post-cutover-validation';
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
@@ -3050,10 +3082,12 @@ async function runRealBundledLifecycle(
       description: 'owner Jobs, proof Jobs, Pods, ConfigMaps, and owner Secrets were cleaned',
       passed: true,
     });
+    stage = 'helm-uninstall';
     requireCommand(
       await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
       'HELM_UNINSTALL_FAILED',
     );
+    stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
       description: 'Helm uninstall removed every release-owned object',
@@ -3085,6 +3119,7 @@ async function runRealBundledLifecycle(
       durationMs: Date.now() - startedAt,
       events: await getEvents(NAMESPACE),
       assertions,
+      failedStage: stage,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
@@ -3104,6 +3139,7 @@ async function runRealExternalTlsLifecycle(
   const assertions: AssertionResult[] = [];
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-external-'));
   let cleanupNetworkPrerequisites: (() => Promise<void>) | undefined;
+  let stage: LifecycleFailureStage = 'namespace-reset';
   const databaseTarget = {
     namespace: EXTERNAL_DATABASE_NAMESPACE,
     statefulSet: 'external-postgres',
@@ -3111,16 +3147,21 @@ async function runRealExternalTlsLifecycle(
   try {
     for (const namespace of [NAMESPACE, EXTERNAL_DATABASE_NAMESPACE]) {
       requireCommand(await kubectl(namespaceCleanupArgs(namespace)), 'NAMESPACE_RESET_FAILED');
+      stage = 'namespace-create';
       await createNamespace(namespace);
     }
+    stage = 'certificate-material';
     const hostname = `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc.cluster.local`;
     const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release, [
       'external-postgres',
       `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc`,
       hostname,
     ]);
+    stage = 'tls-secrets';
     await createApiProofSecrets(stateDirectory, NAMESPACE, release);
+    stage = 'external-database-fixture';
     const external = await createExternalDatabaseFixture({ directory: stateDirectory, release });
+    stage = 'lifecycle-values';
     const installValues = resolve(stateDirectory, 'values-install.yaml');
     const upgradeValues = resolve(stateDirectory, 'values-upgrade.yaml');
     const database = {
@@ -3161,11 +3202,14 @@ async function runRealExternalTlsLifecycle(
       { mode: 0o600 },
     );
 
+    stage = 'cutover-install';
     await runCutoverCommand('install', release, installValues);
+    stage = 'api-ready';
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
     );
+    stage = 'network-prerequisites';
     cleanupNetworkPrerequisites = await prepareNetworkPrerequisites(
       release,
       installValues,
@@ -3181,6 +3225,7 @@ async function runRealExternalTlsLifecycle(
       ...(await assertExternalRoleConnections(external.hostname)),
     );
     const firstRevision = await helmRevision(release);
+    stage = 'cutover-enforce';
     await runCutoverCommand('enforce', release, upgradeValues);
     const secondRevision = await helmRevision(release);
     const secondProofCount = await proofRowCount(databaseTarget);
@@ -3195,6 +3240,7 @@ async function runRealExternalTlsLifecycle(
         detail: `proofRows=${firstProofCount}->${secondProofCount}`,
       },
     );
+    stage = 'current-proof';
     await runCutoverCommand('enforce', release, upgradeValues);
     const currentRevision = await helmRevision(release);
     const currentProofCount = await proofRowCount(databaseTarget);
@@ -3208,15 +3254,18 @@ async function runRealExternalTlsLifecycle(
         passed: currentProofCount > secondProofCount,
       },
     );
+    stage = 'post-cutover-validation';
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
     await cleanupNetworkPrerequisites();
     cleanupNetworkPrerequisites = undefined;
+    stage = 'helm-uninstall';
     requireCommand(
       await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
       'HELM_UNINSTALL_FAILED',
     );
+    stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     requireCommand(
       await kubectl(namespaceCleanupArgs(EXTERNAL_DATABASE_NAMESPACE)),
@@ -3259,6 +3308,7 @@ async function runRealExternalTlsLifecycle(
       durationMs: Date.now() - startedAt,
       events: await getEvents(NAMESPACE),
       assertions,
+      failedStage: stage,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
@@ -3278,11 +3328,16 @@ async function runFailedRolloutRecovery(
   const assertions: AssertionResult[] = [];
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-recovery-'));
   const databaseTarget = { namespace: NAMESPACE, statefulSet: `${release}-postgres` };
+  let stage: LifecycleFailureStage = 'namespace-reset';
   try {
     requireCommand(await kubectl(namespaceCleanupArgs(NAMESPACE)), 'NAMESPACE_RESET_FAILED');
+    stage = 'namespace-create';
     await createNamespace();
+    stage = 'certificate-material';
     const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release);
+    stage = 'tls-secrets';
     await createLifecycleTlsSecrets(stateDirectory, NAMESPACE, release, 'postgres.key');
+    stage = 'lifecycle-values';
     const values = resolve(stateDirectory, 'values.yaml');
     writeFileSync(
       values,
@@ -3298,6 +3353,7 @@ async function runFailedRolloutRecovery(
       { mode: 0o600 },
     );
     let firstFailure: unknown;
+    stage = 'recovery-failed-install';
     try {
       await runCutoverCommand('install', release, values);
     } catch (error) {
@@ -3323,8 +3379,10 @@ async function runFailedRolloutRecovery(
       },
     );
 
+    stage = 'recovery-retry';
     await replaceApiProofPrivateSecret(stateDirectory, NAMESPACE, release);
     await runCutoverCommand('install', release, values);
+    stage = 'api-ready';
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'RECOVERED_API_DEPLOYMENT_NOT_AVAILABLE',
@@ -3343,13 +3401,16 @@ async function runFailedRolloutRecovery(
         detail: `proofRows=${proofCountAfterFailure}->${proofCountAfterRetry}`,
       },
     );
+    stage = 'post-cutover-validation';
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
+    stage = 'helm-uninstall';
     requireCommand(
       await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
       'HELM_UNINSTALL_FAILED',
     );
+    stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
       description: 'recovered release and every ephemeral owner/proof resource were cleaned',
@@ -3372,6 +3433,7 @@ async function runFailedRolloutRecovery(
       durationMs: Date.now() - startedAt,
       events: await getEvents(NAMESPACE),
       assertions,
+      failedStage: stage,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
