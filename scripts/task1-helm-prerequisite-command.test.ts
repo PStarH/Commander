@@ -505,6 +505,27 @@ describe('Task 1 prerequisite command contract', () => {
     assert.match(egressGuard.expression, /dyn\(object\)\.spec\.egress/);
   });
 
+  it('keeps StatefulSet-only CEL field access dynamic when the guard also matches Deployments', async () => {
+    const workload = renderTask1AdmissionPair(await context(), 'workload');
+    const constraints = workload.policy.spec.matchConstraints as {
+      resourceRules: Array<{ resources: string[] }>;
+    };
+    assert.deepEqual(constraints.resourceRules.map((rule) => rule.resources), [
+      ['deployments', 'statefulsets'],
+    ]);
+    const postgresGuard = (workload.policy.spec.validations as Array<{
+      message: string;
+      expression: string;
+    }>).find(
+      (validation) =>
+        validation.message ===
+        'bundled PostgreSQL must preserve exact TLS transport and data-volume identity',
+    );
+    assert.ok(postgresGuard);
+    assert.match(postgresGuard.expression, /dyn\(object\)\.spec\.serviceName/);
+    assert.match(postgresGuard.expression, /dyn\(object\)\.spec\.volumeClaimTemplates/);
+  });
+
   it('is create-only, idempotent for exact admission objects, and rejects collisions', async () => {
     const loaded = await context();
     const ports = memoryPorts();
