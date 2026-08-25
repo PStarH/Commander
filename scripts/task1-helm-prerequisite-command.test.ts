@@ -569,6 +569,32 @@ describe('Task 1 prerequisite command contract', () => {
     assert.ok(ports.created.every((object) => object.kind === 'NetworkPolicy'));
   });
 
+  it('accepts an observed admission policy with no type-checking warnings field', async () => {
+    const bytes = (await readFile(fixturePath, 'utf8')).replace(
+      'name: postgres',
+      'name: release-a-postgres',
+    );
+    const loaded = loadTask1PrerequisiteContext(
+      {
+        namespace: 'commander',
+        release: 'release-a',
+        valuesPath: fixturePath,
+        stage: 'network',
+        migrationOperatorSubject: subject,
+      },
+      bytes,
+      chartDigest,
+    );
+    const pair = renderTask1AdmissionPair(loaded, 'network');
+    pair.policy.metadata.generation = 1;
+    pair.policy.status = { observedGeneration: 1, typeChecking: {} };
+    const ports = memoryPorts([pair.policy, pair.binding]);
+
+    await runTask1PrerequisiteOperator(loaded, ports);
+
+    assert.equal(ports.created.length, 3);
+  });
+
   it('allows only deterministic future release Services to be absent on a fresh install', async () => {
     const bytes = (await readFile(fixturePath, 'utf8')).replace(
       'name: postgres',
