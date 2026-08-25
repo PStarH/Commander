@@ -487,6 +487,24 @@ describe('Task 1 prerequisite command contract', () => {
     assert.deepEqual(workload.binding.spec, sealed.bindingSpec);
   });
 
+  it('keeps NetworkPolicy-only CEL field access dynamic when the guard also matches Pods', async () => {
+    const network = renderTask1AdmissionPair(await context(), 'network');
+    const constraints = network.policy.spec.matchConstraints as {
+      resourceRules: Array<{ resources: string[] }>;
+    };
+    assert.deepEqual(
+      constraints.resourceRules.map((rule) => rule.resources),
+      [['networkpolicies'], ['pods']],
+    );
+    const egressGuard = (network.policy.spec.validations as Array<{ message: string; expression: string }>).find(
+      (validation) =>
+        validation.message ===
+        'non-operator NetworkPolicy must not add egress to a protected hook selector',
+    );
+    assert.ok(egressGuard);
+    assert.match(egressGuard.expression, /dyn\(object\)\.spec\.egress/);
+  });
+
   it('is create-only, idempotent for exact admission objects, and rejects collisions', async () => {
     const loaded = await context();
     const ports = memoryPorts();
