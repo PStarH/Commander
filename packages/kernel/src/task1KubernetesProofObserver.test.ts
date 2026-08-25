@@ -498,6 +498,51 @@ describe('Task 1 Kubernetes proof observer', () => {
     );
   });
 
+  it('reports Kubernetes label failures at the checked resource boundary', async () => {
+    const locations = new Set<string>();
+    const cases: Array<(values: Record<string, any>) => void> = [
+      (values) => delete values.service.metadata.labels['app.kubernetes.io/component'],
+      (values) => delete values.deployment.metadata.labels['app.kubernetes.io/component'],
+      (values) =>
+        delete values.deployment.spec.template.metadata.labels['app.kubernetes.io/component'],
+      (values) =>
+        delete values.replicaSets.items[0].spec.template.metadata.labels['pod-template-hash'],
+      (values) => delete values.apiPods.items[0].metadata.labels['pod-template-hash'],
+      (values) =>
+        delete values.proofPods.items[0].metadata.labels[
+          'commander.io/tenant-authority-proof-reader'
+        ],
+    ];
+
+    for (const mutate of cases) {
+      const values = JSON.parse(JSON.stringify(resources())) as Record<string, any>;
+      mutate(values);
+      const observer = createTask1KubernetesProofObserver({
+        api: new FixtureApi(values),
+        readProjectedTokenIdentity: async () => token(),
+        readReleaseProjection: async () => releaseProjection(),
+        now: () => now,
+      });
+
+      await assert.rejects(
+        () => observer(operation()),
+        (error: unknown) => {
+          assert(error instanceof Error);
+          assert.equal(
+            (error as Error & { code?: unknown }).code,
+            'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+          );
+          const diagnostic = String((error as Error & { diagnostic?: unknown }).diagnostic);
+          assert.match(diagnostic, /^task1KubernetesProofObserver\.(?:ts|js):\d+:\d+$/);
+          locations.add(diagnostic);
+          return true;
+        },
+      );
+    }
+
+    assert.equal(locations.size, cases.length);
+  });
+
   it('uses only the frozen proof-reader permissions and binds its own projected-token Pod', async () => {
     const api = new FixtureApi();
     const observer = createTask1KubernetesProofObserver({
