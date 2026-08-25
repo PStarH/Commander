@@ -1685,6 +1685,7 @@ describe('helm-lifecycle-kind helpers', () => {
           name: 'fresh-bundled',
           passed: false,
           durationMs: 100,
+          failedChecks: [{ group: 'scenario', index: 1 }],
           failureCodes: [
             'HELM_TENANT_CUTOVER_FAILED',
             'TENANT_CUTOVER_OWNER_JOB_FAILED',
@@ -1700,6 +1701,42 @@ describe('helm-lifecycle-kind helpers', () => {
       JSON.stringify(sanitized),
       /secret|private|SELECT|event|assertion|postgres/i,
     );
+  });
+
+  it('retains only indexes of failed checks when a scenario returns assertions', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [{ message: 'private detail' }],
+          assertions: [
+            { description: 'first check', passed: true },
+            { description: 'failed check', passed: false, detail: 'postgres://secret' },
+          ],
+          rbac: [{ description: 'rbac check', passed: false, detail: 'private rbac detail' }],
+          networkPolicy: [
+            { description: 'network check', passed: true },
+            { description: 'second network check', passed: false },
+          ],
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.failedChecks, [
+      { group: 'scenario', index: 2 },
+      { group: 'rbac', index: 1 },
+      { group: 'networkPolicy', index: 2 },
+    ]);
+    assert.doesNotMatch(JSON.stringify(sanitized), /private|postgres|description|detail/i);
   });
 
   it('rejects unallowlisted and oversized prefixed diagnostic candidates', () => {
