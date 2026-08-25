@@ -590,9 +590,17 @@ export interface SanitizedScenarioEvidence {
   passed: boolean;
   durationMs: number;
   failureCodes?: string[];
+  failedChecks?: SanitizedCheckFailure[];
   rolloutFailure?: RolloutFailureEvidence;
   rolloutObservation?: RolloutNonterminalEvidence | RolloutQueryEvidence;
   apiStartupFailure?: ApiPodStartupFailureEvidence;
+}
+
+type SanitizedCheckGroup = 'scenario' | 'rbac' | 'networkPolicy';
+
+interface SanitizedCheckFailure {
+  group: SanitizedCheckGroup;
+  index: number;
 }
 
 export interface SanitizedHarnessEvidence {
@@ -890,6 +898,17 @@ function scenarioFailureCodes(error: string | undefined): string[] | undefined {
     ...new Set((firstLine.match(SCENARIO_FAILURE_CODE) ?? []).filter(isAllowedHelmDiagnosticCode)),
   ].slice(0, 8);
   return codes.length > 0 ? codes : undefined;
+}
+
+function failedCheckEvidence(
+  group: SanitizedCheckGroup,
+  checks: readonly AssertionResult[] | undefined,
+): SanitizedCheckFailure[] {
+  if (!checks) return [];
+  return checks.reduce<SanitizedCheckFailure[]>((failed, check, index) => {
+    if (!check.passed) failed.push({ group, index: index + 1 });
+    return failed;
+  }, []);
 }
 
 function jsonRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1497,42 +1516,50 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
           },
         }
       : {}),
-    scenarios: evidence.scenarios.map(({ name, passed, durationMs, error }) => {
-      const failureCodes = scenarioFailureCodes(error);
-      const rolloutFailure = error ? parseRolloutFailureEvidence(error) : undefined;
-      const rolloutObservation = error ? parseRolloutObservationEvidence(error) : undefined;
-      const apiStartupFailure = error ? parseApiPodStartupFailureEvidence(error) : undefined;
-      return {
-        name,
-        passed,
-        durationMs,
-        ...(failureCodes ? { failureCodes } : {}),
-        ...(rolloutFailure
-          ? {
-              rolloutFailure: {
-                code: rolloutFailure.code,
-                resourceKind: rolloutFailure.resourceKind,
-                component: rolloutFailure.component,
-                reasonCode: rolloutFailure.reasonCode,
-              },
-            }
-          : {}),
-        ...(rolloutObservation
-          ? {
-              rolloutObservation:
-                rolloutObservation.code === 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL'
-                  ? {
-                      code: rolloutObservation.code,
-                      resourceKind: rolloutObservation.resourceKind,
-                      component: rolloutObservation.component,
-                      reasonCode: rolloutObservation.reasonCode,
-                    }
-                  : { code: rolloutObservation.code },
-            }
-          : {}),
-        ...(apiStartupFailure ? { apiStartupFailure } : {}),
-      };
-    }),
+    scenarios: evidence.scenarios.map(
+      ({ name, passed, durationMs, assertions, rbac, networkPolicy, error }) => {
+        const failureCodes = scenarioFailureCodes(error);
+        const failedChecks = [
+          ...failedCheckEvidence('scenario', assertions),
+          ...failedCheckEvidence('rbac', rbac),
+          ...failedCheckEvidence('networkPolicy', networkPolicy),
+        ];
+        const rolloutFailure = error ? parseRolloutFailureEvidence(error) : undefined;
+        const rolloutObservation = error ? parseRolloutObservationEvidence(error) : undefined;
+        const apiStartupFailure = error ? parseApiPodStartupFailureEvidence(error) : undefined;
+        return {
+          name,
+          passed,
+          durationMs,
+          ...(failureCodes ? { failureCodes } : {}),
+          ...(failedChecks.length > 0 ? { failedChecks } : {}),
+          ...(rolloutFailure
+            ? {
+                rolloutFailure: {
+                  code: rolloutFailure.code,
+                  resourceKind: rolloutFailure.resourceKind,
+                  component: rolloutFailure.component,
+                  reasonCode: rolloutFailure.reasonCode,
+                },
+              }
+            : {}),
+          ...(rolloutObservation
+            ? {
+                rolloutObservation:
+                  rolloutObservation.code === 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL'
+                    ? {
+                        code: rolloutObservation.code,
+                        resourceKind: rolloutObservation.resourceKind,
+                        component: rolloutObservation.component,
+                        reasonCode: rolloutObservation.reasonCode,
+                      }
+                    : { code: rolloutObservation.code },
+              }
+            : {}),
+          ...(apiStartupFailure ? { apiStartupFailure } : {}),
+        };
+      },
+    ),
     ...(evidence.ownerFailureEvidence
       ? {
           ownerFailureEvidence: evidence.ownerFailureEvidence.map((failure) => ({
