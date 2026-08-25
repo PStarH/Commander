@@ -30,6 +30,7 @@ import {
   kindClusterExists,
   proofTemplatesPresent,
   parseOwnerFailureEvidence,
+  ownerFailureEvidenceRecord,
   classifyRolloutObservation,
   classifyRolloutFailureJson,
   retainRolloutObservation,
@@ -1093,6 +1094,23 @@ describe('helm-lifecycle-kind helpers', () => {
       undefined,
     );
     assert.equal(parseOwnerFailureEvidence('postgres://owner:secret@db private detail'), undefined);
+  });
+
+  it('serializes a parsed owner failure without retaining the child-process output', () => {
+    const record = ownerFailureEvidenceRecord({
+      code: 'COMMANDER_MIGRATION_FAILED',
+      producer: 'owner_entrypoint',
+      transport: 'kubectl_logs',
+      ownerStage: 'lifecycle_initialize',
+      logSha256: 'c'.repeat(64),
+    });
+
+    assert.equal(
+      record,
+      'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=' +
+        'c'.repeat(64),
+    );
+    assert.doesNotMatch(record, /secret|postgres|stderr|output/i);
   });
 
   it('pins Kubernetes 1.33.2 and the expected digest', () => {
