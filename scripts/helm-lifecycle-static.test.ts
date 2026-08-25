@@ -432,6 +432,10 @@ describe('Helm lifecycle static contract', () => {
     );
     assert.match(
       api,
+      /X-Commander-Readiness-Challenge': 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc'/,
+    );
+    assert.match(
+      api,
       /name: api-proof-private[\s\S]*mountPath: \/run\/commander\/api-proof[\s\S]*readOnly: true/,
     );
     assert.match(
