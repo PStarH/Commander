@@ -157,7 +157,7 @@ export function namespaceCleanupArgs(namespace: string): string[] {
 
 export function serviceAccountTokenArgs(token: string, commandArgs: readonly string[]): string[] {
   if (!token || /\s/.test(token)) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
-  return [...commandArgs, '--token', token];
+  return ['--token', token, ...commandArgs];
 }
 
 export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
