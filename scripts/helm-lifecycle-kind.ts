@@ -2893,7 +2893,32 @@ async function helmRevision(release: string): Promise<string> {
   return String(revision);
 }
 
-async function assertReleaseCleanup(release: string): Promise<void> {
+export async function waitForCleanupCheck(
+  check: () => Promise<void>,
+  failureCode: string,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 250;
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    try {
+      await check();
+      return;
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== failureCode) throw error;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error(failureCode);
+    await new Promise((resolveWait) =>
+      setTimeout(resolveWait, Math.min(pollIntervalMs, remainingMs)),
+    );
+  }
+}
+
+async function assertReleaseCleanup(release: string, allowRetry = true): Promise<void> {
   for (const resources of [
     'all',
     'configmaps,secrets,serviceaccounts',
@@ -2911,7 +2936,12 @@ async function assertReleaseCleanup(release: string): Promise<void> {
       'name',
     ]);
     if (result.exitCode !== 0 || result.stdout.trim()) {
-      throw new Error('HELM_UNINSTALL_CLEANUP_FAILED');
+      if (!allowRetry) throw new Error('HELM_UNINSTALL_CLEANUP_FAILED');
+      await waitForCleanupCheck(
+        () => assertReleaseCleanup(release, false),
+        'HELM_UNINSTALL_CLEANUP_FAILED',
+      );
+      return;
     }
   }
 }

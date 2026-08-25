@@ -38,6 +38,7 @@ import {
   productionImageSourceRevision,
   proofReaderCanIArgs,
   serviceAccountTokenArgs,
+  waitForCleanupCheck,
   KIND_NODE_IMAGE,
   CALICO_URL,
 } from './helm-lifecycle-kind.js';
@@ -1422,6 +1423,20 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(aggregateScenarioPass([{ passed: true }, { passed: false }]), false);
     assert.equal(aggregateScenarioPass([{ passed: true }, { passed: true }]), true);
     assert.equal(aggregateScenarioPass([]), false);
+  });
+
+  it('waits for controller-owned resources to disappear after Helm uninstall', async () => {
+    let checks = 0;
+    await waitForCleanupCheck(
+      async () => {
+        checks += 1;
+        if (checks === 1) throw new Error('HELM_UNINSTALL_CLEANUP_FAILED');
+      },
+      'HELM_UNINSTALL_CLEANUP_FAILED',
+      { timeoutMs: 1_000, pollIntervalMs: 0 },
+    );
+
+    assert.equal(checks, 2);
   });
 
   it('does not make successful lifecycle proofs depend on observing an ephemeral hook Pod', () => {
