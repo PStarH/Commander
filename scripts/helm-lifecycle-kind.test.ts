@@ -36,6 +36,7 @@ import {
   retainRolloutObservation,
   retainRolloutFailureEvidence,
   productionImageSourceRevision,
+  proofReaderCanIArgs,
   serviceAccountTokenArgs,
   KIND_NODE_IMAGE,
   CALICO_URL,
@@ -1449,6 +1450,29 @@ describe('helm-lifecycle-kind helpers', () => {
       true,
     );
     assert.equal(aggregateScenarioChecks({ assertions: [], rbac: [], networkPolicy: [] }), false);
+  });
+
+  it('uses Kubernetes TYPE/NAME grammar for the named proof service RBAC check', () => {
+    assert.deepEqual(
+      proofReaderCanIArgs({
+        verb: 'get',
+        resource: 'services',
+        resourceName: 'cmdr-live-api-proof',
+        identity:
+          'system:serviceaccount:commander-lifecycle:commander-proof-reader-0123456789abcdef',
+        namespace: 'commander-lifecycle',
+      }),
+      [
+        'auth',
+        'can-i',
+        'get',
+        'services/cmdr-live-api-proof',
+        '--as',
+        'system:serviceaccount:commander-lifecycle:commander-proof-reader-0123456789abcdef',
+        '-n',
+        'commander-lifecycle',
+      ],
+    );
   });
 
   it('maps the local production tag to the exact Kind containerd digest reference', () => {
