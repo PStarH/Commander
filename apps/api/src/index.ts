@@ -58,6 +58,7 @@ import {
   initRateLimitStore,
   closeRateLimitStore,
 } from './securityMiddleware';
+import { bootstrapDefaultAdminAccount } from './userStore';
 import { authMiddleware } from './authMiddleware';
 import { tenantContextMiddleware } from './tenantContextMiddleware';
 import { loadTenantProvider } from './tenantProviderLoader';
@@ -950,6 +951,7 @@ async function startServer(): Promise<void> {
   }
 
   await initRateLimitStore();
+  await bootstrapDefaultAdminAccount();
 
   // Memory backend selection:
   // - Non-production: Local-First via resolveMemoryStoreType (in-memory without DSN).
