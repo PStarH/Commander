@@ -674,7 +674,7 @@ describe('Task 1 prerequisite command contract', () => {
     broadRbac.canI = async () => true;
     await assert.rejects(
       runTask1PrerequisiteOperator(loaded, broadRbac),
-      /TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD/,
+      /TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED/,
     );
 
     const drift = memoryPorts([
