@@ -156,12 +156,19 @@ function installSubscriptionsOnce(): void {
 }
 
 function adminGate(req: Request, res: Response, next: NextFunction): void {
-  if (process.env.AUTH_DISABLED === 'true') return next();
+  // AUDIT-API10: global authMiddleware already fail-closes on AUTH_DISABLED in
+  // production; honoring it here as a bypass was inconsistent. JWT admins were
+  // also locked out (their roles never appear in apiScopes) — accept either
+  // an admin/super_admin JWT or an admin-scoped API key.
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'super_admin')) {
+    next();
+    return;
+  }
   const scopes = req.apiScopes ?? [];
   if (!scopes.includes('admin')) {
     res
       .status(403)
-      .json({ error: 'Admin scope required', detail: 'Pass an API key with scope=admin.' });
+      .json({ error: 'Admin authority required', detail: 'Pass an admin JWT or an API key with scope=admin.' });
     return;
   }
   next();

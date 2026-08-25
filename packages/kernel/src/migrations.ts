@@ -32,6 +32,7 @@ import {
 } from './evidenceSchema.js';
 import { KERNEL_COMPENSATION_PERSISTENCE_SQL } from './compensationSchema.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import { assertSafeSqlIdentifier } from './sqlSafety.js';
 
 export interface KernelMigration {
   id: string;
@@ -295,12 +296,37 @@ export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigr
   },
 ];
 
+
+// AUDIT-E1: PostgreSQL-authoritative authentication-failure lockout ledger.
+// Replaces the Redis AUTH_FAILURE_REDIS_URL authority (forbidden by the
+// no-Redis-auth-fallback policy). IP-keyed, deployment-global (not tenant
+// scoped); payload is the lockout entry, expires_at drives cleanup.
+export const KERNEL_AUTH_FAILURE_AUTHORITY_SQL = `
+CREATE TABLE IF NOT EXISTS commander_auth_failures (
+  ip TEXT PRIMARY KEY,
+  entry JSONB NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS commander_auth_failures_expires_idx
+  ON commander_auth_failures (expires_at);
+GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app;
+`;
+
+export const KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-22.1.auth_failure_authority',
+    sql: KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+    checksum: checksum(KERNEL_AUTH_FAILURE_AUTHORITY_SQL),
+  },
+];
+
 export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_TASK1_FORWARD_MIGRATIONS,
   ...KERNEL_TASK2_FORWARD_MIGRATIONS,
   ...KERNEL_COMPENSATION_PERSISTENCE_MIGRATIONS,
   ...KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS,
   ...KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
 ];
 
 export const KERNEL_TASK1_BASELINE_MIGRATIONS: readonly KernelMigration[] = [
@@ -329,6 +355,7 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_PERSISTENCE_MIGRATIONS,
   ...KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS,
   ...KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';
@@ -535,6 +562,10 @@ export async function runKernelMigrations(
       'SELECT rolbypassrls, rolname FROM pg_roles WHERE rolname = current_user',
     );
     if (!ownerInfo.rows[0]?.rolbypassrls) {
+      // AUDIT-K5: role names may contain double quotes; interpolating one into
+      // this DDL would execute attacker SQL via the simple-query protocol.
+      // Migration-owner roles are always plain identifiers — anything else refuses.
+      assertSafeSqlIdentifier(ownerInfo.rows[0].rolname, 'migration owner rolname');
       await client.query(`ALTER ROLE "${ownerInfo.rows[0].rolname}" BYPASSRLS`);
     }
 

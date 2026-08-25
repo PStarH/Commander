@@ -306,17 +306,17 @@ function getClientIp(req: Request): string {
 }
 
 function extractTenantId(req: Request): string | undefined {
-  // Prefer the tenant resolved by tenantContextMiddleware from the authenticated
-  // principal. Fall back to the raw header only for pre-auth rate-limit bucketing
-  // (this value never authorizes data access — see tenantContextMiddleware).
-  const resolved = (req as Request & { tenantId?: string }).tenantId;
-  const rawHeader = Array.isArray(req.headers['x-tenant-id'])
-    ? req.headers['x-tenant-id'][0]
-    : req.headers['x-tenant-id'];
-  const value = resolved ?? rawHeader;
-  if (typeof value !== 'string') return undefined;
-  if (!TENANT_ID_RE.test(value)) return undefined;
-  return value;
+  // AUDIT-B: only an authenticated principal may feed the tenant bucket. The
+  // raw X-Tenant-ID header must NEVER be used — this middleware runs before
+  // authMiddleware/tenantContextMiddleware, so an unauthenticated (or
+  // cross-tenant) caller could otherwise exhaust another tenant's quota by
+  // spoofing the header. `req.tenantId` is set by authMiddleware (API-key
+  // binding); `req.user.tenantId` is the verified JWT claim parsed earlier.
+  const resolved =
+    (req as Request & { tenantId?: string }).tenantId ?? req.user?.tenantId;
+  if (typeof resolved !== 'string') return undefined;
+  if (!TENANT_ID_RE.test(resolved)) return undefined;
+  return resolved;
 }
 
 function buildRateLimitIdentity(req: Request): RateLimitIdentity {

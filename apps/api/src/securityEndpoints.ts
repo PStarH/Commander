@@ -15,6 +15,12 @@ export function createSecurityRouter(): Router {
       if (!content) {
         return res.status(400).json({ error: 'Content is required' });
       }
+      // AUDIT-API8: cap regex-scan input; the 1MB body limit alone still
+      // allows expensive multi-pattern passes per request.
+      const MAX_SCAN_CONTENT = 200_000;
+      if (typeof content === 'string' && content.length > MAX_SCAN_CONTENT) {
+        return res.status(413).json({ error: `Content exceeds ${MAX_SCAN_CONTENT} characters` });
+      }
       const result: ScanResult = await contentScanner.scan(content, contentType || 'text');
       res.json({
         safe: result.safe,
@@ -99,6 +105,17 @@ export function createSecurityRouter(): Router {
     const { newMemories, existingMemories } = req.body ?? {};
     if (!Array.isArray(newMemories)) {
       return res.status(400).json({ error: 'newMemories array is required' });
+    }
+    // AUDIT-API8: the detector does O(n·m) contradiction + cosine work —
+    // bound both inputs or any principal gets a cheap CPU-DoS lever.
+    const MAX_POISON_INPUTS = 200;
+    if (
+      newMemories.length > MAX_POISON_INPUTS ||
+      (Array.isArray(existingMemories) && existingMemories.length > MAX_POISON_INPUTS)
+    ) {
+      return res
+        .status(413)
+        .json({ error: `At most ${MAX_POISON_INPUTS} memories per array are accepted` });
     }
     const indicators = await memoryPoisoningDetector.detectPoisoning(
       newMemories.map((m: Record<string, unknown>) => ({

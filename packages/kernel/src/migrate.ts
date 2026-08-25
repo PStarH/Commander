@@ -40,6 +40,7 @@ import {
 } from './task1KubernetesProofRuntime.js';
 import { readFile } from 'node:fs/promises';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
+import { buildAdapterOpsLoginSql } from './sqlSafety.js';
 
 /** Parse comma-separated tenant list; reject empty and '*'. */
 export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
@@ -52,19 +53,9 @@ export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
 
 /** Populated-volume upgrade gate: role init scripts only run on first database creation. */
 export async function ensureAdapterOpsLogin(pool: Pool, password: string): Promise<void> {
-  if (!password) throw new Error('COMMANDER_ADAPTER_OPS_PASSWORD must be non-empty');
-  const passwordLiteral = `'${password.replace(/'/g, "''")}'`;
-  await pool.query(`
-    DO $role$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='commander_adapter_ops') THEN
-        CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD ${passwordLiteral} NOBYPASSRLS NOCREATEROLE;
-      ELSE
-        ALTER ROLE commander_adapter_ops WITH LOGIN PASSWORD ${passwordLiteral} NOBYPASSRLS NOCREATEROLE;
-      END IF;
-    END
-    $role$;
-  `);
+  // AUDIT-K6: SQL body built by the shared helper — a password containing the
+  // dollar-quote tag would otherwise terminate the DO block and inject SQL.
+  await pool.query(buildAdapterOpsLoginSql(password));
 }
 
 /** Resolve the adapter-ops LOGIN password without requiring a sixth raw-password Secret key. */

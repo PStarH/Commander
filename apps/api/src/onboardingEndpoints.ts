@@ -475,7 +475,9 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   const persistConfig = deps.writeConfig ?? writeCommanderConfig;
 
   // ── GET /api/onboarding/status ──────────────────────────────────────────
-  router.get('/api/onboarding/status', async (_req: Request, res: Response) => {
+  // AUDIT-API15: status discloses provider config, whether API_KEYS is set,
+  // and directory contents — operator-scoped information.
+  router.get('/api/onboarding/status', requireOnboardingConfigAdmin, async (_req: Request, res: Response) => {
     try {
       const resolved = await resolveProvider();
       const hasRunTask = await dirHasContent(TRACES_DIR);
@@ -619,6 +621,9 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   // ── POST /api/onboarding/run-first-task ─────────────────────────────────
   router.post(
     '/api/onboarding/run-first-task',
+    // AUDIT-API1: this endpoint spends the operator's stored provider key on
+    // a real LLM call — it needs the same admin guard as save-config.
+    requireOnboardingConfigAdmin,
     validateBody(runFirstTaskBody),
     async (req: Request, res: Response) => {
       try {
@@ -764,6 +769,7 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   // ── POST /api/onboarding/complete ───────────────────────────────────────
   router.post(
     '/api/onboarding/complete',
+    requireOnboardingConfigAdmin,
     validateBody(completeBody),
     async (req: Request, res: Response) => {
       try {

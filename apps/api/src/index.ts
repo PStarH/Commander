@@ -114,6 +114,9 @@ import {
 } from './v1GatewayKernel';
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
+import { isProductionEnv } from './envSignal';
+import { resolveTrustProxySetting, TrustProxyConfigError } from './trustProxyConfig';
+import { assertDurableStoreConfigured } from './storeBackendGate';
 import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
 
 import { getDirname, getRequire } from './esmCompat';
@@ -176,6 +179,9 @@ function validateEnvironment(): void {
 
   const storeBackend = process.env.API_STORE_BACKEND;
   if (!storeBackend && !process.env.DATABASE_URL) {
+    // AUDIT-K2 (api leg): fail closed in production — an ephemeral in-memory
+    // store must never be a silent fallback for a production deployment.
+    assertDurableStoreConfigured(process.env);
     getGlobalLogger().warn(
       'Startup',
       'Neither API_STORE_BACKEND nor DATABASE_URL is set. The API will fall back to an in-memory store, which is ephemeral and only suitable for single-node development/testing. Set DATABASE_URL for production persistence.',
@@ -217,9 +223,27 @@ const scimStore = getDefaultScimStore();
 app.disable('x-powered-by');
 
 // Security: Configure trust proxy for reverse proxy deployments.
-// Per Express behind-proxies docs: set to hop count or trusted IP range.
-// '1' trusts the first proxy (typical Nginx/ALB setup). Set via env for flexibility.
-app.set('trust proxy', process.env.TRUST_PROXY_HOPS ?? '1');
+// AUDIT-E2: no proxy is trusted by default. A default of '1' trusted one hop
+// even when the API is directly exposed, making req.ip (auth-failure lockout,
+// per-IP rate bucket) spoofable via client-controlled X-Forwarded-For.
+// Deployments behind a proxy MUST set TRUST_PROXY_HOPS explicitly; malformed
+// values abort startup instead of silently meaning something else.
+try {
+  app.set('trust proxy', resolveTrustProxySetting(process.env));
+} catch (err) {
+  if (err instanceof TrustProxyConfigError) {
+    process.stderr.write(`[startup] ${err.message}\n`);
+    throw err;
+  }
+  throw err;
+}
+if (process.env.TRUST_PROXY_HOPS === undefined && isProductionEnv()) {
+  process.stderr.write(
+    '[startup] TRUST_PROXY_HOPS is unset — no proxy trusted (client X-Forwarded-For is ignored). ' +
+      'Set it to your proxy hop count when deploying behind a reverse proxy, or auth-failure ' +
+      'lockout and per-IP rate limits will key on the proxy address.\n',
+  );
+}
 
 // 1. Request ID tracking
 app.use(requestIdMiddleware);
@@ -582,12 +606,17 @@ registerRouter({
   },
 });
 
-// V2 live benchmark harness routes (in-memory ledger for Layer B topology tests)
-registerRouter({
-  name: 'v2-bench',
-  mountPath: '/v2',
-  factory: () => createV2BenchRouter(),
-});
+// V2 live benchmark harness routes (in-memory ledger for Layer B topology tests).
+// AUDIT-R4F1: opt-in only — the harness ledger is tenant-spoofable,
+// unauthenticated-role-accessible and in-memory; it must never be mounted in a
+// production topology by default.
+if (process.env.COMMANDER_V2_BENCH_HARNESS === '1') {
+  registerRouter({
+    name: 'v2-bench',
+    mountPath: '/v2',
+    factory: () => createV2BenchRouter(),
+  });
+}
 
 // Observability routes must be mounted before the legacy execution routers
 // (pipeline/orchestrator) because those routers' compatibility middleware
