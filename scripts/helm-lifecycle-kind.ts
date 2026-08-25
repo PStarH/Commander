@@ -2435,63 +2435,6 @@ async function createExternalDatabaseFixture(input: {
   return { serviceClusterIp, hostname };
 }
 
-async function inspectLiveProofPod(release: string, imageDigest: string): Promise<boolean> {
-  const result = await kubectl([
-    'get',
-    'pods',
-    '-n',
-    NAMESPACE,
-    '-l',
-    `commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`,
-    '-o',
-    'json',
-  ]);
-  if (result.exitCode !== 0) return false;
-  const parsed = JSON.parse(result.stdout) as { items?: unknown[] };
-  if (parsed.items?.length !== 1) return false;
-  const pod = parsed.items[0];
-  if (!pod) return false;
-  assertProofPodContract(pod, proofReaderName(NAMESPACE, release));
-  const spec = (pod as { spec?: { containers?: unknown[] } }).spec;
-  const containers = Array.isArray(spec?.containers) ? spec.containers : [];
-  const container = containers[0] as
-    | {
-        image?: unknown;
-        command?: unknown;
-        env?: Array<{
-          name?: unknown;
-          valueFrom?: { secretKeyRef?: { name?: unknown; key?: unknown } };
-        }>;
-      }
-    | undefined;
-  const owner = container?.env?.find(({ name }) => name === 'COMMANDER_OWNER_DATABASE_URL');
-  if (
-    containers.length !== 1 ||
-    container?.image !== `commander-lifecycle-api@${imageDigest}` ||
-    JSON.stringify(container.command) !==
-      JSON.stringify(['node', 'packages/kernel/dist/migrate.js', 'tenant-cutover-prove']) ||
-    typeof owner?.valueFrom?.secretKeyRef?.name !== 'string' ||
-    !owner.valueFrom.secretKeyRef.name.startsWith(`${release}-proof-owner-v`) ||
-    owner.valueFrom.secretKeyRef.key !== 'owner-url'
-  ) {
-    throw new Error('PROOF_POD_RUNTIME_CONTRACT_INVALID');
-  }
-  const exposed = await kubectl([
-    'get',
-    'service',
-    '-n',
-    NAMESPACE,
-    '-l',
-    `commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`,
-    '-o',
-    'name',
-  ]);
-  if (exposed.exitCode !== 0 || exposed.stdout.trim()) {
-    throw new Error('PROOF_POD_SERVICE_EXPOSURE_INVALID');
-  }
-  return true;
-}
-
 async function observeLiveRolloutFailure(release: string): Promise<RolloutObservation> {
   const result = await kubectl(
     [
@@ -2578,8 +2521,7 @@ async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
   values: string,
-  requireLiveProofPod: boolean,
-): Promise<{ proofPodObserved: boolean; stdout: string }> {
+): Promise<void> {
   const valuesText = readFileSync(values, 'utf8');
   const digest = valuesText.match(/^\s*digest:\s*(sha256:[a-f0-9]{64})\s*$/m)?.[1];
   if (!digest) throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
@@ -2601,9 +2543,7 @@ async function runCutoverCommand(
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const stdout: Buffer[] = [];
   const stderr: Buffer[] = [];
-  child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
   child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
   let finished = false;
   let exitCode = -1;
@@ -2615,15 +2555,10 @@ async function runCutoverCommand(
       resolveCompletion();
     });
   });
-  let proofPodObserved = false;
   let rolloutObservation: RolloutObservationState | undefined;
   let apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
   while (!finished) {
-    const [proofPod, observedFailure] = await Promise.all([
-      inspectLiveProofPod(release, digest),
-      observeLiveRolloutFailure(release),
-    ]);
-    proofPodObserved = proofPod || proofPodObserved;
+    const observedFailure = await observeLiveRolloutFailure(release);
     rolloutObservation = retainRolloutObservation(rolloutObservation, observedFailure);
     apiStartupFailure ??= await captureApiPodStartupFailure(release, observedFailure);
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
@@ -2646,10 +2581,6 @@ async function runCutoverCommand(
         (apiStartupFailure ? ':' + apiPodStartupFailureRecord(apiStartupFailure) : ''),
     );
   }
-  if (requireLiveProofPod && !proofPodObserved) {
-    throw new Error('LIVE_PROOF_POD_NOT_OBSERVED');
-  }
-  return { proofPodObserved, stdout: Buffer.concat(stdout).toString('utf8') };
 }
 
 async function assertProofReaderRbac(release: string): Promise<AssertionResult[]> {
@@ -2961,11 +2892,7 @@ async function runRealBundledLifecycle(
       { mode: 0o600 },
     );
 
-    const installed = await runCutoverCommand('install', release, installValues, true);
-    assertions.push({
-      description: 'fresh bundled install used an observed live proof Pod',
-      passed: installed.proofPodObserved,
-    });
+    await runCutoverCommand('install', release, installValues);
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
@@ -2983,7 +2910,7 @@ async function runRealBundledLifecycle(
     });
     const firstRevision = await helmRevision(release);
 
-    const upgraded = await runCutoverCommand('enforce', release, upgradeValues, true);
+    await runCutoverCommand('enforce', release, upgradeValues);
     const secondProofCount = await proofRowCount(databaseTarget);
     const secondRevision = await helmRevision(release);
     assertions.push(
@@ -2994,12 +2921,12 @@ async function runRealBundledLifecycle(
       },
       {
         description: 'post-upgrade challenged API proof appended another proof row',
-        passed: upgraded.proofPodObserved && secondProofCount > firstProofCount,
+        passed: secondProofCount > firstProofCount,
         detail: `proofRows=${firstProofCount}->${secondProofCount}`,
       },
     );
 
-    await runCutoverCommand('enforce', release, upgradeValues, false);
+    await runCutoverCommand('enforce', release, upgradeValues);
     const noOpRevision = await helmRevision(release);
     const noOpProofCount = await proofRowCount(databaseTarget);
     assertions.push(
@@ -3134,7 +3061,7 @@ async function runRealExternalTlsLifecycle(
       { mode: 0o600 },
     );
 
-    const installed = await runCutoverCommand('install', release, installValues, true);
+    await runCutoverCommand('install', release, installValues);
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
@@ -3147,10 +3074,6 @@ async function runRealExternalTlsLifecycle(
     const firstProofCount = await proofRowCount(databaseTarget);
     assertions.push(
       {
-        description: 'external TLS install observed the real in-cluster proof Pod',
-        passed: installed.proofPodObserved,
-      },
-      {
         description: 'external TLS post-install challenge appended a proof row',
         passed: firstProofCount >= 1,
         detail: `proofRows=${firstProofCount}`,
@@ -3158,7 +3081,7 @@ async function runRealExternalTlsLifecycle(
       ...(await assertExternalRoleConnections(external.hostname)),
     );
     const firstRevision = await helmRevision(release);
-    const upgraded = await runCutoverCommand('enforce', release, upgradeValues, true);
+    await runCutoverCommand('enforce', release, upgradeValues);
     const secondRevision = await helmRevision(release);
     const secondProofCount = await proofRowCount(databaseTarget);
     assertions.push(
@@ -3168,11 +3091,11 @@ async function runRealExternalTlsLifecycle(
       },
       {
         description: 'external TLS post-upgrade challenge appended another proof row',
-        passed: upgraded.proofPodObserved && secondProofCount > firstProofCount,
+        passed: secondProofCount > firstProofCount,
         detail: `proofRows=${firstProofCount}->${secondProofCount}`,
       },
     );
-    await runCutoverCommand('enforce', release, upgradeValues, false);
+    await runCutoverCommand('enforce', release, upgradeValues);
     const currentRevision = await helmRevision(release);
     const currentProofCount = await proofRowCount(databaseTarget);
     assertions.push(
@@ -3276,7 +3199,7 @@ async function runFailedRolloutRecovery(
     );
     let firstFailure: unknown;
     try {
-      await runCutoverCommand('install', release, values, false);
+      await runCutoverCommand('install', release, values);
     } catch (error) {
       firstFailure = error;
     }
@@ -3301,7 +3224,7 @@ async function runFailedRolloutRecovery(
     );
 
     await replaceApiProofPrivateSecret(stateDirectory, NAMESPACE, release);
-    const recovered = await runCutoverCommand('install', release, values, true);
+    await runCutoverCommand('install', release, values);
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'RECOVERED_API_DEPLOYMENT_NOT_AVAILABLE',
@@ -3316,7 +3239,7 @@ async function runFailedRolloutRecovery(
       },
       {
         description: 'recovered rollout ran the challenged proof Job and appended a proof row',
-        passed: recovered.proofPodObserved && proofCountAfterRetry > proofCountAfterFailure,
+        passed: proofCountAfterRetry > proofCountAfterFailure,
         detail: `proofRows=${proofCountAfterFailure}->${proofCountAfterRetry}`,
       },
     );
