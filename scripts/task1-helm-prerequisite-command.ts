@@ -449,7 +449,7 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
       expression:
         "request.resource.resource != 'networkpolicies' || request.userInfo.username == '" +
         operator +
-        "' || request.operation == 'DELETE' || !has(object.spec.egress) || size(object.spec.egress) == 0 || !(" +
+        "' || request.operation == 'DELETE' || !has(dyn(object).spec.egress) || size(dyn(object).spec.egress) == 0 || !(" +
         TASK1_SELECTOR_CAN_MATCH_H_CEL +
         ')',
       message: 'non-operator NetworkPolicy must not add egress to a protected hook selector',
