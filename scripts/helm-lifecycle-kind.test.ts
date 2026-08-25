@@ -1175,10 +1175,10 @@ describe('helm-lifecycle-kind helpers', () => {
 
   it('authenticates operator kubectl calls with the issued ServiceAccount token', () => {
     assert.deepEqual(serviceAccountTokenArgs('issued-service-account-token', ['get', 'pods']), [
-      'get',
-      'pods',
       '--token',
       'issued-service-account-token',
+      'get',
+      'pods',
     ]);
   });
 
