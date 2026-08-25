@@ -731,8 +731,8 @@ function admissionReady(policy: Task1KubernetesObject): boolean {
     const checking = record(status.typeChecking);
     return (
       policy.metadata.generation === status.observedGeneration &&
-      Array.isArray(checking.expressionWarnings) &&
-      checking.expressionWarnings.length === 0
+      (checking.expressionWarnings === undefined ||
+        (Array.isArray(checking.expressionWarnings) && checking.expressionWarnings.length === 0))
     );
   } catch {
     return false;
