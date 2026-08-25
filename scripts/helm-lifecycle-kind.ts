@@ -629,11 +629,70 @@ export interface SanitizedScenarioEvidence {
   durationMs: number;
   failedStage?: LifecycleFailureStage;
   failureCodes?: string[];
+  admissionRbacFailure?: AdmissionRbacFailureEvidence;
   failedChecks?: SanitizedCheckFailure[];
   rolloutFailure?: RolloutFailureEvidence;
   rolloutObservation?: RolloutNonterminalEvidence | RolloutQueryEvidence;
   apiStartupFailure?: ApiPodStartupFailureEvidence;
 }
+
+interface AdmissionRbacFailureEvidence {
+  verb: 'create' | 'update' | 'patch' | 'delete' | 'list' | 'watch';
+  resource:
+    | 'validatingadmissionpolicies.admissionregistration.k8s.io'
+    | 'validatingadmissionpolicybindings.admissionregistration.k8s.io';
+}
+
+const ADMISSION_RBAC_FAILURES = {
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED: {
+    verb: 'create',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_UPDATE_ALLOWED: {
+    verb: 'update',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_PATCH_ALLOWED: {
+    verb: 'patch',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_DELETE_ALLOWED: {
+    verb: 'delete',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_LIST_ALLOWED: {
+    verb: 'list',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_WATCH_ALLOWED: {
+    verb: 'watch',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_CREATE_ALLOWED: {
+    verb: 'create',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_UPDATE_ALLOWED: {
+    verb: 'update',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_PATCH_ALLOWED: {
+    verb: 'patch',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_DELETE_ALLOWED: {
+    verb: 'delete',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_LIST_ALLOWED: {
+    verb: 'list',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_WATCH_ALLOWED: {
+    verb: 'watch',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+} as const satisfies Record<string, AdmissionRbacFailureEvidence>;
 
 type SanitizedCheckGroup = 'scenario' | 'rbac' | 'networkPolicy';
 
@@ -966,6 +1025,14 @@ function scenarioFailureCodes(error: string | undefined): string[] | undefined {
     ]),
   ].slice(0, 8);
   return codes.length > 0 ? codes : undefined;
+}
+
+function parseAdmissionRbacFailure(
+  error: string,
+): AdmissionRbacFailureEvidence | undefined {
+  const code = error.split(':', 1)[0];
+  if (!code) return undefined;
+  return Object.entries(ADMISSION_RBAC_FAILURES).find(([candidate]) => candidate === code)?.[1];
 }
 
 function failedCheckEvidence(
@@ -1623,12 +1690,14 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
         const rolloutFailure = error ? parseRolloutFailureEvidence(error) : undefined;
         const rolloutObservation = error ? parseRolloutObservationEvidence(error) : undefined;
         const apiStartupFailure = error ? parseApiPodStartupFailureEvidence(error) : undefined;
+        const admissionRbacFailure = error ? parseAdmissionRbacFailure(error) : undefined;
         return {
           name,
           passed,
           durationMs,
           ...(failedStage ? { failedStage } : {}),
           ...(safeFailureCodes.length > 0 ? { failureCodes: safeFailureCodes } : {}),
+          ...(admissionRbacFailure ? { admissionRbacFailure } : {}),
           ...(failedChecks.length > 0 ? { failedChecks } : {}),
           ...(rolloutFailure
             ? {

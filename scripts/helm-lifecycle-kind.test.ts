@@ -1924,6 +1924,41 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /private|detail/i);
   });
 
+  it('retains the fixed over-broad admission RBAC tuple without raw command output', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED: opaque private detail',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0], {
+      name: 'fresh-bundled',
+      passed: false,
+      durationMs: 100,
+      failureCodes: ['TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED'],
+      admissionRbacFailure: {
+        verb: 'create',
+        resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(sanitized), /private|detail/i);
+  });
+
   it('rejects unallowlisted and oversized prefixed diagnostic candidates', () => {
     const oversized = 'COMMANDER_' + 'A'.repeat(512);
     const evidence = {

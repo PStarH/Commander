@@ -739,6 +739,40 @@ function admissionReady(policy: Task1KubernetesObject): boolean {
   }
 }
 
+function admissionRbacFailureCode(resource: string, verb: string): string {
+  const policy = resource === 'validatingadmissionpolicies.admissionregistration.k8s.io';
+  const binding = resource === 'validatingadmissionpolicybindings.admissionregistration.k8s.io';
+  if (!policy && !binding) return 'TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD';
+  switch (verb) {
+    case 'create':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_CREATE_ALLOWED';
+    case 'update':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_UPDATE_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_UPDATE_ALLOWED';
+    case 'patch':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_PATCH_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_PATCH_ALLOWED';
+    case 'delete':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_DELETE_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_DELETE_ALLOWED';
+    case 'list':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_LIST_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_LIST_ALLOWED';
+    case 'watch':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_WATCH_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_WATCH_ALLOWED';
+    default:
+      return 'TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD';
+  }
+}
+
 async function requireAdmission(
   context: Task1PrerequisiteContext,
   stage: Task1PrerequisiteStage,
@@ -755,8 +789,9 @@ async function requireAdmission(
     'validatingadmissionpolicybindings.admissionregistration.k8s.io',
   ]) {
     for (const verb of ['create', 'update', 'patch', 'delete', 'list', 'watch']) {
-      if (await ports.canI(verb, resource, pair.policy.metadata.name))
-        fail('TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD');
+      if (await ports.canI(verb, resource, pair.policy.metadata.name)) {
+        fail(admissionRbacFailureCode(resource, verb));
+      }
     }
   }
 }
