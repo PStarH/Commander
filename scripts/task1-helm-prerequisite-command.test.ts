@@ -364,11 +364,13 @@ describe('Task 1 prerequisite command contract', () => {
     assert.equal(reviewedToken, 'short-lived-service-account-token');
   });
 
-  it('addresses a named resource with the kubectl auth can-i TYPE/NAME syntax', async () => {
+  it('uses a self-subject access review for a named grouped resource', async () => {
     let command: readonly string[] = [];
-    const ports = createTask1KubectlPorts(async (args) => {
+    let request = '';
+    const ports = createTask1KubectlPorts(async (args, stdin) => {
       command = args;
-      return 'no\n';
+      request = stdin ?? '';
+      return JSON.stringify({ status: { allowed: false } });
     });
 
     assert.equal(
@@ -379,12 +381,28 @@ describe('Task 1 prerequisite command contract', () => {
       ),
       false,
     );
-    assert.deepEqual(command, [
-      'auth',
-      'can-i',
-      'get',
-      'validatingadmissionpolicies.admissionregistration.k8s.io/tenant-policy-guard',
-    ]);
+    assert.deepEqual(command, ['create', '--filename', '-', '--output', 'json']);
+    assert.deepEqual(JSON.parse(request), {
+      apiVersion: 'authorization.k8s.io/v1',
+      kind: 'SelfSubjectAccessReview',
+      spec: {
+        resourceAttributes: {
+          verb: 'get',
+          group: 'admissionregistration.k8s.io',
+          resource: 'validatingadmissionpolicies',
+          name: 'tenant-policy-guard',
+        },
+      },
+    });
+  });
+
+  it('fails closed when a self-subject access review lacks an explicit decision', async () => {
+    const ports = createTask1KubectlPorts(async () => JSON.stringify({ status: {} }));
+
+    await assert.rejects(
+      ports.canI('create', 'validatingadmissionpolicies.admissionregistration.k8s.io'),
+      /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
+    );
   });
 
   it('uses the canonical projection and renders the exact stable policy set', async () => {
@@ -496,7 +514,9 @@ describe('Task 1 prerequisite command contract', () => {
       constraints.resourceRules.map((rule) => rule.resources),
       [['networkpolicies'], ['pods']],
     );
-    const egressGuard = (network.policy.spec.validations as Array<{ message: string; expression: string }>).find(
+    const egressGuard = (
+      network.policy.spec.validations as Array<{ message: string; expression: string }>
+    ).find(
       (validation) =>
         validation.message ===
         'non-operator NetworkPolicy must not add egress to a protected hook selector',
@@ -510,13 +530,16 @@ describe('Task 1 prerequisite command contract', () => {
     const constraints = workload.policy.spec.matchConstraints as {
       resourceRules: Array<{ resources: string[] }>;
     };
-    assert.deepEqual(constraints.resourceRules.map((rule) => rule.resources), [
-      ['deployments', 'statefulsets'],
-    ]);
-    const postgresGuard = (workload.policy.spec.validations as Array<{
-      message: string;
-      expression: string;
-    }>).find(
+    assert.deepEqual(
+      constraints.resourceRules.map((rule) => rule.resources),
+      [['deployments', 'statefulsets']],
+    );
+    const postgresGuard = (
+      workload.policy.spec.validations as Array<{
+        message: string;
+        expression: string;
+      }>
+    ).find(
       (validation) =>
         validation.message ===
         'bundled PostgreSQL must preserve exact TLS transport and data-volume identity',
