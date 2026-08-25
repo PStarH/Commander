@@ -197,6 +197,7 @@ export interface HelmCutoverPorts {
       sourceKey: string;
       targetName: string;
     }): Promise<void>;
+    captureProofHookFailureDiagnostic(namespace: string, release: string): Promise<string>;
     cleanupProofResources(namespace: string, release: string): Promise<void>;
     prepareReleaseProjectionConfigMap(request: {
       namespace: string;
@@ -332,6 +333,13 @@ export function ownerJobFailureDiagnostic(
   return (
     'code=' + code + ';producer=owner_entrypoint;transport=' + transport + ';log_sha256=' + digest
   );
+}
+
+function proofResourceSelector(release: string): string {
+  return [
+    'commander.io/tenant-authority-proof-reader=true',
+    'commander.io/tenant-authority-proof-release=' + release,
+  ].join(',');
 }
 
 function phase(command: HelmCutoverCommand): HelmPhase {
@@ -1067,6 +1075,7 @@ async function runHelmRolloutWithProofCredential(input: {
 }): Promise<void> {
   const targetName = proofOwnerSecretName(input.release, input.operation.operationVersion);
   await input.ports.kubectl.cleanupProofResources(input.namespace, input.release);
+  let rolloutStarted = false;
   try {
     await input.prepareDatabase?.();
     await input.ports.kubectl.prepareProofOwnerSecret({
@@ -1075,7 +1084,17 @@ async function runHelmRolloutWithProofCredential(input: {
       sourceKey: input.reference.sourceKey,
       targetName,
     });
+    rolloutStarted = true;
     await input.rollout();
+  } catch (error) {
+    if (rolloutStarted) {
+      const diagnostic = await input.ports.kubectl.captureProofHookFailureDiagnostic(
+        input.namespace,
+        input.release,
+      );
+      fail('TENANT_CUTOVER_PROOF_HOOK_FAILED:' + diagnostic);
+    }
+    throw error;
   } finally {
     try {
       await input.ports.kubectl.cleanupProofResources(input.namespace, input.release);
@@ -4582,10 +4601,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
         }
       },
       cleanupProofResources: async (namespace, release) => {
-        const selector = [
-          'commander.io/tenant-authority-proof-reader=true',
-          `commander.io/tenant-authority-proof-release=${release}`,
-        ].join(',');
+        const selector = proofResourceSelector(release);
         for (const resource of ['job', 'pod']) {
           await command('kubectl', [
             'delete',
@@ -4612,6 +4628,54 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           ])
         ).trim();
         if (remaining) fail('TENANT_CUTOVER_PROOF_RESOURCE_CLEANUP_FAILED');
+      },
+      captureProofHookFailureDiagnostic: async (namespace, release) => {
+        const selector = proofResourceSelector(release);
+        let proofJobName: string | undefined;
+        try {
+          const names = (
+            await command('kubectl', [
+              'get',
+              'jobs',
+              '--selector',
+              selector,
+              '--namespace',
+              namespace,
+              '--output',
+              'jsonpath={.items[*].metadata.name}',
+            ])
+          )
+            .trim()
+            .split(/\s+/)
+            .filter((name) => NAME.test(name) && /-tenant-cutover-prove-r[1-9][0-9]*$/.test(name));
+          if (names.length === 1) proofJobName = names[0];
+        } catch {
+          return ownerJobFailureDiagnostic(
+            'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE',
+            'kubectl_logs_unavailable',
+          );
+        }
+        if (!proofJobName) {
+          return ownerJobFailureDiagnostic(
+            'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE',
+            'kubectl_logs_unavailable',
+          );
+        }
+        try {
+          const logs = await command('kubectl', [
+            'logs',
+            'job/' + proofJobName,
+            '--namespace',
+            namespace,
+            '--tail=40',
+          ]);
+          return ownerJobFailureDiagnostic(logs);
+        } catch {
+          return ownerJobFailureDiagnostic(
+            'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE',
+            'kubectl_logs_unavailable',
+          );
+        }
       },
       prepareReleaseProjectionConfigMap: (request) =>
         prepareReleaseProjectionConfigMap(command, request),

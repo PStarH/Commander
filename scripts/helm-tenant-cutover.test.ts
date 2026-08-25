@@ -1073,6 +1073,9 @@ tenantAuthority:
       deleteAndVerifyConfigMap: async (namespace, name) => {
         calls.push(`cleanup-configmap:${namespace}/${name}`);
       },
+      captureProofHookFailureDiagnostic: async () =>
+        'code=TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=' +
+        digest('f'),
       deleteAndVerifySecret: async (namespace: string, name: string) => {
         calls.push(`cleanup-secret:${namespace}/${name}`);
       },
@@ -1585,7 +1588,7 @@ data: { owner-url: c2VjcmV0 }
             'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.js:812:9',
           ].join('\n');
         }
-        throw new Error(`unexpected kubectl call: ${args.join(' ')}`);
+        throw new Error('unexpected kubectl call');
       },
     });
 
@@ -1610,6 +1613,53 @@ data: { owner-url: c2VjcmV0 }
     assert.deepEqual(commands.find((call) => call.args[0] === 'logs')?.args, [
       'logs',
       'job/commander-tenant-cutover-prove-r7',
+      '--namespace',
+      'commander',
+      '--tail=40',
+    ]);
+  });
+
+  it('captures a failed Helm proof hook through the release-scoped selector', async () => {
+    const commands: Array<{ args: readonly string[] }> = [];
+    const nodePorts = createNodePorts({
+      command: async (_program, args) => {
+        commands.push({ args });
+        if (args[0] === 'get' && args[1] === 'jobs') {
+          return 'commander-tenant-cutover-prove-r10';
+        }
+        if (args[0] === 'logs') {
+          return [
+            'postgres://owner:secret@postgres/commander private proof detail',
+            'COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_initialize',
+          ].join('\n');
+        }
+        throw new Error(`unexpected kubectl call: ${args.join(' ')}`);
+      },
+    });
+
+    const result = await nodePorts.kubectl.captureProofHookFailureDiagnostic(
+      'commander',
+      'commander',
+    );
+
+    assert.match(
+      result,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /postgres:|secret|private proof detail/i);
+    assert.deepEqual(commands[0]?.args, [
+      'get',
+      'jobs',
+      '--selector',
+      'commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=commander',
+      '--namespace',
+      'commander',
+      '--output',
+      'jsonpath={.items[*].metadata.name}',
+    ]);
+    assert.deepEqual(commands[1]?.args, [
+      'logs',
+      'job/commander-tenant-cutover-prove-r10',
       '--namespace',
       'commander',
       '--tail=40',
@@ -1930,6 +1980,35 @@ data: { owner-url: ${payload} }
       'cleanup-proof:commander/commander',
       'cleanup-secret:commander/commander-proof-owner-v7',
     ]);
+  });
+
+  it('captures a sanitized Helm proof hook failure before cleanup', async () => {
+    const fixture = ports();
+    fixture.helm.runProjectedRevision = async () => {
+      fixture.calls.push('helm:projected-failed');
+      throw new Error('unredacted Helm failure');
+    };
+    const kubectl = fixture.kubectl as typeof fixture.kubectl & {
+      captureProofHookFailureDiagnostic?: (namespace: string, release: string) => Promise<string>;
+    };
+    kubectl.captureProofHookFailureDiagnostic = async (namespace, release) => {
+      fixture.calls.push('capture-proof-hook:' + namespace + '/' + release);
+      return (
+        'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;' +
+        'owner_stage=lifecycle_initialize;log_sha256=' +
+        digest('f')
+      );
+    };
+
+    await assert.rejects(
+      () => runHelmTenantCutover(input(), fixture),
+      /TENANT_CUTOVER_PROOF_HOOK_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=f{64}/,
+    );
+    assert.equal(
+      fixture.calls.indexOf('capture-proof-hook:commander/commander') <
+        fixture.calls.lastIndexOf('cleanup-proof:commander/commander'),
+      true,
+    );
   });
 
   it('creates a stable fresh bundled database Secret before deriving the proof credential', async () => {
