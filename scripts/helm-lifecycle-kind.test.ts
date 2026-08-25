@@ -1392,6 +1392,14 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(aggregateScenarioPass([]), false);
   });
 
+  it('does not make successful lifecycle proofs depend on observing an ephemeral hook Pod', () => {
+    const source = readFileSync(resolve(__dirname, 'helm-lifecycle-kind.ts'), 'utf8');
+    assert.doesNotMatch(source, /LIVE_PROOF_POD_NOT_OBSERVED/);
+    assert.match(source, /post-install challenged API proof appended a durable proof row/);
+    assert.match(source, /post-upgrade challenged API proof appended another proof row/);
+    assert.match(source, /recovered rollout ran the challenged proof Job and appended a proof row/);
+  });
+
   it('includes RBAC and NetworkPolicy results in each scenario pass decision', () => {
     assert.equal(
       aggregateScenarioChecks({
