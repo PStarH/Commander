@@ -2628,7 +2628,7 @@ async function runCutoverCommand(
           ? rolloutObservationRecord(rolloutObservation.queryFailure)
           : 'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED';
     throw new Error(
-        failureCodes.join(':') +
+      failureCodes.join(':') +
         ':' +
         diagnostic +
         (ownerFailure ? ':' + ownerFailureEvidenceRecord(ownerFailure) : '') +
