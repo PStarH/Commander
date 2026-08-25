@@ -1,18 +1,11 @@
 /**
- * Shared authentication-failure authority.
+ * PostgreSQL-authoritative authentication-failure / lockout store.
  *
- * AUDIT-E1: PostgreSQL is the authoritative backend. The previous Redis
- * implementation (AUTH_FAILURE_REDIS_URL) violated the no-Redis-auth-fallback
- * policy, and production deployments never configured it — the API crashed at
- * boot. Redis is removed entirely:
- *
- *   - production: a verified PostgreSQL pool is required (DSN from
- *     COMMANDER_AUTH_FAILURE_DATABASE_URL ?? COMMANDER_KERNEL_DATABASE_URL ??
- *     DATABASE_URL). Missing DSN → boot refusal (fail closed).
- *   - development/tests: the explicitly named process-local store.
+ * Every failure is recorded with a single atomic upsert so concurrent login
+ * attempts across API replicas cannot race the lockout decision.
  */
-
-import { isProductionEnv } from './envSignal.js';
+import type { SqlPool } from '@commander/kernel';
+import { createAuthPool, withClient, type VerifiedPoolFactory } from './authDb';
 
 export interface AuthFailureEntry {
   count: number;
@@ -22,178 +15,116 @@ export interface AuthFailureEntry {
 }
 
 export interface AuthFailureStore {
-  get(ip: string): Promise<AuthFailureEntry | undefined>;
-  set(ip: string, entry: AuthFailureEntry): Promise<void>;
-  delete(ip: string): Promise<void>;
+  get(failureKey: string): Promise<AuthFailureEntry | undefined>;
+  /** Atomically increment the failure counter and apply lockout when the threshold is reached. */
+  recordFailure(
+    failureKey: string,
+    now: number,
+    maxFailures: number,
+    windowMs: number,
+    lockoutMs: number,
+  ): Promise<AuthFailureEntry>;
   cleanup(now: number, windowMs: number): Promise<void>;
 }
 
-/** Minimal pg Pool surface the store depends on (injectable for tests). */
-export interface PgPoolLike {
-  query(sql: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
-  end?: () => Promise<void>;
-}
+type FailureRow = {
+  count: number;
+  firstFailureAt: number;
+  lastFailureAt: number;
+  lockedUntil: number;
+};
 
-export type PgPoolLoader = (dsn: string) => PgPoolLike | Promise<PgPoolLike>;
+const RECORD_FAILURE_SQL = [
+  'INSERT INTO commander_auth_failures (failure_key, count, first_failure_at, last_failure_at, locked_until)',
+  'VALUES ($1, 1, to_timestamp($2 / 1000.0), to_timestamp($2 / 1000.0),',
+  '  CASE WHEN $4 <= 1 THEN to_timestamp(($2 + $5) / 1000.0) ELSE NULL END)',
+  'ON CONFLICT (failure_key) DO UPDATE SET',
+  'count = CASE WHEN commander_auth_failures.last_failure_at < to_timestamp(($2 - $3) / 1000.0)',
+  '         THEN 1 ELSE commander_auth_failures.count + 1 END,',
+  'first_failure_at = CASE WHEN commander_auth_failures.last_failure_at < to_timestamp(($2 - $3) / 1000.0)',
+  '         THEN to_timestamp($2 / 1000.0) ELSE commander_auth_failures.first_failure_at END,',
+  'last_failure_at = to_timestamp($2 / 1000.0),',
+  'locked_until = CASE',
+  '  WHEN commander_auth_failures.locked_until > to_timestamp($2 / 1000.0) THEN commander_auth_failures.locked_until',
+  '  WHEN (CASE WHEN commander_auth_failures.last_failure_at < to_timestamp(($2 - $3) / 1000.0)',
+  '         THEN 1 ELSE commander_auth_failures.count + 1 END) >= $4',
+  '    THEN to_timestamp(($2 + $5) / 1000.0)',
+  '  ELSE NULL END',
+  'RETURNING count,',
+  '  EXTRACT(EPOCH FROM first_failure_at) * 1000 AS "firstFailureAt",',
+  '  EXTRACT(EPOCH FROM last_failure_at) * 1000 AS "lastFailureAt",',
+  '  COALESCE(EXTRACT(EPOCH FROM locked_until) * 1000, 0) AS "lockedUntil"',
+].join('\n');
 
-export interface CreateAuthFailureStoreOptions {
-  environment?: NodeJS.ProcessEnv;
-  loadPgPool?: PgPoolLoader;
-}
-
-class InMemoryAuthFailureStore implements AuthFailureStore {
-  private readonly map = new Map<string, AuthFailureEntry>();
-
-  async get(ip: string): Promise<AuthFailureEntry | undefined> {
-    return this.map.get(ip);
-  }
-
-  async set(ip: string, entry: AuthFailureEntry): Promise<void> {
-    this.map.set(ip, entry);
-  }
-
-  async delete(ip: string): Promise<void> {
-    this.map.delete(ip);
-  }
-
-  async cleanup(now: number, windowMs: number): Promise<void> {
-    for (const [ip, entry] of this.map) {
-      if (entry.lockedUntil < now && entry.lastFailureAt < now - windowMs) {
-        this.map.delete(ip);
-      }
-    }
-  }
-}
-
-function isNonNegativeFiniteNumber(value: unknown): value is number {
-  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
-}
-
-function parseAuthFailureEntry(raw: unknown): AuthFailureEntry {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
-    throw new Error('Postgres auth failure entry is malformed');
-  }
-  const entry = raw as Record<string, unknown>;
-  if (
-    !Number.isSafeInteger(entry.count) ||
-    !isNonNegativeFiniteNumber(entry.count) ||
-    !isNonNegativeFiniteNumber(entry.firstFailureAt) ||
-    !isNonNegativeFiniteNumber(entry.lastFailureAt) ||
-    !isNonNegativeFiniteNumber(entry.lockedUntil)
-  ) {
-    throw new Error('Postgres auth failure entry is malformed');
-  }
+function toEntry(row: FailureRow): AuthFailureEntry {
   return {
-    count: entry.count,
-    firstFailureAt: entry.firstFailureAt,
-    lastFailureAt: entry.lastFailureAt,
-    lockedUntil: entry.lockedUntil,
+    count: Number(row.count),
+    firstFailureAt: Number(row.firstFailureAt),
+    lastFailureAt: Number(row.lastFailureAt),
+    lockedUntil: Number(row.lockedUntil),
   };
 }
 
-async function defaultLoadPgPool(dsn: string): Promise<PgPoolLike> {
-  const { createVerifiedPostgresPool } = await import('@commander/postgres-runtime');
-  return createVerifiedPostgresPool({ connectionString: dsn });
-}
+export class PostgresAuthFailureStore implements AuthFailureStore {
+  constructor(private readonly pool: SqlPool) {}
 
-class PostgresAuthFailureStore implements AuthFailureStore {
-  private readonly poolPromise: Promise<PgPoolLike>;
-
-  constructor(
-    dsn: string,
-    loadPgPool: PgPoolLoader,
-    private readonly ensureTable = true,
-  ) {
-    this.poolPromise = Promise.resolve(loadPgPool(dsn)).then(async (pool) => {
-      if (ensureTable) {
-        // Idempotent; kernel migrations own this DDL on migrated databases.
-        // If the connecting role cannot CREATE and the table already exists,
-        // this is a harmless duplicate-object error we swallow; a genuinely
-        // missing table surfaces on first use and fails the request closed.
-        await pool
-          .query(
-            `CREATE TABLE IF NOT EXISTS commander_auth_failures (
-               ip TEXT PRIMARY KEY,
-               entry JSONB NOT NULL,
-               expires_at TIMESTAMPTZ NOT NULL
-             )`,
-          )
-          .catch(() => undefined);
-      }
-      return pool;
+  async get(failureKey: string): Promise<AuthFailureEntry | undefined> {
+    return withClient(this.pool, async (client) => {
+      const result = await client.query<FailureRow>(
+        'SELECT count, EXTRACT(EPOCH FROM first_failure_at) * 1000 AS "firstFailureAt", EXTRACT(EPOCH FROM last_failure_at) * 1000 AS "lastFailureAt", COALESCE(EXTRACT(EPOCH FROM locked_until) * 1000, 0) AS "lockedUntil" FROM commander_auth_failures WHERE failure_key = $1',
+        [failureKey],
+      );
+      return result.rows[0] ? toEntry(result.rows[0]) : undefined;
     });
   }
 
-  async get(ip: string): Promise<AuthFailureEntry | undefined> {
-    const pool = await this.poolPromise;
-    const result = await pool.query(
-      'SELECT entry FROM commander_auth_failures WHERE ip = $1 AND expires_at > now()',
-      [ip],
-    );
-    const row = result.rows[0];
-    if (!row) return undefined;
-    return parseAuthFailureEntry(row.entry);
+  async recordFailure(
+    failureKey: string,
+    now: number,
+    maxFailures: number,
+    windowMs: number,
+    lockoutMs: number,
+  ): Promise<AuthFailureEntry> {
+    return withClient(this.pool, async (client) => {
+      const result = await client.query<FailureRow>(RECORD_FAILURE_SQL, [
+        failureKey,
+        now,
+        windowMs,
+        maxFailures,
+        lockoutMs,
+      ]);
+      if (!result.rows[0]) throw new Error('AUTH_FAILURE_RECORD_MISSING');
+      return toEntry(result.rows[0]);
+    });
   }
 
-  async set(ip: string, entry: AuthFailureEntry): Promise<void> {
-    const pool = await this.poolPromise;
-    const ttlSeconds =
-      entry.lockedUntil > Date.now()
-        ? Math.ceil((entry.lockedUntil - Date.now()) / 1000)
-        : 60 * 60;
-    await pool.query(
-      `INSERT INTO commander_auth_failures (ip, entry, expires_at)
-       VALUES ($1, $2::jsonb, now() + make_interval(secs => $3))
-       ON CONFLICT (ip) DO UPDATE SET entry = EXCLUDED.entry, expires_at = EXCLUDED.expires_at`,
-      [ip, JSON.stringify(entry), ttlSeconds],
-    );
-  }
-
-  async delete(ip: string): Promise<void> {
-    const pool = await this.poolPromise;
-    await pool.query('DELETE FROM commander_auth_failures WHERE ip = $1', [ip]);
-  }
-
-  async cleanup(_now: number, _windowMs: number): Promise<void> {
-    const pool = await this.poolPromise;
-    await pool.query('DELETE FROM commander_auth_failures WHERE expires_at <= now()');
+  async cleanup(now: number, windowMs: number): Promise<void> {
+    await withClient(this.pool, async (client) => {
+      await client.query(
+        'DELETE FROM commander_auth_failures WHERE locked_until IS NULL AND last_failure_at < to_timestamp(($1 - $2) / 1000.0)',
+        [now, windowMs],
+      );
+    });
   }
 }
 
-let sharedStore: AuthFailureStore | null = null;
-
-export function getAuthFailureStore(): AuthFailureStore {
-  if (!sharedStore) {
-    sharedStore = createAuthFailureStore();
-  }
-  return sharedStore;
-}
-
-export function authFailureDsn(env: NodeJS.ProcessEnv): string | undefined {
-  const dsn =
-    env.COMMANDER_AUTH_FAILURE_DATABASE_URL ??
-    env.COMMANDER_KERNEL_DATABASE_URL ??
-    env.DATABASE_URL;
-  return typeof dsn === 'string' && dsn.trim().length > 0 ? dsn.trim() : undefined;
+export interface CreateAuthFailureStoreOptions {
+  environment?: NodeJS.ProcessEnv;
+  createPool?: VerifiedPoolFactory;
 }
 
 export function createAuthFailureStore(
   options: CreateAuthFailureStoreOptions = {},
 ): AuthFailureStore {
   const environment = options.environment ?? process.env;
-  const dsn = authFailureDsn(environment);
-  if (dsn) {
-    return new PostgresAuthFailureStore(dsn, options.loadPgPool ?? defaultLoadPgPool);
-  }
-  if (isProductionEnv(environment)) {
-    // AUDIT-E1: fail closed — no Redis fallback, no silent in-memory authority.
-    throw new Error(
-      'COMMANDER_AUTH_FAILURE_DATABASE_URL (or COMMANDER_KERNEL_DATABASE_URL / DATABASE_URL) ' +
-        'is required in production for the authentication-failure authority. ' +
-        'The Redis backend (AUTH_FAILURE_REDIS_URL) has been removed.',
-    );
-  }
-  return new InMemoryAuthFailureStore();
+  return new PostgresAuthFailureStore(createAuthPool(environment, options.createPool));
+}
+
+let sharedStore: AuthFailureStore | undefined;
+
+export function getAuthFailureStore(): AuthFailureStore {
+  sharedStore ??= createAuthFailureStore();
+  return sharedStore;
 }
 
 export function setAuthFailureStore(store: AuthFailureStore): void {
@@ -201,5 +132,5 @@ export function setAuthFailureStore(store: AuthFailureStore): void {
 }
 
 export function resetAuthFailureStoreForTesting(): void {
-  sharedStore = null;
+  sharedStore = undefined;
 }

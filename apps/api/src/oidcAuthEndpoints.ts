@@ -316,13 +316,13 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
 
     // Resolve by the durable IdP identity. A verified email may bootstrap a
     // one-time link for an existing local account, but is never the login key.
-    let localUser = findUserByOidcIdentity(issuer, subject);
+    let localUser = await findUserByOidcIdentity(issuer, subject);
     if (!localUser) {
       const oidcEmail = result.claims?.email;
       const emailVerified = result.claims?.email_verified === true;
       const emailUser =
         typeof oidcEmail === 'string' && oidcEmail.length > 0
-          ? findUserByEmail(oidcEmail)
+          ? await findUserByEmail(oidcEmail)
           : undefined;
 
       if (emailUser) {
@@ -330,14 +330,14 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
           res.status(409).json({ error: 'OIDC email must be verified before account linking' });
           return;
         }
-        const linked = bindUserToOidcIdentity(emailUser.id, issuer, subject);
+        const linked = await bindUserToOidcIdentity(emailUser.id, issuer, subject);
         if ('error' in linked) {
           res.status(409).json({ error: linked.error });
           return;
         }
-        localUser = findUserByOidcIdentity(issuer, subject);
+        localUser = await findUserByOidcIdentity(issuer, subject);
       } else {
-        const created = createUser({
+        const created = await createUser({
           username: result.username,
           email: result.username,
           // Random local password; authentication always happens via OIDC.
@@ -350,14 +350,14 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
           res.status(409).json({ error: created.error });
           return;
         }
-        localUser = findUserByOidcIdentity(issuer, subject);
+        localUser = await findUserByOidcIdentity(issuer, subject);
       }
     }
 
     // If the OIDC provider changed the linked user's role, keep it in sync.
     if (localUser && localUser.role !== result.role) {
-      updateUser(localUser.id, { role: result.role as UserRole });
-      localUser = findUserByOidcIdentity(issuer, subject);
+      await updateUser(localUser.id, { role: result.role as UserRole });
+      localUser = await findUserByOidcIdentity(issuer, subject);
     }
 
     if (!localUser) {
@@ -365,7 +365,7 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       return;
     }
 
-    updateLastLogin(localUser.id);
+    await updateLastLogin(localUser.id);
 
     const authUser = {
       id: localUser.id,
@@ -376,7 +376,7 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
 
     res.json({
       token: signAccessToken(authUser),
-      refreshToken: signRefreshToken(authUser),
+      refreshToken: await signRefreshToken(authUser),
       user: toSafeUserPublic(localUser),
     });
   });

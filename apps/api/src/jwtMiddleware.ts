@@ -120,10 +120,10 @@ export function signAccessToken(user: AuthUser): string {
 
 /**
  * Signs a long-lived refresh token (7d) used to obtain new access tokens.
- * Each token carries a unique `jti` that is persisted so it can be rotated
- * and revoked (see refreshTokenStore / /api/auth/refresh).
+ * Each token carries a unique `jti` that is persisted in PostgreSQL so it can
+ * be rotated and revoked (see refreshTokenStore / /api/auth/refresh).
  */
-export function signRefreshToken(user: AuthUser): string {
+export async function signRefreshToken(user: AuthUser): Promise<string> {
   const jti = randomUUID();
   const payload: CommanderJwtPayload = {
     id: user.id,
@@ -144,7 +144,7 @@ export function signRefreshToken(user: AuthUser): string {
   const decoded = jwt.decode(token) as CommanderJwtPayload | null;
   const exp =
     typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
-  persistRefreshJti(jti, user.id, exp);
+  await persistRefreshJti(jti, user.id, exp);
   return token;
 }
 

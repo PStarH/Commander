@@ -18,8 +18,9 @@ describe('auth middleware failure-authority boundary', () => {
       get: async () => {
         throw new Error('lockout authority unavailable');
       },
-      set: async () => undefined,
-      delete: async () => undefined,
+      recordFailure: async () => {
+        throw new Error('lockout authority unavailable');
+      },
       cleanup: async () => undefined,
     };
     setAuthFailureStore(unavailableStore);
@@ -45,14 +46,13 @@ describe('auth middleware failure-authority boundary', () => {
   });
 
   it('returns 500 when an invalid credential failure cannot be recorded', async () => {
-    let setCalls = 0;
+    let recordCalls = 0;
     const unavailableStore: AuthFailureStore = {
       get: async () => undefined,
-      set: async () => {
-        setCalls += 1;
+      recordFailure: async () => {
+        recordCalls += 1;
         throw new Error('lockout authority write unavailable');
       },
-      delete: async () => undefined,
       cleanup: async () => undefined,
     };
     setAuthFailureStore(unavailableStore);
@@ -71,7 +71,7 @@ describe('auth middleware failure-authority boundary', () => {
         headers: { 'x-api-key': 'invalid-key' },
       });
       assert.equal(response.status, 500);
-      assert.equal(setCalls, 1);
+      assert.equal(recordCalls, 1);
       assert.deepEqual(await response.json(), { error: 'Internal server error' });
     } finally {
       await new Promise<void>((resolve, reject) => {

@@ -147,9 +147,14 @@ function getCachedKeys(): Map<string, StoredKey> {
 /**
  * Timing-safe key lookup. Hashes the provided token once, then performs an
  * O(1) Map lookup by hex digest. The matched candidate is verified with
- * crypto.timingSafeEqual to guard against timing side-channels.
+ * crypto.timingSafeEqual to guard against timing side-channels. The persistent
+ * API key store (PostgreSQL) is the authority for keys created via
+ * /api/admin/api-keys.
  */
-function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
+async function findKey(
+  token: string,
+  storedKeys: Map<string, StoredKey>,
+): Promise<StoredKey | null> {
   const tokenHash = sha256(token);
   // O(1) lookup by hex digest; timing of Map.get is independent of token content.
   const stored = storedKeys.get(tokenHash.toString('hex'));
@@ -165,8 +170,7 @@ function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey |
       // Length mismatch or other error — fall through
     }
   }
-  // Fallback to the persistent API key store (created via /api/admin/api-keys).
-  const storeRecord = getApiKeyStore().findByHash(tokenHash.toString('hex'));
+  const storeRecord = await getApiKeyStore().findByHash(tokenHash.toString('hex'));
   if (storeRecord) {
     return {
       hash: Buffer.from(storeRecord.hash, 'hex'),
@@ -193,14 +197,17 @@ function getClientIp(req: Request): string {
 async function recordAuthFailure(ip: string): Promise<void> {
   const authFailureStore = getAuthFailureStore();
   const now = Date.now();
-  let entry = await authFailureStore.get(ip);
-  if (!entry || entry.lastFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-    entry = { count: 0, firstFailureAt: now, lastFailureAt: now, lockedUntil: 0 };
-  }
-  entry.count++;
-  entry.lastFailureAt = now;
-  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil === 0) {
-    entry.lockedUntil = now + LOCKOUT_DURATION_MS;
+  // Single atomic upsert: increment + window reset + lockout threshold are
+  // decided inside PostgreSQL so concurrent failures across replicas cannot
+  // race the lockout decision.
+  const entry = await authFailureStore.recordFailure(
+    ip,
+    now,
+    MAX_AUTH_FAILURES,
+    AUTH_FAILURE_WINDOW_MS,
+    LOCKOUT_DURATION_MS,
+  );
+  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil > now) {
     try {
       getGlobalLogger().warn(
         'AuthMiddleware',
@@ -217,7 +224,6 @@ async function recordAuthFailure(ip: string): Promise<void> {
       );
     }
   }
-  await authFailureStore.set(ip, entry);
 }
 
 async function isLockedOut(ip: string): Promise<boolean> {
@@ -347,7 +353,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   let matchedKey: StoredKey | null = null;
 
   if (apiKeyHeader) {
-    const matched = findKey(apiKeyHeader, apiKeys);
+    const matched = await findKey(apiKeyHeader, apiKeys);
     if (!matched) {
       await recordAuthFailure(clientIp);
       try {
@@ -363,7 +369,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
     matchedKey = matched;
   } else if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
-    const matched = findKey(token, apiKeys);
+    const matched = await findKey(token, apiKeys);
     if (!matched) {
       await recordAuthFailure(clientIp);
       try {
@@ -380,7 +386,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   } else if (
     apiKeys.size > 0 ||
     isProductionEnv() ||
-    getApiKeyStore().list().length > 0 ||
+    (await getApiKeyStore().list()).length > 0 ||
     // Non-production with no keys previously fell open. Require an explicit
     // opt-in so local/dev deploys are not anonymously writable by default.
     process.env.COMMANDER_ALLOW_ANON !== '1'
