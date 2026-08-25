@@ -157,11 +157,11 @@ function secretKey(value: unknown): string {
   return result;
 }
 
-function requiredLabels(metadata: unknown, expected: Readonly<Record<string, string>>): void {
-  const actual = labels(metadata);
-  for (const [key, expectedValue] of Object.entries(expected)) {
-    if (actual[key] !== expectedValue) invalid();
-  }
+function hasRequiredLabels(metadata: unknown, expected: Readonly<Record<string, string>>): boolean {
+  const value = field(metadata, 'labels');
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const actual = value as JsonRecord;
+  return Object.entries(expected).every(([key, expectedValue]) => actual[key] === expectedValue);
 }
 
 function controllerOwner(
@@ -328,7 +328,7 @@ async function waitForReadyProofPod(input: {
     ) {
       invalid();
     }
-    requiredLabels(metadata, input.proofSelector);
+    if (!hasRequiredLabels(metadata, input.proofSelector)) invalid();
     controllerOwner(metadata, input.proofController);
   }
 }
@@ -851,7 +851,7 @@ export function createTask1KubernetesProofObserver(
       Object.hasOwn(serviceMetadata, 'deletionTimestamp')
     )
       invalid();
-    requiredLabels(serviceMetadata, apiSelector);
+    if (!hasRequiredLabels(serviceMetadata, apiSelector)) invalid();
     const serviceSpec = record(service.spec);
     exactSelector(serviceSpec.selector, apiSelector);
     const servicePorts = array(serviceSpec.ports).map(record);
@@ -875,13 +875,13 @@ export function createTask1KubernetesProofObserver(
       Object.hasOwn(deploymentMetadata, 'deletionTimestamp')
     )
       invalid();
-    requiredLabels(deploymentMetadata, apiSelector);
+    if (!hasRequiredLabels(deploymentMetadata, apiSelector)) invalid();
     validateRuntimeAnnotations(deploymentMetadata, operation, binding.apiImageDigest);
     const deploymentSpec = record(deployment.spec);
     exactSelector(field(deploymentSpec.selector, 'matchLabels'), apiSelector);
     const desired = integer(deploymentSpec.replicas);
     const deploymentTemplate = record(deploymentSpec.template);
-    requiredLabels(record(deploymentTemplate.metadata), apiSelector);
+    if (!hasRequiredLabels(record(deploymentTemplate.metadata), apiSelector)) invalid();
     validateRuntimeAnnotations(
       record(deploymentTemplate.metadata),
       operation,
@@ -939,7 +939,7 @@ export function createTask1KubernetesProofObserver(
     const setSpec = record(activeSet.spec);
     exactSelector(field(setSpec.selector, 'matchLabels'), podSelector);
     const setTemplate = record(setSpec.template);
-    requiredLabels(record(setTemplate.metadata), podSelector);
+    if (!hasRequiredLabels(record(setTemplate.metadata), podSelector)) invalid();
     validateRuntimeAnnotations(record(setTemplate.metadata), operation, binding.apiImageDigest);
     validateApiContainer(record(setTemplate.spec), operation, binding.apiImageDigest, proofPort);
 
@@ -957,7 +957,7 @@ export function createTask1KubernetesProofObserver(
         podNames.add(name);
         podUids.add(uid);
         if (metadata.namespace !== binding.namespace) invalid();
-        requiredLabels(metadata, podSelector);
+        if (!hasRequiredLabels(metadata, podSelector)) invalid();
         controllerOwner(metadata, {
           kind: 'ReplicaSet',
           name: string(setMetadata.name),
@@ -986,7 +986,7 @@ export function createTask1KubernetesProofObserver(
       Object.hasOwn(proofMetadata, 'deletionTimestamp')
     )
       invalid();
-    requiredLabels(proofMetadata, proofSelector);
+    if (!hasRequiredLabels(proofMetadata, proofSelector)) invalid();
     const proofController = controllerOwner(proofMetadata, { kind: 'Job' });
     const proofJobRevision = validateProofJobName(binding.releaseName, proofController.name);
     const proofSpec = record(proofPod.spec);
