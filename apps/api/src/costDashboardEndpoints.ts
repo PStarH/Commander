@@ -182,12 +182,16 @@ function findTracesDir(): string {
 }
 
 async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
+  // AUDIT-API11: line cap mirrors auditLogEndpoints — every dashboard hit
+  // re-reads every trace file; unbounded files were an I/O+heap DoS lever.
+  const MAX_LINES_PER_FILE = 200_000;
   try {
     await fsp.access(filePath);
     const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
     if (!raw) return [];
     const events: TraceEvent[] = [];
-    for (const line of raw.split('\n')) {
+    const lines = raw.split('\n');
+    for (const line of lines.length > MAX_LINES_PER_FILE ? lines.slice(-MAX_LINES_PER_FILE) : lines) {
       try {
         events.push(JSON.parse(line) as TraceEvent);
       } catch (err) {

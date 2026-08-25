@@ -12,7 +12,7 @@ import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
 import { ResourceGovernor } from '../security/securityPrimitives';
 import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
-import { getCurrentTenantId, tenantPathSegment } from './tenantContext';
+import { getCurrentTenantId, tenantPathSegment, tenantBucketOrThrow } from './tenantContext';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -142,12 +142,14 @@ export class WebhookDispatcher {
   private readonly tenantId: string;
   private readonly storageFile: string;
 
-  constructor(tenantId = getCurrentTenantId() ?? '__default__') {
-    this.tenantId = tenantId;
+  constructor(tenantId?: string) {
+    // AUDIT-CORE3: fail closed in multi-tenant mode when no tenant is bound.
+    const effectiveTenantId = tenantId ?? tenantBucketOrThrow();
+    this.tenantId = effectiveTenantId;
     this.storageFile =
-      tenantId === '__default__'
+      effectiveTenantId === '__default__'
         ? LEGACY_WEBHOOKS_FILE
-        : path.join(WEBHOOKS_DIR, tenantPathSegment(tenantId), 'webhooks.json');
+        : path.join(WEBHOOKS_DIR, tenantPathSegment(effectiveTenantId), 'webhooks.json');
     this.load();
   }
 

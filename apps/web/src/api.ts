@@ -20,7 +20,9 @@ import type {
   SLOStatus,
 } from './types';
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+export const API_BASE =
+  (import.meta as { env?: Record<string, string | undefined> }).env
+    ?.VITE_API_BASE_URL || 'http://localhost:4000';
 export const PROJECT_ID = 'project-war-room';
 
 // ============================================================================
@@ -80,6 +82,29 @@ export function clearAuthToken(): void {
  *
  * Called once at module load. Idempotent — safe to call multiple times.
  */
+/**
+ * True when the request targets the configured API origin or is same-origin
+ * (relative paths). Cross-origin requests to any other host must never
+ * receive the session bearer token.
+ */
+export function isCommanderApiRequest(input: RequestInfo | URL): boolean {
+  try {
+    const base = globalThis.location?.href ?? globalThis.location?.origin;
+    const url =
+      typeof input === 'string'
+        ? new URL(input, base)
+        : input instanceof URL
+          ? input
+          : new URL(input.url, base);
+    const selfOrigin = globalThis.location?.origin;
+    if (selfOrigin && url.origin === selfOrigin) return true;
+    return url.origin === new URL(API_BASE).origin;
+  } catch {
+    // Unresolvable destination — do not attach the token.
+    return false;
+  }
+}
+
 let _interceptorInstalled = false;
 function installAuthInterceptor(): void {
   if (_interceptorInstalled) return;
@@ -87,7 +112,10 @@ function installAuthInterceptor(): void {
   const originalFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = getAuthToken();
-    if (token) {
+    if (token && isCommanderApiRequest(input)) {
+      // Audit: attach the bearer token ONLY to the configured API origin or
+      // same-origin requests. The previous unconditional attach leaked the
+      // session token to any external host fetched from the app.
       const headers = new Headers(init?.headers ?? undefined);
       if (!headers.has('Authorization')) {
         headers.set('Authorization', `Bearer ${token}`);

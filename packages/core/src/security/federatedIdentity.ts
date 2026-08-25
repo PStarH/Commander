@@ -73,6 +73,7 @@ import { recordSinkFailure } from '../observability/sinkFailureCounter';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import { getCapabilityTokenIssuer, decode } from './capabilityToken';
 import { getAgentLineage } from './agentLineage';
+import { isProductionCryptoEnv } from './productionEnv.js';
 
 /** Module-level revocation set shared across all FederatedIdentity instances. */
 const REVOKED_TRUST_IDS = new Set<string>();
@@ -193,7 +194,7 @@ const MAX_TRUST_TTL_SECONDS = 86400;
 export function resolveFederationKey(env: NodeJS.ProcessEnv = process.env): Buffer {
   const v = env[FEDERATION_KEY_ENV];
   if (v && v.length >= 32) return Buffer.from(v, 'utf-8');
-  if (env.NODE_ENV === 'production') {
+  if (isProductionCryptoEnv(env)) {
     throw new Error(
       `[federatedIdentity] ${FEDERATION_KEY_ENV} must be set (>= 32 chars) in production. ` +
         'Refusing to issue federation trusts with a default key.',

@@ -893,7 +893,11 @@ export class ThreeLayerMemory {
     // context is active, deny the promotion if entry.metadata.tenantId
     // (if set) does not match currentTenantId. Untagged entries are also
     // denied in a tenant context (no implicit cross-tenant trust).
-    const ctx = this.currentTenantId;
+    // AUDIT-CORE5: guard must resolve the tenant the same way reads/writes
+    // do (effectiveTenantId) — this.currentTenantId is never set in production
+    // (setTenantContext has no production callers), so the guard was inert and
+    // ambient tenant X could promote tenant Y's entries.
+    const ctx = this.effectiveTenantId();
     if (ctx !== null) {
       const tid = entry.metadata?.tenantId;
       if (tid !== ctx) return false;
@@ -914,7 +918,8 @@ export class ThreeLayerMemory {
     // Cross-tenant defense (parity with promoteToLongTerm): deny cross-tenant
     // archival when a tenant context is active and entry.metadata.tenantId
     // (if set) does not match.
-    const ctx = this.currentTenantId;
+    // AUDIT-CORE5: same fix as promoteToLongTerm — use effectiveTenantId.
+    const ctx = this.effectiveTenantId();
     if (ctx !== null) {
       const tid = entry.metadata?.tenantId;
       if (tid !== ctx) return false;

@@ -38,8 +38,10 @@ const forceStateSchema = z.object({
 });
 
 const sacConsensusSchema = z.object({
-  proposals: z.array(z.object({}).passthrough()),
-  evaluations: z.array(z.object({}).passthrough()),
+  // AUDIT-API14: bound compute inputs — unbounded passthrough arrays gave any
+  // principal a CPU-DoS lever against computeConsensus.
+  proposals: z.array(z.object({}).passthrough()).max(1000),
+  evaluations: z.array(z.object({}).passthrough()).max(1000),
 });
 
 const stoppingRecordSchema = z.object({

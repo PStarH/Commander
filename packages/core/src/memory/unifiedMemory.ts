@@ -23,7 +23,7 @@
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalThreeLayerMemory, wireGlobalThreeLayerMemory } from '../threeLayerMemory';
-import { getCurrentTenantId } from '../runtime/tenantContext';
+import { getCurrentTenantId, tenantBucketOrThrow } from '../runtime/tenantContext';
 import type { ThreeLayerMemory, MemoryEntry } from '../threeLayerMemory';
 import type { MemoryStore, EpisodicMemoryItem, MemoryWriteOptions } from '../episodicMemory';
 import { writeProductMemory } from './writeProductMemory';
@@ -373,7 +373,7 @@ export class UnifiedMemory {
           text: options.query,
           limit,
           minSimilarity: options.minRelevance ?? 0.1,
-          tenantId: getCurrentTenantId() ?? '__default__',
+          tenantId: tenantBucketOrThrow(),
         });
       } catch (e) {
         getGlobalLogger().debug('UnifiedMemory', 'Semantic search failed', {

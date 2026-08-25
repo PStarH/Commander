@@ -197,7 +197,8 @@ function createCanonicalNamespacedMemoryRouter(memoryStore: MemoryStore): Router
         projectId,
         query: q,
         tags: [namespaceTag(namespace)],
-        limit: Number(req.query.limit ?? 50),
+        // AUDIT-API16: clamp — unvalidated limits (1e9 / NaN) passed through.
+        limit: Math.min(Math.max(Number.parseInt(String(req.query.limit ?? '50'), 10) || 50, 1), 200),
       });
       pushAudit({ action: 'search', namespace, role, agentId: 'api', ok: true });
       res.json({ namespace, query: q, items: results.items, total: results.total });
