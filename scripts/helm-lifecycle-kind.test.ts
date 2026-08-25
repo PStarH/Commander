@@ -1799,6 +1799,7 @@ describe('helm-lifecycle-kind helpers', () => {
       { group: 'rbac', index: 1 },
       { group: 'networkPolicy', index: 2 },
     ]);
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, ['PROOF_READER_RBAC_INVALID']);
     assert.doesNotMatch(JSON.stringify(sanitized), /private|postgres|description|detail/i);
   });
 
