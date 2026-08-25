@@ -1424,6 +1424,29 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
   return evidence;
 }
 
+/** Re-emits only the parsed owner fields after the harness discards child-process output. */
+export function ownerFailureEvidenceRecord(value: OwnerFailureEvidence): string {
+  return [
+    'code=' + value.code,
+    'producer=' + value.producer,
+    'transport=' + value.transport,
+    ...(value.ownerStage ? ['owner_stage=' + value.ownerStage] : []),
+    ...(value.proofCode ? ['proof_code=' + value.proofCode] : []),
+    ...(value.proofInvariant ? ['proof_invariant=' + value.proofInvariant] : []),
+    ...(value.snapshot ? ['snapshot=' + value.snapshot] : []),
+    ...(value.catalogStep ? ['catalog_step=' + value.catalogStep] : []),
+    ...(value.snapshotTransaction ? ['snapshot_transaction=' + value.snapshotTransaction] : []),
+    ...(value.snapshotValidation ? ['snapshot_validation=' + value.snapshotValidation] : []),
+    ...(value.originClassificationStep
+      ? ['origin_classification_step=' + value.originClassificationStep]
+      : []),
+    ...(value.migration ? ['migration=' + value.migration] : []),
+    ...(value.phase ? ['phase=' + value.phase] : []),
+    ...(value.sqlstate ? ['sqlstate=' + value.sqlstate] : []),
+    'log_sha256=' + value.logSha256,
+  ].join(';');
+}
+
 /** Converts the prior API container output to a fixed code and digest without retaining the output. */
 export function apiPodStartupFailureDiagnostic(
   logs: string,
@@ -2593,7 +2616,9 @@ async function runCutoverCommand(
   }
   await completion;
   if (exitCode !== 0) {
-    const childCodes = scenarioFailureCodes(Buffer.concat(stderr).toString('utf8')) ?? [];
+    const childFailure = Buffer.concat(stderr).toString('utf8');
+    const childCodes = scenarioFailureCodes(childFailure) ?? [];
+    const ownerFailure = parseOwnerFailureEvidence(childFailure);
     const failureCodes = [...new Set(['HELM_TENANT_CUTOVER_FAILED', ...childCodes])];
     const diagnostic = rolloutObservation?.terminal
       ? rolloutFailureRecord(rolloutObservation.terminal)
@@ -2603,9 +2628,10 @@ async function runCutoverCommand(
           ? rolloutObservationRecord(rolloutObservation.queryFailure)
           : 'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED';
     throw new Error(
-      failureCodes.join(':') +
+        failureCodes.join(':') +
         ':' +
         diagnostic +
+        (ownerFailure ? ':' + ownerFailureEvidenceRecord(ownerFailure) : '') +
         (apiStartupFailure ? ':' + apiPodStartupFailureRecord(apiStartupFailure) : ''),
     );
   }
