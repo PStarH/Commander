@@ -84,7 +84,7 @@ function resources(): Record<string, any> {
         command: [
           'node',
           '-e',
-          "const https = require('node:https'); const req = https.get({ hostname: '127.0.0.1', port: 9443, path: '/ready/tenant-authority/v1', rejectUnauthorized: false }, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(1500, () => { req.destroy(); process.exit(1); });",
+          "const https = require('node:https'); const req = https.get({ hostname: '127.0.0.1', port: 9443, path: '/ready/tenant-authority/v1', rejectUnauthorized: false, headers: { 'X-Commander-Readiness-Challenge': 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc' } }, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(1500, () => { req.destroy(); process.exit(1); });",
         ],
       },
     },

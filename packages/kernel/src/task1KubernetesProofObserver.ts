@@ -274,7 +274,7 @@ function validateApiContainer(
         proofPort +
         ", path: '" +
         PROOF_PATH +
-        "', rejectUnauthorized: false }, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(1500, () => { req.destroy(); process.exit(1); });",
+        "', rejectUnauthorized: false, headers: { 'X-Commander-Readiness-Challenge': 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc' } }, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(1500, () => { req.destroy(); process.exit(1); });",
     ],
   });
 }
