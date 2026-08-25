@@ -1588,7 +1588,12 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
       : {}),
     scenarios: evidence.scenarios.map(
       ({ name, passed, durationMs, assertions, rbac, networkPolicy, error }) => {
-        const failureCodes = scenarioFailureCodes(error);
+        const safeFailureCodes = [
+          ...new Set([
+            ...(rbac?.some(({ passed }) => !passed) ? ['PROOF_READER_RBAC_INVALID'] : []),
+            ...(scenarioFailureCodes(error) ?? []),
+          ]),
+        ];
         const failedChecks = [
           ...failedCheckEvidence('scenario', assertions),
           ...failedCheckEvidence('rbac', rbac),
@@ -1601,7 +1606,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
           name,
           passed,
           durationMs,
-          ...(failureCodes ? { failureCodes } : {}),
+          ...(safeFailureCodes.length > 0 ? { failureCodes: safeFailureCodes } : {}),
           ...(failedChecks.length > 0 ? { failedChecks } : {}),
           ...(rolloutFailure
             ? {
@@ -2704,7 +2709,6 @@ async function assertProofReaderRbac(release: string): Promise<AssertionResult[]
       detail: check.stderr.trim() || undefined,
     });
   }
-  if (results.some(({ passed }) => !passed)) throw new Error('PROOF_READER_RBAC_INVALID');
   return results;
 }
 
