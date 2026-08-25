@@ -890,12 +890,40 @@ const API_POD_STARTUP_FAILURE_RECORD = new RegExp(
     ');exit_code=([0-9]{1,3}))?;log_sha256=([a-f0-9]{64})(?=;|\\n|$)',
 );
 const SCENARIO_FAILURE_CODE = /\b(?:COMMANDER|TASK1|TENANT_CUTOVER|HELM)_[A-Z0-9_]{1,80}\b/g;
+const LIFECYCLE_FAILURE_CODES = new Set([
+  'API_DEPLOYMENT_NOT_AVAILABLE',
+  'API_PROOF_SERVICE_INVALID',
+  'EPHEMERAL_LIFECYCLE_RESOURCE_CLEANUP_FAILED',
+  'EXTERNAL_DATABASE_CLEANUP_FAILED',
+  'EXTERNAL_DATABASE_SERVICE_INVALID',
+  'EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED',
+  'HELM_HISTORY_FAILED',
+  'HELM_HISTORY_INVALID',
+  'HELM_UNINSTALL_CLEANUP_FAILED',
+  'HELM_UNINSTALL_FAILED',
+  'KUBECTL_JSON_FAILED',
+  'KUBECTL_JSON_INVALID',
+  'LIFECYCLE_ROW_COUNT_INVALID',
+  'NAMESPACE_RESET_FAILED',
+  'NETWORK_POLICY_CANARY_CLEANUP_FAILED',
+  'NETWORK_POLICY_CANARY_CREATE_FAILED',
+  'NETWORK_POLICY_CANARY_TIMEOUT',
+  'NETWORK_POLICY_POSITIVE_CANARY_INVALID',
+  'PROOF_READER_RBAC_INVALID',
+  'PROOF_ROW_QUERY_FAILED',
+  'RECOVERED_API_DEPLOYMENT_NOT_AVAILABLE',
+  'ROLLOUT_FAILURE_NOT_OBSERVED',
+]);
 
 function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   if (!error) return undefined;
   const firstLine = error.split('\n', 1)[0] ?? '';
+  const fixedCode = firstLine.match(/^([A-Z][A-Z0-9_]{1,95})(?::|$)/)?.[1];
   const codes = [
-    ...new Set((firstLine.match(SCENARIO_FAILURE_CODE) ?? []).filter(isAllowedHelmDiagnosticCode)),
+    ...new Set([
+      ...(firstLine.match(SCENARIO_FAILURE_CODE) ?? []).filter(isAllowedHelmDiagnosticCode),
+      ...(fixedCode && LIFECYCLE_FAILURE_CODES.has(fixedCode) ? [fixedCode] : []),
+    ]),
   ].slice(0, 8);
   return codes.length > 0 ? codes : undefined;
 }
