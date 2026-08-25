@@ -938,6 +938,19 @@ describe('helm-lifecycle-kind helpers', () => {
     );
     assert.deepEqual(
       parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_PROOF_HOOK_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=' +
+          'b'.repeat(64),
+      ),
+      {
+        code: 'COMMANDER_MIGRATION_FAILED',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs',
+        ownerStage: 'lifecycle_initialize',
+        logSha256: 'b'.repeat(64),
+      },
+    );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
         'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_PROOF_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.js:812:9;log_sha256=' +
           '8'.repeat(64),
       ),
