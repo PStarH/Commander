@@ -1747,6 +1747,31 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /private|postgres|description|detail/i);
   });
 
+  it('retains a fixed lifecycle failure code without raw command output', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error: 'API_DEPLOYMENT_NOT_AVAILABLE: postgres://private:secret@database/commander',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, ['API_DEPLOYMENT_NOT_AVAILABLE']);
+    assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|secret/i);
+  });
+
   it('rejects unallowlisted and oversized prefixed diagnostic candidates', () => {
     const oversized = 'COMMANDER_' + 'A'.repeat(512);
     const evidence = {
