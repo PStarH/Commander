@@ -155,25 +155,9 @@ export function namespaceCleanupArgs(namespace: string): string[] {
   ];
 }
 
-export function serviceAccountImpersonationArgs(
-  subject: string,
-  commandArgs: readonly string[],
-): string[] {
-  const match = subject.match(
-    /^system:serviceaccount:([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?):[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/,
-  );
-  if (!match) throw new Error('TENANT_POLICY_SUBJECT_INVALID');
-  return [
-    ...commandArgs,
-    '--as',
-    subject,
-    '--as-group',
-    'system:serviceaccounts',
-    '--as-group',
-    'system:serviceaccounts:' + match[1],
-    '--as-group',
-    'system:authenticated',
-  ];
+export function serviceAccountTokenArgs(token: string, commandArgs: readonly string[]): string[] {
+  if (!token || /\s/.test(token)) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
+  return [...commandArgs, '--token', token];
 }
 
 export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
@@ -1969,7 +1953,7 @@ async function prepareNetworkPrerequisites(
       if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
       const operatorPorts = createTask1KubectlPorts(
         (commandArgs, stdin) =>
-          defaultCommand('kubectl', serviceAccountImpersonationArgs(subject, commandArgs), stdin),
+          defaultCommand('kubectl', serviceAccountTokenArgs(token, commandArgs), stdin),
         async () => token,
       );
       const deadline = Date.now() + 120_000;

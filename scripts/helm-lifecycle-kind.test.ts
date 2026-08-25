@@ -35,7 +35,7 @@ import {
   retainRolloutObservation,
   retainRolloutFailureEvidence,
   productionImageSourceRevision,
-  serviceAccountImpersonationArgs,
+  serviceAccountTokenArgs,
   KIND_NODE_IMAGE,
   CALICO_URL,
 } from './helm-lifecycle-kind.js';
@@ -1140,25 +1140,13 @@ describe('helm-lifecycle-kind helpers', () => {
     ]);
   });
 
-  it('impersonates the migration ServiceAccount with its canonical authentication groups', () => {
-    assert.deepEqual(
-      serviceAccountImpersonationArgs(
-        'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
-        ['get', 'pods'],
-      ),
-      [
-        'get',
-        'pods',
-        '--as',
-        'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
-        '--as-group',
-        'system:serviceaccounts',
-        '--as-group',
-        'system:serviceaccounts:commander-lifecycle',
-        '--as-group',
-        'system:authenticated',
-      ],
-    );
+  it('authenticates operator kubectl calls with the issued ServiceAccount token', () => {
+    assert.deepEqual(serviceAccountTokenArgs('issued-service-account-token', ['get', 'pods']), [
+      'get',
+      'pods',
+      '--token',
+      'issued-service-account-token',
+    ]);
   });
 
   it('removes the prerequisite admission binding before its policy', () => {
