@@ -991,15 +991,19 @@ export function createTask1KubectlPorts(
       ) as Task1KubernetesObject;
     },
     async selfSubjectReview() {
-      const review = JSON.parse(
-        await runCommand(
-          ['create', '--filename', '-', '--output', 'json'],
-          canonicalBootstrapJson({
-            apiVersion: 'authentication.k8s.io/v1',
-            kind: 'SelfSubjectReview',
-          }) + '\n',
-        ),
-      ) as Record<string, unknown>;
+      const output = await runCommand(
+        ['create', '--filename', '-', '--output', 'json'],
+        canonicalBootstrapJson({
+          apiVersion: 'authentication.k8s.io/v1',
+          kind: 'SelfSubjectReview',
+        }) + '\n',
+      );
+      let review: Record<string, unknown>;
+      try {
+        review = JSON.parse(output) as Record<string, unknown>;
+      } catch {
+        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
+      }
       const status = review.status;
       if (!status || typeof status !== 'object' || Array.isArray(status)) {
         fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');

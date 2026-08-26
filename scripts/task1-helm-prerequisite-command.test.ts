@@ -360,6 +360,12 @@ describe('Task 1 prerequisite command contract', () => {
 
     const malformed = createTask1KubectlPorts(async () => JSON.stringify({ status: {} }));
     await assert.rejects(malformed.selfSubjectReview(), /TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED/);
+
+    const invalidJson = createTask1KubectlPorts(async () => 'not-json');
+    await assert.rejects(
+      invalidJson.selfSubjectReview(),
+      /TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED/,
+    );
   });
 
   it('uses a self-subject access review for a named grouped resource', async () => {
