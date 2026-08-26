@@ -2359,6 +2359,8 @@ export function commandFailureCode(
       const labels = object.metadata?.labels;
       if (object.kind === 'ConfigMap') {
         createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_CONFIGMAP_FAILED';
+      } else if (object.kind === 'SelfSubjectAccessReview') {
+        forbiddenCreateCode = 'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN';
       } else if (object.kind === 'NetworkPolicy') {
         createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FAILED';
         forbiddenCreateCode = 'TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FORBIDDEN';

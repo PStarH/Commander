@@ -174,7 +174,10 @@ describe('Helm owner Job diagnostics', () => {
 
   it('retains the safe prerequisite object type for forbidden creates', () => {
     assert.deepEqual(
-      [{ apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy' }].map((object) =>
+      [
+        { apiVersion: 'authorization.k8s.io/v1', kind: 'SelfSubjectAccessReview' },
+        { apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy' },
+      ].map((object) =>
         helmTenantCutover.commandFailureCode(
           'kubectl',
           ['create', '--filename', '-'],
@@ -182,7 +185,10 @@ describe('Helm owner Job diagnostics', () => {
           'Error from server (Forbidden): forbidden',
         ),
       ),
-      ['TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FORBIDDEN'],
+      [
+        'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN',
+        'TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FORBIDDEN',
+      ],
     );
   });
 
