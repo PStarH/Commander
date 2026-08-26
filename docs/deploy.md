@@ -130,8 +130,17 @@ surface only. Worker and adapter-ops authority uses Ed25519 PEM/JWKS/key id —
 never the HMAC env on those components.
 
 ```bash
+# 1. Create the API secrets Secret (all five keys are required in production).
+kubectl create secret generic commander-api-secrets \
+  --from-literal=master-key=$(openssl rand -hex 32) \
+  --from-literal=jwt-secret=$(openssl rand -hex 32) \
+  --from-literal=api-key=$(openssl rand -hex 32) \
+  --from-literal=capability-token-key=$(openssl rand -hex 32) \
+  --from-literal=integrity-key=$(openssl rand -hex 32)
+
+# 2. Install, referencing that Secret (team tier fails closed without it).
 helm install commander deploy/helm/commander \
-  --set commander.apiKey=$(openssl rand -hex 32) \
+  --set api.secrets.existingSecret=commander-api-secrets \
   --set ingress.enabled=true \
   --set ingress.hosts[0].host=commander.example.com
 ```
