@@ -73,11 +73,18 @@ jobs:
           pnpm --filter @commander/worker-plane build
       - name: Seed Kind bootstrap evidence
         run: pnpm exec tsx scripts/helm-lifecycle-kind.ts bootstrap-evidence
-      - uses: helm/kind-action@v1
+      - id: provision-kind
+        uses: helm/kind-action@v1
         with:
           cluster_name: commander-helm-lifecycle
           node_image: kindest/node:v1.33.2@sha256:18e6c8f260d51cda4bc32d9f1a4852f9e693c7b667aa14321996ed7c411fc121
           config: scripts/fixtures/helm-lifecycle/kind-config.yaml
+      - name: Record Kind provisioning failure
+        if: ${{ always() && steps.provision-kind.outcome == 'failure' }}
+        run: pnpm exec tsx scripts/helm-lifecycle-kind.ts bootstrap-evidence kind-provisioning
+      - name: Seed Kind harness evidence
+        if: ${{ success() && steps.provision-kind.outcome == 'success' }}
+        run: pnpm exec tsx scripts/helm-lifecycle-kind.ts bootstrap-evidence harness-bootstrap
       - name: Run Kind lifecycle harness
         run: pnpm exec tsx scripts/helm-lifecycle-kind.ts run
       - name: Upload sanitized evidence

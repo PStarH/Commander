@@ -851,8 +851,8 @@ export interface SanitizedHarnessEvidence {
   calicoUrl: string;
   scenarios: SanitizedScenarioEvidence[];
   bootstrapFailure?: {
-    stage: 'harness-bootstrap';
-    code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED';
+    stage: 'harness-bootstrap' | 'kind-provisioning';
+    code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED' | 'KIND_LIFECYCLE_KIND_PROVISION_FAILED';
   };
   image?: {
     digest: string;
@@ -1849,7 +1849,19 @@ function rootDir(): string {
   return resolve(__dirname, '..');
 }
 
-export function bootstrapFailureEvidence(_error: unknown): SanitizedHarnessEvidence {
+type BootstrapFailureStage = 'harness-bootstrap' | 'kind-provisioning';
+
+function bootstrapFailureCode(
+  stage: BootstrapFailureStage,
+): 'KIND_LIFECYCLE_BOOTSTRAP_FAILED' | 'KIND_LIFECYCLE_KIND_PROVISION_FAILED' {
+  return stage === 'kind-provisioning'
+    ? 'KIND_LIFECYCLE_KIND_PROVISION_FAILED'
+    : 'KIND_LIFECYCLE_BOOTSTRAP_FAILED';
+}
+
+export function bootstrapFailureEvidence(
+  stage: BootstrapFailureStage = 'harness-bootstrap',
+): SanitizedHarnessEvidence {
   return {
     generatedAt: new Date().toISOString(),
     cluster: CLUSTER_NAME,
@@ -1857,8 +1869,8 @@ export function bootstrapFailureEvidence(_error: unknown): SanitizedHarnessEvide
     calicoUrl: CALICO_URL,
     scenarios: [],
     bootstrapFailure: {
-      stage: 'harness-bootstrap',
-      code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
+      stage,
+      code: bootstrapFailureCode(stage),
     },
     passed: false,
     sanitized: true,
@@ -1871,8 +1883,10 @@ function writeSanitizedEvidence(evidence: SanitizedHarnessEvidence): void {
   process.stdout.write('Evidence written to ' + evidencePath + '\n');
 }
 
-export function writeBootstrapFailureEvidence(): void {
-  writeSanitizedEvidence(bootstrapFailureEvidence(undefined));
+export function writeBootstrapFailureEvidence(
+  stage: BootstrapFailureStage = 'harness-bootstrap',
+): void {
+  writeSanitizedEvidence(bootstrapFailureEvidence(stage));
 }
 
 function fixturePath(name: string): string {
@@ -3946,13 +3960,20 @@ export { runAll };
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   if (process.argv[2] === 'bootstrap-evidence') {
-    writeBootstrapFailureEvidence();
+    if (process.argv[3] === undefined || process.argv[3] === 'harness-bootstrap') {
+      writeBootstrapFailureEvidence();
+    } else if (process.argv[3] === 'kind-provisioning') {
+      writeBootstrapFailureEvidence('kind-provisioning');
+    } else {
+      process.stderr.write('bootstrap evidence failed: KIND_BOOTSTRAP_EVIDENCE_ARGUMENT_INVALID\n');
+      process.exitCode = 1;
+    }
   } else {
     (async () => {
       const opts = parseArgs();
       const evidence = await runAll(opts);
       process.exitCode = evidence.passed ? 0 : 1;
-    })().catch((error) => {
+    })().catch(() => {
       writeBootstrapFailureEvidence();
       process.stderr.write('harness failed: KIND_LIFECYCLE_BOOTSTRAP_FAILED\n');
       process.exitCode = 1;
