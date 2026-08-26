@@ -56,7 +56,7 @@ function memoryPorts(seed: Task1KubernetesObject[] = []): Task1PrerequisiteComma
       created.push(structuredClone(object));
       return structuredClone(object);
     },
-    async tokenReview() {
+    async selfSubjectReview() {
       return subject;
     },
     async canI() {
@@ -343,25 +343,23 @@ describe('Task 1 prerequisite command contract', () => {
     );
   });
 
-  it('reviews an explicitly supplied service-account token', async () => {
-    let reviewedToken = '';
-    const ports = createTask1KubectlPorts(
-      async (args, stdin) => {
-        assert.deepEqual(args.slice(0, 2), ['create', '--filename']);
-        reviewedToken =
-          (JSON.parse(stdin ?? '{}') as { spec?: { token?: string } }).spec?.token ?? '';
-        return JSON.stringify({
-          status: {
-            authenticated: true,
-            user: { username: subject },
-          },
-        });
-      },
-      async () => 'short-lived-service-account-token\n',
-    );
+  it('reviews the authenticated subject without submitting a token', async () => {
+    let request = '';
+    const ports = createTask1KubectlPorts(async (args, stdin) => {
+      assert.deepEqual(args.slice(0, 2), ['create', '--filename']);
+      request = stdin ?? '';
+      return JSON.stringify({ status: { userInfo: { username: subject } } });
+    });
 
-    assert.equal(await ports.tokenReview(), subject);
-    assert.equal(reviewedToken, 'short-lived-service-account-token');
+    assert.equal(await ports.selfSubjectReview(), subject);
+    assert.deepEqual(JSON.parse(request), {
+      apiVersion: 'authentication.k8s.io/v1',
+      kind: 'SelfSubjectReview',
+    });
+    assert.doesNotMatch(request, /token/i);
+
+    const malformed = createTask1KubectlPorts(async () => JSON.stringify({ status: {} }));
+    await assert.rejects(malformed.selfSubjectReview(), /TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED/);
   });
 
   it('uses a self-subject access review for a named grouped resource', async () => {
@@ -687,7 +685,7 @@ describe('Task 1 prerequisite command contract', () => {
     pair.policy.metadata.generation = 1;
     pair.policy.status = { observedGeneration: 1, typeChecking: { expressionWarnings: [] } };
     const wrongSubject = memoryPorts([pair.policy, pair.binding]);
-    wrongSubject.tokenReview = async () => 'system:serviceaccount:commander-ops:other';
+    wrongSubject.selfSubjectReview = async () => 'system:serviceaccount:commander-ops:other';
     await assert.rejects(
       runTask1PrerequisiteOperator(loaded, wrongSubject),
       /TENANT_POLICY_SUBJECT_MISMATCH/,

@@ -33,7 +33,7 @@ metadata:
     commander.io/purpose: tenant-authority-prerequisite
 rules:
   - apiGroups: ["authentication.k8s.io"]
-    resources: ["tokenreviews"]
+    resources: ["selfsubjectreviews"]
     verbs: ["create"]
   - apiGroups: ["authorization.k8s.io"]
     resources: ["selfsubjectaccessreviews"]

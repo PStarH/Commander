@@ -1183,11 +1183,15 @@ describe('helm-lifecycle-kind helpers', () => {
     ]);
   });
 
-  it('retries only transient prerequisite readiness failures', () => {
+  it('retries only transient admission readiness failures', () => {
     assert.equal(prerequisiteRetryableFailure('TENANT_POLICY_ADMISSION_NOT_READY'), true);
     assert.equal(
       prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FORBIDDEN'),
-      true,
+      false,
+    );
+    assert.equal(
+      prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_REVIEW_FORBIDDEN'),
+      false,
     );
     assert.equal(
       prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FORBIDDEN'),

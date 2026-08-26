@@ -175,7 +175,7 @@ describe('Helm owner Job diagnostics', () => {
   it('retains the safe prerequisite object type for forbidden creates', () => {
     assert.deepEqual(
       [
-        { apiVersion: 'authentication.k8s.io/v1', kind: 'TokenReview' },
+        { apiVersion: 'authentication.k8s.io/v1', kind: 'SelfSubjectReview' },
         { apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy' },
       ].map((object) =>
         helmTenantCutover.commandFailureCode(
@@ -186,7 +186,7 @@ describe('Helm owner Job diagnostics', () => {
         ),
       ),
       [
-        'TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FORBIDDEN',
+        'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_REVIEW_FORBIDDEN',
         'TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FORBIDDEN',
       ],
     );

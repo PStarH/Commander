@@ -71,7 +71,11 @@ describe('Task 1 prerequisite operator RBAC', () => {
       'release-a-tenant-prerequisite-operator',
     );
     assert.deepEqual(clusterRole.rules, [
-      { apiGroups: ['authentication.k8s.io'], resources: ['tokenreviews'], verbs: ['create'] },
+      {
+        apiGroups: ['authentication.k8s.io'],
+        resources: ['selfsubjectreviews'],
+        verbs: ['create'],
+      },
       {
         apiGroups: ['authorization.k8s.io'],
         resources: ['selfsubjectaccessreviews'],
