@@ -1206,6 +1206,35 @@ describe('helm-lifecycle-kind helpers', () => {
     ]);
   });
 
+  it('builds an exact administrator review for the operator self-review permission', () => {
+    const accessReview = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        operatorSelfSubjectReviewAccessReview?: (subject: string) => Record<string, unknown>;
+      }
+    ).operatorSelfSubjectReviewAccessReview;
+    assert.equal(typeof accessReview, 'function');
+
+    assert.deepEqual(
+      accessReview!('system:serviceaccount:commander-lifecycle:tenant-migration-operator'),
+      {
+        apiVersion: 'authorization.k8s.io/v1',
+        kind: 'SubjectAccessReview',
+        spec: {
+          user: 'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
+          resourceAttributes: {
+            verb: 'create',
+            group: 'authentication.k8s.io',
+            resource: 'selfsubjectreviews',
+          },
+        },
+      },
+    );
+    assert.throws(
+      () => accessReview!('system:serviceaccount:invalid'),
+      /TENANT_POLICY_OPERATOR_RBAC_REVIEW_INVALID/,
+    );
+  });
+
   it('retries only transient admission readiness failures', () => {
     assert.equal(prerequisiteRetryableFailure('TENANT_POLICY_ADMISSION_NOT_READY'), true);
     assert.equal(
