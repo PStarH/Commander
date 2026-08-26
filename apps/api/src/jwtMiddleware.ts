@@ -80,8 +80,57 @@ if (!process.env.JWT_SECRET) {
   );
 }
 
-const ACCESS_TOKEN_EXPIRES_IN = '24h';
-const REFRESH_TOKEN_EXPIRES_IN = '7d';
+/**
+ * Token lifetime configuration. Defaults preserve the historical contract
+ * (24h access / 7d refresh); operators can tighten without a code change:
+ *   JWT_ACCESS_TOKEN_TTL   e.g. '15m' (recommended minimum for prod access)
+ *   JWT_REFRESH_TOKEN_TTL  e.g. '1d'
+ * Values use the `jsonwebtoken`/`ms` duration format ('s'|'m'|'h'|'d'|'w'|'y').
+ */
+const ACCESS_TOKEN_EXPIRES_IN: string = process.env.JWT_ACCESS_TOKEN_TTL?.trim() || '24h';
+const REFRESH_TOKEN_EXPIRES_IN: string = process.env.JWT_REFRESH_TOKEN_TTL?.trim() || '7d';
+
+// jsonwebtoken types `expiresIn` as the `ms` StringValue template-literal
+// union; runtime env values are plain strings, so cast at the boundary.
+type DurationValue = jwt.SignOptions['expiresIn'];
+
+/**
+ * Key identifier for the signing key. Declarative token hygiene — tags every
+ * issued token with the active key id so a future rotation can select the
+ * right verifier. It is NOT itself a rotation mechanism.
+ *   JWT_KID — override the key id (default 'commander-hs256-v1').
+ */
+const JWT_KID: string = process.env.JWT_KID?.trim() || 'commander-hs256-v1';
+
+/**
+ * Token issuer / audience claims (WS3 §4.2). Legacy tokens signed before this
+ * feature carry no iss/aud and still verify.
+ *   JWT_ISSUER           — issuer claim (default 'commander')
+ *   JWT_AUDIENCE         — audience for access tokens (default 'commander-api')
+ *   JWT_REFRESH_AUDIENCE — audience for refresh tokens (default 'commander-refresh')
+ */
+const JWT_ISSUER: string = process.env.JWT_ISSUER?.trim() || 'commander';
+const JWT_AUDIENCE: string = process.env.JWT_AUDIENCE?.trim() || 'commander-api';
+const JWT_REFRESH_AUDIENCE: string =
+  process.env.JWT_REFRESH_AUDIENCE?.trim() || 'commander-refresh';
+
+/** Parse a `ms`-style duration string to seconds. */
+function durationToSeconds(value: string): number {
+  const trimmed = value.trim();
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)\s*(s|m|h|d|w|y)?$/i);
+  if (!match) return 0;
+  const amount = Number(match[1]);
+  const unit = (match[2] ?? 's').toLowerCase();
+  const multipliers: Record<string, number> = {
+    s: 1,
+    m: 60,
+    h: 60 * 60,
+    d: 24 * 60 * 60,
+    w: 7 * 24 * 60 * 60,
+    y: 365 * 24 * 60 * 60,
+  };
+  return Math.round(amount * multipliers[unit]);
+}
 
 /**
  * AUTH-01: tenant claim for access tokens minted by login/register/refresh/OIDC.
@@ -105,6 +154,8 @@ export function signAccessToken(user: AuthUser): string {
     username: user.username,
     role: user.role,
     type: 'access',
+    iss: JWT_ISSUER,
+    aud: JWT_AUDIENCE,
   };
   if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
     payload.tenant_id = user.tenantId;
@@ -113,8 +164,9 @@ export function signAccessToken(user: AuthUser): string {
     payload.scopes = user.scopes;
   }
   return jwt.sign(payload, JWT_SECRET, {
-    expiresIn: ACCESS_TOKEN_EXPIRES_IN,
+    expiresIn: ACCESS_TOKEN_EXPIRES_IN as DurationValue,
     algorithm: 'HS256',
+    keyid: JWT_KID,
   });
 }
 
@@ -131,6 +183,8 @@ export function signRefreshToken(user: AuthUser): string {
     role: user.role,
     type: 'refresh',
     jti,
+    iss: JWT_ISSUER,
+    aud: JWT_REFRESH_AUDIENCE,
   };
   // Preserve the authenticated tenant across rotation; otherwise an OIDC
   // session would silently fall back to the deployment default tenant.
@@ -138,19 +192,26 @@ export function signRefreshToken(user: AuthUser): string {
     payload.tenant_id = user.tenantId;
   }
   const token = jwt.sign(payload, JWT_SECRET, {
-    expiresIn: REFRESH_TOKEN_EXPIRES_IN,
+    expiresIn: REFRESH_TOKEN_EXPIRES_IN as DurationValue,
     algorithm: 'HS256',
+    keyid: JWT_KID,
   });
   const decoded = jwt.decode(token) as CommanderJwtPayload | null;
-  const exp =
-    typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
+  const fallbackExp = Math.floor(Date.now() / 1000) + durationToSeconds(REFRESH_TOKEN_EXPIRES_IN);
+  const exp = typeof decoded?.exp === 'number' ? decoded.exp : fallbackExp;
   persistRefreshJti(jti, user.id, exp);
   return token;
 }
 
 /**
  * Verifies a JWT and returns the decoded payload, or `null` if the token is
- * invalid / expired. Never throws — callers branch on the null return.
+ * invalid / expired / issued for a foreign issuer or audience. Never throws —
+ * callers branch on the null return.
+ *
+ * Claim policy (WS3 §4.2):
+ *   - Legacy tokens (no iss/aud) still verify — rolling upgrade is safe.
+ *   - New tokens must carry a matching `iss` and a type-appropriate `aud`;
+ *     a token signed for a foreign audience is rejected here.
  */
 export function verifyToken(token: string): CommanderJwtPayload | null {
   try {
@@ -160,10 +221,24 @@ export function verifyToken(token: string): CommanderJwtPayload | null {
     if (typeof decoded === 'string') {
       return null;
     }
-    return decoded as CommanderJwtPayload;
+    const payload = decoded as CommanderJwtPayload;
+    if (payload.iss !== undefined && payload.iss !== JWT_ISSUER) {
+      return null;
+    }
+    const expectedAudience = payload.type === 'refresh' ? JWT_REFRESH_AUDIENCE : JWT_AUDIENCE;
+    if (payload.aud !== undefined && !audienceMatches(payload.aud, expectedAudience)) {
+      return null;
+    }
+    return payload;
   } catch {
     return null;
   }
+}
+
+function audienceMatches(audience: string | string[] | undefined, expected: string): boolean {
+  if (audience === undefined) return true; // legacy tokens carry no aud
+  const list = Array.isArray(audience) ? audience : [audience];
+  return list.includes(expected);
 }
 
 // ── Paths exempt from JWT parsing ───────────────────────────────────────────
