@@ -1953,6 +1953,33 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /private|detail/i);
   });
 
+  it('retains a fixed network prerequisite substage without scenario diagnostics', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          failedStage: 'network-prerequisites',
+          networkPrerequisiteStage: 'operator-verify',
+          error: 'opaque private detail',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    } satisfies Parameters<typeof sanitizeEvidence>[0]);
+
+    assert.equal(sanitized.scenarios[0]?.networkPrerequisiteStage, 'operator-verify');
+    assert.doesNotMatch(JSON.stringify(sanitized), /private|detail/i);
+  });
+
   it('retains the fixed admission readiness code without raw command output', () => {
     const sanitized = sanitizeEvidence({
       generatedAt: '2024-01-01T00:00:00Z',
