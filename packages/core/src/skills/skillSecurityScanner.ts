@@ -29,8 +29,13 @@ export function scanSkillContent(
   const warnings: SecurityWarning[] = [];
   const searchSpace = `${name} ${content} ${tools.join(' ')}`;
 
-  // Shell injection patterns
-  checkPatterns(searchSpace, SHELL_INJECTION_PATTERNS, warnings);
+  // Shell injection patterns — selected by content kind so that real source
+  // files (.ts/.tsx/.js/...) are not false-flagged on every template literal.
+  // A backtick in TypeScript is string interpolation, not command
+  // substitution; only a template literal handed to a shell-executing API is
+  // dangerous there. Prose (skill descriptions/docs) and shell scripts keep
+  // the naive backtick / $() rules.
+  checkPatterns(searchSpace, shellInjectionPatternsFor(name), warnings);
 
   // Path traversal
   checkPatterns(searchSpace, PATH_TRAVERSAL_PATTERNS, warnings);
@@ -77,37 +82,94 @@ function checkPatterns(
 // Pattern definitions
 // ============================================================================
 
-const SHELL_INJECTION_PATTERNS = [
+type ScanContentKind = 'prose' | 'shell' | 'source-js';
+
+type ShellInjectionPattern = {
+  regex: RegExp;
+  category: string;
+  message: string;
+  severity: 'low' | 'medium' | 'high';
+};
+
+/**
+ * Detect what kind of content we are scanning from the name. The pre-commit
+ * hook passes the file path (e.g. `apps/api/src/refreshTokenStore.ts`), while
+ * skill creation passes a bare skill name. Prose (skill descriptions / docs)
+ * and shell scripts keep the naive backtick / $() rules; JavaScript-family
+ * source files get sink-based rules so SQL template literals are not flagged
+ * as shell command substitution.
+ */
+function detectContentKind(name: string): ScanContentKind {
+  if (/\.(ts|tsx|mts|cts|js|mjs|cjs|jsx)$/i.test(name)) return 'source-js';
+  if (/(?:\.sh|\.bash|\.zsh|\.fish)$/i.test(name)) return 'shell';
+  return 'prose';
+}
+
+// Patterns shared by prose/shell and JS source: a shell pipe, or a bare
+// process-execution call, are dangerous in every content kind.
+const PIPE_SHELL_PATTERN: ShellInjectionPattern = {
+  regex: /\|\s*(bash|sh|zsh|cmd|powershell)\b/gi,
+  category: 'shell_injection',
+  severity: 'high',
+  message: 'Piped shell execution detected',
+};
+
+const BARE_EXEC_PATTERN: ShellInjectionPattern = {
+  regex: /\bexec\s*\(/gi,
+  category: 'shell_injection',
+  severity: 'high',
+  message: 'exec() call detected — potential arbitrary command execution',
+};
+
+const BARE_SPAWN_PATTERN: ShellInjectionPattern = {
+  regex: /\bspawn\s*\(/gi,
+  category: 'shell_injection',
+  severity: 'high',
+  message: 'spawn() call detected — potential arbitrary process creation',
+};
+
+function shellInjectionPatternsFor(name: string): ShellInjectionPattern[] {
+  return detectContentKind(name) === 'source-js'
+    ? SOURCE_JS_SHELL_INJECTION_PATTERNS
+    : SHELL_INJECTION_PATTERNS;
+}
+
+/** Naive rules for prose / shell content: backticks and $() are real shell syntax. */
+const SHELL_INJECTION_PATTERNS: ShellInjectionPattern[] = [
   {
     regex: /\$\(.+?\)/g,
     category: 'shell_injection',
-    severity: 'high' as const,
+    severity: 'high',
     message: 'Command substitution via $() detected — may allow arbitrary shell execution',
   },
   {
     regex: /`[^`]+`/g,
     category: 'shell_injection',
-    severity: 'high' as const,
+    severity: 'high',
     message: 'Backtick command execution detected',
   },
+  PIPE_SHELL_PATTERN,
+  BARE_EXEC_PATTERN,
+  BARE_SPAWN_PATTERN,
+];
+
+/**
+ * Sink-based rules for JavaScript/TypeScript source. Backticks are template
+ * literals (not command substitution) and `$(...)` is a jQuery-style call, so
+ * only flag a template literal that is passed to a shell-executing API, a
+ * shell pipe, or a bare shell-executing call.
+ */
+const SOURCE_JS_SHELL_INJECTION_PATTERNS: ShellInjectionPattern[] = [
   {
-    regex: /\|\s*(bash|sh|zsh|cmd|powershell)\b/gi,
+    regex: /\b(?:exec|execSync|execFileSync|spawn|spawnSync|system|popen|fork)\s*\(\s*`/gi,
     category: 'shell_injection',
-    severity: 'high' as const,
-    message: 'Piped shell execution detected',
+    severity: 'high',
+    message:
+      'Template literal passed to a shell-executing API — verify the command is not attacker-controlled',
   },
-  {
-    regex: /\bexec\s*\(/gi,
-    category: 'shell_injection',
-    severity: 'high' as const,
-    message: 'exec() call detected — potential arbitrary command execution',
-  },
-  {
-    regex: /\bspawn\s*\(/gi,
-    category: 'shell_injection',
-    severity: 'high' as const,
-    message: 'spawn() call detected — potential arbitrary process creation',
-  },
+  PIPE_SHELL_PATTERN,
+  BARE_EXEC_PATTERN,
+  BARE_SPAWN_PATTERN,
 ];
 
 const PATH_TRAVERSAL_PATTERNS = [

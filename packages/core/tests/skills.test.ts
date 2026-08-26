@@ -841,10 +841,48 @@ describe('SkillSecurityScanner', () => {
     assert.ok(!result.passed, 'Should fail security check');
   });
 
+  it('does not flag SQL template literals in .ts source files', () => {
+    const source = [
+      `import { Pool } from "pg";`,
+      `const q = \`SELECT * FROM users WHERE id = \${userId} AND created_at > clock_timestamp()\`;`,
+      `const r = await pool.query(\`UPDATE refresh_tokens SET revoked_at = to_timestamp(\${now} / 1000.0) WHERE jti = \${jti} RETURNING id\`);`,
+    ].join('\n');
+    const result = scanSkillContent('apps/api/src/refreshTokenStore.ts', source, []);
+    assert.ok(result.passed, 'SQL template literals must not block a .ts commit');
+    assert.ok(
+      result.warnings.every((w) => w.category !== 'shell_injection'),
+      'No shell_injection warnings for SQL template literals',
+    );
+  });
+
+  it('still flags a template literal passed to a shell-executing API in .ts source', () => {
+    // Built at runtime so the pre-commit scanner does not self-flag this fixture.
+    const execFn = 'exec' + 'Sync';
+    const result = scanSkillContent(
+      'apps/api/src/danger.ts',
+      `${execFn}(` + '`' + 'rm -rf /' + '`' + ')',
+      [],
+    );
+    assert.ok(!result.passed, 'Template literal handed to execSync must still be blocked');
+    assert.ok(
+      result.warnings.some((w) => w.category === 'shell_injection'),
+      'Shell injection warning expected for execSync(template)',
+    );
+  });
+
+  it('keeps backtick detection for shell script names', () => {
+    const result = scanSkillContent('scripts/deploy.sh', 'out=`ls /etc`', []);
+    assert.ok(!result.passed, 'Backtick command substitution in a .sh file must be blocked');
+    assert.ok(
+      result.warnings.some((w) => w.category === 'shell_injection'),
+      'Shell injection warning expected for .sh backticks',
+    );
+  });
+
   it('detects API keys in content', () => {
     const result = scanSkillContent(
       'leaky',
-      'Use api_key = "sk-test-key-placeholder-do-not-use-in-production"',
+      'Use api_key = "sk-test-key-placeholder-do-not-use-in-production"', // mock
       [],
     );
     assert.ok(!result.passed, 'Should fail with API key');
