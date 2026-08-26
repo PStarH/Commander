@@ -2148,10 +2148,7 @@ async function currentClusterTokenOnlyKubeconfig(): Promise<string> {
 }
 
 export function prerequisiteRetryableFailure(code: string): boolean {
-  return (
-    code === 'TENANT_POLICY_ADMISSION_NOT_READY' ||
-    code === 'TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FORBIDDEN'
-  );
+  return code === 'TENANT_POLICY_ADMISSION_NOT_READY';
 }
 
 async function prepareNetworkPrerequisites(

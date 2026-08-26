@@ -1,6 +1,5 @@
 import { createHash, X509Certificate } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { load } from 'js-yaml';
 import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
@@ -63,7 +62,7 @@ export interface Task1PrerequisiteContext {
 export interface Task1PrerequisiteCommandPorts {
   get(kind: string, name: string, namespace?: string): Promise<Task1KubernetesObject | null>;
   create(object: Task1KubernetesObject): Promise<Task1KubernetesObject>;
-  tokenReview(): Promise<string>;
+  selfSubjectReview(): Promise<string>;
   canI(verb: string, resource: string, name?: string): Promise<boolean>;
   dryRunCreate(object: Task1KubernetesObject): Promise<boolean>;
   readPublicCertificate(namespace: string, secretName: string, key: string): Promise<string>;
@@ -887,7 +886,7 @@ export async function runTask1PrerequisiteOperator(
   context: Task1PrerequisiteContext,
   ports: Task1PrerequisiteCommandPorts,
 ): Promise<void> {
-  if ((await ports.tokenReview()) !== context.request.migrationOperatorSubject)
+  if ((await ports.selfSubjectReview()) !== context.request.migrationOperatorSubject)
     fail('TENANT_POLICY_SUBJECT_MISMATCH');
   await requireAdmission(context, 'network', ports);
   if (context.request.stage === 'workload') {
@@ -967,8 +966,6 @@ export function verifyTask1PublicCertificate(
 
 export function createTask1KubectlPorts(
   runCommand: (args: readonly string[], stdin?: string) => Promise<string> = kubectl,
-  readToken: () => Promise<string> = () =>
-    readFile('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8'),
 ): Task1PrerequisiteCommandPorts {
   return {
     async get(kind, objectName, namespace) {
@@ -993,22 +990,29 @@ export function createTask1KubectlPorts(
         ),
       ) as Task1KubernetesObject;
     },
-    async tokenReview() {
-      const token = await readToken();
+    async selfSubjectReview() {
       const review = JSON.parse(
         await runCommand(
           ['create', '--filename', '-', '--output', 'json'],
           canonicalBootstrapJson({
             apiVersion: 'authentication.k8s.io/v1',
-            kind: 'TokenReview',
-            spec: { token: token.trim() },
+            kind: 'SelfSubjectReview',
           }) + '\n',
         ),
       ) as Record<string, unknown>;
-      const status = record(review.status);
-      const user = record(status.user);
-      if (status.authenticated !== true) fail('TENANT_POLICY_TOKEN_REVIEW_FAILED');
-      return string(user.username);
+      const status = review.status;
+      if (!status || typeof status !== 'object' || Array.isArray(status)) {
+        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
+      }
+      const userInfo = (status as Record<string, unknown>).userInfo;
+      if (!userInfo || typeof userInfo !== 'object' || Array.isArray(userInfo)) {
+        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
+      }
+      const username = (userInfo as Record<string, unknown>).username;
+      if (typeof username !== 'string' || username.length === 0) {
+        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
+      }
+      return username;
     },
     async canI(verb, resource, objectName) {
       const [resourceName, ...groupParts] = resource.split('.');
