@@ -636,6 +636,7 @@ export interface ScenarioEvidence {
   events: Record<string, unknown>[];
   assertions: AssertionResult[];
   failedStage?: LifecycleFailureStage;
+  networkPrerequisiteStage?: NetworkPrerequisiteStage;
   rbac?: AssertionResult[];
   networkPolicy?: AssertionResult[];
   error?: string;
@@ -658,6 +659,21 @@ export type LifecycleFailureStage =
   | 'release-cleanup'
   | 'recovery-failed-install'
   | 'recovery-retry';
+
+const NETWORK_PREREQUISITE_STAGES = [
+  'read-release-values',
+  'materialize-values',
+  'write-values',
+  'load-context',
+  'render-admission',
+  'install-admission',
+  'issue-operator-token',
+  'write-operator-kubeconfig',
+  'operator-verify',
+  'admission-cleanup',
+] as const;
+
+type NetworkPrerequisiteStage = (typeof NETWORK_PREREQUISITE_STAGES)[number];
 
 export interface AssertionResult {
   description: string;
@@ -689,6 +705,7 @@ export interface SanitizedScenarioEvidence {
   passed: boolean;
   durationMs: number;
   failedStage?: LifecycleFailureStage;
+  networkPrerequisiteStage?: NetworkPrerequisiteStage;
   failureCodes?: string[];
   admissionRbacFailure?: AdmissionRbacFailureEvidence;
   failedChecks?: SanitizedCheckFailure[];
@@ -1767,6 +1784,13 @@ function fixturePath(name: string): string {
   return resolve(__dirname, 'fixtures', 'helm-lifecycle', name);
 }
 
+function isNetworkPrerequisiteStage(value: unknown): value is NetworkPrerequisiteStage {
+  return (
+    typeof value === 'string' &&
+    NETWORK_PREREQUISITE_STAGES.includes(value as NetworkPrerequisiteStage)
+  );
+}
+
 export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvidence {
   return {
     generatedAt: evidence.generatedAt,
@@ -1784,7 +1808,17 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
         }
       : {}),
     scenarios: evidence.scenarios.map(
-      ({ name, passed, durationMs, failedStage, assertions, rbac, networkPolicy, error }) => {
+      ({
+        name,
+        passed,
+        durationMs,
+        failedStage,
+        networkPrerequisiteStage,
+        assertions,
+        rbac,
+        networkPolicy,
+        error,
+      }) => {
         const safeFailureCodes = [
           ...new Set([
             ...(rbac?.some(({ passed }) => !passed) ? ['PROOF_READER_RBAC_INVALID'] : []),
@@ -1805,6 +1839,10 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
           passed,
           durationMs,
           ...(failedStage ? { failedStage } : {}),
+          ...(failedStage === 'network-prerequisites' &&
+          isNetworkPrerequisiteStage(networkPrerequisiteStage)
+            ? { networkPrerequisiteStage }
+            : {}),
           ...(safeFailureCodes.length > 0 ? { failureCodes: safeFailureCodes } : {}),
           ...(admissionRbacFailure ? { admissionRbacFailure } : {}),
           ...(failedChecks.length > 0 ? { failedChecks } : {}),
@@ -2201,6 +2239,20 @@ export function prerequisiteRetryableFailure(code: string): boolean {
   return code === 'TENANT_POLICY_ADMISSION_NOT_READY';
 }
 
+class NetworkPrerequisiteError extends Error {
+  readonly networkPrerequisiteStage: NetworkPrerequisiteStage;
+
+  constructor(networkPrerequisiteStage: NetworkPrerequisiteStage, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'NetworkPrerequisiteError';
+    this.networkPrerequisiteStage = networkPrerequisiteStage;
+  }
+}
+
+function networkPrerequisiteFailureStage(error: unknown): NetworkPrerequisiteStage | undefined {
+  return error instanceof NetworkPrerequisiteError ? error.networkPrerequisiteStage : undefined;
+}
+
 async function prepareNetworkPrerequisites(
   release: string,
   valuesPath: string,
@@ -2209,16 +2261,19 @@ async function prepareNetworkPrerequisites(
   const subject = 'system:serviceaccount:' + NAMESPACE + ':tenant-migration-operator';
   const resolvedValuesPath = valuesPath + '.network-prerequisites';
   const operatorKubeconfigPath = resolvedValuesPath + '.operator-kubeconfig';
+  let stage: NetworkPrerequisiteStage = 'read-release-values';
   try {
     const resolvedValues = requireCommand(
       await helm(['get', 'values', release, '-n', NAMESPACE, '--all', '-o', 'yaml']),
       'TENANT_POLICY_RELEASE_VALUES_FAILED',
     );
+    stage = 'materialize-values';
     const parsedValues = materializeNetworkPrerequisiteValues(
       resolvedValues,
       apiProofSpkiSha256,
       release,
     );
+    stage = 'write-values';
     writeFileSync(resolvedValuesPath, dump(parsedValues, { noRefs: true, sortKeys: true }), {
       mode: 0o600,
     });
@@ -2234,7 +2289,9 @@ async function prepareNetworkPrerequisites(
       '--migration-operator-subject',
       subject,
     ];
+    stage = 'load-context';
     const context = await loadTask1PrerequisiteCommandContext(args, rootDir());
+    stage = 'render-admission';
     const admissionName = renderTask1AdmissionPair(context, 'network').policy.metadata.name;
     const cleanupAdmission = async (): Promise<void> => {
       for (const commandArgs of prerequisiteAdmissionCleanupCommands(admissionName)) {
@@ -2245,8 +2302,10 @@ async function prepareNetworkPrerequisites(
       defaultCommand('kubectl', commandArgs, stdin),
     );
     try {
+      stage = 'install-admission';
       await runTask1AdmissionAdministrator(context, adminPorts);
 
+      stage = 'issue-operator-token';
       const token = requireCommand(
         await kubectl([
           'create',
@@ -2259,6 +2318,7 @@ async function prepareNetworkPrerequisites(
         'TENANT_POLICY_OPERATOR_TOKEN_FAILED',
       ).trim();
       if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
+      stage = 'write-operator-kubeconfig';
       writeFileSync(operatorKubeconfigPath, await currentClusterTokenOnlyKubeconfig(), {
         mode: 0o600,
       });
@@ -2274,6 +2334,7 @@ async function prepareNetworkPrerequisites(
       const deadline = Date.now() + 120_000;
       while (true) {
         try {
+          stage = 'operator-verify';
           await runTask1PrerequisiteOperator(context, operatorPorts);
           return cleanupAdmission;
         } catch (error) {
@@ -2288,9 +2349,18 @@ async function prepareNetworkPrerequisites(
         }
       }
     } catch (error) {
-      await cleanupAdmission();
-      throw error;
+      const failedStage = stage;
+      stage = 'admission-cleanup';
+      try {
+        await cleanupAdmission();
+      } catch (cleanupError) {
+        throw new NetworkPrerequisiteError(stage, cleanupError);
+      }
+      throw new NetworkPrerequisiteError(failedStage, error);
     }
+  } catch (error) {
+    if (error instanceof NetworkPrerequisiteError) throw error;
+    throw new NetworkPrerequisiteError(stage, error);
   } finally {
     rmSync(resolvedValuesPath, { force: true });
     rmSync(operatorKubeconfigPath, { force: true });
@@ -3296,6 +3366,7 @@ async function runRealBundledLifecycle(
       networkPolicy,
     };
   } catch (caught) {
+    const networkPrerequisiteStage = networkPrerequisiteFailureStage(caught);
     let error = caught;
     if (cleanupNetworkPrerequisites) {
       try {
@@ -3312,6 +3383,7 @@ async function runRealBundledLifecycle(
       events: await getEvents(NAMESPACE),
       assertions,
       failedStage: stage,
+      ...(networkPrerequisiteStage ? { networkPrerequisiteStage } : {}),
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
@@ -3485,6 +3557,7 @@ async function runRealExternalTlsLifecycle(
       networkPolicy,
     };
   } catch (caught) {
+    const networkPrerequisiteStage = networkPrerequisiteFailureStage(caught);
     let error = caught;
     if (cleanupNetworkPrerequisites) {
       try {
@@ -3501,6 +3574,7 @@ async function runRealExternalTlsLifecycle(
       events: await getEvents(NAMESPACE),
       assertions,
       failedStage: stage,
+      ...(networkPrerequisiteStage ? { networkPrerequisiteStage } : {}),
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
