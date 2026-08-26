@@ -341,6 +341,20 @@ describe('Task 1 prerequisite command contract', () => {
       forbidden.get('Service', 'release-a-api-proof', 'commander'),
       /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
     );
+
+    const invalidGet = createTask1KubectlPorts(async () => 'not-json');
+    await assert.rejects(
+      invalidGet.get('Service', 'release-a-api-proof', 'commander'),
+      /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
+    );
+
+    const invalidCreate = createTask1KubectlPorts(async (args) =>
+      args[0] === 'get' ? '' : 'not-json',
+    );
+    await assert.rejects(
+      runTask1AdmissionAdministrator(await context(), invalidCreate),
+      /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
+    );
   });
 
   it('reviews the authenticated subject without submitting a token', async () => {
