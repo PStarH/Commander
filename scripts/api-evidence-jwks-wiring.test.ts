@@ -87,6 +87,35 @@ test('enterprise Helm fails without public JWKS Secret and demo remains renderab
   );
 });
 
+test('team tier fails closed without API secrets and renders with existingSecret', () => {
+  // Default values (tier: team) set NODE_ENV=production but no API secrets, so
+  // the API pod would crash-loop at boot (JWT_SECRET/COMMANDER_MASTER_KEY/...).
+  assert.throws(
+    () =>
+      execFileSync(
+        'helm',
+        ['template', 'team', 'deploy/helm/commander', '--set', 'image.tag=test'],
+        { cwd: root, encoding: 'utf8' },
+      ),
+    /api\.secrets|JWT_SECRET|team tier/,
+  );
+  assert.doesNotThrow(() =>
+    execFileSync(
+      'helm',
+      [
+        'template',
+        'team',
+        'deploy/helm/commander',
+        '--set',
+        'image.tag=test',
+        '--set',
+        'api.secrets.existingSecret=team-api-secrets',
+      ],
+      { cwd: root, encoding: 'utf8' },
+    ),
+  );
+});
+
 test('Compose rejects a missing public JWKS and injects it only into API services', () => {
   const env = {
     ...process.env,

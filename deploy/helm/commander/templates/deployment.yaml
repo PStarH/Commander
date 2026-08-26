@@ -2,6 +2,7 @@
 # Commander API — Deployment
 # =============================================================================
 {{- include "commander.requireEnterpriseSecrets" . }}
+{{- include "commander.requireApiSecrets" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

@@ -64,6 +64,23 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- if include "commander.postgresBackend" . -}}memory{{- else -}}{{ .Values.database.backend }}{{- end -}}
 {{- end -}}
 
+{{/*
+Non-demo tiers must supply API secrets. The API sets NODE_ENV=production by
+default (config.nodeEnv) and refuses to boot without JWT_SECRET / COMMANDER_MASTER_KEY
+/ COMMANDER_API_KEY / COMMANDER_CAPABILITY_TOKEN_KEY / COMMANDER_INTEGRITY_KEY.
+A team install with no secrets renders a deployment whose pods crash-loop, so
+fail at template time with an actionable message instead.
+*/}}
+{{- define "commander.requireApiSecrets" -}}
+{{- if ne .Values.tier "demo" -}}
+{{- if not .Values.api.secrets.existingSecret -}}
+{{- if or (not .Values.api.secrets.masterKeySecret) (not .Values.api.secrets.jwtSecretSecret) (not .Values.api.secrets.apiKeySecret) (not .Values.api.secrets.capabilityTokenKeySecret) (not .Values.api.secrets.integrityKeySecret) -}}
+{{- fail "team/enterprise tiers require api.secrets.existingSecret or all of masterKeySecret/jwtSecretSecret/apiKeySecret/capabilityTokenKeySecret/integrityKeySecret (API refuses to boot with NODE_ENV=production and no JWT_SECRET)" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "commander.requireEnterpriseSecrets" -}}
 {{- if eq .Values.tier "enterprise" -}}
 {{- if not .Values.database.postgres.existingSecret -}}{{- fail "enterprise tier requires database.postgres.existingSecret" -}}{{- end -}}
