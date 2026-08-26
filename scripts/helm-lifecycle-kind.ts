@@ -1871,6 +1871,10 @@ function writeSanitizedEvidence(evidence: SanitizedHarnessEvidence): void {
   process.stdout.write('Evidence written to ' + evidencePath + '\n');
 }
 
+export function writeBootstrapFailureEvidence(): void {
+  writeSanitizedEvidence(bootstrapFailureEvidence(undefined));
+}
+
 function fixturePath(name: string): string {
   return resolve(__dirname, 'fixtures', 'helm-lifecycle', name);
 }
@@ -3941,13 +3945,17 @@ function parseArgs(): HarnessOptions {
 export { runAll };
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
-  (async () => {
-    const opts = parseArgs();
-    const evidence = await runAll(opts);
-    process.exitCode = evidence.passed ? 0 : 1;
-  })().catch((error) => {
-    writeSanitizedEvidence(bootstrapFailureEvidence(error));
-    process.stderr.write('harness failed: KIND_LIFECYCLE_BOOTSTRAP_FAILED\n');
-    process.exitCode = 1;
-  });
+  if (process.argv[2] === 'bootstrap-evidence') {
+    writeBootstrapFailureEvidence();
+  } else {
+    (async () => {
+      const opts = parseArgs();
+      const evidence = await runAll(opts);
+      process.exitCode = evidence.passed ? 0 : 1;
+    })().catch((error) => {
+      writeBootstrapFailureEvidence();
+      process.stderr.write('harness failed: KIND_LIFECYCLE_BOOTSTRAP_FAILED\n');
+      process.exitCode = 1;
+    });
+  }
 }

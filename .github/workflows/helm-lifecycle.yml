@@ -71,6 +71,8 @@ jobs:
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
           pnpm --filter @commander/worker-plane build
+      - name: Seed Kind bootstrap evidence
+        run: pnpm exec tsx scripts/helm-lifecycle-kind.ts bootstrap-evidence
       - uses: helm/kind-action@v1
         with:
           cluster_name: commander-helm-lifecycle
