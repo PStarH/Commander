@@ -850,6 +850,10 @@ export interface SanitizedHarnessEvidence {
   kindNodeImage: string;
   calicoUrl: string;
   scenarios: SanitizedScenarioEvidence[];
+  bootstrapFailure?: {
+    stage: 'harness-bootstrap';
+    code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED';
+  };
   image?: {
     digest: string;
     sourceRevision?: string;
@@ -1843,6 +1847,28 @@ interface HarnessOptions {
 
 function rootDir(): string {
   return resolve(__dirname, '..');
+}
+
+export function bootstrapFailureEvidence(_error: unknown): SanitizedHarnessEvidence {
+  return {
+    generatedAt: new Date().toISOString(),
+    cluster: CLUSTER_NAME,
+    kindNodeImage: KIND_NODE_IMAGE,
+    calicoUrl: CALICO_URL,
+    scenarios: [],
+    bootstrapFailure: {
+      stage: 'harness-bootstrap',
+      code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
+    },
+    passed: false,
+    sanitized: true,
+  };
+}
+
+function writeSanitizedEvidence(evidence: SanitizedHarnessEvidence): void {
+  const evidencePath = resolve(rootDir(), 'kind-lifecycle-evidence.json');
+  writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
+  process.stdout.write('Evidence written to ' + evidencePath + '\n');
 }
 
 function fixturePath(name: string): string {
@@ -3892,9 +3918,7 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   const evidence = sanitizeEvidence(rawEvidence);
   evidence.sanitized = true;
 
-  const evidencePath = resolve(rootDir(), 'kind-lifecycle-evidence.json');
-  writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
-  process.stdout.write(`Evidence written to ${evidencePath}\n`);
+  writeSanitizedEvidence(evidence);
 
   return evidence;
 }
@@ -3916,15 +3940,14 @@ function parseArgs(): HarnessOptions {
 
 export { runAll };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
   (async () => {
     const opts = parseArgs();
     const evidence = await runAll(opts);
     process.exitCode = evidence.passed ? 0 : 1;
   })().catch((error) => {
-    process.stderr.write(
-      `harness failed: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-    process.exit(1);
+    writeSanitizedEvidence(bootstrapFailureEvidence(error));
+    process.stderr.write('harness failed: KIND_LIFECYCLE_BOOTSTRAP_FAILED\n');
+    process.exitCode = 1;
   });
 }

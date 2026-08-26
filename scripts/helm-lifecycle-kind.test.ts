@@ -13,6 +13,7 @@ import {
   assertProofPodContract,
   buildExternalPostgresResources,
   buildLifecycleValues,
+  bootstrapFailureEvidence,
   calicoImagesForArchitecture,
   kindNodeImageForArchitecture,
   leafCertificateExtensions,
@@ -1887,6 +1888,24 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(uploadStep, /path: kind-lifecycle-evidence\.json/);
     assert.match(uploadStep, /if-no-files-found: error/);
     assert.match(uploadStep, /retention-days: 30/);
+  });
+
+  it('creates a canonical sanitized artifact for a harness bootstrap failure', () => {
+    const evidence = bootstrapFailureEvidence(
+      new Error('opaque private postgres://api:secret@database/commander diagnostic'),
+    );
+
+    assert.equal(evidence.cluster, 'commander-helm-lifecycle');
+    assert.equal(evidence.kindNodeImage, KIND_NODE_IMAGE);
+    assert.equal(evidence.calicoUrl, CALICO_URL);
+    assert.deepEqual(evidence.scenarios, []);
+    assert.deepEqual(evidence.bootstrapFailure, {
+      stage: 'harness-bootstrap',
+      code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
+    });
+    assert.equal(evidence.passed, false);
+    assert.equal(evidence.sanitized, true);
+    assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
   });
 
   it('omits raw scenario diagnostics and retains only canonical safe evidence fields', () => {
