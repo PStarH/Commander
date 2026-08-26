@@ -2281,7 +2281,10 @@ async function verifyIssuedOperatorToken(token: string, subject: string): Promis
 }
 
 export function prerequisiteRetryableFailure(code: string): boolean {
-  return code === 'TENANT_POLICY_ADMISSION_NOT_READY';
+  return (
+    code === 'TENANT_POLICY_ADMISSION_NOT_READY' ||
+    code === 'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN'
+  );
 }
 
 class NetworkPrerequisiteError extends Error {

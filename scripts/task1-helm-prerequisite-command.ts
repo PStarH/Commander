@@ -1029,7 +1029,13 @@ export function createTask1KubectlPorts(
         const allowed = (status as Record<string, unknown>).allowed;
         if (allowed === true) return true;
         if (allowed === false) return false;
-      } catch {
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === 'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN'
+        ) {
+          throw error;
+        }
         fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
       }
       fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');

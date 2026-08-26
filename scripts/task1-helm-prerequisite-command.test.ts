@@ -418,6 +418,17 @@ describe('Task 1 prerequisite command contract', () => {
     );
   });
 
+  it('preserves an operator self-subject access review rejection for bounded readiness handling', async () => {
+    const ports = createTask1KubectlPorts(async () => {
+      throw new Error('TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN');
+    });
+
+    await assert.rejects(
+      ports.canI('get', 'validatingadmissionpolicies.admissionregistration.k8s.io'),
+      /TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN/,
+    );
+  });
+
   it('uses the canonical projection and renders the exact stable policy set', async () => {
     const loaded = await context();
     assert.equal(loaded.projection.sha256, loaded.annotationValue);
