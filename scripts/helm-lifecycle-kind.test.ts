@@ -1182,6 +1182,48 @@ describe('helm-lifecycle-kind helpers', () => {
     ]);
   });
 
+  it('isolates operator commands from administrator client credentials', () => {
+    const tokenOnlyKubeconfig = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        tokenOnlyKubeconfig?: (server: string, certificateAuthorityData: string) => string;
+      }
+    ).tokenOnlyKubeconfig;
+    const operatorKubectlArgs = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        operatorKubectlArgs?: (
+          token: string,
+          kubeconfigPath: string,
+          commandArgs: readonly string[],
+        ) => string[];
+      }
+    ).operatorKubectlArgs;
+
+    assert.equal(typeof tokenOnlyKubeconfig, 'function');
+    assert.equal(typeof operatorKubectlArgs, 'function');
+
+    const kubeconfig = tokenOnlyKubeconfig!(
+      'https://127.0.0.1:6443',
+      Buffer.from('public-ca').toString('base64'),
+    );
+    assert.match(kubeconfig, /server: https:\/\/127\.0\.0\.1:6443/);
+    assert.match(kubeconfig, /certificate-authority-data: cHVibGljLWNh/);
+    assert.doesNotMatch(kubeconfig, /client-certificate|client-key|token:/);
+    assert.deepEqual(
+      operatorKubectlArgs!('issued-service-account-token', '/tmp/operator-kubeconfig', [
+        'get',
+        'pods',
+      ]),
+      [
+        '--kubeconfig',
+        '/tmp/operator-kubeconfig',
+        '--token',
+        'issued-service-account-token',
+        'get',
+        'pods',
+      ],
+    );
+  });
+
   it('removes the prerequisite admission binding before its policy', () => {
     assert.deepEqual(prerequisiteAdmissionCleanupCommands('tenant-policy-guard'), [
       [
@@ -1938,8 +1980,7 @@ describe('helm-lifecycle-kind helpers', () => {
           durationMs: 100,
           events: [],
           assertions: [],
-          error:
-            'TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED: opaque private detail',
+          error: 'TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED: opaque private detail',
         },
       ],
       passed: false,

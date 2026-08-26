@@ -160,6 +160,67 @@ export function serviceAccountTokenArgs(token: string, commandArgs: readonly str
   return ['--token', token, ...commandArgs];
 }
 
+export function tokenOnlyKubeconfig(server: string, certificateAuthorityData: string): string {
+  try {
+    const endpoint = new URL(server);
+    if (
+      endpoint.protocol !== 'https:' ||
+      !endpoint.hostname ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      !['', '/'].includes(endpoint.pathname)
+    ) {
+      throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+    }
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+  const decodedCertificateAuthority = Buffer.from(certificateAuthorityData, 'base64');
+  if (
+    decodedCertificateAuthority.length === 0 ||
+    decodedCertificateAuthority.toString('base64') !== certificateAuthorityData
+  ) {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+  return dump(
+    {
+      apiVersion: 'v1',
+      clusters: [
+        {
+          cluster: {
+            'certificate-authority-data': certificateAuthorityData,
+            server,
+          },
+          name: 'operator-cluster',
+        },
+      ],
+      contexts: [
+        {
+          context: { cluster: 'operator-cluster', user: 'operator-token' },
+          name: 'operator-token',
+        },
+      ],
+      'current-context': 'operator-token',
+      kind: 'Config',
+      users: [{ name: 'operator-token', user: {} }],
+    },
+    { noRefs: true, sortKeys: true },
+  );
+}
+
+export function operatorKubectlArgs(
+  token: string,
+  kubeconfigPath: string,
+  commandArgs: readonly string[],
+): string[] {
+  if (!kubeconfigPath.startsWith('/') || /\0/.test(kubeconfigPath)) {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+  return ['--kubeconfig', kubeconfigPath, ...serviceAccountTokenArgs(token, commandArgs)];
+}
+
 export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
   if (!/^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$/.test(name)) {
     throw new Error('TENANT_POLICY_ADMISSION_NAME_INVALID');
@@ -1027,9 +1088,7 @@ function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   return codes.length > 0 ? codes : undefined;
 }
 
-function parseAdmissionRbacFailure(
-  error: string,
-): AdmissionRbacFailureEvidence | undefined {
+function parseAdmissionRbacFailure(error: string): AdmissionRbacFailureEvidence | undefined {
   const code = error.split(':', 1)[0];
   if (!code) return undefined;
   return Object.entries(ADMISSION_RBAC_FAILURES).find(([candidate]) => candidate === code)?.[1];
@@ -2060,6 +2119,34 @@ function helm(args: string[]): Promise<CommandResult> {
   return runCmd('helm', args);
 }
 
+async function currentClusterTokenOnlyKubeconfig(): Promise<string> {
+  try {
+    const server = requireCommand(
+      await kubectl([
+        'config',
+        'view',
+        '--minify',
+        '--raw',
+        '--output=jsonpath={.clusters[0].cluster.server}',
+      ]),
+      'TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID',
+    ).trim();
+    const certificateAuthorityData = requireCommand(
+      await kubectl([
+        'config',
+        'view',
+        '--minify',
+        '--raw',
+        '--output=jsonpath={.clusters[0].cluster.certificate-authority-data}',
+      ]),
+      'TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID',
+    ).trim();
+    return tokenOnlyKubeconfig(server, certificateAuthorityData);
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+}
+
 async function prepareNetworkPrerequisites(
   release: string,
   valuesPath: string,
@@ -2067,6 +2154,7 @@ async function prepareNetworkPrerequisites(
 ): Promise<() => Promise<void>> {
   const subject = 'system:serviceaccount:' + NAMESPACE + ':tenant-migration-operator';
   const resolvedValuesPath = valuesPath + '.network-prerequisites';
+  const operatorKubeconfigPath = resolvedValuesPath + '.operator-kubeconfig';
   try {
     const resolvedValues = requireCommand(
       await helm(['get', 'values', release, '-n', NAMESPACE, '--all', '-o', 'yaml']),
@@ -2144,9 +2232,16 @@ async function prepareNetworkPrerequisites(
         'TENANT_POLICY_OPERATOR_TOKEN_FAILED',
       ).trim();
       if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
+      writeFileSync(operatorKubeconfigPath, await currentClusterTokenOnlyKubeconfig(), {
+        mode: 0o600,
+      });
       const operatorPorts = createTask1KubectlPorts(
         (commandArgs, stdin) =>
-          defaultCommand('kubectl', serviceAccountTokenArgs(token, commandArgs), stdin),
+          defaultCommand(
+            'kubectl',
+            operatorKubectlArgs(token, operatorKubeconfigPath, commandArgs),
+            stdin,
+          ),
         async () => token,
       );
       const deadline = Date.now() + 120_000;
@@ -2171,6 +2266,7 @@ async function prepareNetworkPrerequisites(
     }
   } finally {
     rmSync(resolvedValuesPath, { force: true });
+    rmSync(operatorKubeconfigPath, { force: true });
   }
 }
 
