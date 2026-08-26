@@ -37,6 +37,7 @@ import {
   retainRolloutFailureEvidence,
   productionImageSourceRevision,
   proofReaderCanIArgs,
+  prerequisiteRetryableFailure,
   serviceAccountTokenArgs,
   waitForCleanupCheck,
   KIND_NODE_IMAGE,
@@ -1180,6 +1181,19 @@ describe('helm-lifecycle-kind helpers', () => {
       'get',
       'pods',
     ]);
+  });
+
+  it('retries only transient prerequisite readiness failures', () => {
+    assert.equal(prerequisiteRetryableFailure('TENANT_POLICY_ADMISSION_NOT_READY'), true);
+    assert.equal(
+      prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FORBIDDEN'),
+      true,
+    );
+    assert.equal(
+      prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FORBIDDEN'),
+      false,
+    );
+    assert.equal(prerequisiteRetryableFailure('TENANT_POLICY_SUBJECT_MISMATCH'), false);
   });
 
   it('isolates operator commands from administrator client credentials', () => {
