@@ -628,7 +628,14 @@ async function ensureCreateOnly(
   }
   for (let index = 0; index < objects.length; index += 1) {
     const expected = objects[index]!;
-    if (!existing[index]) await ports.create(expected);
+    if (!existing[index]) {
+      try {
+        await ports.create(expected);
+      } catch (error) {
+        if (error instanceof SyntaxError) fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+        throw error;
+      }
+    }
     const observed = await ports.get(
       expected.kind,
       expected.metadata.name,
@@ -980,7 +987,11 @@ export function createTask1KubectlPorts(
       if (namespace) args.push('--namespace', namespace);
       const output = await runCommand(args);
       if (!output.trim()) return null;
-      return JSON.parse(output) as Task1KubernetesObject;
+      try {
+        return JSON.parse(output) as Task1KubernetesObject;
+      } catch {
+        fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+      }
     },
     async create(object) {
       return JSON.parse(
