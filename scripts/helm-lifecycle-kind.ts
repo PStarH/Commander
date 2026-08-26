@@ -1880,6 +1880,7 @@ export async function runBootstrapStage<T>(
   stage: BootstrapFailureStage,
   operation: () => Promise<T>,
 ): Promise<T> {
+  writeBootstrapFailureEvidence(stage);
   try {
     return await operation();
   } catch {
