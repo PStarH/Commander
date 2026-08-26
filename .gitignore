@@ -67,6 +67,16 @@ temp/
 /.commander/scheduler/
 /.commander/webhooks/
 
+# Auth runtime state — credential material, never commit.
+# Written to <cwd>/.commander/ by userStore/apiKeyStore/refreshTokenStore when
+# the API is started from the repo root (e.g. `tsx apps/api/src/index.ts`).
+/.commander/users.json
+/.commander/users.json.corrupt-*
+/.commander/api_keys.json
+/.commander/api_keys.json.corrupt-*
+/.commander/refresh_tokens.json
+/.commander/refresh_tokens.json.corrupt-*
+
 # Generated files
 apps/api/data/
 apps/api/dist/
