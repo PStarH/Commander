@@ -1895,22 +1895,37 @@ describe('helm-lifecycle-kind helpers', () => {
     const runtimeBuild = workflow.indexOf('Build Kind lifecycle runtime packages');
     const seed = workflow.indexOf('Seed Kind bootstrap evidence');
     const kind = workflow.indexOf('uses: helm/kind-action@v1');
+    const provisionFailure = workflow.indexOf('Record Kind provisioning failure');
+    const harnessSeed = workflow.indexOf('Seed Kind harness evidence');
     const harness = workflow.indexOf('pnpm exec tsx scripts/helm-lifecycle-kind.ts run');
 
     assert.ok(runtimeBuild >= 0);
     assert.ok(seed > runtimeBuild, 'bootstrap evidence must have built runtime dependencies');
     assert.ok(seed < kind, 'bootstrap evidence must exist before Kind provisioning');
+    assert.ok(
+      provisionFailure > kind,
+      'Kind provisioning failures must overwrite bootstrap evidence',
+    );
+    assert.ok(harnessSeed > provisionFailure, 'harness evidence must follow Kind provisioning');
+    assert.ok(harnessSeed < harness, 'the harness must replace its pending evidence');
     assert.ok(kind < harness, 'the harness must replace bootstrap evidence after provisioning');
     assert.match(
       workflow,
       /name: Seed Kind bootstrap evidence\n        run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts bootstrap-evidence/,
     );
+    assert.match(workflow, /id: provision-kind\n        uses: helm\/kind-action@v1/);
+    assert.match(
+      workflow,
+      /name: Record Kind provisioning failure\n        if: \$\{\{ always\(\) && steps\.provision-kind\.outcome == 'failure' \}\}\n        run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts bootstrap-evidence kind-provisioning/,
+    );
+    assert.match(
+      workflow,
+      /name: Seed Kind harness evidence\n        if: \$\{\{ success\(\) && steps\.provision-kind\.outcome == 'success' \}\}\n        run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts bootstrap-evidence harness-bootstrap/,
+    );
   });
 
   it('creates a canonical sanitized artifact for a harness bootstrap failure', () => {
-    const evidence = bootstrapFailureEvidence(
-      new Error('opaque private postgres://api:secret@database/commander diagnostic'),
-    );
+    const evidence = bootstrapFailureEvidence();
 
     assert.equal(evidence.cluster, 'commander-helm-lifecycle');
     assert.equal(evidence.kindNodeImage, KIND_NODE_IMAGE);
@@ -1923,6 +1938,11 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(evidence.passed, false);
     assert.equal(evidence.sanitized, true);
     assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
+
+    assert.deepEqual(bootstrapFailureEvidence('kind-provisioning').bootstrapFailure, {
+      stage: 'kind-provisioning',
+      code: 'KIND_LIFECYCLE_KIND_PROVISION_FAILED',
+    });
   });
 
   it('omits raw scenario diagnostics and retains only canonical safe evidence fields', () => {
