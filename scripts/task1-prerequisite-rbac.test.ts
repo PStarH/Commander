@@ -72,11 +72,6 @@ describe('Task 1 prerequisite operator RBAC', () => {
     );
     assert.deepEqual(clusterRole.rules, [
       {
-        apiGroups: ['authentication.k8s.io'],
-        resources: ['selfsubjectreviews'],
-        verbs: ['create'],
-      },
-      {
         apiGroups: ['authorization.k8s.io'],
         resources: ['selfsubjectaccessreviews'],
         verbs: ['create'],

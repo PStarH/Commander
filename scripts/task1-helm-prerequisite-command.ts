@@ -63,7 +63,6 @@ export interface Task1PrerequisiteContext {
 export interface Task1PrerequisiteCommandPorts {
   get(kind: string, name: string, namespace?: string): Promise<Task1KubernetesObject | null>;
   create(object: Task1KubernetesObject): Promise<Task1KubernetesObject>;
-  selfSubjectReview(): Promise<string>;
   canI(verb: string, resource: string, name?: string): Promise<boolean>;
   dryRunCreate(object: Task1KubernetesObject): Promise<boolean>;
   readPublicCertificate(namespace: string, secretName: string, key: string): Promise<string>;
@@ -894,8 +893,6 @@ export async function runTask1PrerequisiteOperator(
   context: Task1PrerequisiteContext,
   ports: Task1PrerequisiteCommandPorts,
 ): Promise<void> {
-  if ((await ports.selfSubjectReview()) !== context.request.migrationOperatorSubject)
-    fail('TENANT_POLICY_SUBJECT_MISMATCH');
   await requireAdmission(context, 'network', ports);
   if (context.request.stage === 'workload') {
     await requireReadyDeployment(context, ports);
@@ -1001,34 +998,6 @@ export function createTask1KubectlPorts(
           `${canonicalBootstrapJson(object)}\n`,
         ),
       ) as Task1KubernetesObject;
-    },
-    async selfSubjectReview() {
-      const output = await runCommand(
-        ['create', '--filename', '-', '--output', 'json'],
-        canonicalBootstrapJson({
-          apiVersion: 'authentication.k8s.io/v1',
-          kind: 'SelfSubjectReview',
-        }) + '\n',
-      );
-      let review: Record<string, unknown>;
-      try {
-        review = JSON.parse(output) as Record<string, unknown>;
-      } catch {
-        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
-      }
-      const status = review.status;
-      if (!status || typeof status !== 'object' || Array.isArray(status)) {
-        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
-      }
-      const userInfo = (status as Record<string, unknown>).userInfo;
-      if (!userInfo || typeof userInfo !== 'object' || Array.isArray(userInfo)) {
-        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
-      }
-      const username = (userInfo as Record<string, unknown>).username;
-      if (typeof username !== 'string' || username.length === 0) {
-        fail('TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED');
-      }
-      return username;
     },
     async canI(verb, resource, objectName) {
       const [resourceName, ...groupParts] = resource.split('.');

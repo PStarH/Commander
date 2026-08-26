@@ -1206,32 +1206,55 @@ describe('helm-lifecycle-kind helpers', () => {
     ]);
   });
 
-  it('builds an exact administrator review for the operator self-review permission', () => {
-    const accessReview = (
+  it('builds an exact administrator token review for the issued operator credential', () => {
+    const tokenReview = (
       lifecycleHarness as typeof lifecycleHarness & {
-        operatorSelfSubjectReviewAccessReview?: (subject: string) => Record<string, unknown>;
+        operatorTokenReview?: (token: string) => Record<string, unknown>;
       }
-    ).operatorSelfSubjectReviewAccessReview;
-    assert.equal(typeof accessReview, 'function');
+    ).operatorTokenReview;
+    assert.equal(typeof tokenReview, 'function');
 
-    assert.deepEqual(
-      accessReview!('system:serviceaccount:commander-lifecycle:tenant-migration-operator'),
-      {
-        apiVersion: 'authorization.k8s.io/v1',
-        kind: 'SubjectAccessReview',
-        spec: {
-          user: 'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
-          resourceAttributes: {
-            verb: 'create',
-            group: 'authentication.k8s.io',
-            resource: 'selfsubjectreviews',
-          },
-        },
+    assert.deepEqual(tokenReview!('issued-service-account-token'), {
+      apiVersion: 'authentication.k8s.io/v1',
+      kind: 'TokenReview',
+      spec: {
+        token: 'issued-service-account-token',
       },
+    });
+    assert.throws(
+      () => tokenReview!('issued service account token'),
+      /TENANT_POLICY_OPERATOR_TOKEN_INVALID/,
+    );
+  });
+
+  it('accepts only an authenticated operator token review for the expected subject', () => {
+    const verifyTokenReview = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        verifyOperatorTokenReview?: (review: unknown, subject: string) => void;
+      }
+    ).verifyOperatorTokenReview;
+    assert.equal(typeof verifyTokenReview, 'function');
+
+    const subject = 'system:serviceaccount:commander-lifecycle:tenant-migration-operator';
+    assert.doesNotThrow(() =>
+      verifyTokenReview!({ status: { authenticated: true, user: { username: subject } } }, subject),
     );
     assert.throws(
-      () => accessReview!('system:serviceaccount:invalid'),
-      /TENANT_POLICY_OPERATOR_RBAC_REVIEW_INVALID/,
+      () => verifyTokenReview!({ status: { authenticated: false } }, subject),
+      /TENANT_POLICY_OPERATOR_TOKEN_INVALID/,
+    );
+    assert.throws(
+      () =>
+        verifyTokenReview!(
+          {
+            status: {
+              authenticated: true,
+              user: { username: 'system:serviceaccount:commander-lifecycle:other' },
+            },
+          },
+          subject,
+        ),
+      /TENANT_POLICY_SUBJECT_MISMATCH/,
     );
   });
 
@@ -1239,10 +1262,6 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(prerequisiteRetryableFailure('TENANT_POLICY_ADMISSION_NOT_READY'), true);
     assert.equal(
       prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FORBIDDEN'),
-      false,
-    );
-    assert.equal(
-      prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_REVIEW_FORBIDDEN'),
       false,
     );
     assert.equal(
