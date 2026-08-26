@@ -57,9 +57,6 @@ function memoryPorts(seed: Task1KubernetesObject[] = []): Task1PrerequisiteComma
       created.push(structuredClone(object));
       return structuredClone(object);
     },
-    async selfSubjectReview() {
-      return subject;
-    },
     async canI() {
       return false;
     },
@@ -380,31 +377,6 @@ describe('Task 1 prerequisite command contract', () => {
     );
   });
 
-  it('reviews the authenticated subject without submitting a token', async () => {
-    let request = '';
-    const ports = createTask1KubectlPorts(async (args, stdin) => {
-      assert.deepEqual(args.slice(0, 2), ['create', '--filename']);
-      request = stdin ?? '';
-      return JSON.stringify({ status: { userInfo: { username: subject } } });
-    });
-
-    assert.equal(await ports.selfSubjectReview(), subject);
-    assert.deepEqual(JSON.parse(request), {
-      apiVersion: 'authentication.k8s.io/v1',
-      kind: 'SelfSubjectReview',
-    });
-    assert.doesNotMatch(request, /token/i);
-
-    const malformed = createTask1KubectlPorts(async () => JSON.stringify({ status: {} }));
-    await assert.rejects(malformed.selfSubjectReview(), /TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED/);
-
-    const invalidJson = createTask1KubectlPorts(async () => 'not-json');
-    await assert.rejects(
-      invalidJson.selfSubjectReview(),
-      /TENANT_POLICY_SELF_SUBJECT_REVIEW_FAILED/,
-    );
-  });
-
   it('uses a self-subject access review for a named grouped resource', async () => {
     let command: readonly string[] = [];
     let request = '';
@@ -634,7 +606,7 @@ describe('Task 1 prerequisite command contract', () => {
     );
   });
 
-  it('operator verifies identity, admission/RBAC, live Services and creates only stable policies', async () => {
+  it('operator verifies admission/RBAC, live Services and creates only stable policies', async () => {
     const loaded = await context();
     const pair = renderTask1AdmissionPair(loaded, 'network');
     pair.policy.status = { observedGeneration: 1, typeChecking: { expressionWarnings: [] } };
@@ -722,18 +694,11 @@ describe('Task 1 prerequisite command contract', () => {
     assert.equal(ports.created.length, 3);
   });
 
-  it('operator fails closed on subject mismatch, admission write permission, or Service drift', async () => {
+  it('operator fails closed on admission write permission or Service drift', async () => {
     const loaded = await context();
     const pair = renderTask1AdmissionPair(loaded, 'network');
     pair.policy.metadata.generation = 1;
     pair.policy.status = { observedGeneration: 1, typeChecking: { expressionWarnings: [] } };
-    const wrongSubject = memoryPorts([pair.policy, pair.binding]);
-    wrongSubject.selfSubjectReview = async () => 'system:serviceaccount:commander-ops:other';
-    await assert.rejects(
-      runTask1PrerequisiteOperator(loaded, wrongSubject),
-      /TENANT_POLICY_SUBJECT_MISMATCH/,
-    );
-
     const broadRbac = memoryPorts([pair.policy, pair.binding]);
     broadRbac.canI = async () => true;
     await assert.rejects(

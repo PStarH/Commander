@@ -224,22 +224,29 @@ export function operatorKubectlArgs(
   return ['--kubeconfig', kubeconfigPath, ...serviceAccountTokenArgs(token, commandArgs)];
 }
 
-export function operatorSelfSubjectReviewAccessReview(subject: string): Record<string, unknown> {
-  if (!SERVICE_ACCOUNT_SUBJECT.test(subject)) {
-    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_INVALID');
+export function operatorTokenReview(token: string): Record<string, unknown> {
+  if (!token || /\s/.test(token)) {
+    throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
   }
   return {
-    apiVersion: 'authorization.k8s.io/v1',
-    kind: 'SubjectAccessReview',
+    apiVersion: 'authentication.k8s.io/v1',
+    kind: 'TokenReview',
     spec: {
-      user: subject,
-      resourceAttributes: {
-        verb: 'create',
-        group: 'authentication.k8s.io',
-        resource: 'selfsubjectreviews',
-      },
+      token,
     },
   };
+}
+
+export function verifyOperatorTokenReview(review: unknown, subject: string): void {
+  if (!SERVICE_ACCOUNT_SUBJECT.test(subject)) {
+    throw new Error('TENANT_POLICY_SUBJECT_MISMATCH');
+  }
+  const status = jsonRecord(jsonRecord(review)?.status);
+  const user = jsonRecord(status?.user);
+  if (status?.authenticated !== true || typeof user?.username !== 'string') {
+    throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
+  }
+  if (user.username !== subject) throw new Error('TENANT_POLICY_SUBJECT_MISMATCH');
 }
 
 export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
@@ -688,8 +695,8 @@ const NETWORK_PREREQUISITE_STAGES = [
   'load-context',
   'render-admission',
   'install-admission',
-  'operator-rbac-ready',
   'issue-operator-token',
+  'verify-operator-token',
   'write-operator-kubeconfig',
   'operator-verify',
   'admission-cleanup',
@@ -2257,28 +2264,20 @@ async function currentClusterTokenOnlyKubeconfig(): Promise<string> {
   }
 }
 
-async function waitForOperatorSelfSubjectReviewAccess(
-  subject: string,
-  deadline: number,
-): Promise<void> {
-  const request = canonicalBootstrapJson(operatorSelfSubjectReviewAccessReview(subject)) + '\n';
-  while (true) {
-    let review: unknown;
-    try {
-      review = JSON.parse(
-        await defaultCommand('kubectl', ['create', '--filename', '-', '--output', 'json'], request),
-      );
-    } catch {
-      throw new Error('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
-    }
-    const status = jsonRecord(jsonRecord(review)?.status);
-    if (!status || typeof status.allowed !== 'boolean') {
-      throw new Error('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
-    }
-    if (status.allowed) return;
-    if (Date.now() >= deadline) throw new Error('TENANT_POLICY_OPERATOR_RBAC_NOT_READY');
-    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+async function verifyIssuedOperatorToken(token: string, subject: string): Promise<void> {
+  let review: unknown;
+  try {
+    review = JSON.parse(
+      await defaultCommand(
+        'kubectl',
+        ['create', '--filename', '-', '--output', 'json'],
+        canonicalBootstrapJson(operatorTokenReview(token)) + '\n',
+      ),
+    );
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
   }
+  verifyOperatorTokenReview(review, subject);
 }
 
 export function prerequisiteRetryableFailure(code: string): boolean {
@@ -2351,10 +2350,6 @@ async function prepareNetworkPrerequisites(
       stage = 'install-admission';
       await runTask1AdmissionAdministrator(context, adminPorts);
 
-      const deadline = Date.now() + 120_000;
-      stage = 'operator-rbac-ready';
-      await waitForOperatorSelfSubjectReviewAccess(subject, deadline);
-
       stage = 'issue-operator-token';
       const token = requireCommand(
         await kubectl([
@@ -2368,6 +2363,8 @@ async function prepareNetworkPrerequisites(
         'TENANT_POLICY_OPERATOR_TOKEN_FAILED',
       ).trim();
       if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
+      stage = 'verify-operator-token';
+      await verifyIssuedOperatorToken(token, subject);
       stage = 'write-operator-kubeconfig';
       writeFileSync(operatorKubeconfigPath, await currentClusterTokenOnlyKubeconfig(), {
         mode: 0o600,
@@ -2381,6 +2378,7 @@ async function prepareNetworkPrerequisites(
           ),
         async () => token,
       );
+      const deadline = Date.now() + 120_000;
       while (true) {
         try {
           stage = 'operator-verify';
