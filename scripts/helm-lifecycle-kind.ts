@@ -14,6 +14,7 @@ import { arch, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { dump, load } from 'js-yaml';
+import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
 import { isAllowedHelmDiagnosticCode } from './helm-diagnostic-policy.js';
 import { defaultCommand } from './helm-tenant-cutover.js';
 import {
@@ -105,6 +106,8 @@ const EXTERNAL_DATABASE_NAMESPACE = 'commander-external-database';
 const RUN_ID = `${Date.now().toString(36)}-${process.pid}`;
 const CALICO_IMAGES = calicoImagesForArchitecture(arch());
 const POSTGRES_IMAGE = postgresImageForArchitecture(arch());
+const SERVICE_ACCOUNT_SUBJECT =
+  /^system:serviceaccount:([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?):([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)$/;
 
 function scenarioRelease(prefix: string): string {
   return `${prefix}-${RUN_ID}`;
@@ -219,6 +222,24 @@ export function operatorKubectlArgs(
     throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
   }
   return ['--kubeconfig', kubeconfigPath, ...serviceAccountTokenArgs(token, commandArgs)];
+}
+
+export function operatorSelfSubjectReviewAccessReview(subject: string): Record<string, unknown> {
+  if (!SERVICE_ACCOUNT_SUBJECT.test(subject)) {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_INVALID');
+  }
+  return {
+    apiVersion: 'authorization.k8s.io/v1',
+    kind: 'SubjectAccessReview',
+    spec: {
+      user: subject,
+      resourceAttributes: {
+        verb: 'create',
+        group: 'authentication.k8s.io',
+        resource: 'selfsubjectreviews',
+      },
+    },
+  };
 }
 
 export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
@@ -667,6 +688,7 @@ const NETWORK_PREREQUISITE_STAGES = [
   'load-context',
   'render-admission',
   'install-admission',
+  'operator-rbac-ready',
   'issue-operator-token',
   'write-operator-kubeconfig',
   'operator-verify',
@@ -2235,6 +2257,30 @@ async function currentClusterTokenOnlyKubeconfig(): Promise<string> {
   }
 }
 
+async function waitForOperatorSelfSubjectReviewAccess(
+  subject: string,
+  deadline: number,
+): Promise<void> {
+  const request = canonicalBootstrapJson(operatorSelfSubjectReviewAccessReview(subject)) + '\n';
+  while (true) {
+    let review: unknown;
+    try {
+      review = JSON.parse(
+        await defaultCommand('kubectl', ['create', '--filename', '-', '--output', 'json'], request),
+      );
+    } catch {
+      throw new Error('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+    }
+    const status = jsonRecord(jsonRecord(review)?.status);
+    if (!status || typeof status.allowed !== 'boolean') {
+      throw new Error('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+    }
+    if (status.allowed) return;
+    if (Date.now() >= deadline) throw new Error('TENANT_POLICY_OPERATOR_RBAC_NOT_READY');
+    await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+  }
+}
+
 export function prerequisiteRetryableFailure(code: string): boolean {
   return code === 'TENANT_POLICY_ADMISSION_NOT_READY';
 }
@@ -2305,6 +2351,10 @@ async function prepareNetworkPrerequisites(
       stage = 'install-admission';
       await runTask1AdmissionAdministrator(context, adminPorts);
 
+      const deadline = Date.now() + 120_000;
+      stage = 'operator-rbac-ready';
+      await waitForOperatorSelfSubjectReviewAccess(subject, deadline);
+
       stage = 'issue-operator-token';
       const token = requireCommand(
         await kubectl([
@@ -2331,7 +2381,6 @@ async function prepareNetworkPrerequisites(
           ),
         async () => token,
       );
-      const deadline = Date.now() + 120_000;
       while (true) {
         try {
           stage = 'operator-verify';
