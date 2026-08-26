@@ -134,6 +134,44 @@ describe('Helm owner Job diagnostics', () => {
     );
   });
 
+  it('classifies token-only kubectl create failures by their subcommand', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-token-only-kubectl-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      [
+        '#!/usr/bin/env node',
+        "process.stderr.write('Error from server (Forbidden): forbidden\\n');",
+        'process.exitCode = 1;',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      await assert.rejects(
+        helmTenantCutover.defaultCommand(
+          'kubectl',
+          [
+            '--kubeconfig',
+            '/tmp/operator-kubeconfig',
+            '--token',
+            'issued-service-account-token',
+            'create',
+            '--filename',
+            '-',
+          ],
+          '{}',
+        ),
+        /TENANT_CUTOVER_KUBECTL_CREATE_FORBIDDEN/,
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('accepts kubectl auth can-i denial as a structured negative result', async () => {
     const root = await mkdtemp(join(tmpdir(), 'commander-helm-can-i-denial-'));
     const kubectl = join(root, 'kubectl');

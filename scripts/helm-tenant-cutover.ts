@@ -2323,14 +2323,33 @@ export function commandExecutionTimeoutMs(policy: CommandExecutionPolicy | strin
   return Math.min(timeout, COMMAND_TIMEOUT_ABSOLUTE_CAP_MS);
 }
 
+function kubectlSubcommand(args: readonly string[]): { name: string; index: number } {
+  let index = 0;
+  while (index < args.length) {
+    const value = args[index]!;
+    if (value === '--kubeconfig' || value === '--token') {
+      index += 2;
+      continue;
+    }
+    if (value.startsWith('--kubeconfig=') || value.startsWith('--token=')) {
+      index += 1;
+      continue;
+    }
+    return { name: value, index };
+  }
+  return { name: '', index };
+}
+
 export function commandFailureCode(
   program: string,
   args: readonly string[],
   stdin?: string,
   stderr = '',
 ): string {
+  const kubectlCommand = program === 'kubectl' ? kubectlSubcommand(args) : undefined;
+  const command = kubectlCommand?.name;
   let createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED';
-  if (args[0] === 'create' && stdin) {
+  if (command === 'create' && stdin) {
     try {
       const object = load(stdin) as {
         kind?: unknown;
@@ -2354,7 +2373,7 @@ export function commandFailureCode(
       // Non-canonical create input retains the generic fixed code.
     }
   }
-  if (args[0] === 'create') {
+  if (command === 'create') {
     if (/\bAlreadyExists\b/.test(stderr)) {
       createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_ALREADY_EXISTS';
     } else if (/\bforbidden\b/i.test(stderr)) {
@@ -2369,21 +2388,21 @@ export function commandFailureCode(
     }
   }
   const kubectlCode =
-    args[0] === 'auth' && args[1] === 'can-i'
+    command === 'auth' && args[(kubectlCommand?.index ?? 0) + 1] === 'can-i'
       ? 'TENANT_CUTOVER_KUBECTL_AUTH_CAN_I_FAILED'
-      : args[0] === 'apply'
+      : command === 'apply'
         ? 'TENANT_CUTOVER_KUBECTL_APPLY_FAILED'
-        : args[0] === 'create'
+        : command === 'create'
           ? createCode
-          : args[0] === 'delete'
+          : command === 'delete'
             ? 'TENANT_CUTOVER_KUBECTL_DELETE_FAILED'
-            : args[0] === 'get'
+            : command === 'get'
               ? 'TENANT_CUTOVER_KUBECTL_GET_FAILED'
-              : args[0] === 'logs'
+              : command === 'logs'
                 ? 'TENANT_CUTOVER_KUBECTL_LOGS_COMMAND_FAILED'
-                : args[0] === 'version'
+                : command === 'version'
                   ? 'TENANT_CUTOVER_KUBECTL_VERSION_FAILED'
-                  : args[0] === 'wait'
+                  : command === 'wait'
                     ? 'TENANT_CUTOVER_KUBECTL_WAIT_FAILED'
                     : 'TENANT_CUTOVER_KUBECTL_COMMAND_FAILED';
   const code =
@@ -2403,9 +2422,11 @@ export async function defaultCommand(
   executionPolicy: CommandExecutionPolicy = 'standard',
 ): Promise<string> {
   return new Promise((resolveCommand, reject) => {
+    const kubectlCommand = program === 'kubectl' ? kubectlSubcommand(args).name : undefined;
     const canICheck = program === 'kubectl' && args.includes('auth') && args.includes('can-i');
     const captureStderr =
-      (program === 'kubectl' && (args[0] === 'logs' || args[0] === 'create')) || canICheck;
+      (program === 'kubectl' && (kubectlCommand === 'logs' || kubectlCommand === 'create')) ||
+      canICheck;
     const processGroup = process.platform !== 'win32';
     const child = launchProcess(program, [...args], {
       detached: processGroup,
@@ -2531,7 +2552,7 @@ export async function defaultCommand(
       clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
       resolveCommand(
-        canICheck || args[0] === 'create'
+        canICheck || kubectlCommand === 'create'
           ? stdoutText
           : Buffer.concat([...output, ...errorOutput]).toString('utf8'),
       );
