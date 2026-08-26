@@ -45,6 +45,29 @@ import {
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('fails closed before invalid Helm values reach network prerequisites', () => {
+    const materialize = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        materializeNetworkPrerequisiteValues?: (
+          values: string,
+          apiProofSpkiSha256: string,
+          release: string,
+        ) => Record<string, unknown>;
+      }
+    ).materializeNetworkPrerequisiteValues;
+    assert.equal(typeof materialize, 'function');
+
+    for (const values of [
+      'tenantAuthority: [',
+      'tenantAuthority:\n  chartContentSha256: ' + 'c'.repeat(64) + '\nnetworkPolicy: {}\n',
+    ]) {
+      assert.throws(
+        () => materialize!(values, 'a'.repeat(64), 'release-a'),
+        /TENANT_POLICY_RELEASE_VALUES_INVALID/,
+      );
+    }
+  });
+
   it('retains the rejected Kubernetes object type for invalid creates', () => {
     const createObjects = [
       { kind: 'ConfigMap', metadata: {} },

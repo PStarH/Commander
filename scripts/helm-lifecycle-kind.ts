@@ -1111,6 +1111,56 @@ function jsonRecord(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+export function materializeNetworkPrerequisiteValues(
+  values: string,
+  apiProofSpkiSha256: string,
+  release: string,
+): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = load(values);
+  } catch {
+    throw new Error('TENANT_POLICY_RELEASE_VALUES_INVALID');
+  }
+  const parsedValues = jsonRecord(parsed);
+  const tenantAuthority = jsonRecord(parsedValues?.tenantAuthority);
+  const apiProof = jsonRecord(tenantAuthority?.apiProof);
+  const networkPolicy = jsonRecord(parsedValues?.networkPolicy);
+  const chartContentSha256 = tenantAuthority?.chartContentSha256;
+  const proofPort = apiProof?.port;
+  if (
+    !parsedValues ||
+    !tenantAuthority ||
+    !apiProof ||
+    !networkPolicy ||
+    typeof chartContentSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(chartContentSha256) ||
+    typeof proofPort !== 'number' ||
+    !Number.isSafeInteger(proofPort) ||
+    proofPort < 1 ||
+    proofPort > 65535 ||
+    !/^[a-f0-9]{64}$/.test(apiProofSpkiSha256)
+  ) {
+    throw new Error('TENANT_POLICY_RELEASE_VALUES_INVALID');
+  }
+  tenantAuthority.platformBinding = { chartContentSha256 };
+  tenantAuthority.apiProof = {
+    ...apiProof,
+    publicCertificateSpkiSha256: apiProofSpkiSha256,
+    serviceName: release + '-api-proof',
+    servicePort: proofPort,
+    targetPort: proofPort,
+    podSelector: {
+      'app.kubernetes.io/name': release,
+      'app.kubernetes.io/instance': release,
+      'app.kubernetes.io/component': 'api',
+    },
+    dnsSan: release + '-api-proof.' + NAMESPACE + '.svc.cluster.local',
+  };
+  networkPolicy.clusterDomain = 'cluster.local';
+  return parsedValues;
+}
+
 function jsonArray(value: unknown): unknown[] | undefined {
   return Array.isArray(value) ? value : undefined;
 }
@@ -2164,38 +2214,11 @@ async function prepareNetworkPrerequisites(
       await helm(['get', 'values', release, '-n', NAMESPACE, '--all', '-o', 'yaml']),
       'TENANT_POLICY_RELEASE_VALUES_FAILED',
     );
-    const parsedValues = load(resolvedValues) as Record<string, unknown>;
-    const tenantAuthority = parsedValues.tenantAuthority as Record<string, unknown>;
-    const apiProof = tenantAuthority.apiProof as Record<string, unknown>;
-    const networkPolicy = parsedValues.networkPolicy as Record<string, unknown>;
-    const chartContentSha256 = tenantAuthority.chartContentSha256;
-    const proofPort = apiProof.port;
-    if (
-      typeof chartContentSha256 !== 'string' ||
-      !/^[a-f0-9]{64}$/.test(chartContentSha256) ||
-      typeof proofPort !== 'number' ||
-      !Number.isSafeInteger(proofPort) ||
-      proofPort < 1 ||
-      proofPort > 65535 ||
-      !/^[a-f0-9]{64}$/.test(apiProofSpkiSha256)
-    ) {
-      throw new Error('TENANT_POLICY_RELEASE_VALUES_INVALID');
-    }
-    tenantAuthority.platformBinding = { chartContentSha256 };
-    tenantAuthority.apiProof = {
-      ...apiProof,
-      publicCertificateSpkiSha256: apiProofSpkiSha256,
-      serviceName: release + '-api-proof',
-      servicePort: proofPort,
-      targetPort: proofPort,
-      podSelector: {
-        'app.kubernetes.io/name': release,
-        'app.kubernetes.io/instance': release,
-        'app.kubernetes.io/component': 'api',
-      },
-      dnsSan: release + '-api-proof.' + NAMESPACE + '.svc.cluster.local',
-    };
-    networkPolicy.clusterDomain = 'cluster.local';
+    const parsedValues = materializeNetworkPrerequisiteValues(
+      resolvedValues,
+      apiProofSpkiSha256,
+      release,
+    );
     writeFileSync(resolvedValuesPath, dump(parsedValues, { noRefs: true, sortKeys: true }), {
       mode: 0o600,
     });
