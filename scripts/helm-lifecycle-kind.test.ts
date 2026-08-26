@@ -14,6 +14,7 @@ import {
   buildExternalPostgresResources,
   buildLifecycleValues,
   bootstrapFailureEvidence,
+  bootstrapFailureStage,
   calicoImagesForArchitecture,
   kindNodeImageForArchitecture,
   leafCertificateExtensions,
@@ -39,6 +40,7 @@ import {
   productionImageSourceRevision,
   proofReaderCanIArgs,
   prerequisiteRetryableFailure,
+  runBootstrapStage,
   serviceAccountTokenArgs,
   waitForCleanupCheck,
   KIND_NODE_IMAGE,
@@ -1942,6 +1944,28 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.deepEqual(bootstrapFailureEvidence('kind-provisioning').bootstrapFailure, {
       stage: 'kind-provisioning',
       code: 'KIND_LIFECYCLE_KIND_PROVISION_FAILED',
+    });
+  });
+
+  it('captures a fixed preflight stage without retaining bootstrap error details', async () => {
+    await assert.rejects(
+      () =>
+        runBootstrapStage('calico-install', async () => {
+          throw new Error('opaque private postgres://api:secret@database/commander diagnostic');
+        }),
+      (error: unknown) => {
+        assert.equal(bootstrapFailureStage(error), 'calico-install');
+        assert.equal(
+          error instanceof Error ? error.message : '',
+          'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
+        );
+        assert.doesNotMatch(String(error), /opaque|private|postgres|secret/i);
+        return true;
+      },
+    );
+    assert.deepEqual(bootstrapFailureEvidence('calico-install').bootstrapFailure, {
+      stage: 'calico-install',
+      code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
     });
   });
 
