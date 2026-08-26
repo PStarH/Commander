@@ -2349,6 +2349,7 @@ export function commandFailureCode(
   const kubectlCommand = program === 'kubectl' ? kubectlSubcommand(args) : undefined;
   const command = kubectlCommand?.name;
   let createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED';
+  let forbiddenCreateCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FORBIDDEN';
   if (command === 'create' && stdin) {
     try {
       const object = load(stdin) as {
@@ -2358,6 +2359,12 @@ export function commandFailureCode(
       const labels = object.metadata?.labels;
       if (object.kind === 'ConfigMap') {
         createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_CONFIGMAP_FAILED';
+      } else if (object.kind === 'TokenReview') {
+        createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FAILED';
+        forbiddenCreateCode = 'TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FORBIDDEN';
+      } else if (object.kind === 'NetworkPolicy') {
+        createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FAILED';
+        forbiddenCreateCode = 'TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_FORBIDDEN';
       } else if (
         object.kind === 'Job' &&
         labels?.['commander.io/tenant-cutover-owner-execution'] !== undefined
@@ -2377,7 +2384,7 @@ export function commandFailureCode(
     if (/\bAlreadyExists\b/.test(stderr)) {
       createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_ALREADY_EXISTS';
     } else if (/\bforbidden\b/i.test(stderr)) {
-      createCode = 'TENANT_CUTOVER_KUBECTL_CREATE_FORBIDDEN';
+      createCode = forbiddenCreateCode;
     } else if (/\binvalid\b/i.test(stderr)) {
       createCode =
         createCode === 'TENANT_CUTOVER_KUBECTL_CREATE_FAILED'
