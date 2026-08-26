@@ -851,7 +851,7 @@ export interface SanitizedHarnessEvidence {
   calicoUrl: string;
   scenarios: SanitizedScenarioEvidence[];
   bootstrapFailure?: {
-    stage: 'harness-bootstrap' | 'kind-provisioning';
+    stage: BootstrapFailureStage;
     code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED' | 'KIND_LIFECYCLE_KIND_PROVISION_FAILED';
   };
   image?: {
@@ -862,6 +862,23 @@ export interface SanitizedHarnessEvidence {
   passed: boolean;
   sanitized: true;
 }
+
+export type BootstrapFailureStage =
+  | 'harness-bootstrap'
+  | 'kind-provisioning'
+  | 'scenario-selection'
+  | 'helm-version'
+  | 'production-image'
+  | 'source-revision'
+  | 'kind-cluster'
+  | 'runtime-images'
+  | 'calico-install'
+  | 'production-image-load'
+  | 'control-plane-readiness'
+  | 'kubernetes-api-service'
+  | 'kubernetes-api-endpoint'
+  | 'scenario-execution'
+  | 'cluster-cleanup';
 
 export interface OwnerFailureEvidence {
   code: string;
@@ -1849,7 +1866,26 @@ function rootDir(): string {
   return resolve(__dirname, '..');
 }
 
-type BootstrapFailureStage = 'harness-bootstrap' | 'kind-provisioning';
+class HarnessBootstrapError extends Error {
+  constructor(readonly stage: BootstrapFailureStage) {
+    super('KIND_LIFECYCLE_BOOTSTRAP_FAILED');
+  }
+}
+
+export function bootstrapFailureStage(error: unknown): BootstrapFailureStage {
+  return error instanceof HarnessBootstrapError ? error.stage : 'harness-bootstrap';
+}
+
+export async function runBootstrapStage<T>(
+  stage: BootstrapFailureStage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await operation();
+  } catch {
+    throw new HarnessBootstrapError(stage);
+  }
+}
 
 function bootstrapFailureCode(
   stage: BootstrapFailureStage,
@@ -3863,29 +3899,38 @@ async function runFailedRolloutRecovery(
 }
 
 async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
-  const selectedScenarios = selectLifecycleScenarios(opts.scenarioFilter);
-  assertHelmVersion(requireCommand(await helm(['version', '--short']), 'HELM_VERSION_FAILED'));
-  const imageDigest = opts.reuseProductionImage
-    ? await inspectReusableProductionImage()
-    : await buildProductionImage();
+  const selectedScenarios = await runBootstrapStage('scenario-selection', async () =>
+    selectLifecycleScenarios(opts.scenarioFilter),
+  );
+  await runBootstrapStage('helm-version', async () => {
+    assertHelmVersion(requireCommand(await helm(['version', '--short']), 'HELM_VERSION_FAILED'));
+  });
+  const imageDigest = await runBootstrapStage('production-image', async () =>
+    opts.reuseProductionImage ? inspectReusableProductionImage() : buildProductionImage(),
+  );
   const imageSourceRevision = opts.reuseProductionImage
     ? undefined
-    : productionImageSourceRevision(process.env, () =>
-        requireCommand(
-          runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
-          'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
+    : await runBootstrapStage('source-revision', async () =>
+        productionImageSourceRevision(process.env, () =>
+          requireCommand(
+            runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
+            'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
+          ),
         ),
       );
 
-  if (!kindClusterExists(CLUSTER_NAME)) {
-    await createKindCluster(CLUSTER_NAME);
+  if (!(await runBootstrapStage('kind-cluster', async () => kindClusterExists(CLUSTER_NAME)))) {
+    await runBootstrapStage('kind-cluster', async () => createKindCluster(CLUSTER_NAME));
   }
-  await loadPinnedRuntimeImages();
-  await installCalico();
-  await loadProductionImage(imageDigest);
-  await ensureControlPlaneReady();
-  const kubernetesApiIp = await kubernetesApiServiceIp();
-  const kubernetesApiEndpoint = await kubernetesApiEndpointIp();
+  await runBootstrapStage('runtime-images', loadPinnedRuntimeImages);
+  await runBootstrapStage('calico-install', installCalico);
+  await runBootstrapStage('production-image-load', async () => loadProductionImage(imageDigest));
+  await runBootstrapStage('control-plane-readiness', ensureControlPlaneReady);
+  const kubernetesApiIp = await runBootstrapStage('kubernetes-api-service', kubernetesApiServiceIp);
+  const kubernetesApiEndpoint = await runBootstrapStage(
+    'kubernetes-api-endpoint',
+    kubernetesApiEndpointIp,
+  );
   const runners: Record<
     LifecycleScenarioName,
     (
@@ -3900,7 +3945,11 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   };
   const scenarios: ScenarioEvidence[] = [];
   for (const scenario of selectedScenarios) {
-    scenarios.push(await runners[scenario](imageDigest, kubernetesApiIp, kubernetesApiEndpoint));
+    scenarios.push(
+      await runBootstrapStage('scenario-execution', async () =>
+        runners[scenario](imageDigest, kubernetesApiIp, kubernetesApiEndpoint),
+      ),
+    );
   }
   const rbac = scenarios.flatMap((scenario) => scenario.rbac ?? []);
   const networkPolicy = scenarios.flatMap((scenario) => scenario.networkPolicy ?? []);
@@ -3909,7 +3958,7 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   );
 
   if (!opts.keepCluster) {
-    await deleteKindCluster(CLUSTER_NAME);
+    await runBootstrapStage('cluster-cleanup', async () => deleteKindCluster(CLUSTER_NAME));
   }
 
   const rawEvidence: HarnessEvidence = {
@@ -3973,8 +4022,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
       const opts = parseArgs();
       const evidence = await runAll(opts);
       process.exitCode = evidence.passed ? 0 : 1;
-    })().catch(() => {
-      writeBootstrapFailureEvidence();
+    })().catch((error) => {
+      writeBootstrapFailureEvidence(bootstrapFailureStage(error));
       process.stderr.write('harness failed: KIND_LIFECYCLE_BOOTSTRAP_FAILED\n');
       process.exitCode = 1;
     });
