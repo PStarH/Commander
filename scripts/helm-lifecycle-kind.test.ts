@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
@@ -1967,6 +1967,25 @@ describe('helm-lifecycle-kind helpers', () => {
       stage: 'calico-install',
       code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
     });
+  });
+
+  it('persists the current preflight stage before invoking its operation', async () => {
+    const evidencePath = resolve(process.cwd(), 'kind-lifecycle-evidence.json');
+    rmSync(evidencePath, { force: true });
+
+    try {
+      await runBootstrapStage('calico-install', async () => {
+        const evidence = JSON.parse(readFileSync(evidencePath, 'utf8')) as {
+          bootstrapFailure?: unknown;
+        };
+        assert.deepEqual(evidence.bootstrapFailure, {
+          stage: 'calico-install',
+          code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
+        });
+      });
+    } finally {
+      rmSync(evidencePath, { force: true });
+    }
   });
 
   it('omits raw scenario diagnostics and retains only canonical safe evidence fields', () => {
