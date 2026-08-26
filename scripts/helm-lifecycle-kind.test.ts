@@ -1890,6 +1890,23 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(uploadStep, /retention-days: 30/);
   });
 
+  it('seeds sanitized bootstrap evidence before Kind provisioning', () => {
+    const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
+    const runtimeBuild = workflow.indexOf('Build Kind lifecycle runtime packages');
+    const seed = workflow.indexOf('Seed Kind bootstrap evidence');
+    const kind = workflow.indexOf('uses: helm/kind-action@v1');
+    const harness = workflow.indexOf('pnpm exec tsx scripts/helm-lifecycle-kind.ts run');
+
+    assert.ok(runtimeBuild >= 0);
+    assert.ok(seed > runtimeBuild, 'bootstrap evidence must have built runtime dependencies');
+    assert.ok(seed < kind, 'bootstrap evidence must exist before Kind provisioning');
+    assert.ok(kind < harness, 'the harness must replace bootstrap evidence after provisioning');
+    assert.match(
+      workflow,
+      /name: Seed Kind bootstrap evidence\n        run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts bootstrap-evidence/,
+    );
+  });
+
   it('creates a canonical sanitized artifact for a harness bootstrap failure', () => {
     const evidence = bootstrapFailureEvidence(
       new Error('opaque private postgres://api:secret@database/commander diagnostic'),
