@@ -1258,13 +1258,64 @@ describe('helm-lifecycle-kind helpers', () => {
     );
   });
 
+  it('builds exact administrator subject access reviews for the issued operator subject', () => {
+    const accessReview = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        operatorSubjectAccessReview?: (
+          subject: string,
+          verb: string,
+          resource: string,
+          name?: string,
+        ) => Record<string, unknown>;
+      }
+    ).operatorSubjectAccessReview;
+    assert.equal(typeof accessReview, 'function');
+
+    assert.deepEqual(
+      accessReview!(
+        'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
+        'delete',
+        'validatingadmissionpolicies.admissionregistration.k8s.io',
+        'tenant-policy-guard',
+      ),
+      {
+        apiVersion: 'authorization.k8s.io/v1',
+        kind: 'SubjectAccessReview',
+        spec: {
+          user: 'system:serviceaccount:commander-lifecycle:tenant-migration-operator',
+          resourceAttributes: {
+            verb: 'delete',
+            group: 'admissionregistration.k8s.io',
+            resource: 'validatingadmissionpolicies',
+            name: 'tenant-policy-guard',
+          },
+        },
+      },
+    );
+  });
+
+  it('accepts only explicit administrator subject access decisions', () => {
+    const verifyAccessReview = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        verifyOperatorSubjectAccessReview?: (review: unknown) => boolean;
+      }
+    ).verifyOperatorSubjectAccessReview;
+    assert.equal(typeof verifyAccessReview, 'function');
+    assert.equal(verifyAccessReview!({ status: { allowed: true } }), true);
+    assert.equal(verifyAccessReview!({ status: { allowed: false } }), false);
+    assert.throws(
+      () => verifyAccessReview!({ status: {} }),
+      /TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED/,
+    );
+  });
+
   it('retries only transient admission readiness failures', () => {
     assert.equal(prerequisiteRetryableFailure('TENANT_POLICY_ADMISSION_NOT_READY'), true);
     assert.equal(
       prerequisiteRetryableFailure(
         'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN',
       ),
-      true,
+      false,
     );
     assert.equal(
       prerequisiteRetryableFailure('TENANT_CUTOVER_KUBECTL_CREATE_TOKEN_REVIEW_FORBIDDEN'),

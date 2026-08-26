@@ -249,6 +249,42 @@ export function verifyOperatorTokenReview(review: unknown, subject: string): voi
   if (user.username !== subject) throw new Error('TENANT_POLICY_SUBJECT_MISMATCH');
 }
 
+export function operatorSubjectAccessReview(
+  subject: string,
+  verb: string,
+  resource: string,
+  name?: string,
+): Record<string, unknown> {
+  if (!SERVICE_ACCOUNT_SUBJECT.test(subject) || !/^[a-z]+$/.test(verb)) {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  const [resourceName, ...groupParts] = resource.split('.');
+  if (!resourceName || !/^[a-z]+(?:[a-z0-9-]*[a-z0-9])?$/.test(resourceName)) {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  return {
+    apiVersion: 'authorization.k8s.io/v1',
+    kind: 'SubjectAccessReview',
+    spec: {
+      user: subject,
+      resourceAttributes: {
+        verb,
+        group: groupParts.join('.'),
+        resource: resourceName,
+        ...(name ? { name } : {}),
+      },
+    },
+  };
+}
+
+export function verifyOperatorSubjectAccessReview(review: unknown): boolean {
+  const status = jsonRecord(jsonRecord(review)?.status);
+  if (typeof status?.allowed !== 'boolean') {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  return status.allowed;
+}
+
 export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
   if (!/^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$/.test(name)) {
     throw new Error('TENANT_POLICY_ADMISSION_NAME_INVALID');
@@ -2280,11 +2316,29 @@ async function verifyIssuedOperatorToken(token: string, subject: string): Promis
   verifyOperatorTokenReview(review, subject);
 }
 
+async function operatorSubjectAccessDecision(
+  subject: string,
+  verb: string,
+  resource: string,
+  name?: string,
+): Promise<boolean> {
+  let review: unknown;
+  try {
+    review = JSON.parse(
+      await defaultCommand(
+        'kubectl',
+        ['create', '--filename', '-', '--output', 'json'],
+        canonicalBootstrapJson(operatorSubjectAccessReview(subject, verb, resource, name)) + '\n',
+      ),
+    );
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  return verifyOperatorSubjectAccessReview(review);
+}
+
 export function prerequisiteRetryableFailure(code: string): boolean {
-  return (
-    code === 'TENANT_POLICY_ADMISSION_NOT_READY' ||
-    code === 'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN'
-  );
+  return code === 'TENANT_POLICY_ADMISSION_NOT_READY';
 }
 
 class NetworkPrerequisiteError extends Error {
@@ -2372,7 +2426,7 @@ async function prepareNetworkPrerequisites(
       writeFileSync(operatorKubeconfigPath, await currentClusterTokenOnlyKubeconfig(), {
         mode: 0o600,
       });
-      const operatorPorts = createTask1KubectlPorts(
+      const tokenOnlyOperatorPorts = createTask1KubectlPorts(
         (commandArgs, stdin) =>
           defaultCommand(
             'kubectl',
@@ -2381,6 +2435,11 @@ async function prepareNetworkPrerequisites(
           ),
         async () => token,
       );
+      const operatorPorts = {
+        ...tokenOnlyOperatorPorts,
+        canI: (verb: string, resource: string, name?: string) =>
+          operatorSubjectAccessDecision(subject, verb, resource, name),
+      };
       const deadline = Date.now() + 120_000;
       while (true) {
         try {
