@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import { loadTask1PrerequisiteCommandContext } from './task1-helm-prerequisite-command.js';
 import {
   TASK1_SELECTOR_CAN_MATCH_H_CEL,
   canTask1SelectorMatchHook,
@@ -138,6 +139,28 @@ function readyDeployment(
 }
 
 describe('Task 1 prerequisite command contract', () => {
+  it('reads prerequisite values before validating their chart binding', async () => {
+    await assert.rejects(
+      () =>
+        loadTask1PrerequisiteCommandContext(
+          [
+            '--namespace',
+            'commander',
+            '--release',
+            'release-a',
+            '--values',
+            fixturePath,
+            '--stage',
+            'network',
+            '--migration-operator-subject',
+            subject,
+          ],
+          process.cwd(),
+        ),
+      /TENANT_POLICY_CHART_DIGEST_MISMATCH/,
+    );
+  });
+
   it('keeps the tracked CEL selector predicate and exact local truth table in lockstep', async () => {
     assert.equal(
       [...TASK1_SELECTOR_CAN_MATCH_H_CEL].reduce(

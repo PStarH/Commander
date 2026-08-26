@@ -1,5 +1,6 @@
 import { createHash, X509Certificate } from 'node:crypto';
 import { execFile } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { isAbsolute, resolve } from 'node:path';
 import { load } from 'js-yaml';
 import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
