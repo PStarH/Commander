@@ -2421,13 +2421,20 @@ export function commandFailureCode(
   return code;
 }
 
-type CommandStream = Pick<NodeJS.EventEmitter, 'once'>;
+type CommandErrorEmitter = Pick<NodeJS.EventEmitter, 'on'>;
+
+export function observeCommandProcessFailures(
+  process: CommandErrorEmitter,
+  terminate: () => void,
+): void {
+  process.on('error', terminate);
+}
 
 export function observeCommandStreamFailures(
   streams: {
-    stdin?: CommandStream | null;
-    stdout?: CommandStream | null;
-    stderr?: CommandStream | null;
+    stdin?: CommandErrorEmitter | null;
+    stdout?: CommandErrorEmitter | null;
+    stderr?: CommandErrorEmitter | null;
   },
   terminate: () => void,
 ): void {
@@ -2539,7 +2546,7 @@ export async function defaultCommand(
       }
       destination.push(value);
     };
-    child.once('error', () => {
+    observeCommandProcessFailures(child, () => {
       childClosed = true;
       if (terminatingError) {
         finishTerminationWhenGone();

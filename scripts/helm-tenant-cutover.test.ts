@@ -70,6 +70,19 @@ describe('Helm owner Job diagnostics', () => {
     assert.equal(terminations, 2);
   });
 
+  it('continues to contain command process failures after rejection starts', () => {
+    const child = new EventEmitter();
+    let failures = 0;
+
+    helmTenantCutover.observeCommandProcessFailures(child, () => {
+      failures += 1;
+    });
+
+    child.emit('error', new Error('first child failure'));
+    assert.doesNotThrow(() => child.emit('error', new Error('subsequent child failure')));
+    assert.equal(failures, 2);
+  });
+
   it('classifies kubectl failures by fixed subcommand without retaining arguments', () => {
     assert.deepEqual(
       [
