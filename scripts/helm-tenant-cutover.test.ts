@@ -182,6 +182,23 @@ describe('Helm owner Job diagnostics', () => {
     );
   });
 
+  it('uses delete wait completion for proof-resource cleanup without a second get', async () => {
+    const calls: Array<{ program: string; args: readonly string[] }> = [];
+    const ports = createNodePorts({
+      command: async (program, args) => {
+        calls.push({ program, args });
+        return '';
+      },
+    });
+
+    await ports.kubectl.cleanupProofResources('commander', 'release');
+    await ports.kubectl.deleteAndVerifySecret('commander', 'proof-owner');
+
+    assert.equal(calls.length, 3);
+    assert.ok(calls.every((call) => call.args[0] === 'delete'));
+    assert.ok(calls.every((call) => call.args.includes('--wait=true')));
+  });
+
   it('classifies token-only kubectl create failures by their subcommand', async () => {
     const root = await mkdtemp(join(tmpdir(), 'commander-token-only-kubectl-'));
     const kubectl = join(root, 'kubectl');
