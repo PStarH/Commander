@@ -213,6 +213,13 @@ describe('Helm lifecycle static contract', () => {
     }
   });
 
+  it('renders the bundled PostgreSQL Service with the numeric lifecycle target port', () => {
+    const service = manifest(render(), 'Service', 'lifecycle-demo-postgres');
+    const ports = service.spec?.ports as Array<{ port?: unknown; targetPort?: unknown }>;
+
+    assert.deepEqual(ports, [{ name: 'postgres', port: 5432, protocol: 'TCP', targetPort: 5432 }]);
+  });
+
   it('uses revision-safe pre-hooks and never a post-install migration Job', () => {
     const rendered = render(true);
     const migration = resource(rendered, 'Job', 'lifecycle-demo-migration-r1');
