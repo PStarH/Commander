@@ -18,6 +18,7 @@ import {
   buildLifecycleValues,
   bootstrapFailureEvidence,
   bootstrapFailureStage,
+  uncaughtExceptionEvidence,
   calicoImagesForArchitecture,
   kindNodeImageForArchitecture,
   leafCertificateExtensions,
@@ -1965,6 +1966,20 @@ describe('helm-lifecycle-kind helpers', () => {
       stage: 'kind-provisioning',
       code: 'KIND_LIFECYCLE_KIND_PROVISION_FAILED',
     });
+  });
+
+  it('retains a fixed process-failure classification for an uncaught scenario exception', () => {
+    const evidence = uncaughtExceptionEvidence('scenario-execution');
+
+    assert.deepEqual(evidence.bootstrapFailure, {
+      stage: 'scenario-execution',
+      code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED',
+    });
+    assert.deepEqual(evidence.processFailure, {
+      source: 'uncaught-exception',
+      code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
+    });
+    assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
   });
 
   it('captures a fixed preflight stage without retaining bootstrap error details', async () => {
