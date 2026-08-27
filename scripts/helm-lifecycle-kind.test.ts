@@ -1843,6 +1843,9 @@ describe('helm-lifecycle-kind helpers', () => {
 
   it('runs the live Kind workflow for every production proof dependency', () => {
     const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
+    const pushTrigger = workflow.match(/  push:\n[\s\S]*?(?=\n\njobs:)/)?.[0];
+
+    assert.ok(pushTrigger, 'the lifecycle workflow must retain a push trigger');
     for (const path of [
       'apps/api/**',
       'deploy/helm/commander/**',
@@ -1854,14 +1857,19 @@ describe('helm-lifecycle-kind helpers', () => {
       'pnpm-workspace.yaml',
       'tsconfig*.json',
     ]) {
-      const quoted = `'${path.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`;
-      assert.equal(
-        workflow.match(new RegExp(`^\\s*- ${quoted}$`, 'gm'))?.length,
-        2,
-        `${path} must trigger both pull_request and push lifecycle proofs`,
+      assert.ok(
+        pushTrigger.includes("      - '" + path + "'"),
+        path + ' must trigger the push lifecycle proof',
       );
     }
     assert.match(workflow, /run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts run/);
+  });
+
+  it('runs the lifecycle release gate for every pull request synchronization', () => {
+    const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
+
+    assert.match(workflow, /^  pull_request:\s*$/m);
+    assert.doesNotMatch(workflow, /  pull_request:\n    paths:/);
   });
 
   it('builds Kind lifecycle workspace runtime dependencies before the harness', () => {
