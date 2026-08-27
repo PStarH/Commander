@@ -7,7 +7,13 @@
  * the Commander chart. Produces sanitized evidence JSON.
  */
 
-import { execFile, execFileSync, ExecFileOptions, spawn } from 'node:child_process';
+import {
+  execFile,
+  execFileSync,
+  type ChildProcess,
+  type ExecFileOptions,
+  spawn,
+} from 'node:child_process';
 import { X509Certificate, createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { arch, tmpdir } from 'node:os';
@@ -3098,13 +3104,9 @@ async function runCutoverCommand(
   child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
   let finished = false;
   let exitCode = -1;
-  const completion = new Promise<void>((resolveCompletion, reject) => {
-    child.once('error', reject);
-    child.once('close', (code) => {
-      exitCode = code ?? 1;
-      finished = true;
-      resolveCompletion();
-    });
+  const completion = awaitChildExit(child).then((code) => {
+    exitCode = code;
+    finished = true;
   });
   let rolloutObservation: RolloutObservationState | undefined;
   let apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
@@ -3135,6 +3137,19 @@ async function runCutoverCommand(
         (apiStartupFailure ? ':' + apiPodStartupFailureRecord(apiStartupFailure) : ''),
     );
   }
+}
+
+export function awaitChildExit(child: ChildProcess): Promise<number> {
+  return new Promise((resolveExit) => {
+    let settled = false;
+    const settle = (exitCode: number) => {
+      if (settled) return;
+      settled = true;
+      resolveExit(exitCode);
+    };
+    child.once('error', () => settle(1));
+    child.once('close', (code) => settle(code ?? 1));
+  });
 }
 
 async function assertProofReaderRbac(release: string): Promise<AssertionResult[]> {
