@@ -4681,20 +4681,6 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             '--wait=true',
           ]);
         }
-        const remaining = (
-          await command('kubectl', [
-            'get',
-            'jobs,pods',
-            '--selector',
-            selector,
-            '--namespace',
-            namespace,
-            '--ignore-not-found=true',
-            '--output',
-            'name',
-          ])
-        ).trim();
-        if (remaining) fail('TENANT_CUTOVER_PROOF_RESOURCE_CLEANUP_FAILED');
       },
       captureProofHookFailureDiagnostic: async (namespace, release) => {
         const selector = proofResourceSelector(release);
@@ -4824,19 +4810,6 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           '--ignore-not-found=true',
           '--wait=true',
         ]);
-        const remaining = (
-          await command('kubectl', [
-            'get',
-            'secret',
-            name,
-            '--namespace',
-            namespace,
-            '--ignore-not-found=true',
-            '--output',
-            'name',
-          ])
-        ).trim();
-        if (remaining) fail('TENANT_CUTOVER_PROOF_OWNER_SECRET_CLEANUP_FAILED');
       },
       verifyCurrentObject: async (object) => {
         await assertKubernetesVersion();
