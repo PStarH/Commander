@@ -171,6 +171,15 @@ describe('Helm owner Job diagnostics', () => {
         'TENANT_CUTOVER_KUBECTL_CREATE_NOT_FOUND',
       ],
     );
+    assert.equal(
+      helmTenantCutover.commandFailureCode(
+        'kubectl',
+        ['create', '--filename', '-'],
+        JSON.stringify({ apiVersion: 'networking.k8s.io/v1', kind: 'NetworkPolicy', metadata: {} }),
+        'The NetworkPolicy is invalid',
+      ),
+      'TENANT_CUTOVER_KUBECTL_CREATE_NETWORK_POLICY_INVALID',
+    );
   });
 
   it('classifies token-only kubectl create failures by their subcommand', async () => {
