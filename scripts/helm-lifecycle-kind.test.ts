@@ -1993,6 +1993,16 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
   });
 
+  it('retains a fixed process-failure classification for an unhandled rejection', () => {
+    const evidence = uncaughtExceptionEvidence('scenario-execution', 'unhandledRejection');
+
+    assert.deepEqual(evidence.processFailure, {
+      source: 'unhandled-rejection',
+      code: 'KIND_LIFECYCLE_UNHANDLED_REJECTION',
+    });
+    assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
+  });
+
   it('captures a fixed preflight stage without retaining bootstrap error details', async () => {
     await assert.rejects(
       () =>

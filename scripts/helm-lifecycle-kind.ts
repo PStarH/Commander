@@ -862,8 +862,8 @@ export interface SanitizedHarnessEvidence {
     code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED' | 'KIND_LIFECYCLE_KIND_PROVISION_FAILED';
   };
   processFailure?: {
-    source: 'uncaught-exception';
-    code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION';
+    source: 'uncaught-exception' | 'unhandled-rejection';
+    code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION' | 'KIND_LIFECYCLE_UNHANDLED_REJECTION';
   };
   image?: {
     digest: string;
@@ -1931,12 +1931,16 @@ export function bootstrapFailureEvidence(
 
 export function uncaughtExceptionEvidence(
   stage: BootstrapFailureStage = activeBootstrapStage,
+  origin: NodeJS.UncaughtExceptionOrigin = 'uncaughtException',
 ): SanitizedHarnessEvidence {
   return {
     ...bootstrapFailureEvidence(stage),
     processFailure: {
-      source: 'uncaught-exception',
-      code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
+      source: origin === 'unhandledRejection' ? 'unhandled-rejection' : 'uncaught-exception',
+      code:
+        origin === 'unhandledRejection'
+          ? 'KIND_LIFECYCLE_UNHANDLED_REJECTION'
+          : 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
     },
   };
 }
@@ -1954,8 +1958,8 @@ export function writeBootstrapFailureEvidence(
 }
 
 function installUncaughtExceptionEvidenceCapture(): void {
-  process.once('uncaughtExceptionMonitor', () => {
-    writeSanitizedEvidence(uncaughtExceptionEvidence());
+  process.once('uncaughtExceptionMonitor', (_error, origin) => {
+    writeSanitizedEvidence(uncaughtExceptionEvidence(activeBootstrapStage, origin));
   });
 }
 
