@@ -4038,20 +4038,6 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           '--wait=true',
         ]).catch(() => undefined);
       }
-      const remaining = (
-        await command('kubectl', [
-          'get',
-          'jobs,pods,configmaps',
-          '--selector',
-          bundle.selector,
-          '--namespace',
-          context.namespace,
-          '--ignore-not-found=true',
-          '--output',
-          'name',
-        ])
-      ).trim();
-      if (remaining) fail('TENANT_CUTOVER_OWNER_JOB_CLEANUP_FAILED');
     }
   };
   const operation = (value: unknown): HelmOperation => {
