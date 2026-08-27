@@ -57,6 +57,19 @@ describe('Helm owner Job diagnostics', () => {
     assert.equal(terminations, 1);
   });
 
+  it('continues to contain command stream failures after termination starts', () => {
+    const stdout = new EventEmitter();
+    let terminations = 0;
+
+    helmTenantCutover.observeCommandStreamFailures({ stdout }, () => {
+      terminations += 1;
+    });
+
+    stdout.emit('error', new Error('first stdout failure'));
+    assert.doesNotThrow(() => stdout.emit('error', new Error('subsequent stdout failure')));
+    assert.equal(terminations, 2);
+  });
+
   it('classifies kubectl failures by fixed subcommand without retaining arguments', () => {
     assert.deepEqual(
       [
