@@ -1076,6 +1076,7 @@ async function runHelmRolloutWithProofCredential(input: {
   const targetName = proofOwnerSecretName(input.release, input.operation.operationVersion);
   await input.ports.kubectl.cleanupProofResources(input.namespace, input.release);
   let rolloutStarted = false;
+  let primaryFailure: unknown;
   try {
     await input.prepareDatabase?.();
     await input.ports.kubectl.prepareProofOwnerSecret({
@@ -1092,14 +1093,25 @@ async function runHelmRolloutWithProofCredential(input: {
         input.namespace,
         input.release,
       );
-      fail('TENANT_CUTOVER_PROOF_HOOK_FAILED:' + diagnostic);
+      primaryFailure = new Error('TENANT_CUTOVER_PROOF_HOOK_FAILED:' + diagnostic);
+      throw primaryFailure;
     }
-    throw error;
+    primaryFailure = error;
+    throw primaryFailure;
   } finally {
+    let cleanupFailure: unknown;
     try {
       await input.ports.kubectl.cleanupProofResources(input.namespace, input.release);
-    } finally {
+    } catch (error) {
+      cleanupFailure = error;
+    }
+    try {
       await input.ports.kubectl.deleteAndVerifySecret(input.namespace, targetName);
+    } catch (error) {
+      cleanupFailure ??= error;
+    }
+    if (primaryFailure === undefined && cleanupFailure !== undefined) {
+      throw cleanupFailure;
     }
   }
 }

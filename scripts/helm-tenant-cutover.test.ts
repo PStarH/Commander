@@ -2117,6 +2117,26 @@ data: { owner-url: ${payload} }
     );
   });
 
+  it('preserves a proof failure when ephemeral proof cleanup also fails', async () => {
+    const fixture = ports();
+    let cleanupCalls = 0;
+    fixture.helm.runProjectedRevision = async () => {
+      throw new Error('unredacted Helm failure');
+    };
+    fixture.kubectl.captureProofHookFailureDiagnostic = async () =>
+      'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=' +
+      digest('a');
+    fixture.kubectl.cleanupProofResources = async () => {
+      cleanupCalls += 1;
+      if (cleanupCalls === 2) throw new Error('TENANT_CUTOVER_KUBECTL_GET_FAILED');
+    };
+
+    await assert.rejects(
+      () => runHelmTenantCutover(input(), fixture),
+      /TENANT_CUTOVER_PROOF_HOOK_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=a{64}/,
+    );
+  });
+
   it('creates a stable fresh bundled database Secret before deriving the proof credential', async () => {
     const fixture = ports();
     fixture.owner.append = async () =>
