@@ -2421,6 +2421,21 @@ export function commandFailureCode(
   return code;
 }
 
+type CommandStream = Pick<NodeJS.EventEmitter, 'once'>;
+
+export function observeCommandStreamFailures(
+  streams: {
+    stdin?: CommandStream | null;
+    stdout?: CommandStream | null;
+    stderr?: CommandStream | null;
+  },
+  terminate: () => void,
+): void {
+  streams.stdin?.once('error', terminate);
+  streams.stdout?.once('error', terminate);
+  streams.stderr?.once('error', terminate);
+}
+
 export async function defaultCommand(
   program: string,
   args: readonly string[],
@@ -2524,8 +2539,6 @@ export async function defaultCommand(
       }
       destination.push(value);
     };
-    child.stdout.on('data', capture(output));
-    if (captureStderr) child.stderr?.on('data', capture(errorOutput));
     child.once('error', () => {
       childClosed = true;
       if (terminatingError) {
@@ -2563,6 +2576,9 @@ export async function defaultCommand(
           : Buffer.concat([...output, ...errorOutput]).toString('utf8'),
       );
     });
+    observeCommandStreamFailures(child, () => terminate(commandFailureCode(program, args, stdin)));
+    child.stdout.on('data', capture(output));
+    if (captureStderr) child.stderr?.on('data', capture(errorOutput));
     child.stdin.end(stdin ?? '');
   });
 }

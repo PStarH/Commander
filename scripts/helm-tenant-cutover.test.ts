@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -44,6 +45,18 @@ const chart = digest('b');
 const nonce = 'n'.repeat(43);
 
 describe('Helm owner Job diagnostics', () => {
+  it('converts command stdout failures into controlled termination', () => {
+    const stdout = new EventEmitter();
+    let terminations = 0;
+
+    helmTenantCutover.observeCommandStreamFailures({ stdout }, () => {
+      terminations += 1;
+    });
+
+    assert.doesNotThrow(() => stdout.emit('error', new Error('stdout failed')));
+    assert.equal(terminations, 1);
+  });
+
   it('classifies kubectl failures by fixed subcommand without retaining arguments', () => {
     assert.deepEqual(
       [
