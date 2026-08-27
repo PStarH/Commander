@@ -861,6 +861,10 @@ export interface SanitizedHarnessEvidence {
     stage: BootstrapFailureStage;
     code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED' | 'KIND_LIFECYCLE_KIND_PROVISION_FAILED';
   };
+  processFailure?: {
+    source: 'uncaught-exception';
+    code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION';
+  };
   image?: {
     digest: string;
     sourceRevision?: string;
@@ -1880,6 +1884,8 @@ class HarnessBootstrapError extends Error {
   }
 }
 
+let activeBootstrapStage: BootstrapFailureStage = 'harness-bootstrap';
+
 export function bootstrapFailureStage(error: unknown): BootstrapFailureStage {
   return error instanceof HarnessBootstrapError ? error.stage : 'harness-bootstrap';
 }
@@ -1888,6 +1894,7 @@ export async function runBootstrapStage<T>(
   stage: BootstrapFailureStage,
   operation: () => Promise<T>,
 ): Promise<T> {
+  activeBootstrapStage = stage;
   writeBootstrapFailureEvidence(stage);
   try {
     return await operation();
@@ -1922,6 +1929,18 @@ export function bootstrapFailureEvidence(
   };
 }
 
+export function uncaughtExceptionEvidence(
+  stage: BootstrapFailureStage = activeBootstrapStage,
+): SanitizedHarnessEvidence {
+  return {
+    ...bootstrapFailureEvidence(stage),
+    processFailure: {
+      source: 'uncaught-exception',
+      code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
+    },
+  };
+}
+
 function writeSanitizedEvidence(evidence: SanitizedHarnessEvidence): void {
   const evidencePath = resolve(rootDir(), 'kind-lifecycle-evidence.json');
   writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
@@ -1932,6 +1951,12 @@ export function writeBootstrapFailureEvidence(
   stage: BootstrapFailureStage = 'harness-bootstrap',
 ): void {
   writeSanitizedEvidence(bootstrapFailureEvidence(stage));
+}
+
+function installUncaughtExceptionEvidenceCapture(): void {
+  process.once('uncaughtExceptionMonitor', () => {
+    writeSanitizedEvidence(uncaughtExceptionEvidence());
+  });
 }
 
 function fixturePath(name: string): string {
@@ -4064,6 +4089,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1
       process.exitCode = 1;
     }
   } else {
+    installUncaughtExceptionEvidenceCapture();
     (async () => {
       const opts = parseArgs();
       const evidence = await runAll(opts);
