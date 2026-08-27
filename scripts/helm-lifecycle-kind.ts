@@ -2130,20 +2130,48 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
   };
 }
 
+type ExecFileErrorEmitter = Pick<NodeJS.EventEmitter, 'on'>;
+
+export function observeExecFileFailures(
+  process: ExecFileErrorEmitter & {
+    stdout?: ExecFileErrorEmitter | null;
+    stderr?: ExecFileErrorEmitter | null;
+  },
+  fail: (error: Error) => void,
+): void {
+  process.on('error', fail);
+  process.stdout?.on('error', fail);
+  process.stderr?.on('error', fail);
+}
+
 function runCmd(
   file: string,
   args: string[],
   options: ExecFileOptions = {},
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
-    execFile(file, args, { ...options, encoding: 'utf8' as const }, (error, stdout, stderr) => {
+    let settled = false;
+    const settle = (
+      error: (Error & { code?: string | number }) | null,
+      stdout: string,
+      stderr: string,
+    ) => {
+      if (settled) return;
+      settled = true;
       resolve({
         stdout: stdout ?? '',
         stderr: stderr ?? '',
         exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
         ...(error && typeof error.code === 'string' ? { errorCode: error.code } : {}),
       });
-    });
+    };
+    const child = execFile(
+      file,
+      args,
+      { ...options, encoding: 'utf8' as const },
+      (error, stdout, stderr) => settle(error, stdout ?? '', stderr ?? ''),
+    );
+    observeExecFileFailures(child, (error) => settle(error, '', ''));
   });
 }
 

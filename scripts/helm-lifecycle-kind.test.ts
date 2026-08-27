@@ -15,6 +15,7 @@ import {
   assertNegativeCanaryResult,
   assertProofPodContract,
   awaitChildExit,
+  observeExecFileFailures,
   buildExternalPostgresResources,
   buildLifecycleValues,
   bootstrapFailureEvidence,
@@ -54,6 +55,23 @@ import {
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('continues to contain execFile process and stdio errors after the first failure', () => {
+    const stdout = new EventEmitter();
+    const stderr = new EventEmitter();
+    const child = Object.assign(new EventEmitter(), { stdout, stderr }) as ChildProcess;
+    let failures = 0;
+
+    observeExecFileFailures(child, () => {
+      failures += 1;
+    });
+
+    child.emit('error', new Error('first process failure'));
+    assert.doesNotThrow(() => child.emit('error', new Error('subsequent process failure')));
+    assert.doesNotThrow(() => stdout.emit('error', new Error('stdout failure')));
+    assert.doesNotThrow(() => stderr.emit('error', new Error('stderr failure')));
+    assert.equal(failures, 4);
+  });
+
   it('settles a failed cutover child spawn as a nonzero exit', async () => {
     const child = new EventEmitter() as ChildProcess;
     const exit = awaitChildExit(child);
