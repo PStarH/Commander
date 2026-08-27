@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,6 +58,16 @@ describe('helm-lifecycle-kind helpers', () => {
     const child = new EventEmitter() as ChildProcess;
     const exit = awaitChildExit(child);
     child.emit('error', new Error('spawn failed'));
+
+    assert.equal(await exit, 1);
+  });
+
+  it('settles a cutover child stderr failure as a nonzero exit', async () => {
+    const child = Object.assign(new EventEmitter(), { stderr: new PassThrough() }) as ChildProcess;
+    const exit = awaitChildExit(child);
+
+    assert.doesNotThrow(() => child.stderr?.emit('error', new Error('stderr failed')));
+    child.emit('close', 0);
 
     assert.equal(await exit, 1);
   });
