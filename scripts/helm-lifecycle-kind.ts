@@ -2134,12 +2134,14 @@ type ExecFileErrorEmitter = Pick<NodeJS.EventEmitter, 'on'>;
 
 export function observeExecFileFailures(
   process: ExecFileErrorEmitter & {
+    stdin?: ExecFileErrorEmitter | null;
     stdout?: ExecFileErrorEmitter | null;
     stderr?: ExecFileErrorEmitter | null;
   },
   fail: (error: Error) => void,
 ): void {
   process.on('error', fail);
+  process.stdin?.on('error', fail);
   process.stdout?.on('error', fail);
   process.stderr?.on('error', fail);
 }
