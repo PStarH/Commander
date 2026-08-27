@@ -3167,13 +3167,20 @@ async function runCutoverCommand(
 export function awaitChildExit(child: ChildProcess): Promise<number> {
   return new Promise((resolveExit) => {
     let settled = false;
+    let stdioFailed = false;
     const settle = (exitCode: number) => {
       if (settled) return;
       settled = true;
       resolveExit(exitCode);
     };
+    const markStdioFailure = () => {
+      stdioFailed = true;
+    };
+    child.stdout?.resume();
+    child.stdout?.once('error', markStdioFailure);
+    child.stderr?.once('error', markStdioFailure);
     child.once('error', () => settle(1));
-    child.once('close', (code) => settle(code ?? 1));
+    child.once('close', (code) => settle(stdioFailed ? 1 : (code ?? 1)));
   });
 }
 
