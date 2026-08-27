@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
@@ -11,6 +13,7 @@ import {
   assertHelmVersion,
   assertNegativeCanaryResult,
   assertProofPodContract,
+  awaitChildExit,
   buildExternalPostgresResources,
   buildLifecycleValues,
   bootstrapFailureEvidence,
@@ -49,6 +52,14 @@ import {
 } from './helm-lifecycle-kind.js';
 
 describe('helm-lifecycle-kind helpers', () => {
+  it('settles a failed cutover child spawn as a nonzero exit', async () => {
+    const child = new EventEmitter() as ChildProcess;
+    const exit = awaitChildExit(child);
+    child.emit('error', new Error('spawn failed'));
+
+    assert.equal(await exit, 1);
+  });
+
   it('fails closed before invalid Helm values reach network prerequisites', () => {
     const materialize = (
       lifecycleHarness as typeof lifecycleHarness & {
