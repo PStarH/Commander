@@ -2431,9 +2431,9 @@ export function observeCommandStreamFailures(
   },
   terminate: () => void,
 ): void {
-  streams.stdin?.once('error', terminate);
-  streams.stdout?.once('error', terminate);
-  streams.stderr?.once('error', terminate);
+  streams.stdin?.on('error', terminate);
+  streams.stdout?.on('error', terminate);
+  streams.stderr?.on('error', terminate);
 }
 
 export async function defaultCommand(
