@@ -258,7 +258,9 @@ describe('Helm post-rendered release projection', () => {
           if (args[0] === 'get')
             return existsSync(statePath) ? readFileSync(statePath, 'utf8') : '';
           if (args[0] === 'create' && stdin) {
-            if ((JSON.parse(readFileSync(dataPath, 'utf8')) as { failCreate?: boolean }).failCreate) {
+            if (
+              (JSON.parse(readFileSync(dataPath, 'utf8')) as { failCreate?: boolean }).failCreate
+            ) {
               return '';
             }
             writeFileSync(statePath, stdin);

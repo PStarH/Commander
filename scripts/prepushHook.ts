@@ -32,16 +32,14 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import * as path from 'node:path';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
-// Resolve REPO_ROOT from GIT_DIR if present (git hook context) — same
-// convention used by scripts/precommitHook.ts so the two hooks share dir-
-// resolution semantics. Falls back to process.cwd() for CI replay.
-const REPO_ROOT = process.env.GIT_DIR
-  ? path.dirname(path.dirname(process.env.GIT_DIR))
-  : process.cwd();
+// Git keeps linked-worktree metadata outside the worktree, so GIT_DIR is
+// not a valid basis for resolving source paths. Git itself owns this mapping.
+const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+  encoding: 'utf8',
+}).trim();
 
 const PRETTIER_FILE = /\.(?:ts|tsx)$/;
 const NULL_OBJECT_ID = /^0+$/;
