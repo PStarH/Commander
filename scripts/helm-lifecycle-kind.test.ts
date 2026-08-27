@@ -40,6 +40,7 @@ import {
   productionImageSourceRevision,
   proofReaderCanIArgs,
   prerequisiteRetryableFailure,
+  runLifecycleScenario,
   runBootstrapStage,
   serviceAccountTokenArgs,
   waitForCleanupCheck,
@@ -1994,6 +1995,41 @@ describe('helm-lifecycle-kind helpers', () => {
     } finally {
       rmSync(evidencePath, { force: true });
     }
+  });
+
+  it('retains an unexpected scenario exception as fixed sanitized evidence', async () => {
+    const scenario = await runLifecycleScenario('real-bundled', async () => {
+      throw new Error('sensitive implementation detail');
+    });
+
+    assert.deepEqual(scenario, {
+      name: 'real-bundled-install-upgrade-current-uninstall',
+      passed: false,
+      durationMs: scenario.durationMs,
+      events: [],
+      assertions: [],
+      failedStage: 'scenario-execution',
+      error: 'KIND_LIFECYCLE_SCENARIO_EXECUTION_FAILED',
+    });
+    assert.deepEqual(
+      sanitizeEvidence({
+        generatedAt: '2024-01-01T00:00:00Z',
+        cluster: 'test',
+        kindNodeImage: KIND_NODE_IMAGE,
+        chartPath: 'test',
+        calicoUrl: CALICO_URL,
+        scenarios: [scenario],
+        passed: false,
+        sanitized: false,
+      }).scenarios[0],
+      {
+        name: 'real-bundled-install-upgrade-current-uninstall',
+        passed: false,
+        durationMs: scenario.durationMs,
+        failedStage: 'scenario-execution',
+        failureCodes: ['KIND_LIFECYCLE_SCENARIO_EXECUTION_FAILED'],
+      },
+    );
   });
 
   it('omits raw scenario diagnostics and retains only canonical safe evidence fields', () => {
