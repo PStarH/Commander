@@ -864,6 +864,7 @@ export interface SanitizedHarnessEvidence {
   processFailure?: {
     source: 'uncaught-exception' | 'unhandled-rejection';
     code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION' | 'KIND_LIFECYCLE_UNHANDLED_REJECTION';
+    cause: ProcessFailureCause;
   };
   image?: {
     digest: string;
@@ -890,6 +891,21 @@ export type BootstrapFailureStage =
   | 'kubernetes-api-endpoint'
   | 'scenario-execution'
   | 'cluster-cleanup';
+
+export type ProcessFailureCause =
+  | 'EPIPE'
+  | 'ECONNRESET'
+  | 'ERR_STREAM_DESTROYED'
+  | 'ERR_STREAM_PREMATURE_CLOSE'
+  | 'ERR_STREAM_WRITE_AFTER_END'
+  | 'ERR_SOCKET_CLOSED'
+  | 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+  | 'ERROR'
+  | 'TYPE_ERROR'
+  | 'RANGE_ERROR'
+  | 'SYNTAX_ERROR'
+  | 'AGGREGATE_ERROR'
+  | 'UNKNOWN';
 
 export interface OwnerFailureEvidence {
   code: string;
@@ -1929,9 +1945,34 @@ export function bootstrapFailureEvidence(
   };
 }
 
+export function processFailureCause(error: unknown): ProcessFailureCause {
+  const code =
+    error && typeof error === 'object' && typeof (error as NodeJS.ErrnoException).code === 'string'
+      ? (error as NodeJS.ErrnoException).code
+      : undefined;
+  if (
+    code === 'EPIPE' ||
+    code === 'ECONNRESET' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ERR_STREAM_WRITE_AFTER_END' ||
+    code === 'ERR_SOCKET_CLOSED' ||
+    code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+  ) {
+    return code;
+  }
+  if (error instanceof TypeError) return 'TYPE_ERROR';
+  if (error instanceof RangeError) return 'RANGE_ERROR';
+  if (error instanceof SyntaxError) return 'SYNTAX_ERROR';
+  if (error instanceof AggregateError) return 'AGGREGATE_ERROR';
+  if (error instanceof Error) return 'ERROR';
+  return 'UNKNOWN';
+}
+
 export function uncaughtExceptionEvidence(
   stage: BootstrapFailureStage = activeBootstrapStage,
   origin: NodeJS.UncaughtExceptionOrigin = 'uncaughtException',
+  error?: unknown,
 ): SanitizedHarnessEvidence {
   return {
     ...bootstrapFailureEvidence(stage),
@@ -1941,6 +1982,7 @@ export function uncaughtExceptionEvidence(
         origin === 'unhandledRejection'
           ? 'KIND_LIFECYCLE_UNHANDLED_REJECTION'
           : 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
+      cause: processFailureCause(error),
     },
   };
 }
@@ -1958,8 +2000,8 @@ export function writeBootstrapFailureEvidence(
 }
 
 function installUncaughtExceptionEvidenceCapture(): void {
-  process.once('uncaughtExceptionMonitor', (_error, origin) => {
-    writeSanitizedEvidence(uncaughtExceptionEvidence(activeBootstrapStage, origin));
+  process.once('uncaughtExceptionMonitor', (error, origin) => {
+    writeSanitizedEvidence(uncaughtExceptionEvidence(activeBootstrapStage, origin, error));
   });
 }
 
