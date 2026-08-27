@@ -62,6 +62,16 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(await exit, 1);
   });
 
+  it('continues to contain cutover child errors after the first failure', async () => {
+    const child = new EventEmitter() as ChildProcess;
+    const exit = awaitChildExit(child);
+
+    child.emit('error', new Error('first spawn failure'));
+    assert.doesNotThrow(() => child.emit('error', new Error('subsequent spawn failure')));
+
+    assert.equal(await exit, 1);
+  });
+
   it('settles a cutover child stderr failure as a nonzero exit', async () => {
     const child = Object.assign(new EventEmitter(), { stderr: new PassThrough() }) as ChildProcess;
     const exit = awaitChildExit(child);

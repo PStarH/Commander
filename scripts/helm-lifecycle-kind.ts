@@ -3180,7 +3180,7 @@ export function awaitChildExit(child: ChildProcess): Promise<number> {
     const markStdioFailure = () => {
       stdioFailed = true;
     };
-    child.once('error', () => settle(1));
+    child.on('error', () => settle(1));
     child.once('close', (code) => settle(stdioFailed ? 1 : (code ?? 1)));
     child.stdout?.on('error', markStdioFailure);
     child.stderr?.on('error', markStdioFailure);
