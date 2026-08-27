@@ -2007,7 +2007,8 @@ describe('helm-lifecycle-kind helpers', () => {
   });
 
   it('retains a fixed process-failure classification for an uncaught scenario exception', () => {
-    const evidence = uncaughtExceptionEvidence('scenario-execution');
+    const error = Object.assign(new Error('opaque private postgres://secret'), { code: 'EPIPE' });
+    const evidence = uncaughtExceptionEvidence('scenario-execution', 'uncaughtException', error);
 
     assert.deepEqual(evidence.bootstrapFailure, {
       stage: 'scenario-execution',
@@ -2016,6 +2017,7 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.deepEqual(evidence.processFailure, {
       source: 'uncaught-exception',
       code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
+      cause: 'EPIPE',
     });
     assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
   });
@@ -2026,6 +2028,7 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.deepEqual(evidence.processFailure, {
       source: 'unhandled-rejection',
       code: 'KIND_LIFECYCLE_UNHANDLED_REJECTION',
+      cause: 'UNKNOWN',
     });
     assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
   });
