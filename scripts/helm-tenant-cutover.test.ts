@@ -199,6 +199,50 @@ describe('Helm owner Job diagnostics', () => {
     assert.ok(calls.every((call) => call.args.includes('--wait=true')));
   });
 
+  it('uses owner Job delete wait completion without a second resource query', async () => {
+    const ports = createNodePorts({
+      command: async (_program, args, stdin) => {
+        if (args[0] === 'create') {
+          const object = JSON.parse(stdin!) as { kind: string; metadata: { name: string } };
+          return object.kind === 'ConfigMap'
+            ? 'configmap/' + object.metadata.name
+            : 'job.batch/' + object.metadata.name;
+        }
+        if (args[0] === 'wait' || args[0] === 'delete') return '';
+        if (args[0] === 'logs') return JSON.stringify({ action: 'append' });
+        if (args[0] === 'get') throw new Error('unexpected owner cleanup query');
+        throw new Error('unexpected command: ' + args.join(' '));
+      },
+    });
+
+    await assert.doesNotReject(() =>
+      ports.owner.plan(
+        {},
+        {
+          namespace: 'commander',
+          release: 'commander',
+          image: 'registry.example/commander@' + image,
+          databaseSecretName: 'commander-database',
+          databaseSecretKeys: {
+            owner: 'owner-url',
+            app: 'app-url',
+            tenantAuthority: 'tenant-authority-url',
+            scheduler: 'scheduler-url',
+            worker: 'worker-url',
+            adapterOps: 'adapter-ops-url',
+          },
+          databaseTls: {
+            secretName: 'commander-database-tls',
+            caKey: 'ca.crt',
+            expectedServerSpkiSha256: digest('c'),
+          },
+          proofCertificate: { secretName: 'commander-api-proof', certKey: 'tls.crt' },
+          bootstrap: { kind: 'none' },
+        },
+      ),
+    );
+  });
+
   it('classifies token-only kubectl create failures by their subcommand', async () => {
     const root = await mkdtemp(join(tmpdir(), 'commander-token-only-kubectl-'));
     const kubectl = join(root, 'kubectl');
