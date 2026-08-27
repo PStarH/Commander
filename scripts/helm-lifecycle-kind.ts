@@ -707,6 +707,7 @@ export interface ScenarioEvidence {
 }
 
 export type LifecycleFailureStage =
+  | 'scenario-execution'
   | 'namespace-reset'
   | 'namespace-create'
   | 'certificate-material'
@@ -1166,6 +1167,7 @@ const LIFECYCLE_FAILURE_CODES = new Set([
   'HELM_UNINSTALL_FAILED',
   'KUBECTL_JSON_FAILED',
   'KUBECTL_JSON_INVALID',
+  'KIND_LIFECYCLE_SCENARIO_EXECUTION_FAILED',
   'LIFECYCLE_ROW_COUNT_INVALID',
   'NAMESPACE_RESET_FAILED',
   'NETWORK_POLICY_CANARY_CLEANUP_FAILED',
@@ -3899,6 +3901,32 @@ async function runFailedRolloutRecovery(
   }
 }
 
+const SCENARIO_EVIDENCE_NAMES: Readonly<Record<LifecycleScenarioName, string>> = {
+  'real-bundled': 'real-bundled-install-upgrade-current-uninstall',
+  'real-external-tls': 'real-external-tls-install-upgrade-current-uninstall',
+  'failed-rollout-recovery': 'failed-rollout-exact-retry-recovery',
+};
+
+export async function runLifecycleScenario(
+  scenario: LifecycleScenarioName,
+  operation: () => Promise<ScenarioEvidence>,
+): Promise<ScenarioEvidence> {
+  const startedAt = Date.now();
+  try {
+    return await operation();
+  } catch {
+    return {
+      name: SCENARIO_EVIDENCE_NAMES[scenario],
+      passed: false,
+      durationMs: Date.now() - startedAt,
+      events: [],
+      assertions: [],
+      failedStage: 'scenario-execution',
+      error: 'KIND_LIFECYCLE_SCENARIO_EXECUTION_FAILED',
+    };
+  }
+}
+
 async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   const selectedScenarios = await runBootstrapStage('scenario-selection', async () =>
     selectLifecycleScenarios(opts.scenarioFilter),
@@ -3948,7 +3976,9 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   for (const scenario of selectedScenarios) {
     scenarios.push(
       await runBootstrapStage('scenario-execution', async () =>
-        runners[scenario](imageDigest, kubernetesApiIp, kubernetesApiEndpoint),
+        runLifecycleScenario(scenario, () =>
+          runners[scenario](imageDigest, kubernetesApiIp, kubernetesApiEndpoint),
+        ),
       ),
     );
   }
