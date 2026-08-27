@@ -379,7 +379,7 @@ export function buildLifecycleValues(input: {
   kubernetesApiServiceIp: string;
   kubernetesApiEndpointIp: string;
   database?:
-    | { kind: 'bundled' }
+    | { kind: 'bundled'; secretName?: string }
     | {
         kind: 'external';
         secretName: string;
@@ -412,7 +412,7 @@ export function buildLifecycleValues(input: {
   ) {
     throw new Error('LIFECYCLE_VALUES_INVALID');
   }
-  const postgresValues =
+  let postgresValues =
     database.kind === 'bundled'
       ? `    bundled: true
     user: postgres
@@ -420,6 +420,16 @@ export function buildLifecycleValues(input: {
       enabled: false`
       : `    bundled: false
     existingSecret: ${database.secretName}`;
+  const bundledDatabaseSecret =
+    database.kind === 'bundled' && database.secretName
+      ? '    existingSecret: ' + database.secretName + '\n'
+      : '';
+  if (bundledDatabaseSecret) {
+    postgresValues = postgresValues.replace(
+      '    persistence:',
+      bundledDatabaseSecret + '    persistence:',
+    );
+  }
   const databaseTlsValues =
     database.kind === 'bundled'
       ? `  existingSecret: ${input.release}-database-tls`
@@ -3611,6 +3621,7 @@ async function runRealBundledLifecycle(
         logLevel: 'warn',
         kubernetesApiServiceIp: kubernetesApiIp,
         kubernetesApiEndpointIp: kubernetesApiEndpoint,
+        database: { kind: 'bundled', secretName: release + '-database-bootstrap' },
       }),
       { mode: 0o600 },
     );
