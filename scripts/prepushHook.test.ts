@@ -28,4 +28,20 @@ describe('pre-push format hook', () => {
     assert.equal(result.status, 0, result.stderr);
     assert.match(result.stdout, /Prettier check on 2 changed path\(s\)/);
   });
+
+  it('resolves the linked worktree root when Git supplies its administrative directory', () => {
+    const local = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const remote = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+    const gitDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-dir'], {
+      encoding: 'utf8',
+    }).trim();
+    const result = spawnSync('pnpm', ['exec', 'tsx', 'scripts/prepushHook.ts'], {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_DIR: gitDir },
+      input: 'refs/heads/test ' + local + ' refs/heads/test ' + remote + '\n',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Prettier check on 2 changed path\(s\)/);
+  });
 });
