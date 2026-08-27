@@ -865,6 +865,7 @@ export interface SanitizedHarnessEvidence {
     source: 'uncaught-exception' | 'unhandled-rejection';
     code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION' | 'KIND_LIFECYCLE_UNHANDLED_REJECTION';
     cause: ProcessFailureCause;
+    location: ProcessFailureLocation;
   };
   image?: {
     digest: string;
@@ -906,6 +907,9 @@ export type ProcessFailureCause =
   | 'SYNTAX_ERROR'
   | 'AGGREGATE_ERROR'
   | 'UNKNOWN';
+
+export type ProcessFailureLocation =
+  'lifecycle-harness' | 'tenant-cutover' | 'task1-prerequisite' | 'node-runtime' | 'unknown';
 
 export interface OwnerFailureEvidence {
   code: string;
@@ -1969,6 +1973,21 @@ export function processFailureCause(error: unknown): ProcessFailureCause {
   return 'UNKNOWN';
 }
 
+export function processFailureLocation(error: unknown): ProcessFailureLocation {
+  const stack = error instanceof Error ? error.stack : undefined;
+  if (!stack) return 'unknown';
+  if (/[/\\]scripts[/\\]helm-lifecycle-kind\.(?:ts|js)(?::\d+)?/.test(stack)) {
+    return 'lifecycle-harness';
+  }
+  if (/[/\\]scripts[/\\]helm-tenant-cutover\.(?:ts|js)(?::\d+)?/.test(stack)) {
+    return 'tenant-cutover';
+  }
+  if (/[/\\]scripts[/\\]task1-helm-prerequisite-command\.(?:ts|js)(?::\d+)?/.test(stack)) {
+    return 'task1-prerequisite';
+  }
+  return stack.includes('node:') ? 'node-runtime' : 'unknown';
+}
+
 export function uncaughtExceptionEvidence(
   stage: BootstrapFailureStage = activeBootstrapStage,
   origin: NodeJS.UncaughtExceptionOrigin = 'uncaughtException',
@@ -1983,6 +2002,7 @@ export function uncaughtExceptionEvidence(
           ? 'KIND_LIFECYCLE_UNHANDLED_REJECTION'
           : 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
       cause: processFailureCause(error),
+      location: processFailureLocation(error),
     },
   };
 }

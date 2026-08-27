@@ -39,6 +39,7 @@ import {
   proofTemplatesPresent,
   parseOwnerFailureEvidence,
   ownerFailureEvidenceRecord,
+  processFailureLocation,
   classifyRolloutObservation,
   classifyRolloutFailureJson,
   retainRolloutObservation,
@@ -2038,8 +2039,22 @@ describe('helm-lifecycle-kind helpers', () => {
       source: 'uncaught-exception',
       code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
       cause: 'EPIPE',
+      location: 'node-runtime',
     });
     assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
+  });
+
+  it('classifies uncaught-error stack locations without retaining the stack text', () => {
+    const error = new Error('opaque private postgres://secret');
+    error.stack =
+      'Error: opaque private postgres://secret\n' +
+      '    at operation (/workspace/scripts/helm-tenant-cutover.ts:2450:1)';
+
+    assert.equal(processFailureLocation(error), 'tenant-cutover');
+    assert.doesNotMatch(
+      JSON.stringify(uncaughtExceptionEvidence('scenario-execution', 'uncaughtException', error)),
+      /opaque|private|postgres|secret/i,
+    );
   });
 
   it('retains a fixed process-failure classification for an unhandled rejection', () => {
@@ -2049,6 +2064,7 @@ describe('helm-lifecycle-kind helpers', () => {
       source: 'unhandled-rejection',
       code: 'KIND_LIFECYCLE_UNHANDLED_REJECTION',
       cause: 'UNKNOWN',
+      location: 'unknown',
     });
     assert.doesNotMatch(JSON.stringify(evidence), /opaque|private|postgres|secret/i);
   });
