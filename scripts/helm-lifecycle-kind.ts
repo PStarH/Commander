@@ -3129,14 +3129,14 @@ async function runCutoverCommand(
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const stderr: Buffer[] = [];
-  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
   let finished = false;
   let exitCode = -1;
   const completion = awaitChildExit(child).then((code) => {
     exitCode = code;
     finished = true;
   });
+  const stderr: Buffer[] = [];
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
   let rolloutObservation: RolloutObservationState | undefined;
   let apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
   while (!finished) {
@@ -3180,11 +3180,11 @@ export function awaitChildExit(child: ChildProcess): Promise<number> {
     const markStdioFailure = () => {
       stdioFailed = true;
     };
-    child.stdout?.resume();
-    child.stdout?.once('error', markStdioFailure);
-    child.stderr?.once('error', markStdioFailure);
     child.once('error', () => settle(1));
     child.once('close', (code) => settle(stdioFailed ? 1 : (code ?? 1)));
+    child.stdout?.on('error', markStdioFailure);
+    child.stderr?.on('error', markStdioFailure);
+    child.stdout?.resume();
   });
 }
 
