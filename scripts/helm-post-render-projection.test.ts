@@ -197,7 +197,7 @@ describe('Helm post-rendered release projection', () => {
         [
           '#!/usr/bin/env node',
           "const { execFileSync } = require('node:child_process');",
-          "const { readFileSync } = require('node:fs');",
+          "const { readFileSync, rmSync } = require('node:fs');",
           'const args = process.argv.slice(2);',
           'const data = JSON.parse(readFileSync(process.env.COMMANDER_FAKE_HELM_DATA, "utf8"));',
           'if (data.failAt === args[0]) process.exit(3);',
@@ -211,6 +211,10 @@ describe('Helm post-rendered release projection', () => {
           '  const prefix = "--post-renderer-args=";',
           '  const rendererArgs = args.filter((value) => value.startsWith(prefix)).map((value) => value.slice(prefix.length));',
           '  execFileSync(renderer, rendererArgs, { input: data.ordinary, maxBuffer: 64 * 1024 * 1024, stdio: ["pipe", "pipe", "pipe"] });',
+          '  if (data.removeProjectionAfterProof) {',
+          '    readFileSync(process.env.COMMANDER_FAKE_KUBECTL_STATE, "utf8");',
+          '    rmSync(process.env.COMMANDER_FAKE_KUBECTL_STATE, { force: true });',
+          '  }',
           '  if (data.failAfterPostRenderer) process.exit(3);',
           '}',
           'else if (args[0] === "history") process.stdout.write("[{\\"revision\\":\\"8\\"}]");',
@@ -307,6 +311,42 @@ describe('Helm post-rendered release projection', () => {
         await ports.helm.projectRevision('commander', 'commander', '8', chartPath),
         projection,
       );
+
+      writeFileSync(
+        dataPath,
+        JSON.stringify({
+          ordinary,
+          renderedHooks: renderedHooks(),
+          storedHooks,
+          values,
+          removeProjectionAfterProof: true,
+        }),
+      );
+      const projectionAfterProofCleanup = await ports.helm.runProjectedRevision({
+        namespace: 'commander',
+        release: 'commander',
+        revision: '8',
+        projectionConfigMapName: 'commander-proof-projection-v7-r8',
+        args: [
+          'upgrade',
+          '--install',
+          'commander',
+          chartPath,
+          '--namespace',
+          'commander',
+          '--values',
+          '-',
+          '--set',
+          'tenantAuthority.releaseProjectionConfigMap=commander-proof-projection-v7-r8',
+          '--atomic',
+          '--wait',
+          '--wait-for-jobs',
+          '--timeout',
+          '10m',
+        ],
+        rendererValues: values,
+      });
+      assert.deepEqual(projectionAfterProofCleanup, projection);
 
       for (const [failAt, code] of [
         ['template', 'TENANT_CUTOVER_HELM_COMMAND_FAILED'],

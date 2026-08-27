@@ -3173,29 +3173,32 @@ function failStoredProjectionHelmCommand(error: unknown, context: ProjectionCont
 async function verifyStoredProjection(
   renderContext: ProjectionRenderContext,
   context: ProjectionContext,
+  expectedProjection?: HelmReleaseProjection,
 ): Promise<void> {
   const invalidCode =
     context === 'rollout'
       ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
       : 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID';
-  const liveText = await defaultCommand('kubectl', [
-    'get',
-    'configmap',
-    renderContext.projectionConfigMapName,
-    '--namespace',
-    renderContext.namespace,
-    '--output',
-    'json',
-  ]);
-  const live = parseJsonObject(liveText, invalidCode);
-  const data = jsonRecord(live.data, invalidCode);
-  const projectionText = data['projection.json'];
-  if (typeof projectionText !== 'string') fail(invalidCode);
-  let expected: HelmReleaseProjection;
-  try {
-    expected = JSON.parse(projectionText) as HelmReleaseProjection;
-  } catch {
-    return fail(invalidCode);
+  let expected = expectedProjection;
+  if (expected === undefined) {
+    const liveText = await defaultCommand('kubectl', [
+      'get',
+      'configmap',
+      renderContext.projectionConfigMapName,
+      '--namespace',
+      renderContext.namespace,
+      '--output',
+      'json',
+    ]);
+    const live = parseJsonObject(liveText, invalidCode);
+    const data = jsonRecord(live.data, invalidCode);
+    const projectionText = data['projection.json'];
+    if (typeof projectionText !== 'string') fail(invalidCode);
+    try {
+      expected = JSON.parse(projectionText) as HelmReleaseProjection;
+    } catch {
+      return fail(invalidCode);
+    }
   }
   let history: string;
   try {
@@ -3380,7 +3383,7 @@ async function streamValuesToHelm(input: {
 async function runHelmPostRendered(
   helmArgs: readonly string[],
   rendererValues: string,
-  postRender: (manifest: string, rendererValues: string) => Promise<string>,
+  postRender: (manifest: string, rendererValues: string) => Promise<HelmReleaseProjection>,
 ): Promise<void> {
   const renderContext = projectionRenderContext(helmArgs);
   const hookManifest = await renderProjectionHooks(renderContext, rendererValues);
@@ -3395,6 +3398,7 @@ async function runHelmPostRendered(
   const token = randomBytes(32).toString('hex');
   let requests = 0;
   let postRenderFailureCode: string | undefined;
+  let expectedProjection: HelmReleaseProjection | undefined;
   const server = createServer(async (request, response) => {
     try {
       const supplied = request.headers['x-commander-restore-token'];
@@ -3413,7 +3417,7 @@ async function runHelmPostRendered(
         RESTORE_STREAM_LIMIT,
         'TENANT_CUTOVER_RESTORE_STREAM_LIMIT',
       );
-      await postRender(
+      expectedProjection = await postRender(
         mergePostRenderedHelmHooks({
           namespace: renderContext.namespace,
           releaseName: renderContext.release,
@@ -3463,7 +3467,8 @@ async function runHelmPostRendered(
       throw error;
     }
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-    await verifyStoredProjection(renderContext, 'rollout');
+    if (expectedProjection === undefined) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
+    await verifyStoredProjection(renderContext, 'rollout', expectedProjection);
   } finally {
     await closeServer(server);
     await rm(socketDirectory, { recursive: true, force: true });
@@ -4261,7 +4266,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
               ) {
                 fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
               }
-              return manifest;
+              return projection;
             },
           );
           if (!projection) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
