@@ -72,6 +72,23 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(await exit, 1);
   });
 
+  it('installs a cutover child stdout error handler before draining it', async () => {
+    const stdout = Object.assign(new EventEmitter(), {
+      resume() {
+        this.emit('error', new Error('stdout failed while draining'));
+      },
+    });
+    const child = Object.assign(new EventEmitter(), { stdout }) as ChildProcess;
+    let exit: Promise<number> | undefined;
+
+    assert.doesNotThrow(() => {
+      exit = awaitChildExit(child);
+    });
+    child.emit('close', 0);
+
+    assert.equal(await exit, 1);
+  });
+
   it('fails closed before invalid Helm values reach network prerequisites', () => {
     const materialize = (
       lifecycleHarness as typeof lifecycleHarness & {
