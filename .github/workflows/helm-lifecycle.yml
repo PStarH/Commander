@@ -2,17 +2,6 @@ name: Helm Lifecycle
 
 on:
   pull_request:
-    paths:
-      - 'apps/api/**'
-      - 'deploy/helm/commander/**'
-      - 'packages/**'
-      - 'scripts/**'
-      - '.dockerignore'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'tsconfig*.json'
-      - '.github/workflows/helm-lifecycle.yml'
   push:
     branches: [main, master]
     paths:
