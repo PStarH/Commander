@@ -56,9 +56,10 @@ import {
 
 describe('helm-lifecycle-kind helpers', () => {
   it('continues to contain execFile process and stdio errors after the first failure', () => {
+    const stdin = new EventEmitter();
     const stdout = new EventEmitter();
     const stderr = new EventEmitter();
-    const child = Object.assign(new EventEmitter(), { stdout, stderr }) as ChildProcess;
+    const child = Object.assign(new EventEmitter(), { stdin, stdout, stderr }) as ChildProcess;
     let failures = 0;
 
     observeExecFileFailures(child, () => {
@@ -67,9 +68,10 @@ describe('helm-lifecycle-kind helpers', () => {
 
     child.emit('error', new Error('first process failure'));
     assert.doesNotThrow(() => child.emit('error', new Error('subsequent process failure')));
+    assert.doesNotThrow(() => stdin.emit('error', new Error('stdin failure')));
     assert.doesNotThrow(() => stdout.emit('error', new Error('stdout failure')));
     assert.doesNotThrow(() => stderr.emit('error', new Error('stderr failure')));
-    assert.equal(failures, 4);
+    assert.equal(failures, 5);
   });
 
   it('settles a failed cutover child spawn as a nonzero exit', async () => {
