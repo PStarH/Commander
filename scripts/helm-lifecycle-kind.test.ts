@@ -1500,6 +1500,23 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(values, /commander-lifecycle-noop/);
   });
 
+  it('retains the bundled database Secret reference across lifecycle upgrades', () => {
+    const values = buildLifecycleValues({
+      namespace: 'commander-lifecycle',
+      release: 'cmdr-live',
+      imageDigest: 'sha256:' + 'a'.repeat(64),
+      databaseSpkiSha256: 'b'.repeat(64),
+      logLevel: 'warn',
+      kubernetesApiServiceIp: '10.96.0.1',
+      kubernetesApiEndpointIp: '172.18.0.2',
+      database: { kind: 'bundled', secretName: 'cmdr-live-database-bootstrap' },
+    });
+    assert.match(
+      values,
+      /bundled: true\n    user: postgres\n    existingSecret: cmdr-live-database-bootstrap/,
+    );
+  });
+
   it('builds a real external PostgreSQL TLS lifecycle configuration', () => {
     const values = buildLifecycleValues({
       namespace: 'commander-lifecycle',
