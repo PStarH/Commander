@@ -31,4 +31,3 @@ test('source scans can skip syntax heuristics without disabling malware detectio
     maliciousSourceScan.warnings.some((warning) => warning.category === 'malware.Data destruction'),
   );
 });
-
