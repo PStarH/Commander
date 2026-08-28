@@ -353,6 +353,124 @@ function resources(): Record<string, any> {
   };
 }
 
+function ownerCurrentProofResources(): Record<string, any> {
+  const values = resources();
+  const proofPod = values.proofPods.items[0];
+  proofPod.metadata.labels = {
+    ...proofSelector,
+    'app.kubernetes.io/name': 'release-a',
+    'app.kubernetes.io/instance': 'release-a',
+    'commander.io/migration-client-v2': 'true',
+    'commander.io/migration-release': 'release-a',
+    'commander.io/tenant-cutover-owner-execution': 'abcdef1234567890abcdef1234567890',
+  };
+  proofPod.metadata.ownerReferences = [
+    {
+      apiVersion: 'batch/v1',
+      kind: 'Job',
+      name: 'release-a-owner-append-abcdef123456',
+      uid: 'job-uid',
+      controller: true,
+    },
+  ];
+  proofPod.spec.terminationGracePeriodSeconds = undefined;
+  proofPod.spec.containers = [
+    {
+      name: 'owner-command',
+      image: `registry.example/commander@sha256:${digest('b')}`,
+      imagePullPolicy: 'IfNotPresent',
+      command: ['node', 'packages/kernel/dist/migrate.js', 'tenant-cutover-append'],
+      env: [
+        { name: 'NODE_ENV', value: 'production' },
+        {
+          name: 'COMMANDER_TENANT_CUTOVER_INPUT_FILE',
+          value: '/run/commander/tenant-cutover/request.json',
+        },
+        {
+          name: 'DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'owner-url' } },
+        },
+        {
+          name: 'COMMANDER_KERNEL_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'owner-url' } },
+        },
+        {
+          name: 'COMMANDER_OWNER_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'owner-url' } },
+        },
+        {
+          name: 'COMMANDER_APP_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'app-url' } },
+        },
+        {
+          name: 'COMMANDER_TENANT_AUTHORITY_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'tenant-authority-url' } },
+        },
+        {
+          name: 'COMMANDER_SCHEDULER_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'scheduler-url' } },
+        },
+        {
+          name: 'COMMANDER_WORKER_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'worker-url' } },
+        },
+        {
+          name: 'COMMANDER_ADAPTER_OPS_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'adapter-ops-url' } },
+        },
+        { name: 'COMMANDER_DATABASE_TLS_CA_FILE', value: '/run/commander/database-tls/ca.crt' },
+        {
+          name: 'COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY',
+          value: 'secret/database-ca:database-ca.pem',
+        },
+        { name: 'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256', value: digest('3') },
+        {
+          name: 'COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE',
+          value: '/run/commander/api-proof-public/tls.crt',
+        },
+        { name: 'COMMANDER_KUBERNETES_PROOF_RUNTIME', value: '1' },
+      ],
+      securityContext: {
+        allowPrivilegeEscalation: false,
+        readOnlyRootFilesystem: true,
+        capabilities: { drop: ['ALL'] },
+      },
+      volumeMounts: [
+        { name: 'request', mountPath: '/run/commander/tenant-cutover', readOnly: true },
+        { name: 'database-public-ca', mountPath: '/run/commander/database-tls', readOnly: true },
+        { name: 'api-proof-public', mountPath: '/run/commander/api-proof-public', readOnly: true },
+        {
+          name: 'proof-api-token',
+          mountPath: '/var/run/secrets/commander.io/proof-api',
+          readOnly: true,
+        },
+        {
+          name: 'release-projection',
+          mountPath: '/run/commander/release-projection',
+          readOnly: true,
+        },
+      ],
+    },
+  ];
+  proofPod.spec.volumes = [
+    { name: 'request', configMap: { name: 'release-a-request-abcdef123456', defaultMode: 292 } },
+    ...proofPod.spec.volumes.filter((volume: { name: string }) => volume.name !== 'tmp'),
+  ];
+  proofPod.spec.volumes.find(
+    (volume: { name: string }) => volume.name === 'release-projection',
+  )!.configMap.name = 'release-a-owner-proof-current-r6';
+  proofPod.status.containerStatuses = [
+    {
+      name: 'owner-command',
+      ready: true,
+      restartCount: 0,
+      image: 'docker.io/library/commander:kind',
+      imageID: `containerd://sha256:${digest('b')}`,
+    },
+  ];
+  return values;
+}
+
 function token(): Task1ProjectedTokenIdentity {
   return {
     audience,
@@ -582,6 +700,43 @@ describe('Task 1 Kubernetes proof observer', () => {
       api: new FixtureApi(),
       readProjectedTokenIdentity: async () => token(),
       readReleaseProjection: async () => ({ ...releaseProjection(), revision: '5' }),
+      now: () => now,
+    });
+
+    await assert.rejects(() => observer(operation()), /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/);
+  });
+
+  it('accepts the strictly bound owner append Pod as the current-proof observer', async () => {
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(ownerCurrentProofResources()),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await observer(operation());
+  });
+
+  it('accepts the Kubernetes-defaulted owner current-proof termination grace period', async () => {
+    const values = ownerCurrentProofResources();
+    values.proofPods.items[0].spec.terminationGracePeriodSeconds = 30;
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await observer(operation());
+  });
+
+  it('rejects an owner current-proof Pod whose image pull policy drifts', async () => {
+    const values = ownerCurrentProofResources();
+    values.proofPods.items[0].spec.containers[0].imagePullPolicy = 'Always';
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
       now: () => now,
     });
 
