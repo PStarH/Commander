@@ -621,14 +621,6 @@ function releaseProjectionConfigMapName(
   return name;
 }
 
-function ownerCurrentProjectionConfigMapName(release: string, revision: string): string {
-  const suffix = `-owner-proof-current-r${revision}`;
-  if (!/^[1-9][0-9]*$/.test(revision)) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  const name = `${release.slice(0, 63 - suffix.length).replace(/-$/, '')}${suffix}`;
-  if (!NAME.test(name) || name.length > 63) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
-  return name;
-}
-
 function rendererValues(
   values: string,
   operation: HelmOperation,
@@ -1798,54 +1790,6 @@ function prepared(
   };
 }
 
-async function withOwnerCurrentProofRuntime<T>(input: {
-  request: Extract<HelmTenantCutoverRequest, { command: HelmCutoverCommand }>;
-  chartPackage: string;
-  context: HelmOwnerExecutionContext;
-  ports: HelmCutoverPorts;
-  execute(context: HelmOwnerExecutionContext): Promise<T>;
-}): Promise<T> {
-  if (input.request.command !== 'enforce' || input.context.proofRuntime) {
-    return input.execute(input.context);
-  }
-
-  const revision = await input.ports.helm.currentRevision(
-    input.request.namespace,
-    input.request.release,
-  );
-  const projectionConfigMapName = ownerCurrentProjectionConfigMapName(
-    input.request.release,
-    revision,
-  );
-  try {
-    const projection = await input.ports.helm.projectRevision(
-      input.request.namespace,
-      input.request.release,
-      revision,
-      input.chartPackage,
-    );
-    await input.ports.kubectl.prepareReleaseProjectionConfigMap({
-      namespace: input.request.namespace,
-      release: input.request.release,
-      revision,
-      name: projectionConfigMapName,
-      projection,
-    });
-    return await input.execute({
-      ...input.context,
-      proofRuntime: {
-        caKey: input.context.proofCertificate.caKey,
-        releaseProjectionConfigMap: projectionConfigMapName,
-      },
-    });
-  } finally {
-    await input.ports.kubectl.deleteAndVerifyConfigMap(
-      input.request.namespace,
-      projectionConfigMapName,
-    );
-  }
-}
-
 export async function runHelmTenantCutover(
   request: HelmTenantCutoverRequest,
   ports: HelmCutoverPorts,
@@ -2089,47 +2033,38 @@ export async function runHelmTenantCutover(
     );
   }
   let appendedOperation: HelmOperation | undefined;
-  const plan = await withOwnerCurrentProofRuntime({
-    request,
-    chartPackage,
-    context: ownerContext,
-    ports,
-    execute: async (context) => {
-      const plan = await ports.owner.plan(
-        {
-          schema: 'tenant-cutover-plan/v1',
-          command: request.command,
-          platformIntent: {
-            kind: 'helm',
-            namespace: request.namespace,
-            releaseName: request.release,
-            chartContentSha256: chartDigest,
-            phase: phase(request.command),
-            apiImageDigest: imageDigest,
-          },
-          businessConfiguration,
-        },
-        context,
-      );
-      if (plan.action === 'append') {
-        appendedOperation = await ports.owner.append(
-          {
-            schema: 'tenant-cutover-request/v1',
-            command: request.command,
-            prepared: prepared(
-              request,
-              values,
-              chartDigest,
-              ports.createNonce(),
-              businessConfiguration,
-            ),
-          },
-          context,
-        );
-      }
-      return plan;
+  const plan = await ports.owner.plan(
+    {
+      schema: 'tenant-cutover-plan/v1',
+      command: request.command,
+      platformIntent: {
+        kind: 'helm',
+        namespace: request.namespace,
+        releaseName: request.release,
+        chartContentSha256: chartDigest,
+        phase: phase(request.command),
+        apiImageDigest: imageDigest,
+      },
+      businessConfiguration,
     },
-  });
+    ownerContext,
+  );
+  if (plan.action === 'append') {
+    appendedOperation = await ports.owner.append(
+      {
+        schema: 'tenant-cutover-request/v1',
+        command: request.command,
+        prepared: prepared(
+          request,
+          values,
+          chartDigest,
+          ports.createNonce(),
+          businessConfiguration,
+        ),
+      },
+      ownerContext,
+    );
+  }
   if (plan.action === 'return_current') {
     assertOperation(plan.operation, request.command, chartDigest, request);
     if (!plan.operation.proven) fail('TENANT_CUTOVER_OWNER_RESPONSE_INVALID');
