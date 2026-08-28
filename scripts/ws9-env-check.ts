@@ -78,13 +78,15 @@ function hasBinary(name: string): boolean {
 }
 
 /** Postgres connection parameters sourced from COMMANDER_DB_* env vars. */
-function pgConnParams(): {
-  host: string;
-  port: string;
-  db: string;
-  user: string;
-  password: string;
-} | undefined {
+function pgConnParams():
+  | {
+      host: string;
+      port: string;
+      db: string;
+      user: string;
+      password: string;
+    }
+  | undefined {
   const host = process.env.COMMANDER_DB_HOST;
   const port = process.env.COMMANDER_DB_PORT ?? '5432';
   const db = process.env.COMMANDER_DB_NAME;
@@ -107,12 +109,20 @@ function pgQuery(sql: string): { ok: boolean; out: string; err: string } {
   const result = spawnSync(
     'psql',
     [
-      '-h', conn.host,
-      '-p', String(conn.port),
-      '-U', conn.user,
-      '-d', conn.db,
-      '-t', '-A', '-F', '|',
-      '-c', sql,
+      '-h',
+      conn.host,
+      '-p',
+      String(conn.port),
+      '-U',
+      conn.user,
+      '-d',
+      conn.db,
+      '-t',
+      '-A',
+      '-F',
+      '|',
+      '-c',
+      sql,
     ],
     {
       encoding: 'utf-8',
@@ -194,8 +204,7 @@ function checkPgRole(): CheckResult {
       check: NAME,
       passed: false,
       severity: 'FAIL',
-      detail:
-        'psql binary not found; PG role checks required for live-fire (spec §3.2).',
+      detail: 'psql binary not found; PG role checks required for live-fire (spec §3.2).',
     };
   }
   if (!pgConnParams()) {
@@ -242,12 +251,16 @@ function checkPgRole(): CheckResult {
 
   // does this role own any target table?
   const ownerSql =
-    "SELECT c.relname FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner " +
+    'SELECT c.relname FROM pg_class c JOIN pg_roles r ON r.oid = c.relowner ' +
     "WHERE r.rolname = current_user AND c.relkind = 'r' AND " +
     "(c.relname IN ('runs','steps','memory_items','atr_run_ledger','event_sourcing_log') " +
     "OR c.relname LIKE 'war\\_room\\_%') ORDER BY c.relname;";
   const owner = pgQuery(ownerSql);
-  const ownedTables = owner.ok ? parseRows(owner.out).map((r) => r[0]).filter(Boolean) : [];
+  const ownedTables = owner.ok
+    ? parseRows(owner.out)
+        .map((r) => r[0])
+        .filter(Boolean)
+    : [];
 
   const reasons: string[] = [];
   if (isSuper) reasons.push('role is superuser');
@@ -280,8 +293,7 @@ function checkRlsWithCheck(): CheckResult {
       check: NAME,
       passed: false,
       severity: 'FAIL',
-      detail:
-        'psql binary not found; RLS checks required for live-fire (spec §3.2).',
+      detail: 'psql binary not found; RLS checks required for live-fire (spec §3.2).',
     };
   }
   if (!pgConnParams()) {
@@ -289,14 +301,13 @@ function checkRlsWithCheck(): CheckResult {
       check: NAME,
       passed: false,
       severity: 'FAIL',
-      detail:
-        'COMMANDER_DB_HOST/NAME/USER not set; RLS checks required for live-fire (spec §3.2).',
+      detail: 'COMMANDER_DB_HOST/NAME/USER not set; RLS checks required for live-fire (spec §3.2).',
     };
   }
 
   const sql =
     'SELECT c.relname, c.relrowsecurity, ' +
-    'COALESCE(p.polname, \'\') AS polname, ' +
+    "COALESCE(p.polname, '') AS polname, " +
     'COALESCE(p.polqual IS NOT NULL, false) AS has_using, ' +
     'COALESCE(p.polwithcheck IS NOT NULL, false) AS has_withcheck ' +
     'FROM pg_class c LEFT JOIN pg_policy p ON p.polrelid = c.oid ' +
@@ -415,8 +426,7 @@ async function checkVault(): Promise<CheckResult> {
   const sealed = body.sealed === true;
   const initialized = body.initialized !== false;
 
-  const reachableHealthy =
-    (res.status === 200 || res.status === 429) && !sealed && initialized;
+  const reachableHealthy = (res.status === 200 || res.status === 429) && !sealed && initialized;
 
   if (!reachableHealthy) {
     return {
@@ -515,7 +525,8 @@ function checkRunsc(): CheckResult {
       check: NAME,
       passed: false,
       severity: 'WARN',
-      detail: 'runsc found but `runsc --version` failed; gVisor EXEC tests should skip or use Docker fallback.',
+      detail:
+        'runsc found but `runsc --version` failed; gVisor EXEC tests should skip or use Docker fallback.',
     };
   }
   return {
@@ -629,7 +640,9 @@ async function main(): Promise<void> {
       console.log(`    ${c.detail}`);
     }
     console.log('');
-    console.log(`Verdict: ${result.verdict}${anyFail ? ' (one or more required checks failed)' : ' (all required checks pass; WARNs are advisory)'}`);
+    console.log(
+      `Verdict: ${result.verdict}${anyFail ? ' (one or more required checks failed)' : ' (all required checks pass; WARNs are advisory)'}`,
+    );
   }
 
   process.exit(anyFail ? 1 : 0);

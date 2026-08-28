@@ -193,13 +193,19 @@ export interface McpRouterOptions {
  * role/scope model of actionGatewayEndpoints.
  */
 const MCP_ACTION_TOOL_AUTHORITY: Record<string, { minRole: UserRole; scopes: string[] }> = {
-  commander_action_propose: { minRole: 'developer', scopes: ['actions:propose', 'write', 'admin', '*'] },
+  commander_action_propose: {
+    minRole: 'developer',
+    scopes: ['actions:propose', 'write', 'admin', '*'],
+  },
   commander_action_approve: { minRole: 'admin', scopes: ['actions:approve', 'admin', '*'] },
   commander_action_compensation_request: {
     minRole: 'developer',
     scopes: ['actions:compensation', 'write', 'admin', '*'],
   },
-  commander_action_compensation_approve: { minRole: 'admin', scopes: ['actions:approve', 'admin', '*'] },
+  commander_action_compensation_approve: {
+    minRole: 'admin',
+    scopes: ['actions:approve', 'admin', '*'],
+  },
   commander_action_reconcile: { minRole: 'admin', scopes: ['actions:reconcile', 'admin', '*'] },
 };
 

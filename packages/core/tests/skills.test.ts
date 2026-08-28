@@ -865,7 +865,8 @@ describe('SkillSecurityScanner', () => {
     assert.ok(
       result.warnings.some(
         (warning) =>
-          warning.category === 'shell_injection' && warning.message.includes(join('ex', 'ec() call')),
+          warning.category === 'shell_injection' &&
+          warning.message.includes(join('ex', 'ec() call')),
       ),
       'Process execution must remain a high-severity finding',
     );
@@ -901,14 +902,22 @@ describe('SkillSecurityScanner', () => {
   it('detects private key blocks', () => {
     const result = scanSkillContent(
       'key-leak',
-      join('-----BEGIN TEST ', 'PRIVATE KEY-----\nTHIS IS A TEST FIXTURE NOT A REAL KEY\n-----END TEST ', 'PRIVATE KEY-----'),
+      join(
+        '-----BEGIN TEST ',
+        'PRIVATE KEY-----\nTHIS IS A TEST FIXTURE NOT A REAL KEY\n-----END TEST ',
+        'PRIVATE KEY-----',
+      ),
       [],
     );
     assert.ok(!result.passed, 'Should fail with private key');
   });
 
   it('detects child_process require', () => {
-    const result = scanSkillContent('dangerous', join('const cp = require("child_', 'process")'), []);
+    const result = scanSkillContent(
+      'dangerous',
+      join('const cp = require("child_', 'process")'),
+      [],
+    );
     assert.ok(!result.passed, 'Should fail with dangerous API');
     assert.ok(
       result.warnings.some((w) => w.category === 'dangerous_api'),

@@ -9,11 +9,7 @@
 import * as crypto from 'node:crypto';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import type { SqlClient, SqlPool } from '@commander/kernel';
-import {
-  createAuthPool,
-  withTenantScopedClient,
-  type VerifiedPoolFactory,
-} from './authDb';
+import { createAuthPool, withTenantScopedClient, type VerifiedPoolFactory } from './authDb';
 
 export interface ApiKeyRecord {
   id: string;

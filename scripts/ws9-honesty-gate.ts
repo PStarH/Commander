@@ -170,16 +170,16 @@ interface TextMatch {
   context: string;
 }
 
-function findLineMatches(
-  text: string,
-  regex: RegExp,
-): TextMatch[] {
+function findLineMatches(text: string, regex: RegExp): TextMatch[] {
   const results: TextMatch[] = [];
   const lines = text.split('\n');
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line) continue;
-    const re = new RegExp(regex.source, regex.flags.includes('g') ? regex.flags : regex.flags + 'g');
+    const re = new RegExp(
+      regex.source,
+      regex.flags.includes('g') ? regex.flags : regex.flags + 'g',
+    );
     re.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = re.exec(line)) !== null) {
@@ -300,17 +300,14 @@ function checkEvidenceLevelMismatch(markdownFiles: string[]): HonestyViolation[]
  * harness / predicate / fuzz / InMemory / not-a-substitute / verify) in the
  * ±2 line window so that unrelated "simulated load" mentions do not fire.
  */
-function collectSimulatedItemClaims(
-  lines: string[],
-): Map<string, { line: number; match: string }> {
+function collectSimulatedItemClaims(lines: string[]): Map<string, { line: number; match: string }> {
   const out = new Map<string, { line: number; match: string }>();
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     if (!line) continue;
     // Use the lookbehind-aware pattern so CLI flags like `--simulated` do not
     // register as evidence-level claims.
-    const isSimulatedClaim =
-      SIMULATED_WORD.test(line) || EVIDENCE_LEVEL_NON_LIVE.test(line);
+    const isSimulatedClaim = SIMULATED_WORD.test(line) || EVIDENCE_LEVEL_NON_LIVE.test(line);
     if (!isSimulatedClaim) continue;
     const window = lines.slice(Math.max(0, i - 2), i + 3).join('\n');
     const isEvidenceContext =
@@ -550,9 +547,7 @@ function printHuman(result: HonestyGateResult): void {
   if (result.verdict === 'PASS') {
     console.log('✓ No overclaim violations found.');
     if (result.warnings.length > 0) {
-      console.log(
-        `  ${result.warnings.length} warning(s) — see above (Phase 3 work).`,
-      );
+      console.log(`  ${result.warnings.length} warning(s) — see above (Phase 3 work).`);
     }
   } else {
     console.log('✗ Overclaim violations present — see above.');

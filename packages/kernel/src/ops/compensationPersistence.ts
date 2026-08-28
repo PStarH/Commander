@@ -5,7 +5,10 @@ import {
   type GovernedCompensationAuthorizationInput,
 } from './compensationAuthority.js';
 import type { KernelEffect, KernelRunState } from '../types.js';
-import type { CompensationApprovalBinding, CompensationDecisionEffect } from './compensationAuthority.js';
+import type {
+  CompensationApprovalBinding,
+  CompensationDecisionEffect,
+} from './compensationAuthority.js';
 
 /** Legacy test-fixture input. Production authority uses CompensationAuthorizationRecord. */
 export interface LegacyGovernedCompensationInput {
@@ -52,10 +55,12 @@ function stableId(prefix: string, value: unknown, length: number): string {
   return `${prefix}_${canonicalCompensationHash(value).slice(0, length)}`;
 }
 
-export function governedCompensationIdentifiers(input: Pick<
-  LegacyGovernedCompensationInput,
-  'tenantId' | 'originalRunId' | 'originalEffectId' | 'adapterVersion'
->): GovernedCompensationIdentifiers {
+export function governedCompensationIdentifiers(
+  input: Pick<
+    LegacyGovernedCompensationInput,
+    'tenantId' | 'originalRunId' | 'originalEffectId' | 'adapterVersion'
+  >,
+): GovernedCompensationIdentifiers {
   const identity = {
     protocol: 'commander.compensation/v1',
     tenantId: input.tenantId,

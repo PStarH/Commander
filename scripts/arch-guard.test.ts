@@ -344,7 +344,10 @@ test('rejects adapter-ops importing @commander/core', () => {
       },
     },
   });
-  assert.throws(() => runGuard(root), /illegal.*dependency|adapter-ops.*core|forbidden @commander\/core/i);
+  assert.throws(
+    () => runGuard(root),
+    /illegal.*dependency|adapter-ops.*core|forbidden @commander\/core/i,
+  );
 });
 
 test('rejects adapter-ops importing apps/api', () => {
@@ -435,7 +438,10 @@ test('rejects commander dev importing @commander/worker-plane', () => {
     packages: {
       contracts: { name: '@commander/contracts' },
       kernel: { name: '@commander/kernel', deps: { '@commander/contracts': 'workspace:*' } },
-      'worker-plane': { name: '@commander/worker-plane', deps: { '@commander/kernel': 'workspace:*' } },
+      'worker-plane': {
+        name: '@commander/worker-plane',
+        deps: { '@commander/kernel': 'workspace:*' },
+      },
       core: {
         name: '@commander/core',
         deps: { '@commander/worker-plane': 'workspace:*' },

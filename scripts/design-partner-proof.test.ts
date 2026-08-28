@@ -184,19 +184,20 @@ describe('technical design-partner proof', () => {
     assert.equal(result.manifest.verdict, 'PROVEN');
     assert.equal(result.manifest.passed, true);
     assert.deepEqual(result.manifest.failures, []);
-    assert.deepEqual(
-      result.manifest.artifacts.map(({ path }) => path).sort(),
-      [
-        'campaign-observation.json',
-        'events.ndjson',
-        'metrics.json',
-        'receipt.json',
-        'rotation-evidence.json',
-        'verification.json',
-      ],
+    assert.deepEqual(result.manifest.artifacts.map(({ path }) => path).sort(), [
+      'campaign-observation.json',
+      'events.ndjson',
+      'metrics.json',
+      'receipt.json',
+      'rotation-evidence.json',
+      'verification.json',
+    ]);
+    for (const artifact of result.manifest.artifacts)
+      assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
+    assert.equal(
+      JSON.stringify(result).includes('/opt/commander/bin/design-partner-driver'),
+      false,
     );
-    for (const artifact of result.manifest.artifacts) assert.match(artifact.sha256, /^[a-f0-9]{64}$/);
-    assert.equal(JSON.stringify(result).includes('/opt/commander/bin/design-partner-driver'), false);
   });
 
   it('retains NOT_READY when an operational gate is incomplete', async () => {
@@ -284,9 +285,11 @@ describe('field review', () => {
       signature: {
         algorithm: 'ed25519',
         keyId: 'partner-key',
-        value: sign(null, Buffer.from(customerAcceptanceSigningPayload(unsigned)), privateKey).toString(
-          'base64',
-        ),
+        value: sign(
+          null,
+          Buffer.from(customerAcceptanceSigningPayload(unsigned)),
+          privateKey,
+        ).toString('base64'),
       },
     };
     const result = runDesignPartnerFieldReview({

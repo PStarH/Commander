@@ -76,7 +76,12 @@ async function rmMemoryDirRetry(): Promise<void> {
   // Best-effort on Windows — do not fail the suite on leftover locked files.
   if (process.platform === 'win32') {
     try {
-      await fsp.rm(EXPECTED_MEMORY_DIR, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      await fsp.rm(EXPECTED_MEMORY_DIR, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
     } catch {
       /* ignore */
     }

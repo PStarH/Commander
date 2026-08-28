@@ -1222,8 +1222,15 @@ export class InMemoryKernelRepository implements KernelRepository {
     effect.completedAt = now();
     if (!existing) this.evidence.set(evidenceKey, clone(request.evidence));
     this.event(
-      'effect', effect.id, 2, 'effect.failed', request.tenantId, effect.runId,
-      effect.stepId, request.actor, { error: request.error },
+      'effect',
+      effect.id,
+      2,
+      'effect.failed',
+      request.tenantId,
+      effect.runId,
+      effect.stepId,
+      request.actor,
+      { error: request.error },
     );
     return clone(effect);
   }
@@ -1631,11 +1638,11 @@ export class InMemoryKernelRepository implements KernelRepository {
         nextAttempt >= policy.maxAttempts);
     const projectedState =
       mutation === 'COMPLETE'
-        ? 'COMPLETED' as const
+        ? ('COMPLETED' as const)
         : mutation === 'CONFIRM_NOT_APPLIED'
-          ? 'CONFIRMED_NOT_APPLIED' as const
+          ? ('CONFIRMED_NOT_APPLIED' as const)
           : mutation === 'ESCALATE' || rescheduleEscalates
-            ? 'COMPLETION_UNKNOWN' as const
+            ? ('COMPLETION_UNKNOWN' as const)
             : null;
     let evidenceEntry: { key: string; record: KernelEvidenceRecord } | null = null;
     if (projectedState) {
@@ -2395,8 +2402,8 @@ export class InMemoryKernelRepository implements KernelRepository {
         input.disposition === 'COMPLETED'
           ? effect.state
           : input.disposition === 'CONFIRMED_NOT_APPLIED'
-            ? 'CONFIRMED_NOT_APPLIED' as const
-            : 'COMPLETION_UNKNOWN' as const,
+            ? ('CONFIRMED_NOT_APPLIED' as const)
+            : ('COMPLETION_UNKNOWN' as const),
     };
     if (!input.evidence) {
       return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
@@ -3377,7 +3384,11 @@ export class InMemoryKernelRepository implements KernelRepository {
   }
   private hasUnreceiptedConsequentialEffect(runId: string, tenantId: string): boolean {
     return [...this.effects.values()].some((effect) => {
-      if (effect.runId !== runId || effect.tenantId !== tenantId || !isClassAEffectType(effect.type)) {
+      if (
+        effect.runId !== runId ||
+        effect.tenantId !== tenantId ||
+        !isClassAEffectType(effect.type)
+      ) {
         return false;
       }
       return !this.hasEvidenceForEffect(effect);

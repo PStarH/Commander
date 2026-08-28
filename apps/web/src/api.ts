@@ -21,8 +21,8 @@ import type {
 } from './types';
 
 export const API_BASE =
-  (import.meta as { env?: Record<string, string | undefined> }).env
-    ?.VITE_API_BASE_URL || 'http://localhost:4000';
+  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_API_BASE_URL ||
+  'http://localhost:4000';
 export const PROJECT_ID = 'project-war-room';
 
 // ============================================================================

@@ -31,7 +31,10 @@ describe('capabilityToken key resolver (AUDIT-CORE1)', () => {
     // FAILING before the fix: only NODE_ENV gated this resolver, so a
     // deployment with just COMMANDER_ENV=prod silently issued capability
     // tokens signed with a public constant.
-    assert.throws(() => resolveCapabilityMasterKey({ COMMANDER_ENV: 'prod' } as NodeJS.ProcessEnv), /must be set/);
+    assert.throws(
+      () => resolveCapabilityMasterKey({ COMMANDER_ENV: 'prod' } as NodeJS.ProcessEnv),
+      /must be set/,
+    );
   });
 
   test('production with a proper key passes', () => {
@@ -59,6 +62,9 @@ describe('encryptedSecretsVault key resolver (AUDIT-CORE1)', () => {
 
 describe('federatedIdentity key resolver (AUDIT-CORE1)', () => {
   test('COMMANDER_ENV=prod without a key refuses (baseline hole)', () => {
-    assert.throws(() => resolveFederationKey({ COMMANDER_ENV: 'prod' } as NodeJS.ProcessEnv), /required|must be set/i);
+    assert.throws(
+      () => resolveFederationKey({ COMMANDER_ENV: 'prod' } as NodeJS.ProcessEnv),
+      /required|must be set/i,
+    );
   });
 });

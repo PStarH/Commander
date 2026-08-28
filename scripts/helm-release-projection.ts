@@ -191,13 +191,7 @@ function retainedSecretReference(
   documents: readonly JsonRecord[],
   releaseNamespace: string,
 ): { sentinel: string; reference: HelmReleaseObjectIdentity } {
-  const retained = retainedSecretPayload(
-    pointer,
-    sentinel,
-    secretKey,
-    documents,
-    releaseNamespace,
-  );
+  const retained = retainedSecretPayload(pointer, sentinel, secretKey, documents, releaseNamespace);
   return { sentinel: retained.sentinel, reference: retained.reference };
 }
 
@@ -350,20 +344,8 @@ function sanitizeRendererValues(
     const closedSecretKey = CLOSED_CREDENTIAL_VALUE_PATHS.get(childPath);
     if (closedSecretKey && typeof child === 'string' && child.length > 0) {
       const typed = child.startsWith('commander-secret-ref/v1:')
-        ? retainedSecretReference(
-            childPath,
-            child,
-            closedSecretKey,
-            documents,
-            releaseNamespace,
-          )
-        : typedSecretReference(
-            childPath,
-            child,
-            closedSecretKey,
-            documents,
-            releaseNamespace,
-          );
+        ? retainedSecretReference(childPath, child, closedSecretKey, documents, releaseNamespace)
+        : typedSecretReference(childPath, child, closedSecretKey, documents, releaseNamespace);
       if (!references.has(identityKey(typed.reference))) fail();
       references.set(identityKey(typed.reference), typed.reference);
       result[key] = typed.sentinel;
@@ -376,18 +358,15 @@ function sanitizeRendererValues(
       !secretReferencePath(childPath)
     )
       fail();
-    result[key] = sanitizeRendererValues(
-      child,
-      documents,
-      releaseNamespace,
-      references,
-      childPath,
-    );
+    result[key] = sanitizeRendererValues(child, documents, releaseNamespace, references, childPath);
   }
   return result;
 }
 
-function sourceReferences(value: unknown, namespace: string): Map<string, HelmReleaseObjectIdentity> {
+function sourceReferences(
+  value: unknown,
+  namespace: string,
+): Map<string, HelmReleaseObjectIdentity> {
   if (!Array.isArray(value)) fail();
   const references = new Map<string, HelmReleaseObjectIdentity>();
   for (const source of value) {
@@ -401,7 +380,12 @@ function sourceReferences(value: unknown, namespace: string): Map<string, HelmRe
       !SECRET_NAME.test(name)
     )
       fail();
-    const identity: HelmReleaseObjectIdentity = { apiVersion: 'v1', kind: 'Secret', namespace, name };
+    const identity: HelmReleaseObjectIdentity = {
+      apiVersion: 'v1',
+      kind: 'Secret',
+      namespace,
+      name,
+    };
     const key = identityKey(identity);
     if (references.has(key)) fail();
     references.set(key, identity);
@@ -503,21 +487,23 @@ export function projectHelmReleaseRevision(input: {
     const references =
       objectIdentity.kind === 'Secret'
         ? []
-        : [...collectSecretReferences(document, objectIdentity.namespace).values()].sort((left, right) =>
-            identityKey(left).localeCompare(identityKey(right)),
+        : [...collectSecretReferences(document, objectIdentity.namespace).values()].sort(
+            (left, right) => identityKey(left).localeCompare(identityKey(right)),
           );
     for (const reference of references) allSecretReferences.set(identityKey(reference), reference);
     objects.push({
       identity: objectIdentity,
       comparator:
-        objectIdentity.kind === 'Secret'
-          ? secretComparator(document)
-          : desiredComparator(document),
+        objectIdentity.kind === 'Secret' ? secretComparator(document) : desiredComparator(document),
       secretReferences: references,
     });
   }
-  objects.sort((left, right) => identityKey(left.identity).localeCompare(identityKey(right.identity)));
-  hooks.sort((left, right) => identityKey(left.identity).localeCompare(identityKey(right.identity)));
+  objects.sort((left, right) =>
+    identityKey(left.identity).localeCompare(identityKey(right.identity)),
+  );
+  hooks.sort((left, right) =>
+    identityKey(left.identity).localeCompare(identityKey(right.identity)),
+  );
   const rendererValues = sanitizeRendererValues(
     values,
     documents,

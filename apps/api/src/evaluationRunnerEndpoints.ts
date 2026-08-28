@@ -44,7 +44,9 @@ export function createEvaluationRunnerRouter(): Router {
     // AUDIT-R4F4: validate k and bound the O(n·k) computation.
     const kNum = Number(k);
     if (!Number.isInteger(kNum) || kNum < 1 || kNum > 100 || trials.length > 1000) {
-      return res.status(400).json({ error: 'k must be an integer in [1,100]; trials capped at 1000' });
+      return res
+        .status(400)
+        .json({ error: 'k must be an integer in [1,100]; trials capped at 1000' });
     }
 
     const runner = createEvaluationRunner();

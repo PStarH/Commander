@@ -17,8 +17,7 @@ describe('assertSafeSqlIdentifier (AUDIT-K5)', () => {
     // FAILING before the fix: `x"; CREATE ROLE evil SUPERUSER;--` was
     // interpolated into ALTER ROLE "..." BYPASSRLS verbatim.
     assert.throws(
-      () =>
-        assertSafeSqlIdentifier('x"; CREATE ROLE evil SUPERUSER;--', 'rolname'),
+      () => assertSafeSqlIdentifier('x"; CREATE ROLE evil SUPERUSER;--', 'rolname'),
       /must match/,
     );
   });
@@ -29,7 +28,7 @@ describe('assertSafeSqlIdentifier (AUDIT-K5)', () => {
         assertSafeSqlIdentifier(bad, 'rolname');
         assert.fail('should have thrown');
       } catch (err) {
-        assert.ok(!(String((err as Error).message)).includes(bad));
+        assert.ok(!String((err as Error).message).includes(bad));
       }
     });
   }
@@ -46,7 +45,7 @@ describe('buildAdapterOpsLoginSql (AUDIT-K6)', () => {
     assert.match(sql, /CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD/);
   });
 
-  test("single quotes are escaped", () => {
+  test('single quotes are escaped', () => {
     const sql = buildAdapterOpsLoginSql("o'brien");
     assert.ok(sql.includes("'o''brien'"));
   });
@@ -61,7 +60,10 @@ describe('buildAdapterOpsLoginSql (AUDIT-K6)', () => {
     const tags = [...sql.matchAll(/\$(cmdr_pwd_\d+)\$/g)].map((m) => m[1]);
     assert.ok(tags.length >= 2, 'opening and closing tag present');
     assert.equal(new Set(tags).size, 1, 'one consistent tag');
-    const body = sql.slice(sql.indexOf(`$${tags[0]}$`) + tags[0].length + 2, sql.lastIndexOf(`$${tags[0]}$`));
+    const body = sql.slice(
+      sql.indexOf(`$${tags[0]}$`) + tags[0].length + 2,
+      sql.lastIndexOf(`$${tags[0]}$`),
+    );
     assert.ok(!body.includes(`$${tags[0]}$`), 'tag must not occur inside the body');
     assert.ok(body.includes(hostile.replace(/'/g, "''")), 'payload stays literal text');
   });

@@ -18,15 +18,13 @@
 import { describe, it, expect } from 'vitest';
 
 import { ReversibilityGate } from '../../src/security/reversibilityGate';
-import { runWithTenant, assertSameTenant, tenantPathSegment, TenantIsolationError } from '../../src/runtime/tenantContext';
 import {
-  probeGvisor,
-  describeIf,
-  writePass,
-  writeBreach,
-  TENANT_A,
-  TENANT_B,
-} from './_evidence';
+  runWithTenant,
+  assertSameTenant,
+  tenantPathSegment,
+  TenantIsolationError,
+} from '../../src/runtime/tenantContext';
+import { probeGvisor, describeIf, writePass, writeBreach, TENANT_A, TENANT_B } from './_evidence';
 import {
   evaluateExec1Isolation,
   isEscapeBlocked,
@@ -104,10 +102,8 @@ describe('WS9 EXEC-1 helpers (unit, no live evidence)', () => {
     expect(evaluateExec1Isolation(okProbes, true).ok).toBe(true);
     expect(evaluateExec1Isolation(okProbes, false).ok).toBe(false);
     expect(
-      evaluateExec1Isolation(
-        [{ ...okProbes[0], blocked: false }, okProbes[1], okProbes[2]],
-        true,
-      ).ok,
+      evaluateExec1Isolation([{ ...okProbes[0], blocked: false }, okProbes[1], okProbes[2]], true)
+        .ok,
     ).toBe(false);
   });
 
@@ -141,12 +137,7 @@ describeIf(probeGvisor)('WS9 EXEC-1 (live gVisor): A tries nsenter/proc access �
         expect(p.blocked).toBe(true);
       }
 
-      writePass(
-        'EXEC-1',
-        result.details,
-        artifacts,
-        'live',
-      );
+      writePass('EXEC-1', result.details, artifacts, 'live');
     } catch (err) {
       writeBreach(
         'EXEC-1',
@@ -167,7 +158,7 @@ describeIf(!probeGvisor.available)('WS9 EXEC-1 (skipped: gVisor unavailable)', (
 
 // ─── EXEC-2: A reuses B's container/workdir → rejected ──────────────────
 
-describe('WS9 EXEC-2: A reuses B\'s container/workdir/volume → rejected', () => {
+describe("WS9 EXEC-2: A reuses B's container/workdir/volume → rejected", () => {
   it('workloadId mismatch prevents reuse; tenant path segments distinct', () => {
     const artifacts: string[] = [];
     try {

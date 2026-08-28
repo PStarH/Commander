@@ -477,40 +477,44 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   // ── GET /api/onboarding/status ──────────────────────────────────────────
   // AUDIT-API15: status discloses provider configuration and directory
   // contents — operator-scoped information.
-  router.get('/api/onboarding/status', requireOnboardingConfigAdmin, async (_req: Request, res: Response) => {
-    try {
-      const resolved = await resolveProvider();
-      const hasRunTask = await dirHasContent(TRACES_DIR);
-      const hasKnowledge = await dirHasContent(KNOWLEDGE_BASE_DIR);
-      const completion = await readCompletedSteps();
+  router.get(
+    '/api/onboarding/status',
+    requireOnboardingConfigAdmin,
+    async (_req: Request, res: Response) => {
+      try {
+        const resolved = await resolveProvider();
+        const hasRunTask = await dirHasContent(TRACES_DIR);
+        const hasKnowledge = await dirHasContent(KNOWLEDGE_BASE_DIR);
+        const completion = await readCompletedSteps();
 
-      const hasProvider = resolved !== null;
-      const hasApiKey =
-        (resolved !== null && resolved.apiKey !== '') ||
-        (resolved?.id === 'ollama' && resolved.baseUrl !== '');
+        const hasProvider = resolved !== null;
+        const hasApiKey =
+          (resolved !== null && resolved.apiKey !== '') ||
+          (resolved?.id === 'ollama' && resolved.baseUrl !== '');
 
-      const completedSteps = completion.steps.slice();
-      // 根据 detected 状态自动推断已完成的步骤（即使未显式标记 complete）
-      if (hasProvider && !completedSteps.includes('provider')) completedSteps.push('provider');
-      if (hasRunTask && !completedSteps.includes('first-task')) completedSteps.push('first-task');
+        const completedSteps = completion.steps.slice();
+        // 根据 detected 状态自动推断已完成的步骤（即使未显式标记 complete）
+        if (hasProvider && !completedSteps.includes('provider')) completedSteps.push('provider');
+        if (hasRunTask && !completedSteps.includes('first-task')) completedSteps.push('first-task');
 
-      const isComplete = completion.isComplete;
+        const isComplete = completion.isComplete;
 
-      res.json({
-        hasProvider,
-        hasApiKey,
-        provider: resolved?.id ?? null,
-        providerLabel: resolved?.label ?? null,
-        model: resolved?.model ?? null,
-        hasRunTask,
-        hasKnowledge,
-        completedSteps,
-        isComplete,
-      });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+        res.json({
+          hasProvider,
+          hasApiKey,
+          provider: resolved?.id ?? null,
+          providerLabel: resolved?.label ?? null,
+          model: resolved?.model ?? null,
+          hasRunTask,
+          hasKnowledge,
+          completedSteps,
+          isComplete,
+        });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   // ── GET /api/onboarding/sample-tasks ───────────────────────────────────
   // 返回示例任务列表，供前端向导展示给新用户选择。

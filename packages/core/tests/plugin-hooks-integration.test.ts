@@ -22,6 +22,7 @@ import type {
   AfterBackendSelectContext,
 } from '../src/pluginManager';
 import { ExecutionRouter } from '../src/sandbox/executionRouter';
+import type { ExecutionBackend } from '../src/sandbox/types';
 
 function freshHookManager(): HookManager {
   resetHookManager();
@@ -763,7 +764,7 @@ describe('beforeBackendSelect + ExecutionRouter', () => {
 
   it('hook can redirect to a named backend', async () => {
     const router = new ExecutionRouter();
-    const recording = new (class implements import('../src/sandbox/types').ExecutionBackend {
+    const recording = new (class implements ExecutionBackend {
       readonly type = 'local' as const;
       readonly available = true;
       async execute(cmd: string) {

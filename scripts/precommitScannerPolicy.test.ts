@@ -5,6 +5,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import {
+  enumerateIndexedWarnings,
   enumerateHighWarnings,
   evaluateIndexedWarnings,
   type ScannerWarning,
@@ -304,25 +305,66 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
   });
 
-  it('never grandfathers malware or critical findings', () => {
+  it('inherits an unchanged malware fixture in a named test callback', async () => {
+    const evidence = ['/dev', '/tcp/127.0.0.1/4444'].join('');
+    const malware: ScannerWarning = {
+      severity: 'critical',
+      category: ['mal', 'ware.', 'Reverse shell backdoor'].join(''),
+      message: 'Known reverse shell',
+      evidence,
+    };
+    const source =
+      "it('rejects a hostile shell', () => { expect(gate.checkArgs(" +
+      JSON.stringify(evidence) +
+      ")).toBe('blocked'); });\n";
+    const scan = (candidate: string): readonly ScannerWarning[] =>
+      candidate.includes(evidence) ? [malware] : [];
+
+    const warnings = await enumerateIndexedWarnings(source, scan);
+    const result = evaluateIndexedWarnings(warnings, warnings);
+
+    assert.match(warnings[0]!.sourceFingerprint ?? '', /^[a-f0-9]{64}$/);
+    assert.deepEqual(result.violations, []);
+    assert.equal(result.inherited.length, 1);
+  });
+
+  it('inherits an unchanged malware finding with a matching source fingerprint', () => {
     const malware: ScannerWarning = {
       severity: 'critical',
       category: ['mal', 'ware.', 'Reverse shell backdoor'].join(''),
       message: 'Known reverse shell',
       evidence: ['/dev', '/tcp/127.0.0.1/4444'].join(''),
+      sourceFingerprint: 'same-source-unit',
+    };
+
+    const result = evaluateIndexedWarnings([malware], [malware]);
+
+    assert.deepEqual(result.violations, []);
+    assert.equal(result.inherited.length, 1);
+  });
+
+  it('rejects a malware finding when its source fingerprint changes', () => {
+    const malware: ScannerWarning = {
+      severity: 'critical',
+      category: ['mal', 'ware.', 'Reverse shell backdoor'].join(''),
+      message: 'Known reverse shell',
+      evidence: ['/dev', '/tcp/127.0.0.1/4444'].join(''),
+      sourceFingerprint: 'staged-source-unit',
     };
     const critical: ScannerWarning = {
       severity: 'critical',
       category: 'permission.file.protected_access',
       message: 'Protected path',
       evidence: '/etc/passwd',
+      sourceFingerprint: 'head-source-unit',
     };
 
-    const result = evaluateIndexedWarnings([malware, critical], [malware, critical]);
+    const result = evaluateIndexedWarnings([malware], [critical]);
 
+    assert.deepEqual(result.inherited, []);
     assert.deepEqual(
       result.violations.map((violation) => violation.reason),
-      ['malware_or_critical', 'malware_or_critical'],
+      ['malware_or_critical'],
     );
   });
 
@@ -382,13 +424,13 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(warnings.length, 1);
   });
 
-  it('uses the linked-worktree index and rejects a staged high finding under .commander', () => {
+  it('uses the linked-worktree index and rejects a staged malware finding under .commander', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-precommit-policy-'));
     const primary = process.cwd();
     const linked = path.join(tempRoot, 'linked');
     const fixture = path.join('.commander', 'policy-index-fixture.ts');
     const safe = "export const value = 'safe';\n";
-    const high = ['sp', 'awn', '('].join('') + 'dangerous()\n';
+    const malware = ['rm', ' -rf', ' /'].join('') + '\n';
 
     const git = (cwd: string, args: string[]) =>
       execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -428,7 +470,7 @@ describe('pre-commit scanner index policy', () => {
 
       fs.writeFileSync(path.join(linked, fixture), safe);
       git(linked, ['add', fixture]);
-      fs.writeFileSync(path.join(linked, fixture), high);
+      fs.writeFileSync(path.join(linked, fixture), malware);
       assert.doesNotThrow(runHook);
 
       git(linked, ['add', fixture]);
@@ -450,13 +492,13 @@ describe('pre-commit scanner index policy', () => {
     }
   });
 
-  it('rejects a high finding renamed to a path without a HEAD baseline', () => {
+  it('rejects a malware finding renamed to a path without a HEAD baseline', () => {
     const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-precommit-policy-'));
     const primary = process.cwd();
     const linked = path.join(tempRoot, 'linked');
     const original = path.join('.commander', 'legacy-policy-fixture.ts');
     const renamed = path.join('.commander', 'renamed-policy-fixture.ts');
-    const high = ['sp', 'awn', '('].join('') + 'dangerous()\n';
+    const malware = ['rm', ' -rf', ' /'].join('') + '\n';
 
     const git = (cwd: string, args: string[]) =>
       execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -490,7 +532,7 @@ describe('pre-commit scanner index policy', () => {
       }
 
       fs.mkdirSync(path.join(linked, '.commander'), { recursive: true });
-      fs.writeFileSync(path.join(linked, original), high);
+      fs.writeFileSync(path.join(linked, original), malware);
       git(linked, ['add', original]);
       const tree = git(linked, ['write-tree']).trim();
       const parent = git(linked, ['rev-parse', 'HEAD']).trim();

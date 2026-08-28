@@ -271,12 +271,14 @@ export class CompensationDaemon {
     }
     if (input.projectedState === 'COMPLETED') {
       const existing = this.options.terminalEvidenceContext
-        ? (await this.options.terminalEvidenceContext.getTerminalEvidenceContext(
-            input.effectId,
-            input.runId,
-            input.tenantId,
-            input.claimToken,
-          )).evidence
+        ? (
+            await this.options.terminalEvidenceContext.getTerminalEvidenceContext(
+              input.effectId,
+              input.runId,
+              input.tenantId,
+              input.claimToken,
+            )
+          ).evidence
         : await evidenceRepository.getEvidence(input.runId, input.tenantId);
       if (existing?.bundleId === `evidence_${input.effectId}`) return existing;
       throw Object.assign(new Error('completed compensation evidence is missing'), {

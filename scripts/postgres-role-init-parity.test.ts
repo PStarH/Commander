@@ -128,14 +128,24 @@ describe('postgres role-init parity', () => {
     assert.ok(workerLine?.includes('NOBYPASSRLS'), 'commander_worker must be NOBYPASSRLS');
     assert.ok(appLine?.includes('NOBYPASSRLS'), 'commander_app must be NOBYPASSRLS');
     assert.ok(adapterOpsLine?.includes('NOBYPASSRLS'), 'commander_adapter_ops must be NOBYPASSRLS');
-    assert.ok(authorityLine?.includes('NOBYPASSRLS'), 'commander_tenant_authority must be NOBYPASSRLS');
+    assert.ok(
+      authorityLine?.includes('NOBYPASSRLS'),
+      'commander_tenant_authority must be NOBYPASSRLS',
+    );
     const ownerLine = prod.roles.find((r) => r.startsWith('commander_owner:'));
-    assert.ok(ownerLine?.includes('BYPASSRLS') && !ownerLine.includes('NOBYPASSRLS'),
-      'commander_owner must carry BYPASSRLS');
-    assert.ok(schedulerLine?.includes('BYPASSRLS') && !schedulerLine.includes('NOBYPASSRLS'),
-      'commander_scheduler must carry BYPASSRLS');
+    assert.ok(
+      ownerLine?.includes('BYPASSRLS') && !ownerLine.includes('NOBYPASSRLS'),
+      'commander_owner must carry BYPASSRLS',
+    );
+    assert.ok(
+      schedulerLine?.includes('BYPASSRLS') && !schedulerLine.includes('NOBYPASSRLS'),
+      'commander_scheduler must carry BYPASSRLS',
+    );
     assert.ok(workerLine?.includes('NOCREATEROLE'), 'commander_worker must be NOCREATEROLE');
-    assert.ok(adapterOpsLine?.includes('NOCREATEROLE'), 'commander_adapter_ops must be NOCREATEROLE');
+    assert.ok(
+      adapterOpsLine?.includes('NOCREATEROLE'),
+      'commander_adapter_ops must be NOCREATEROLE',
+    );
   });
 
   it('never grants reconcile claim back to commander_worker', () => {

@@ -18,7 +18,10 @@ describe('tenantBucketOrThrow (AUDIT-CORE3)', () => {
   });
 
   test('multi-tenant mode with context returns the bound tenant', () => {
-    assert.equal(runWithTenant('tenant-a', () => tenantBucketOrThrow()), 'tenant-a');
+    assert.equal(
+      runWithTenant('tenant-a', () => tenantBucketOrThrow()),
+      'tenant-a',
+    );
   });
 
   test('single-tenant mode keeps the implicit default bucket', () => {

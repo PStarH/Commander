@@ -14,20 +14,36 @@ const roles = ['owner', 'app', 'tenant-authority', 'scheduler', 'worker', 'adapt
 
 function input(): Task1PrerequisiteInput {
   return {
-    namespace: 'commander', releaseName: 'release-a', clusterDomain: 'cluster.local',
+    namespace: 'commander',
+    releaseName: 'release-a',
+    clusterDomain: 'cluster.local',
     migrationOperatorSubject: 'system:serviceaccount:commander-ops:migration-operator',
     clusterDns: { namespace: 'kube-system', podSelector: { 'k8s-app': 'kube-dns' } },
-    databaseEndpoints: [{
-      roles: [...roles],
-      service: {
-        namespace: 'commander', name: 'postgres', servicePort: 5432, targetPort: 5432,
-        podSelector: { 'app.kubernetes.io/component': 'postgres', 'app.kubernetes.io/instance': 'release-a' },
+    databaseEndpoints: [
+      {
+        roles: [...roles],
+        service: {
+          namespace: 'commander',
+          name: 'postgres',
+          servicePort: 5432,
+          targetPort: 5432,
+          podSelector: {
+            'app.kubernetes.io/component': 'postgres',
+            'app.kubernetes.io/instance': 'release-a',
+          },
+        },
       },
-    }],
+    ],
     apiProof: {
-      serviceName: 'release-a-api-proof', servicePort: 9443, targetPort: 9443,
-      podSelector: { 'app.kubernetes.io/component': 'api', 'app.kubernetes.io/instance': 'release-a' },
-      dnsSan: 'release-a-api-proof.commander.svc.cluster.local', spkiSha256: 'a'.repeat(64),
+      serviceName: 'release-a-api-proof',
+      servicePort: 9443,
+      targetPort: 9443,
+      podSelector: {
+        'app.kubernetes.io/component': 'api',
+        'app.kubernetes.io/instance': 'release-a',
+      },
+      dnsSan: 'release-a-api-proof.commander.svc.cluster.local',
+      spkiSha256: 'a'.repeat(64),
     },
   };
 }
@@ -38,7 +54,10 @@ describe('Task 1 Helm prerequisite policy projection', () => {
     assert.equal(config.value.format, 'prerequisite-policy-config/v1');
     assert.deepEqual(config.value.databaseEndpoints[0]!.roles, [...roles].sort());
     assert.match(config.sha256, /^[0-9a-f]{64}$/);
-    assert.deepEqual(task1StablePolicyNames('commander', 'release-a', config.value), config.value.stablePolicyNames);
+    assert.deepEqual(
+      task1StablePolicyNames('commander', 'release-a', config.value),
+      config.value.stablePolicyNames,
+    );
   });
 
   it('seals complete stable policies and both normalized admission guards into exact JCS', () => {
@@ -57,7 +76,11 @@ describe('Task 1 Helm prerequisite policy projection', () => {
     assert.equal(config.value.stablePolicies.length, 3);
     for (const policy of config.value.stablePolicies) {
       assert.deepEqual(Object.keys(policy).sort(), [
-        'labels', 'name', 'namespace', 'spec', 'specSha256',
+        'labels',
+        'name',
+        'namespace',
+        'spec',
+        'specSha256',
       ]);
       assert.equal(policy.specSha256, canonicalBootstrapSha256(policy.spec));
     }
@@ -87,10 +110,7 @@ describe('Task 1 Helm prerequisite policy projection', () => {
     );
     assert.equal(config.jcs, canonicalBootstrapJson(config.value));
     assert.equal(config.sha256, canonicalBootstrapSha256(config.value));
-    assert.equal(
-      config.sha256,
-      '90d61f1db6937f82c8c287c1589fdbfa45795cde4af1bb365af7937f27c8c6ce',
-    );
+    assert.equal(config.sha256, '90d61f1db6937f82c8c287c1589fdbfa45795cde4af1bb365af7937f27c8c6ce');
   });
 
   it('changes the sealed digest when a normalized policy or guard input changes', () => {
@@ -118,25 +138,46 @@ describe('Task 1 Helm prerequisite policy projection', () => {
 
   it('rejects role omissions, broad CIDRs, hostname endpoints, and non-numeric Service ports', () => {
     const base = {
-      namespace: 'commander', releaseName: 'release-a', clusterDomain: 'cluster.local',
+      namespace: 'commander',
+      releaseName: 'release-a',
+      clusterDomain: 'cluster.local',
       migrationOperatorSubject: 'system:serviceaccount:ops:operator',
       clusterDns: { namespace: 'kube-system', podSelector: { 'k8s-app': 'kube-dns' } },
       apiProof: {
-        serviceName: 'release-a-api-proof', servicePort: 9443, targetPort: 9443,
-        podSelector: { app: 'api' }, dnsSan: 'release-a-api-proof.commander.svc.cluster.local',
+        serviceName: 'release-a-api-proof',
+        servicePort: 9443,
+        targetPort: 9443,
+        podSelector: { app: 'api' },
+        dnsSan: 'release-a-api-proof.commander.svc.cluster.local',
         spkiSha256: 'a'.repeat(64),
       },
     } as const;
-    assert.throws(() => createTask1PrerequisitePolicyConfig({
-      ...base,
-      databaseEndpoints: [{ roles: ['owner'], cidr: { cidr: '10.0.0.0/24', port: 5432 } }],
-    }), /TENANT_POLICY_ENDPOINT_INVALID/);
-    assert.throws(() => createTask1PrerequisitePolicyConfig({
-      ...base,
-      databaseEndpoints: [{ roles: [...roles], service: {
-        namespace: 'commander', name: 'postgres', servicePort: '5432', targetPort: 5432,
-        podSelector: { app: 'postgres' },
-      } }],
-    } as never), /TENANT_POLICY_ENDPOINT_INVALID/);
+    assert.throws(
+      () =>
+        createTask1PrerequisitePolicyConfig({
+          ...base,
+          databaseEndpoints: [{ roles: ['owner'], cidr: { cidr: '10.0.0.0/24', port: 5432 } }],
+        }),
+      /TENANT_POLICY_ENDPOINT_INVALID/,
+    );
+    assert.throws(
+      () =>
+        createTask1PrerequisitePolicyConfig({
+          ...base,
+          databaseEndpoints: [
+            {
+              roles: [...roles],
+              service: {
+                namespace: 'commander',
+                name: 'postgres',
+                servicePort: '5432',
+                targetPort: 5432,
+                podSelector: { app: 'postgres' },
+              },
+            },
+          ],
+        } as never),
+      /TENANT_POLICY_ENDPOINT_INVALID/,
+    );
   });
 });

@@ -41,8 +41,16 @@ test('covers every finite authority category with exact named entries', () => {
       'structural-trigger',
     ]),
   );
-  assert.ok(AUTHORITY_CLASSIFIER_MANIFEST_V1.rows.some((row) => row.signature === 'issue_app_tenant_context(text,oid,integer,xid8)'));
-  assert.ok(AUTHORITY_CLASSIFIER_MANIFEST_V1.rows.some((row) => row.signature === 'commander_runtime_configuration_identity()'));
+  assert.ok(
+    AUTHORITY_CLASSIFIER_MANIFEST_V1.rows.some(
+      (row) => row.signature === 'issue_app_tenant_context(text,oid,integer,xid8)',
+    ),
+  );
+  assert.ok(
+    AUTHORITY_CLASSIFIER_MANIFEST_V1.rows.some(
+      (row) => row.signature === 'commander_runtime_configuration_identity()',
+    ),
+  );
   assert.deepEqual(
     AUTHORITY_CLASSIFIER_MANIFEST_V1.rows.find(
       (row) => row.signature === 'reject_tenant_cutover_operation_mutation()',
@@ -54,7 +62,8 @@ test('covers every finite authority category with exact named entries', () => {
     },
   );
   assert.equal(
-    AUTHORITY_CLASSIFIER_MANIFEST_V1.policies.filter((policy) => policy.role === 'commander_worker').length,
+    AUTHORITY_CLASSIFIER_MANIFEST_V1.policies.filter((policy) => policy.role === 'commander_worker')
+      .length,
     18,
   );
 });
@@ -69,17 +78,22 @@ test('exports canonical JSON independently of catalog row ordering', () => {
     exportAuthorityClassifierManifest(reordered),
     exportAuthorityClassifierManifest(AUTHORITY_CLASSIFIER_MANIFEST_V1),
   );
-  assert.match(exportAuthorityClassifierManifest(AUTHORITY_CLASSIFIER_MANIFEST_V1), /^\{"policies":/);
+  assert.match(
+    exportAuthorityClassifierManifest(AUTHORITY_CLASSIFIER_MANIFEST_V1),
+    /^\{"policies":/,
+  );
   assert.equal(
     exportAuthorityClassifierManifest(AUTHORITY_CLASSIFIER_MANIFEST_V1),
     canonicalBootstrapJson({
       version: AUTHORITY_CLASSIFIER_MANIFEST_V1.version,
       rows: [...AUTHORITY_CLASSIFIER_MANIFEST_V1.rows].sort((a, b) =>
-        a.signature.localeCompare(b.signature)),
+        a.signature.localeCompare(b.signature),
+      ),
       policies: [...AUTHORITY_CLASSIFIER_MANIFEST_V1.policies].sort((a, b) =>
         `${a.relation}:${a.role}:${a.name}:${a.command}`.localeCompare(
           `${b.relation}:${b.role}:${b.name}:${b.command}`,
-        )),
+        ),
+      ),
     }),
   );
 });
@@ -157,15 +171,51 @@ test('rejects catalog rows and policies that differ from the literal manifest', 
 
   const cases: Array<[string, unknown]> = [
     ['missing', { ...expected, rows: expected.rows.slice(1) }],
-    ['extra', { ...expected, rows: [...expected.rows, { ...expected.rows[0], signature: 'extra()' }] }],
-    ['category', { ...expected, rows: [{ ...expected.rows[0], category: 'runtime-daemon' }, expected.rows[1]] }],
-    ['dependency', { ...expected, rows: [{ ...expected.rows[0], allowedRelations: ['public.commander_runs'] }, expected.rows[1]] }],
-    ['grant', { ...expected, rows: [{ ...expected.rows[0], executableRoles: [] }, expected.rows[1]] }],
-    ['trigger', { ...expected, rows: [expected.rows[0], { ...expected.rows[1], triggerBinding: { ...expected.rows[1].triggerBinding!, events: ['UPDATE'] } }] }],
+    [
+      'extra',
+      { ...expected, rows: [...expected.rows, { ...expected.rows[0], signature: 'extra()' }] },
+    ],
+    [
+      'category',
+      {
+        ...expected,
+        rows: [{ ...expected.rows[0], category: 'runtime-daemon' }, expected.rows[1]],
+      },
+    ],
+    [
+      'dependency',
+      {
+        ...expected,
+        rows: [
+          { ...expected.rows[0], allowedRelations: ['public.commander_runs'] },
+          expected.rows[1],
+        ],
+      },
+    ],
+    [
+      'grant',
+      { ...expected, rows: [{ ...expected.rows[0], executableRoles: [] }, expected.rows[1]] },
+    ],
+    [
+      'trigger',
+      {
+        ...expected,
+        rows: [
+          expected.rows[0],
+          {
+            ...expected.rows[1],
+            triggerBinding: { ...expected.rows[1].triggerBinding!, events: ['UPDATE'] },
+          },
+        ],
+      },
+    ],
     ['policy', { ...expected, policies: [{ ...expected.policies[0], role: 'commander_worker' }] }],
   ];
 
   for (const [name, observed] of cases) {
-    assert.throws(() => verifyAuthorityClassifierCatalog(expected, observed), new RegExp(`CATALOG_MISMATCH: ${name}`));
+    assert.throws(
+      () => verifyAuthorityClassifierCatalog(expected, observed),
+      new RegExp(`CATALOG_MISMATCH: ${name}`),
+    );
   }
 });

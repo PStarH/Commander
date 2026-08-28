@@ -15,10 +15,7 @@ const createRun = (steps: NewKernelStep[] = [{ id: 'step-a', kind: 'agent' }]) =
   steps,
 });
 
-function seedOperationsReadiness(
-  kernel: InMemoryKernelRepository,
-  ...tenantIds: string[]
-): void {
+function seedOperationsReadiness(kernel: InMemoryKernelRepository, ...tenantIds: string[]): void {
   const now = new Date();
   for (const tenantId of tenantIds) {
     for (const [role, capability] of [
