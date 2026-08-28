@@ -1303,7 +1303,15 @@ async function runHelmRolloutWithProofCredential(input: {
           input.namespace,
           input.release,
         ));
-      primaryFailure = new Error('TENANT_CUTOVER_PROOF_HOOK_FAILED:' + diagnostic);
+      const rolloutFailureCode =
+        error instanceof Error && isAllowedHelmDiagnosticCode(error.message)
+          ? error.message
+          : undefined;
+      primaryFailure = new Error(
+        'TENANT_CUTOVER_PROOF_HOOK_FAILED:' +
+          (rolloutFailureCode ? rolloutFailureCode + ':' : '') +
+          diagnostic,
+      );
       throw primaryFailure;
     }
     primaryFailure = error;
