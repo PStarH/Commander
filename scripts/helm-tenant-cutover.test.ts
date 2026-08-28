@@ -236,7 +236,11 @@ describe('Helm owner Job diagnostics', () => {
             caKey: 'ca.crt',
             expectedServerSpkiSha256: digest('c'),
           },
-          proofCertificate: { secretName: 'commander-api-proof', certKey: 'tls.crt' },
+          proofCertificate: {
+            secretName: 'commander-api-proof',
+            caKey: 'ca.crt',
+            certKey: 'tls.crt',
+          },
           bootstrap: { kind: 'none' },
         },
       ),
@@ -800,7 +804,11 @@ describe('Helm owner Job diagnostics', () => {
                 caKey: 'ca.crt',
                 expectedServerSpkiSha256: digest('c'),
               },
-              proofCertificate: { secretName: 'commander-api-proof', certKey: 'tls.crt' },
+              proofCertificate: {
+                secretName: 'commander-api-proof',
+                caKey: 'ca.crt',
+                certKey: 'tls.crt',
+              },
               bootstrap: { kind: 'none' },
             },
           ),
@@ -1070,6 +1078,15 @@ function input(command: string = 'enforce') {
     ],
     '/repo',
   );
+}
+
+function ownerCurrentProjectionCalls(revision: string = '9'): string[] {
+  return [
+    'helm:current-revision',
+    `helm:project-revision:${revision}`,
+    `prepare-projection:commander-owner-proof-current-r${revision}:${revision}`,
+    `cleanup-configmap:commander/commander-owner-proof-current-r${revision}`,
+  ];
 }
 
 function ports(
@@ -2051,6 +2068,39 @@ data: { owner-url: ${payload} }
     assert.equal(fixture.writes.size, 0);
   });
 
+  it('projects the current release for owner commands when enforce values omit the projection name', async () => {
+    const fixture = ports();
+    const proofRuntimes: Array<{ caKey: string; releaseProjectionConfigMap: string } | undefined> =
+      [];
+    const plan = fixture.owner.plan;
+    const append = fixture.owner.append;
+    fixture.owner.plan = async (request, context) => {
+      proofRuntimes.push(context.proofRuntime);
+      return plan(request, context);
+    };
+    fixture.owner.append = async (request, context) => {
+      proofRuntimes.push(context.proofRuntime);
+      return append(request, context);
+    };
+
+    await runHelmTenantCutover(input(), fixture);
+
+    assert.deepEqual(proofRuntimes, [
+      { caKey: 'ca.crt', releaseProjectionConfigMap: 'commander-owner-proof-current-r9' },
+      { caKey: 'ca.crt', releaseProjectionConfigMap: 'commander-owner-proof-current-r9' },
+    ]);
+    assert.deepEqual(fixture.calls.slice(0, 3), [
+      'helm:current-revision',
+      'helm:project-revision:9',
+      'prepare-projection:commander-owner-proof-current-r9:9',
+    ]);
+    assert.equal(
+      fixture.calls.indexOf('cleanup-configmap:commander/commander-owner-proof-current-r9') <
+        fixture.calls.indexOf('helm:version --short'),
+      true,
+    );
+  });
+
   it('rejects an owner operation selected for another namespace or release', async () => {
     const current = operation({
       proven: true,
@@ -2065,7 +2115,7 @@ data: { owner-url: ${payload} }
       () => runHelmTenantCutover(input(), fixture),
       /TENANT_CUTOVER_OWNER_RESPONSE_INVALID/,
     );
-    assert.equal(fixture.calls.length, 0);
+    assert.deepEqual(fixture.calls, ownerCurrentProjectionCalls());
   });
 
   it('fails closed before owner planning when a sealed database role DSN is invalid', async () => {
@@ -2122,28 +2172,29 @@ data: { owner-url: ${payload} }
         },
       },
     });
-    assert.match(fixture.calls[0]!, /^helm:version --short$/);
-    assert.equal(fixture.calls[1]!, 'cleanup-proof:commander/commander');
+    assert.deepEqual(fixture.calls.slice(0, 4), ownerCurrentProjectionCalls());
+    assert.match(fixture.calls[4]!, /^helm:version --short$/);
+    assert.equal(fixture.calls[5]!, 'cleanup-proof:commander/commander');
     assert.equal(
-      fixture.calls[2]!,
+      fixture.calls[6]!,
       'prepare-secret:commander/commander-database/owner-url->commander-proof-owner-v7',
     );
     assert.match(
-      fixture.calls[3]!,
+      fixture.calls[7]!,
       /helm:upgrade commander \/retained\/charts\/b{64}\/commander --namespace commander --values \/state\/values\.yaml --set tenantAuthority\.cutoverPhase=enforce --set tenantAuthority\.configurationSha256=/,
     );
-    assert.match(fixture.calls[3]!, /--atomic --wait --wait-for-jobs --timeout 10m/);
+    assert.match(fixture.calls[7]!, /--atomic --wait --wait-for-jobs --timeout 10m/);
     assert.match(
-      fixture.calls[3]!,
+      fixture.calls[7]!,
       /--set tenantAuthority\.proofOwnerSecret=commander-proof-owner-v7/,
     );
     assert.match(
-      fixture.calls[3]!,
+      fixture.calls[7]!,
       /--set tenantAuthority\.releaseProjectionConfigMap=commander-proof-projection-v7-r10/,
     );
-    assert.match(fixture.calls[3]!, /:projection-r10$/);
-    assert.doesNotMatch(fixture.calls[3]!, /template|dry-run|rollback/);
-    assert.deepEqual(fixture.calls.slice(4), [
+    assert.match(fixture.calls[7]!, /:projection-r10$/);
+    assert.doesNotMatch(fixture.calls[7]!, /template|dry-run|rollback/);
+    assert.deepEqual(fixture.calls.slice(8), [
       'cleanup-proof:commander/commander',
       'cleanup-secret:commander/commander-proof-owner-v7',
     ]);
@@ -2241,6 +2292,7 @@ data: { owner-url: ${payload} }
     await assert.rejects(() => runHelmTenantCutover(input(), fixture), /restore failed/);
 
     assert.deepEqual(fixture.calls, [
+      ...ownerCurrentProjectionCalls(),
       'cleanup-proof:commander/commander',
       'cleanup-secret:commander/commander-proof-owner-v7',
       'owner:restore',
@@ -2269,6 +2321,7 @@ data: { owner-url: ${payload} }
     );
 
     assert.deepEqual(fixture.calls, [
+      ...ownerCurrentProjectionCalls(),
       'cleanup-proof:commander/commander',
       'cleanup-secret:commander/commander-proof-owner-v7',
       'owner:restore',
@@ -2295,6 +2348,7 @@ data: { owner-url: ${payload} }
     );
 
     assert.deepEqual(fixture.calls, [
+      ...ownerCurrentProjectionCalls(),
       'cleanup-proof:commander/commander',
       'cleanup-secret:commander/commander-proof-owner-v7',
       'owner:restore',
@@ -2322,6 +2376,7 @@ data: { owner-url: ${payload} }
     );
 
     assert.deepEqual(fixture.calls, [
+      ...ownerCurrentProjectionCalls(),
       'cleanup-proof:commander/commander',
       'cleanup-secret:commander/commander-proof-owner-v7',
       'owner:restore',
@@ -2365,7 +2420,7 @@ data: { owner-url: ${payload} }
     const result = await runHelmTenantCutover(input(), fixture);
 
     assert.equal(result.action, 'returned_current');
-    assert.equal(fixture.calls.filter((call) => call === 'helm:current-revision').length, 2);
+    assert.equal(fixture.calls.filter((call) => call === 'helm:current-revision').length, 3);
     assert.ok(fixture.calls.includes('helm:project-revision:7'));
     assert.ok(fixture.calls.includes('helm:proof-job-manifest:7'));
     assert.ok(fixture.calls.includes('prepare-projection:commander-proof-projection-v7-r7:7'));
@@ -2409,7 +2464,7 @@ data: { owner-url: ${payload} }
     });
 
     await assert.rejects(() => runHelmTenantCutover(input(), fixture), /fresh proof failed/);
-    assert.equal(fixture.calls.filter((call) => call === 'helm:current-revision').length, 2);
+    assert.equal(fixture.calls.filter((call) => call === 'helm:current-revision').length, 3);
     assert.deepEqual(fixture.calls.slice(-4), [
       'cleanup-proof:commander/commander',
       'cleanup-configmap:commander/commander-proof-projection-v7-r7',
@@ -2424,7 +2479,7 @@ data: { owner-url: ${payload} }
     fixture.helm.currentRevision = async () => {
       fixture.calls.push('helm:current-revision');
       revisionRead += 1;
-      return revisionRead === 1 ? '7' : '8';
+      return revisionRead < 3 ? '7' : '8';
     };
 
     await assert.rejects(
@@ -2458,8 +2513,8 @@ data: { owner-url: ${payload} }
       'helm:current-revision',
     ]);
     assert.equal(
-      fixture.calls.indexOf('cleanup-proof:commander/commander') <
-        fixture.calls.indexOf('helm:current-revision'),
+      fixture.calls.lastIndexOf('cleanup-proof:commander/commander') <
+        fixture.calls.lastIndexOf('helm:current-revision'),
       true,
     );
   });
@@ -2559,7 +2614,9 @@ data: { owner-url: ${payload} }
       throw new Error('lost create response');
     };
     await assert.rejects(() => runHelmTenantCutover(input(), fixture), /lost create response/);
-    assert.deepEqual(fixture.calls.slice(1), [
+    assert.deepEqual(fixture.calls, [
+      ...ownerCurrentProjectionCalls(),
+      'helm:version --short',
       'cleanup-proof:commander/commander',
       'prepare-secret:commander/commander-database/owner-url->commander-proof-owner-v7',
       'cleanup-proof:commander/commander',
@@ -2654,7 +2711,7 @@ data: { owner-url: ${payload} }
           caKey: 'ca.crt',
           expectedServerSpkiSha256: digest('d'),
         },
-        proofCertificate: { secretName: 'api-proof-public', certKey: 'tls.crt' },
+        proofCertificate: { secretName: 'api-proof-public', caKey: 'ca.crt', certKey: 'tls.crt' },
         proofRuntime: {
           caKey: 'ca.crt',
           releaseProjectionConfigMap: 'commander-proof-projection-v1',
