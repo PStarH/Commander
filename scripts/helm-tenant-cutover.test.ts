@@ -1892,7 +1892,18 @@ data: { owner-url: c2VjcmV0 }
       command: async (_program, args) => {
         commands.push({ args });
         if (args[0] === 'get' && args[1] === 'jobs') {
-          return 'commander-tenant-cutover-prove-r10';
+          if (
+            args[3] === 'app.kubernetes.io/instance=commander,app.kubernetes.io/component=migration'
+          ) {
+            return '';
+          }
+          if (
+            args[3] ===
+            'commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=commander'
+          ) {
+            return 'commander-tenant-cutover-prove-r10';
+          }
+          throw new Error(`unexpected selector: ${args[3]}`);
         }
         if (args[0] === 'logs') {
           return [
@@ -1918,18 +1929,140 @@ data: { owner-url: c2VjcmV0 }
       'get',
       'jobs',
       '--selector',
-      'commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=commander',
+      'app.kubernetes.io/instance=commander,app.kubernetes.io/component=migration',
       '--namespace',
       'commander',
       '--output',
       'jsonpath={.items[*].metadata.name}',
     ]);
     assert.deepEqual(commands[1]?.args, [
+      'get',
+      'jobs',
+      '--selector',
+      'commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=commander',
+      '--namespace',
+      'commander',
+      '--output',
+      'jsonpath={.items[*].metadata.name}',
+    ]);
+    assert.deepEqual(commands[2]?.args, [
       'logs',
       'job/commander-tenant-cutover-prove-r10',
       '--namespace',
       'commander',
       '--tail=40',
+    ]);
+  });
+
+  it('classifies an unavailable Pod when a failed Helm proof hook has no readable logs', async () => {
+    const commands: Array<{ args: readonly string[] }> = [];
+    const nodePorts = createNodePorts({
+      command: async (_program, args) => {
+        commands.push({ args });
+        if (args[0] === 'get' && args[1] === 'jobs') {
+          if (
+            args[3] === 'app.kubernetes.io/instance=commander,app.kubernetes.io/component=migration'
+          ) {
+            return '';
+          }
+          if (
+            args[3] ===
+            'commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=commander'
+          ) {
+            return 'commander-tenant-cutover-prove-r10';
+          }
+          throw new Error(`unexpected selector: ${args[3]}`);
+        }
+        if (args[0] === 'logs') {
+          throw new Error('TENANT_CUTOVER_KUBECTL_COMMAND_FAILED');
+        }
+        if (args[0] === 'get' && args[1] === 'pods') {
+          return JSON.stringify({
+            items: [],
+            privateDiagnostic: 'postgres://owner:secret@postgres/commander',
+          });
+        }
+        throw new Error(`unexpected kubectl call: ${args.join(' ')}`);
+      },
+    });
+
+    const result = await nodePorts.kubectl.captureProofHookFailureDiagnostic(
+      'commander',
+      'commander',
+    );
+
+    assert.match(
+      result,
+      /^code=TENANT_CUTOVER_PROOF_HOOK_POD_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /items|pods|postgres:|secret|private/i);
+    assert.deepEqual(commands[3]?.args, [
+      'get',
+      'pods',
+      '--selector',
+      'commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=commander',
+      '--namespace',
+      'commander',
+      '--output',
+      'json',
+    ]);
+  });
+
+  it('classifies an unavailable Pod for a failed Helm migration hook before the proof hook', async () => {
+    const commands: Array<{ args: readonly string[] }> = [];
+    const nodePorts = createNodePorts({
+      command: async (_program, args) => {
+        commands.push({ args });
+        if (args[0] === 'get' && args[1] === 'jobs') {
+          if (
+            args[3] === 'app.kubernetes.io/instance=commander,app.kubernetes.io/component=migration'
+          ) {
+            return 'commander-migration-r10';
+          }
+          throw new Error(`unexpected selector: ${args[3]}`);
+        }
+        if (args[0] === 'logs') {
+          throw new Error('TENANT_CUTOVER_KUBECTL_COMMAND_FAILED');
+        }
+        if (args[0] === 'get' && args[1] === 'pods') {
+          return JSON.stringify({
+            items: [],
+            privateDiagnostic: 'postgres://owner:secret@postgres/commander',
+          });
+        }
+        throw new Error(`unexpected kubectl call: ${args.join(' ')}`);
+      },
+    });
+
+    const result = await nodePorts.kubectl.captureProofHookFailureDiagnostic(
+      'commander',
+      'commander',
+    );
+
+    assert.match(
+      result,
+      /^code=TENANT_CUTOVER_MIGRATION_HOOK_POD_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /items|pods|postgres:|secret|private/i);
+    assert.deepEqual(commands[0]?.args, [
+      'get',
+      'jobs',
+      '--selector',
+      'app.kubernetes.io/instance=commander,app.kubernetes.io/component=migration',
+      '--namespace',
+      'commander',
+      '--output',
+      'jsonpath={.items[*].metadata.name}',
+    ]);
+    assert.deepEqual(commands[2]?.args, [
+      'get',
+      'pods',
+      '--selector',
+      'commander.io/migration-client-v2=true,commander.io/migration-release=commander',
+      '--namespace',
+      'commander',
+      '--output',
+      'json',
     ]);
   });
 
