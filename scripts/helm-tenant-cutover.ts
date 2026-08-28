@@ -3757,7 +3757,15 @@ async function runHelmPostRendered(
   postRender: (manifest: string, rendererValues: string) => Promise<HelmReleaseProjection>,
 ): Promise<void> {
   const renderContext = projectionRenderContext(helmArgs);
-  const hookManifest = await renderProjectionHooks(renderContext, rendererValues);
+  let hookManifest: string;
+  try {
+    hookManifest = await renderProjectionHooks(renderContext, rendererValues);
+  } catch (error) {
+    if (error instanceof Error && error.message === 'TENANT_CUTOVER_HELM_COMMAND_FAILED') {
+      fail('TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED');
+    }
+    throw error;
+  }
   const projectionValues = await projectionRendererValues(
     renderContext.chart,
     rendererValues,

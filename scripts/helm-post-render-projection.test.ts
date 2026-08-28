@@ -351,7 +351,7 @@ describe('Helm post-rendered release projection', () => {
       assert.deepEqual(projectionAfterProofCleanup, projection);
 
       for (const [failAt, code] of [
-        ['template', 'TENANT_CUTOVER_HELM_COMMAND_FAILED'],
+        ['template', 'TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED'],
         ['upgrade', 'TENANT_CUTOVER_HELM_COMMAND_FAILED'],
         ['history', 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'],
         ['get', 'TENANT_CUTOVER_HELM_PROJECTION_COMMAND_FAILED'],
