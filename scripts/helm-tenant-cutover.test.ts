@@ -756,6 +756,25 @@ describe('Helm owner Job diagnostics', () => {
     );
   });
 
+  it('classifies an owner Job that created no Pod without retaining Pod output', () => {
+    const classify = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobPodFailureCode?: (value: string) => string;
+      }
+    ).ownerJobPodFailureCode;
+    assert.equal(typeof classify, 'function');
+
+    const result = classify!(
+      JSON.stringify({
+        items: [],
+        privateDiagnostic: 'postgres://owner:secret@postgres/commander',
+      }),
+    );
+
+    assert.equal(result, 'TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE');
+    assert.doesNotMatch(result, /postgres|secret|private/i);
+  });
+
   it('carries a safe owner diagnostic from kubectl stderr through the real command boundary', async () => {
     const root = await mkdtemp(join(tmpdir(), 'commander-helm-owner-transport-'));
     const kubectl = join(root, 'kubectl');
@@ -819,6 +838,79 @@ describe('Helm owner Job diagnostics', () => {
             /TENANT_CUTOVER_OWNER_JOB_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;migration=2026-07-27\.3\.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01;log_sha256=[a-f0-9]{64}/,
           );
           assert.doesNotMatch(message, /postgres:|secret|SELECT/i);
+          return true;
+        },
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  it('captures an unavailable owner Pod when owner Job logs cannot be read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-owner-pod-'));
+    const kubectl = join(root, 'kubectl');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      kubectl,
+      [
+        '#!/usr/bin/env node',
+        "const fs = require('node:fs');",
+        "const input = fs.readFileSync(0, 'utf8');",
+        'const action = process.argv[2];',
+        "if (action === 'create') {",
+        '  const object = JSON.parse(input);',
+        "  process.stdout.write((object.kind === 'ConfigMap' ? 'configmap/' : 'job.batch/') + object.metadata.name);",
+        "} else if (action === 'wait' || action === 'logs') {",
+        '  process.exitCode = 1;',
+        "} else if (action === 'get' && process.argv[3] === 'pods') {",
+        '  process.stdout.write(JSON.stringify({ items: [] }));',
+        '}',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    await chmod(kubectl, 0o700);
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      const ports = helmTenantCutover.createNodePorts();
+      await assert.rejects(
+        () =>
+          ports.owner.plan(
+            {},
+            {
+              namespace: 'commander',
+              release: 'commander',
+              image: 'registry.example/commander@' + image,
+              databaseSecretName: 'commander-database',
+              databaseSecretKeys: {
+                owner: 'owner-url',
+                app: 'app-url',
+                tenantAuthority: 'tenant-authority-url',
+                scheduler: 'scheduler-url',
+                worker: 'worker-url',
+                adapterOps: 'adapter-ops-url',
+              },
+              databaseTls: {
+                secretName: 'commander-database-tls',
+                caKey: 'ca.crt',
+                expectedServerSpkiSha256: digest('c'),
+              },
+              proofCertificate: {
+                secretName: 'commander-api-proof',
+                caKey: 'ca.crt',
+                certKey: 'tls.crt',
+              },
+              bootstrap: { kind: 'none' },
+            },
+          ),
+        (error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          assert.match(
+            message,
+            /TENANT_CUTOVER_OWNER_JOB_FAILED:code=TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=[a-f0-9]{64}/,
+          );
+          assert.doesNotMatch(message, /items|pods|secret|private/i);
           return true;
         },
       );
