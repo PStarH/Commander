@@ -40,7 +40,12 @@ interface ProofPodContract {
 }
 
 type ProofPodController =
-  { kind: 'helm-hook'; revision: string } | { kind: 'owner-current'; executionId: string };
+  | { kind: 'helm-hook'; revision: string }
+  | {
+      kind: 'owner-current';
+      mode: 'plan' | 'append';
+      executionId: string;
+    };
 
 export interface Task1ProjectedTokenIdentity {
   audience: string;
@@ -794,6 +799,7 @@ function validateOwnerCurrentProofPodContract(
   contract: ProofPodContract,
   releaseName: string,
   executionId: string,
+  mode: 'plan' | 'append',
 ): void {
   if (
     podSpec.restartPolicy !== 'Never' ||
@@ -818,7 +824,7 @@ function validateOwnerCurrentProofPodContract(
   exactJson(container.command, [
     'node',
     'packages/kernel/dist/migrate.js',
-    'tenant-cutover-append',
+    `tenant-cutover-${mode}`,
   ]);
   exactJson(container.securityContext, {
     allowPrivilegeEscalation: false,
@@ -866,7 +872,7 @@ function validateProofController(
     if (jobName !== expected) invalid();
     return { kind: 'helm-hook', revision: match[1]! };
   }
-  const ownerMatch = /-owner-append-([0-9a-f]{12})$/.exec(jobName);
+  const ownerMatch = /-owner-(plan|append)-([0-9a-f]{12})$/.exec(jobName);
   if (!ownerMatch) invalid();
   const suffix = ownerMatch[0];
   const expected = `${releaseName.slice(0, 63 - suffix.length).replace(/-$/, '')}${suffix}`;
@@ -874,13 +880,13 @@ function validateProofController(
   if (
     jobName !== expected ||
     !/^[0-9a-f]{32}$/.test(executionId) ||
-    executionId.slice(0, 12) !== ownerMatch[1] ||
+    executionId.slice(0, 12) !== ownerMatch[2] ||
     labels(metadata)['commander.io/migration-client-v2'] !== 'true' ||
     labels(metadata)['commander.io/migration-release'] !== releaseName
   ) {
     invalid();
   }
-  return { kind: 'owner-current', executionId };
+  return { kind: 'owner-current', mode: ownerMatch[1] as 'plan' | 'append', executionId };
 }
 
 function validateReleaseProjection(
@@ -1279,6 +1285,7 @@ export function createTask1KubernetesProofObserver(
         contract,
         binding.releaseName,
         proofPodController.executionId,
+        proofPodController.mode,
       );
     }
     await waitForReadyProofPod({
