@@ -11,7 +11,6 @@ import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import type { SqlClient, SqlPool } from '@commander/kernel';
 import {
   createAuthPool,
-  withClient,
   withTenantScopedClient,
   type VerifiedPoolFactory,
 } from './authDb';
@@ -139,21 +138,35 @@ export class PostgresApiKeyStore implements ApiKeyStore {
     return { record: fromRow(result.rows[0]!), key };
   }
 
-  async revoke(id: string, tenantScope = ''): Promise<ApiKeyRecord | undefined> {
-    const result = await withTenantScopedClient(this.pool, tenantScope, async (client) => {
+  async revoke(id: string, tenantScope?: string): Promise<ApiKeyRecord | undefined> {
+    const result = await withTenantScopedClient(this.pool, tenantScope ?? '', async (client) => {
+      if (tenantScope === undefined) {
+        return client.query<ApiKeyRow>(
+          `UPDATE commander_auth_api_keys SET enabled = false, revoked_at = COALESCE(revoked_at, clock_timestamp())
+           WHERE id = $1 AND enabled = true
+           RETURNING ${API_KEY_COLUMNS}`,
+          [id],
+        );
+      }
       return client.query<ApiKeyRow>(
         `UPDATE commander_auth_api_keys SET enabled = false, revoked_at = COALESCE(revoked_at, clock_timestamp())
-         WHERE id = $1 AND enabled = true
+         WHERE id = $1 AND tenant_id = $2 AND enabled = true
          RETURNING ${API_KEY_COLUMNS}`,
-        [id],
+        [id, tenantScope],
       );
     });
     return result.rows[0] ? fromRow(result.rows[0]) : undefined;
   }
 
-  async delete(id: string, tenantScope = ''): Promise<boolean> {
-    const result = await withTenantScopedClient(this.pool, tenantScope, async (client) => {
-      return client.query('DELETE FROM commander_auth_api_keys WHERE id = $1', [id]);
+  async delete(id: string, tenantScope?: string): Promise<boolean> {
+    const result = await withTenantScopedClient(this.pool, tenantScope ?? '', async (client) => {
+      if (tenantScope === undefined) {
+        return client.query('DELETE FROM commander_auth_api_keys WHERE id = $1', [id]);
+      }
+      return client.query('DELETE FROM commander_auth_api_keys WHERE id = $1 AND tenant_id = $2', [
+        id,
+        tenantScope,
+      ]);
     });
     return (result.rowCount ?? 0) > 0;
   }

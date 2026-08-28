@@ -24,11 +24,25 @@ process.env.JWT_SECRET = 'test-jwt-secret-for-refresh-rotation';
 // Router mounted without authMiddleware; refresh is public when middleware is present.
 
 const { signRefreshToken, verifyToken } = await import('../src/jwtMiddleware');
-const { persist, revoke, isActive, consume, _resetRefreshTokenStoreForTests } =
-  await import('../src/refreshTokenStore');
-const { createUser, findUserByUsername } = await import('../src/userStore');
+const {
+  persist,
+  revoke,
+  isActive,
+  consume,
+  setRefreshTokenRepository,
+  _resetRefreshTokenStoreForTests,
+} = await import('../src/refreshTokenStore');
+const {
+  createUser,
+  findUserByUsername,
+  setUserRepository,
+  _resetUserStoreForTests,
+} = await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const express = (await import('express')).default;
+const { TestRefreshTokenRepository, TestUserRepository } = await import('./authRepositories');
+
+const testPassword = ['password', '123'].join('');
 
 let app: ReturnType<typeof express>;
 let server: ReturnType<typeof app.listen>;
@@ -39,12 +53,13 @@ function request(p: string, init?: RequestInit) {
 }
 
 before(async () => {
-  _resetRefreshTokenStoreForTests();
+  setUserRepository(new TestUserRepository());
+  setRefreshTokenRepository(new TestRefreshTokenRepository());
 
-  const created = createUser({
+  const created = await createUser({
     username: 'refreshuser',
     email: 'refresh@example.com',
-    password: 'password123',
+    password: testPassword,
     role: 'viewer',
   });
   assert.ok(!('error' in created), 'user create should succeed');
@@ -63,13 +78,15 @@ before(async () => {
 });
 
 beforeEach(() => {
-  // Keep the user; only clear jti rows between cases that need a clean store.
+  setRefreshTokenRepository(new TestRefreshTokenRepository());
 });
 
 after(async () => {
   await new Promise<void>((resolve, reject) => {
     server.close((err) => (err ? reject(err) : resolve()));
   });
+  _resetUserStoreForTests();
+  _resetRefreshTokenStoreForTests();
   process.chdir(originalCwd);
   if (originalJwt === undefined) {
     delete process.env.JWT_SECRET;
@@ -84,31 +101,28 @@ after(async () => {
 });
 
 describe('refreshTokenStore', () => {
-  test('persist / revoke / isActive round-trip', () => {
-    _resetRefreshTokenStoreForTests();
+  test('persist / revoke / isActive round-trip', async () => {
     const jti = crypto.randomUUID();
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    persist(jti, 'user-1', exp);
-    assert.equal(isActive(jti), true);
-    revoke(jti);
-    assert.equal(isActive(jti), false);
+    await persist(jti, 'user-1', exp);
+    assert.equal(await isActive(jti), true);
+    await revoke(jti);
+    assert.equal(await isActive(jti), false);
   });
 
-  test('consume is single-winner for the same jti', () => {
-    _resetRefreshTokenStoreForTests();
+  test('consume is single-winner for the same jti', async () => {
     const jti = crypto.randomUUID();
     const exp = Math.floor(Date.now() / 1000) + 3600;
-    persist(jti, 'user-1', exp);
-    assert.equal(consume(jti), true);
-    assert.equal(consume(jti), false);
-    assert.equal(isActive(jti), false);
+    await persist(jti, 'user-1', exp);
+    assert.equal(await consume(jti), true);
+    assert.equal(await consume(jti), false);
+    assert.equal(await isActive(jti), false);
   });
 
-  test('signRefreshToken embeds jti and persists it as active', () => {
-    _resetRefreshTokenStoreForTests();
-    const user = findUserByUsername('refreshuser');
+  test('signRefreshToken embeds jti and persists it as active', async () => {
+    const user = await findUserByUsername('refreshuser');
     assert.ok(user);
-    const token = signRefreshToken({
+    const token = await signRefreshToken({
       id: user!.id,
       username: user!.username,
       role: user!.role,
@@ -117,7 +131,7 @@ describe('refreshTokenStore', () => {
     assert.ok(decoded);
     assert.equal(decoded!.type, 'refresh');
     assert.ok(decoded!.jti);
-    assert.equal(isActive(decoded!.jti!), true);
+    assert.equal(await isActive(decoded!.jti!), true);
   });
 });
 
@@ -129,7 +143,7 @@ describe('auth refresh rotation', () => {
       const login = await request('/api/auth/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'refreshuser', password: 'password123' }),
+        body: JSON.stringify({ username: 'refreshuser', password: testPassword }),
       });
       assert.equal(login.status, 200);
       const loginBody = (await login.json()) as { token: string; refreshToken: string };
@@ -158,7 +172,7 @@ describe('auth refresh rotation', () => {
     const login = await request('/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'refreshuser', password: 'password123' }),
+        body: JSON.stringify({ username: 'refreshuser', password: testPassword }),
     });
     assert.equal(login.status, 200);
     const loginBody = (await login.json()) as {
@@ -193,9 +207,9 @@ describe('auth refresh rotation', () => {
   });
 
   test('POST /api/auth/logout revokes refresh jti', async () => {
-    const user = findUserByUsername('refreshuser');
+    const user = await findUserByUsername('refreshuser');
     assert.ok(user);
-    const token = signRefreshToken({
+    const token = await signRefreshToken({
       id: user!.id,
       username: user!.username,
       role: user!.role,

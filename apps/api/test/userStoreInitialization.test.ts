@@ -5,7 +5,7 @@ import {
   isInitialized,
   setUserRepository,
 } from '../src/userStore.js';
-import { TestUserRepository } from './support/authRepositories.js';
+import { TestUserRepository } from './authRepositories.js';
 
 afterEach(() => {
   _resetUserStoreForTests();

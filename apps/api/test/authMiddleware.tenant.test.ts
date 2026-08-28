@@ -1,37 +1,104 @@
-import { test, before, after } from 'node:test';
 import * as assert from 'node:assert/strict';
-import express, { type Request, type Response } from 'express';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
 import * as crypto from 'node:crypto';
+import { after, afterEach, before, beforeEach, test } from 'node:test';
+import express, { type Request, type Response } from 'express';
 import { authMiddleware } from '../src/authMiddleware';
-import { getApiKeyStore, resetApiKeyStore } from '../src/apiKeyStore';
+import {
+  resetApiKeyStore,
+  setApiKeyStore,
+  type ApiKeyCreationResult,
+  type ApiKeyRecord,
+  type ApiKeyStore,
+} from '../src/apiKeyStore';
+import {
+  resetAuthFailureStoreForTesting,
+  setAuthFailureStore,
+  type AuthFailureStore,
+} from '../src/authFailureStore';
+
+class TestApiKeyStore implements ApiKeyStore {
+  readonly records: ApiKeyRecord[] = [];
+
+  async list(): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return this.records.map(({ hash: _hash, ...record }) => record);
+  }
+
+  async listByTenant(tenantId: string): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return this.records
+      .filter((record) => record.tenantId === tenantId)
+      .map(({ hash: _hash, ...record }) => record);
+  }
+
+  async findByHash(hash: string): Promise<ApiKeyRecord | undefined> {
+    return this.records.find((record) => record.enabled && record.hash === hash);
+  }
+
+  async create(
+    name: string,
+    scopes: string[] = ['read', 'write'],
+    tenantId?: string,
+  ): Promise<ApiKeyCreationResult> {
+    const id = `ak_${this.records.length + 1}`;
+    const key = `cmdr_test_${id}`;
+    const record: ApiKeyRecord = {
+      id,
+      name,
+      prefix: key.slice(0, 8),
+      hash: crypto.createHash('sha256').update(key).digest('hex'),
+      scopes,
+      tenantId,
+      enabled: true,
+      createdAt: '2026-08-27T00:00:00.000Z',
+    };
+    this.records.push(record);
+    return { record, key };
+  }
+
+  async revoke(id: string, tenantScope?: string): Promise<ApiKeyRecord | undefined> {
+    const record = this.records.find(
+      (candidate) =>
+        candidate.id === id &&
+        candidate.enabled &&
+        (tenantScope === undefined || candidate.tenantId === tenantScope),
+    );
+    if (!record) return undefined;
+    record.enabled = false;
+    record.revokedAt = '2026-08-27T00:00:00.000Z';
+    return record;
+  }
+
+  async delete(id: string, tenantScope?: string): Promise<boolean> {
+    const index = this.records.findIndex(
+      (candidate) =>
+        candidate.id === id && (tenantScope === undefined || candidate.tenantId === tenantScope),
+    );
+    if (index < 0) return false;
+    this.records.splice(index, 1);
+    return true;
+  }
+}
+
+const unlockedFailures: AuthFailureStore = {
+  get: async () => undefined,
+  recordFailure: async () => ({
+    count: 1,
+    firstFailureAt: Date.now(),
+    lastFailureAt: Date.now(),
+    lockedUntil: 0,
+  }),
+  cleanup: async () => {},
+};
 
 let app: express.Express;
 let server: ReturnType<typeof app.listen>;
 let port: number;
-let tmpDir: string;
-let originalCwd: string;
-let originalApiKeys: string | undefined;
-let originalTenantApiKeys: string | undefined;
+let store: TestApiKeyStore;
 
-function request(p: string, init?: RequestInit) {
-  return fetch(`http://127.0.0.1:${port}${p}`, init);
+function request(path: string, init?: RequestInit) {
+  return fetch(`http://127.0.0.1:${port}${path}`, init);
 }
 
 before(async () => {
-  originalCwd = process.cwd();
-  originalApiKeys = process.env.API_KEYS;
-  originalTenantApiKeys = process.env.TENANT_API_KEYS;
-
-  tmpDir = path.join(
-    os.tmpdir(),
-    `commander-auth-tenant-test-${crypto.randomBytes(8).toString('hex')}`,
-  );
-  fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
-  process.chdir(tmpDir);
-
   app = express();
   app.use(authMiddleware);
   app.get('/context', (req: Request, res: Response) => {
@@ -47,152 +114,97 @@ before(async () => {
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      port = typeof addr === 'object' && addr ? addr.port : 0;
+      const address = server.address();
+      port = typeof address === 'object' && address ? address.port : 0;
       resolve();
     });
   });
 });
 
-after(async () => {
-  await new Promise<void>((resolve) => server.close(() => resolve()));
-  process.env.API_KEYS = originalApiKeys;
-  process.env.TENANT_API_KEYS = originalTenantApiKeys;
-  resetApiKeyStore();
-  process.chdir(originalCwd);
-  try {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {
-    /* best-effort */
-  }
+beforeEach(() => {
+  store = new TestApiKeyStore();
+  setApiKeyStore(store);
+  setAuthFailureStore(unlockedFailures);
 });
 
-test('TENANT_API_KEYS static mapping sets req.tenantId', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'acme-corp:acme-secret-key';
+afterEach(() => {
   resetApiKeyStore();
+  resetAuthFailureStoreForTesting();
+});
 
-  const res = await request('/context', {
-    headers: { 'X-API-Key': 'acme-secret-key' },
-  });
-  assert.equal(res.status, 200);
-  const body = (await res.json()) as { apiKeyId: string; tenantId: string };
-  assert.ok(body.apiKeyId.includes('acme-corp'));
+after(async () => {
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+});
+
+test('PostgreSQL tenant API key sets req.tenantId', async () => {
+  const { key } = await store.create('acme-key', ['read', 'write'], 'acme-corp');
+
+  const response = await request('/context', { headers: { 'X-API-Key': key } });
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { apiKeyId: string; tenantId: string };
+  assert.equal(body.apiKeyId, 'acme-key');
   assert.equal(body.tenantId, 'acme-corp');
 });
 
-test('TENANT_API_KEYS multiple keys per tenant', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'acme-corp:key1,key2;globex:key3';
-  resetApiKeyStore();
+test('PostgreSQL tenant API key preserves explicit scopes', async () => {
+  const { key } = await store.create('scoped-key', ['admin', 'actions:approve'], 'cell-tenant');
 
-  const res1 = await request('/context', {
-    headers: { 'X-API-Key': 'key1' },
-  });
-  assert.equal(res1.status, 200);
-  const body1 = (await res1.json()) as { tenantId: string };
-  assert.equal(body1.tenantId, 'acme-corp');
+  const response = await request('/context', { headers: { 'X-API-Key': key } });
 
-  const res2 = await request('/context', {
-    headers: { 'X-API-Key': 'key3' },
-  });
-  assert.equal(res2.status, 200);
-  const body2 = (await res2.json()) as { tenantId: string };
-  assert.equal(body2.tenantId, 'globex');
-});
-
-test('tenant binding preserves explicit API key scopes with colon names', async () => {
-  process.env.API_KEYS = 'shared-key:cell-e2e:admin;actions:approve';
-  process.env.TENANT_API_KEYS = 'cell-tenant:shared-key';
-  resetApiKeyStore();
-
-  const res = await request('/context', {
-    headers: { 'X-API-Key': 'shared-key' },
-  });
-  assert.equal(res.status, 200);
-  const body = (await res.json()) as { apiScopes: string[]; tenantId: string };
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { apiScopes: string[]; tenantId: string };
   assert.equal(body.tenantId, 'cell-tenant');
   assert.deepEqual(body.apiScopes, ['admin', 'actions:approve']);
 });
 
-test('persistent API key with tenantId sets req.tenantId', async () => {
-  delete process.env.API_KEYS;
-  delete process.env.TENANT_API_KEYS;
-  resetApiKeyStore();
+test('Bearer token resolves its PostgreSQL API-key tenant', async () => {
+  const { key } = await store.create('bearer-key', ['read'], 'stark');
 
-  const { key } = getApiKeyStore().create('tenant-key', ['read', 'write'], 'wayne-ind');
+  const response = await request('/context', { headers: { Authorization: `Bearer ${key}` } });
 
-  const res = await request('/context', {
-    headers: { 'X-API-Key': key },
-  });
-  assert.equal(res.status, 200);
-  const body = (await res.json()) as { apiKeyId: string; tenantId: string };
-  assert.equal(body.apiKeyId, 'tenant-key');
-  assert.equal(body.tenantId, 'wayne-ind');
-});
-
-test('legacy API_KEYS without tenant still works and leaves tenantId unset', async () => {
-  delete process.env.TENANT_API_KEYS;
-  process.env.API_KEYS = 'legacy-api-key:legacy-key';
-  resetApiKeyStore();
-
-  const res = await request('/context', {
-    headers: { 'X-API-Key': 'legacy-api-key' },
-  });
-  assert.equal(res.status, 200);
-  const body = (await res.json()) as { apiKeyId: string; tenantId: string | undefined };
-  assert.equal(body.apiKeyId, 'legacy-key');
-  assert.equal(body.tenantId, undefined);
-});
-
-test('Authorization Bearer token resolves tenant from TENANT_API_KEYS', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'stark:stark-bearer-token';
-  resetApiKeyStore();
-
-  const res = await request('/context', {
-    headers: { Authorization: 'Bearer stark-bearer-token' },
-  });
-  assert.equal(res.status, 200);
-  const body = (await res.json()) as { tenantId: string };
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { tenantId: string };
   assert.equal(body.tenantId, 'stark');
 });
 
-test('invalid API key is rejected regardless of tenant mapping', async () => {
-  delete process.env.API_KEYS;
-  process.env.TENANT_API_KEYS = 'acme-corp:valid-key';
-  resetApiKeyStore();
+test('invalid API key is rejected', async () => {
+  await store.create('valid-key', ['read'], 'acme-corp');
 
-  const res = await request('/context', {
-    headers: { 'X-API-Key': 'invalid-key' },
-  });
-  assert.equal(res.status, 401);
+  const response = await request('/context', { headers: { 'X-API-Key': 'invalid-key' } });
+
+  assert.equal(response.status, 401);
 });
 
-test('/ready stays public when API keys are configured', async () => {
-  process.env.API_KEYS = 'configured-api-key:cell-e2e';
-  delete process.env.TENANT_API_KEYS;
-  resetApiKeyStore();
+test('/ready stays public when PostgreSQL contains API keys', async () => {
+  await store.create('configured-key');
 
-  const res = await request('/ready');
-  assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { status: 'ready' });
+  const response = await request('/ready');
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), { status: 'ready' });
 });
 
-test('tenant-scoped persistent key does not leak tenant to other keys', async () => {
-  delete process.env.API_KEYS;
-  delete process.env.TENANT_API_KEYS;
-  resetApiKeyStore();
+test('tenant-scoped keys do not leak their tenant bindings', async () => {
+  const { key: keyA } = await store.create('key-a', ['read'], 'tenant-a');
+  const { key: keyB } = await store.create('key-b', ['read'], 'tenant-b');
 
-  const store = getApiKeyStore();
-  const { key: keyA } = store.create('key-a', ['read'], 'tenant-a');
-  const { key: keyB } = store.create('key-b', ['read'], 'tenant-b');
-
-  const resA = await request('/context', { headers: { 'X-API-Key': keyA } });
-  const bodyA = (await resA.json()) as { tenantId: string };
+  const responseA = await request('/context', { headers: { 'X-API-Key': keyA } });
+  const bodyA = (await responseA.json()) as { tenantId: string };
   assert.equal(bodyA.tenantId, 'tenant-a');
 
-  const resB = await request('/context', { headers: { 'X-API-Key': keyB } });
-  const bodyB = (await resB.json()) as { tenantId: string };
+  const responseB = await request('/context', { headers: { 'X-API-Key': keyB } });
+  const bodyB = (await responseB.json()) as { tenantId: string };
   assert.equal(bodyB.tenantId, 'tenant-b');
+});
+
+test('an unscoped PostgreSQL API key leaves req.tenantId unset', async () => {
+  const { key } = await store.create('platform-key', ['admin']);
+
+  const response = await request('/context', { headers: { 'X-API-Key': key } });
+
+  assert.equal(response.status, 200);
+  const body = (await response.json()) as { apiKeyId: string; tenantId?: string };
+  assert.equal(body.apiKeyId, 'platform-key');
+  assert.equal(body.tenantId, undefined);
 });

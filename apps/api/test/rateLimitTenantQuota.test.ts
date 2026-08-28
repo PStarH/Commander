@@ -1,61 +1,111 @@
 /**
- * AUDIT-B: rate limiting runs BEFORE authMiddleware / tenantContextMiddleware
- * and derives the tenant bucket from the raw X-Tenant-ID header. A completely
- * unauthenticated attacker (or a tenant-A identity) must not be able to consume
- * tenant-B's rate-limit quota by spoofing the header.
- *
- * Reproduces on the real mount chain (jwt → rateLimit → auth → tenantContext)
- * used by apps/api/src/index.ts.
+ * AUDIT-B: rate limiting runs before authMiddleware / tenantContextMiddleware.
+ * A raw X-Tenant-ID header must never consume another tenant's PostgreSQL
+ * quota before an authenticated principal establishes the tenant identity.
  */
-import { test, before, after, describe } from 'node:test';
 import * as assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import * as crypto from 'node:crypto';
+import { after, before, describe, test } from 'node:test';
+import express from 'express';
+import { authMiddleware } from '../src/authMiddleware';
+import {
+  resetApiKeyStore,
+  setApiKeyStore,
+  type ApiKeyStore,
+  type ApiKeyCreationResult,
+  type ApiKeyRecord,
+} from '../src/apiKeyStore';
+import {
+  resetAuthFailureStoreForTesting,
+  setAuthFailureStore,
+  type AuthFailureStore,
+} from '../src/authFailureStore';
+import {
+  _resetRateLimitStoreForTesting,
+  rateLimitMiddleware,
+  setRateLimitStoreForTesting,
+  type RateLimitBucket,
+  type RateLimitEntry,
+  type RateLimitStore,
+} from '../src/securityMiddleware';
+import { tenantContextMiddleware } from '../src/tenantContextMiddleware';
 
-const tmpDir = path.join(
-  os.tmpdir(),
-  `commander-rl-audit-${crypto.randomBytes(8).toString('hex')}`,
-);
-const originalCwd = process.cwd();
-const envSnap: Record<string, string | undefined> = {
-  JWT_SECRET: process.env.JWT_SECRET,
-  NODE_ENV: process.env.NODE_ENV,
-  API_KEYS: process.env.API_KEYS,
-  COMMANDER_ALLOW_ANON: process.env.COMMANDER_ALLOW_ANON,
-  API_RATE_LIMIT: process.env.API_RATE_LIMIT,
-  API_RATE_LIMIT_TENANT: process.env.API_RATE_LIMIT_TENANT,
-  API_RATE_LIMIT_PERSISTENT: process.env.API_RATE_LIMIT_PERSISTENT,
+class EmptyApiKeyStore implements ApiKeyStore {
+  async list(): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return [];
+  }
+
+  async listByTenant(): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return [];
+  }
+
+  async findByHash(): Promise<ApiKeyRecord | undefined> {
+    return undefined;
+  }
+
+  async create(): Promise<ApiKeyCreationResult> {
+    throw new Error('test API-key store does not mint keys');
+  }
+
+  async revoke(): Promise<ApiKeyRecord | undefined> {
+    return undefined;
+  }
+
+  async delete(): Promise<boolean> {
+    return false;
+  }
+}
+
+class TestRateLimitStore implements RateLimitStore {
+  private readonly entries: Array<{ key: string; count: number; resetAt: number }> = [];
+
+  async consume(buckets: readonly RateLimitBucket[]): Promise<RateLimitEntry[]> {
+    const now = Date.now();
+    return buckets.map((bucket) => {
+      const entry = this.entries.find((candidate) => candidate.key === bucket.key);
+      if (!entry || entry.resetAt <= now) {
+        const next = { key: bucket.key, count: 1, resetAt: now + bucket.windowMs };
+        if (entry) Object.assign(entry, next);
+        else this.entries.push(next);
+        return { count: 1, resetAt: next.resetAt };
+      }
+      entry.count += 1;
+      return { count: entry.count, resetAt: entry.resetAt };
+    });
+  }
+
+  async cleanup(): Promise<number> {
+    return 0;
+  }
+}
+
+const unlockedFailures: AuthFailureStore = {
+  get: async () => undefined,
+  recordFailure: async () => ({
+    count: 1,
+    firstFailureAt: Date.now(),
+    lastFailureAt: Date.now(),
+    lockedUntil: 0,
+  }),
+  cleanup: async () => {},
 };
 
-fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
-process.chdir(tmpDir);
+const originalJwtSecret = process.env.JWT_SECRET;
 process.env.JWT_SECRET = 'audit-rl-secret';
-process.env.NODE_ENV = 'test';
-delete process.env.API_KEYS;
-delete process.env.COMMANDER_ALLOW_ANON;
-process.env.API_RATE_LIMIT = '1000';
-process.env.API_RATE_LIMIT_TENANT = '3';
-process.env.API_RATE_LIMIT_PERSISTENT = 'off';
+const { jwtMiddleware, signAccessToken } = await import('../src/jwtMiddleware');
 
-const { jwtMiddleware } = await import('../src/jwtMiddleware');
-const { rateLimitMiddleware } = await import('../src/securityMiddleware');
-const { authMiddleware } = await import('../src/authMiddleware');
-const { tenantContextMiddleware } = await import('../src/tenantContextMiddleware');
-const { signAccessToken } = await import('../src/jwtMiddleware');
-const express = (await import('express')).default;
-
-let server: ReturnType<typeof express.listen>;
+let server: ReturnType<express.Express['listen']>;
 let port: number;
 
-function request(p: string, init?: RequestInit) {
-  return fetch(`http://127.0.0.1:${port}${p}`, init);
+function request(path: string, init?: RequestInit) {
+  return fetch(`http://127.0.0.1:${port}${path}`, init);
 }
 
 before(async () => {
+  setRateLimitStoreForTesting(new TestRateLimitStore());
+  setApiKeyStore(new EmptyApiKeyStore());
+  setAuthFailureStore(unlockedFailures);
+
   const app = express();
-  // Real mount order from src/index.ts steps 4→5→7→7a.
   app.use(jwtMiddleware);
   app.use(rateLimitMiddleware);
   app.use(authMiddleware);
@@ -66,8 +116,8 @@ before(async () => {
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      port = typeof addr === 'object' && addr ? addr.port : 0;
+      const address = server.address();
+      port = typeof address === 'object' && address ? address.port : 0;
       resolve();
     });
   });
@@ -75,40 +125,31 @@ before(async () => {
 
 after(async () => {
   await new Promise<void>((resolve, reject) => {
-    server.close((err) => (err ? reject(err) : resolve()));
+    server.close((error) => (error ? reject(error) : resolve()));
   });
-  process.chdir(originalCwd);
-  for (const [key, value] of Object.entries(envSnap)) {
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  try {
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  } catch {
-    /* best effort */
-  }
+  _resetRateLimitStoreForTesting();
+  resetApiKeyStore();
+  resetAuthFailureStoreForTesting();
+  if (originalJwtSecret === undefined) delete process.env.JWT_SECRET;
+  else process.env.JWT_SECRET = originalJwtSecret;
 });
 
-describe('AUDIT-B: spoofed X-Tenant-ID must not consume the victim tenant quota', () => {
-  test('unauthenticated spoofed-header flood does not throttle a legitimate tenant user', async () => {
-    // Attacker: no credentials, claims to be tenant-victim.
-    for (let i = 0; i < 6; i++) {
+describe('AUDIT-B: spoofed X-Tenant-ID cannot consume the victim quota', () => {
+  test('unauthenticated spoofed-header flood does not throttle a tenant JWT user', async () => {
+    for (let count = 0; count < 6; count += 1) {
       await request('/probe', { headers: { 'x-tenant-id': 'tenant-victim' } });
     }
 
-    // Legitimate tenant-victim user with a signed access token.
     const token = signAccessToken({
       id: 'user-victim',
       username: 'victim',
       role: 'viewer',
       tenantId: 'tenant-victim',
     });
-    const res = await request('/probe', {
+    const response = await request('/probe', {
       headers: { authorization: `Bearer ${token}`, 'x-tenant-id': 'tenant-victim' },
     });
 
-    // FAILING before the fix: 429 — the attacker's unauthenticated requests
-    // were bucketed into tenant:victim and exhausted its quota.
-    assert.equal(res.status, 200, 'legitimate tenant-victim request must not be throttled');
+    assert.equal(response.status, 200, 'legitimate tenant user must not be throttled');
   });
 });

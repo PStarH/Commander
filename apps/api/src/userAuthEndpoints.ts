@@ -25,7 +25,11 @@ import {
   type AuthUser,
   resolveAccessTenantId,
 } from './jwtMiddleware';
-import { consume as consumeRefreshJti, revoke as revokeRefreshJti } from './refreshTokenStore';
+import {
+  consume as consumeRefreshJti,
+  revoke as revokeRefreshJti,
+  revokeAllForUser,
+} from './refreshTokenStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -515,11 +519,21 @@ export function createUserAuthRouter(): Router {
       }
 
       const id = String(req.params.id);
+      const targetUser = await findUserById(id);
+      if (!targetUser) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
+      if (!canActOnTarget(req.user!.role, targetUser)) {
+        res.status(403).json({ error: 'You cannot modify a user above your own level' });
+        return;
+      }
       const updated = await resetUserPassword(id, parsed.data.newPassword);
       if (!updated) {
         res.status(404).json({ error: 'User not found' });
         return;
       }
+      await revokeAllForUser(id);
       res.json({ user: updated });
     },
   );

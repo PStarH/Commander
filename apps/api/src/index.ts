@@ -327,7 +327,7 @@ app.use('/api/runs', (req, res, next) => {
   });
 });
 
-// 7. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
+// 7. Authentication (skipped only by the explicit non-production anonymous mode)
 // JWT was already parsed in step 4 for rate-limit identity. API-key auth runs
 // here and skips requests already authenticated via JWT (req.user set).
 app.use(authMiddleware);

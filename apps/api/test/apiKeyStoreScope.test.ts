@@ -46,3 +46,18 @@ test('tenant-bound API-key creation uses that tenant RLS scope', async () => {
     },
   ]);
 });
+
+test('tenant-scoped API-key revocation constrains the mutation to that tenant', async () => {
+  const client = new RecordingClient();
+  const store = new PostgresApiKeyStore({ connect: async () => client } satisfies SqlPool);
+
+  await store.revoke('api-key-id', 'tenant-a');
+
+  assert.deepEqual(client.calls[2], {
+    sql:
+      'UPDATE commander_auth_api_keys SET enabled = false, revoked_at = COALESCE(revoked_at, clock_timestamp())\n' +
+      '         WHERE id = $1 AND tenant_id = $2 AND enabled = true\n' +
+      '         RETURNING id, name, prefix, key_hash, scopes, tenant_id, enabled, created_at, revoked_at',
+    values: ['api-key-id', 'tenant-a'],
+  });
+});

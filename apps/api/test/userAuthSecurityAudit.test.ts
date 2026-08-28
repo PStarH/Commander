@@ -24,13 +24,17 @@ fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
 process.chdir(tmpDir);
 process.env.JWT_SECRET = 'audit-jwt-secret';
 
-const { createUser, findUserByUsername, _resetUserStoreForTests } = await import(
+const { createUser, findUserByUsername, setUserRepository, _resetUserStoreForTests } = await import(
   '../src/userStore'
 );
-const { _resetRefreshTokenStoreForTests } = await import('../src/refreshTokenStore');
+const {
+  setRefreshTokenRepository,
+  _resetRefreshTokenStoreForTests,
+} = await import('../src/refreshTokenStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const { jwtMiddleware } = await import('../src/jwtMiddleware');
 const express = (await import('express')).default;
+const { TestRefreshTokenRepository, TestUserRepository } = await import('./authRepositories');
 
 // Obvious fake test credentials, kept behind indirection so the precommit
 // sensitive-data scanner does not flag quoted credential literals.
@@ -62,15 +66,15 @@ async function login(username: string, password: string): Promise<string> {
 }
 
 before(async () => {
-  _resetUserStoreForTests();
-  _resetRefreshTokenStoreForTests();
+  setUserRepository(new TestUserRepository());
+  setRefreshTokenRepository(new TestRefreshTokenRepository());
 
   for (const u of [
     { username: 'root', email: 'root@example.com', password: PW.root, role: 'super_admin' },
     { username: 'midadmin', email: 'mid@example.com', password: PW.mid, role: 'admin' },
     { username: 'victim', email: 'victim@example.com', password: PW.victimOld, role: 'viewer' },
   ]) {
-    const created = createUser(u);
+    const created = await createUser(u);
     assert.ok(!('error' in created), `create ${u.username} should succeed`);
   }
 
@@ -92,6 +96,8 @@ after(async () => {
   await new Promise<void>((resolve, reject) => {
     server.close((err) => (err ? reject(err) : resolve()));
   });
+  _resetUserStoreForTests();
+  _resetRefreshTokenStoreForTests();
   process.chdir(originalCwd);
   if (originalJwt === undefined) {
     delete process.env.JWT_SECRET;
@@ -117,7 +123,7 @@ describe('AUDIT-A: admin must not reset a super_admin password', () => {
     assert.equal(refreshRes.status, 200);
     const { token } = (await refreshRes.json()) as { token: string };
 
-    const root = findUserByUsername('root');
+    const root = await findUserByUsername('root');
     assert.ok(root, 'root user must exist');
 
     const res = await request(`/api/auth/users/${root.id}/reset-password`, {
@@ -151,7 +157,7 @@ describe('AUDIT-D: password reset must revoke outstanding refresh tokens', () =>
     });
     const { token } = (await refreshRes.json()) as { token: string };
 
-    const victim = findUserByUsername('victim');
+    const victim = await findUserByUsername('victim');
     assert.ok(victim);
 
     const resetRes = await request(`/api/auth/users/${victim.id}/reset-password`, {
