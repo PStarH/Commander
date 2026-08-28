@@ -2493,6 +2493,21 @@ data: { owner-url: ${payload} }
     );
   });
 
+  it('retains a fixed Helm rollout failure when hook cleanup loses the Job logs', async () => {
+    const fixture = ports();
+    fixture.helm.runProjectedRevision = async () => {
+      throw new Error('TENANT_CUTOVER_HELM_COMMAND_FAILED');
+    };
+    fixture.kubectl.captureProofHookFailureDiagnostic = async () =>
+      'code=TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=' +
+      digest('e');
+
+    await assert.rejects(
+      () => runHelmTenantCutover(input(), fixture),
+      /TENANT_CUTOVER_PROOF_HOOK_FAILED:TENANT_CUTOVER_HELM_COMMAND_FAILED:code=TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=e{64}/,
+    );
+  });
+
   it('preserves a hook failure captured while an atomic Helm rollout is still running', async () => {
     const fixture = ports();
     let rolloutRunning = true;
