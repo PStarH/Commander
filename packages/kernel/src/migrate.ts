@@ -644,6 +644,9 @@ export async function runTask1OwnerMode(
   pool: Pool,
   proof: {
     proveCurrent?(operation: Task1LifecycleOperation): Promise<Task1RolloutProofReceipt>;
+    challengeCurrent?(
+      operation: Task1LifecycleOperation,
+    ): Promise<Task1RecoveryPredecessorChallenge | { status: 'absent' }>;
     verifyRecoveryPredecessor?(
       operation: Task1LifecycleOperation,
     ): Promise<Task1RecoveryPredecessorChallenge | { status: 'absent' }>;
@@ -671,7 +674,17 @@ export async function runTask1OwnerMode(
   return atOwnerMigrationFailureStage('input', () =>
     runTask1OwnerCommand(mode, stdin, {
       execute: (request) =>
-        atOwnerMigrationFailureStage('lifecycle_transaction', () => ledger.execute(request)),
+        atOwnerMigrationFailureStage('lifecycle_transaction', () =>
+          ledger.execute({
+            ...request,
+            verifyCurrent: proof.challengeCurrent
+              ? (operation) =>
+                  atOwnerMigrationFailureStage('rollout_proof', () =>
+                    proof.challengeCurrent!(operation),
+                  )
+              : undefined,
+          }),
+        ),
       current: () =>
         atOwnerMigrationFailureStage('current_read', () => currentTask1Operation(pool)),
       proveCurrent: proof.proveCurrent
@@ -837,6 +850,9 @@ async function main() {
       const response = await runTask1OwnerMode(action, stdin, activePool, {
         proveCurrent: proofRuntime
           ? (operation) => proofRuntime.proveCurrent(operation)
+          : undefined,
+        challengeCurrent: proofRuntime
+          ? (operation) => proofRuntime.challengeCurrent(operation)
           : undefined,
         verifyRecoveryPredecessor: proofRuntime
           ? (operation) => proofRuntime.challengeRecoveryPredecessor(operation)
