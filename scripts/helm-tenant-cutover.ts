@@ -2170,6 +2170,7 @@ export function buildHelmOwnerJobBundle(input: {
   const labels = {
     'app.kubernetes.io/name': input.context.release,
     'app.kubernetes.io/instance': input.context.release,
+    'app.kubernetes.io/component': 'migration',
     'commander.io/migration-client-v2': 'true',
     'commander.io/migration-release': input.context.release,
     'commander.io/tenant-cutover-owner-execution': executionLabel,
