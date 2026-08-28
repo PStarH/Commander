@@ -353,7 +353,7 @@ function resources(): Record<string, any> {
   };
 }
 
-function ownerCurrentProofResources(): Record<string, any> {
+function ownerCurrentProofResources(mode: 'plan' | 'append' = 'append'): Record<string, any> {
   const values = resources();
   const proofPod = values.proofPods.items[0];
   proofPod.metadata.labels = {
@@ -368,7 +368,7 @@ function ownerCurrentProofResources(): Record<string, any> {
     {
       apiVersion: 'batch/v1',
       kind: 'Job',
-      name: 'release-a-owner-append-abcdef123456',
+      name: `release-a-owner-${mode}-abcdef123456`,
       uid: 'job-uid',
       controller: true,
     },
@@ -379,7 +379,7 @@ function ownerCurrentProofResources(): Record<string, any> {
       name: 'owner-command',
       image: `registry.example/commander@sha256:${digest('b')}`,
       imagePullPolicy: 'IfNotPresent',
-      command: ['node', 'packages/kernel/dist/migrate.js', 'tenant-cutover-append'],
+      command: ['node', 'packages/kernel/dist/migrate.js', `tenant-cutover-${mode}`],
       env: [
         { name: 'NODE_ENV', value: 'production' },
         {
@@ -709,6 +709,17 @@ describe('Task 1 Kubernetes proof observer', () => {
   it('accepts the strictly bound owner append Pod as the current-proof observer', async () => {
     const observer = createTask1KubernetesProofObserver({
       api: new FixtureApi(ownerCurrentProofResources()),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await observer(operation());
+  });
+
+  it('accepts the strictly bound owner plan Pod as the current-proof observer', async () => {
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(ownerCurrentProofResources('plan')),
       readProjectedTokenIdentity: async () => token(),
       readReleaseProjection: async () => releaseProjection(),
       now: () => now,
