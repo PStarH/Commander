@@ -3843,6 +3843,13 @@ async function runHelmPostRendered(
       );
     } catch (error) {
       if (postRenderFailureCode) fail(postRenderFailureCode);
+      if (
+        requests === 0 &&
+        error instanceof Error &&
+        error.message === 'TENANT_CUTOVER_HELM_COMMAND_FAILED'
+      ) {
+        fail('TENANT_CUTOVER_HELM_POST_RENDER_COMMAND_FAILED');
+      }
       throw error;
     }
     if (requests !== 1) fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID');
