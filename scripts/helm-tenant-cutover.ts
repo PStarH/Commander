@@ -3811,16 +3811,11 @@ async function runHelmPostRendered(
       response.end(manifest);
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
-      if (
-        code === 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID' ||
-        code === 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID' ||
-        code === 'TENANT_CUTOVER_RELEASE_PROJECTION_CREATE_FAILED'
-      ) {
-        postRenderFailureCode =
-          code === 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID'
-            ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
-            : code;
-      }
+      const fixedCode =
+        code === 'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID'
+          ? 'TENANT_CUTOVER_RELEASE_PROJECTION_INVALID'
+          : code;
+      if (isAllowedHelmDiagnosticCode(fixedCode)) postRenderFailureCode = fixedCode;
       response.writeHead(400);
       response.end();
     }
