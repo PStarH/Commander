@@ -96,7 +96,9 @@ describe('design-partner fault campaign contract', () => {
 
     const duplicate = completeObservation();
     duplicate.scenarios.push({ ...duplicate.scenarios[0]! });
-    assert.ok(validateCampaignObservation(duplicate).includes('SCENARIO_DUPLICATE:tenant_isolation'));
+    assert.ok(
+      validateCampaignObservation(duplicate).includes('SCENARIO_DUPLICATE:tenant_isolation'),
+    );
 
     const overWrite = completeObservation();
     overWrite.scenarios.find(({ id }) => id === 'ambiguous_completion')!.observedExternalWrites = 2;

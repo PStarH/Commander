@@ -675,7 +675,9 @@ export async function collectTask1PrebootstrapInventory(
       return identityRows[0]!;
     });
     const ledgerExists = identity.ledger_exists === true;
-    const ledger = ledgerExists ? await queryRows(client, 'ledger', TASK1_CATALOG_QUERIES.ledger) : null;
+    const ledger = ledgerExists
+      ? await queryRows(client, 'ledger', TASK1_CATALOG_QUERIES.ledger)
+      : null;
     const namespaces = await queryRows(client, 'namespaces', TASK1_CATALOG_QUERIES.namespaces);
     const relations = await queryRows(client, 'relations', TASK1_CATALOG_QUERIES.relations);
     const functions = (await queryRows(client, 'functions', TASK1_CATALOG_QUERIES.functions)).map(
@@ -687,7 +689,11 @@ export async function collectTask1PrebootstrapInventory(
     const triggers = await queryRows(client, 'triggers', TASK1_CATALOG_QUERIES.triggers);
     const roles = await queryRows(client, 'roles', TASK1_CATALOG_QUERIES.roles);
     const memberships = await queryRows(client, 'memberships', TASK1_CATALOG_QUERIES.memberships);
-    const roleSettings = await queryRows(client, 'role_settings', TASK1_CATALOG_QUERIES.roleSettings);
+    const roleSettings = await queryRows(
+      client,
+      'role_settings',
+      TASK1_CATALOG_QUERIES.roleSettings,
+    );
     const databaseAcl = await queryRows(client, 'database_acl', TASK1_CATALOG_QUERIES.databaseAcl);
     const schemaAcls = await queryRows(client, 'schema_acls', TASK1_CATALOG_QUERIES.schemaAcls);
     const defaultAcls = await queryRows(client, 'default_acls', TASK1_CATALOG_QUERIES.defaultAcls);
@@ -716,7 +722,8 @@ export async function collectTask1PrebootstrapInventory(
       });
     }
 
-    const catalogVersion = options.catalogVersion ?? bootstrap?.catalogVersion ?? identity.catalog_version;
+    const catalogVersion =
+      options.catalogVersion ?? bootstrap?.catalogVersion ?? identity.catalog_version;
     await atCatalogSnapshotValidation('catalog_version_validation', () => {
       if (typeof catalogVersion !== 'string' || !/^[0-9]+$/.test(catalogVersion)) {
         fail('TASK1_CATALOG_IDENTITY_INVALID');

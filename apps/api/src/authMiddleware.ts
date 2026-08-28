@@ -45,9 +45,11 @@ const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
 // Cleanup old entries every 5 minutes
 setInterval(() => {
-  getAuthFailureStore().cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
-    process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
-  });
+  getAuthFailureStore()
+    .cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS)
+    .catch((err) => {
+      process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
+    });
 }, 300_000).unref();
 
 function sha256(input: string): string {

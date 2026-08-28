@@ -5,7 +5,14 @@
  * tests, SDK clients, and Gateway validation without importing the kernel.
  */
 
-import { isTerminalRunState, isTerminalStepState, isValidRunTransition, isValidStepTransition, type RunState, type StepState } from './states.js';
+import {
+  isTerminalRunState,
+  isTerminalStepState,
+  isValidRunTransition,
+  isValidStepTransition,
+  type RunState,
+  type StepState,
+} from './states.js';
 
 export interface TransitionResult {
   ok: boolean;

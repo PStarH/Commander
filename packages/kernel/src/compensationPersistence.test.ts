@@ -24,10 +24,7 @@ describe('compensation terminal evidence schema', () => {
       KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
       /p_disposition='ESCALATED'[\s\S]*reconcile_disposition='ESCALATED'[\s\S]*reconcile_escalated_at/i,
     );
-    assert.match(
-      KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
-      /TERMINAL_EVIDENCE_REQUIRED/i,
-    );
+    assert.match(KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL, /TERMINAL_EVIDENCE_REQUIRED/i);
     assert.match(
       KERNEL_COMPENSATION_PERSISTENCE_SQL,
       /v_request\.compensation_effect_id<>p_input->>'effectId'[\s\S]*v_effect\.id IS NULL[\s\S]*p_disposition<>'ESCALATED'/i,
@@ -292,7 +289,10 @@ for (const kind of ['memory', 'sqlite'] as const) {
         });
 
         assert.deepEqual(result, { applied: true, disposition: 'ESCALATED', replayed: false });
-        assert.equal(await harness.repository.getEffect(claimed.request.compensationEffectId, TENANT), null);
+        assert.equal(
+          await harness.repository.getEffect(claimed.request.compensationEffectId, TENANT),
+          null,
+        );
         assert.equal(
           (await harness.repository.getStep(claimed.request.compensationStepId, TENANT))?.state,
           'WAITING_FOR_HUMAN',
@@ -320,6 +320,5 @@ for (const kind of ['memory', 'sqlite'] as const) {
         harness.close();
       }
     });
-
   });
 }

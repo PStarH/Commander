@@ -93,6 +93,9 @@ describe('reclaim → compensation authority boundary', () => {
     const messages = await repository.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10);
     assert.equal(messages.length, 0);
     const events = await repository.listEvents('run-a', 'tenant-a');
-    assert.equal(events.some((event) => event.type === 'compensation.authorization_required'), true);
+    assert.equal(
+      events.some((event) => event.type === 'compensation.authorization_required'),
+      true,
+    );
   });
 });

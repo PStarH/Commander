@@ -166,9 +166,10 @@ function adminGate(req: Request, res: Response, next: NextFunction): void {
   }
   const scopes = req.apiScopes ?? [];
   if (!scopes.includes('admin')) {
-    res
-      .status(403)
-      .json({ error: 'Admin authority required', detail: 'Pass an admin JWT or an API key with scope=admin.' });
+    res.status(403).json({
+      error: 'Admin authority required',
+      detail: 'Pass an admin JWT or an API key with scope=admin.',
+    });
     return;
   }
   next();

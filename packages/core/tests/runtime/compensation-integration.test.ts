@@ -91,9 +91,11 @@ describe('AgentRuntime — handleMutationToolFailure', () => {
   it('records compensation actions via recordAction and publishes bus event', async () => {
     // Simulate some executed mutations so the rollback plan has steps
     const rt = runtime as any;
-    rt.runContext.mutableExecutedMutations.splice(0, rt.runContext.mutableExecutedMutations.length, ...[
-      { toolName: 'file_write', args: { path: '/tmp/a.txt', content: 'hello' } },
-    ]);
+    rt.runContext.mutableExecutedMutations.splice(
+      0,
+      rt.runContext.mutableExecutedMutations.length,
+      ...[{ toolName: 'file_write', args: { path: '/tmp/a.txt', content: 'hello' } }],
+    );
 
     const recordSpy = vi.spyOn(runtime.getCompensationRegistry(), 'recordAction');
     const bus = getMessageBus();
@@ -121,10 +123,14 @@ describe('AgentRuntime — handleMutationToolFailure', () => {
 
   it('generates a rollback plan that includes steps for prior mutations', async () => {
     const rt = runtime as any;
-    rt.runContext.mutableExecutedMutations.splice(0, rt.runContext.mutableExecutedMutations.length, ...[
-      { toolName: 'file_write', args: { path: '/tmp/a.txt', content: 'v1' } },
-      { toolName: 'file_write', args: { path: '/tmp/b.txt', content: 'v2' } },
-    ]);
+    rt.runContext.mutableExecutedMutations.splice(
+      0,
+      rt.runContext.mutableExecutedMutations.length,
+      ...[
+        { toolName: 'file_write', args: { path: '/tmp/a.txt', content: 'v1' } },
+        { toolName: 'file_write', args: { path: '/tmp/b.txt', content: 'v2' } },
+      ],
+    );
 
     const recordSpy = vi.spyOn(runtime.getCompensationRegistry(), 'recordAction');
 
@@ -136,7 +142,11 @@ describe('AgentRuntime — handleMutationToolFailure', () => {
 
   it('handles empty executedMutations gracefully (no prior mutations)', async () => {
     const rt = runtime as any;
-    rt.runContext.mutableExecutedMutations.splice(0, rt.runContext.mutableExecutedMutations.length, ...[]);
+    rt.runContext.mutableExecutedMutations.splice(
+      0,
+      rt.runContext.mutableExecutedMutations.length,
+      ...[],
+    );
 
     const recordSpy = vi.spyOn(runtime.getCompensationRegistry(), 'recordAction');
 

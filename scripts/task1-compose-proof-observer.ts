@@ -26,7 +26,10 @@ function string(value: unknown): string {
   return value;
 }
 
-function container(value: unknown, detail: boolean): ComposeTopologyRelayContainer | ComposeTopologyRelayContainerDetail {
+function container(
+  value: unknown,
+  detail: boolean,
+): ComposeTopologyRelayContainer | ComposeTopologyRelayContainerDetail {
   const record = object(value);
   const baseKeys = [
     'containerId',
@@ -41,7 +44,11 @@ function container(value: unknown, detail: boolean): ComposeTopologyRelayContain
   ];
   exactKeys(record, detail ? [...baseKeys, 'containerName', 'imageId'] : baseKeys);
   const containerId = string(record.containerId);
-  if (!CONTAINER_ID_PATTERN.test(containerId) || record.state !== 'running' || record.health !== 'healthy') {
+  if (
+    !CONTAINER_ID_PATTERN.test(containerId) ||
+    record.state !== 'running' ||
+    record.health !== 'healthy'
+  ) {
     fail();
   }
   if (!Number.isSafeInteger(record.restartCount) || record.restartCount !== 0) fail();
@@ -63,7 +70,11 @@ function container(value: unknown, detail: boolean): ComposeTopologyRelayContain
     ) as Record<string, string>,
   };
   return detail
-    ? { ...projection, containerName: string(record.containerName), imageId: string(record.imageId) }
+    ? {
+        ...projection,
+        containerName: string(record.containerName),
+        imageId: string(record.imageId),
+      }
     : projection;
 }
 
@@ -94,11 +105,13 @@ export function createComposeProofObserver(
           response.setEncoding('utf8');
           response.on('data', (chunk: string) => {
             bytes += Buffer.byteLength(chunk, 'utf8');
-            if (bytes > RESPONSE_LIMIT_BYTES) req.destroy(new Error('TENANT_CUTOVER_PROOF_OBSERVER_RESPONSE_INVALID'));
+            if (bytes > RESPONSE_LIMIT_BYTES)
+              req.destroy(new Error('TENANT_CUTOVER_PROOF_OBSERVER_RESPONSE_INVALID'));
             else responseBody += chunk;
           });
           response.once('end', () => {
-            if (response.statusCode !== 200) reject(new Error('TENANT_CUTOVER_PROOF_OBSERVER_REQUEST_REJECTED'));
+            if (response.statusCode !== 200)
+              reject(new Error('TENANT_CUTOVER_PROOF_OBSERVER_REQUEST_REJECTED'));
             else resolve();
           });
         },
@@ -126,14 +139,22 @@ export function createComposeProofObserver(
     async containers() {
       const projection = await get('/containers/json');
       if (!Array.isArray(projection)) fail();
-      const containers = projection.map((entry) => container(entry, false) as ComposeTopologyRelayContainer);
-      const sorted = [...containers].sort((left, right) => left.containerId.localeCompare(right.containerId));
+      const containers = projection.map(
+        (entry) => container(entry, false) as ComposeTopologyRelayContainer,
+      );
+      const sorted = [...containers].sort((left, right) =>
+        left.containerId.localeCompare(right.containerId),
+      );
       if (JSON.stringify(containers) !== JSON.stringify(sorted)) fail();
       return containers;
     },
     async container(containerId) {
-      if (!CONTAINER_ID_PATTERN.test(containerId)) fail('TENANT_CUTOVER_PROOF_OBSERVER_REQUEST_INVALID');
-      return container(await get(`/containers/${containerId}/json`), true) as ComposeTopologyRelayContainerDetail;
+      if (!CONTAINER_ID_PATTERN.test(containerId))
+        fail('TENANT_CUTOVER_PROOF_OBSERVER_REQUEST_INVALID');
+      return container(
+        await get(`/containers/${containerId}/json`),
+        true,
+      ) as ComposeTopologyRelayContainerDetail;
     },
   };
 }

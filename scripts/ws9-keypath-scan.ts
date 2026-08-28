@@ -74,11 +74,7 @@ const ENV_KEY_ACCESS =
 
 const SCAN_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.json']);
 
-const DEFAULT_SCAN_DIRS = [
-  'packages/core/src',
-  'apps/api/src',
-  'packages/sdk',
-];
+const DEFAULT_SCAN_DIRS = ['packages/core/src', 'apps/api/src', 'packages/sdk'];
 
 // Directories to skip entirely.
 const SKIP_DIRS = new Set([
@@ -117,15 +113,14 @@ function loadAllowlist(allowlistPath: string): KeypathAllowlist {
   const raw = readFileSync(allowlistPath, 'utf-8');
   const parsed = JSON.parse(raw) as KeypathAllowlist;
   if (!Array.isArray(parsed.allowed) || !Array.isArray(parsed.forbiddenPatterns)) {
-    throw new Error('Invalid allowlist format: expected { allowed: string[], forbiddenPatterns: string[] }');
+    throw new Error(
+      'Invalid allowlist format: expected { allowed: string[], forbiddenPatterns: string[] }',
+    );
   }
   return parsed;
 }
 
-function scanFile(
-  filePath: string,
-  allowlist: KeypathAllowlist,
-): Violation[] {
+function scanFile(filePath: string, allowlist: KeypathAllowlist): Violation[] {
   const content = readFileSync(filePath, 'utf-8');
   const lines = content.split('\n');
   const violations: Violation[] = [];
@@ -146,9 +141,7 @@ function scanFile(
       const col = match.index + 'process.env.'.length;
 
       // Check if it's explicitly forbidden
-      const isForbidden = allowlist.forbiddenPatterns.some((p) =>
-        envVar.includes(p),
-      );
+      const isForbidden = allowlist.forbiddenPatterns.some((p) => envVar.includes(p));
       // Check if it's in the allowlist
       const isAllowed = allowlist.allowed.includes(envVar);
 
@@ -226,12 +219,7 @@ function main(): void {
   const jsonOutput = args.includes('--json');
   const scanDist = args.includes('--scan-dist');
 
-  const allowlistPath = path.resolve(
-    __dirname,
-    '..',
-    'config',
-    'keypath-allowlist.json',
-  );
+  const allowlistPath = path.resolve(__dirname, '..', 'config', 'keypath-allowlist.json');
 
   let allowlist: KeypathAllowlist;
   try {

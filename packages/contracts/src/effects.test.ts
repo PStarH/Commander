@@ -13,7 +13,10 @@ import {
 
 describe('WS2 §2 EffectEnvelope contract', () => {
   it('exposes the five action namespaces', () => {
-    assert.deepEqual([...EFFECT_ACTION_NAMESPACES], ['http', 'llm', 'connector', 'compensate', 'tool']);
+    assert.deepEqual(
+      [...EFFECT_ACTION_NAMESPACES],
+      ['http', 'llm', 'connector', 'compensate', 'tool'],
+    );
   });
 
   it('classifies action names into namespaces', () => {

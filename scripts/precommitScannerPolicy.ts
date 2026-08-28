@@ -42,6 +42,10 @@ function isHighWarning(warning: ScannerWarning): boolean {
   return warning.severity === 'high';
 }
 
+function isIndexedWarning(warning: ScannerWarning): boolean {
+  return isHighWarning(warning) || isMalwareOrCritical(warning);
+}
+
 function auditWarning(warning: ScannerWarning): ScannerPolicyAuditWarning {
   return {
     fingerprint: warningFingerprint(warning),
@@ -389,6 +393,23 @@ function stableBindingIdentity(
   if (ts.isFunctionExpression(node) && node.name !== undefined) return node.name.text;
 
   const parent = node.parent;
+  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+    const argumentsList = parent.arguments;
+    const argumentIndex = argumentsList?.findIndex((argument) => argument === node) ?? -1;
+    if (argumentIndex >= 0) {
+      return (
+        'callback:' +
+        parent.expression.getText(sourceFile) +
+        ':' +
+        argumentIndex +
+        ':' +
+        argumentsList!
+          .slice(0, argumentIndex)
+          .map((argument) => argument.getText(sourceFile))
+          .join(',')
+      );
+    }
+  }
   if (ts.isVariableDeclaration(parent) && ts.isIdentifier(parent.name)) {
     return 'variable:' + parent.name.text;
   }
@@ -609,20 +630,19 @@ export function readIndexedContent(repoRoot: string, relativePath: string): stri
   return staged;
 }
 
-export async function enumerateHighWarnings(
+async function enumerateWarnings(
   content: string,
   scan: (content: string) => Promise<readonly ScannerWarning[]> | readonly ScannerWarning[],
+  include: (warning: ScannerWarning) => boolean,
 ): Promise<ScannerWarning[]> {
   const warnings: ScannerWarning[] = [];
   let remaining = content;
 
   for (let iteration = 0; iteration < MAX_HIGH_WARNING_OCCURRENCES; iteration += 1) {
-    const highWarnings = (await scan(remaining)).filter(
-      (warning) => isHighWarning(warning) && !isMalwareOrCritical(warning),
-    );
-    if (highWarnings.length === 0) return warnings;
+    const matchingWarnings = (await scan(remaining)).filter(include);
+    if (matchingWarnings.length === 0) return warnings;
 
-    for (const warning of highWarnings) {
+    for (const warning of matchingWarnings) {
       const evidence = warningEvidencePrefix(warning.evidence);
       const index = remaining.indexOf(evidence);
       if (index < 0 || evidence.length === 0) {
@@ -640,6 +660,24 @@ export async function enumerateHighWarnings(
   throw new Error('D3_SCANNER_WARNING_OCCURRENCE_LIMIT');
 }
 
+export async function enumerateHighWarnings(
+  content: string,
+  scan: (content: string) => Promise<readonly ScannerWarning[]> | readonly ScannerWarning[],
+): Promise<ScannerWarning[]> {
+  return enumerateWarnings(
+    content,
+    scan,
+    (warning) => isHighWarning(warning) && !isMalwareOrCritical(warning),
+  );
+}
+
+export async function enumerateIndexedWarnings(
+  content: string,
+  scan: (content: string) => Promise<readonly ScannerWarning[]> | readonly ScannerWarning[],
+): Promise<ScannerWarning[]> {
+  return enumerateWarnings(content, scan, isIndexedWarning);
+}
+
 export function evaluateIndexedWarnings(
   stagedWarnings: readonly ScannerWarning[],
   headWarnings: readonly ScannerWarning[],
@@ -651,10 +689,13 @@ export function evaluateIndexedWarnings(
   const violations: ScannerPolicyViolation[] = [];
   const baselineOccurrences = new Map<string, string[]>();
   const consumedBaselineOccurrences = new Map<string, Set<number>>();
-  const unmatchedStagedWarnings: ScannerPolicyAuditWarning[] = [];
+  const unmatchedStagedWarnings: Array<{
+    audit: ScannerPolicyAuditWarning;
+    blocking: boolean;
+  }> = [];
 
   for (const warning of headWarnings) {
-    if (!isHighWarning(warning) || isMalwareOrCritical(warning)) continue;
+    if (!isIndexedWarning(warning)) continue;
     if (warning.sourceFingerprint === undefined) continue;
     const fingerprint = warningFingerprint(warning);
     const occurrences = baselineOccurrences.get(fingerprint) ?? [];
@@ -664,14 +705,11 @@ export function evaluateIndexedWarnings(
 
   for (const warning of stagedWarnings) {
     const audit = auditWarning(warning);
-    if (isMalwareOrCritical(warning)) {
-      violations.push({ ...audit, reason: 'malware_or_critical' });
-      continue;
-    }
-    if (!isHighWarning(warning)) continue;
+    const blocking = isMalwareOrCritical(warning);
+    if (!isIndexedWarning(warning)) continue;
 
     if (warning.sourceFingerprint === undefined) {
-      violations.push({ ...audit, reason: 'new_high_warning' });
+      violations.push({ ...audit, reason: blocking ? 'malware_or_critical' : 'new_high_warning' });
       continue;
     }
 
@@ -686,16 +724,18 @@ export function evaluateIndexedWarnings(
       consumedBaselineOccurrences.set(audit.fingerprint, consumed);
       inherited.push(audit);
     } else {
-      unmatchedStagedWarnings.push(audit);
+      unmatchedStagedWarnings.push({ audit, blocking });
     }
   }
 
-  for (const audit of unmatchedStagedWarnings) {
+  for (const { audit, blocking } of unmatchedStagedWarnings) {
     violations.push({
       ...audit,
-      reason: baselineOccurrences.has(audit.fingerprint)
-        ? 'duplicate_high_warning'
-        : 'new_high_warning',
+      reason: blocking
+        ? 'malware_or_critical'
+        : baselineOccurrences.has(audit.fingerprint)
+          ? 'duplicate_high_warning'
+          : 'new_high_warning',
     });
   }
 

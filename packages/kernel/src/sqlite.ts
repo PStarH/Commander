@@ -1624,8 +1624,8 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             disposition === 'COMPLETED'
               ? current.state
               : disposition === 'CONFIRMED_NOT_APPLIED'
-                ? 'CONFIRMED_NOT_APPLIED' as const
-                : 'COMPLETION_UNKNOWN' as const,
+                ? ('CONFIRMED_NOT_APPLIED' as const)
+                : ('COMPLETION_UNKNOWN' as const),
         };
         assertEvidenceRecordBoundToEffect(input.evidence, projected);
         await this.appendSqliteEvidenceInTransaction(client, input.evidence);
@@ -1692,7 +1692,12 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           `UPDATE commander_effects SET reconcile_disposition='ESCALATED',
              reconcile_escalated_at=?,reconcile_escalation_code=?,reconcile_after=NULL
            WHERE id=? AND tenant_id=?`,
-          [new Date().toISOString(), 'COMPENSATION_QUERY_UNSUPPORTED', input.effectId, input.tenantId],
+          [
+            new Date().toISOString(),
+            'COMPENSATION_QUERY_UNSUPPORTED',
+            input.effectId,
+            input.tenantId,
+          ],
         );
       }
       await client.query(
@@ -2017,10 +2022,10 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
               disposition === 'COMPLETED'
                 ? current.state
                 : current.state === 'ADMITTED'
-                  ? 'FAILED' as const
-                  : 'COMPLETION_UNKNOWN' as const,
+                  ? ('FAILED' as const)
+                  : ('COMPLETION_UNKNOWN' as const),
           };
-          if (!await this.hasEvidenceForEffect(client, projected)) {
+          if (!(await this.hasEvidenceForEffect(client, projected))) {
             return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
           }
         }
@@ -2699,11 +2704,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             Date.parse(nextAfter) >= Date.parse(deadlineAt));
         const projectedState =
           mutation === 'COMPLETE' && !deadlineExpired
-            ? 'COMPLETED' as const
+            ? ('COMPLETED' as const)
             : mutation === 'CONFIRM_NOT_APPLIED' && !deadlineExpired
-              ? 'CONFIRMED_NOT_APPLIED' as const
+              ? ('CONFIRMED_NOT_APPLIED' as const)
               : mutation === 'ESCALATE' || deadlineExpired || rescheduleEscalates
-                ? 'COMPLETION_UNKNOWN' as const
+                ? ('COMPLETION_UNKNOWN' as const)
                 : null;
         if (projectedState) {
           if (!input.evidence) {

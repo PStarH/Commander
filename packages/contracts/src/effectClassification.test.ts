@@ -18,7 +18,14 @@ describe('effect classification', () => {
   });
 
   it('permits only known disclosure/read and local-compute families as non-Class-A', () => {
-    for (const type of ['llm.chat', 'retrieve.search', 'read.record', 'budget.check', 'local.hash', 'compute.fold']) {
+    for (const type of [
+      'llm.chat',
+      'retrieve.search',
+      'read.record',
+      'budget.check',
+      'local.hash',
+      'compute.fold',
+    ]) {
       assert.equal(isClassAEffectType(type), false, type);
     }
   });

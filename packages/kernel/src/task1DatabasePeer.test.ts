@@ -10,8 +10,11 @@ import { TASK1_DATABASE_ROLES } from './canonicalBootstrap.js';
 import { observeTask1DatabasePeers } from './task1DatabasePeer.js';
 
 const LOGINS = {
-  'adapter-ops': 'commander_adapter_ops', app: 'commander_app', owner: 'commander_owner',
-  scheduler: 'commander_scheduler', 'tenant-authority': 'commander_tenant_authority',
+  'adapter-ops': 'commander_adapter_ops',
+  app: 'commander_app',
+  owner: 'commander_owner',
+  scheduler: 'commander_scheduler',
+  'tenant-authority': 'commander_tenant_authority',
   worker: 'commander_worker',
 } as const;
 
@@ -19,16 +22,38 @@ function certificate(): X509Certificate {
   const directory = mkdtempSync(join(tmpdir(), 'commander-peer-cert-'));
   const key = join(directory, 'tls.key');
   const cert = join(directory, 'tls.crt');
-  execFileSync('openssl', [
-    'req', '-x509', '-new', '-nodes', '-newkey', 'ec', '-pkeyopt', 'ec_paramgen_curve:P-256',
-    '-days', '2', '-subj', '/CN=db.example.test', '-addext', 'subjectAltName=DNS:db.example.test',
-    '-keyout', key, '-out', cert,
-  ], { stdio: 'ignore' });
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-new',
+      '-nodes',
+      '-newkey',
+      'ec',
+      '-pkeyopt',
+      'ec_paramgen_curve:P-256',
+      '-days',
+      '2',
+      '-subj',
+      '/CN=db.example.test',
+      '-addext',
+      'subjectAltName=DNS:db.example.test',
+      '-keyout',
+      key,
+      '-out',
+      cert,
+    ],
+    { stdio: 'ignore' },
+  );
   return new X509Certificate(readFileSync(cert));
 }
 
 class FakePool {
-  constructor(private readonly login: string, private readonly cert: X509Certificate) {}
+  constructor(
+    private readonly login: string,
+    private readonly cert: X509Certificate,
+  ) {}
   async connect(): Promise<PoolClient> {
     return {
       connection: {
@@ -38,19 +63,23 @@ class FakePool {
         },
       },
       query: async () => ({
-        rows: [{
-          current_user: this.login,
-          session_user: this.login,
-          database_oid: '42',
-          database_name: 'commander',
-        }],
+        rows: [
+          {
+            current_user: this.login,
+            session_user: this.login,
+            database_oid: '42',
+            database_name: 'commander',
+          },
+        ],
         rowCount: 1,
       }),
       release: () => undefined,
     } as unknown as PoolClient;
   }
   async end(): Promise<void> {}
-  on(): this { return this; }
+  on(): this {
+    return this;
+  }
 }
 
 describe('Task 1 six-role database peer observation', () => {
@@ -75,8 +104,14 @@ describe('Task 1 six-role database peer observation', () => {
         return new FakePool(login, cert) as unknown as Pool;
       }) as typeof import('@commander/postgres-runtime').createVerifiedPostgresPool,
     });
-    assert.deepEqual(observation.input.roles.map(({ role }) => role), [...TASK1_DATABASE_ROLES]);
-    assert.deepEqual(observation.binding.roles.map(({ role }) => role), [...TASK1_DATABASE_ROLES]);
+    assert.deepEqual(
+      observation.input.roles.map(({ role }) => role),
+      [...TASK1_DATABASE_ROLES],
+    );
+    assert.deepEqual(
+      observation.binding.roles.map(({ role }) => role),
+      [...TASK1_DATABASE_ROLES],
+    );
     assert.equal(new Set(observation.binding.roles.map(({ databaseOid }) => databaseOid)).size, 1);
   });
 });

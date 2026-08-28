@@ -11,9 +11,7 @@ import { getCurrentBaseline } from '../../../../scripts/check-readiness.ts';
 
 describe('bench-v2-live worker tenant gate', () => {
   it('allows live mode at the five-tenant default without COMMANDER_WORKER_TENANTS', () => {
-    expect(() =>
-      assertLiveBenchWorkerTenants(5, 'live', {} as NodeJS.ProcessEnv),
-    ).not.toThrow();
+    expect(() => assertLiveBenchWorkerTenants(5, 'live', {} as NodeJS.ProcessEnv)).not.toThrow();
   });
 
   it('allows simulated mode with any tenant count without COMMANDER_WORKER_TENANTS', () => {
@@ -23,9 +21,9 @@ describe('bench-v2-live worker tenant gate', () => {
   });
 
   it('fail-closes live mode when --tenants≠5 and COMMANDER_WORKER_TENANTS is unset', () => {
-    expect(() =>
-      assertLiveBenchWorkerTenants(3, 'live', {} as NodeJS.ProcessEnv),
-    ).toThrow(/COMMANDER_WORKER_TENANTS/);
+    expect(() => assertLiveBenchWorkerTenants(3, 'live', {} as NodeJS.ProcessEnv)).toThrow(
+      /COMMANDER_WORKER_TENANTS/,
+    );
   });
 
   it('fail-closes live mode when COMMANDER_WORKER_TENANTS is empty or *', () => {
@@ -108,7 +106,11 @@ interface MockRun {
   }>;
 }
 
-function startMockV1KernelServer(): Promise<{ server: Server; baseUrl: string; stop: () => Promise<void> }> {
+function startMockV1KernelServer(): Promise<{
+  server: Server;
+  baseUrl: string;
+  stop: () => Promise<void>;
+}> {
   let counter = 0;
   const runs = new Map<string, MockRun>();
 
@@ -275,9 +277,10 @@ describe('bench-v2-live live mode', () => {
     const current = getCurrentBaseline();
     // Mock kernel has no real image; host docker digests must not gate this test.
     const validation = validateBaseline(doc, { ...current, imageDigest: undefined });
-    expect(validation.reasons, `baseline validation failed: ${validation.reasons.join('; ')}`).toEqual(
-      [],
-    );
+    expect(
+      validation.reasons,
+      `baseline validation failed: ${validation.reasons.join('; ')}`,
+    ).toEqual([]);
     expect(validation.ok).toBe(true);
 
     rmSync(baselinePath);

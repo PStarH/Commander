@@ -37,34 +37,47 @@ export async function main(): Promise<void> {
   const healthPort = positiveInteger('COMMANDER_ADAPTER_OPS_HEALTH_PORT', 8082);
   const runtime = await startAdapterOpsRuntime({
     wiring,
-    startHealth: () => startAdapterOpsHealthServer({
-      port: healthPort,
-      isReady: async () => {
-        if (!durableClaimsReady) return false;
-        if (tier === 'enterprise' && !cellTenantId) return false;
-        if (tier !== 'demo' && egressAllowlist.length === 0) return false;
-        if (!wiring.reconciliation.isHealthy() || !wiring.compensation.isHealthy()) {
-          return false;
-        }
-        if (!(await wiring.ping())) return false;
-        return (await wiring.operationsReadiness()).ready;
-      },
-      getLoopHealth: () => ({
-        reconciliation: wiring.reconciliation.getHealth(),
-        compensation: wiring.compensation.getHealth(),
+    startHealth: () =>
+      startAdapterOpsHealthServer({
+        port: healthPort,
+        isReady: async () => {
+          if (!durableClaimsReady) return false;
+          if (tier === 'enterprise' && !cellTenantId) return false;
+          if (tier !== 'demo' && egressAllowlist.length === 0) return false;
+          if (!wiring.reconciliation.isHealthy() || !wiring.compensation.isHealthy()) {
+            return false;
+          }
+          if (!(await wiring.ping())) return false;
+          return (await wiring.operationsReadiness()).ready;
+        },
+        getLoopHealth: () => ({
+          reconciliation: wiring.reconciliation.getHealth(),
+          compensation: wiring.compensation.getHealth(),
+        }),
       }),
-    }),
   });
 
   process.once('SIGINT', () => {
     void runtime.shutdown().catch((error) => {
-      console.error(JSON.stringify({ channel: 'adapter-ops-lifecycle', event: 'shutdown_failed', error: error instanceof Error ? error.message : String(error) }));
+      console.error(
+        JSON.stringify({
+          channel: 'adapter-ops-lifecycle',
+          event: 'shutdown_failed',
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
       process.exitCode = 1;
     });
   });
   process.once('SIGTERM', () => {
     void runtime.shutdown().catch((error) => {
-      console.error(JSON.stringify({ channel: 'adapter-ops-lifecycle', event: 'shutdown_failed', error: error instanceof Error ? error.message : String(error) }));
+      console.error(
+        JSON.stringify({
+          channel: 'adapter-ops-lifecycle',
+          event: 'shutdown_failed',
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
       process.exitCode = 1;
     });
   });
@@ -75,11 +88,13 @@ void main().catch(async (error: unknown) => {
   try {
     await fatalSafeStop?.('fatal_invariant');
   } catch (safeStopError) {
-    console.error(JSON.stringify({
-      channel: 'adapter-ops-lifecycle',
-      event: 'fatal_safe_stop_failed',
-      error: safeStopError instanceof Error ? safeStopError.message : String(safeStopError),
-    }));
+    console.error(
+      JSON.stringify({
+        channel: 'adapter-ops-lifecycle',
+        event: 'fatal_safe_stop_failed',
+        error: safeStopError instanceof Error ? safeStopError.message : String(safeStopError),
+      }),
+    );
   }
   process.exitCode = 1;
 });

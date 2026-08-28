@@ -261,8 +261,11 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
       generateActionId: () => 'test',
       getBreakerRegistry: () => ({ get: () => null }) as never,
     });
-    (svc as unknown as { recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> }).recentToolCalls =
-      [{ name: 'file_search', arguments: { q: 'x' } }];
+    (
+      svc as unknown as {
+        recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+      }
+    ).recentToolCalls = [{ name: 'file_search', arguments: { q: 'x' } }];
 
     await svc.triggerSpeculativeExecution();
 
@@ -341,8 +344,11 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
       getBreakerRegistry: () => ({ get: () => null }) as never,
     });
 
-    (svc as unknown as { recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> }).recentToolCalls =
-      [{ name: 'file_search', arguments: { q: 'x' } }];
+    (
+      svc as unknown as {
+        recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+      }
+    ).recentToolCalls = [{ name: 'file_search', arguments: { q: 'x' } }];
 
     await svc.triggerSpeculativeExecution(undefined, 'test-capability-token');
 

@@ -28,7 +28,10 @@ describe('getSafeRoot multi-tenant fail-closed (AUDIT-CORE2)', () => {
     setGlobalTenantProvider(
       new FakeProvider(
         new Map([
-          ['tenant-configured', { workspacePath: '/tmp/workspaces/tenant-configured' } as TenantConfig],
+          [
+            'tenant-configured',
+            { workspacePath: '/tmp/workspaces/tenant-configured' } as TenantConfig,
+          ],
           // 'tenant-unconfigured' is a known tenant with no workspacePath — the hole.
         ]),
       ),

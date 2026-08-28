@@ -230,8 +230,7 @@ function extractTenantId(req: Request): string | undefined {
   // cross-tenant) caller could otherwise exhaust another tenant's quota by
   // spoofing the header. `req.tenantId` is set by authMiddleware (API-key
   // binding); `req.user.tenantId` is the verified JWT claim parsed earlier.
-  const resolved =
-    (req as Request & { tenantId?: string }).tenantId ?? req.user?.tenantId;
+  const resolved = (req as Request & { tenantId?: string }).tenantId ?? req.user?.tenantId;
   if (typeof resolved !== 'string') return undefined;
   if (!TENANT_ID_RE.test(resolved)) return undefined;
   return resolved;

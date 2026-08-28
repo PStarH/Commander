@@ -17,11 +17,19 @@ import {
   OutboundNetworkPolicy,
   type OutboundNetworkPolicyConfig,
 } from '../../src/security/outboundNetworkPolicy';
-import { probePostgres, describeIf, writePass, writeBreach, writeFail, TENANT_A, TENANT_B } from './_evidence';
+import {
+  probePostgres,
+  describeIf,
+  writePass,
+  writeBreach,
+  writeFail,
+  TENANT_A,
+  TENANT_B,
+} from './_evidence';
 
 // ─── NET-1: A cannot reach B's allowed domain ───────────────────────────
 
-describe('WS9 NET-1: A and B have different allowlists; A cannot reach B\'s domains', () => {
+describe("WS9 NET-1: A and B have different allowlists; A cannot reach B's domains", () => {
   it('OutboundNetworkPolicy denies A access to B-only domain; B still allowed', () => {
     const artifacts: string[] = [];
 
@@ -48,10 +56,10 @@ describe('WS9 NET-1: A and B have different allowlists; A cannot reach B\'s doma
     const bToA = policyB.check('https://api.openai.com/v1/chat/completions');
 
     try {
-      expect(aToB.allowed).toBe(false);   // A cannot reach B's domain
-      expect(bToOwn.allowed).toBe(true);   // B can reach its own domain
-      expect(aToOwn.allowed).toBe(true);   // A can reach its own domain
-      expect(bToA.allowed).toBe(false);     // B cannot reach A's domain
+      expect(aToB.allowed).toBe(false); // A cannot reach B's domain
+      expect(bToOwn.allowed).toBe(true); // B can reach its own domain
+      expect(aToOwn.allowed).toBe(true); // A can reach its own domain
+      expect(bToA.allowed).toBe(false); // B cannot reach A's domain
 
       writePass(
         'NET-1',
