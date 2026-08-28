@@ -39,8 +39,13 @@ const {
   _resetUserStoreForTests,
 } = await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
+const { setAuthFailureStore, resetAuthFailureStoreForTesting } = await import('../src/authFailureStore');
 const express = (await import('express')).default;
-const { TestRefreshTokenRepository, TestUserRepository } = await import('./authRepositories');
+const {
+  TestAuthFailureStore,
+  TestRefreshTokenRepository,
+  TestUserRepository,
+} = await import('./authRepositories');
 
 const testPassword = ['password', '123'].join('');
 
@@ -55,6 +60,7 @@ function request(p: string, init?: RequestInit) {
 before(async () => {
   setUserRepository(new TestUserRepository());
   setRefreshTokenRepository(new TestRefreshTokenRepository());
+  setAuthFailureStore(new TestAuthFailureStore());
 
   const created = await createUser({
     username: 'refreshuser',
@@ -87,6 +93,7 @@ after(async () => {
   });
   _resetUserStoreForTests();
   _resetRefreshTokenStoreForTests();
+  resetAuthFailureStoreForTesting();
   process.chdir(originalCwd);
   if (originalJwt === undefined) {
     delete process.env.JWT_SECRET;

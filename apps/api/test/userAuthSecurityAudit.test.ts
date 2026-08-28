@@ -31,10 +31,15 @@ const {
   setRefreshTokenRepository,
   _resetRefreshTokenStoreForTests,
 } = await import('../src/refreshTokenStore');
+const { setAuthFailureStore, resetAuthFailureStoreForTesting } = await import('../src/authFailureStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const { jwtMiddleware } = await import('../src/jwtMiddleware');
 const express = (await import('express')).default;
-const { TestRefreshTokenRepository, TestUserRepository } = await import('./authRepositories');
+const {
+  TestAuthFailureStore,
+  TestRefreshTokenRepository,
+  TestUserRepository,
+} = await import('./authRepositories');
 
 // Obvious fake test credentials, kept behind indirection so the precommit
 // sensitive-data scanner does not flag quoted credential literals.
@@ -68,6 +73,7 @@ async function login(username: string, password: string): Promise<string> {
 before(async () => {
   setUserRepository(new TestUserRepository());
   setRefreshTokenRepository(new TestRefreshTokenRepository());
+  setAuthFailureStore(new TestAuthFailureStore());
 
   for (const u of [
     { username: 'root', email: 'root@example.com', password: PW.root, role: 'super_admin' },
@@ -98,6 +104,7 @@ after(async () => {
   });
   _resetUserStoreForTests();
   _resetRefreshTokenStoreForTests();
+  resetAuthFailureStoreForTesting();
   process.chdir(originalCwd);
   if (originalJwt === undefined) {
     delete process.env.JWT_SECRET;
