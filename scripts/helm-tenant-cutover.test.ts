@@ -2493,6 +2493,27 @@ data: { owner-url: ${payload} }
     );
   });
 
+  it('preserves a hook failure captured while an atomic Helm rollout is still running', async () => {
+    const fixture = ports();
+    let rolloutRunning = true;
+    fixture.helm.runProjectedRevision = async () => {
+      await new Promise<void>((resolve) => setTimeout(resolve, 25));
+      rolloutRunning = false;
+      throw new Error('unredacted Helm failure');
+    };
+    fixture.kubectl.captureProofHookFailureDiagnostic = async () =>
+      rolloutRunning
+        ? 'code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=' +
+          digest('f')
+        : 'code=TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=' +
+          digest('e');
+
+    await assert.rejects(
+      () => runHelmTenantCutover(input(), fixture),
+      /TENANT_CUTOVER_PROOF_HOOK_FAILED:code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=kubectl_logs;owner_stage=lifecycle_initialize;log_sha256=f{64}/,
+    );
+  });
+
   it('preserves a proof failure when ephemeral proof cleanup also fails', async () => {
     const fixture = ports();
     let cleanupCalls = 0;

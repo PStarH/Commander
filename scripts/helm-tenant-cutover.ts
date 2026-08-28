@@ -1219,6 +1219,51 @@ export function createHelmOwnerExecutionContext(input: {
   };
 }
 
+const IN_FLIGHT_HOOK_FAILURE_CODES = new Set([
+  'COMMANDER_MIGRATION_FAILED',
+  'TENANT_CUTOVER_MIGRATION_HOOK_POD_UNSCHEDULABLE',
+  'TENANT_CUTOVER_MIGRATION_HOOK_POD_IMAGE_PULL_FAILED',
+  'TENANT_CUTOVER_MIGRATION_HOOK_POD_CONTAINER_CONFIG_ERROR',
+  'TENANT_CUTOVER_PROOF_HOOK_POD_UNSCHEDULABLE',
+  'TENANT_CUTOVER_PROOF_HOOK_POD_IMAGE_PULL_FAILED',
+  'TENANT_CUTOVER_PROOF_HOOK_POD_CONTAINER_CONFIG_ERROR',
+]);
+
+function isInFlightHookFailureDiagnostic(value: string): boolean {
+  const code = /^code=([A-Z0-9_]+);producer=owner_entrypoint;/.exec(value)?.[1];
+  return code !== undefined && IN_FLIGHT_HOOK_FAILURE_CODES.has(code);
+}
+
+async function runRolloutWithInFlightHookObservation(input: {
+  rollout(): Promise<void>;
+  captureDiagnostic(): Promise<string>;
+  recordDiagnostic(diagnostic: string): void;
+}): Promise<void> {
+  let settled = false;
+  let failed = false;
+  let failure: unknown;
+  const rollout = input
+    .rollout()
+    .catch((error: unknown) => {
+      failed = true;
+      failure = error;
+    })
+    .finally(() => {
+      settled = true;
+    });
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  while (!settled) {
+    const diagnostic = await input.captureDiagnostic();
+    if (isInFlightHookFailureDiagnostic(diagnostic)) {
+      input.recordDiagnostic(diagnostic);
+      break;
+    }
+    if (!settled) await new Promise<void>((resolve) => setTimeout(resolve, 250));
+  }
+  await rollout;
+  if (failed) throw failure;
+}
+
 async function runHelmRolloutWithProofCredential(input: {
   operation: HelmOperation;
   namespace: string;
@@ -1232,6 +1277,7 @@ async function runHelmRolloutWithProofCredential(input: {
   await input.ports.kubectl.cleanupProofResources(input.namespace, input.release);
   let rolloutStarted = false;
   let primaryFailure: unknown;
+  let inFlightHookFailureDiagnostic: string | undefined;
   try {
     await input.prepareDatabase?.();
     await input.ports.kubectl.prepareProofOwnerSecret({
@@ -1241,13 +1287,22 @@ async function runHelmRolloutWithProofCredential(input: {
       targetName,
     });
     rolloutStarted = true;
-    await input.rollout();
+    await runRolloutWithInFlightHookObservation({
+      rollout: input.rollout,
+      captureDiagnostic: () =>
+        input.ports.kubectl.captureProofHookFailureDiagnostic(input.namespace, input.release),
+      recordDiagnostic: (diagnostic) => {
+        inFlightHookFailureDiagnostic ??= diagnostic;
+      },
+    });
   } catch (error) {
     if (rolloutStarted) {
-      const diagnostic = await input.ports.kubectl.captureProofHookFailureDiagnostic(
-        input.namespace,
-        input.release,
-      );
+      const diagnostic =
+        inFlightHookFailureDiagnostic ??
+        (await input.ports.kubectl.captureProofHookFailureDiagnostic(
+          input.namespace,
+          input.release,
+        ));
       primaryFailure = new Error('TENANT_CUTOVER_PROOF_HOOK_FAILED:' + diagnostic);
       throw primaryFailure;
     }
