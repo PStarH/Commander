@@ -11,6 +11,7 @@ import type {
   RefreshTokenRecord,
   RefreshTokenRepository,
 } from '../src/refreshTokenStore.js';
+import type { AuthFailureEntry, AuthFailureStore } from '../src/authFailureStore.js';
 
 function toSafeUser(user: User): SafeUser {
   const { passwordHash: _passwordHash, oidcIssuer: _oidcIssuer, oidcSubject: _oidcSubject, ...safe } =
@@ -179,6 +180,43 @@ export class TestRefreshTokenRepository implements RefreshTokenRepository {
   async revokeAllForUser(userId: string): Promise<void> {
     for (const record of this.tokens.values()) {
       if (record.userId === userId) record.revoked = true;
+    }
+  }
+}
+
+/** Explicit test double; production authentication failures always use PostgreSQL. */
+export class TestAuthFailureStore implements AuthFailureStore {
+  private readonly entries = new Map<string, AuthFailureEntry>();
+
+  async get(failureKey: string): Promise<AuthFailureEntry | undefined> {
+    return this.entries.get(failureKey);
+  }
+
+  async recordFailure(
+    failureKey: string,
+    now: number,
+    maxFailures: number,
+    windowMs: number,
+    lockoutMs: number,
+  ): Promise<AuthFailureEntry> {
+    const previous = this.entries.get(failureKey);
+    const expired = !previous || previous.lastFailureAt < now - windowMs;
+    const count = expired ? 1 : previous.count + 1;
+    const entry = {
+      count,
+      firstFailureAt: expired ? now : previous.firstFailureAt,
+      lastFailureAt: now,
+      lockedUntil: count >= maxFailures ? now + lockoutMs : previous?.lockedUntil ?? 0,
+    };
+    this.entries.set(failureKey, entry);
+    return entry;
+  }
+
+  async cleanup(now: number, windowMs: number): Promise<void> {
+    for (const [key, entry] of this.entries) {
+      if (entry.lockedUntil <= now && entry.lastFailureAt < now - windowMs) {
+        this.entries.delete(key);
+      }
     }
   }
 }

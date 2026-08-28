@@ -30,6 +30,7 @@ import {
   revoke as revokeRefreshJti,
   revokeAllForUser,
 } from './refreshTokenStore';
+import { getAuthFailureStore } from './authFailureStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -38,6 +39,9 @@ import {
  * matches the real comparison; it is never a valid credential.
  */
 const DUMMY_PASSWORD_HASH = hashSync(`invalid:${process.pid}:no-such-user`, 10);
+const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
+const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10);
+const AUTH_FAILURE_WINDOW_MS = 60_000;
 
 // ── Validation schemas ──────────────────────────────────────────────────────
 
@@ -159,6 +163,45 @@ async function buildAuthResponse(user: AuthUser): Promise<AuthResponseBody> {
   };
 }
 
+function loginClientIp(req: Request): string {
+  return req.ip ?? req.socket.remoteAddress ?? 'unknown';
+}
+
+async function rejectLockedLogin(req: Request, res: Response): Promise<boolean> {
+  try {
+    const entry = await getAuthFailureStore().get(loginClientIp(req));
+    if (!entry || entry.lockedUntil <= Date.now()) return false;
+    const retryAfter = Math.max(1, Math.ceil((entry.lockedUntil - Date.now()) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({
+      error: 'Too many authentication failures. Try again later.',
+      retryAfter,
+    });
+    return true;
+  } catch (error) {
+    process.stderr.write(`[Auth] Login lockout authority unavailable: ${String(error)}\n`);
+    res.status(503).json({ error: 'Authentication authority unavailable. Retry later.' });
+    return true;
+  }
+}
+
+async function recordLoginFailure(req: Request, res: Response): Promise<boolean> {
+  try {
+    await getAuthFailureStore().recordFailure(
+      loginClientIp(req),
+      Date.now(),
+      MAX_AUTH_FAILURES,
+      AUTH_FAILURE_WINDOW_MS,
+      LOCKOUT_DURATION_MS,
+    );
+    return true;
+  } catch (error) {
+    process.stderr.write(`[Auth] Login failure authority unavailable: ${String(error)}\n`);
+    res.status(503).json({ error: 'Authentication authority unavailable. Retry later.' });
+    return false;
+  }
+}
+
 // ── Router ──────────────────────────────────────────────────────────────────
 
 export function createUserAuthRouter(): Router {
@@ -210,6 +253,7 @@ export function createUserAuthRouter(): Router {
     }
 
     const { username, password } = parsed.data;
+    if (await rejectLockedLogin(req, res)) return;
     const user = await findUserByUsername(username);
     // AUTH-6: always perform a bcrypt comparison, even when the user does not
     // exist, so the response time does not reveal whether a username is
@@ -217,6 +261,7 @@ export function createUserAuthRouter(): Router {
     // bcrypt hash so the work factor matches the real path.
     const passwordOk = compareSync(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
     if (!user || !passwordOk) {
+      if (!(await recordLoginFailure(req, res))) return;
       // Use the same message for both cases to avoid user enumeration.
       res.status(401).json({ error: 'Invalid username or password' });
       return;
