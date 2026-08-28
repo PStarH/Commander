@@ -135,6 +135,7 @@ export interface HelmOwnerExecutionContext {
     expectedServerSpkiSha256: string;
   };
   proofCertificate: { secretName: string; certKey: string };
+  proofRuntime?: { caKey: string; releaseProjectionConfigMap: string };
   bootstrap:
     | { kind: 'none' }
     | { kind: 'bundled'; user: string; passwordSecretKey: string }
@@ -1012,6 +1013,14 @@ export function createHelmOwnerExecutionContext(input: {
   if (typeof expectedServerSpkiSha256 !== 'string' || !SHA256.test(expectedServerSpkiSha256)) {
     fail('TENANT_CUTOVER_VALUES_INVALID');
   }
+  const releaseProjectionConfigMap = tenantAuthority.releaseProjectionConfigMap;
+  const proofRuntime =
+    releaseProjectionConfigMap === undefined || releaseProjectionConfigMap === ''
+      ? undefined
+      : {
+          caKey: configuredSecretKey(apiProof.caKey, 'ca.crt'),
+          releaseProjectionConfigMap: configuredName(releaseProjectionConfigMap),
+        };
 
   let bootstrap: HelmOwnerExecutionContext['bootstrap'] = { kind: 'none' };
   if (input.command === 'install') {
@@ -1060,6 +1069,7 @@ export function createHelmOwnerExecutionContext(input: {
       secretName: configuredName(apiProof.publicSecret),
       certKey: configuredSecretKey(apiProof.certKey, 'tls.crt'),
     },
+    proofRuntime,
     bootstrap,
   };
 }
@@ -2122,6 +2132,13 @@ export async function runHelmTenantCutover(
 
 type HelmOwnerMode = 'tenant-cutover-plan' | 'tenant-cutover-append' | 'tenant-cutover-restore';
 
+function proofReaderServiceAccountName(namespace: string, release: string): string {
+  return `commander-proof-reader-${createHash('sha256')
+    .update(`${namespace}/${release}`)
+    .digest('hex')
+    .slice(0, 16)}`;
+}
+
 export function buildHelmOwnerJobBundle(input: {
   mode: HelmOwnerMode;
   payload: Record<string, unknown>;
@@ -2145,12 +2162,19 @@ export function buildHelmOwnerJobBundle(input: {
     .slice(0, 63 - configSuffix.length)
     .replace(/-$/, '')}${configSuffix}`;
   const executionLabel = input.executionId;
+  const proofRuntime = input.context.proofRuntime;
   const labels = {
     'app.kubernetes.io/name': input.context.release,
     'app.kubernetes.io/instance': input.context.release,
     'commander.io/migration-client-v2': 'true',
     'commander.io/migration-release': input.context.release,
     'commander.io/tenant-cutover-owner-execution': executionLabel,
+    ...(proofRuntime
+      ? {
+          'commander.io/tenant-authority-proof-reader': 'true',
+          'commander.io/tenant-authority-proof-release': input.context.release,
+        }
+      : {}),
   };
   const secretEnv = (key: string) => ({
     valueFrom: { secretKeyRef: { name: input.context.databaseSecretName, key } },
@@ -2224,6 +2248,99 @@ export function buildHelmOwnerJobBundle(input: {
       },
     });
   }
+  if (proofRuntime) {
+    env.push({ name: 'COMMANDER_KUBERNETES_PROOF_RUNTIME', value: '1' });
+  }
+  const volumeMounts = [
+    {
+      name: 'request',
+      mountPath: '/run/commander/tenant-cutover',
+      readOnly: true,
+    },
+    {
+      name: 'database-public-ca',
+      mountPath: '/run/commander/database-tls',
+      readOnly: true,
+    },
+    {
+      name: 'api-proof-public',
+      mountPath: '/run/commander/api-proof-public',
+      readOnly: true,
+    },
+    ...(proofRuntime
+      ? [
+          {
+            name: 'proof-api-token',
+            mountPath: '/var/run/secrets/commander.io/proof-api',
+            readOnly: true,
+          },
+          {
+            name: 'release-projection',
+            mountPath: '/run/commander/release-projection',
+            readOnly: true,
+          },
+        ]
+      : []),
+  ];
+  const volumes = [
+    { name: 'request', configMap: { name: configMapName, defaultMode: 0o444 } },
+    {
+      name: 'database-public-ca',
+      secret: {
+        secretName: input.context.databaseTls.secretName,
+        items: [{ key: input.context.databaseTls.caKey, path: 'ca.crt' }],
+      },
+    },
+    {
+      name: 'api-proof-public',
+      secret: {
+        secretName: input.context.proofCertificate.secretName,
+        items: [
+          ...(proofRuntime ? [{ key: proofRuntime.caKey, path: 'ca.crt' }] : []),
+          { key: input.context.proofCertificate.certKey, path: 'tls.crt' },
+        ],
+      },
+    },
+    ...(proofRuntime
+      ? [
+          {
+            name: 'proof-api-token',
+            projected: {
+              defaultMode: 0o400,
+              sources: [
+                {
+                  serviceAccountToken: {
+                    audience: 'commander-tenant-cutover-proof/v1',
+                    expirationSeconds: 600,
+                    path: 'identity-token',
+                  },
+                },
+                {
+                  serviceAccountToken: {
+                    expirationSeconds: 600,
+                    path: 'api-token',
+                  },
+                },
+                {
+                  configMap: {
+                    name: 'kube-root-ca.crt',
+                    items: [{ key: 'ca.crt', path: 'ca.crt' }],
+                  },
+                },
+              ],
+            },
+          },
+          {
+            name: 'release-projection',
+            configMap: {
+              name: proofRuntime.releaseProjectionConfigMap,
+              defaultMode: 0o444,
+              items: [{ key: 'projection.json', path: 'projection.json' }],
+            },
+          },
+        ]
+      : []),
+  ];
   const selector = `commander.io/tenant-cutover-owner-execution=${executionLabel}`;
   return {
     configMapName,
@@ -2250,6 +2367,14 @@ export function buildHelmOwnerJobBundle(input: {
         template: {
           metadata: { labels },
           spec: {
+            ...(proofRuntime
+              ? {
+                  serviceAccountName: proofReaderServiceAccountName(
+                    input.context.namespace,
+                    input.context.release,
+                  ),
+                }
+              : {}),
             automountServiceAccountToken: false,
             restartPolicy: 'Never',
             securityContext: {
@@ -2271,42 +2396,10 @@ export function buildHelmOwnerJobBundle(input: {
                   readOnlyRootFilesystem: true,
                   capabilities: { drop: ['ALL'] },
                 },
-                volumeMounts: [
-                  {
-                    name: 'request',
-                    mountPath: '/run/commander/tenant-cutover',
-                    readOnly: true,
-                  },
-                  {
-                    name: 'database-public-ca',
-                    mountPath: '/run/commander/database-tls',
-                    readOnly: true,
-                  },
-                  {
-                    name: 'api-proof-public',
-                    mountPath: '/run/commander/api-proof-public',
-                    readOnly: true,
-                  },
-                ],
+                volumeMounts,
               },
             ],
-            volumes: [
-              { name: 'request', configMap: { name: configMapName, defaultMode: 0o444 } },
-              {
-                name: 'database-public-ca',
-                secret: {
-                  secretName: input.context.databaseTls.secretName,
-                  items: [{ key: input.context.databaseTls.caKey, path: 'ca.crt' }],
-                },
-              },
-              {
-                name: 'api-proof-public',
-                secret: {
-                  secretName: input.context.proofCertificate.secretName,
-                  items: [{ key: input.context.proofCertificate.certKey, path: 'tls.crt' }],
-                },
-              },
-            ],
+            volumes,
           },
         },
       },

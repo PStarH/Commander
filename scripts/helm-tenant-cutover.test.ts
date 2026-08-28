@@ -2631,7 +2631,7 @@ data: { owner-url: ${payload} }
     );
   });
 
-  it('builds a digest-pinned owner Job with only Secret references and a fixed request mount', () => {
+  it('builds a digest-pinned owner Job with the scoped current-proof runtime', () => {
     const bundle = buildHelmOwnerJobBundle({
       mode: 'tenant-cutover-append',
       payload: { schema: 'tenant-cutover-request/v1' },
@@ -2655,6 +2655,10 @@ data: { owner-url: ${payload} }
           expectedServerSpkiSha256: digest('d'),
         },
         proofCertificate: { secretName: 'api-proof-public', certKey: 'tls.crt' },
+        proofRuntime: {
+          caKey: 'ca.crt',
+          releaseProjectionConfigMap: 'commander-proof-projection-v1',
+        },
         bootstrap: { kind: 'bundled', user: 'postgres', passwordSecretKey: 'postgres-password' },
       },
     });
@@ -2662,6 +2666,20 @@ data: { owner-url: ${payload} }
     assert.match(serialized, new RegExp(`ghcr\\.io/commander/api@${image}`));
     assert.match(serialized, /COMMANDER_TENANT_CUTOVER_INPUT_FILE/);
     assert.match(serialized, /\/run\/commander\/tenant-cutover\/request\.json/);
+    assert.match(serialized, /COMMANDER_KUBERNETES_PROOF_RUNTIME/);
+    assert.match(
+      serialized,
+      new RegExp(
+        `"serviceAccountName":"commander-proof-reader-${createHash('sha256')
+          .update('commander/commander')
+          .digest('hex')
+          .slice(0, 16)}"`,
+      ),
+    );
+    assert.match(serialized, /\/var\/run\/secrets\/commander\.io\/proof-api/);
+    assert.match(serialized, /"path":"identity-token"/);
+    assert.match(serialized, /"name":"commander-proof-projection-v1"/);
+    assert.match(serialized, /\/run\/commander\/release-projection/);
     assert.match(serialized, /"automountServiceAccountToken":false/);
     assert.match(serialized, /"commander\.io\/migration-client-v2":"true"/);
     assert.match(serialized, /"commander\.io\/migration-release":"commander"/);
