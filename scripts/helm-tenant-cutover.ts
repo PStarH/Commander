@@ -336,6 +336,97 @@ export function ownerJobFailureDiagnostic(
   );
 }
 
+const OWNER_JOB_POD_FAILURE_CODES = {
+  unavailable: 'TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE',
+  unschedulable: 'TENANT_CUTOVER_OWNER_JOB_POD_UNSCHEDULABLE',
+  imagePull: 'TENANT_CUTOVER_OWNER_JOB_POD_IMAGE_PULL_FAILED',
+  containerConfig: 'TENANT_CUTOVER_OWNER_JOB_POD_CONTAINER_CONFIG_ERROR',
+  containerStart: 'TENANT_CUTOVER_OWNER_JOB_POD_CONTAINER_START_FAILED',
+  pending: 'TENANT_CUTOVER_OWNER_JOB_POD_PENDING',
+  unclassified: 'TENANT_CUTOVER_OWNER_JOB_POD_UNCLASSIFIED',
+} as const;
+
+/** Converts transient owner-Pod state into a fixed diagnostic without retaining Kubernetes output. */
+export function ownerJobPodFailureCode(value: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return OWNER_JOB_POD_FAILURE_CODES.unavailable;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return OWNER_JOB_POD_FAILURE_CODES.unavailable;
+  }
+  const items = (parsed as { items?: unknown }).items;
+  if (!Array.isArray(items) || items.length !== 1) {
+    return OWNER_JOB_POD_FAILURE_CODES.unavailable;
+  }
+  const pod = items[0];
+  if (!pod || typeof pod !== 'object' || Array.isArray(pod)) {
+    return OWNER_JOB_POD_FAILURE_CODES.unavailable;
+  }
+  const status = (pod as { status?: unknown }).status;
+  if (!status || typeof status !== 'object' || Array.isArray(status)) {
+    return OWNER_JOB_POD_FAILURE_CODES.unclassified;
+  }
+  const podStatus = status as {
+    phase?: unknown;
+    conditions?: unknown;
+    initContainerStatuses?: unknown;
+    containerStatuses?: unknown;
+  };
+  const conditions = Array.isArray(podStatus.conditions) ? podStatus.conditions : [];
+  if (
+    conditions.some(
+      (condition) =>
+        condition &&
+        typeof condition === 'object' &&
+        !Array.isArray(condition) &&
+        (condition as { type?: unknown }).type === 'PodScheduled' &&
+        (condition as { status?: unknown }).status === 'False' &&
+        (condition as { reason?: unknown }).reason === 'Unschedulable',
+    )
+  ) {
+    return OWNER_JOB_POD_FAILURE_CODES.unschedulable;
+  }
+  const containerStatuses = [
+    ...(Array.isArray(podStatus.initContainerStatuses) ? podStatus.initContainerStatuses : []),
+    ...(Array.isArray(podStatus.containerStatuses) ? podStatus.containerStatuses : []),
+  ];
+  const waitingReasons = containerStatuses.flatMap((container) => {
+    if (!container || typeof container !== 'object' || Array.isArray(container)) return [];
+    const state = (container as { state?: unknown }).state;
+    if (!state || typeof state !== 'object' || Array.isArray(state)) return [];
+    const waiting = (state as { waiting?: unknown }).waiting;
+    if (!waiting || typeof waiting !== 'object' || Array.isArray(waiting)) return [];
+    const reason = (waiting as { reason?: unknown }).reason;
+    return typeof reason === 'string' ? [reason] : [];
+  });
+  if (waitingReasons.some((reason) => reason === 'ErrImagePull' || reason === 'ImagePullBackOff')) {
+    return OWNER_JOB_POD_FAILURE_CODES.imagePull;
+  }
+  if (
+    waitingReasons.some(
+      (reason) => reason === 'CreateContainerConfigError' || reason === 'InvalidImageName',
+    )
+  ) {
+    return OWNER_JOB_POD_FAILURE_CODES.containerConfig;
+  }
+  if (
+    waitingReasons.some(
+      (reason) =>
+        reason === 'ContainerCreating' ||
+        reason === 'CreateContainerError' ||
+        reason === 'RunContainerError',
+    )
+  ) {
+    return OWNER_JOB_POD_FAILURE_CODES.containerStart;
+  }
+  return podStatus.phase === 'Pending'
+    ? OWNER_JOB_POD_FAILURE_CODES.pending
+    : OWNER_JOB_POD_FAILURE_CODES.unclassified;
+}
+
 function proofResourceSelector(release: string): string {
   return [
     'commander.io/tenant-authority-proof-reader=true',
@@ -3746,6 +3837,29 @@ async function deleteReleaseProjectionConfigMap(
   }
 }
 
+async function ownerJobPodFailureCodeFromCluster(
+  command: HelmCommandPort,
+  namespace: string,
+  selector: string,
+): Promise<string> {
+  try {
+    return ownerJobPodFailureCode(
+      await command('kubectl', [
+        'get',
+        'pods',
+        '--selector',
+        selector,
+        '--namespace',
+        namespace,
+        '--output',
+        'json',
+      ]),
+    );
+  } catch {
+    return OWNER_JOB_POD_FAILURE_CODES.unavailable;
+  }
+}
+
 async function prepareReleaseProjectionConfigMap(
   command: HelmCommandPort,
   input: {
@@ -4163,7 +4277,11 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           ]);
           logTransport = 'kubectl_logs';
         } catch {
-          logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+          logs = await ownerJobPodFailureCodeFromCluster(
+            command,
+            context.namespace,
+            bundle.selector,
+          );
         }
         fail('TENANT_CUTOVER_OWNER_JOB_FAILED:' + ownerJobFailureDiagnostic(logs, logTransport));
       }
