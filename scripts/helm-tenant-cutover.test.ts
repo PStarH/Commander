@@ -2720,7 +2720,7 @@ data: { owner-url: ${payload} }
     assert.match(serialized, /"automountServiceAccountToken":false/);
     assert.match(serialized, /"commander\.io\/migration-client-v2":"true"/);
     assert.match(serialized, /"commander\.io\/migration-release":"commander"/);
-    assert.match(serialized, /"app\.kubernetes\.io\/component":"migration"/);
+    assert.doesNotMatch(serialized, /"app\.kubernetes\.io\/component":"migration"/);
     assert.match(
       serialized,
       /"secretKeyRef":\{"key":"owner-url","name":"commander-database-bootstrap"\}/,
