@@ -33,16 +33,21 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import * as path from 'node:path';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
-// Resolve REPO_ROOT from GIT_DIR if present (git hook context) — same
-// convention used by scripts/precommitHook.ts so the two hooks share dir-
-// resolution semantics. Falls back to process.cwd() for CI replay.
-const REPO_ROOT = process.env.GIT_DIR
-  ? path.dirname(path.dirname(process.env.GIT_DIR))
-  : process.cwd();
+// `GIT_DIR` points into the common repository when this runs from a linked
+// worktree, so deriving a parent path from it resolves to `.git`, not the
+// checked-out source tree. Ask Git for the worktree root directly.
+function resolveRepoRoot(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
+
+const REPO_ROOT = resolveRepoRoot();
 
 // PUSH_BASELINE_PATHS — the development surface where Prettier violations
 // matter. Belt-and-suspenders scope: every directory a refactor's style
