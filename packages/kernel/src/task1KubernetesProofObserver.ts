@@ -24,12 +24,23 @@ const PROOF_STATUS_ATTEMPTS = 100;
 interface ProofPodContract {
   apiProof: { secretName: string; caKey: string; certKey: string };
   databaseCa: { secretName: string; caKey: string };
+  databaseRoleKeys: {
+    owner: string;
+    app: string;
+    tenantAuthority: string;
+    scheduler: string;
+    worker: string;
+    adapterOps: string;
+  };
   expectedServerSpkiSha256: string;
   imagePullPolicy: string;
   ownerSecret: { name: string; key: string };
   podSecurityContext: JsonRecord;
   terminationGracePeriodSeconds: number;
 }
+
+type ProofPodController =
+  { kind: 'helm-hook'; revision: string } | { kind: 'owner-current'; executionId: string };
 
 export interface Task1ProjectedTokenIdentity {
   audience: string;
@@ -285,14 +296,14 @@ function conditionTrue(conditions: unknown, type: string): boolean {
     .some((condition) => condition.type === type && condition.status === 'True');
 }
 
-function proofPodReady(pod: JsonRecord): boolean {
+function proofPodReady(pod: JsonRecord, containerName: string): boolean {
   const status = record(pod.status);
   if (status.phase !== 'Running') {
     if (status.phase === 'Pending') return false;
     invalid();
   }
   const statuses = Array.isArray(status.containerStatuses)
-    ? status.containerStatuses.map(record).filter((value) => value.name === 'tenant-cutover-prove')
+    ? status.containerStatuses.map(record).filter((value) => value.name === containerName)
     : [];
   if (statuses.length > 1) invalid();
   const containerStatus = statuses[0];
@@ -307,13 +318,14 @@ async function waitForReadyProofPod(input: {
   identity: Task1ProjectedTokenIdentity;
   proofController: { kind: string; name: string; uid: string };
   proofSelector: Readonly<Record<string, string>>;
+  proofContainerName: string;
   readProofPods(): Promise<unknown>;
   wait(): Promise<void>;
 }): Promise<void> {
   // The proof process can start before kubelet publishes its Ready status.
   let pod = input.initialPod;
   for (let attempt = 0; attempt < PROOF_STATUS_ATTEMPTS; attempt += 1) {
-    if (proofPodReady(pod)) return;
+    if (proofPodReady(pod, input.proofContainerName)) return;
     if (attempt === PROOF_STATUS_ATTEMPTS - 1) invalid();
     await input.wait();
     const pods = array(field(await input.readProofPods(), 'items')).map(record);
@@ -449,6 +461,11 @@ function projectionConfigMapName(
   return releaseScopedName(releaseName, `-proof-projection-v${operationVersion}-r${revision}`);
 }
 
+function ownerCurrentProjectionConfigMapName(releaseName: string, revision: string): string {
+  if (!/^[1-9][0-9]*$/.test(revision)) invalid();
+  return releaseScopedName(releaseName, `-owner-proof-current-r${revision}`);
+}
+
 function proofPodContract(
   projection: JsonRecord,
   operation: Task1LifecycleOperation,
@@ -513,9 +530,17 @@ function proofPodContract(
       ),
       caKey: secretKey(databaseTls.caKey),
     },
+    databaseRoleKeys: {
+      owner: secretKey(postgres.ownerSecretKey ?? 'owner-url'),
+      app: secretKey(postgres.appSecretKey ?? 'app-url'),
+      tenantAuthority: secretKey(postgres.tenantAuthoritySecretKey ?? 'tenant-authority-url'),
+      scheduler: secretKey(postgres.schedulerSecretKey ?? 'scheduler-url'),
+      worker: secretKey(postgres.workerSecretKey ?? 'worker-url'),
+      adapterOps: secretKey(postgres.adapterOpsSecretKey ?? 'adapter-ops-url'),
+    },
     expectedServerSpkiSha256: string(databaseTls.expectedServerSpkiSha256),
     imagePullPolicy: string(image.pullPolicy),
-    ownerSecret: { name: ownerSecretName, key: secretKey(postgres.ownerSecretKey) },
+    ownerSecret: { name: ownerSecretName, key: secretKey(postgres.ownerSecretKey ?? 'owner-url') },
     podSecurityContext,
     terminationGracePeriodSeconds: integer(migration.terminationGracePeriodSeconds),
   };
@@ -655,13 +680,207 @@ function validateProofPodContract(
   exactMount(mounts, 'tmp', '/tmp', false);
 }
 
-function validateProofJobName(releaseName: string, jobName: string): string {
+function ownerDatabaseUrlEnvironment(entry: JsonRecord, name: string, expectedKey: string): string {
+  const valueFrom = record(entry.valueFrom);
+  const secretKeyRef = record(valueFrom.secretKeyRef);
+  if (
+    canonicalBootstrapJson(Object.keys(entry).sort()) !==
+      canonicalBootstrapJson(['name', 'valueFrom']) ||
+    entry.name !== name ||
+    canonicalBootstrapJson(Object.keys(valueFrom).sort()) !==
+      canonicalBootstrapJson(['secretKeyRef']) ||
+    canonicalBootstrapJson(Object.keys(secretKeyRef).sort()) !==
+      canonicalBootstrapJson(['key', 'name']) ||
+    secretKeyRef.key !== expectedKey
+  ) {
+    invalid();
+  }
+  return kubernetesName(secretKeyRef.name);
+}
+
+function validateOwnerCurrentEnvironment(container: JsonRecord, contract: ProofPodContract): void {
+  const environment = exactNamedObjects(container.env, [
+    'NODE_ENV',
+    'COMMANDER_TENANT_CUTOVER_INPUT_FILE',
+    'DATABASE_URL',
+    'COMMANDER_KERNEL_DATABASE_URL',
+    'COMMANDER_OWNER_DATABASE_URL',
+    'COMMANDER_APP_DATABASE_URL',
+    'COMMANDER_TENANT_AUTHORITY_DATABASE_URL',
+    'COMMANDER_SCHEDULER_DATABASE_URL',
+    'COMMANDER_WORKER_DATABASE_URL',
+    'COMMANDER_ADAPTER_OPS_DATABASE_URL',
+    'COMMANDER_DATABASE_TLS_CA_FILE',
+    'COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY',
+    'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256',
+    'COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE',
+    'COMMANDER_KUBERNETES_PROOF_RUNTIME',
+  ]);
+  exactJson(environment.get('NODE_ENV'), { name: 'NODE_ENV', value: 'production' });
+  exactJson(environment.get('COMMANDER_TENANT_CUTOVER_INPUT_FILE'), {
+    name: 'COMMANDER_TENANT_CUTOVER_INPUT_FILE',
+    value: '/run/commander/tenant-cutover/request.json',
+  });
+  const databaseSecretNames = [
+    ownerDatabaseUrlEnvironment(
+      environment.get('DATABASE_URL')!,
+      'DATABASE_URL',
+      contract.databaseRoleKeys.owner,
+    ),
+    ownerDatabaseUrlEnvironment(
+      environment.get('COMMANDER_KERNEL_DATABASE_URL')!,
+      'COMMANDER_KERNEL_DATABASE_URL',
+      contract.databaseRoleKeys.owner,
+    ),
+    ownerDatabaseUrlEnvironment(
+      environment.get('COMMANDER_OWNER_DATABASE_URL')!,
+      'COMMANDER_OWNER_DATABASE_URL',
+      contract.databaseRoleKeys.owner,
+    ),
+    ownerDatabaseUrlEnvironment(
+      environment.get('COMMANDER_APP_DATABASE_URL')!,
+      'COMMANDER_APP_DATABASE_URL',
+      contract.databaseRoleKeys.app,
+    ),
+    ownerDatabaseUrlEnvironment(
+      environment.get('COMMANDER_TENANT_AUTHORITY_DATABASE_URL')!,
+      'COMMANDER_TENANT_AUTHORITY_DATABASE_URL',
+      contract.databaseRoleKeys.tenantAuthority,
+    ),
+    ownerDatabaseUrlEnvironment(
+      environment.get('COMMANDER_SCHEDULER_DATABASE_URL')!,
+      'COMMANDER_SCHEDULER_DATABASE_URL',
+      contract.databaseRoleKeys.scheduler,
+    ),
+    ownerDatabaseUrlEnvironment(
+      environment.get('COMMANDER_WORKER_DATABASE_URL')!,
+      'COMMANDER_WORKER_DATABASE_URL',
+      contract.databaseRoleKeys.worker,
+    ),
+    ownerDatabaseUrlEnvironment(
+      environment.get('COMMANDER_ADAPTER_OPS_DATABASE_URL')!,
+      'COMMANDER_ADAPTER_OPS_DATABASE_URL',
+      contract.databaseRoleKeys.adapterOps,
+    ),
+  ];
+  if (new Set(databaseSecretNames).size !== 1) invalid();
+  exactJson(environment.get('COMMANDER_DATABASE_TLS_CA_FILE'), {
+    name: 'COMMANDER_DATABASE_TLS_CA_FILE',
+    value: '/run/commander/database-tls/ca.crt',
+  });
+  exactJson(environment.get('COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY'), {
+    name: 'COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY',
+    value: `secret/${contract.databaseCa.secretName}:${contract.databaseCa.caKey}`,
+  });
+  exactJson(environment.get('COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256'), {
+    name: 'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256',
+    value: contract.expectedServerSpkiSha256,
+  });
+  exactJson(environment.get('COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE'), {
+    name: 'COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE',
+    value: '/run/commander/api-proof-public/tls.crt',
+  });
+  exactJson(environment.get('COMMANDER_KUBERNETES_PROOF_RUNTIME'), {
+    name: 'COMMANDER_KUBERNETES_PROOF_RUNTIME',
+    value: '1',
+  });
+}
+
+function validateOwnerCurrentProofPodContract(
+  podSpec: JsonRecord,
+  container: JsonRecord,
+  volumes: ReadonlyMap<string, JsonRecord>,
+  mounts: ReadonlyMap<string, JsonRecord>,
+  contract: ProofPodContract,
+  releaseName: string,
+  executionId: string,
+): void {
+  if (
+    podSpec.restartPolicy !== 'Never' ||
+    (podSpec.terminationGracePeriodSeconds !== undefined &&
+      podSpec.terminationGracePeriodSeconds !== 30) ||
+    podSpec.activeDeadlineSeconds !== undefined ||
+    (podSpec.ephemeralContainers !== undefined &&
+      array(podSpec.ephemeralContainers).length !== 0) ||
+    podSpec.hostNetwork === true ||
+    podSpec.hostPID === true ||
+    podSpec.hostIPC === true ||
+    podSpec.shareProcessNamespace === true ||
+    container.args !== undefined ||
+    (container.envFrom !== undefined && array(container.envFrom).length !== 0) ||
+    container.stdin === true ||
+    container.tty === true ||
+    container.imagePullPolicy !== 'IfNotPresent'
+  ) {
+    invalid();
+  }
+  exactJson(podSpec.securityContext, contract.podSecurityContext);
+  exactJson(container.command, [
+    'node',
+    'packages/kernel/dist/migrate.js',
+    'tenant-cutover-append',
+  ]);
+  exactJson(container.securityContext, {
+    allowPrivilegeEscalation: false,
+    readOnlyRootFilesystem: true,
+    capabilities: { drop: ['ALL'] },
+  });
+  validateOwnerCurrentEnvironment(container, contract);
+  exactSecretVolume(volumes.get('database-public-ca')!, {
+    secretName: contract.databaseCa.secretName,
+    items: [{ key: contract.databaseCa.caKey, path: 'ca.crt' }],
+  });
+  exactSecretVolume(volumes.get('api-proof-public')!, {
+    secretName: contract.apiProof.secretName,
+    items: [
+      { key: contract.apiProof.caKey, path: 'ca.crt' },
+      { key: contract.apiProof.certKey, path: 'tls.crt' },
+    ],
+  });
+  const requestConfigMap = record(volumes.get('request')!.configMap);
+  if (
+    canonicalBootstrapJson(Object.keys(volumes.get('request')!).sort()) !==
+      canonicalBootstrapJson(['configMap', 'name']) ||
+    canonicalBootstrapJson(Object.keys(requestConfigMap).sort()) !==
+      canonicalBootstrapJson(['defaultMode', 'name']) ||
+    requestConfigMap.name !==
+      releaseScopedName(releaseName, `-request-${executionId.slice(0, 12)}`) ||
+    requestConfigMap.defaultMode !== 0o444
+  ) {
+    invalid();
+  }
+  exactMount(mounts, 'request', '/run/commander/tenant-cutover', true);
+  exactMount(mounts, 'database-public-ca', '/run/commander/database-tls', true);
+  exactMount(mounts, 'api-proof-public', '/run/commander/api-proof-public', true);
+}
+
+function validateProofController(
+  releaseName: string,
+  metadata: JsonRecord,
+  jobName: string,
+): ProofPodController {
   const match = /-tenant-cutover-prove-r([1-9][0-9]*)$/.exec(jobName);
-  if (!match) invalid();
-  const suffix = match[0];
+  if (match) {
+    const suffix = match[0];
+    const expected = `${releaseName.slice(0, 63 - suffix.length).replace(/-$/, '')}${suffix}`;
+    if (jobName !== expected) invalid();
+    return { kind: 'helm-hook', revision: match[1]! };
+  }
+  const ownerMatch = /-owner-append-([0-9a-f]{12})$/.exec(jobName);
+  if (!ownerMatch) invalid();
+  const suffix = ownerMatch[0];
   const expected = `${releaseName.slice(0, 63 - suffix.length).replace(/-$/, '')}${suffix}`;
-  if (jobName !== expected) invalid();
-  return match[1]!;
+  const executionId = string(labels(metadata)['commander.io/tenant-cutover-owner-execution']);
+  if (
+    jobName !== expected ||
+    !/^[0-9a-f]{32}$/.test(executionId) ||
+    executionId.slice(0, 12) !== ownerMatch[1] ||
+    labels(metadata)['commander.io/migration-client-v2'] !== 'true' ||
+    labels(metadata)['commander.io/migration-release'] !== releaseName
+  ) {
+    invalid();
+  }
+  return { kind: 'owner-current', executionId };
 }
 
 function validateReleaseProjection(
@@ -988,59 +1207,119 @@ export function createTask1KubernetesProofObserver(
       invalid();
     if (!hasRequiredLabels(proofMetadata, proofSelector)) invalid();
     const proofController = controllerOwner(proofMetadata, { kind: 'Job' });
-    const proofJobRevision = validateProofJobName(binding.releaseName, proofController.name);
+    const proofPodController = validateProofController(
+      binding.releaseName,
+      proofMetadata,
+      proofController.name,
+    );
     const proofSpec = record(proofPod.spec);
     if (
       proofSpec.serviceAccountName !==
       proofReaderServiceAccount(binding.namespace, binding.releaseName)
     )
       invalid();
-    const proofContainers = exactNamedObjects(proofSpec.containers, ['tenant-cutover-prove']);
-    if (proofSpec.initContainers !== undefined && array(proofSpec.initContainers).length !== 0) {
+    const platformArtifact = validateReleaseProjection(releaseProjectionValue, binding);
+    const proofJobRevision =
+      proofPodController.kind === 'helm-hook'
+        ? proofPodController.revision
+        : string(platformArtifact.revision);
+    if (
+      proofPodController.kind === 'helm-hook' &&
+      platformArtifact.revision !== proofPodController.revision
+    ) {
       invalid();
     }
-    const proofContainer = proofContainers.get('tenant-cutover-prove')!;
-    if (!string(proofContainer.image).endsWith(`@${binding.apiImageDigest}`)) invalid();
-    const proofVolumes = exactNamedObjects(proofSpec.volumes, [
-      'proof-api-token',
-      'database-public-ca',
-      'api-proof-public',
-      'release-projection',
-      'tmp',
-    ]);
-    const proofMounts = exactNamedObjects(proofContainer.volumeMounts, [
-      'proof-api-token',
-      'database-public-ca',
-      'api-proof-public',
-      'release-projection',
-      'tmp',
-    ]);
-    projectedTokenVolume(proofSpec, proofContainer);
-    const platformArtifact = validateReleaseProjection(releaseProjectionValue, binding);
-    if (platformArtifact.revision !== proofJobRevision) invalid();
     const contract = proofPodContract(
       platformArtifact,
       operation,
       binding.releaseName,
       proofJobRevision,
     );
-    validateProofPodContract(proofSpec, proofContainer, proofVolumes, proofMounts, contract);
+    const proofContainerName =
+      proofPodController.kind === 'helm-hook' ? 'tenant-cutover-prove' : 'owner-command';
+    const proofContainers = exactNamedObjects(proofSpec.containers, [proofContainerName]);
+    if (proofSpec.initContainers !== undefined && array(proofSpec.initContainers).length !== 0) {
+      invalid();
+    }
+    const proofContainer = proofContainers.get(proofContainerName)!;
+    if (!string(proofContainer.image).endsWith(`@${binding.apiImageDigest}`)) invalid();
+    const proofVolumes = exactNamedObjects(
+      proofSpec.volumes,
+      proofPodController.kind === 'helm-hook'
+        ? ['proof-api-token', 'database-public-ca', 'api-proof-public', 'release-projection', 'tmp']
+        : [
+            'request',
+            'proof-api-token',
+            'database-public-ca',
+            'api-proof-public',
+            'release-projection',
+          ],
+    );
+    const proofMounts = exactNamedObjects(
+      proofContainer.volumeMounts,
+      proofPodController.kind === 'helm-hook'
+        ? ['proof-api-token', 'database-public-ca', 'api-proof-public', 'release-projection', 'tmp']
+        : [
+            'request',
+            'proof-api-token',
+            'database-public-ca',
+            'api-proof-public',
+            'release-projection',
+          ],
+    );
+    projectedTokenVolume(proofSpec, proofContainer);
+    if (proofPodController.kind === 'helm-hook') {
+      validateProofPodContract(proofSpec, proofContainer, proofVolumes, proofMounts, contract);
+    } else {
+      validateOwnerCurrentProofPodContract(
+        proofSpec,
+        proofContainer,
+        proofVolumes,
+        proofMounts,
+        contract,
+        binding.releaseName,
+        proofPodController.executionId,
+      );
+    }
     await waitForReadyProofPod({
       initialPod: proofPod,
       identity,
       proofController,
       proofSelector,
+      proofContainerName,
       readProofPods: () => request('pods', { selector: proofSelector }),
       wait: options.waitForProofStatus ?? (() => delay(100)),
     });
 
-    releaseProjectionVolume(
-      proofSpec,
-      proofContainer,
-      binding.releaseName,
-      operation.operationVersion,
-      proofJobRevision,
-    );
+    if (proofPodController.kind === 'helm-hook') {
+      releaseProjectionVolume(
+        proofSpec,
+        proofContainer,
+        binding.releaseName,
+        operation.operationVersion,
+        proofJobRevision,
+      );
+    } else {
+      const projectionVolume = exactNamedObjects(proofSpec.volumes, [
+        'request',
+        'proof-api-token',
+        'database-public-ca',
+        'api-proof-public',
+        'release-projection',
+      ]).get('release-projection')!;
+      const projectionConfigMap = record(projectionVolume.configMap);
+      if (
+        canonicalBootstrapJson(Object.keys(projectionConfigMap).sort()) !==
+          canonicalBootstrapJson(['defaultMode', 'items', 'name']) ||
+        projectionConfigMap.name !==
+          ownerCurrentProjectionConfigMapName(binding.releaseName, proofJobRevision) ||
+        projectionConfigMap.defaultMode !== 0o444 ||
+        canonicalBootstrapJson(projectionConfigMap.items) !==
+          canonicalBootstrapJson([{ key: 'projection.json', path: 'projection.json' }])
+      ) {
+        invalid();
+      }
+    }
     const templateSha256 = canonicalBootstrapSha256({
       deploymentTemplate,
       replicaSetTemplate: setTemplate,
