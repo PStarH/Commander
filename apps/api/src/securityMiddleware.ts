@@ -207,32 +207,6 @@ const RATE_LIMIT_TENANT_MAX = parseInt(
   10,
 );
 
-// GLOBAL token bucket — per-replica admission guard only. This is NOT an auth
-// authority: per-identity rate limiting lives in PostgreSQL. The bucket caps
-// aggregate in-process request rate so one replica cannot be overwhelmed while
-// a sibling replica is healthy; it deliberately resets on restart.
-const GLOBAL_BUCKET_CAPACITY = Math.max(
-  1000,
-  parseInt(process.env.API_GLOBAL_RATE_LIMIT ?? String(RATE_LIMIT_MAX * 2), 10),
-);
-const GLOBAL_BUCKET_REFILL_PER_SEC = parseInt(
-  process.env.API_GLOBAL_RATE_REFILL_PER_SEC ?? '1000',
-  10,
-);
-const globalBucket = { tokens: GLOBAL_BUCKET_CAPACITY, lastRefill: Date.now() };
-
-function consumeGlobalToken(now: number): boolean {
-  const elapsedSec = Math.max(0, (now - globalBucket.lastRefill) / 1000);
-  globalBucket.tokens = Math.min(
-    GLOBAL_BUCKET_CAPACITY,
-    globalBucket.tokens + elapsedSec * GLOBAL_BUCKET_REFILL_PER_SEC,
-  );
-  globalBucket.lastRefill = now;
-  if (globalBucket.tokens < 1) return false;
-  globalBucket.tokens -= 1;
-  return true;
-}
-
 // Expired rows are swept periodically; PostgreSQL owns storage so the Map
 // eviction machinery from the legacy in-memory implementation is gone.
 setInterval(() => {
@@ -311,18 +285,7 @@ export async function rateLimitMiddleware(
   const identity = buildRateLimitIdentity(req);
   const now = Date.now();
 
-  // Layer 1: GLOBAL token bucket (per-replica admission guard).
-  if (!consumeGlobalToken(now)) {
-    res.setHeader('X-RateLimit-Reason', 'global-token-bucket');
-    res.setHeader('Retry-After', '1');
-    res.status(429).json({
-      error: 'Server overloaded. Retry after rate-limit reset.',
-      retryAfter: 1,
-    });
-    return;
-  }
-
-  // Layer 2: per-tier per-identity, atomically consumed in PostgreSQL.
+  // Per-tier per-identity, atomically consumed in PostgreSQL.
   const tier = classifyTier(req.url ?? '/', req.method ?? 'GET');
   const scopes = buildScopes(identity, tier);
 

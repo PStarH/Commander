@@ -58,11 +58,9 @@ const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
 const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
-const startupAuthFailureStore = getAuthFailureStore();
-
 // Cleanup old entries every 5 minutes
 setInterval(() => {
-  startupAuthFailureStore.cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
+  getAuthFailureStore().cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS).catch((err) => {
     process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
   });
 }, 300_000).unref();
