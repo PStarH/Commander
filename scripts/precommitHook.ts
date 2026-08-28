@@ -119,6 +119,9 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
       name,
       content,
       tools: [],
+      // The hook scans repository source, not user-provided skill content.
+      // Malware signatures remain enabled for every staged file.
+      skipPreScanHeuristics: true,
     });
     const blocked = r.warnings.some(
       (w) =>

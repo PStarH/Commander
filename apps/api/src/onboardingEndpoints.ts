@@ -475,8 +475,8 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   const persistConfig = deps.writeConfig ?? writeCommanderConfig;
 
   // ── GET /api/onboarding/status ──────────────────────────────────────────
-  // AUDIT-API15: status discloses provider config, whether API_KEYS is set,
-  // and directory contents — operator-scoped information.
+  // AUDIT-API15: status discloses provider configuration and directory
+  // contents — operator-scoped information.
   router.get('/api/onboarding/status', requireOnboardingConfigAdmin, async (_req: Request, res: Response) => {
     try {
       const resolved = await resolveProvider();
@@ -485,13 +485,7 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
       const completion = await readCompletedSteps();
 
       const hasProvider = resolved !== null;
-      // hasApiKey: 环境变量 API_KEYS 配置了 Commander 自身鉴权 key，
-      // 或 provider 解析出了 key（含本地 ollama 视为已具备）。
-      const hasCommanderApiKey = Boolean(
-        process.env.API_KEYS && process.env.API_KEYS.trim() !== '',
-      );
       const hasApiKey =
-        hasCommanderApiKey ||
         (resolved !== null && resolved.apiKey !== '') ||
         (resolved?.id === 'ollama' && resolved.baseUrl !== '');
 

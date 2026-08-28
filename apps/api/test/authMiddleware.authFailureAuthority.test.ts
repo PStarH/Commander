@@ -3,6 +3,13 @@ import { createServer } from 'node:http';
 import { afterEach, describe, it } from 'node:test';
 import express from 'express';
 import {
+  resetApiKeyStore,
+  setApiKeyStore,
+  type ApiKeyCreationResult,
+  type ApiKeyRecord,
+  type ApiKeyStore,
+} from '../src/apiKeyStore.js';
+import {
   resetAuthFailureStoreForTesting,
   setAuthFailureStore,
   type AuthFailureStore,
@@ -10,7 +17,19 @@ import {
 
 afterEach(() => {
   resetAuthFailureStoreForTesting();
+  resetApiKeyStore();
 });
+
+const noApiKeys: ApiKeyStore = {
+  list: async (): Promise<Omit<ApiKeyRecord, 'hash'>[]> => [],
+  listByTenant: async (): Promise<Omit<ApiKeyRecord, 'hash'>[]> => [],
+  findByHash: async (): Promise<ApiKeyRecord | undefined> => undefined,
+  create: async (): Promise<ApiKeyCreationResult> => {
+    throw new Error('test API-key store does not mint keys');
+  },
+  revoke: async (): Promise<ApiKeyRecord | undefined> => undefined,
+  delete: async (): Promise<boolean> => false,
+};
 
 describe('auth middleware failure-authority boundary', () => {
   it('returns 500 when lockout authority cannot be read', async () => {
@@ -56,6 +75,7 @@ describe('auth middleware failure-authority boundary', () => {
       cleanup: async () => undefined,
     };
     setAuthFailureStore(unavailableStore);
+    setApiKeyStore(noApiKeys);
     const { authMiddleware } = await import('../src/authMiddleware.js');
 
     const app = express();
