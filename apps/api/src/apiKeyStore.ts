@@ -86,17 +86,18 @@ function fromRow(row: ApiKeyRow): ApiKeyRecord {
 
 export interface ApiKeyStore {
   list(): Promise<Omit<ApiKeyRecord, 'hash'>[]>;
+  listByTenant(tenantId: string): Promise<Omit<ApiKeyRecord, 'hash'>[]>;
   findByHash(hash: string): Promise<ApiKeyRecord | undefined>;
   create(name: string, scopes?: string[], tenantId?: string): Promise<ApiKeyCreationResult>;
-  revoke(id: string): Promise<ApiKeyRecord | undefined>;
-  delete(id: string): Promise<boolean>;
+  revoke(id: string, tenantScope?: string): Promise<ApiKeyRecord | undefined>;
+  delete(id: string, tenantScope?: string): Promise<boolean>;
 }
 
 export class PostgresApiKeyStore implements ApiKeyStore {
   constructor(private readonly pool: SqlPool) {}
 
   async list(): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
-    return withClient(this.pool, async (client) => {
+    return withTenantScopedClient(this.pool, '', async (client) => {
       const result = await client.query<ApiKeyRow>(
         `SELECT ${API_KEY_COLUMNS} FROM commander_auth_api_keys ORDER BY created_at DESC`,
       );
@@ -105,7 +106,7 @@ export class PostgresApiKeyStore implements ApiKeyStore {
   }
 
   async findByHash(hash: string): Promise<ApiKeyRecord | undefined> {
-    return withClient(this.pool, async (client) => {
+    return withTenantScopedClient(this.pool, '', async (client) => {
       const result = await client.query<ApiKeyRow>(
         `SELECT ${API_KEY_COLUMNS} FROM commander_auth_api_keys WHERE key_hash = $1 AND enabled = true`,
         [hash],
@@ -120,7 +121,7 @@ export class PostgresApiKeyStore implements ApiKeyStore {
     tenantId?: string,
   ): Promise<ApiKeyCreationResult> {
     const key = generateKey();
-    const result = await withClient(this.pool, async (client) => {
+    const result = await withTenantScopedClient(this.pool, tenantId ?? '', async (client) => {
       return client.query<ApiKeyRow>(
         `INSERT INTO commander_auth_api_keys (id, name, prefix, key_hash, scopes, tenant_id)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -138,8 +139,8 @@ export class PostgresApiKeyStore implements ApiKeyStore {
     return { record: fromRow(result.rows[0]!), key };
   }
 
-  async revoke(id: string): Promise<ApiKeyRecord | undefined> {
-    const result = await withClient(this.pool, async (client) => {
+  async revoke(id: string, tenantScope = ''): Promise<ApiKeyRecord | undefined> {
+    const result = await withTenantScopedClient(this.pool, tenantScope, async (client) => {
       return client.query<ApiKeyRow>(
         `UPDATE commander_auth_api_keys SET enabled = false, revoked_at = COALESCE(revoked_at, clock_timestamp())
          WHERE id = $1 AND enabled = true
@@ -150,8 +151,8 @@ export class PostgresApiKeyStore implements ApiKeyStore {
     return result.rows[0] ? fromRow(result.rows[0]) : undefined;
   }
 
-  async delete(id: string): Promise<boolean> {
-    const result = await withClient(this.pool, async (client) => {
+  async delete(id: string, tenantScope = ''): Promise<boolean> {
+    const result = await withTenantScopedClient(this.pool, tenantScope, async (client) => {
       return client.query('DELETE FROM commander_auth_api_keys WHERE id = $1', [id]);
     });
     return (result.rowCount ?? 0) > 0;

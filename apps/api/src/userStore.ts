@@ -462,8 +462,8 @@ export async function countAdmins(): Promise<number> {
   return getUserRepository().countAdmins();
 }
 
-export async function isInitialized(): Promise<boolean> {
-  return getUserRepository().countAdmins() !== null;
+export function isInitialized(): boolean {
+  return defaultRepository !== undefined;
 }
 
 /**

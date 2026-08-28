@@ -90,9 +90,8 @@ export function createApiKeyRouter(): Router {
     requireRole(),
     async (req: Request, res: Response) => {
       try {
-        const all = await store.list();
         if (isSuperAdmin(req)) {
-          res.json({ keys: all });
+          res.json({ keys: await store.list() });
           return;
         }
         const tenant = principalTenant(req);
@@ -102,7 +101,7 @@ export function createApiKeyRouter(): Router {
           });
           return;
         }
-        res.json({ keys: all.filter((k) => k.tenantId === tenant) });
+        res.json({ keys: await store.listByTenant(tenant) });
       } catch (error) {
         res.status(500).json({ error: String(error) });
       }
@@ -160,26 +159,30 @@ export function createApiKeyRouter(): Router {
     requireRole(),
     async (req: Request, res: Response) => {
       const id = String(req.params.id);
-      // Locate first so we can enforce tenant before mutating.
-      const existing = (await store.list()).find((k) => k.id === id);
-      if (!existing) {
+      const tenant = isSuperAdmin(req) ? undefined : principalTenant(req);
+      if (!isSuperAdmin(req) && !tenant) {
         res.status(404).json({ error: 'API key not found or already revoked' });
         return;
       }
-      if (!isSuperAdmin(req)) {
-        const principal = principalTenant(req);
-        if (!principal || existing.tenantId !== principal) {
-          // 404 to avoid cross-tenant existence oracle
+
+      // Locate first so we can enforce tenant before mutating.
+      try {
+        const existing = (
+          isSuperAdmin(req) ? await store.list() : await store.listByTenant(tenant!)
+        ).find((key) => key.id === id);
+        if (!existing) {
           res.status(404).json({ error: 'API key not found or already revoked' });
           return;
         }
+        const revoked = await store.revoke(id, tenant);
+        if (!revoked) {
+          res.status(404).json({ error: 'API key not found or already revoked' });
+          return;
+        }
+        res.json({ status: 'revoked', record: redactHash(revoked) });
+      } catch (error) {
+        res.status(500).json({ error: String(error) });
       }
-      const revoked = await store.revoke(id);
-      if (!revoked) {
-        res.status(404).json({ error: 'API key not found or already revoked' });
-        return;
-      }
-      res.json({ status: 'revoked', record: redactHash(revoked) });
     },
   );
 

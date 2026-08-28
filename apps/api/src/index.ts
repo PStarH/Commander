@@ -60,6 +60,7 @@ import {
 } from './securityMiddleware';
 import { bootstrapDefaultAdminAccount } from './userStore';
 import { authMiddleware } from './authMiddleware';
+import { initAuthFailureStore } from './authFailureStore';
 import { tenantContextMiddleware } from './tenantContextMiddleware';
 import { loadTenantProvider } from './tenantProviderLoader';
 import { jwtMiddleware } from './jwtMiddleware';
@@ -900,11 +901,9 @@ app.get('/api/openapi.json', (_req, res) => {
 // ── Startup + Graceful Shutdown ──────────────────────────────────────────────
 const port = Number(process.env.PORT || 4000);
 
-// initRateLimitStore() opens the persistent SQLite store and hydrates the
-// in-memory Map BEFORE listen() so the first request after boot doesn't see
-// an empty rate-limit cache (which would defeat the auth-reset bypass
-// mitigation this persistence layer was added for). Server reference is
-// captured so gracefulShutdown can drain it.
+// Auth authorities are initialized before listen. They require PostgreSQL and
+// fail closed instead of allowing a process-local fallback. Server reference
+// is captured so gracefulShutdown can drain it.
 let httpServer: { close: (cb?: () => void) => void } | null = null;
 let task1ReadinessService: Task1ReadinessService | undefined;
 
@@ -951,6 +950,7 @@ async function startServer(): Promise<void> {
   }
 
   await initRateLimitStore();
+  initAuthFailureStore();
   await bootstrapDefaultAdminAccount();
 
   // Memory backend selection:

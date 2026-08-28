@@ -60,8 +60,9 @@ export async function withClient<T>(
 
 /**
  * Run `operation` inside a transaction that sets `app.tenant_scope` so RLS
- * policies on tenant-bearing auth tables apply. When `tenantScope` is empty
- * the global (pre-auth) path is used and the scope stays unset.
+ * policies on tenant-bearing auth tables apply. The global (pre-auth) path
+ * uses an explicit empty scope because the RLS policy treats an unset scope
+ * as deny-by-default.
  */
 export async function withTenantScopedClient<T>(
   pool: SqlPool,
@@ -71,9 +72,7 @@ export async function withTenantScopedClient<T>(
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    if (tenantScope) {
-      await client.query("SELECT set_config('app.tenant_scope', $1, true)", [tenantScope]);
-    }
+    await client.query("SELECT set_config('app.tenant_scope', $1, true)", [tenantScope]);
     const value = await operation(client);
     await client.query('COMMIT');
     return value;

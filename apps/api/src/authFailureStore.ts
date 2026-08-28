@@ -127,6 +127,11 @@ export function getAuthFailureStore(): AuthFailureStore {
   return sharedStore;
 }
 
+/** Construct the PostgreSQL authority during API startup so misconfiguration fails closed. */
+export function initAuthFailureStore(): void {
+  getAuthFailureStore();
+}
+
 export function setAuthFailureStore(store: AuthFailureStore): void {
   sharedStore = store;
 }
