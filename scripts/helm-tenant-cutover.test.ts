@@ -3115,6 +3115,8 @@ data: { owner-url: ${payload} }
     assert.match(serialized, /"name":"commander-proof-projection-v1"/);
     assert.match(serialized, /\/run\/commander\/release-projection/);
     assert.match(serialized, /"automountServiceAccountToken":false/);
+    assert.match(serialized, /"emptyDir":\{\},"name":"tmp"/);
+    assert.match(serialized, /"mountPath":"\/tmp","name":"tmp"/);
     assert.match(serialized, /"app\.kubernetes\.io\/component":"tenant-authority-proof-reader"/);
     assert.match(serialized, /"commander\.io\/migration-client-v2":"true"/);
     assert.match(serialized, /"commander\.io\/migration-release":"commander"/);
