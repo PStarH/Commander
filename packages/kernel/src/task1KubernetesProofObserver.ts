@@ -858,6 +858,8 @@ function validateOwnerCurrentProofPodContract(
   exactMount(mounts, 'request', '/run/commander/tenant-cutover', true);
   exactMount(mounts, 'database-public-ca', '/run/commander/database-tls', true);
   exactMount(mounts, 'api-proof-public', '/run/commander/api-proof-public', true);
+  exactJson(record(volumes.get('tmp')!.emptyDir), {});
+  exactMount(mounts, 'tmp', '/tmp', false);
 }
 
 function validateProofController(
@@ -1259,6 +1261,7 @@ export function createTask1KubernetesProofObserver(
             'database-public-ca',
             'api-proof-public',
             'release-projection',
+            'tmp',
           ],
     );
     const proofMounts = exactNamedObjects(
@@ -1271,6 +1274,7 @@ export function createTask1KubernetesProofObserver(
             'database-public-ca',
             'api-proof-public',
             'release-projection',
+            'tmp',
           ],
     );
     projectedTokenVolume(proofSpec, proofContainer);
@@ -1313,6 +1317,7 @@ export function createTask1KubernetesProofObserver(
         'database-public-ca',
         'api-proof-public',
         'release-projection',
+        'tmp',
       ]).get('release-projection')!;
       const projectionConfigMap = record(projectionVolume.configMap);
       if (

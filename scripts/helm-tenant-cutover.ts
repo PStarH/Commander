@@ -2553,6 +2553,10 @@ export function buildHelmOwnerJobBundle(input: {
             mountPath: '/run/commander/release-projection',
             readOnly: true,
           },
+          {
+            name: 'tmp',
+            mountPath: '/tmp',
+          },
         ]
       : []),
   ];
@@ -2612,6 +2616,7 @@ export function buildHelmOwnerJobBundle(input: {
               items: [{ key: 'projection.json', path: 'projection.json' }],
             },
           },
+          { name: 'tmp', emptyDir: {} },
         ]
       : []),
   ];

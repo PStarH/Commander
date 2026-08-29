@@ -449,12 +449,13 @@ function ownerCurrentProofResources(mode: 'plan' | 'append' = 'append'): Record<
           mountPath: '/run/commander/release-projection',
           readOnly: true,
         },
+        { name: 'tmp', mountPath: '/tmp' },
       ],
     },
   ];
   proofPod.spec.volumes = [
     { name: 'request', configMap: { name: 'release-a-request-abcdef123456', defaultMode: 292 } },
-    ...proofPod.spec.volumes.filter((volume: { name: string }) => volume.name !== 'tmp'),
+    ...proofPod.spec.volumes,
   ];
   proofPod.spec.volumes.find(
     (volume: { name: string }) => volume.name === 'release-projection',
@@ -726,6 +727,25 @@ describe('Task 1 Kubernetes proof observer', () => {
     });
 
     await observer(operation());
+  });
+
+  it('rejects an owner current-proof Pod without a writable tmp volume', async () => {
+    const values = ownerCurrentProofResources();
+    values.proofPods.items[0].spec.containers[0].volumeMounts =
+      values.proofPods.items[0].spec.containers[0].volumeMounts.filter(
+        (mount: { name: string }) => mount.name !== 'tmp',
+      );
+    values.proofPods.items[0].spec.volumes = values.proofPods.items[0].spec.volumes.filter(
+      (volume: { name: string }) => volume.name !== 'tmp',
+    );
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await assert.rejects(() => observer(operation()), /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/);
   });
 
   it('accepts the Kubernetes-defaulted owner current-proof termination grace period', async () => {
