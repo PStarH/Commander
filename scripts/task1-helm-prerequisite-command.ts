@@ -430,12 +430,20 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
   const allowedCel = task1CelDynLiteral(allowed);
   const operator = context.request.migrationOperatorSubject.replaceAll("'", "\\'");
   const protectedNames = policies.map((policy) => `'${policy.metadata.name}'`).join(',');
+  const labelEquals = (resource: 'object' | 'oldObject', key: string, value: string) =>
+    `'${key}' in ${resource}.metadata.labels && ${resource}.metadata.labels['${key}'] == '${value}'`;
+  const hookLabelsMatch = (resource: 'object' | 'oldObject') =>
+    Object.entries(hookLabels(context))
+      .map(([key, value]) => labelEquals(resource, key, value))
+      .join(' && ');
   const ownerProofPodException =
-    "object.metadata.labels['app.kubernetes.io/component'] == 'tenant-authority-proof-reader' && " +
-    "object.metadata.labels['commander.io/tenant-authority-proof-reader'] == 'true' && " +
-    "object.metadata.labels['commander.io/tenant-authority-proof-release'] == '" +
-    context.request.release +
-    "' && 'commander.io/tenant-cutover-owner-execution' in object.metadata.labels";
+    '(' +
+    labelEquals('object', 'app.kubernetes.io/component', 'tenant-authority-proof-reader') +
+    ' && ' +
+    labelEquals('object', 'commander.io/tenant-authority-proof-reader', 'true') +
+    ' && ' +
+    labelEquals('object', 'commander.io/tenant-authority-proof-release', context.request.release) +
+    " && 'commander.io/tenant-cutover-owner-execution' in object.metadata.labels)";
   return [
     {
       expression: `request.resource.resource != 'networkpolicies' || request.operation == 'CREATE' || !(object.metadata.name in [${protectedNames}])`,
@@ -460,25 +468,11 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
       message: 'non-operator NetworkPolicy must not add egress to a protected hook selector',
     },
     {
-      expression: `request.resource.resource != 'pods' || request.operation != 'CREATE' || !(${Object.entries(
-        hookLabels(context),
-      )
-        .map(([key, value]) => `object.metadata.labels['${key}'] == '${value}'`)
-        .join(
-          ' && ',
-        )}) || !('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}`,
+      expression: `request.resource.resource != 'pods' || request.operation != 'CREATE' || !(${hookLabelsMatch('object')}) || !('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}`,
       message: 'migration hook Pods may not carry the legacy component label',
     },
     {
-      expression: `request.resource.resource != 'pods' || request.operation != 'UPDATE' || !(${Object.entries(
-        hookLabels(context),
-      )
-        .map(([key, value]) => `oldObject.metadata.labels['${key}'] == '${value}'`)
-        .join(' && ')}) || ((${Object.entries(hookLabels(context))
-        .map(([key, value]) => `object.metadata.labels['${key}'] == '${value}'`)
-        .join(
-          ' && ',
-        )}) && (!('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}))`,
+      expression: `request.resource.resource != 'pods' || request.operation != 'UPDATE' || !(${hookLabelsMatch('oldObject')}) || ((${hookLabelsMatch('object')}) && (!('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}))`,
       message: 'migration hook Pod labels are immutable',
     },
   ];
