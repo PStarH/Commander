@@ -541,6 +541,7 @@ describe('Helm lifecycle static contract', () => {
     ]);
     const proofPolicy = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-tenant-cutover-prove');
     assert.match(proofPolicy, /commander\.io\/tenant-authority-proof-reader: "true"/);
+    assert.match(proofPolicy, /app\.kubernetes\.io\/component: tenant-authority-proof-reader/);
     assert.match(proofPolicy, /policyTypes:[\s\S]*- Ingress[\s\S]*- Egress/);
     assert.match(proofPolicy, /ingress: \[\]/);
     assert.match(

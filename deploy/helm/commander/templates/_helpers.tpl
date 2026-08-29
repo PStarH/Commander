@@ -123,6 +123,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "commander.proofReaderLabels" -}}
 app.kubernetes.io/name: {{ include "commander.fullname" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: tenant-authority-proof-reader
 commander.io/tenant-authority-proof-reader: "true"
 commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
 {{- end -}}
