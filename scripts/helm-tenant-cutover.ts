@@ -2444,6 +2444,7 @@ export function buildHelmOwnerJobBundle(input: {
     'commander.io/tenant-cutover-owner-execution': executionLabel,
     ...(proofRuntime
       ? {
+          'app.kubernetes.io/component': 'tenant-authority-proof-reader',
           'commander.io/tenant-authority-proof-reader': 'true',
           'commander.io/tenant-authority-proof-release': input.context.release,
         }
