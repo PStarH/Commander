@@ -573,6 +573,22 @@ describe('Task 1 prerequisite command contract', () => {
     assert.match(postgresGuard.expression, /dyn\(object\)\.spec\.volumeClaimTemplates/);
   });
 
+  it('matches the tenant readiness path inside the exec probe script', async () => {
+    const workload = renderTask1AdmissionPair(await context(), 'workload');
+    const guard = (
+      workload.policy.spec.validations as Array<{ message: string; expression: string }>
+    ).find(
+      (validation) =>
+        validation.message ===
+        'tenant-authority API workload must preserve exact context-aware metadata',
+    );
+    assert.ok(guard);
+    assert.match(
+      guard.expression,
+      /readinessProbe\.exec\.command\.exists\(a, a\.contains\('\/ready\/tenant-authority\/v1'\)\)/,
+    );
+  });
+
   it('is create-only, idempotent for exact admission objects, and rejects collisions', async () => {
     const loaded = await context();
     const ports = memoryPorts();
