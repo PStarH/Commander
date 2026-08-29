@@ -547,6 +547,16 @@ describe('Task 1 prerequisite command contract', () => {
     );
     assert.ok(egressGuard);
     assert.match(egressGuard.expression, /dyn\(object\)\.spec\.egress/);
+
+    const ownerProofPodGuard = (
+      network.policy.spec.validations as Array<{ message: string; expression: string }>
+    ).find(
+      (validation) =>
+        validation.message === 'migration hook Pods may not carry the legacy component label',
+    );
+    assert.ok(ownerProofPodGuard);
+    assert.match(ownerProofPodGuard.expression, /tenant-cutover-owner-execution/);
+    assert.match(ownerProofPodGuard.expression, /tenant-authority-proof-reader/);
   });
 
   it('keeps StatefulSet-only CEL field access dynamic when the guard also matches Deployments', async () => {

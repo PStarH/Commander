@@ -430,6 +430,12 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
   const allowedCel = task1CelDynLiteral(allowed);
   const operator = context.request.migrationOperatorSubject.replaceAll("'", "\\'");
   const protectedNames = policies.map((policy) => `'${policy.metadata.name}'`).join(',');
+  const ownerProofPodException =
+    "object.metadata.labels['app.kubernetes.io/component'] == 'tenant-authority-proof-reader' && " +
+    "object.metadata.labels['commander.io/tenant-authority-proof-reader'] == 'true' && " +
+    "object.metadata.labels['commander.io/tenant-authority-proof-release'] == '" +
+    context.request.release +
+    "' && 'commander.io/tenant-cutover-owner-execution' in object.metadata.labels";
   return [
     {
       expression: `request.resource.resource != 'networkpolicies' || request.operation == 'CREATE' || !(object.metadata.name in [${protectedNames}])`,
@@ -458,7 +464,9 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
         hookLabels(context),
       )
         .map(([key, value]) => `object.metadata.labels['${key}'] == '${value}'`)
-        .join(' && ')}) || !('${'app.kubernetes.io/component'}' in object.metadata.labels)`,
+        .join(
+          ' && ',
+        )}) || !('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}`,
       message: 'migration hook Pods may not carry the legacy component label',
     },
     {
@@ -468,7 +476,9 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
         .map(([key, value]) => `oldObject.metadata.labels['${key}'] == '${value}'`)
         .join(' && ')}) || ((${Object.entries(hookLabels(context))
         .map(([key, value]) => `object.metadata.labels['${key}'] == '${value}'`)
-        .join(' && ')}) && !('${'app.kubernetes.io/component'}' in object.metadata.labels))`,
+        .join(
+          ' && ',
+        )}) && (!('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}))`,
       message: 'migration hook Pod labels are immutable',
     },
   ];
