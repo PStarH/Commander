@@ -3372,7 +3372,7 @@ async function runNetworkPolicyCanaries(
   )},port:9443},()=>finish(0));socket.setTimeout(5000,()=>finish(42));socket.on('error',()=>finish(43));`;
   const applyCanary = async (name: string, labelled: boolean) => {
     const labels = labelled
-      ? `app.kubernetes.io/name=${release},app.kubernetes.io/instance=${release},commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`
+      ? `app.kubernetes.io/name=${release},app.kubernetes.io/instance=${release},app.kubernetes.io/component=tenant-authority-proof-reader,commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`
       : 'commander.io/network-policy-negative-canary=true';
     requireCommand(
       await kubectl([
