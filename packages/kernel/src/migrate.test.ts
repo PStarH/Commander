@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import * as migrationEntrypoint from './migrate.js';
 import {
   isTask1OwnerCommandMode,
+  ownerMigrationPoolConfig,
   parseTask1ClosureMigrationPhase,
   resolveMigrationDatabaseUrl,
   runTask1OwnerMode,
@@ -264,11 +265,14 @@ describe('kernel owner migration entrypoint', () => {
       assert.equal(typeof formatter, 'function');
 
       const result = formatter!(
-        Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
-          ownerStage: 'lifecycle_prebootstrap_snapshot',
-          snapshot: 's0',
-          snapshotTransaction,
-        }),
+        Object.assign(
+          new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+          {
+            ownerStage: 'lifecycle_prebootstrap_snapshot',
+            snapshot: 's0',
+            snapshotTransaction,
+          },
+        ),
       );
 
       assert.equal(
@@ -296,11 +300,14 @@ describe('kernel owner migration entrypoint', () => {
       assert.equal(typeof formatter, 'function');
 
       const result = formatter!(
-        Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
-          ownerStage: 'lifecycle_prebootstrap_snapshot',
-          snapshot: 's0',
-          snapshotValidation,
-        }),
+        Object.assign(
+          new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+          {
+            ownerStage: 'lifecycle_prebootstrap_snapshot',
+            snapshot: 's0',
+            snapshotValidation,
+          },
+        ),
       );
 
       assert.equal(
@@ -328,12 +335,15 @@ describe('kernel owner migration entrypoint', () => {
       assert.equal(typeof formatter, 'function');
 
       const result = formatter!(
-        Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
-          ownerStage: 'lifecycle_prebootstrap_snapshot',
-          snapshot: 's0',
-          snapshotValidation: 'origin_classification',
-          originClassificationStep,
-        }),
+        Object.assign(
+          new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+          {
+            ownerStage: 'lifecycle_prebootstrap_snapshot',
+            snapshot: 's0',
+            snapshotValidation: 'origin_classification',
+            originClassificationStep,
+          },
+        ),
       );
 
       assert.equal(
@@ -474,6 +484,16 @@ describe('kernel owner migration entrypoint', () => {
         DATABASE_URL: 'postgres://legacy',
       }),
       'postgres://owner',
+    );
+  });
+
+  it('bounds owner database connection acquisition before a lifecycle Job can exhaust its deadline', () => {
+    assert.deepEqual(
+      ownerMigrationPoolConfig('postgres://owner:secret@db.internal/commander?sslmode=verify-full'),
+      {
+        connectionString: 'postgres://owner:secret@db.internal/commander?sslmode=verify-full',
+        connectionTimeoutMillis: 5_000,
+      },
     );
   });
 
