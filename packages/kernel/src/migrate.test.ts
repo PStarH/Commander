@@ -487,12 +487,13 @@ describe('kernel owner migration entrypoint', () => {
     );
   });
 
-  it('bounds owner database connection acquisition before a lifecycle Job can exhaust its deadline', () => {
+  it('bounds owner database waits before a lifecycle Job can exhaust its deadline', () => {
     assert.deepEqual(
       ownerMigrationPoolConfig('postgres://owner:secret@db.internal/commander?sslmode=verify-full'),
       {
         connectionString: 'postgres://owner:secret@db.internal/commander?sslmode=verify-full',
         connectionTimeoutMillis: 5_000,
+        query_timeout: 30_000,
       },
     );
   });

@@ -1,4 +1,7 @@
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import {
+  createVerifiedPostgresPool,
+  type VerifiedPostgresPoolInput,
+} from '@commander/postgres-runtime';
 import type { Pool } from 'pg';
 import { pathToFileURL } from 'node:url';
 import {
@@ -118,12 +121,9 @@ export function resolveMigrationDatabaseUrl(env: NodeJS.ProcessEnv): string | un
   return env.COMMANDER_OWNER_DATABASE_URL ?? env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL;
 }
 
-/** Keep lifecycle Jobs from spending their entire deadline on an unreachable database endpoint. */
-export function ownerMigrationPoolConfig(connectionString: string): {
-  connectionString: string;
-  connectionTimeoutMillis: number;
-} {
-  return { connectionString, connectionTimeoutMillis: 5_000 };
+/** Keep lifecycle owner Jobs bounded when database connection or query waits stop progressing. */
+export function ownerMigrationPoolConfig(connectionString: string): VerifiedPostgresPoolInput {
+  return { connectionString, connectionTimeoutMillis: 5_000, query_timeout: 30_000 };
 }
 
 const MIGRATION_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+\.[a-z0-9_]+$/;
@@ -842,14 +842,18 @@ export async function readTask1OwnerInput(
 
 async function main() {
   let pool: Pool | undefined;
+  const action = process.argv[2];
   try {
     const activePool = await atOwnerMigrationFailureStage('owner_pool_configuration', async () => {
       const databaseUrl = resolveMigrationDatabaseUrl(process.env);
       if (!databaseUrl) throw new Error('COMMANDER_MIGRATION_FAILED');
-      return createVerifiedPostgresPool(ownerMigrationPoolConfig(databaseUrl));
+      return createVerifiedPostgresPool(
+        isTask1OwnerCommandMode(action)
+          ? ownerMigrationPoolConfig(databaseUrl)
+          : { connectionString: databaseUrl },
+      );
     });
     pool = activePool;
-    const action = process.argv[2];
     if (isTask1OwnerCommandMode(action)) {
       const stdin = await atOwnerMigrationFailureStage('input', () => readTask1OwnerInput());
       const proofRuntime = await atOwnerMigrationFailureStage('proof_runtime', async () =>
