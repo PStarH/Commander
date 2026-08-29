@@ -1304,9 +1304,7 @@ async function runHelmRolloutWithProofCredential(input: {
           input.release,
         ));
       const rolloutFailureCode =
-        error instanceof Error && isAllowedHelmDiagnosticCode(error.message)
-          ? error.message
-          : undefined;
+        error instanceof Error ? sanitizedHelmFailureCode(error.message) : undefined;
       primaryFailure = new Error(
         'TENANT_CUTOVER_PROOF_HOOK_FAILED:' +
           (rolloutFailureCode ? rolloutFailureCode + ':' : '') +
@@ -1332,6 +1330,15 @@ async function runHelmRolloutWithProofCredential(input: {
       throw cleanupFailure;
     }
   }
+}
+
+function sanitizedHelmFailureCode(message: string): string | undefined {
+  const match = /^TENANT_CUTOVER_HELM_COMMAND_FAILED(?::([A-Z0-9_]+))?$/.exec(message);
+  if (!match) return undefined;
+  const diagnostic = match[1];
+  return diagnostic && isAllowedHelmDiagnosticCode(diagnostic)
+    ? 'TENANT_CUTOVER_HELM_COMMAND_FAILED:' + diagnostic
+    : 'TENANT_CUTOVER_HELM_COMMAND_FAILED';
 }
 
 function restoreEvidence(operation: HelmOperation): NonNullable<HelmOperation['restore']> {
