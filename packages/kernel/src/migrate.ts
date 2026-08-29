@@ -118,6 +118,14 @@ export function resolveMigrationDatabaseUrl(env: NodeJS.ProcessEnv): string | un
   return env.COMMANDER_OWNER_DATABASE_URL ?? env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL;
 }
 
+/** Keep lifecycle Jobs from spending their entire deadline on an unreachable database endpoint. */
+export function ownerMigrationPoolConfig(connectionString: string): {
+  connectionString: string;
+  connectionTimeoutMillis: number;
+} {
+  return { connectionString, connectionTimeoutMillis: 5_000 };
+}
+
 const MIGRATION_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+\.[a-z0-9_]+$/;
 const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
 export const OWNER_MIGRATION_FAILURE_STAGES = [
@@ -838,7 +846,7 @@ async function main() {
     const activePool = await atOwnerMigrationFailureStage('owner_pool_configuration', async () => {
       const databaseUrl = resolveMigrationDatabaseUrl(process.env);
       if (!databaseUrl) throw new Error('COMMANDER_MIGRATION_FAILED');
-      return createVerifiedPostgresPool({ connectionString: databaseUrl });
+      return createVerifiedPostgresPool(ownerMigrationPoolConfig(databaseUrl));
     });
     pool = activePool;
     const action = process.argv[2];
