@@ -1085,7 +1085,7 @@ const ROLLOUT_NONTERMINAL_REASON_CODES: readonly RolloutNonterminalReasonCode[] 
   'POD_NOT_READY',
 ];
 const ROLLOUT_FAILURE_RECORD = new RegExp(
-  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_OOM_KILLED|POD_CRASH_LOOP_BACKOFF)(?=\\n|$)',
+  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_OOM_KILLED|POD_CRASH_LOOP_BACKOFF)(?=:code=|\\n|$)',
 );
 const ROLLOUT_NONTERMINAL_RECORD = new RegExp(
   '(?:^|:)TENANT_CUTOVER_ROLLOUT_NONTERMINAL:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_UNAVAILABLE|JOB_ACTIVE|POD_NOT_READY)(?=\\n|$)',

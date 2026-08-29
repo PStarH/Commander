@@ -962,6 +962,38 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /tenant-secret|private|SELECT|stderr|secret/i);
   });
 
+  it('retains rollout failure details when an owner record follows the canonical record', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=Job;component=migration;reason_code=JOB_BACKOFF_LIMIT_EXCEEDED:code=TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;log_sha256=' +
+            'f'.repeat(64),
+        },
+      ],
+      ownerFailureEvidence: [],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.rolloutFailure, {
+      code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+      resourceKind: 'Job',
+      component: 'migration',
+      reasonCode: 'JOB_BACKOFF_LIMIT_EXCEEDED',
+    });
+  });
+
   it('rejects malformed rollout records and preserves existing Helm failure codes', () => {
     const sanitized = sanitizeEvidence({
       generatedAt: '2024-01-01T00:00:00Z',
