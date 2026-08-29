@@ -112,8 +112,14 @@ describe('Helm lifecycle static contract', () => {
       ),
     ];
     for (const api of apiDeployments) {
-      assert.match(api, /- name: COMMANDER_WARROOM_FILE\n\s+value: \/tmp\/commander-api\/war-room.json/);
-      assert.match(api, /- name: COMMANDER_AGENT_STATE_FILE\n\s+value: \/tmp\/commander-api\/agent-state.json/);
+      assert.match(
+        api,
+        /- name: COMMANDER_WARROOM_FILE\n\s+value: \/tmp\/commander-api\/war-room.json/,
+      );
+      assert.match(
+        api,
+        /- name: COMMANDER_AGENT_STATE_FILE\n\s+value: \/tmp\/commander-api\/agent-state.json/,
+      );
       assert.match(
         api,
         /- name: COMMANDER_ACTION_RATIONALE_FILE\n\s+value: \/tmp\/commander-api\/action-rationales.json/,
@@ -142,7 +148,11 @@ describe('Helm lifecycle static contract', () => {
   });
 
   it('uses a local TCP readiness probe for the non-authoritative Redis cache', () => {
-    const redis = resource(render(false, ['--set', 'redis.enabled=true']), 'StatefulSet', 'lifecycle-demo-redis');
+    const redis = resource(
+      render(false, ['--set', 'redis.enabled=true']),
+      'StatefulSet',
+      'lifecycle-demo-redis',
+    );
     assert.match(redis, /readinessProbe:\n\s+tcpSocket:\n\s+port: redis/);
     assert.doesNotMatch(redis, /redis-cli/);
   });
