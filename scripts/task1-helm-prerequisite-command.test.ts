@@ -559,6 +559,42 @@ describe('Task 1 prerequisite command contract', () => {
     assert.match(ownerProofPodGuard.expression, /tenant-authority-proof-reader/);
   });
 
+  it('guards optional Pod-label CEL map reads with key-presence checks', async () => {
+    const network = renderTask1AdmissionPair(await context(), 'network');
+    const validations = network.policy.spec.validations as Array<{
+      message: string;
+      expression: string;
+    }>;
+    const createGuard = validations.find(
+      (validation) =>
+        validation.message === 'migration hook Pods may not carry the legacy component label',
+    );
+    const updateGuard = validations.find(
+      (validation) => validation.message === 'migration hook Pod labels are immutable',
+    );
+    assert.ok(createGuard);
+    assert.ok(updateGuard);
+
+    for (const guard of [createGuard, updateGuard]) {
+      for (const [key, value] of [
+        ['app.kubernetes.io/instance', 'release-a'],
+        ['app.kubernetes.io/name', 'release-a'],
+        ['commander.io/migration-client-v2', 'true'],
+        ['commander.io/migration-release', 'release-a'],
+        ['app.kubernetes.io/component', 'tenant-authority-proof-reader'],
+        ['commander.io/tenant-authority-proof-reader', 'true'],
+        ['commander.io/tenant-authority-proof-release', 'release-a'],
+      ]) {
+        assert.match(
+          guard.expression,
+          new RegExp(
+            `'${key}' in (?:oldObject|object)\\.metadata\\.labels && (?:oldObject|object)\\.metadata\\.labels\\['${key}'\\] == '${value}'`,
+          ),
+        );
+      }
+    }
+  });
+
   it('keeps StatefulSet-only CEL field access dynamic when the guard also matches Deployments', async () => {
     const workload = renderTask1AdmissionPair(await context(), 'workload');
     const constraints = workload.policy.spec.matchConstraints as {
