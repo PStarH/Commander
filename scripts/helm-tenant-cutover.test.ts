@@ -182,6 +182,69 @@ describe('Helm owner Job diagnostics', () => {
     );
   });
 
+  it('classifies Helm failures from bounded stderr without retaining its contents', () => {
+    assert.equal(
+      helmTenantCutover.commandFailureCode(
+        'helm',
+        ['upgrade', 'commander', 'chart'],
+        undefined,
+        'Error: UPGRADE FAILED: post-renderer failed: sensitive-resource-name',
+      ),
+      'TENANT_CUTOVER_HELM_COMMAND_FAILED:HELM_POST_RENDERER_FAILED',
+    );
+    assert.equal(
+      helmTenantCutover.commandFailureCode(
+        'helm',
+        ['upgrade', 'commander', 'chart'],
+        undefined,
+        'Error: UPGRADE FAILED: timed out waiting for the condition',
+      ),
+      'TENANT_CUTOVER_HELM_COMMAND_FAILED:HELM_UPGRADE_TIMEOUT',
+    );
+    assert.equal(
+      helmTenantCutover.commandFailureCode(
+        'helm',
+        ['upgrade', 'commander', 'chart'],
+        undefined,
+        'unrecognized sensitive Helm failure',
+      ),
+      'TENANT_CUTOVER_HELM_COMMAND_FAILED',
+    );
+  });
+
+  it('carries only the fixed Helm failure category across the command boundary', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'commander-helm-failure-category-'));
+    const helm = join(root, 'helm');
+    const previousPath = process.env.PATH;
+    await writeFile(
+      helm,
+      [
+        '#!/usr/bin/env node',
+        "process.stderr.write('post-renderer failed: private-resource-name\\n');",
+        'process.exitCode = 1;',
+      ].join('\n'),
+      { mode: 0o700 },
+    );
+    process.env.PATH = root + (previousPath ? ':' + previousPath : '');
+    try {
+      await assert.rejects(
+        () => helmTenantCutover.defaultCommand('helm', ['upgrade', 'commander', 'chart']),
+        (error: unknown) => {
+          assert.match(
+            error instanceof Error ? error.message : '',
+            /^TENANT_CUTOVER_HELM_COMMAND_FAILED:HELM_POST_RENDERER_FAILED$/,
+          );
+          assert.doesNotMatch(String(error), /private-resource-name/);
+          return true;
+        },
+      );
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   it('uses delete wait completion for proof-resource cleanup without a second get', async () => {
     const calls: Array<{ program: string; args: readonly string[] }> = [];
     const ports = createNodePorts({
