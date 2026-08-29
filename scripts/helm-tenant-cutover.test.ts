@@ -3132,6 +3132,40 @@ data: { owner-url: ${payload} }
     );
   });
 
+  it('mounts writable tmp for a non-proof owner Job', () => {
+    const bundle = buildHelmOwnerJobBundle({
+      mode: 'tenant-cutover-plan',
+      payload: { schema: 'tenant-cutover-plan/v1' },
+      executionId: '2'.repeat(32),
+      context: {
+        namespace: 'commander',
+        release: 'commander',
+        image: `ghcr.io/commander/api@${image}`,
+        databaseSecretName: 'commander-database-bootstrap',
+        databaseSecretKeys: {
+          owner: 'owner-url',
+          app: 'app-url',
+          tenantAuthority: 'tenant-authority-url',
+          scheduler: 'scheduler-url',
+          worker: 'worker-url',
+          adapterOps: 'adapter-ops-url',
+        },
+        databaseTls: {
+          secretName: 'database-server-tls',
+          caKey: 'ca.crt',
+          expectedServerSpkiSha256: digest('d'),
+        },
+        proofCertificate: { secretName: 'api-proof-public', caKey: 'ca.crt', certKey: 'tls.crt' },
+        bootstrap: { kind: 'none' },
+      },
+    });
+
+    const serialized = canonicalBootstrapJson(bundle.job);
+    assert.match(serialized, /"emptyDir":\{\},"name":"tmp"/);
+    assert.match(serialized, /"mountPath":"\/tmp","name":"tmp"/);
+    assert.doesNotMatch(serialized, /COMMANDER_KUBERNETES_PROOF_RUNTIME/);
+  });
+
   it('pins Helm 3.17.3', () => {
     assert.throws(
       () =>
