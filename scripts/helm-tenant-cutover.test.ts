@@ -3163,6 +3163,7 @@ data: { owner-url: ${payload} }
     const serialized = canonicalBootstrapJson(bundle.job);
     assert.match(serialized, /"emptyDir":\{\},"name":"tmp"/);
     assert.match(serialized, /"mountPath":"\/tmp","name":"tmp"/);
+    assert.match(serialized, /"app\.kubernetes\.io\/component":"migration"/);
     assert.doesNotMatch(serialized, /COMMANDER_KUBERNETES_PROOF_RUNTIME/);
   });
 
