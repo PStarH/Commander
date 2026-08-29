@@ -2789,7 +2789,27 @@ export function commandFailureCode(
         ? kubectlCode
         : 'TENANT_CUTOVER_COMMAND_FAILED';
   if (!isAllowedHelmDiagnosticCode(code)) fail('TENANT_CUTOVER_COMMAND_FAILED');
+  if (program === 'helm') {
+    const diagnostic = classifyHelmFailure(stderr);
+    return diagnostic ? code + ':' + diagnostic : code;
+  }
   return code;
+}
+
+export function classifyHelmFailure(stderr: string): string | undefined {
+  const value = stderr.slice(-8_192);
+  const diagnostic = /post-render(?:er|ing)|post renderer/i.test(value)
+    ? 'HELM_POST_RENDERER_FAILED'
+    : /timed out waiting for the condition|context deadline exceeded|deadline exceeded/i.test(value)
+      ? 'HELM_UPGRADE_TIMEOUT'
+      : /hook .* failed|failed (?:pre|post)-(?:install|upgrade|rollback) hook/i.test(value)
+        ? 'HELM_HOOK_FAILED'
+        : /cannot patch|already exists|immutable|conflict/i.test(value)
+          ? 'HELM_RESOURCE_CONFLICT'
+          : /cluster unreachable|unable to connect to the server|forbidden/i.test(value)
+            ? 'HELM_KUBERNETES_API_FAILED'
+            : undefined;
+  return diagnostic && isAllowedHelmDiagnosticCode(diagnostic) ? diagnostic : undefined;
 }
 
 type CommandErrorEmitter = Pick<NodeJS.EventEmitter, 'on'>;
@@ -2824,6 +2844,7 @@ export async function defaultCommand(
     const kubectlCommand = program === 'kubectl' ? kubectlSubcommand(args).name : undefined;
     const canICheck = program === 'kubectl' && args.includes('auth') && args.includes('can-i');
     const captureStderr =
+      program === 'helm' ||
       (program === 'kubectl' && (kubectlCommand === 'logs' || kubectlCommand === 'create')) ||
       canICheck;
     const processGroup = process.platform !== 'win32';
@@ -2949,7 +2970,7 @@ export async function defaultCommand(
       clearTimeout(timeout);
       if (forceKill) clearTimeout(forceKill);
       resolveCommand(
-        canICheck || kubectlCommand === 'create'
+        program === 'helm' || canICheck || kubectlCommand === 'create'
           ? stdoutText
           : Buffer.concat([...output, ...errorOutput]).toString('utf8'),
       );
@@ -3667,6 +3688,10 @@ async function runProjectedHelmCommand(
       code === 'TENANT_CUTOVER_COMMAND_TERMINATION_UNCONFIRMED'
     ) {
       throw error;
+    }
+    const diagnostic = /^TENANT_CUTOVER_HELM_COMMAND_FAILED:([A-Z0-9_]+)$/.exec(code)?.[1];
+    if (diagnostic && isAllowedHelmDiagnosticCode(diagnostic)) {
+      return fail('TENANT_CUTOVER_HELM_COMMAND_FAILED:' + diagnostic);
     }
     return fail('TENANT_CUTOVER_HELM_COMMAND_FAILED');
   }
