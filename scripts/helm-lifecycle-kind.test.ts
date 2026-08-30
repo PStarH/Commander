@@ -854,6 +854,35 @@ describe('helm-lifecycle-kind helpers', () => {
     }
   });
 
+  it('classifies a failed migration Pod termination before Helm atomic cleanup', () => {
+    assert.deepEqual(
+      classifyRolloutFailureJson(
+        JSON.stringify({
+          kind: 'List',
+          items: [
+            {
+              kind: 'Pod',
+              metadata: {
+                name: 'tenant-migration-secret',
+                labels: { 'commander.io/migration-client-v2': 'true' },
+              },
+              status: {
+                phase: 'Failed',
+                containerStatuses: [{ state: { terminated: { reason: 'Error', exitCode: 1 } } }],
+              },
+            },
+          ],
+        }),
+      ),
+      {
+        code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+        resourceKind: 'Pod',
+        component: 'migration',
+        reasonCode: 'POD_CONTAINER_TERMINATED',
+      },
+    );
+  });
+
   it('maps migration and proof Pods from fixed labels rather than names', () => {
     const migration = classifyRolloutFailureJson(
       JSON.stringify({
