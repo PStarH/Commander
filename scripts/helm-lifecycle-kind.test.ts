@@ -136,6 +136,34 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(failureOutput(), /TENANT_CUTOVER_OWNER_JOB_FAILED/);
   });
 
+  it('launches the cutover CLI directly under the current Node runtime', () => {
+    const invocation = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        cutoverChildInvocation?: (
+          command: 'install' | 'enforce',
+          release: string,
+          values: string,
+        ) => { executable: string; args: string[] };
+      }
+    ).cutoverChildInvocation;
+    assert.equal(typeof invocation, 'function');
+
+    const child = invocation!('install', 'commander', '/private/values.yaml');
+
+    assert.equal(child.executable, process.execPath);
+    assert.deepEqual(child.args.slice(0, 2), ['--import', 'tsx']);
+    assert.match(child.args[2]!, /scripts[/\\]helm-tenant-cutover\.ts$/);
+    assert.deepEqual(child.args.slice(3), [
+      'install',
+      '--namespace',
+      'commander-lifecycle',
+      '--release',
+      'commander',
+      '--values',
+      '/private/values.yaml',
+    ]);
+  });
+
   it('separates bounded child-output segments before parsing diagnostics', () => {
     const collect = (
       lifecycleHarness as typeof lifecycleHarness & {
