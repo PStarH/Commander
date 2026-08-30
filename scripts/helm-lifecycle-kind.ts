@@ -3942,16 +3942,30 @@ async function runFailedRolloutRecovery(
   const release = scenarioRelease('cmdr-recovery');
   const assertions: AssertionResult[] = [];
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-recovery-'));
-  const databaseTarget = { namespace: NAMESPACE, statefulSet: `${release}-postgres` };
+  const databaseTarget = {
+    namespace: EXTERNAL_DATABASE_NAMESPACE,
+    statefulSet: 'external-postgres',
+  };
   let stage: LifecycleFailureStage = 'namespace-reset';
   try {
-    requireCommand(await kubectl(namespaceCleanupArgs(NAMESPACE)), 'NAMESPACE_RESET_FAILED');
+    for (const namespace of [NAMESPACE, EXTERNAL_DATABASE_NAMESPACE]) {
+      requireCommand(await kubectl(namespaceCleanupArgs(namespace)), 'NAMESPACE_RESET_FAILED');
+    }
     stage = 'namespace-create';
-    await createNamespace();
+    for (const namespace of [NAMESPACE, EXTERNAL_DATABASE_NAMESPACE]) {
+      await createNamespace(namespace);
+    }
     stage = 'certificate-material';
-    const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release);
+    const hostname = `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc.cluster.local`;
+    const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release, [
+      'external-postgres',
+      `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc`,
+      hostname,
+    ]);
     stage = 'tls-secrets';
-    await createLifecycleTlsSecrets(stateDirectory, NAMESPACE, release, 'postgres.key');
+    await createApiProofSecrets(stateDirectory, NAMESPACE, release, 'postgres.key');
+    stage = 'external-database-fixture';
+    const external = await createExternalDatabaseFixture({ directory: stateDirectory, release });
     stage = 'lifecycle-values';
     const values = resolve(stateDirectory, 'values.yaml');
     writeFileSync(
@@ -3964,6 +3978,15 @@ async function runFailedRolloutRecovery(
         logLevel: 'info',
         kubernetesApiServiceIp: kubernetesApiIp,
         kubernetesApiEndpointIp: kubernetesApiEndpoint,
+        database: {
+          kind: 'external' as const,
+          secretName: `${release}-database`,
+          caSecret: `${release}-database-ca`,
+          bootstrapAuthoritySecret: `${release}-bootstrap`,
+          serviceNamespace: EXTERNAL_DATABASE_NAMESPACE,
+          serviceName: 'external-postgres',
+          serviceClusterIp: external.serviceClusterIp,
+        },
       }),
       { mode: 0o600 },
     );
