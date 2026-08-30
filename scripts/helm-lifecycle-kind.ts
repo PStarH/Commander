@@ -1194,8 +1194,7 @@ const API_POD_STARTUP_FAILURE_RECORD = new RegExp(
     API_POD_TERMINATION_REASONS.join('|') +
     ');exit_code=([0-9]{1,3}))?;log_sha256=([a-f0-9]{64})(?=;|\\n|$)',
 );
-const SCENARIO_FAILURE_CODE =
-  /\b(?:COMMANDER|TASK1|TENANT_POLICY|TENANT_CUTOVER|HELM)_[A-Z0-9_]{1,80}\b/g;
+const FIXED_FAILURE_CODE = /\b[A-Z][A-Z0-9_]{1,95}\b/g;
 const LIFECYCLE_FAILURE_CODES = new Set([
   'API_DEPLOYMENT_NOT_AVAILABLE',
   'API_PROOF_SERVICE_INVALID',
@@ -1224,12 +1223,12 @@ const LIFECYCLE_FAILURE_CODES = new Set([
 
 function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   if (!error) return undefined;
-  const firstLine = error.split('\n', 1)[0] ?? '';
-  const fixedCode = firstLine.match(/^([A-Z][A-Z0-9_]{1,95})(?::|$)/)?.[1];
+  const boundedError = error.length <= 8_192 ? error : error.slice(0, 4_096) + error.slice(-4_096);
   const codes = [
     ...new Set([
-      ...(firstLine.match(SCENARIO_FAILURE_CODE) ?? []).filter(isAllowedHelmDiagnosticCode),
-      ...(fixedCode && LIFECYCLE_FAILURE_CODES.has(fixedCode) ? [fixedCode] : []),
+      ...(boundedError.match(FIXED_FAILURE_CODE) ?? []).filter(
+        (code) => isAllowedHelmDiagnosticCode(code) || LIFECYCLE_FAILURE_CODES.has(code),
+      ),
     ]),
   ].slice(0, 8);
   return codes.length > 0 ? codes : undefined;
