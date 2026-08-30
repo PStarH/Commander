@@ -2369,6 +2369,34 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|secret/i);
   });
 
+  it('retains an allowlisted child failure code after an untrusted tool prefix', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error: [
+            'tool-wrapper: private command context',
+            'TENANT_CUTOVER_OWNER_JOB_FAILED: postgres://owner:secret@database/commander',
+          ].join('\n'),
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, ['TENANT_CUTOVER_OWNER_JOB_FAILED']);
+    assert.doesNotMatch(JSON.stringify(sanitized), /tool-wrapper|private|postgres|secret/i);
+  });
+
   it('retains only a fixed lifecycle failure stage when a scenario error has no safe code', () => {
     const evidence = {
       generatedAt: '2024-01-01T00:00:00Z',
