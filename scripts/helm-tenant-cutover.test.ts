@@ -449,7 +449,7 @@ describe('Helm owner Job diagnostics', () => {
     ).commandExecutionTimeoutMs;
     assert.equal(typeof timeout, 'function');
     assert.equal(timeout!('standard'), 60_000);
-    assert.ok(timeout!('owner_job_wait') > 5 * 60_000);
+    assert.ok(timeout!('owner_job_wait') > 10 * 60_000);
     assert.ok(timeout!('helm_rollout') > 10 * 60_000);
     assert.ok(timeout!('proof_job_wait') > 10 * 60_000);
     assert.ok(timeout!('helm_rollout') <= 11 * 60_000);
@@ -3117,6 +3117,7 @@ data: { owner-url: ${payload} }
     assert.match(serialized, /"automountServiceAccountToken":false/);
     assert.match(serialized, /"emptyDir":\{\},"name":"tmp"/);
     assert.match(serialized, /"mountPath":"\/tmp","name":"tmp"/);
+    assert.equal((bundle.job.spec as Record<string, unknown>).activeDeadlineSeconds, 300);
     assert.match(serialized, /"app\.kubernetes\.io\/component":"tenant-authority-proof-reader"/);
     assert.match(serialized, /"commander\.io\/migration-client-v2":"true"/);
     assert.match(serialized, /"commander\.io\/migration-release":"commander"/);
@@ -3130,6 +3131,38 @@ data: { owner-url: ${payload} }
       (bundle.configMap.data as Record<string, string>)['request.json'],
       '{"schema":"tenant-cutover-request/v1"}\n',
     );
+  });
+
+  it('uses the configured migration deadline for owner bootstrap Jobs', () => {
+    const bundle = buildHelmOwnerJobBundle({
+      mode: 'tenant-cutover-append',
+      payload: { schema: 'tenant-cutover-request/v1' },
+      executionId: '3'.repeat(32),
+      context: {
+        namespace: 'commander',
+        release: 'commander',
+        image: `ghcr.io/commander/api@${image}`,
+        databaseSecretName: 'commander-database-bootstrap',
+        databaseSecretKeys: {
+          owner: 'owner-url',
+          app: 'app-url',
+          tenantAuthority: 'tenant-authority-url',
+          scheduler: 'scheduler-url',
+          worker: 'worker-url',
+          adapterOps: 'adapter-ops-url',
+        },
+        databaseTls: {
+          secretName: 'database-server-tls',
+          caKey: 'ca.crt',
+          expectedServerSpkiSha256: digest('d'),
+        },
+        proofCertificate: { secretName: 'api-proof-public', caKey: 'ca.crt', certKey: 'tls.crt' },
+        bootstrap: { kind: 'none' },
+        activeDeadlineSeconds: 600,
+      },
+    });
+
+    assert.equal((bundle.job.spec as Record<string, unknown>).activeDeadlineSeconds, 600);
   });
 
   it('mounts writable tmp for a non-proof owner Job', () => {
