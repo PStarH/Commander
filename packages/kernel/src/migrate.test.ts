@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import * as migrationEntrypoint from './migrate.js';
 import {
   isTask1OwnerCommandMode,
+  migrationPoolConfig,
   ownerMigrationPoolConfig,
   parseTask1ClosureMigrationPhase,
   resolveMigrationDatabaseUrl,
@@ -496,6 +497,16 @@ describe('kernel owner migration entrypoint', () => {
         query_timeout: 30_000,
       },
     );
+  });
+
+  it('bounds the chart migration Hook database waits before its Job deadline', () => {
+    const connectionString = 'postgres://owner:secret@db.internal/commander?sslmode=verify-full';
+
+    assert.deepEqual(
+      migrationPoolConfig('tenant-cutover-migrate', connectionString),
+      ownerMigrationPoolConfig(connectionString),
+    );
+    assert.deepEqual(migrationPoolConfig('migration', connectionString), { connectionString });
   });
 
   it('runs closure descriptors only for the explicit phase-bound action', () => {
