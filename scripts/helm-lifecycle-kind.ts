@@ -1013,6 +1013,7 @@ export type RolloutReasonCode =
   | 'POD_IMAGE_PULL_FAILED'
   | 'POD_CONTAINER_CONFIG_ERROR'
   | 'POD_CONTAINER_START_FAILED'
+  | 'POD_CONTAINER_TERMINATED'
   | 'POD_OOM_KILLED'
   | 'POD_CRASH_LOOP_BACKOFF';
 export type RolloutNonterminalReasonCode =
@@ -1076,6 +1077,7 @@ const ROLLOUT_REASON_CODES: readonly RolloutReasonCode[] = [
   'POD_IMAGE_PULL_FAILED',
   'POD_CONTAINER_CONFIG_ERROR',
   'POD_CONTAINER_START_FAILED',
+  'POD_CONTAINER_TERMINATED',
   'POD_OOM_KILLED',
   'POD_CRASH_LOOP_BACKOFF',
 ];
@@ -1085,7 +1087,7 @@ const ROLLOUT_NONTERMINAL_REASON_CODES: readonly RolloutNonterminalReasonCode[] 
   'POD_NOT_READY',
 ];
 const ROLLOUT_FAILURE_RECORD = new RegExp(
-  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_OOM_KILLED|POD_CRASH_LOOP_BACKOFF)(?=:code=|\\n|$)',
+  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_CONTAINER_TERMINATED|POD_OOM_KILLED|POD_CRASH_LOOP_BACKOFF)(?=:code=|\\n|$)',
 );
 const ROLLOUT_NONTERMINAL_RECORD = new RegExp(
   '(?:^|:)TENANT_CUTOVER_ROLLOUT_NONTERMINAL:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_UNAVAILABLE|JOB_ACTIVE|POD_NOT_READY)(?=\\n|$)',
@@ -1391,6 +1393,28 @@ function podLastTerminationReason(status: Record<string, unknown> | undefined): 
   return undefined;
 }
 
+function podHasNonzeroTermination(status: Record<string, unknown> | undefined): boolean {
+  for (const field of ['initContainerStatuses', 'containerStatuses'] as const) {
+    const containers = jsonArray(status?.[field]);
+    if (!containers) continue;
+    for (const candidate of containers) {
+      const container = jsonRecord(candidate);
+      const state = jsonRecord(container?.state);
+      const terminated = jsonRecord(state?.terminated);
+      const exitCode = terminated?.exitCode;
+      if (
+        typeof exitCode === 'number' &&
+        Number.isInteger(exitCode) &&
+        exitCode > 0 &&
+        exitCode <= 255
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /** Extracts the fixed, non-sensitive termination facts for the API container only. */
 export function apiPodTerminationFacts(status: unknown): ApiPodTerminationFacts | undefined {
   const containerStatuses = jsonArray(jsonRecord(status)?.containerStatuses);
@@ -1417,6 +1441,7 @@ export function apiPodTerminationFacts(status: unknown): ApiPodTerminationFacts 
 function rolloutReasonForItem(
   resourceKind: RolloutResourceKind,
   status: Record<string, unknown> | undefined,
+  component?: RolloutComponent,
 ): RolloutReasonCode | undefined {
   if (resourceKind === 'Deployment') {
     return conditionReason(status, 'Progressing', 'False') === 'ProgressDeadlineExceeded'
@@ -1431,6 +1456,9 @@ function rolloutReasonForItem(
   }
   if (conditionReason(status, 'PodScheduled', 'False') === 'Unschedulable') {
     return 'POD_UNSCHEDULABLE';
+  }
+  if (component === 'migration' && status?.phase === 'Failed' && podHasNonzeroTermination(status)) {
+    return 'POD_CONTAINER_TERMINATED';
   }
   switch (podWaitingReason(status)) {
     case 'ErrImagePull':
@@ -1478,7 +1506,7 @@ function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | un
   const item = jsonRecord(value);
   if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
   const component = rolloutComponent(jsonRecord(item.metadata));
-  const reasonCode = rolloutReasonForItem(item.kind, jsonRecord(item.status));
+  const reasonCode = rolloutReasonForItem(item.kind, jsonRecord(item.status), component);
   if (!component || !reasonCode) return undefined;
   return {
     code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
@@ -1514,14 +1542,16 @@ function rolloutFailurePriority(value: RolloutFailureEvidence): number {
       return 2;
     case 'POD_CONTAINER_START_FAILED':
       return 3;
-    case 'POD_CRASH_LOOP_BACKOFF':
+    case 'POD_CONTAINER_TERMINATED':
       return 4;
-    case 'JOB_DEADLINE_EXCEEDED':
+    case 'POD_CRASH_LOOP_BACKOFF':
       return 5;
-    case 'JOB_BACKOFF_LIMIT_EXCEEDED':
+    case 'JOB_DEADLINE_EXCEEDED':
       return 6;
-    case 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED':
+    case 'JOB_BACKOFF_LIMIT_EXCEEDED':
       return 7;
+    case 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED':
+      return 8;
   }
 }
 
