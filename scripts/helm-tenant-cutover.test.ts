@@ -46,6 +46,20 @@ const chart = digest('b');
 const nonce = 'n'.repeat(43);
 
 describe('Helm owner Job diagnostics', () => {
+  it('writes a CLI failure through the supplied terminal reporter', () => {
+    const report = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        reportCutoverCliFailure?: (error: unknown, write: (line: string) => void) => void;
+      }
+    ).reportCutoverCliFailure;
+    assert.equal(typeof report, 'function');
+    const lines: string[] = [];
+
+    report!(new Error('TENANT_CUTOVER_OWNER_JOB_FAILED'), (line) => lines.push(line));
+
+    assert.deepEqual(lines, ['TENANT_CUTOVER_OWNER_JOB_FAILED\n']);
+  });
+
   it('converts command stdout failures into controlled termination', () => {
     const stdout = new EventEmitter();
     let terminations = 0;

@@ -1,6 +1,7 @@
 #!/usr/bin/env tsx
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { spawn as launchProcess } from 'node:child_process';
+import { writeSync } from 'node:fs';
 import { chmod, cp, mkdir, mkdtemp, open, readFile, rename, rm, unlink } from 'node:fs/promises';
 import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -5493,6 +5494,10 @@ async function main(): Promise<void> {
   );
 }
 
+export function reportCutoverCliFailure(error: unknown, write: (line: string) => void): void {
+  write((error instanceof Error ? error.message : 'TENANT_CUTOVER_FAILED') + '\n');
+}
+
 if (process.argv[1]?.match(/helm-tenant-cutover\.(?:ts|js)$/)) {
   const invocation = process.argv.slice(2);
   const run =
@@ -5503,7 +5508,13 @@ if (process.argv[1]?.match(/helm-tenant-cutover\.(?:ts|js)$/)) {
         }
       : main;
   run().catch((error) => {
-    process.stderr.write((error instanceof Error ? error.message : 'TENANT_CUTOVER_FAILED') + '\n');
+    reportCutoverCliFailure(error, (line) => {
+      try {
+        writeSync(2, line);
+      } catch {
+        process.stderr.write(line);
+      }
+    });
     process.exitCode = 1;
   });
 }
