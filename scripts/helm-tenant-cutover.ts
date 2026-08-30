@@ -135,6 +135,8 @@ export interface HelmOwnerExecutionContext {
     expectedServerSpkiSha256: string;
   };
   proofCertificate: { secretName: string; caKey: string; certKey: string };
+  /** Owner bootstrap includes lifecycle initialization; use the chart migration budget. */
+  activeDeadlineSeconds?: number;
   proofRuntime?: { caKey: string; releaseProjectionConfigMap: string };
   bootstrap:
     | { kind: 'none' }
@@ -1141,6 +1143,10 @@ export function createHelmOwnerExecutionContext(input: {
   const postgres = yamlRecord(database.postgres);
   const databaseTls = yamlRecord(root.databaseTls);
   const tenantAuthority = yamlRecord(root.tenantAuthority);
+  const migration =
+    root.migration && typeof root.migration === 'object' && !Array.isArray(root.migration)
+      ? yamlRecord(root.migration)
+      : {};
   const apiProof = yamlRecord(tenantAuthority.apiProof);
   const repository = image.repository;
   const digest = apiImageDigest(input.values);
@@ -1154,6 +1160,10 @@ export function createHelmOwnerExecutionContext(input: {
   const bundled = postgres.bundled === true;
   const tlsSecretName = configuredName(bundled ? databaseTls.existingSecret : databaseTls.caSecret);
   const expectedServerSpkiSha256 = databaseTls.expectedServerSpkiSha256;
+  const activeDeadlineSeconds = migration.activeDeadlineSeconds ?? 300;
+  if (!Number.isSafeInteger(activeDeadlineSeconds) || Number(activeDeadlineSeconds) <= 0) {
+    fail('TENANT_CUTOVER_VALUES_INVALID');
+  }
   if (typeof expectedServerSpkiSha256 !== 'string' || !SHA256.test(expectedServerSpkiSha256)) {
     fail('TENANT_CUTOVER_VALUES_INVALID');
   }
@@ -1214,6 +1224,7 @@ export function createHelmOwnerExecutionContext(input: {
       caKey: configuredSecretKey(apiProof.caKey, 'ca.crt'),
       certKey: configuredSecretKey(apiProof.certKey, 'tls.crt'),
     },
+    activeDeadlineSeconds: Number(activeDeadlineSeconds),
     proofRuntime,
     bootstrap,
   };
@@ -2642,7 +2653,7 @@ export function buildHelmOwnerJobBundle(input: {
       metadata: { name: jobName, namespace: input.context.namespace, labels },
       spec: {
         backoffLimit: 0,
-        activeDeadlineSeconds: 300,
+        activeDeadlineSeconds: input.context.activeDeadlineSeconds ?? 300,
         template: {
           metadata: { labels },
           spec: {
@@ -2700,7 +2711,7 @@ export function commandExecutionTimeoutMs(policy: CommandExecutionPolicy | strin
     policy === 'standard' || policy === 'helm_read'
       ? 60_000
       : policy === 'owner_job_wait'
-        ? 5 * 60_000 + COMMAND_TIMEOUT_MARGIN_MS
+        ? 10 * 60_000 + COMMAND_TIMEOUT_MARGIN_MS
         : policy === 'helm_rollout' || policy === 'proof_job_wait'
           ? 10 * 60_000 + COMMAND_TIMEOUT_MARGIN_MS
           : fail('TENANT_CUTOVER_COMMAND_TIMEOUT_POLICY_INVALID');
@@ -4441,6 +4452,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       }
       try {
         const ownerJob = 'job/' + bundle.jobName;
+        const ownerDeadlineSeconds = context.activeDeadlineSeconds ?? 300;
         await command(
           'kubectl',
           [
@@ -4449,7 +4461,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             ownerJob,
             '--namespace',
             context.namespace,
-            '--timeout=5m',
+            '--timeout=' + ownerDeadlineSeconds + 's',
           ],
           undefined,
           'owner_job_wait',
