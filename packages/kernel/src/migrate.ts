@@ -123,7 +123,12 @@ export function resolveMigrationDatabaseUrl(env: NodeJS.ProcessEnv): string | un
 
 /** Keep lifecycle owner Jobs bounded when database connection or query waits stop progressing. */
 export function ownerMigrationPoolConfig(connectionString: string): VerifiedPostgresPoolInput {
-  return { connectionString, connectionTimeoutMillis: 5_000, query_timeout: 30_000 };
+  return {
+    connectionString,
+    connectionTimeoutMillis: 5_000,
+    query_timeout: 30_000,
+    lock_timeout: 30_000,
+  };
 }
 
 /** Keep every lifecycle migration path bounded independently of the Kubernetes Job deadline. */

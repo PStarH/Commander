@@ -495,6 +495,7 @@ describe('kernel owner migration entrypoint', () => {
         connectionString: 'postgres://owner:secret@db.internal/commander?sslmode=verify-full',
         connectionTimeoutMillis: 5_000,
         query_timeout: 30_000,
+        lock_timeout: 30_000,
       },
     );
   });
