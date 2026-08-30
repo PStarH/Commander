@@ -3207,6 +3207,32 @@ async function captureApiPodStartupFailure(
   return parseApiPodStartupFailureEvidence('TENANT_CUTOVER_API_POD_STARTUP_FAILED:' + diagnostic);
 }
 
+const CUTOVER_CHILD_FAILURE_OUTPUT_BYTES = 4_096;
+
+export function captureCutoverChildFailureOutput(
+  child: Pick<ChildProcess, 'stdout' | 'stderr'>,
+): () => string {
+  let head = Buffer.alloc(0);
+  let tail = Buffer.alloc(0);
+  const capture = (chunk: Buffer | string) => {
+    const output = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    if (head.length < CUTOVER_CHILD_FAILURE_OUTPUT_BYTES) {
+      head = Buffer.concat([
+        head,
+        output.subarray(0, CUTOVER_CHILD_FAILURE_OUTPUT_BYTES - head.length),
+      ]);
+    }
+    const nextTail =
+      output.length >= CUTOVER_CHILD_FAILURE_OUTPUT_BYTES
+        ? output.subarray(-CUTOVER_CHILD_FAILURE_OUTPUT_BYTES)
+        : Buffer.concat([tail, output]).subarray(-CUTOVER_CHILD_FAILURE_OUTPUT_BYTES);
+    tail = Buffer.from(nextTail);
+  };
+  child.stdout?.on('data', capture);
+  child.stderr?.on('data', capture);
+  return () => Buffer.concat([head, Buffer.from('\n'), tail]).toString('utf8');
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -3233,14 +3259,13 @@ async function runCutoverCommand(
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  const cutoverFailureOutput = captureCutoverChildFailureOutput(child);
   let finished = false;
   let exitCode = -1;
   const completion = awaitChildExit(child).then((code) => {
     exitCode = code;
     finished = true;
   });
-  const stderr: Buffer[] = [];
-  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
   let rolloutObservation: RolloutObservationState | undefined;
   let apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
   while (!finished) {
@@ -3251,7 +3276,7 @@ async function runCutoverCommand(
   }
   await completion;
   if (exitCode !== 0) {
-    const childFailure = Buffer.concat(stderr).toString('utf8');
+    const childFailure = cutoverFailureOutput();
     const childCodes = scenarioFailureCodes(childFailure) ?? [];
     const ownerFailure = parseOwnerFailureEvidence(childFailure);
     const failureCodes = [...new Set(['HELM_TENANT_CUTOVER_FAILED', ...childCodes])];
