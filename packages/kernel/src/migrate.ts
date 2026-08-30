@@ -126,6 +126,16 @@ export function ownerMigrationPoolConfig(connectionString: string): VerifiedPost
   return { connectionString, connectionTimeoutMillis: 5_000, query_timeout: 30_000 };
 }
 
+/** Keep every lifecycle migration path bounded independently of the Kubernetes Job deadline. */
+export function migrationPoolConfig(
+  action: string | undefined,
+  connectionString: string,
+): VerifiedPostgresPoolInput {
+  return isTask1OwnerCommandMode(action) || action === 'tenant-cutover-migrate'
+    ? ownerMigrationPoolConfig(connectionString)
+    : { connectionString };
+}
+
 const MIGRATION_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+\.[a-z0-9_]+$/;
 const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
 export const OWNER_MIGRATION_FAILURE_STAGES = [
@@ -847,11 +857,7 @@ async function main() {
     const activePool = await atOwnerMigrationFailureStage('owner_pool_configuration', async () => {
       const databaseUrl = resolveMigrationDatabaseUrl(process.env);
       if (!databaseUrl) throw new Error('COMMANDER_MIGRATION_FAILED');
-      return createVerifiedPostgresPool(
-        isTask1OwnerCommandMode(action)
-          ? ownerMigrationPoolConfig(databaseUrl)
-          : { connectionString: databaseUrl },
-      );
+      return createVerifiedPostgresPool(migrationPoolConfig(action, databaseUrl));
     });
     pool = activePool;
     if (isTask1OwnerCommandMode(action)) {
