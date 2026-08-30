@@ -820,6 +820,33 @@ describe('Helm owner Job diagnostics', () => {
     );
   });
 
+  it('retains the last allowlisted owner stage when a deadline removes the Pod logs', () => {
+    const diagnostic = (
+      helmTenantCutover as typeof helmTenantCutover & {
+        ownerJobFailureDiagnostic?: (
+          logs: string,
+          transport?: 'kubectl_logs' | 'kubectl_logs_unavailable',
+        ) => string;
+      }
+    ).ownerJobFailureDiagnostic;
+    assert.equal(typeof diagnostic, 'function');
+
+    const result = diagnostic!(
+      [
+        'private SQL and postgres://owner:secret@db/commander',
+        'COMMANDER_MIGRATION_PROGRESS;owner_stage=lifecycle_transaction',
+        'TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE',
+      ].join('\n'),
+      'kubectl_logs_unavailable',
+    );
+
+    assert.match(
+      result,
+      /^code=TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;owner_stage=lifecycle_transaction;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.doesNotMatch(result, /postgres|secret|private|SQL/i);
+  });
+
   it('classifies an owner Job that created no Pod without retaining Pod output', () => {
     const classify = (
       helmTenantCutover as typeof helmTenantCutover & {
@@ -983,6 +1010,83 @@ describe('Helm owner Job diagnostics', () => {
       else process.env.PATH = previousPath;
       await rm(root, { recursive: true, force: true });
     }
+  });
+
+  it('captures owner progress before a deadline removes the Job Pod logs', async () => {
+    let jobRunning = true;
+    let progressReads = 0;
+    const ports = helmTenantCutover.createNodePorts({
+      command: async (_program, args, stdin) => {
+        if (args[0] === 'create') {
+          const object = JSON.parse(stdin ?? '{}') as {
+            kind?: string;
+            metadata?: { name?: string };
+          };
+          return (
+            (object.kind === 'ConfigMap' ? 'configmap/' : 'job.batch/') + object.metadata?.name
+          );
+        }
+        if (args[0] === 'wait') {
+          return new Promise<string>((_resolveWait, rejectWait) => {
+            setTimeout(() => {
+              jobRunning = false;
+              rejectWait(new Error('deadline exceeded'));
+            }, 6_500);
+          });
+        }
+        if (args[0] === 'logs') {
+          if (jobRunning) {
+            progressReads += 1;
+            return 'COMMANDER_MIGRATION_PROGRESS;owner_stage=lifecycle_transaction\n';
+          }
+          throw new Error('pod removed');
+        }
+        if (args[0] === 'get' && args[1] === 'pods') return JSON.stringify({ items: [] });
+        return '';
+      },
+    });
+    let ownerError = '';
+    await assert.rejects(
+      () =>
+        ports.owner.plan(
+          {},
+          {
+            namespace: 'commander',
+            release: 'commander',
+            image: 'registry.example/commander@' + image,
+            databaseSecretName: 'commander-database',
+            databaseSecretKeys: {
+              owner: 'owner-url',
+              app: 'app-url',
+              tenantAuthority: 'tenant-authority-url',
+              scheduler: 'scheduler-url',
+              worker: 'worker-url',
+              adapterOps: 'adapter-ops-url',
+            },
+            databaseTls: {
+              secretName: 'commander-database-tls',
+              caKey: 'ca.crt',
+              expectedServerSpkiSha256: digest('c'),
+            },
+            proofCertificate: {
+              secretName: 'commander-api-proof',
+              caKey: 'ca.crt',
+              certKey: 'tls.crt',
+            },
+            bootstrap: { kind: 'none' },
+          },
+        ),
+      (error: unknown) => {
+        ownerError = error instanceof Error ? error.message : String(error);
+        return true;
+      },
+    );
+    assert.equal(progressReads, 1);
+    assert.match(
+      ownerError,
+      /TENANT_CUTOVER_OWNER_JOB_FAILED:code=TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;owner_stage=lifecycle_transaction;log_sha256=[a-f0-9]{64}/,
+    );
+    assert.doesNotMatch(ownerError, /postgres:|secret|private|SQL/i);
   });
 
   it('keeps owner Job failure diagnostics free of new scanner high findings', async () => {

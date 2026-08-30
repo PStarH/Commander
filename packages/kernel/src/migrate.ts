@@ -184,6 +184,13 @@ function isOwnerMigrationFailureStage(value: unknown): value is OwnerMigrationFa
   );
 }
 
+/** Emit a fixed progress marker that the Helm owner can retain without exposing migration output. */
+export function ownerMigrationProgressRecord(ownerStage: OwnerMigrationFailureStage): string {
+  return 'COMMANDER_MIGRATION_PROGRESS;owner_stage=' + ownerStage;
+}
+
+let ownerMigrationProgressReporter: ((ownerStage: OwnerMigrationFailureStage) => void) | undefined;
+
 function isTask1CatalogCollectionStep(value: unknown): boolean {
   return (
     typeof value === 'string' &&
@@ -235,6 +242,7 @@ async function atOwnerMigrationFailureStage<T>(
   ownerStage: OwnerMigrationFailureStage,
   operation: () => Promise<T>,
 ): Promise<T> {
+  ownerMigrationProgressReporter?.(ownerStage);
   try {
     return await operation();
   } catch (error) {
@@ -858,6 +866,10 @@ export async function readTask1OwnerInput(
 async function main() {
   let pool: Pool | undefined;
   const action = process.argv[2];
+  const previousOwnerMigrationProgressReporter = ownerMigrationProgressReporter;
+  ownerMigrationProgressReporter = (ownerStage) => {
+    process.stderr.write(ownerMigrationProgressRecord(ownerStage) + '\n');
+  };
   try {
     const activePool = await atOwnerMigrationFailureStage('owner_pool_configuration', async () => {
       const databaseUrl = resolveMigrationDatabaseUrl(process.env);
@@ -918,6 +930,7 @@ async function main() {
     console.error('Migration failed: ' + migrationFailureDiagnostic(error));
     process.exit(1);
   } finally {
+    ownerMigrationProgressReporter = previousOwnerMigrationProgressReporter;
     await pool?.end();
   }
 }
