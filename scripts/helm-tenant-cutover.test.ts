@@ -18,6 +18,7 @@ import {
 } from '../packages/kernel/src/migrations.js';
 import {
   buildHelmOwnerJobBundle,
+  createHelmOwnerExecutionContext,
   buildHelmRolloutArgs,
   buildHelmTransportBootstrapArgs,
   assertManagedFieldsMatch,
@@ -3163,6 +3164,19 @@ data: { owner-url: ${payload} }
     });
 
     assert.equal((bundle.job.spec as Record<string, unknown>).activeDeadlineSeconds, 600);
+  });
+
+  it('uses the chart migration deadline when caller values omit migration defaults', () => {
+    const values = dump(releaseProjection('1').rendererInput.values);
+    const context = createHelmOwnerExecutionContext({
+      values,
+      namespace: 'commander',
+      release: 'commander',
+      command: 'enforce',
+      databaseSecretName: 'commander-database',
+    });
+
+    assert.equal(context.activeDeadlineSeconds, 600);
   });
 
   it('mounts writable tmp for a non-proof owner Job', () => {

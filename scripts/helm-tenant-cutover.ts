@@ -1160,7 +1160,8 @@ export function createHelmOwnerExecutionContext(input: {
   const bundled = postgres.bundled === true;
   const tlsSecretName = configuredName(bundled ? databaseTls.existingSecret : databaseTls.caSecret);
   const expectedServerSpkiSha256 = databaseTls.expectedServerSpkiSha256;
-  const activeDeadlineSeconds = migration.activeDeadlineSeconds ?? 300;
+  // The owner context receives the caller's values file, which may omit chart defaults.
+  const activeDeadlineSeconds = migration.activeDeadlineSeconds ?? 600;
   if (!Number.isSafeInteger(activeDeadlineSeconds) || Number(activeDeadlineSeconds) <= 0) {
     fail('TENANT_CUTOVER_VALUES_INVALID');
   }
