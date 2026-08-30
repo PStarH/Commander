@@ -120,6 +120,41 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(await exit, 1);
   });
 
+  it('collects a cutover diagnostic written to child stdout', () => {
+    const collect = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        captureCutoverChildFailureOutput?: (child: ChildProcess) => () => string;
+      }
+    ).captureCutoverChildFailureOutput;
+    assert.equal(typeof collect, 'function');
+    const stdout = new PassThrough();
+    const child = Object.assign(new EventEmitter(), { stdout }) as ChildProcess;
+    const failureOutput = collect!(child);
+
+    stdout.end('private wrapper detail\nTENANT_CUTOVER_OWNER_JOB_FAILED\n');
+
+    assert.match(failureOutput(), /TENANT_CUTOVER_OWNER_JOB_FAILED/);
+  });
+
+  it('separates bounded child-output segments before parsing diagnostics', () => {
+    const collect = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        captureCutoverChildFailureOutput?: (child: ChildProcess) => () => string;
+      }
+    ).captureCutoverChildFailureOutput;
+    assert.equal(typeof collect, 'function');
+    const stdout = new PassThrough();
+    const child = Object.assign(new EventEmitter(), { stdout }) as ChildProcess;
+    const failureOutput = collect!(child);
+    const prefix = 'TENANT_CUTOVER_';
+    const suffix = 'OWNER_JOB_FAILED';
+
+    stdout.write('x'.repeat(4_096 - prefix.length) + prefix);
+    stdout.end(suffix + 'x'.repeat(4_096 - suffix.length));
+
+    assert.doesNotMatch(failureOutput(), /TENANT_CUTOVER_OWNER_JOB_FAILED/);
+  });
+
   it('fails closed before invalid Helm values reach network prerequisites', () => {
     const materialize = (
       lifecycleHarness as typeof lifecycleHarness & {
