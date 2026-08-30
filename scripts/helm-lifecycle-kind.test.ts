@@ -1744,6 +1744,26 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.throws(() => selectLifecycleScenarios('external-postgres'), /KIND_SCENARIO_INVALID/);
   });
 
+  it('keeps failed-rollout recovery state outside the atomic Helm release', () => {
+    const source = readFileSync(resolve(__dirname, 'helm-lifecycle-kind.ts'), 'utf8');
+    const recoveryStart = source.indexOf('async function runFailedRolloutRecovery(');
+    const recoveryEnd = source.indexOf('\nconst SCENARIO_EVIDENCE_NAMES', recoveryStart);
+    assert.ok(recoveryStart >= 0 && recoveryEnd > recoveryStart);
+    const recovery = source.slice(recoveryStart, recoveryEnd);
+
+    assert.match(
+      recovery,
+      /const databaseTarget = \{\s*namespace: EXTERNAL_DATABASE_NAMESPACE,\s*statefulSet: 'external-postgres',\s*\};/,
+    );
+    assert.match(recovery, /for \(const namespace of \[NAMESPACE, EXTERNAL_DATABASE_NAMESPACE\]\)/);
+    assert.match(
+      recovery,
+      /const external = await createExternalDatabaseFixture\(\{ directory: stateDirectory, release \}\);/,
+    );
+    assert.match(recovery, /database: \{\n          kind: 'external' as const,/);
+    assert.doesNotMatch(recovery, /statefulSet: `\$\{release\}-postgres`/);
+  });
+
   it('fails the top-level harness when any selected scenario fails', () => {
     assert.equal(aggregateScenarioPass([{ passed: true }, { passed: false }]), false);
     assert.equal(aggregateScenarioPass([{ passed: true }, { passed: true }]), true);
