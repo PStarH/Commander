@@ -3263,6 +3263,28 @@ export function captureCutoverChildFailureOutput(
   return () => Buffer.concat([head, Buffer.from('\n'), tail]).toString('utf8');
 }
 
+export function cutoverChildInvocation(
+  command: 'install' | 'enforce',
+  release: string,
+  values: string,
+): { executable: string; args: string[] } {
+  return {
+    executable: process.execPath,
+    args: [
+      '--import',
+      'tsx',
+      resolve(__dirname, 'helm-tenant-cutover.ts'),
+      command,
+      '--namespace',
+      NAMESPACE,
+      '--release',
+      release,
+      '--values',
+      values,
+    ],
+  };
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -3271,19 +3293,8 @@ async function runCutoverCommand(
   const valuesText = readFileSync(values, 'utf8');
   const digest = valuesText.match(/^\s*digest:\s*(sha256:[a-f0-9]{64})\s*$/m)?.[1];
   if (!digest) throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
-  const args = [
-    'exec',
-    'tsx',
-    'scripts/helm-tenant-cutover.ts',
-    command,
-    '--namespace',
-    NAMESPACE,
-    '--release',
-    release,
-    '--values',
-    values,
-  ];
-  const child = spawn('pnpm', args, {
+  const invocation = cutoverChildInvocation(command, release, values);
+  const child = spawn(invocation.executable, invocation.args, {
     cwd: rootDir(),
     env: process.env,
     shell: false,
