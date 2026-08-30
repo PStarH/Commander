@@ -2432,6 +2432,35 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /tool-wrapper|private|postgres|secret/i);
   });
 
+  it('retains the fixed database peer-binding failure without child output', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_DATABASE_PEER_INPUT_INVALID:postgres://owner:secret@database/commander',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, [
+      'HELM_TENANT_CUTOVER_FAILED',
+      'TENANT_CUTOVER_DATABASE_PEER_INPUT_INVALID',
+    ]);
+    assert.doesNotMatch(JSON.stringify(sanitized), /postgres:\/\/owner:secret@database/i);
+  });
+
   it('retains only a fixed lifecycle failure stage when a scenario error has no safe code', () => {
     const evidence = {
       generatedAt: '2024-01-01T00:00:00Z',
