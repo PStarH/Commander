@@ -1111,6 +1111,19 @@ describe('helm-lifecycle-kind helpers', () => {
         logSha256: '9'.repeat(64),
       },
     );
+    assert.deepEqual(
+      parseOwnerFailureEvidence(
+        'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_OWNER_JOB_FAILED:code=TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE;producer=owner_entrypoint;transport=kubectl_logs_unavailable;owner_stage=lifecycle_transaction;log_sha256=' +
+          'a'.repeat(64),
+      ),
+      {
+        code: 'TENANT_CUTOVER_OWNER_JOB_POD_UNAVAILABLE',
+        producer: 'owner_entrypoint',
+        transport: 'kubectl_logs_unavailable',
+        ownerStage: 'lifecycle_transaction',
+        logSha256: 'a'.repeat(64),
+      },
+    );
     for (const ownerStage of [
       'lifecycle_pinned_manifest_validation',
       'lifecycle_prepared_request_validation',

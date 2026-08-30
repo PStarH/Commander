@@ -245,14 +245,29 @@ const OWNER_MIGRATION_ORIGIN_CLASSIFICATION_STEP =
   '(fresh_catalog_shape|role_envelope|role_attributes|memberships|public_acl)';
 const OWNER_MIGRATION_PROOF_RECORD =
   /\bCOMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=(TENANT_CUTOVER_KUBERNETES_PROOF_INVALID);proof_invariant=(task1KubernetesProofObserver\.(?:ts|js):[1-9][0-9]*:[1-9][0-9]*)\b/g;
+const OWNER_MIGRATION_PROGRESS_RECORD = new RegExp(
+  '\\bCOMMANDER_MIGRATION_PROGRESS;owner_stage=' + OWNER_MIGRATION_FAILURE_STAGE + '\\b',
+  'g',
+);
+const OWNER_MIGRATION_PROGRESS_STAGE = new RegExp('^' + OWNER_MIGRATION_FAILURE_STAGE + '$');
+
+function ownerJobProgressStage(logs: string): string | undefined {
+  return [...logs.slice(-4_096).matchAll(OWNER_MIGRATION_PROGRESS_RECORD)].at(-1)?.[1];
+}
 
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(
   logs: string,
   transport: 'kubectl_logs' | 'kubectl_logs_unavailable' = 'kubectl_logs',
+  retainedProgressStage?: string,
 ): string {
   const tail = logs.slice(-4_096);
   const proofDiagnostic = [...tail.matchAll(OWNER_MIGRATION_PROOF_RECORD)].at(-1);
+  const progressStage =
+    ownerJobProgressStage(tail) ??
+    (retainedProgressStage && OWNER_MIGRATION_PROGRESS_STAGE.test(retainedProgressStage)
+      ? retainedProgressStage
+      : undefined);
   const migrationDiagnostic = [
     ...tail.matchAll(
       new RegExp(
@@ -334,7 +349,13 @@ export function ownerJobFailureDiagnostic(
       : snapshotDiagnostic + ';log_sha256=' + digest;
   }
   return (
-    'code=' + code + ';producer=owner_entrypoint;transport=' + transport + ';log_sha256=' + digest
+    'code=' +
+    code +
+    ';producer=owner_entrypoint;transport=' +
+    transport +
+    (progressStage ? ';owner_stage=' + progressStage : '') +
+    ';log_sha256=' +
+    digest
   );
 }
 
@@ -4037,6 +4058,74 @@ async function ownerJobPodFailureCodeFromCluster(
   return podFailureCodeFromCluster(command, namespace, selector, ownerJobPodFailureCode);
 }
 
+const OWNER_JOB_PROGRESS_POLL_INTERVAL_MS = 5_000;
+
+type OwnerJobWaitOutcome = { complete: true; error?: unknown } | { complete: false };
+type OwnerJobCompletion =
+  | { completed: true; lastProgressStage?: string }
+  | { completed: false; error: unknown; lastProgressStage?: string };
+
+async function waitForOwnerJobCompletion(
+  command: HelmCommandPort,
+  ownerJob: string,
+  namespace: string,
+  timeoutSeconds: number,
+): Promise<OwnerJobCompletion> {
+  const completion: Promise<OwnerJobWaitOutcome> = command(
+    'kubectl',
+    [
+      'wait',
+      '--for=condition=complete',
+      ownerJob,
+      '--namespace',
+      namespace,
+      '--timeout=' + timeoutSeconds + 's',
+    ],
+    undefined,
+    'owner_job_wait',
+  ).then(
+    () => ({ complete: true }),
+    (error) => ({ complete: true, error }),
+  );
+  let lastProgressStage: string | undefined;
+
+  for (;;) {
+    let pollTimer: NodeJS.Timeout | undefined;
+    const outcome = await Promise.race([
+      completion,
+      new Promise<OwnerJobWaitOutcome>((resolvePoll) => {
+        pollTimer = setTimeout(
+          () => resolvePoll({ complete: false }),
+          OWNER_JOB_PROGRESS_POLL_INTERVAL_MS,
+        );
+      }),
+    ]);
+    if (pollTimer) clearTimeout(pollTimer);
+    if (outcome.complete) {
+      return 'error' in outcome
+        ? {
+            completed: false,
+            error: outcome.error,
+            ...(lastProgressStage ? { lastProgressStage } : {}),
+          }
+        : { completed: true, ...(lastProgressStage ? { lastProgressStage } : {}) };
+    }
+    try {
+      const logs = await command('kubectl', [
+        'logs',
+        ownerJob,
+        '--namespace',
+        namespace,
+        '--tail=8',
+        '--pod-running-timeout=1s',
+      ]);
+      lastProgressStage = ownerJobProgressStage(logs) ?? lastProgressStage;
+    } catch {
+      // The Job may not have scheduled a Pod yet. Retain the last parsed safe stage.
+    }
+  }
+}
+
 async function proofHookPodFailureCodeFromCluster(
   command: HelmCommandPort,
   namespace: string,
@@ -4451,22 +4540,18 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
       if (createdJob !== 'job.batch/' + bundle.jobName) {
         fail('TENANT_CUTOVER_OWNER_JOB_CREATE_FAILED');
       }
+      let lastProgressStage: string | undefined;
       try {
         const ownerJob = 'job/' + bundle.jobName;
         const ownerDeadlineSeconds = context.activeDeadlineSeconds ?? 300;
-        await command(
-          'kubectl',
-          [
-            'wait',
-            '--for=condition=complete',
-            ownerJob,
-            '--namespace',
-            context.namespace,
-            '--timeout=' + ownerDeadlineSeconds + 's',
-          ],
-          undefined,
-          'owner_job_wait',
+        const ownerCompletion = await waitForOwnerJobCompletion(
+          command,
+          ownerJob,
+          context.namespace,
+          ownerDeadlineSeconds,
         );
+        lastProgressStage = ownerCompletion.lastProgressStage;
+        if (!ownerCompletion.completed) throw ownerCompletion.error;
       } catch {
         const ownerJob = 'job/' + bundle.jobName;
         let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
@@ -4487,7 +4572,10 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             bundle.selector,
           );
         }
-        fail('TENANT_CUTOVER_OWNER_JOB_FAILED:' + ownerJobFailureDiagnostic(logs, logTransport));
+        fail(
+          'TENANT_CUTOVER_OWNER_JOB_FAILED:' +
+            ownerJobFailureDiagnostic(logs, logTransport, lastProgressStage),
+        );
       }
       const output = (
         await command('kubectl', [

@@ -1183,7 +1183,9 @@ const OWNER_FAILURE_RECORD = new RegExp(
     ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
 const GENERIC_OWNER_FAILURE_RECORD = new RegExp(
-  '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]{1,80});producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);log_sha256=([a-f0-9]{64})(?=\\n|$)',
+  '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]{1,80});producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)(?:;owner_stage=' +
+    OWNER_FAILURE_STAGE +
+    ')?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
 );
 const API_POD_STARTUP_FAILURE_RECORD = new RegExp(
   '(?:^|:)TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=(' +
@@ -1738,7 +1740,8 @@ export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence |
       code: generic[1] as OwnerFailureEvidence['code'],
       producer: 'owner_entrypoint',
       transport: generic[2] as OwnerFailureEvidence['transport'],
-      logSha256: generic[3]!,
+      ...(generic[3] ? { ownerStage: generic[3] as OwnerMigrationFailureStage } : {}),
+      logSha256: generic[4]!,
     };
   }
   const [

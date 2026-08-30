@@ -500,6 +500,20 @@ describe('kernel owner migration entrypoint', () => {
     );
   });
 
+  it('formats owner progress with a fixed non-sensitive stage record', () => {
+    const progressRecord = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        ownerMigrationProgressRecord?: (stage: string) => string;
+      }
+    ).ownerMigrationProgressRecord;
+
+    assert.equal(typeof progressRecord, 'function');
+    assert.equal(
+      progressRecord!('lifecycle_transaction'),
+      'COMMANDER_MIGRATION_PROGRESS;owner_stage=lifecycle_transaction',
+    );
+  });
+
   it('bounds the chart migration Hook database waits before its Job deadline', () => {
     const connectionString = 'postgres://owner:secret@db.internal/commander?sslmode=verify-full';
 
