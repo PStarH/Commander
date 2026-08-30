@@ -1,5 +1,8 @@
 import { pathToFileURL } from 'node:url';
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import {
+  createVerifiedPostgresPool,
+  type VerifiedPostgresPoolInput,
+} from '@commander/postgres-runtime';
 
 export type MigrationGateMode = 'preflight' | 'await';
 export type MigrationGateTarget = { name: string; connectionString: string };
@@ -59,11 +62,22 @@ export function parseExpectedMigrationDescriptors(
   return result;
 }
 
+/** Bound one probe so the migration wait loop, rather than the Job deadline, owns retries. */
+export function migrationGatePoolConfig(connectionString: string): VerifiedPostgresPoolInput {
+  return {
+    connectionString,
+    max: 1,
+    connectionTimeoutMillis: 5_000,
+    query_timeout: 5_000,
+    statement_timeout: 4_500,
+  };
+}
+
 async function probeDatabase(
   target: MigrationGateTarget,
   descriptors: MigrationGateDescriptors,
 ): Promise<void> {
-  const pool = createVerifiedPostgresPool({ connectionString: target.connectionString, max: 1 });
+  const pool = createVerifiedPostgresPool(migrationGatePoolConfig(target.connectionString));
   try {
     await pool.query('SELECT 1');
     const ids = Object.keys(descriptors);
