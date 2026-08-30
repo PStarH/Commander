@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  migrationGatePoolConfig,
   migrationGateTargets,
   parseExpectedMigrationDescriptors,
   parseMigrationGateMode,
@@ -42,6 +43,19 @@ describe('migration gate', () => {
         COMMANDER_PREFLIGHT_OWNER_DATABASE_URL: 'postgres://owner',
       }),
       [{ name: 'RUNTIME', connectionString: 'postgres://runtime' }],
+    );
+  });
+
+  it('bounds every database probe within the migration wait budget', () => {
+    assert.deepEqual(
+      migrationGatePoolConfig('postgres://owner:secret@db.internal/commander?sslmode=verify-full'),
+      {
+        connectionString: 'postgres://owner:secret@db.internal/commander?sslmode=verify-full',
+        max: 1,
+        connectionTimeoutMillis: 5_000,
+        query_timeout: 5_000,
+        statement_timeout: 4_500,
+      },
     );
   });
 
