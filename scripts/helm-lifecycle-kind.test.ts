@@ -45,6 +45,7 @@ import {
   retainRolloutFailureEvidence,
   productionImageSourceRevision,
   proofReaderCanIArgs,
+  proofReaderCanIResultPasses,
   prerequisiteRetryableFailure,
   runLifecycleScenario,
   runBootstrapStage,
@@ -2269,6 +2270,25 @@ describe('helm-lifecycle-kind helpers', () => {
         '-n',
         'commander-lifecycle',
       ],
+    );
+  });
+
+  it('accepts the canonical nonzero denial result for proof-reader RBAC checks', () => {
+    assert.equal(
+      proofReaderCanIResultPasses({ expected: 'yes', exitCode: 0, stdout: 'yes\n' }),
+      true,
+    );
+    assert.equal(
+      proofReaderCanIResultPasses({ expected: 'no', exitCode: 1, stdout: 'no\n' }),
+      true,
+    );
+    assert.equal(
+      proofReaderCanIResultPasses({ expected: 'no', exitCode: 0, stdout: 'no\n' }),
+      false,
+    );
+    assert.equal(
+      proofReaderCanIResultPasses({ expected: 'no', exitCode: 1, stdout: 'yes\n' }),
+      false,
     );
   });
 
