@@ -7,13 +7,7 @@
  * the Commander chart. Produces sanitized evidence JSON.
  */
 
-import {
-  execFile,
-  execFileSync,
-  type ChildProcess,
-  type ExecFileOptions,
-  spawn,
-} from 'node:child_process';
+import { execFile, execFileSync, type ExecFileOptions } from 'node:child_process';
 import { X509Certificate, createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { arch, tmpdir } from 'node:os';
@@ -22,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 import { dump, load } from 'js-yaml';
 import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
 import { isAllowedHelmDiagnosticCode } from './helm-diagnostic-policy.js';
-import { defaultCommand } from './helm-tenant-cutover.js';
+import { defaultCommand, runHelmTenantCutoverCli } from './helm-tenant-cutover.js';
 import {
   createTask1KubectlPorts,
   loadTask1PrerequisiteCommandContext,
@@ -3237,54 +3231,6 @@ async function captureApiPodStartupFailure(
   return parseApiPodStartupFailureEvidence('TENANT_CUTOVER_API_POD_STARTUP_FAILED:' + diagnostic);
 }
 
-const CUTOVER_CHILD_FAILURE_OUTPUT_BYTES = 4_096;
-
-export function captureCutoverChildFailureOutput(
-  child: Pick<ChildProcess, 'stdout' | 'stderr'>,
-): () => string {
-  let head = Buffer.alloc(0);
-  let tail = Buffer.alloc(0);
-  const capture = (chunk: Buffer | string) => {
-    const output = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    if (head.length < CUTOVER_CHILD_FAILURE_OUTPUT_BYTES) {
-      head = Buffer.concat([
-        head,
-        output.subarray(0, CUTOVER_CHILD_FAILURE_OUTPUT_BYTES - head.length),
-      ]);
-    }
-    const nextTail =
-      output.length >= CUTOVER_CHILD_FAILURE_OUTPUT_BYTES
-        ? output.subarray(-CUTOVER_CHILD_FAILURE_OUTPUT_BYTES)
-        : Buffer.concat([tail, output]).subarray(-CUTOVER_CHILD_FAILURE_OUTPUT_BYTES);
-    tail = Buffer.from(nextTail);
-  };
-  child.stdout?.on('data', capture);
-  child.stderr?.on('data', capture);
-  return () => Buffer.concat([head, Buffer.from('\n'), tail]).toString('utf8');
-}
-
-export function cutoverChildInvocation(
-  command: 'install' | 'enforce',
-  release: string,
-  values: string,
-): { executable: string; args: string[] } {
-  return {
-    executable: process.execPath,
-    args: [
-      '--import',
-      'tsx',
-      resolve(__dirname, 'helm-tenant-cutover.ts'),
-      command,
-      '--namespace',
-      NAMESPACE,
-      '--release',
-      release,
-      '--values',
-      values,
-    ],
-  };
-}
-
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -3293,20 +3239,20 @@ async function runCutoverCommand(
   const valuesText = readFileSync(values, 'utf8');
   const digest = valuesText.match(/^\s*digest:\s*(sha256:[a-f0-9]{64})\s*$/m)?.[1];
   if (!digest) throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
-  const invocation = cutoverChildInvocation(command, release, values);
-  const child = spawn(invocation.executable, invocation.args, {
-    cwd: rootDir(),
-    env: process.env,
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const cutoverFailureOutput = captureCutoverChildFailureOutput(child);
   let finished = false;
-  let exitCode = -1;
-  const completion = awaitChildExit(child).then((code) => {
-    exitCode = code;
-    finished = true;
-  });
+  let cutoverFailure: unknown;
+  const completion = runHelmTenantCutoverCli(
+    [command, '--namespace', NAMESPACE, '--release', release, '--values', values],
+    rootDir(),
+  ).then(
+    () => {
+      finished = true;
+    },
+    (error: unknown) => {
+      cutoverFailure = error;
+      finished = true;
+    },
+  );
   let rolloutObservation: RolloutObservationState | undefined;
   let apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
   while (!finished) {
@@ -3316,10 +3262,10 @@ async function runCutoverCommand(
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
-  if (exitCode !== 0) {
-    const childFailure = cutoverFailureOutput();
-    const childCodes = scenarioFailureCodes(childFailure) ?? [];
-    const ownerFailure = parseOwnerFailureEvidence(childFailure);
+  if (cutoverFailure !== undefined) {
+    const failureMessage = cutoverFailure instanceof Error ? cutoverFailure.message : '';
+    const childCodes = scenarioFailureCodes(failureMessage) ?? [];
+    const ownerFailure = parseOwnerFailureEvidence(failureMessage);
     const failureCodes = [...new Set(['HELM_TENANT_CUTOVER_FAILED', ...childCodes])];
     const diagnostic = rolloutObservation?.terminal
       ? rolloutFailureRecord(rolloutObservation.terminal)
@@ -3336,26 +3282,6 @@ async function runCutoverCommand(
         (apiStartupFailure ? ':' + apiPodStartupFailureRecord(apiStartupFailure) : ''),
     );
   }
-}
-
-export function awaitChildExit(child: ChildProcess): Promise<number> {
-  return new Promise((resolveExit) => {
-    let settled = false;
-    let stdioFailed = false;
-    const settle = (exitCode: number) => {
-      if (settled) return;
-      settled = true;
-      resolveExit(exitCode);
-    };
-    const markStdioFailure = () => {
-      stdioFailed = true;
-    };
-    child.on('error', () => settle(1));
-    child.once('close', (code) => settle(stdioFailed ? 1 : (code ?? 1)));
-    child.stdout?.on('error', markStdioFailure);
-    child.stderr?.on('error', markStdioFailure);
-    child.stdout?.resume();
-  });
 }
 
 async function assertProofReaderRbac(release: string): Promise<AssertionResult[]> {
