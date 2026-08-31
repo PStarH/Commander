@@ -320,11 +320,13 @@ export function proofReaderCanIArgs(input: {
   identity: string;
   namespace: string;
 }): string[] {
+  const [resource, subresource] = input.resource.split('/', 2);
   return [
     'auth',
     'can-i',
     input.verb,
-    input.resourceName ? input.resource + '/' + input.resourceName : input.resource,
+    input.resourceName ? resource + '/' + input.resourceName : resource,
+    ...(subresource ? [`--subresource=${subresource}`] : []),
     '--as',
     input.identity,
     '-n',
