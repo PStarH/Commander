@@ -841,10 +841,40 @@ describe('SkillSecurityScanner', () => {
     assert.ok(!result.passed, 'Should fail security check');
   });
 
+  it('allows TypeScript template literals that are not shell execution', () => {
+    const source = [
+      'const query = `SELECT id FROM users WHERE tenant_id = ${tenantId}`;',
+      'const label = `tenant:${tenantId}`;',
+    ].join('\n');
+    const result = scanSkillContent('packages/api/src/userStore.ts', source, []);
+
+    assert.ok(result.passed, 'TypeScript template literals must not block source commits');
+    assert.ok(
+      result.warnings.every((warning) => warning.category !== 'shell_injection'),
+      'TypeScript template literals must not produce shell-injection findings',
+    );
+  });
+
+  it('blocks a TypeScript template literal passed to a process-execution API', () => {
+    const backtick = String.fromCharCode(96);
+    const source = ['exec', 'Sync(', backtick, 'echo safe', backtick, ')'].join('');
+    const result = scanSkillContent('packages/api/src/commandRunner.ts', source, []);
+
+    assert.ok(!result.passed, 'A template literal passed to execSync must be blocked');
+    assert.ok(
+      result.warnings.some(
+        (warning) =>
+          warning.category === 'shell_injection' &&
+          warning.message.includes('Template literal passed to a shell-executing API'),
+      ),
+      'Expected a source-level shell execution finding',
+    );
+  });
+
   it('detects API keys in content', () => {
     const result = scanSkillContent(
       'leaky',
-      'Use api_key = "sk-test-key-placeholder-do-not-use-in-production"',
+      'Use api_key = "sk-test-key-placeholder-do-not-use-in-production"', // mock
       [],
     );
     assert.ok(!result.passed, 'Should fail with API key');

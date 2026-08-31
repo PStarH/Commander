@@ -90,16 +90,29 @@ describe('L3-03b catalog authority helpers', () => {
         true,
       );
       assert.equal(
-        isCatalogAuthorizedLocalOnly({ localOnly: true }, { toolName: 'echo', catalog: DENY_ALL_TOOL_EFFECT_CATALOG }),
+        isCatalogAuthorizedLocalOnly(
+          { localOnly: true },
+          { toolName: 'echo', catalog: DENY_ALL_TOOL_EFFECT_CATALOG },
+        ),
         false,
       );
     });
-    await withEnv({ NODE_ENV: 'test', COMMANDER_PROFILE: undefined, COMMANDER_REQUIRE_EFFECT_BROKER: undefined }, () => {
-      assert.equal(
-        isCatalogAuthorizedLocalOnly({ localOnly: true }, { toolName: 'http.post', catalog: DENY_ALL_TOOL_EFFECT_CATALOG }),
-        true,
-      );
-    });
+    await withEnv(
+      {
+        NODE_ENV: 'test',
+        COMMANDER_PROFILE: undefined,
+        COMMANDER_REQUIRE_EFFECT_BROKER: undefined,
+      },
+      () => {
+        assert.equal(
+          isCatalogAuthorizedLocalOnly(
+            { localOnly: true },
+            { toolName: 'http.post', catalog: DENY_ALL_TOOL_EFFECT_CATALOG },
+          ),
+          true,
+        );
+      },
+    );
   });
 
   it('createDefaultWorkerToolEffectCatalog includes echo and memory', () => {
@@ -146,7 +159,10 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
           capabilityToken: 'tok',
         },
       });
-      const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      const result = await executor.execute(step, {
+        signal: ac.signal,
+        worker: createMockWorker(),
+      });
       assert.equal(handlerInvoked, false);
       assert.equal(brokerInvoked, true);
       assert.deepEqual((result as { result: unknown }).result, { via: 'broker' });
@@ -202,9 +218,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
       const executor = new ToolStepExecutor(
         {
           get: (name) =>
-            name === 'echo'
-              ? { execute: async (args) => ({ echo: args.message }) }
-              : null,
+            name === 'echo' ? { execute: async (args) => ({ echo: args.message }) } : null,
         },
         {
           execute: async () => {
@@ -218,7 +232,10 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
       const step = createMockStep({
         input: { toolName: 'echo', args: { message: 'ok' }, localOnly: true },
       });
-      const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      const result = await executor.execute(step, {
+        signal: ac.signal,
+        worker: createMockWorker(),
+      });
       assert.equal(brokerInvoked, false);
       assert.deepEqual((result as { result: unknown }).result, { echo: 'ok' });
     });
@@ -333,14 +350,16 @@ describe('L3-03b dev compatibility', () => {
   it('7. Non-prod localOnly without catalog still bypasses broker', async () => {
     let brokerInvoked = false;
     await withEnv(
-      { NODE_ENV: 'test', COMMANDER_PROFILE: undefined, COMMANDER_REQUIRE_EFFECT_BROKER: undefined },
+      {
+        NODE_ENV: 'test',
+        COMMANDER_PROFILE: undefined,
+        COMMANDER_REQUIRE_EFFECT_BROKER: undefined,
+      },
       async () => {
         const executor = new ToolStepExecutor(
           {
             get: (name) =>
-              name === 'echo'
-                ? { execute: async (args) => ({ echo: args.message }) }
-                : null,
+              name === 'echo' ? { execute: async (args) => ({ echo: args.message }) } : null,
           },
           {
             execute: async () => {
@@ -354,7 +373,10 @@ describe('L3-03b dev compatibility', () => {
         const step = createMockStep({
           input: { toolName: 'echo', args: { message: 'dev' }, localOnly: true },
         });
-        const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+        const result = await executor.execute(step, {
+          signal: ac.signal,
+          worker: createMockWorker(),
+        });
         assert.equal(brokerInvoked, false);
         assert.deepEqual((result as { result: unknown }).result, { echo: 'dev' });
       },

@@ -16,15 +16,22 @@ describe('adapter-ops lifecycle', () => {
   it('cleans up both daemon intervals and wiring when health bind fails', async () => {
     const events: string[] = [];
     await assert.rejects(
-      () => startAdapterOpsRuntime({
-        wiring: {
-          reconciliation: daemon(events, 'reconciliation'),
-          compensation: daemon(events, 'compensation'),
-          safeStop: async (reason) => { events.push(`safe-stop:${reason}`); },
-          close: async () => { events.push('wiring:close'); },
-        },
-        startHealth: async () => { throw new Error('EADDRINUSE'); },
-      }),
+      () =>
+        startAdapterOpsRuntime({
+          wiring: {
+            reconciliation: daemon(events, 'reconciliation'),
+            compensation: daemon(events, 'compensation'),
+            safeStop: async (reason) => {
+              events.push(`safe-stop:${reason}`);
+            },
+            close: async () => {
+              events.push('wiring:close');
+            },
+          },
+          startHealth: async () => {
+            throw new Error('EADDRINUSE');
+          },
+        }),
       /EADDRINUSE/,
     );
     assert.deepEqual(events, [
@@ -45,17 +52,17 @@ describe('adapter-ops lifecycle', () => {
           events.push(`safe-stop:${reason}`);
           throw new Error('drain failed');
         },
-        close: async () => { events.push('wiring:close'); },
+        close: async () => {
+          events.push('wiring:close');
+        },
       },
       startHealth: async () => ({
-        close: async () => { events.push('health:close'); },
+        close: async () => {
+          events.push('health:close');
+        },
       }),
     });
     await assert.rejects(() => runtime.shutdown(), /drain failed/);
-    assert.deepEqual(events.slice(-3), [
-      'safe-stop:shutdown',
-      'health:close',
-      'wiring:close',
-    ]);
+    assert.deepEqual(events.slice(-3), ['safe-stop:shutdown', 'health:close', 'wiring:close']);
   });
 });

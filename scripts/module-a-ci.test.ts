@@ -89,6 +89,14 @@ describe('Module A CI workflow', () => {
     assert.match(readFileSync(script, 'utf8'), /overall_status=0/);
   });
 
+  it('keeps versioned Git hook wrappers executable', () => {
+    for (const hook of ['pre-commit', 'pre-push']) {
+      const path = join(process.cwd(), '.githooks', hook);
+      assert.equal(existsSync(path), true, `${hook} must be versioned`);
+      assert.notEqual(statSync(path).mode & 0o111, 0, `${hook} must be executable`);
+    }
+  });
+
   it('does not use the tsx IPC CLI for workflow test entrypoints', () => {
     for (const workflow of readdirSync(join(process.cwd(), '.github/workflows'))) {
       if (!workflow.endsWith('.yml') && !workflow.endsWith('.yaml')) continue;
