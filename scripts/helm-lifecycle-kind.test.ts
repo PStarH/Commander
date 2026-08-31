@@ -1746,6 +1746,7 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(values, /bundled: true\n    user: postgres/);
     assert.match(values, /existingSecret: cmdr-live-database-tls/);
     assert.match(values, /redis:\n  enabled: true/);
+    assert.match(values, /redis:\n  enabled: true\n  persistence:\n    enabled: false/);
     assert.match(
       values,
       /migrationOperator:\n    subject: system:serviceaccount:commander-lifecycle:tenant-migration-operator/,

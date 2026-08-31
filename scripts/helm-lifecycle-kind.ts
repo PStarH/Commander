@@ -459,6 +459,8 @@ persistence:
   enabled: false
 redis:
   enabled: true
+  persistence:
+    enabled: false
 api:
   replicas: 2
   secrets:
