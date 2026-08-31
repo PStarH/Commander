@@ -259,6 +259,26 @@ function ownerJobProgressStage(logs: string): string | undefined {
   return [...logs.slice(-4_096).matchAll(OWNER_MIGRATION_PROGRESS_RECORD)].at(-1)?.[1];
 }
 
+function parseOwnerJobResponse(output: string): Record<string, unknown> {
+  const responseLines = output
+    .split(/\r?\n/)
+    .filter(Boolean)
+    .filter((line) => {
+      const progress = /^COMMANDER_MIGRATION_PROGRESS;owner_stage=([a-z_]+)$/.exec(line);
+      return !progress || !OWNER_MIGRATION_PROGRESS_STAGE.test(progress[1]!);
+    });
+  if (responseLines.length !== 1) fail('TENANT_CUTOVER_OWNER_RESPONSE_INVALID');
+  try {
+    const parsed = JSON.parse(responseLines[0]!);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      fail('TENANT_CUTOVER_OWNER_RESPONSE_INVALID');
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    return fail('TENANT_CUTOVER_OWNER_RESPONSE_INVALID');
+  }
+}
+
 /** Keep failed owner Job evidence useful without reflecting credentials or raw logs. */
 export function ownerJobFailureDiagnostic(
   logs: string,
@@ -4589,16 +4609,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
           context.namespace,
         ])
       ).trim();
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(output);
-      } catch {
-        return fail('TENANT_CUTOVER_OWNER_RESPONSE_INVALID');
-      }
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        fail('TENANT_CUTOVER_OWNER_RESPONSE_INVALID');
-      }
-      return parsed as Record<string, unknown>;
+      return parseOwnerJobResponse(output);
     } finally {
       for (const resource of ['job', 'pod', 'configmap']) {
         await command('kubectl', [

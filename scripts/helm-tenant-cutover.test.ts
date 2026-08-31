@@ -46,6 +46,60 @@ const chart = digest('b');
 const nonce = 'n'.repeat(43);
 
 describe('Helm owner Job diagnostics', () => {
+  it('accepts an owner result after fixed progress records in Kubernetes logs', async () => {
+    const nodePorts = createNodePorts({
+      command: async (program, args, stdin) => {
+        assert.equal(program, 'kubectl');
+        if (args[0] === 'create') {
+          const object = JSON.parse(stdin ?? '') as { kind?: string; metadata?: { name?: string } };
+          if (object.kind === 'ConfigMap') return 'configmap/' + object.metadata?.name;
+          if (object.kind === 'Job') return 'job.batch/' + object.metadata?.name;
+        }
+        if (args[0] === 'wait' || args[0] === 'delete') return '';
+        if (args[0] === 'logs') {
+          return [
+            'COMMANDER_MIGRATION_PROGRESS;owner_stage=owner_pool_configuration',
+            'COMMANDER_MIGRATION_PROGRESS;owner_stage=current_read',
+            '{"action":"append"}',
+          ].join('\n');
+        }
+        throw new Error('unexpected kubectl call: ' + args.join(' '));
+      },
+    });
+
+    assert.deepEqual(
+      await nodePorts.owner.plan(
+        {},
+        {
+          namespace: 'commander',
+          release: 'commander',
+          image: 'registry.example/commander@' + image,
+          databaseSecretName: 'commander-database',
+          databaseSecretKeys: {
+            owner: 'owner-url',
+            app: 'app-url',
+            tenantAuthority: 'tenant-authority-url',
+            scheduler: 'scheduler-url',
+            worker: 'worker-url',
+            adapterOps: 'adapter-ops-url',
+          },
+          databaseTls: {
+            secretName: 'commander-database-tls',
+            caKey: 'ca.crt',
+            expectedServerSpkiSha256: digest('c'),
+          },
+          proofCertificate: {
+            secretName: 'commander-api-proof',
+            caKey: 'ca.crt',
+            certKey: 'tls.crt',
+          },
+          bootstrap: { kind: 'none' },
+        },
+      ),
+      { action: 'append' },
+    );
+  });
+
   it('writes a CLI failure through the supplied terminal reporter', () => {
     const report = (
       helmTenantCutover as typeof helmTenantCutover & {
