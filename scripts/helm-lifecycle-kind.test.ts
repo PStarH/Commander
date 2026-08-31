@@ -676,6 +676,41 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /private|secret/i);
   });
 
+  it('retains fixed current-proof validation failure codes after proof cleanup', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          failedStage: 'current-proof',
+          error:
+            'HELM_TENANT_CUTOVER_FAILED:TENANT_CUTOVER_PROOF_RECEIPT_INVALID:TENANT_CUTOVER_PROOF_REVISION_MISMATCH:TENANT_CUTOVER_RESTORE_PROJECTION_DRIFT:TENANT_CUTOVER_RESTORE_PROOF_REQUIRED:TENANT_CUTOVER_RETAINED_CHART_DRIFT:TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED\\nsecret=private',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, [
+      'HELM_TENANT_CUTOVER_FAILED',
+      'TENANT_CUTOVER_PROOF_RECEIPT_INVALID',
+      'TENANT_CUTOVER_PROOF_REVISION_MISMATCH',
+      'TENANT_CUTOVER_RESTORE_PROJECTION_DRIFT',
+      'TENANT_CUTOVER_RESTORE_PROOF_REQUIRED',
+      'TENANT_CUTOVER_RETAINED_CHART_DRIFT',
+      'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED',
+    ]);
+    assert.doesNotMatch(JSON.stringify(sanitized), /private|secret/i);
+  });
+
   it('classifies exact controller rollout failures without retaining object data', () => {
     for (const [item, expected] of [
       [
