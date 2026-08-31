@@ -332,6 +332,16 @@ export function proofReaderCanIArgs(input: {
   ];
 }
 
+export function proofReaderCanIResultPasses(input: {
+  expected: 'yes' | 'no';
+  exitCode: number;
+  stdout: string;
+}): boolean {
+  return (
+    input.exitCode === (input.expected === 'yes' ? 0 : 1) && input.stdout.trim() === input.expected
+  );
+}
+
 export function productionImageReferences(digest: string): { source: string; target: string } {
   if (!/^sha256:[a-f0-9]{64}$/.test(digest)) {
     throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
@@ -3715,7 +3725,11 @@ async function assertProofReaderRbac(release: string): Promise<AssertionResult[]
       description: `proof-reader RBAC ${verb} ${resource}${
         resourceName ? `/${resourceName}` : ''
       } is ${expected}`,
-      passed: check.exitCode === 0 && check.stdout.trim() === expected,
+      passed: proofReaderCanIResultPasses({
+        expected,
+        exitCode: check.exitCode,
+        stdout: check.stdout,
+      }),
       detail: check.stderr.trim() || undefined,
     });
   }
