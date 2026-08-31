@@ -191,18 +191,21 @@ describe('ReconciliationDaemon', () => {
       assert.equal(queryCalls.length, 1);
       assert.equal(queryCalls[0]?.effect, EFFECT, 'broker must receive the claimed snapshot');
       assert.equal(queryCalls[0]?.querier, querier);
-      assert.deepEqual(writes.map(({ method, input }) => ({ method, input: mutationWithoutEvidence(input) })), [
-        {
-          method: test.method,
-          input: {
-            tenantId: EFFECT.tenantId,
-            effectId: EFFECT.id,
-            ...TEST_RECONCILE_WORKER,
-            claimToken: CLAIM.claimToken,
-            response: test.response,
+      assert.deepEqual(
+        writes.map(({ method, input }) => ({ method, input: mutationWithoutEvidence(input) })),
+        [
+          {
+            method: test.method,
+            input: {
+              tenantId: EFFECT.tenantId,
+              effectId: EFFECT.id,
+              ...TEST_RECONCILE_WORKER,
+              claimToken: CLAIM.claimToken,
+              response: test.response,
+            },
           },
-        },
-      ]);
+        ],
+      );
       assertSignedEvidence(writes[0]?.input);
     }
   });
@@ -232,21 +235,24 @@ describe('ReconciliationDaemon', () => {
       escalated: 0,
       rescheduled: 1,
     });
-    assert.deepEqual(writes.map(({ method, input }) => ({ method, input: mutationWithoutEvidence(input) })), [
-      {
-        method: 'rescheduleReconcileEffect',
-        input: {
-          tenantId: EFFECT.tenantId,
-          effectId: EFFECT.id,
-          ...TEST_RECONCILE_WORKER,
-          claimToken: CLAIM.claimToken,
-          lastError: {
-            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
-            message: 'not visible yet',
+    assert.deepEqual(
+      writes.map(({ method, input }) => ({ method, input: mutationWithoutEvidence(input) })),
+      [
+        {
+          method: 'rescheduleReconcileEffect',
+          input: {
+            tenantId: EFFECT.tenantId,
+            effectId: EFFECT.id,
+            ...TEST_RECONCILE_WORKER,
+            claimToken: CLAIM.claimToken,
+            lastError: {
+              code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+              message: 'not visible yet',
+            },
           },
         },
-      },
-    ]);
+      ],
+    );
     assertSignedEvidence(writes[0]?.input);
     assert.equal('reconcileAfter' in (writes[0]?.input as object), false);
   });

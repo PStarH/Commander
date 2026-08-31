@@ -88,9 +88,10 @@ function parseVerifiedConnectionString(connectionString: string): {
   }
 
   url.searchParams.delete('sslmode');
-  const hostname = url.hostname.startsWith('[') && url.hostname.endsWith(']')
-    ? url.hostname.slice(1, -1)
-    : url.hostname;
+  const hostname =
+    url.hostname.startsWith('[') && url.hostname.endsWith(']')
+      ? url.hostname.slice(1, -1)
+      : url.hostname;
   return { connectionString: url.toString(), hostname };
 }
 

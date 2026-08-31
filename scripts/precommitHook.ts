@@ -35,6 +35,7 @@ import { reportSilentFailure } from '../packages/core/src/silentFailureReporter'
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { addedContentFromUnifiedDiff } from './precommitPatch.js';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -56,6 +57,7 @@ function resolveRepoRoot(): string {
 
 const REPO_ROOT = resolveRepoRoot();
 const SCANNABLE_EXT = /\.(ts|tsx|js|mjs|cjs|json|sh)$/i;
+const JAVASCRIPT_SOURCE_FILE = /\.(?:[cm]?tsx?|[cm]?js|jsx)$/i;
 const MAX_FILE_BYTES = 500 * 1024;
 const EXECPOLICY_TEST_FILE = 'tests/runtime/execPolicy.edge.test.ts';
 const SCANNER_MODULE_PATH = path.join(
@@ -92,6 +94,18 @@ interface ScanLike {
   warnings: Array<{ severity: string; category: string; message: string; evidence: string }>;
 }
 
+function readAddedStagedContent(relativePath: string, source: 'git' | 'argv'): string {
+  if (source === 'argv') {
+    return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8');
+  }
+  const patch = execFileSync(
+    'git',
+    ['diff', '--cached', '--no-ext-diff', '--no-color', '--unified=0', '--', relativePath],
+    { cwd: REPO_ROOT, encoding: 'utf-8' },
+  );
+  return addedContentFromUnifiedDiff(patch);
+}
+
 /**
  * Run SupplyChainScanner.scan() if we can load the module. Otherwise fall
  * back to an inline blocklist mirroring MAL-001 / MAL-005 / MAL-007 so
@@ -101,7 +115,14 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
   try {
     const mod = await import(SCANNER_MODULE_PATH);
     const scanner = mod.getSupplyChainScanner();
-    const r = scanner.scan({ name, content, tools: [] });
+    const r = scanner.scan({
+      name,
+      content,
+      tools: [],
+      // Repository source is not untrusted skill content. Malware signatures
+      // remain enabled; JSON and shell files retain syntax heuristics.
+      skipPreScanHeuristics: JAVASCRIPT_SOURCE_FILE.test(name),
+    });
     return {
       passed: r.passed,
       severity: r.severity,
@@ -169,19 +190,18 @@ async function runScannerGate(): Promise<void> {
   const violations: Array<{ file: string; reason: string; severity: string }> = [];
 
   for (const rel of scannable) {
-    const full = path.isAbsolute(rel) ? rel : path.join(REPO_ROOT, rel);
     let content: string;
     try {
-      const stat = fs.statSync(full);
-      if (stat.size > MAX_FILE_BYTES) {
-        console.warn(`[D3 hook] skipping ${rel} (size ${stat.size} > ${MAX_FILE_BYTES})`);
+      content = readAddedStagedContent(rel, staged.source);
+      if (Buffer.byteLength(content, 'utf-8') > MAX_FILE_BYTES) {
+        console.warn(`[D3 hook] skipping ${rel} (added content > ${MAX_FILE_BYTES})`);
         continue;
       }
-      content = fs.readFileSync(full, 'utf-8');
     } catch (err) {
       console.warn(`[D3 hook] cannot read ${rel}: ${(err as Error).message}`);
       continue;
     }
+    if (content.length === 0) continue;
     const result = await scanContent(rel, content);
     if (!result.passed || result.recommendation === 'block') {
       for (const w of result.warnings) {

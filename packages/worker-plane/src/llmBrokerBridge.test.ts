@@ -63,10 +63,10 @@ function dispatchFromExecutionContext(input: Parameters<EffectExecutor['execute'
   });
 }
 
-function makeBroker(options?: {
-  localWorkerId?: string;
-  executor?: EffectExecutor;
-}): { broker: EffectBroker; issuer: CapabilityTokenIssuer } {
+function makeBroker(options?: { localWorkerId?: string; executor?: EffectExecutor }): {
+  broker: EffectBroker;
+  issuer: CapabilityTokenIssuer;
+} {
   const localWorkerId = options?.localWorkerId ?? DEFAULT_WORKER_ID;
   const issuer = CapabilityTokenIssuer.generate({
     issuer: 'commander-worker',
@@ -93,8 +93,9 @@ function makeBroker(options?: {
     }),
     completeEffect: async (_id, _tenant, _lease, response) => ({ ok: true, response }),
   };
-  const executor: EffectExecutor =
-    options?.executor ?? { execute: async (input) => dispatchFromExecutionContext(input) };
+  const executor: EffectExecutor = options?.executor ?? {
+    execute: async (input) => dispatchFromExecutionContext(input),
+  };
   const audit: AuditSink = { append: async () => undefined };
   const broker = new EffectBroker(tokens, policy, kernel, executor, audit, {
     audience: 'commander.effect-broker',
@@ -351,7 +352,12 @@ describe('llmBrokerBridge (WS2 §1)', () => {
           runId: `run-${tenantId}`,
           stepId: 's1',
           actor: 'worker-1',
-          lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+          lease: {
+            workerId: DEFAULT_WORKER_ID,
+            workerGeneration: 1,
+            token: 'lease',
+            fencingEpoch: 1,
+          },
           issuer,
         });
         return runWithLlmEffectAuth(auth, () =>
@@ -517,7 +523,12 @@ describe('llmBrokerBridge (WS2 §1)', () => {
             stepId: 's1',
             actor: 'worker-1',
             // Grant↔lease fence matches; kernel claimed generation differs → LEASE_LOST
-            lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+            lease: {
+              workerId: DEFAULT_WORKER_ID,
+              workerGeneration: 1,
+              token: 'lease',
+              fencingEpoch: 1,
+            },
             issuer,
           }),
           () => wrapped.call({ model: 'gpt', messages: [{ role: 'user', content: 'x' }] }),
@@ -526,10 +537,7 @@ describe('llmBrokerBridge (WS2 §1)', () => {
         assert.ok(err instanceof Error);
         // Broker surfaces kernel LEASE_LOST as EFFECT_ADMISSION_REJECTED + details.reason
         assert.match(err.message, /EFFECT_ADMISSION_REJECTED/);
-        assert.equal(
-          (err as { details?: { reason?: string } }).details?.reason,
-          'LEASE_LOST',
-        );
+        assert.equal((err as { details?: { reason?: string } }).details?.reason, 'LEASE_LOST');
         return true;
       },
     );

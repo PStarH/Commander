@@ -46,8 +46,7 @@ describe('tool/connector broker fail-closed', () => {
           worker: { id: 'w1' } as never,
         }),
       (err: unknown) =>
-        err instanceof WorkerExecutionError &&
-        err.options.code === 'EFFECT_AUTHORIZATION_REQUIRED',
+        err instanceof WorkerExecutionError && err.options.code === 'EFFECT_AUTHORIZATION_REQUIRED',
     );
     assert.equal(executed, false);
   });
@@ -106,8 +105,7 @@ describe('tool/connector broker fail-closed', () => {
           { signal: AbortSignal.timeout(5_000), worker: { id: 'w1' } as never },
         ),
       (err: unknown) =>
-        err instanceof WorkerExecutionError &&
-        err.options.code === 'EFFECT_AUTHORIZATION_REQUIRED',
+        err instanceof WorkerExecutionError && err.options.code === 'EFFECT_AUTHORIZATION_REQUIRED',
     );
   });
 
