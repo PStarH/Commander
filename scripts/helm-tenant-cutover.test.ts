@@ -1322,6 +1322,7 @@ spec:
       labels:
         app.kubernetes.io/name: commander
         app.kubernetes.io/instance: commander
+        app.kubernetes.io/component: tenant-authority-proof-reader
         commander.io/tenant-authority-proof-reader: "true"
         commander.io/tenant-authority-proof-release: commander
     spec:
@@ -2987,6 +2988,19 @@ data: { owner-url: ${payload} }
       ),
       false,
     );
+  });
+
+  it('accepts the production proof-reader component label on a retained proof Job', async () => {
+    const fixture = ports(operation({ proven: true }));
+    fixture.helm.currentRevision = async () => {
+      fixture.calls.push('helm:current-revision');
+      return '7';
+    };
+    fixture.helm.proofJobManifest = async (_namespace, _release, revision) =>
+      retainedProofJobManifest(revision);
+
+    await assert.doesNotReject(() => runHelmTenantCutover(input(), fixture));
+    assert.ok(fixture.calls.includes('run-proof-job:commander-tenant-cutover-prove-r7:7'));
   });
 
   it('cleans every ephemeral return_current proof resource when the fresh challenge fails', async () => {
