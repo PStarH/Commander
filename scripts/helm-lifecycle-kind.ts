@@ -1451,7 +1451,7 @@ function rolloutReasonForItem(
   if (conditionReason(status, 'PodScheduled', 'False') === 'Unschedulable') {
     return 'POD_UNSCHEDULABLE';
   }
-  if (component === 'migration' && status?.phase === 'Failed' && podHasNonzeroTermination(status)) {
+  if (status?.phase === 'Failed' && podHasNonzeroTermination(status)) {
     return 'POD_CONTAINER_TERMINATED';
   }
   switch (podWaitingReason(status)) {
