@@ -240,7 +240,7 @@ describe('Helm post-rendered release projection', () => {
       process.env.PATH = temporary + ':' + originalPath;
       process.env.COMMANDER_FAKE_HELM_DATA = dataPath;
       process.env.COMMANDER_FAKE_KUBECTL_STATE = statePath;
-      process.argv[1] = resolve(root, 'scripts/helm-tenant-cutover.ts');
+      process.argv[1] = resolve(root, 'scripts/not-the-cutover-script.ts');
       const ports = createNodePorts({
         command: async (program, args, stdin) => {
           if (program === 'helm') {

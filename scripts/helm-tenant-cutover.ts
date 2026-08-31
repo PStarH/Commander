@@ -6,6 +6,7 @@ import { chmod, cp, mkdir, mkdtemp, open, readFile, rename, rm, unlink } from 'n
 import { createServer, request as httpRequest } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { isDeepStrictEqual } from 'node:util';
 import { dump, load, loadAll } from 'js-yaml';
 import {
@@ -31,6 +32,8 @@ import {
 } from './helm-recover-tenant-authority.js';
 import { createTask1DatabasePeerBindingInput } from './task1-database-peer-input.js';
 import { isAllowedHelmDiagnosticCode } from './helm-diagnostic-policy.js';
+
+const CUTOVER_SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 export const HELM_VERSION = '3.17.3';
 export type HelmCutoverCommand = 'install' | 'expand' | 'enforce' | 'rollback-recorded-expand';
@@ -3801,7 +3804,7 @@ async function streamValuesToHelm(input: {
   await listen(server, socketPath);
   const postRendererArgs = [
     ...process.execArgv,
-    resolve(process.argv[1] ?? fail('TENANT_CUTOVER_RESTORE_SECRET_RENDER_INVALID')),
+    CUTOVER_SCRIPT_PATH,
     '--tenant-cutover-post-render',
     socketPath,
     token,
@@ -3896,7 +3899,7 @@ async function runHelmPostRendered(
   await listen(server, socketPath);
   const postRendererArgs = [
     ...process.execArgv,
-    resolve(process.argv[1] ?? fail('TENANT_CUTOVER_RELEASE_PROJECTION_INVALID')),
+    CUTOVER_SCRIPT_PATH,
     '--tenant-cutover-post-render',
     socketPath,
     token,
@@ -5483,9 +5486,16 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
   };
 }
 
+export async function runHelmTenantCutoverCli(
+  args: readonly string[],
+  cwd: string,
+): Promise<HelmCutoverResult> {
+  const request = parseHelmTenantCutoverArgs(args, cwd);
+  return runHelmTenantCutover(request, createNodePorts());
+}
+
 async function main(): Promise<void> {
-  const request = parseHelmTenantCutoverArgs(process.argv.slice(2), process.cwd());
-  const result = await runHelmTenantCutover(request, createNodePorts());
+  const result = await runHelmTenantCutoverCli(process.argv.slice(2), process.cwd());
   process.stdout.write(
     canonicalBootstrapJson({
       action: result.action,

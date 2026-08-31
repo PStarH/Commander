@@ -1,12 +1,11 @@
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import { PassThrough } from 'node:stream';
 import type { ChildProcess } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
-import { commandFailureCode } from './helm-tenant-cutover.js';
+import { commandFailureCode, runHelmTenantCutoverCli } from './helm-tenant-cutover.js';
 import * as lifecycleHarness from './helm-lifecycle-kind.js';
 import {
   aggregateScenarioPass,
@@ -14,7 +13,6 @@ import {
   assertHelmVersion,
   assertNegativeCanaryResult,
   assertProofPodContract,
-  awaitChildExit,
   observeExecFileFailures,
   buildExternalPostgresResources,
   buildLifecycleValues,
@@ -75,112 +73,11 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(failures, 5);
   });
 
-  it('settles a failed cutover child spawn as a nonzero exit', async () => {
-    const child = new EventEmitter() as ChildProcess;
-    const exit = awaitChildExit(child);
-    child.emit('error', new Error('spawn failed'));
-
-    assert.equal(await exit, 1);
-  });
-
-  it('continues to contain cutover child errors after the first failure', async () => {
-    const child = new EventEmitter() as ChildProcess;
-    const exit = awaitChildExit(child);
-
-    child.emit('error', new Error('first spawn failure'));
-    assert.doesNotThrow(() => child.emit('error', new Error('subsequent spawn failure')));
-
-    assert.equal(await exit, 1);
-  });
-
-  it('settles a cutover child stderr failure as a nonzero exit', async () => {
-    const child = Object.assign(new EventEmitter(), { stderr: new PassThrough() }) as ChildProcess;
-    const exit = awaitChildExit(child);
-
-    assert.doesNotThrow(() => child.stderr?.emit('error', new Error('stderr failed')));
-    child.emit('close', 0);
-
-    assert.equal(await exit, 1);
-  });
-
-  it('installs a cutover child stdout error handler before draining it', async () => {
-    const stdout = Object.assign(new EventEmitter(), {
-      resume() {
-        this.emit('error', new Error('stdout failed while draining'));
-      },
-    });
-    const child = Object.assign(new EventEmitter(), { stdout }) as ChildProcess;
-    let exit: Promise<number> | undefined;
-
-    assert.doesNotThrow(() => {
-      exit = awaitChildExit(child);
-    });
-    child.emit('close', 0);
-
-    assert.equal(await exit, 1);
-  });
-
-  it('collects a cutover diagnostic written to child stdout', () => {
-    const collect = (
-      lifecycleHarness as typeof lifecycleHarness & {
-        captureCutoverChildFailureOutput?: (child: ChildProcess) => () => string;
-      }
-    ).captureCutoverChildFailureOutput;
-    assert.equal(typeof collect, 'function');
-    const stdout = new PassThrough();
-    const child = Object.assign(new EventEmitter(), { stdout }) as ChildProcess;
-    const failureOutput = collect!(child);
-
-    stdout.end('private wrapper detail\nTENANT_CUTOVER_OWNER_JOB_FAILED\n');
-
-    assert.match(failureOutput(), /TENANT_CUTOVER_OWNER_JOB_FAILED/);
-  });
-
-  it('launches the cutover CLI directly under the current Node runtime', () => {
-    const invocation = (
-      lifecycleHarness as typeof lifecycleHarness & {
-        cutoverChildInvocation?: (
-          command: 'install' | 'enforce',
-          release: string,
-          values: string,
-        ) => { executable: string; args: string[] };
-      }
-    ).cutoverChildInvocation;
-    assert.equal(typeof invocation, 'function');
-
-    const child = invocation!('install', 'commander', '/private/values.yaml');
-
-    assert.equal(child.executable, process.execPath);
-    assert.deepEqual(child.args.slice(0, 2), ['--import', 'tsx']);
-    assert.match(child.args[2]!, /scripts[/\\]helm-tenant-cutover\.ts$/);
-    assert.deepEqual(child.args.slice(3), [
-      'install',
-      '--namespace',
-      'commander-lifecycle',
-      '--release',
-      'commander',
-      '--values',
-      '/private/values.yaml',
-    ]);
-  });
-
-  it('separates bounded child-output segments before parsing diagnostics', () => {
-    const collect = (
-      lifecycleHarness as typeof lifecycleHarness & {
-        captureCutoverChildFailureOutput?: (child: ChildProcess) => () => string;
-      }
-    ).captureCutoverChildFailureOutput;
-    assert.equal(typeof collect, 'function');
-    const stdout = new PassThrough();
-    const child = Object.assign(new EventEmitter(), { stdout }) as ChildProcess;
-    const failureOutput = collect!(child);
-    const prefix = 'TENANT_CUTOVER_';
-    const suffix = 'OWNER_JOB_FAILED';
-
-    stdout.write('x'.repeat(4_096 - prefix.length) + prefix);
-    stdout.end(suffix + 'x'.repeat(4_096 - suffix.length));
-
-    assert.doesNotMatch(failureOutput(), /TENANT_CUTOVER_OWNER_JOB_FAILED/);
+  it('fails closed through the callable cutover CLI entrypoint', async () => {
+    await assert.rejects(
+      () => runHelmTenantCutoverCli(['invalid'], process.cwd()),
+      /TENANT_CUTOVER_CLI_ARGUMENT_INVALID/,
+    );
   });
 
   it('fails closed before invalid Helm values reach network prerequisites', () => {
