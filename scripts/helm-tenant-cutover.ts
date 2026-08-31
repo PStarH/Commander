@@ -1703,6 +1703,7 @@ function proofJobForRevision(input: {
   const expectedProofLabels = {
     'app.kubernetes.io/name': input.projection.releaseName,
     'app.kubernetes.io/instance': input.projection.releaseName,
+    'app.kubernetes.io/component': 'tenant-authority-proof-reader',
     'commander.io/tenant-authority-proof-reader': 'true',
     'commander.io/tenant-authority-proof-release': input.projection.releaseName,
   };
