@@ -42,6 +42,22 @@ function createPoolHarness(): {
         record.revoked = true;
         return { rows: [{ jti }] as T[], rowCount: 1 };
       }
+      if (
+        sql === 'SELECT pg_advisory_lock(hashtext($1))' ||
+        sql === 'SELECT pg_advisory_unlock(hashtext($1))'
+      ) {
+        return { rows: [] as T[], rowCount: 1 };
+      }
+      if (
+        sql ===
+        'UPDATE commander_auth_refresh_tokens SET revoked_at = COALESCE(revoked_at, clock_timestamp()) WHERE user_id = $1'
+      ) {
+        const userId = String(values[0]);
+        for (const record of records.values()) {
+          if (record.userId === userId) record.revoked = true;
+        }
+        return { rows: [] as T[], rowCount: 1 };
+      }
       throw new Error('unexpected query: ' + sql);
     },
     release() {},
@@ -86,6 +102,41 @@ describe('PostgreSQL refresh-token repository', () => {
     const consumeQueries = harness.queries.filter((query) => query.sql.startsWith('UPDATE'));
     assert.equal(consumeQueries.length, 2);
     assert.ok(consumeQueries.every((query) => query.sql === CONSUME_SQL));
+  });
+
+  it('revokes every active refresh token for one user without affecting other users', async () => {
+    const harness = createPoolHarness();
+    const repository = new PostgresRefreshTokenRepository(harness.pool);
+    const expiresAt = new Date(Date.now() + 60_000);
+    await repository.insert({ jti: 'jti-user-a-1', userId: 'user-a', expiresAt });
+    await repository.insert({ jti: 'jti-user-a-2', userId: 'user-a', expiresAt });
+    await repository.insert({ jti: 'jti-user-b-1', userId: 'user-b', expiresAt });
+
+    await repository.revokeAllForUser('user-a');
+
+    assert.equal(harness.records.get('jti-user-a-1')?.revoked, true);
+    assert.equal(harness.records.get('jti-user-a-2')?.revoked, true);
+    assert.equal(harness.records.get('jti-user-b-1')?.revoked, false);
+  });
+
+  it('holds a PostgreSQL user-session advisory lock through the supplied operation', async () => {
+    const harness = createPoolHarness();
+    const repository = new PostgresRefreshTokenRepository(harness.pool);
+    let lockWasHeld = false;
+
+    const result = await repository.withUserSessionLock('user-1', async () => {
+      lockWasHeld = harness.queries.some(
+        (query) => query.sql === 'SELECT pg_advisory_lock(hashtext($1))',
+      );
+      return 'locked-result';
+    });
+
+    assert.equal(result, 'locked-result');
+    assert.equal(lockWasHeld, true);
+    assert.deepEqual(
+      harness.queries.map((query) => query.sql),
+      ['SELECT pg_advisory_lock(hashtext($1))', 'SELECT pg_advisory_unlock(hashtext($1))'],
+    );
   });
 
   it('requires DATABASE_URL with the commander_app role and verified pool factory', () => {

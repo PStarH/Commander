@@ -11,6 +11,8 @@ export interface RefreshTokenRepository {
   insert(record: RefreshTokenRecord): Promise<void>;
   consume(jti: string): Promise<boolean>;
   revoke(jti: string): Promise<void>;
+  revokeAllForUser(userId: string): Promise<void>;
+  withUserSessionLock<T>(userId: string, operation: () => Promise<T>): Promise<T>;
 }
 
 type VerifiedPoolFactory = (
@@ -20,6 +22,35 @@ type VerifiedPoolFactory = (
 
 export class PostgresRefreshTokenRepository implements RefreshTokenRepository {
   constructor(private readonly pool: SqlPool) {}
+
+  async withUserSessionLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    const lockKey = 'commander_auth_session:' + userId;
+    let lockAcquired = false;
+    let operationError: unknown;
+    let releaseError: Error | boolean | undefined;
+    try {
+      await client.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+      lockAcquired = true;
+      return await operation();
+    } catch (error) {
+      operationError = error;
+      releaseError = error instanceof Error ? error : true;
+      throw error;
+    } finally {
+      let unlockError: unknown;
+      if (lockAcquired) {
+        try {
+          await client.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]);
+        } catch (error) {
+          unlockError = error;
+          releaseError = error instanceof Error ? error : true;
+        }
+      }
+      await client.release(releaseError);
+      if (operationError === undefined && unlockError !== undefined) throw unlockError;
+    }
+  }
 
   async insert(record: RefreshTokenRecord): Promise<void> {
     const client = await this.pool.connect();
@@ -52,6 +83,18 @@ export class PostgresRefreshTokenRepository implements RefreshTokenRepository {
       await client.query(
         'UPDATE commander_auth_refresh_tokens SET revoked_at = COALESCE(revoked_at, clock_timestamp()) WHERE jti = $1',
         [jti],
+      );
+    } finally {
+      await client.release();
+    }
+  }
+
+  async revokeAllForUser(userId: string): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query(
+        'UPDATE commander_auth_refresh_tokens SET revoked_at = COALESCE(revoked_at, clock_timestamp()) WHERE user_id = $1',
+        [userId],
       );
     } finally {
       await client.release();

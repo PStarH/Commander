@@ -4,12 +4,14 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TestUserRepository } from './authRepositories'; import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
+import { TestUserRepository } from './authRepositories';
+import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
 
 const tmpDir = path.join(os.tmpdir(), 'commander-refresh-test-' + crypto.randomUUID());
 const originalCwd = process.cwd();
 const originalJwt = process.env.JWT_SECRET;
 const REFRESH_TEST_PASSWORD = 'password' + '123';
+const REFRESH_TEST_ADMIN_PASSWORD = 'password' + '456';
 
 fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
 process.chdir(tmpDir);
@@ -18,6 +20,52 @@ process.env.JWT_SECRET = 'test-jwt-secret-for-refresh-rotation';
 class TestRefreshTokenRepository implements RefreshTokenRepository {
   readonly records = new Map<string, RefreshTokenRecord & { revoked: boolean }>();
   unavailable = false;
+  private pausedConsume:
+    | {
+        jti: string;
+        consumed: () => void;
+        waitForRelease: Promise<void>;
+      }
+    | undefined;
+  private readonly sessionLocks = new Map<string, Promise<void>>();
+  private readonly sessionLockWaiters = new Map<string, () => void>();
+
+  waitForSessionLock(userId: string): Promise<void> {
+    return new Promise<void>((resolve) => {
+      this.sessionLockWaiters.set(userId, resolve);
+    });
+  }
+
+  pauseConsume(jti: string): { consumed: Promise<void>; release: () => void } {
+    let consumed!: () => void;
+    let release!: () => void;
+    const consumedPromise = new Promise<void>((resolve) => {
+      consumed = resolve;
+    });
+    const waitForRelease = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.pausedConsume = { jti, consumed, waitForRelease };
+    return { consumed: consumedPromise, release };
+  }
+
+  async withUserSessionLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
+    const predecessor = this.sessionLocks.get(userId);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const queued = (predecessor ?? Promise.resolve()).then(() => held);
+    this.sessionLocks.set(userId, queued);
+    if (predecessor) this.sessionLockWaiters.get(userId)?.();
+    await predecessor;
+    try {
+      return await operation();
+    } finally {
+      release();
+      if (this.sessionLocks.get(userId) === queued) this.sessionLocks.delete(userId);
+    }
+  }
 
   async insert(record: RefreshTokenRecord): Promise<void> {
     this.assertAvailable();
@@ -29,6 +77,12 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
     const record = this.records.get(jti);
     if (!record || record.revoked || record.expiresAt.getTime() <= Date.now()) return false;
     record.revoked = true;
+    if (this.pausedConsume?.jti === jti) {
+      const paused = this.pausedConsume;
+      this.pausedConsume = undefined;
+      paused.consumed();
+      await paused.waitForRelease;
+    }
     return true;
   }
 
@@ -38,14 +92,22 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
     if (record) record.revoked = true;
   }
 
+  async revokeAllForUser(userId: string): Promise<void> {
+    this.assertAvailable();
+    for (const record of this.records.values()) {
+      if (record.userId === userId) record.revoked = true;
+    }
+  }
+
   private assertAvailable(): void {
     if (this.unavailable) throw new Error('postgres authority failed: secret-dsn');
   }
 }
 
 const refreshTokens = new TestRefreshTokenRepository();
-const { signRefreshToken, verifyToken } = await import('../src/jwtMiddleware');
-const { createUser, findUserByUsername, setUserRepositoryForTesting } = await import('../src/userStore');
+const { jwtMiddleware, signRefreshToken, verifyToken } = await import('../src/jwtMiddleware');
+const { createUser, findUserByUsername, setUserRepositoryForTesting } =
+  await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const express = (await import('express')).default;
 
@@ -67,9 +129,18 @@ before(async () => {
     tenantId: 'tenant-a',
   });
   assert.ok(!('error' in (await created)), 'user create should succeed');
+  const admin = createUser({
+    username: 'refreshadmin',
+    email: 'refresh-admin@example.com',
+    password: REFRESH_TEST_ADMIN_PASSWORD,
+    role: 'admin',
+    tenantId: 'tenant-a',
+  });
+  assert.ok(!('error' in (await admin)), 'admin create should succeed');
 
   app = express();
   app.use(express.json());
+  app.use(jwtMiddleware);
   app.use(createUserAuthRouter({ refreshTokens }));
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
@@ -96,11 +167,14 @@ after(async () => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-async function login(): Promise<{ token: string; refreshToken: string }> {
+async function login(
+  username = 'refreshuser',
+  password = REFRESH_TEST_PASSWORD,
+): Promise<{ token: string; refreshToken: string }> {
   const response = await request('/api/auth/login', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD, tenantId: 'tenant-a' }),
+    body: JSON.stringify({ username, password, tenantId: 'tenant-a' }),
   });
   assert.equal(response.status, 200);
   return (await response.json()) as { token: string; refreshToken: string };
@@ -127,7 +201,11 @@ describe('refresh-token issuance', () => {
     const response = await request('/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD, tenantId: 'tenant-a' }),
+      body: JSON.stringify({
+        username: 'refreshuser',
+        password: REFRESH_TEST_PASSWORD,
+        tenantId: 'tenant-a',
+      }),
     });
 
     assert.equal(response.status, 503);
@@ -147,16 +225,27 @@ describe('auth refresh rotation', () => {
       const response = await request('/api/auth/login', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'refreshuser', password: REFRESH_TEST_PASSWORD, tenantId: 'tenant-b' }),
+        body: JSON.stringify({
+          username: 'refreshuser',
+          password: REFRESH_TEST_PASSWORD,
+          tenantId: 'tenant-b',
+        }),
       });
       assert.equal(response.status, 401);
       const valid = await login();
       const forged = await signRefreshToken(
-        { id: (await findUserByUsername('refreshuser'))!.id, username: 'refreshuser', role: 'viewer', tenantId: 'tenant-b' },
+        {
+          id: (await findUserByUsername('refreshuser'))!.id,
+          username: 'refreshuser',
+          role: 'viewer',
+          tenantId: 'tenant-b',
+        },
         refreshTokens,
       );
       const refresh = await request('/api/auth/refresh', {
-        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ refreshToken: forged }),
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: forged }),
       });
       assert.equal(refresh.status, 401);
       assert.equal(verifyToken(valid.token)?.tenant_id, 'tenant-a');
@@ -255,5 +344,113 @@ describe('auth refresh rotation', () => {
     const body = (await response.json()) as Record<string, unknown>;
     assert.deepEqual(body, { error: 'Authentication service unavailable' });
     assert.equal(JSON.stringify(body).includes('secret-dsn'), false);
+  });
+
+  test('password reset revokes every previously issued refresh token', async () => {
+    const victimSession = await login();
+    const adminSession = await login('refreshadmin', REFRESH_TEST_ADMIN_PASSWORD);
+    const adminRefresh = await request('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: adminSession.refreshToken }),
+    });
+    assert.equal(adminRefresh.status, 200);
+    const { token: adminToken } = (await adminRefresh.json()) as { token: string };
+    const victim = await findUserByUsername('refreshuser');
+    assert.ok(victim);
+
+    try {
+      const reset = await request('/api/auth/users/' + victim.id + '/reset-password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + adminToken },
+        body: JSON.stringify({ newPassword: 'password' + '789' }),
+      });
+      assert.equal(reset.status, 200);
+
+      const replay = await request('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: victimSession.refreshToken }),
+      });
+      assert.equal(replay.status, 401);
+    } finally {
+      await users.resetUserPassword(victim.id, REFRESH_TEST_PASSWORD);
+    }
+  });
+
+  test('password reset invalidates a replacement token issued by an in-flight refresh', async () => {
+    const victimSession = await login();
+    const adminSession = await login('refreshadmin', REFRESH_TEST_ADMIN_PASSWORD);
+    const adminRefresh = await request('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: adminSession.refreshToken }),
+    });
+    assert.equal(adminRefresh.status, 200);
+    const { token: adminToken } = (await adminRefresh.json()) as { token: string };
+    const victim = await findUserByUsername('refreshuser');
+    assert.ok(victim);
+    const original = verifyToken(victimSession.refreshToken);
+    assert.ok(original?.jti);
+    const paused = refreshTokens.pauseConsume(original.jti);
+
+    const rotating = request('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: victimSession.refreshToken }),
+    });
+    await paused.consumed;
+    const resetWaiting = refreshTokens.waitForSessionLock(victim.id);
+
+    try {
+      const resetting = request('/api/auth/users/' + victim.id + '/reset-password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: 'Bearer ' + adminToken },
+        body: JSON.stringify({ newPassword: 'password' + '789' }),
+      });
+      await resetWaiting;
+      paused.release();
+      const reset = await resetting;
+      assert.equal(reset.status, 200);
+
+      const rotated = await rotating;
+      assert.equal(rotated.status, 200);
+      const { refreshToken } = (await rotated.json()) as { refreshToken: string };
+      const replay = await request('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      });
+      assert.equal(replay.status, 401);
+    } finally {
+      paused.release();
+      await users.resetUserPassword(victim.id, REFRESH_TEST_PASSWORD);
+    }
+  });
+
+  test('password reset fails closed before changing the password when token revocation is unavailable', async () => {
+    const adminSession = await login('refreshadmin', REFRESH_TEST_ADMIN_PASSWORD);
+    const adminRefresh = await request('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: adminSession.refreshToken }),
+    });
+    assert.equal(adminRefresh.status, 200);
+    const { token: adminToken } = (await adminRefresh.json()) as { token: string };
+    const victim = await findUserByUsername('refreshuser');
+    assert.ok(victim);
+    refreshTokens.unavailable = true;
+
+    const reset = await request('/api/auth/users/' + victim.id + '/reset-password', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + adminToken },
+      body: JSON.stringify({ newPassword: 'password' + '789' }),
+    });
+    assert.equal(reset.status, 503);
+    assert.deepEqual(await reset.json(), { error: 'Authentication service unavailable' });
+
+    refreshTokens.unavailable = false;
+    const oldPasswordLogin = await login();
+    assert.ok(oldPasswordLogin.refreshToken);
   });
 });
