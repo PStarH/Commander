@@ -3386,6 +3386,45 @@ data: { owner-url: ${payload} }
     assert.doesNotMatch(serialized, /COMMANDER_KUBERNETES_PROOF_RUNTIME/);
   });
 
+  it('does not attach proof-runtime resources to restore owner Jobs', () => {
+    const bundle = buildHelmOwnerJobBundle({
+      mode: 'tenant-cutover-restore',
+      payload: { schema: 'tenant-cutover-restore/v1' },
+      executionId: '4'.repeat(32),
+      context: {
+        namespace: 'commander',
+        release: 'commander',
+        image: `ghcr.io/commander/api@${image}`,
+        databaseSecretName: 'commander-database-bootstrap',
+        databaseSecretKeys: {
+          owner: 'owner-url',
+          app: 'app-url',
+          tenantAuthority: 'tenant-authority-url',
+          scheduler: 'scheduler-url',
+          worker: 'worker-url',
+          adapterOps: 'adapter-ops-url',
+        },
+        databaseTls: {
+          secretName: 'database-server-tls',
+          caKey: 'ca.crt',
+          expectedServerSpkiSha256: digest('d'),
+        },
+        proofCertificate: { secretName: 'api-proof-public', caKey: 'ca.crt', certKey: 'tls.crt' },
+        proofRuntime: {
+          caKey: 'ca.crt',
+          releaseProjectionConfigMap: 'commander-proof-projection-v1',
+        },
+        bootstrap: { kind: 'none' },
+      },
+    });
+
+    const serialized = canonicalBootstrapJson(bundle.job);
+    assert.doesNotMatch(serialized, /tenant-authority-proof-reader/);
+    assert.doesNotMatch(serialized, /COMMANDER_KUBERNETES_PROOF_RUNTIME/);
+    assert.doesNotMatch(serialized, /release-projection/);
+    assert.doesNotMatch(serialized, /proof-api-token/);
+  });
+
   it('pins Helm 3.17.3', () => {
     assert.throws(
       () =>
