@@ -243,16 +243,28 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       res.status(401).json({ error: 'Invalid username or password' });
       return;
     }
+    const userId = user.id;
 
-    const authUser: AuthUser = {
-      id: user.id,
-      username: user.username,
-      role: membership.role,
-      tenantId: membership.tenantId,
-    };
     try {
-      await updateLastLogin(user.id);
-      res.json(await buildAuthResponse(authUser, refreshTokens));
+      const response = await refreshTokens.withUserSessionLock(userId, async () => {
+        const currentUser = await findUserById(userId);
+        if (!currentUser || !compareSync(password, currentUser.passwordHash)) return undefined;
+        const currentMembership = await findUserTenantMembership(currentUser.id, tenantId);
+        if (!currentMembership) return undefined;
+        const authUser: AuthUser = {
+          id: currentUser.id,
+          username: currentUser.username,
+          role: currentMembership.role,
+          tenantId: currentMembership.tenantId,
+        };
+        await updateLastLogin(currentUser.id);
+        return buildAuthResponse(authUser, refreshTokens);
+      });
+      if (!response) {
+        res.status(401).json({ error: 'Invalid username or password' });
+        return;
+      }
+      res.json(response);
     } catch {
       authorityUnavailable(res);
     }
@@ -308,55 +320,36 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       return;
     }
 
-    // Atomic consume: first concurrent refresh wins; replay / race → 401.
-    let consumed: boolean;
-    try {
-      consumed = await refreshTokens.consume(decoded.jti);
-    } catch {
-      authorityUnavailable(res);
-      return;
-    }
-    if (!consumed) {
-      res.status(401).json({ error: 'Refresh token revoked or unknown' });
-      return;
-    }
-
-    // Ensure the user still exists (account may have been removed).
-    let user;
-    try {
-      user = await findUserById(decoded.id);
-    } catch {
-      authorityUnavailable(res);
-      return;
-    }
-    if (!user) {
-      res.status(401).json({ error: 'User no longer exists' });
-      return;
-    }
-
     if (!decoded.tenant_id) {
       res.status(401).json({ error: 'Refresh token tenant is required' });
       return;
     }
-    let membership;
+    const refreshJti = decoded.jti;
+    const refreshTenantId = decoded.tenant_id;
     try {
-      membership = await findUserTenantMembership(user.id, decoded.tenant_id);
-    } catch {
-      authorityUnavailable(res);
-      return;
-    }
-    if (!membership) {
-      res.status(401).json({ error: 'Refresh token tenant is no longer authorized' });
-      return;
-    }
-    const authUser: AuthUser = {
-      id: user.id,
-      username: user.username,
-      role: membership.role,
-      tenantId: membership.tenantId,
-    };
-    try {
-      res.json(await buildAuthResponse(authUser, refreshTokens));
+      const response = await refreshTokens.withUserSessionLock(decoded.id, async () => {
+        // The lock also covers the replacement insert: a concurrent password reset
+        // either revokes this replacement or prevents it from being issued.
+        const consumed = await refreshTokens.consume(refreshJti);
+        if (!consumed) return { error: 'Refresh token revoked or unknown' };
+
+        const user = await findUserById(decoded.id);
+        if (!user) return { error: 'User no longer exists' };
+        const membership = await findUserTenantMembership(user.id, refreshTenantId);
+        if (!membership) return { error: 'Refresh token tenant is no longer authorized' };
+        const authUser: AuthUser = {
+          id: user.id,
+          username: user.username,
+          role: membership.role,
+          tenantId: membership.tenantId,
+        };
+        return { body: await buildAuthResponse(authUser, refreshTokens) };
+      });
+      if ('error' in response) {
+        res.status(401).json({ error: response.error });
+        return;
+      }
+      res.json(response.body);
     } catch {
       authorityUnavailable(res);
     }
@@ -612,7 +605,10 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       if (!(await targetIsInPrincipalTenant(req, res, id))) return;
       let updated;
       try {
-        updated = await resetUserPassword(id, parsed.data.newPassword);
+        updated = await refreshTokens.withUserSessionLock(id, async () => {
+          await refreshTokens.revokeAllForUser(id);
+          return resetUserPassword(id, parsed.data.newPassword);
+        });
       } catch {
         authorityUnavailable(res);
         return;

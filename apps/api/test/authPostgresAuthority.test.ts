@@ -148,11 +148,19 @@ describe('PostgreSQL auth authorities', () => {
     const repository = new PostgresUserRepository(pool);
 
     await bootstrapDefaultAdmin(
-      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password', ADMIN_TENANT_ID: 'tenant-a' },
+      {
+        NODE_ENV: 'production',
+        ADMIN_PASSWORD: 'operator-supplied-password',
+        ADMIN_TENANT_ID: 'tenant-a',
+      },
       repository,
     );
     await bootstrapDefaultAdmin(
-      { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password', ADMIN_TENANT_ID: 'tenant-a' },
+      {
+        NODE_ENV: 'production',
+        ADMIN_PASSWORD: 'operator-supplied-password',
+        ADMIN_TENANT_ID: 'tenant-a',
+      },
       repository,
     );
 
@@ -185,7 +193,11 @@ describe('PostgreSQL auth authorities', () => {
   test('refuses bootstrap without an explicit operator tenant', async () => {
     const pool = new BootstrapPool();
     await assert.rejects(
-      () => bootstrapDefaultAdmin({ NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password' }, new PostgresUserRepository(pool)),
+      () =>
+        bootstrapDefaultAdmin(
+          { NODE_ENV: 'production', ADMIN_PASSWORD: 'operator-supplied-password' },
+          new PostgresUserRepository(pool),
+        ),
       /ADMIN_TENANT_REQUIRED/,
     );
     assert.equal(pool.queries.length, 0);
@@ -337,6 +349,8 @@ describe('PostgreSQL auth authorities', () => {
         insert: async () => undefined,
         consume: async () => false,
         revoke: async () => undefined,
+        revokeAllForUser: async () => undefined,
+        withUserSessionLock: async <T>(_userId: string, operation: () => Promise<T>) => operation(),
       };
       const app = express();
       app.use(express.json());
@@ -352,7 +366,9 @@ describe('PostgreSQL auth authorities', () => {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
-            username: 'alice', password: testPassword, tenantId: 'tenant-a',
+            username: 'alice',
+            password: testPassword,
+            tenantId: 'tenant-a',
           }),
         });
         const body = (await response.json()) as Record<string, unknown>;

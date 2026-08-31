@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import type { AuthPluginResult } from '@commander/core';
-import { TestUserRepository } from './authRepositories'; import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
+import { TestUserRepository } from './authRepositories';
+import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore';
 
 const originalCwd = process.cwd();
 const originalEnv = {
@@ -61,6 +62,17 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
     if (this.unavailable) throw new Error('postgres authority failed: secret-dsn');
     const record = this.records.get(jti);
     if (record) record.revoked = true;
+  }
+
+  async revokeAllForUser(userId: string): Promise<void> {
+    if (this.unavailable) throw new Error('postgres authority failed: secret-dsn');
+    for (const record of this.records.values()) {
+      if (record.userId === userId) record.revoked = true;
+    }
+  }
+
+  async withUserSessionLock<T>(_userId: string, operation: () => Promise<T>): Promise<T> {
+    return operation();
   }
 }
 
@@ -153,7 +165,10 @@ describe('OIDC exchange identity and tenant binding', () => {
     const body = (await response.json()) as { token?: string; refreshToken?: string };
     assert.equal(body.token, undefined);
     assert.equal(body.refreshToken, undefined);
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'),
+      undefined,
+    );
   });
 
   it('accepts a valid explicit tenant claim in multi-tenant mode', async () => {
@@ -199,7 +214,10 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     const rejected = await exchange();
     assert.equal(rejected.status, 401);
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'),
+      undefined,
+    );
 
     process.env.OIDC_DEFAULT_TENANT_ID = 'single-tenant-default';
     assert.equal((await exchange()).status, 401);
@@ -290,7 +308,10 @@ describe('OIDC exchange identity and tenant binding', () => {
     const response = await exchange();
     assert.equal(response.status, 409);
     assert.equal((await findUserByEmail('alice@example.test'))?.role, 'admin');
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'attacker-subject'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'attacker-subject'),
+      undefined,
+    );
   });
 
   it('rejects a second subject attempting to claim an already-bound email', async () => {
@@ -307,7 +328,10 @@ describe('OIDC exchange identity and tenant binding', () => {
     });
 
     assert.equal((await exchange()).status, 409);
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-attacker'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'subject-attacker'),
+      undefined,
+    );
   });
 
   it('rejects an invalid tenant claim instead of minting a fallback tenant', async () => {
@@ -324,7 +348,10 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     const response = await exchange();
     assert.equal(response.status, 401);
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'),
+      undefined,
+    );
   });
 
   it('preserves the OIDC tenant when rotating the refresh token', async () => {

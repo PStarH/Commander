@@ -423,13 +423,6 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       }
     }
 
-    try {
-      await updateLastLogin(localUser.id);
-    } catch {
-      authorityUnavailable(res);
-      return;
-    }
-
     const authUser = {
       id: localUser.id,
       username: localUser.username,
@@ -438,12 +431,16 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
     };
 
     try {
-      const refreshToken = await signRefreshToken(authUser, refreshTokens);
-      res.json({
-        token: signAccessToken(authUser),
-        refreshToken,
-        user: toSafeUserPublic(localUser),
+      const response = await refreshTokens.withUserSessionLock(authUser.id, async () => {
+        await updateLastLogin(authUser.id);
+        const refreshToken = await signRefreshToken(authUser, refreshTokens);
+        return {
+          token: signAccessToken(authUser),
+          refreshToken,
+          user: toSafeUserPublic(localUser),
+        };
       });
+      res.json(response);
     } catch {
       authorityUnavailable(res);
     }
