@@ -77,7 +77,7 @@
     "audit:wiring": "pnpm exec node --import tsx scripts/audit-wiring.ts",
     "check:readiness": "pnpm exec node --import tsx scripts/check-readiness.ts",
     "claim:gate": "pnpm exec node --import tsx scripts/claim-honesty-gate.ts",
-    "claim:gate:test": "pnpm exec node --import tsx --test scripts/claim-honesty-gate.test.ts scripts/runbook-gate-consistency.test.ts",
+    "claim:gate:test": "pnpm exec node --import tsx --test scripts/claim-honesty-gate.test.ts scripts/runbook-gate-consistency.test.ts scripts/launch-runbook-consistency.test.ts",
     "bench:v2:live": "pnpm exec tsx scripts/bench-v2-live.ts",
     "bench:stepfun:loop": "pnpm exec tsx scripts/bench-stepfun-v2-loop.ts",
     "bench:stepfun:once": "pnpm exec tsx scripts/bench-stepfun-v2-loop.ts --once",
