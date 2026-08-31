@@ -3246,6 +3246,37 @@ async function captureApiPodStartupFailure(
   return parseApiPodStartupFailureEvidence('TENANT_CUTOVER_API_POD_STARTUP_FAILED:' + diagnostic);
 }
 
+type CutoverFailureDiagnosticPorts = {
+  observe: (release: string) => Promise<RolloutObservation>;
+  captureApiStartupFailure: (
+    release: string,
+    observation: RolloutObservation,
+  ) => Promise<ApiPodStartupFailureEvidence | undefined>;
+};
+
+const cutoverFailureDiagnosticPorts: CutoverFailureDiagnosticPorts = {
+  observe: observeLiveRolloutFailure,
+  captureApiStartupFailure: captureApiPodStartupFailure,
+};
+
+/** Takes one final bounded observation after a cutover failure reaches completion. */
+export async function captureFinalCutoverFailureDiagnostics(
+  release: string,
+  rolloutObservation: RolloutObservationState | undefined,
+  apiStartupFailure: ApiPodStartupFailureEvidence | undefined,
+  ports: CutoverFailureDiagnosticPorts = cutoverFailureDiagnosticPorts,
+): Promise<{
+  rolloutObservation: RolloutObservationState;
+  apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
+}> {
+  const observedFailure = await ports.observe(release);
+  return {
+    rolloutObservation: retainRolloutObservation(rolloutObservation, observedFailure),
+    apiStartupFailure:
+      apiStartupFailure ?? (await ports.captureApiStartupFailure(release, observedFailure)),
+  };
+}
+
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
@@ -3278,6 +3309,11 @@ async function runCutoverCommand(
   }
   await completion;
   if (cutoverFailure !== undefined) {
+    ({ rolloutObservation, apiStartupFailure } = await captureFinalCutoverFailureDiagnostics(
+      release,
+      rolloutObservation,
+      apiStartupFailure,
+    ));
     const failureMessage = cutoverFailure instanceof Error ? cutoverFailure.message : '';
     const childCodes = scenarioFailureCodes(failureMessage) ?? [];
     const ownerFailure = parseOwnerFailureEvidence(failureMessage);
