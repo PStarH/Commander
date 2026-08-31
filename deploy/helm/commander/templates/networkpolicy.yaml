@@ -398,7 +398,8 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "commander.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: migration
+              commander.io/migration-client-v2: "true"
+              commander.io/migration-release: {{ .Release.Name | quote }}
         - podSelector:
             matchLabels:
               {{- include "commander.proofReaderLabels" . | nindent 14 }}
@@ -419,7 +420,8 @@ spec:
   podSelector:
     matchLabels:
       {{- include "commander.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: migration
+      commander.io/migration-client-v2: "true"
+      commander.io/migration-release: {{ .Release.Name | quote }}
   policyTypes:
     - Egress
   egress:
