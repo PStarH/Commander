@@ -2069,6 +2069,74 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|secret/i);
   });
 
+  it('retains only fixed Helm uninstall residual resource kinds', () => {
+    const resourceKinds = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        helmUninstallResidualResourceKinds?: (output: string) => string[];
+      }
+    ).helmUninstallResidualResourceKinds;
+    assert.equal(typeof resourceKinds, 'function');
+
+    assert.deepEqual(
+      resourceKinds!(
+        [
+          'statefulset.apps/cmdr-live-redis',
+          'pod/cmdr-live-api-private',
+          'secret/cmdr-live-api-secret',
+          'horizontalpodautoscaler.autoscaling/cmdr-live-api',
+          'poddisruptionbudget.policy/cmdr-live-api',
+          'ingress.networking.k8s.io/cmdr-live',
+          'clusterrole.rbac.authorization.k8s.io/cmdr-live-tenant-prerequisite-operator',
+          'clusterrolebinding.rbac.authorization.k8s.io/cmdr-live-tenant-prerequisite-operator',
+          'unknown.example/private-object',
+        ].join('\n'),
+      ),
+      [
+        'clusterrole',
+        'clusterrolebinding',
+        'horizontalpodautoscaler',
+        'ingress',
+        'pod',
+        'poddisruptionbudget',
+        'secret',
+        'statefulset',
+      ],
+    );
+
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_UNINSTALL_DELETE_FAILED;residual_inventory=available;residual_kinds=pod,secret,statefulset: postgres://private:secret@database/commander',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0], {
+      name: 'fresh-bundled',
+      passed: false,
+      durationMs: 100,
+      failureCodes: ['HELM_UNINSTALL_DELETE_FAILED'],
+      helmUninstallResidual: {
+        inventory: 'available',
+        resourceKinds: ['pod', 'secret', 'statefulset'],
+      },
+    });
+    assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|database|cmdr-live/i);
+  });
+
   it('does not make successful lifecycle proofs depend on observing an ephemeral hook Pod', () => {
     const source = readFileSync(resolve(__dirname, 'helm-lifecycle-kind.ts'), 'utf8');
     assert.doesNotMatch(source, /LIVE_PROOF_POD_NOT_OBSERVED/);

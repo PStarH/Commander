@@ -785,11 +785,37 @@ export interface SanitizedScenarioEvidence {
   failedStage?: LifecycleFailureStage;
   networkPrerequisiteStage?: NetworkPrerequisiteStage;
   failureCodes?: string[];
+  helmUninstallResidual?: HelmUninstallResidualEvidence;
   admissionRbacFailure?: AdmissionRbacFailureEvidence;
   failedChecks?: SanitizedCheckFailure[];
   rolloutFailure?: RolloutFailureEvidence;
   rolloutObservation?: RolloutNonterminalEvidence | RolloutQueryEvidence;
   apiStartupFailure?: ApiPodStartupFailureEvidence;
+}
+
+type HelmUninstallResidualResourceKind =
+  | 'clusterrole'
+  | 'clusterrolebinding'
+  | 'configmap'
+  | 'deployment'
+  | 'horizontalpodautoscaler'
+  | 'ingress'
+  | 'job'
+  | 'networkpolicy'
+  | 'persistentvolumeclaim'
+  | 'pod'
+  | 'poddisruptionbudget'
+  | 'replicaset'
+  | 'role'
+  | 'rolebinding'
+  | 'secret'
+  | 'service'
+  | 'serviceaccount'
+  | 'statefulset';
+
+interface HelmUninstallResidualEvidence {
+  inventory: 'available' | 'unavailable';
+  resourceKinds?: HelmUninstallResidualResourceKind[];
 }
 
 interface AdmissionRbacFailureEvidence {
@@ -1223,6 +1249,30 @@ const LIFECYCLE_FAILURE_CODES = new Set([
   'ROLLOUT_FAILURE_NOT_OBSERVED',
 ]);
 
+const HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS: readonly HelmUninstallResidualResourceKind[] = [
+  'clusterrole',
+  'clusterrolebinding',
+  'configmap',
+  'deployment',
+  'horizontalpodautoscaler',
+  'ingress',
+  'job',
+  'networkpolicy',
+  'persistentvolumeclaim',
+  'pod',
+  'poddisruptionbudget',
+  'replicaset',
+  'role',
+  'rolebinding',
+  'secret',
+  'service',
+  'serviceaccount',
+  'statefulset',
+];
+
+const HELM_UNINSTALL_RESIDUAL_EVIDENCE =
+  /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?=:|$)/;
+
 function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   if (!error) return undefined;
   const boundedError = error.length <= 8_192 ? error : error.slice(0, 4_096) + error.slice(-4_096);
@@ -1234,6 +1284,40 @@ function scenarioFailureCodes(error: string | undefined): string[] | undefined {
     ]),
   ].slice(0, 8);
   return codes.length > 0 ? codes : undefined;
+}
+
+function isHelmUninstallResidualResourceKind(
+  value: string,
+): value is HelmUninstallResidualResourceKind {
+  return HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.some((kind) => kind === value);
+}
+
+function parseHelmUninstallResidualEvidence(
+  error: string,
+): HelmUninstallResidualEvidence | undefined {
+  const match = error.match(HELM_UNINSTALL_RESIDUAL_EVIDENCE);
+  if (!match) return undefined;
+  const inventory = match[1];
+  const encodedKinds = match[2];
+  if (inventory === 'unavailable') {
+    return encodedKinds === undefined ? { inventory } : undefined;
+  }
+  if (encodedKinds === undefined) return undefined;
+  if (encodedKinds === 'none') return { inventory };
+  const parsedKinds = encodedKinds.split(',');
+  if (
+    parsedKinds.length === 0 ||
+    new Set(parsedKinds).size !== parsedKinds.length ||
+    parsedKinds.some((kind) => !isHelmUninstallResidualResourceKind(kind))
+  ) {
+    return undefined;
+  }
+  return {
+    inventory,
+    resourceKinds: HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.filter((kind) =>
+      parsedKinds.includes(kind),
+    ),
+  };
 }
 
 function parseAdmissionRbacFailure(error: string): AdmissionRbacFailureEvidence | undefined {
@@ -2136,6 +2220,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
         const rolloutObservation = error ? parseRolloutObservationEvidence(error) : undefined;
         const apiStartupFailure = error ? parseApiPodStartupFailureEvidence(error) : undefined;
         const admissionRbacFailure = error ? parseAdmissionRbacFailure(error) : undefined;
+        const helmUninstallResidual = error ? parseHelmUninstallResidualEvidence(error) : undefined;
         return {
           name,
           passed,
@@ -2146,6 +2231,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
             ? { networkPrerequisiteStage }
             : {}),
           ...(safeFailureCodes.length > 0 ? { failureCodes: safeFailureCodes } : {}),
+          ...(helmUninstallResidual ? { helmUninstallResidual } : {}),
           ...(admissionRbacFailure ? { admissionRbacFailure } : {}),
           ...(failedChecks.length > 0 ? { failedChecks } : {}),
           ...(rolloutFailure
@@ -2802,8 +2888,89 @@ export function classifyHelmUninstallFailure(result: CommandResult): string {
   return 'HELM_UNINSTALL_FAILED';
 }
 
-function requireHelmUninstall(result: CommandResult): string {
-  return requireCommand(result, classifyHelmUninstallFailure(result));
+const HELM_UNINSTALL_RESOURCE_KIND_BY_OUTPUT_PREFIX: Record<
+  string,
+  HelmUninstallResidualResourceKind
+> = {
+  'clusterrole.rbac.authorization.k8s.io': 'clusterrole',
+  'clusterrolebinding.rbac.authorization.k8s.io': 'clusterrolebinding',
+  configmap: 'configmap',
+  'deployment.apps': 'deployment',
+  'horizontalpodautoscaler.autoscaling': 'horizontalpodautoscaler',
+  'ingress.networking.k8s.io': 'ingress',
+  'job.batch': 'job',
+  'networkpolicy.networking.k8s.io': 'networkpolicy',
+  persistentvolumeclaim: 'persistentvolumeclaim',
+  pod: 'pod',
+  'poddisruptionbudget.policy': 'poddisruptionbudget',
+  'replicaset.apps': 'replicaset',
+  'role.rbac.authorization.k8s.io': 'role',
+  'rolebinding.rbac.authorization.k8s.io': 'rolebinding',
+  secret: 'secret',
+  service: 'service',
+  serviceaccount: 'serviceaccount',
+  'statefulset.apps': 'statefulset',
+};
+
+export function helmUninstallResidualResourceKinds(
+  output: string,
+): HelmUninstallResidualResourceKind[] {
+  const found = new Set<HelmUninstallResidualResourceKind>();
+  for (const line of output.split(/\r?\n/)) {
+    const prefix = line.trim().split('/', 1)[0];
+    const kind = prefix ? HELM_UNINSTALL_RESOURCE_KIND_BY_OUTPUT_PREFIX[prefix] : undefined;
+    if (kind) found.add(kind);
+  }
+  return HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.filter((kind) => found.has(kind));
+}
+
+async function helmUninstallResidualEvidence(
+  release: string,
+): Promise<HelmUninstallResidualEvidence> {
+  const namespacedResult = await kubectl([
+    'get',
+    'pods,deployments,statefulsets,replicasets,jobs,services,configmaps,secrets,serviceaccounts,roles,rolebindings,networkpolicies,persistentvolumeclaims,horizontalpodautoscalers,ingresses,poddisruptionbudgets',
+    '-n',
+    NAMESPACE,
+    '-l',
+    `app.kubernetes.io/instance=${release}`,
+    '-o',
+    'name',
+  ]);
+  if (namespacedResult.exitCode !== 0) return { inventory: 'unavailable' };
+  const clusterScopedResult = await kubectl([
+    'get',
+    'clusterroles,clusterrolebindings',
+    '-l',
+    'commander.io/purpose=tenant-authority-prerequisite',
+    '-o',
+    'name',
+  ]);
+  if (clusterScopedResult.exitCode !== 0) return { inventory: 'unavailable' };
+  return {
+    inventory: 'available',
+    resourceKinds: helmUninstallResidualResourceKinds(
+      namespacedResult.stdout + '\n' + clusterScopedResult.stdout,
+    ),
+  };
+}
+
+function helmUninstallFailureRecord(
+  result: CommandResult,
+  residual: HelmUninstallResidualEvidence,
+): string {
+  const code = classifyHelmUninstallFailure(result);
+  if (residual.inventory === 'unavailable') return `${code};residual_inventory=unavailable`;
+  return `${code};residual_inventory=available;residual_kinds=${residual.resourceKinds?.join(',') || 'none'}`;
+}
+
+async function requireHelmUninstall(release: string): Promise<string> {
+  const result = await helm(['uninstall', release, '-n', NAMESPACE, '--wait']);
+  if (result.exitCode === 0) return result.stdout;
+  return requireCommand(
+    result,
+    helmUninstallFailureRecord(result, await helmUninstallResidualEvidence(release)),
+  );
 }
 
 async function kubectlJson(args: string[]): Promise<Record<string, unknown>> {
@@ -3763,7 +3930,7 @@ async function runRealBundledLifecycle(
       passed: true,
     });
     stage = 'helm-uninstall';
-    requireHelmUninstall(await helm(['uninstall', release, '-n', NAMESPACE, '--wait']));
+    await requireHelmUninstall(release);
     stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
@@ -3940,7 +4107,7 @@ async function runRealExternalTlsLifecycle(
     await cleanupNetworkPrerequisites();
     cleanupNetworkPrerequisites = undefined;
     stage = 'helm-uninstall';
-    requireHelmUninstall(await helm(['uninstall', release, '-n', NAMESPACE, '--wait']));
+    await requireHelmUninstall(release);
     stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     requireCommand(
@@ -4107,7 +4274,7 @@ async function runFailedRolloutRecovery(
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
     stage = 'helm-uninstall';
-    requireHelmUninstall(await helm(['uninstall', release, '-n', NAMESPACE, '--wait']));
+    await requireHelmUninstall(release);
     stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
