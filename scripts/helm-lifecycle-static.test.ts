@@ -309,31 +309,17 @@ describe('Helm lifecycle static contract', () => {
       ports: [{ protocol: 'TCP', port: 15433 }],
     });
 
-    const oldMigrationPolicy = manifest(
-      rendered,
-      'NetworkPolicy',
-      'lifecycle-demo-migration-egress',
-    );
-    const oldSelector = (
-      oldMigrationPolicy.spec?.podSelector as { matchLabels?: Record<string, string> }
+    const migrationPolicy = manifest(rendered, 'NetworkPolicy', 'lifecycle-demo-migration-egress');
+    const migrationSelector = (
+      migrationPolicy.spec?.podSelector as { matchLabels?: Record<string, string> }
     ).matchLabels;
-    assert.deepEqual(oldSelector, {
-      'app.kubernetes.io/name': 'lifecycle-demo',
-      'app.kubernetes.io/instance': 'lifecycle-demo',
-      'app.kubernetes.io/component': 'migration',
-    });
     const hookLabels = {
       'app.kubernetes.io/name': 'lifecycle-demo',
       'app.kubernetes.io/instance': 'lifecycle-demo',
       'commander.io/migration-client-v2': 'true',
       'commander.io/migration-release': 'lifecycle-demo',
     };
-    assert.equal(
-      Object.entries(oldSelector ?? {}).every(
-        ([key, value]) => hookLabels[key as keyof typeof hookLabels] === value,
-      ),
-      false,
-    );
+    assert.deepEqual(migrationSelector, hookLabels);
 
     const stableNames = [
       stablePolicyName('egress\0default\0lifecycle-demo', 'egress'),
@@ -573,6 +559,9 @@ describe('Helm lifecycle static contract', () => {
 
     const databaseIngress = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-postgres-ingress');
     assert.match(databaseIngress, /commander\.io\/tenant-authority-proof-reader: "true"/);
+    assert.match(databaseIngress, /commander\.io\/migration-client-v2: "true"/);
+    assert.match(databaseIngress, /commander\.io\/migration-release: "lifecycle-demo"/);
+    assert.doesNotMatch(databaseIngress, /app\.kubernetes\.io\/component: migration/);
     const apiProofIngress = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-api-proof-ingress');
     assert.match(apiProofIngress, /commander\.io\/tenant-authority-proof-reader: "true"/);
     assert.match(apiProofIngress, /port: 9443/);
