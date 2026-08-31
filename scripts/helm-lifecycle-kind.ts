@@ -1203,7 +1203,11 @@ const LIFECYCLE_FAILURE_CODES = new Set([
   'HELM_HISTORY_FAILED',
   'HELM_HISTORY_INVALID',
   'HELM_UNINSTALL_CLEANUP_FAILED',
+  'HELM_UNINSTALL_DELETE_FAILED',
+  'HELM_UNINSTALL_DELETE_FORBIDDEN',
   'HELM_UNINSTALL_FAILED',
+  'HELM_UNINSTALL_RELEASE_NOT_FOUND',
+  'HELM_UNINSTALL_WAIT_TIMEOUT',
   'KUBECTL_JSON_FAILED',
   'KUBECTL_JSON_INVALID',
   'KIND_LIFECYCLE_SCENARIO_EXECUTION_FAILED',
@@ -2781,6 +2785,27 @@ function requireCommand(result: CommandResult, code: string): string {
   return result.stdout;
 }
 
+export function classifyHelmUninstallFailure(result: CommandResult): string {
+  const output = `${result.stderr}\n${result.stdout}`;
+  if (/timed out waiting for the condition|context deadline exceeded/i.test(output)) {
+    return 'HELM_UNINSTALL_WAIT_TIMEOUT';
+  }
+  if (/\brelease\b\s*:?[\t ]*(?:not loaded|not found)\b/i.test(output)) {
+    return 'HELM_UNINSTALL_RELEASE_NOT_FOUND';
+  }
+  if (/forbidden|unauthorized|permission denied/i.test(output)) {
+    return 'HELM_UNINSTALL_DELETE_FORBIDDEN';
+  }
+  if (/failed to delete|unable to delete|deletion failed/i.test(output)) {
+    return 'HELM_UNINSTALL_DELETE_FAILED';
+  }
+  return 'HELM_UNINSTALL_FAILED';
+}
+
+function requireHelmUninstall(result: CommandResult): string {
+  return requireCommand(result, classifyHelmUninstallFailure(result));
+}
+
 async function kubectlJson(args: string[]): Promise<Record<string, unknown>> {
   const output = requireCommand(await kubectl([...args, '-o', 'json']), 'KUBECTL_JSON_FAILED');
   const parsed = JSON.parse(output) as unknown;
@@ -3738,10 +3763,7 @@ async function runRealBundledLifecycle(
       passed: true,
     });
     stage = 'helm-uninstall';
-    requireCommand(
-      await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
-      'HELM_UNINSTALL_FAILED',
-    );
+    requireHelmUninstall(await helm(['uninstall', release, '-n', NAMESPACE, '--wait']));
     stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
@@ -3918,10 +3940,7 @@ async function runRealExternalTlsLifecycle(
     await cleanupNetworkPrerequisites();
     cleanupNetworkPrerequisites = undefined;
     stage = 'helm-uninstall';
-    requireCommand(
-      await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
-      'HELM_UNINSTALL_FAILED',
-    );
+    requireHelmUninstall(await helm(['uninstall', release, '-n', NAMESPACE, '--wait']));
     stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     requireCommand(
@@ -4088,10 +4107,7 @@ async function runFailedRolloutRecovery(
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
     stage = 'helm-uninstall';
-    requireCommand(
-      await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
-      'HELM_UNINSTALL_FAILED',
-    );
+    requireHelmUninstall(await helm(['uninstall', release, '-n', NAMESPACE, '--wait']));
     stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
