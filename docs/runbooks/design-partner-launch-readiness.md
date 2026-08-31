@@ -557,15 +557,15 @@ Exit: G7 and G8 pass.
 
 ## 8. Promotion-Ready Review
 
-Use a planned aggregate command once the underlying gates exist:
+Use the aggregate verifier after the underlying gates produce their evidence:
 
 ```bash
 pnpm launch:verify -- --release <tag> --evidence <bundle-directory>
 ```
 
-`launch:verify` does not exist yet. It should validate artifact schemas, hashes,
-thresholds, source cleanliness, required CI links, maturity labels, and claim
-registry coverage. It must not re-implement the underlying tests.
+`launch:verify` validates artifact schemas, hashes, source cleanliness, required
+gate verdicts, and retained-evidence secret hygiene. It must not re-implement
+the underlying tests.
 
 The release is promotion-ready only when every answer is yes:
 
