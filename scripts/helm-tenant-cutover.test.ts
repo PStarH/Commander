@@ -2013,7 +2013,12 @@ data: { owner-url: c2VjcmV0 }
           return '';
         }
         if (args[0] === 'wait') return '';
-        if (args[0] === 'logs') return JSON.stringify(receipt);
+        if (args[0] === 'logs') {
+          return [
+            'COMMANDER_MIGRATION_PROGRESS;owner_stage=owner_pool_configuration',
+            JSON.stringify(receipt),
+          ].join('\n');
+        }
         throw new Error(`unexpected command: ${program} ${args.join(' ')}`);
       },
     });

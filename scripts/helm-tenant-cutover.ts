@@ -5379,8 +5379,13 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             request.namespace,
           ])
         ).trim();
+        const receiptLines = output
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter((line) => line.length > 0 && !line.startsWith('COMMANDER_MIGRATION_PROGRESS;'));
         try {
-          return JSON.parse(output) as unknown;
+          if (receiptLines.length !== 1) return fail('TENANT_CUTOVER_PROOF_RECEIPT_INVALID');
+          return JSON.parse(receiptLines[0]!) as unknown;
         } catch {
           return fail('TENANT_CUTOVER_PROOF_RECEIPT_INVALID');
         }
