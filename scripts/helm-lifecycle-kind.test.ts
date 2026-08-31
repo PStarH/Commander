@@ -761,6 +761,54 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /private|secret/i);
   });
 
+  it('retains fixed current-proof failures that occur before a rollout resource exists', () => {
+    const currentProofFailureCodes = [
+      'TENANT_CUTOVER_OWNER_RESPONSE_INVALID',
+      'TENANT_CUTOVER_PROOF_CURRENT_CHANGED',
+      'TENANT_CUTOVER_RESTORE_EVIDENCE_INVALID',
+      'TENANT_CUTOVER_RESTORE_HISTORY_INVALID',
+      'TENANT_CUTOVER_RESTORE_PROJECTION_INVALID',
+      'TENANT_CUTOVER_RESTORE_SECRET_MAPPING_INVALID',
+      'TENANT_CUTOVER_PROOF_JOB_INVALID',
+      'TENANT_CUTOVER_PROOF_OWNER_SECRET_CREATE_FAILED',
+      'TENANT_CUTOVER_PROOF_OWNER_SECRET_INVALID',
+      'TENANT_CUTOVER_PROOF_JOB_CREATE_FAILED',
+    ];
+
+    for (const failureCode of currentProofFailureCodes) {
+      const sanitized = sanitizeEvidence({
+        generatedAt: '2024-01-01T00:00:00Z',
+        cluster: 'test',
+        kindNodeImage: KIND_NODE_IMAGE,
+        chartPath: '/private/chart',
+        calicoUrl: CALICO_URL,
+        scenarios: [
+          {
+            name: 'fresh-bundled',
+            passed: false,
+            durationMs: 100,
+            events: [],
+            assertions: [],
+            failedStage: 'current-proof',
+            error:
+              'HELM_TENANT_CUTOVER_FAILED:' +
+              failureCode +
+              ':TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED\\nsecret=private',
+          },
+        ],
+        passed: false,
+        sanitized: false,
+      });
+
+      assert.deepEqual(sanitized.scenarios[0]?.failureCodes, [
+        'HELM_TENANT_CUTOVER_FAILED',
+        failureCode,
+        'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED',
+      ]);
+      assert.doesNotMatch(JSON.stringify(sanitized), /secret=private/i);
+    }
+  });
+
   it('classifies exact controller rollout failures without retaining object data', () => {
     for (const [item, expected] of [
       [
