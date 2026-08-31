@@ -1436,6 +1436,7 @@ function rolloutReasonForItem(
   resourceKind: RolloutResourceKind,
   status: Record<string, unknown> | undefined,
   component?: RolloutComponent,
+  spec?: Record<string, unknown>,
 ): RolloutReasonCode | undefined {
   if (resourceKind === 'Deployment') {
     return conditionReason(status, 'Progressing', 'False') === 'ProgressDeadlineExceeded'
@@ -1446,6 +1447,15 @@ function rolloutReasonForItem(
     const reason = conditionReason(status, 'Failed', 'True');
     if (reason === 'DeadlineExceeded') return 'JOB_DEADLINE_EXCEEDED';
     if (reason === 'BackoffLimitExceeded') return 'JOB_BACKOFF_LIMIT_EXCEEDED';
+    const failed = status?.failed;
+    if (
+      spec?.backoffLimit === 0 &&
+      typeof failed === 'number' &&
+      Number.isInteger(failed) &&
+      failed > 0
+    ) {
+      return 'JOB_BACKOFF_LIMIT_EXCEEDED';
+    }
     return undefined;
   }
   if (conditionReason(status, 'PodScheduled', 'False') === 'Unschedulable') {
@@ -1500,7 +1510,12 @@ function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | un
   const item = jsonRecord(value);
   if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
   const component = rolloutComponent(jsonRecord(item.metadata));
-  const reasonCode = rolloutReasonForItem(item.kind, jsonRecord(item.status), component);
+  const reasonCode = rolloutReasonForItem(
+    item.kind,
+    jsonRecord(item.status),
+    component,
+    jsonRecord(item.spec),
+  );
   if (!component || !reasonCode) return undefined;
   return {
     code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',

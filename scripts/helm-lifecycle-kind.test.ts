@@ -837,6 +837,33 @@ describe('helm-lifecycle-kind helpers', () => {
     );
   });
 
+  it('classifies a failed zero-backoff Job before its failure condition propagates', () => {
+    assert.deepEqual(
+      classifyRolloutFailureJson(
+        JSON.stringify({
+          kind: 'List',
+          items: [
+            {
+              kind: 'Job',
+              metadata: {
+                name: 'tenant-proof-secret',
+                labels: { 'commander.io/tenant-authority-proof-reader': 'true' },
+              },
+              spec: { backoffLimit: 0 },
+              status: { failed: 1 },
+            },
+          ],
+        }),
+      ),
+      {
+        code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+        resourceKind: 'Job',
+        component: 'tenant-cutover-proof',
+        reasonCode: 'JOB_BACKOFF_LIMIT_EXCEEDED',
+      },
+    );
+  });
+
   it('maps migration and proof Pods from fixed labels rather than names', () => {
     const migration = classifyRolloutFailureJson(
       JSON.stringify({
