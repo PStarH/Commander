@@ -2273,6 +2273,30 @@ describe('helm-lifecycle-kind helpers', () => {
     );
   });
 
+  it('uses the Kubernetes subresource flag for the proof-reader pod-log denial check', () => {
+    assert.deepEqual(
+      proofReaderCanIArgs({
+        verb: 'get',
+        resource: 'pods/log',
+        resourceName: '',
+        identity:
+          'system:serviceaccount:commander-lifecycle:commander-proof-reader-0123456789abcdef',
+        namespace: 'commander-lifecycle',
+      }),
+      [
+        'auth',
+        'can-i',
+        'get',
+        'pods',
+        '--subresource=log',
+        '--as',
+        'system:serviceaccount:commander-lifecycle:commander-proof-reader-0123456789abcdef',
+        '-n',
+        'commander-lifecycle',
+      ],
+    );
+  });
+
   it('accepts the canonical nonzero denial result for proof-reader RBAC checks', () => {
     assert.equal(
       proofReaderCanIResultPasses({ expected: 'yes', exitCode: 0, stdout: 'yes\n' }),
