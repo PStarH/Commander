@@ -2075,7 +2075,13 @@ describe('helm-lifecycle-kind helpers', () => {
         helmUninstallResidualResourceKinds?: (output: string) => string[];
       }
     ).helmUninstallResidualResourceKinds;
+    const podComponents = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        helmUninstallResidualPodComponents?: (value: unknown) => string[];
+      }
+    ).helmUninstallResidualPodComponents;
     assert.equal(typeof resourceKinds, 'function');
+    assert.equal(typeof podComponents, 'function');
 
     assert.deepEqual(
       resourceKinds!(
@@ -2102,6 +2108,17 @@ describe('helm-lifecycle-kind helpers', () => {
         'statefulset',
       ],
     );
+    assert.deepEqual(
+      podComponents!({
+        items: [
+          { metadata: { labels: { 'app.kubernetes.io/component': 'redis' } } },
+          { metadata: { labels: { 'app.kubernetes.io/component': 'api' } } },
+          { metadata: { labels: { 'app.kubernetes.io/component': 'private' } } },
+          { metadata: { labels: { 'app.kubernetes.io/component': 'postgres' } } },
+        ],
+      }),
+      ['api', 'postgres', 'redis'],
+    );
 
     const sanitized = sanitizeEvidence({
       generatedAt: '2024-01-01T00:00:00Z',
@@ -2117,7 +2134,7 @@ describe('helm-lifecycle-kind helpers', () => {
           events: [],
           assertions: [],
           error:
-            'HELM_UNINSTALL_DELETE_FAILED;residual_inventory=available;residual_kinds=pod,secret,statefulset: postgres://private:secret@database/commander',
+            'HELM_UNINSTALL_DELETE_FAILED;residual_inventory=available;residual_kinds=pod,secret,statefulset;residual_pod_components=api,redis: postgres://private:secret@database/commander',
         },
       ],
       passed: false,
@@ -2132,6 +2149,7 @@ describe('helm-lifecycle-kind helpers', () => {
       helmUninstallResidual: {
         inventory: 'available',
         resourceKinds: ['pod', 'secret', 'statefulset'],
+        podComponents: ['api', 'redis'],
       },
     });
     assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|database|cmdr-live/i);

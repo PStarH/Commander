@@ -813,9 +813,20 @@ type HelmUninstallResidualResourceKind =
   | 'serviceaccount'
   | 'statefulset';
 
+type HelmUninstallResidualPodComponent =
+  | 'adapter-ops'
+  | 'api'
+  | 'kernel-ops'
+  | 'postgres'
+  | 'redis'
+  | 'tenant-authority-proof-reader'
+  | 'web'
+  | 'worker';
+
 interface HelmUninstallResidualEvidence {
   inventory: 'available' | 'unavailable';
   resourceKinds?: HelmUninstallResidualResourceKind[];
+  podComponents?: HelmUninstallResidualPodComponent[];
 }
 
 interface AdmissionRbacFailureEvidence {
@@ -1270,8 +1281,19 @@ const HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS: readonly HelmUninstallResidualReso
   'statefulset',
 ];
 
+const HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS: readonly HelmUninstallResidualPodComponent[] = [
+  'adapter-ops',
+  'api',
+  'kernel-ops',
+  'postgres',
+  'redis',
+  'tenant-authority-proof-reader',
+  'web',
+  'worker',
+];
+
 const HELM_UNINSTALL_RESIDUAL_EVIDENCE =
-  /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?=:|$)/;
+  /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?:;residual_pod_components=(none|[a-z,-]+))?(?=:|$)/;
 
 function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   if (!error) return undefined;
@@ -1292,6 +1314,28 @@ function isHelmUninstallResidualResourceKind(
   return HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.some((kind) => kind === value);
 }
 
+function isHelmUninstallResidualPodComponent(
+  value: string,
+): value is HelmUninstallResidualPodComponent {
+  return HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.some((component) => component === value);
+}
+
+function parseHelmUninstallResidualValues<T extends string>(
+  encoded: string,
+  isAllowed: (value: string) => value is T,
+): T[] | undefined {
+  if (encoded === 'none') return [];
+  const values = encoded.split(',');
+  if (
+    values.length === 0 ||
+    new Set(values).size !== values.length ||
+    values.some((value) => !isAllowed(value))
+  ) {
+    return undefined;
+  }
+  return values;
+}
+
 function parseHelmUninstallResidualEvidence(
   error: string,
 ): HelmUninstallResidualEvidence | undefined {
@@ -1299,24 +1343,38 @@ function parseHelmUninstallResidualEvidence(
   if (!match) return undefined;
   const inventory = match[1];
   const encodedKinds = match[2];
+  const encodedPodComponents = match[3];
   if (inventory === 'unavailable') {
-    return encodedKinds === undefined ? { inventory } : undefined;
+    return encodedKinds === undefined && encodedPodComponents === undefined
+      ? { inventory }
+      : undefined;
   }
-  if (encodedKinds === undefined) return undefined;
-  if (encodedKinds === 'none') return { inventory };
-  const parsedKinds = encodedKinds.split(',');
-  if (
-    parsedKinds.length === 0 ||
-    new Set(parsedKinds).size !== parsedKinds.length ||
-    parsedKinds.some((kind) => !isHelmUninstallResidualResourceKind(kind))
-  ) {
-    return undefined;
-  }
+  if (encodedKinds === undefined || encodedPodComponents === undefined) return undefined;
+  const parsedKinds = parseHelmUninstallResidualValues(
+    encodedKinds,
+    isHelmUninstallResidualResourceKind,
+  );
+  const parsedPodComponents = parseHelmUninstallResidualValues(
+    encodedPodComponents,
+    isHelmUninstallResidualPodComponent,
+  );
+  if (!parsedKinds || !parsedPodComponents) return undefined;
   return {
     inventory,
-    resourceKinds: HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.filter((kind) =>
-      parsedKinds.includes(kind),
-    ),
+    ...(parsedKinds.length > 0
+      ? {
+          resourceKinds: HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.filter((kind) =>
+            parsedKinds.includes(kind),
+          ),
+        }
+      : {}),
+    ...(parsedPodComponents.length > 0
+      ? {
+          podComponents: HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) =>
+            parsedPodComponents.includes(component),
+          ),
+        }
+      : {}),
   };
 }
 
@@ -2924,6 +2982,22 @@ export function helmUninstallResidualResourceKinds(
   return HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.filter((kind) => found.has(kind));
 }
 
+export function helmUninstallResidualPodComponents(
+  value: unknown,
+): HelmUninstallResidualPodComponent[] {
+  const items = jsonArray(jsonRecord(value)?.items);
+  if (!items) return [];
+  const found = new Set<HelmUninstallResidualPodComponent>();
+  for (const item of items) {
+    const labels = jsonRecord(jsonRecord(item)?.metadata)?.labels;
+    const component = jsonRecord(labels)?.['app.kubernetes.io/component'];
+    if (typeof component === 'string' && isHelmUninstallResidualPodComponent(component)) {
+      found.add(component);
+    }
+  }
+  return HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) => found.has(component));
+}
+
 async function helmUninstallResidualEvidence(
   release: string,
 ): Promise<HelmUninstallResidualEvidence> {
@@ -2947,11 +3021,29 @@ async function helmUninstallResidualEvidence(
     'name',
   ]);
   if (clusterScopedResult.exitCode !== 0) return { inventory: 'unavailable' };
+  const podInventoryResult = await kubectl([
+    'get',
+    'pods',
+    '-n',
+    NAMESPACE,
+    '-l',
+    `app.kubernetes.io/instance=${release}`,
+    '-o',
+    'json',
+  ]);
+  if (podInventoryResult.exitCode !== 0) return { inventory: 'unavailable' };
+  let podInventory: unknown;
+  try {
+    podInventory = JSON.parse(podInventoryResult.stdout) as unknown;
+  } catch {
+    return { inventory: 'unavailable' };
+  }
   return {
     inventory: 'available',
     resourceKinds: helmUninstallResidualResourceKinds(
       namespacedResult.stdout + '\n' + clusterScopedResult.stdout,
     ),
+    podComponents: helmUninstallResidualPodComponents(podInventory),
   };
 }
 
@@ -2961,7 +3053,7 @@ function helmUninstallFailureRecord(
 ): string {
   const code = classifyHelmUninstallFailure(result);
   if (residual.inventory === 'unavailable') return `${code};residual_inventory=unavailable`;
-  return `${code};residual_inventory=available;residual_kinds=${residual.resourceKinds?.join(',') || 'none'}`;
+  return `${code};residual_inventory=available;residual_kinds=${residual.resourceKinds?.join(',') || 'none'};residual_pod_components=${residual.podComponents?.join(',') || 'none'}`;
 }
 
 async function requireHelmUninstall(release: string): Promise<string> {
