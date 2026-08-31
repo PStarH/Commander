@@ -2134,7 +2134,7 @@ describe('helm-lifecycle-kind helpers', () => {
           events: [],
           assertions: [],
           error:
-            'HELM_UNINSTALL_DELETE_FAILED;residual_inventory=available;residual_kinds=pod,secret,statefulset;residual_pod_components=api,redis: postgres://private:secret@database/commander',
+            'HELM_UNINSTALL_DELETE_FAILED;residual_inventory=available;residual_kinds=pod,secret,statefulset;residual_pod_components=api,redis;residual_terminating_pod_components=redis: postgres://private:secret@database/commander',
         },
       ],
       passed: false,
@@ -2150,9 +2150,75 @@ describe('helm-lifecycle-kind helpers', () => {
         inventory: 'available',
         resourceKinds: ['pod', 'secret', 'statefulset'],
         podComponents: ['api', 'redis'],
+        terminatingPodComponents: ['redis'],
       },
     });
     assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|database|cmdr-live/i);
+  });
+
+  it('retains only allowlisted terminating Helm uninstall Pod components', () => {
+    const terminatingPodComponents = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        helmUninstallResidualTerminatingPodComponents?: (value: unknown) => string[];
+      }
+    ).helmUninstallResidualTerminatingPodComponents;
+    assert.equal(typeof terminatingPodComponents, 'function');
+
+    assert.deepEqual(
+      terminatingPodComponents!({
+        items: [
+          {
+            metadata: {
+              labels: { 'app.kubernetes.io/component': 'postgres' },
+              deletionTimestamp: '2026-08-31T19:12:59Z',
+            },
+          },
+          { metadata: { labels: { 'app.kubernetes.io/component': 'api' } } },
+          {
+            metadata: {
+              labels: { 'app.kubernetes.io/component': 'redis' },
+              deletionTimestamp: '2026-08-31T19:12:59Z',
+            },
+          },
+          {
+            metadata: {
+              labels: { 'app.kubernetes.io/component': 'private' },
+              deletionTimestamp: '2026-08-31T19:12:59Z',
+            },
+          },
+        ],
+      }),
+      ['postgres', 'redis'],
+    );
+
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error:
+            'HELM_UNINSTALL_DELETE_FAILED;residual_inventory=available;residual_kinds=networkpolicy,pod;residual_pod_components=api,postgres,redis;residual_terminating_pod_components=postgres,redis: postgres://private:secret@database/commander',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.helmUninstallResidual, {
+      inventory: 'available',
+      resourceKinds: ['networkpolicy', 'pod'],
+      podComponents: ['api', 'postgres', 'redis'],
+      terminatingPodComponents: ['postgres', 'redis'],
+    });
+    assert.doesNotMatch(JSON.stringify(sanitized), /private|secret|database|cmdr-live/i);
   });
 
   it('does not make successful lifecycle proofs depend on observing an ephemeral hook Pod', () => {

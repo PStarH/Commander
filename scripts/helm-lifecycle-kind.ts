@@ -827,6 +827,7 @@ interface HelmUninstallResidualEvidence {
   inventory: 'available' | 'unavailable';
   resourceKinds?: HelmUninstallResidualResourceKind[];
   podComponents?: HelmUninstallResidualPodComponent[];
+  terminatingPodComponents?: HelmUninstallResidualPodComponent[];
 }
 
 interface AdmissionRbacFailureEvidence {
@@ -1293,7 +1294,7 @@ const HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS: readonly HelmUninstallResidualPodC
 ];
 
 const HELM_UNINSTALL_RESIDUAL_EVIDENCE =
-  /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?:;residual_pod_components=(none|[a-z,-]+))?(?=:|$)/;
+  /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?:;residual_pod_components=(none|[a-z,-]+))?(?:;residual_terminating_pod_components=(none|[a-z,-]+))?(?=:|$)/;
 
 function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   if (!error) return undefined;
@@ -1344,12 +1345,21 @@ function parseHelmUninstallResidualEvidence(
   const inventory = match[1];
   const encodedKinds = match[2];
   const encodedPodComponents = match[3];
+  const encodedTerminatingPodComponents = match[4];
   if (inventory === 'unavailable') {
-    return encodedKinds === undefined && encodedPodComponents === undefined
+    return encodedKinds === undefined &&
+      encodedPodComponents === undefined &&
+      encodedTerminatingPodComponents === undefined
       ? { inventory }
       : undefined;
   }
-  if (encodedKinds === undefined || encodedPodComponents === undefined) return undefined;
+  if (
+    encodedKinds === undefined ||
+    encodedPodComponents === undefined ||
+    encodedTerminatingPodComponents === undefined
+  ) {
+    return undefined;
+  }
   const parsedKinds = parseHelmUninstallResidualValues(
     encodedKinds,
     isHelmUninstallResidualResourceKind,
@@ -1358,7 +1368,18 @@ function parseHelmUninstallResidualEvidence(
     encodedPodComponents,
     isHelmUninstallResidualPodComponent,
   );
-  if (!parsedKinds || !parsedPodComponents) return undefined;
+  const parsedTerminatingPodComponents = parseHelmUninstallResidualValues(
+    encodedTerminatingPodComponents,
+    isHelmUninstallResidualPodComponent,
+  );
+  if (
+    !parsedKinds ||
+    !parsedPodComponents ||
+    !parsedTerminatingPodComponents ||
+    parsedTerminatingPodComponents.some((component) => !parsedPodComponents.includes(component))
+  ) {
+    return undefined;
+  }
   return {
     inventory,
     ...(parsedKinds.length > 0
@@ -1372,6 +1393,13 @@ function parseHelmUninstallResidualEvidence(
       ? {
           podComponents: HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) =>
             parsedPodComponents.includes(component),
+          ),
+        }
+      : {}),
+    ...(parsedTerminatingPodComponents.length > 0
+      ? {
+          terminatingPodComponents: HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) =>
+            parsedTerminatingPodComponents.includes(component),
           ),
         }
       : {}),
@@ -2998,6 +3026,27 @@ export function helmUninstallResidualPodComponents(
   return HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) => found.has(component));
 }
 
+export function helmUninstallResidualTerminatingPodComponents(
+  value: unknown,
+): HelmUninstallResidualPodComponent[] {
+  const items = jsonArray(jsonRecord(value)?.items);
+  if (!items) return [];
+  const found = new Set<HelmUninstallResidualPodComponent>();
+  for (const item of items) {
+    const metadata = jsonRecord(jsonRecord(item)?.metadata);
+    const labels = jsonRecord(metadata?.labels);
+    const component = labels?.['app.kubernetes.io/component'];
+    if (
+      typeof metadata?.deletionTimestamp === 'string' &&
+      typeof component === 'string' &&
+      isHelmUninstallResidualPodComponent(component)
+    ) {
+      found.add(component);
+    }
+  }
+  return HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) => found.has(component));
+}
+
 async function helmUninstallResidualEvidence(
   release: string,
 ): Promise<HelmUninstallResidualEvidence> {
@@ -3044,6 +3093,7 @@ async function helmUninstallResidualEvidence(
       namespacedResult.stdout + '\n' + clusterScopedResult.stdout,
     ),
     podComponents: helmUninstallResidualPodComponents(podInventory),
+    terminatingPodComponents: helmUninstallResidualTerminatingPodComponents(podInventory),
   };
 }
 
@@ -3053,7 +3103,7 @@ function helmUninstallFailureRecord(
 ): string {
   const code = classifyHelmUninstallFailure(result);
   if (residual.inventory === 'unavailable') return `${code};residual_inventory=unavailable`;
-  return `${code};residual_inventory=available;residual_kinds=${residual.resourceKinds?.join(',') || 'none'};residual_pod_components=${residual.podComponents?.join(',') || 'none'}`;
+  return `${code};residual_inventory=available;residual_kinds=${residual.resourceKinds?.join(',') || 'none'};residual_pod_components=${residual.podComponents?.join(',') || 'none'};residual_terminating_pod_components=${residual.terminatingPodComponents?.join(',') || 'none'}`;
 }
 
 async function requireHelmUninstall(release: string): Promise<string> {
