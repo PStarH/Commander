@@ -125,7 +125,7 @@ export function signAccessToken(user: AuthUser): string {
  */
 export async function signRefreshToken(
   user: AuthUser,
-  refreshTokens: RefreshTokenRepository,
+  refreshTokens: Pick<RefreshTokenRepository, 'insert'>,
 ): Promise<string> {
   const jti = randomUUID();
   const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);

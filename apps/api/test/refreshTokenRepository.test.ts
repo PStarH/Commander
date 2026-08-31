@@ -15,13 +15,16 @@ interface StoredToken {
   revoked: boolean;
 }
 
-function createPoolHarness(): {
+function createPoolHarness(connectionLimit = Number.POSITIVE_INFINITY): {
   pool: SqlPool;
   records: Map<string, StoredToken>;
   queries: Array<{ sql: string; values: readonly unknown[] }>;
+  connectionCount: () => number;
 } {
   const records = new Map<string, StoredToken>();
   const queries: Array<{ sql: string; values: readonly unknown[] }> = [];
+  let activeConnections = 0;
+  let connectionCount = 0;
   const client: SqlClient = {
     async query<T>(sql: string, values: readonly unknown[] = []) {
       queries.push({ sql, values });
@@ -60,13 +63,37 @@ function createPoolHarness(): {
       }
       throw new Error('unexpected query: ' + sql);
     },
-    release() {},
+    release() {
+      activeConnections -= 1;
+    },
   };
   return {
     records,
     queries,
-    pool: { connect: async () => client },
+    connectionCount: () => connectionCount,
+    pool: {
+      async connect() {
+        if (activeConnections === connectionLimit) return new Promise<SqlClient>(() => undefined);
+        activeConnections += 1;
+        connectionCount += 1;
+        return client;
+      },
+    },
   };
+}
+
+async function completesWithin<T>(operation: Promise<T>, timeoutMs = 100): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation,
+      new Promise<T>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('refresh session operation timed out')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 describe('PostgreSQL refresh-token repository', () => {
@@ -137,6 +164,30 @@ describe('PostgreSQL refresh-token repository', () => {
       harness.queries.map((query) => query.sql),
       ['SELECT pg_advisory_lock(hashtext($1))', 'SELECT pg_advisory_unlock(hashtext($1))'],
     );
+  });
+
+  it('executes every session-scoped token mutation on the locked connection', async () => {
+    const harness = createPoolHarness(1);
+    const repository = new PostgresRefreshTokenRepository(harness.pool);
+    const expiresAt = new Date(Date.now() + 60_000);
+
+    const result = await completesWithin(
+      repository.withUserSessionLock(
+        'user-1',
+        async (
+          session: Pick<RefreshTokenRepository, 'consume' | 'insert' | 'revokeAllForUser'> = repository,
+        ) => {
+          await session.insert({ jti: 'jti-session', userId: 'user-1', expiresAt });
+          const consumed = await session.consume('jti-session');
+          await session.revokeAllForUser('user-1');
+          return consumed;
+        },
+      ),
+    );
+
+    assert.equal(result, true);
+    assert.equal(harness.connectionCount(), 1);
+    assert.equal(harness.records.get('jti-session')?.revoked, true);
   });
 
   it('requires DATABASE_URL with the commander_app role and verified pool factory', () => {
