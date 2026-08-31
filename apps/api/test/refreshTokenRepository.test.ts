@@ -88,7 +88,10 @@ async function completesWithin<T>(operation: Promise<T>, timeoutMs = 100): Promi
     return await Promise.race([
       operation,
       new Promise<T>((_resolve, reject) => {
-        timer = setTimeout(() => reject(new Error('refresh session operation timed out')), timeoutMs);
+        timer = setTimeout(
+          () => reject(new Error('refresh session operation timed out')),
+          timeoutMs,
+        );
       }),
     ]);
   } finally {
@@ -175,7 +178,10 @@ describe('PostgreSQL refresh-token repository', () => {
       repository.withUserSessionLock(
         'user-1',
         async (
-          session: Pick<RefreshTokenRepository, 'consume' | 'insert' | 'revokeAllForUser'> = repository,
+          session: Pick<
+            RefreshTokenRepository,
+            'consume' | 'insert' | 'revokeAllForUser'
+          > = repository,
         ) => {
           await session.insert({ jti: 'jti-session', userId: 'user-1', expiresAt });
           const consumed = await session.consume('jti-session');
