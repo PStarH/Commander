@@ -20,7 +20,10 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
   }
   async revoke(_jti: string): Promise<void> {}
   async revokeAllForUser(_userId: string): Promise<void> {}
-  async withUserSessionLock<T>(_userId: string, operation: (session: this) => Promise<T>): Promise<T> {
+  async withUserSessionLock<T>(
+    _userId: string,
+    operation: (session: this) => Promise<T>,
+  ): Promise<T> {
     return operation(this);
   }
 }
