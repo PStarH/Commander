@@ -2492,7 +2492,10 @@ export function buildHelmOwnerJobBundle(input: {
     .slice(0, 63 - configSuffix.length)
     .replace(/-$/, '')}${configSuffix}`;
   const executionLabel = input.executionId;
-  const proofRuntime = input.context.proofRuntime;
+  // Restore only reads the durable operation; it must not be treated as a proof
+  // workload or receive the projected Kubernetes proof identity.
+  const proofRuntime =
+    input.mode === 'tenant-cutover-restore' ? undefined : input.context.proofRuntime;
   const labels = {
     'app.kubernetes.io/name': input.context.release,
     'app.kubernetes.io/instance': input.context.release,
