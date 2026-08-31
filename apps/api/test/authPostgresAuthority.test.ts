@@ -350,7 +350,7 @@ describe('PostgreSQL auth authorities', () => {
         consume: async () => false,
         revoke: async () => undefined,
         revokeAllForUser: async () => undefined,
-        withUserSessionLock: async <T>(_userId: string, operation: () => Promise<T>) => operation(),
+        withUserSessionLock: async <T>(_userId: string, operation) => operation(refreshTokens),
       };
       const app = express();
       app.use(express.json());

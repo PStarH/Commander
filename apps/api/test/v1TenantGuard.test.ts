@@ -174,8 +174,8 @@ describe('v1TenantGuard — spec §3.2 fail-closed table (enterprise profile)', 
       },
       async revoke() {},
       async revokeAllForUser() {},
-      async withUserSessionLock<T>(_userId: string, operation: () => Promise<T>) {
-        return operation();
+      async withUserSessionLock<T>(_userId: string, operation: (session: this) => Promise<T>) {
+        return operation(this);
       },
     };
     const refresh = await signRefreshToken(makeUser({ tenantId: KNOWN_TENANT }), refreshTokens);

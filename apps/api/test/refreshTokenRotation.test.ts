@@ -49,7 +49,10 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
     return { consumed: consumedPromise, release };
   }
 
-  async withUserSessionLock<T>(userId: string, operation: () => Promise<T>): Promise<T> {
+  async withUserSessionLock<T>(
+    userId: string,
+    operation: (session: this) => Promise<T>,
+  ): Promise<T> {
     const predecessor = this.sessionLocks.get(userId);
     let release!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -60,7 +63,7 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
     if (predecessor) this.sessionLockWaiters.get(userId)?.();
     await predecessor;
     try {
-      return await operation();
+      return await operation(this);
     } finally {
       release();
       if (this.sessionLocks.get(userId) === queued) this.sessionLocks.delete(userId);

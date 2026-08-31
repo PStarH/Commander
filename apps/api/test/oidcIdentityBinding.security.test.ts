@@ -71,8 +71,8 @@ class TestRefreshTokenRepository implements RefreshTokenRepository {
     }
   }
 
-  async withUserSessionLock<T>(_userId: string, operation: () => Promise<T>): Promise<T> {
-    return operation();
+  async withUserSessionLock<T>(_userId: string, operation: (session: this) => Promise<T>): Promise<T> {
+    return operation(this);
   }
 }
 

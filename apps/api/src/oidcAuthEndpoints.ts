@@ -431,9 +431,9 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
     };
 
     try {
-      const response = await refreshTokens.withUserSessionLock(authUser.id, async () => {
+      const response = await refreshTokens.withUserSessionLock(authUser.id, async (session) => {
         await updateLastLogin(authUser.id);
-        const refreshToken = await signRefreshToken(authUser, refreshTokens);
+        const refreshToken = await signRefreshToken(authUser, session);
         return {
           token: signAccessToken(authUser),
           refreshToken,

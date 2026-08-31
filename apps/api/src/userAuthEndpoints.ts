@@ -134,7 +134,7 @@ interface AuthResponseBody {
 
 async function buildAuthResponse(
   user: AuthUser,
-  refreshTokens: RefreshTokenRepository,
+  refreshTokens: Pick<RefreshTokenRepository, 'insert'>,
 ): Promise<AuthResponseBody> {
   // Look up the fresh user record so lastLoginAt / createdAt are current.
   const full = await findUserById(user.id);
@@ -246,7 +246,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
     const userId = user.id;
 
     try {
-      const response = await refreshTokens.withUserSessionLock(userId, async () => {
+      const response = await refreshTokens.withUserSessionLock(userId, async (session) => {
         const currentUser = await findUserById(userId);
         if (!currentUser || !compareSync(password, currentUser.passwordHash)) return undefined;
         const currentMembership = await findUserTenantMembership(currentUser.id, tenantId);
@@ -258,7 +258,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
           tenantId: currentMembership.tenantId,
         };
         await updateLastLogin(currentUser.id);
-        return buildAuthResponse(authUser, refreshTokens);
+        return buildAuthResponse(authUser, session);
       });
       if (!response) {
         res.status(401).json({ error: 'Invalid username or password' });
@@ -327,10 +327,10 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
     const refreshJti = decoded.jti;
     const refreshTenantId = decoded.tenant_id;
     try {
-      const response = await refreshTokens.withUserSessionLock(decoded.id, async () => {
+      const response = await refreshTokens.withUserSessionLock(decoded.id, async (session) => {
         // The lock also covers the replacement insert: a concurrent password reset
         // either revokes this replacement or prevents it from being issued.
-        const consumed = await refreshTokens.consume(refreshJti);
+        const consumed = await session.consume(refreshJti);
         if (!consumed) return { error: 'Refresh token revoked or unknown' };
 
         const user = await findUserById(decoded.id);
@@ -343,7 +343,7 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
           role: membership.role,
           tenantId: membership.tenantId,
         };
-        return { body: await buildAuthResponse(authUser, refreshTokens) };
+        return { body: await buildAuthResponse(authUser, session) };
       });
       if ('error' in response) {
         res.status(401).json({ error: response.error });
@@ -605,8 +605,8 @@ export function createUserAuthRouter(options: UserAuthRouterOptions = {}): Route
       if (!(await targetIsInPrincipalTenant(req, res, id))) return;
       let updated;
       try {
-        updated = await refreshTokens.withUserSessionLock(id, async () => {
-          await refreshTokens.revokeAllForUser(id);
+        updated = await refreshTokens.withUserSessionLock(id, async (session) => {
+          await session.revokeAllForUser(id);
           return resetUserPassword(id, parsed.data.newPassword);
         });
       } catch {
