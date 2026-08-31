@@ -2000,6 +2000,75 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.equal(checks, 2);
   });
 
+  it('classifies Helm uninstall failures into fixed safe codes', () => {
+    const classify = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        classifyHelmUninstallFailure?: (result: {
+          stdout: string;
+          stderr: string;
+          exitCode: number;
+        }) => string;
+      }
+    ).classifyHelmUninstallFailure;
+    assert.equal(typeof classify, 'function');
+
+    assert.equal(
+      classify!({
+        stdout: '',
+        stderr: 'Error: timed out waiting for the condition: postgres://private:secret@db',
+        exitCode: 1,
+      }),
+      'HELM_UNINSTALL_WAIT_TIMEOUT',
+    );
+    assert.equal(
+      classify!({
+        stdout: '',
+        stderr: 'Error: uninstall: Release not loaded: cmdr-live: release: not found',
+        exitCode: 1,
+      }),
+      'HELM_UNINSTALL_RELEASE_NOT_FOUND',
+    );
+    assert.equal(
+      classify!({
+        stdout: '',
+        stderr: 'Error: configmaps "release-projection" not found',
+        exitCode: 1,
+      }),
+      'HELM_UNINSTALL_FAILED',
+    );
+    assert.equal(
+      classify!({
+        stdout: '',
+        stderr: 'Error: services "cmdr-live-api" is forbidden: private detail',
+        exitCode: 1,
+      }),
+      'HELM_UNINSTALL_DELETE_FORBIDDEN',
+    );
+
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-bundled',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          error: 'HELM_UNINSTALL_WAIT_TIMEOUT: postgres://private:secret@database/commander',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.failureCodes, ['HELM_UNINSTALL_WAIT_TIMEOUT']);
+    assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|secret/i);
+  });
+
   it('does not make successful lifecycle proofs depend on observing an ephemeral hook Pod', () => {
     const source = readFileSync(resolve(__dirname, 'helm-lifecycle-kind.ts'), 'utf8');
     assert.doesNotMatch(source, /LIVE_PROOF_POD_NOT_OBSERVED/);
