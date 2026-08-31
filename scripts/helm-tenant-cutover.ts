@@ -2505,7 +2505,7 @@ export function buildHelmOwnerJobBundle(input: {
           'commander.io/tenant-authority-proof-reader': 'true',
           'commander.io/tenant-authority-proof-release': input.context.release,
         }
-      : { 'app.kubernetes.io/component': 'migration' }),
+      : {}),
   };
   const secretEnv = (key: string) => ({
     valueFrom: { secretKeyRef: { name: input.context.databaseSecretName, key } },
