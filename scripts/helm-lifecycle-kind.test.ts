@@ -13,6 +13,7 @@ import {
   assertHelmVersion,
   assertNegativeCanaryResult,
   assertProofPodContract,
+  captureFinalCutoverFailureDiagnostics,
   observeExecFileFailures,
   buildExternalPostgresResources,
   buildLifecycleValues,
@@ -579,6 +580,55 @@ describe('helm-lifecycle-kind helpers', () => {
     });
     const terminalState = retainRolloutObservation(earlyUnready, terminal);
     assert.deepEqual(retainRolloutObservation(terminalState, disappeared), terminalState);
+  });
+
+  it('retains a terminal observation captured after the cutover command fails', async () => {
+    const terminal = classifyRolloutObservation({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        items: [
+          {
+            kind: 'Deployment',
+            metadata: { labels: { 'app.kubernetes.io/component': 'api' } },
+            status: {
+              conditions: [
+                { type: 'Progressing', status: 'False', reason: 'ProgressDeadlineExceeded' },
+              ],
+            },
+          },
+        ],
+      }),
+    });
+    let startupCaptureCalls = 0;
+
+    const diagnostics = await captureFinalCutoverFailureDiagnostics(
+      'tenant-release',
+      undefined,
+      undefined,
+      {
+        observe: async (release) => {
+          assert.equal(release, 'tenant-release');
+          return terminal;
+        },
+        captureApiStartupFailure: async (release, observation) => {
+          startupCaptureCalls += 1;
+          assert.equal(release, 'tenant-release');
+          assert.equal(observation, terminal);
+          return undefined;
+        },
+      },
+    );
+
+    assert.deepEqual(diagnostics.rolloutObservation, {
+      terminal: {
+        code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+        resourceKind: 'Deployment',
+        component: 'api',
+        reasonCode: 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED',
+      },
+    });
+    assert.equal(startupCaptureCalls, 1);
   });
 
   it('sanitizes finite rollout observation records and rejects malicious extra fields', () => {
