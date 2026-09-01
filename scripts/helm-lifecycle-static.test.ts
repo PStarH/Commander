@@ -415,7 +415,11 @@ describe('Helm lifecycle static contract', () => {
       /COMMANDER_TENANT_AUTHORITY_PROOF_DNS_NAME[\s\S]*lifecycle-demo-api-proof\.default\.svc\.cluster\.local/,
     );
     assert.match(api, /containerPort: 9443/);
-    assert.match(api, /name: api-proof-tls-materialize[\s\S]*COPYFILE_EXCL/);
+    assert.match(
+      api,
+      /name: api-proof-tls-materialize[\s\S]*fs\.rmSync\(target, \{ force: true \}\)[\s\S]*copyFileSync\(source, target\)/,
+    );
+    assert.doesNotMatch(api, /COPYFILE_EXCL/);
     assert.match(api, /name: api-proof-private-source[\s\S]*readOnly: true/);
     assert.match(api, /name: api-proof-tls-runtime[\s\S]*emptyDir: \{\}/);
     assert.match(api, /\['tls\.crt', 0o444\][\s\S]*\['tls\.key', 0o400\]/);
