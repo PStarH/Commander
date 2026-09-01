@@ -1722,6 +1722,33 @@ export function selectFailingApiPodName(items: readonly unknown[]): string | und
     .sort()[0];
 }
 
+/** Selects the failing init/container so startup diagnostics do not assume the API process ran. */
+export function selectFailingApiContainerName(status: unknown): string | undefined {
+  const podStatus = jsonRecord(status);
+  const failedWaitingReasons = new Set([
+    'ErrImagePull',
+    'ImagePullBackOff',
+    'CreateContainerConfigError',
+    'CreateContainerError',
+    'RunContainerError',
+    'CrashLoopBackOff',
+  ]);
+  for (const field of ['initContainerStatuses', 'containerStatuses'] as const) {
+    const containers = jsonArray(podStatus?.[field]);
+    if (!containers) continue;
+    const failed = containers
+      .map((candidate) => jsonRecord(candidate))
+      .find((container) => {
+        const waiting = jsonRecord(jsonRecord(container?.state)?.waiting);
+        return (
+          typeof container?.name === 'string' && failedWaitingReasons.has(String(waiting?.reason))
+        );
+      });
+    if (typeof failed?.name === 'string') return failed.name;
+  }
+  return undefined;
+}
+
 function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | undefined {
   const item = jsonRecord(value);
   if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
@@ -3612,13 +3639,14 @@ async function captureApiPodStartupFailure(
     .map((item) => jsonRecord(item))
     .find((item) => jsonRecord(item?.metadata)?.name === podName);
   const termination = apiPodTerminationFacts(pod?.status);
+  const containerName = selectFailingApiContainerName(pod?.status) ?? 'api';
   let logs = await kubectl(
-    ['logs', podName, '-c', 'api', '--previous', '-n', NAMESPACE, '--tail=80'],
+    ['logs', podName, '-c', containerName, '--previous', '-n', NAMESPACE, '--tail=80'],
     { maxBuffer: 16 * 1024 },
   );
   if (logs.exitCode !== 0 || apiPodLogsAreUnclassified(logs.stdout)) {
     const currentLogs = await kubectl(
-      ['logs', podName, '-c', 'api', '-n', NAMESPACE, '--tail=80'],
+      ['logs', podName, '-c', containerName, '-n', NAMESPACE, '--tail=80'],
       { maxBuffer: 16 * 1024 },
     );
     if (currentLogs.exitCode === 0) {
