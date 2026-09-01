@@ -1320,7 +1320,7 @@ const HELM_UNINSTALL_RESIDUAL_EVIDENCE =
   /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?:;residual_pod_components=(none|[a-z,-]+))?(?:;residual_terminating_pod_components=(none|[a-z,-]+))?(?=:|$)/;
 
 const EXTERNAL_DATABASE_ROLE_FAILURE_EVIDENCE =
-  /^EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=((?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query)(?:,(?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query))*)(?=:|$)/;
+  /^EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=((?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query)(?:,(?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query))*)(?=[:\n]|$)/;
 
 function parseExternalDatabaseRoleFailures(
   error: string,

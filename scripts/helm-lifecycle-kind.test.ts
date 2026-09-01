@@ -2173,7 +2173,7 @@ describe('helm-lifecycle-kind helpers', () => {
           assertions: [],
           failedStage: 'network-prerequisites',
           error:
-            'EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=app:authentication,worker:tls: postgres://private:secret@database/commander',
+            'EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=app:authentication,worker:tls\npod/private-diagnostic',
         },
       ],
       passed: false,
