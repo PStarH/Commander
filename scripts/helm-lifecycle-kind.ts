@@ -1259,6 +1259,7 @@ const LIFECYCLE_FAILURE_CODES = new Set([
   'API_PROOF_SERVICE_INVALID',
   'EPHEMERAL_LIFECYCLE_RESOURCE_CLEANUP_FAILED',
   'EXTERNAL_DATABASE_CLEANUP_FAILED',
+  'EXTERNAL_DATABASE_POD_IP_INVALID',
   'EXTERNAL_DATABASE_SERVICE_INVALID',
   'EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED',
   'HELM_HISTORY_FAILED',
@@ -3427,6 +3428,7 @@ async function applyPrivateJson(
 type ExternalDatabaseFixture = {
   serviceClusterIp: string;
   hostname: string;
+  podIp: string;
 };
 
 async function createExternalDatabaseFixture(input: {
@@ -3496,6 +3498,17 @@ async function createExternalDatabaseFixture(input: {
   if (typeof serviceClusterIp !== 'string' || !serviceClusterIp) {
     throw new Error('EXTERNAL_DATABASE_SERVICE_INVALID');
   }
+  const pod = await kubectlJson([
+    'get',
+    'pod',
+    'external-postgres-0',
+    '-n',
+    EXTERNAL_DATABASE_NAMESPACE,
+  ]);
+  const podIp = jsonRecord(pod.status)?.podIP;
+  if (typeof podIp !== 'string' || !isIpv4Address(podIp)) {
+    throw new Error('EXTERNAL_DATABASE_POD_IP_INVALID');
+  }
   const roleLogins: Record<string, string> = {
     owner: 'commander_owner',
     app: 'commander_app',
@@ -3540,7 +3553,7 @@ async function createExternalDatabaseFixture(input: {
     ]),
     'EXTERNAL_DATABASE_CA_SECRET_CREATE_FAILED',
   );
-  return { serviceClusterIp, hostname };
+  return { serviceClusterIp, hostname, podIp };
 }
 
 async function observeLiveRolloutFailure(release: string): Promise<RolloutObservation> {
@@ -4282,7 +4295,7 @@ async function runRealExternalTlsLifecycle(
         passed: firstProofCount >= 1,
         detail: `proofRows=${firstProofCount}`,
       },
-      ...(await assertExternalRoleConnections(external.hostname, external.serviceClusterIp)),
+      ...(await assertExternalRoleConnections(external.hostname, external.podIp)),
     );
     const firstRevision = await helmRevision(release);
     stage = 'cutover-enforce';

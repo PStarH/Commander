@@ -1958,10 +1958,8 @@ describe('helm-lifecycle-kind helpers', () => {
       /assertExternalRoleConnections\(\s*hostname: string,\s*hostAddress: string,?\s*\)/,
     );
     assert.match(source, /hostaddr=\$\{hostAddress\} port=5432 dbname=commander/);
-    assert.match(
-      source,
-      /assertExternalRoleConnections\(external\.hostname, external\.serviceClusterIp\)/,
-    );
+    assert.match(source, /podIp: string/);
+    assert.match(source, /assertExternalRoleConnections\(external\.hostname, external\.podIp\)/);
   });
 
   it('selects the complete real lifecycle matrix and rejects unknown scenarios', () => {
