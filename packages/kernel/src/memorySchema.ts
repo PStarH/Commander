@@ -72,4 +72,64 @@ BEGIN
 END $$;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.memory_items TO commander_app;
 GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.memory_audit_events TO commander_app;
+CREATE TABLE IF NOT EXISTS public.api_tasks (
+  id TEXT PRIMARY KEY,
+  client_id TEXT NOT NULL,
+  agent_id TEXT,
+  description TEXT NOT NULL,
+  priority TEXT NOT NULL DEFAULT 'medium',
+  status TEXT NOT NULL DEFAULT 'pending',
+  input_json TEXT NOT NULL DEFAULT '{}',
+  artifact_id TEXT,
+  progress INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  messages_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  started_at TEXT,
+  completed_at TEXT,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public.api_artifacts (
+  id TEXT PRIMARY KEY,
+  task_id TEXT NOT NULL,
+  content_type TEXT NOT NULL,
+  content TEXT NOT NULL,
+  url TEXT,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS public.api_governance_checkpoints (
+  id TEXT PRIMARY KEY,
+  mission_id TEXT,
+  task_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  risk_score INTEGER NOT NULL DEFAULT 0,
+  risk_level TEXT NOT NULL DEFAULT 'LOW',
+  required_approvals_json TEXT NOT NULL DEFAULT '[]',
+  current_approvals_json TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL,
+  expires_at TEXT,
+  approved_at TEXT,
+  fallback_action TEXT NOT NULL DEFAULT 'abort',
+  context_json TEXT NOT NULL DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS public.api_governance_configs (
+  mission_id TEXT PRIMARY KEY,
+  mode TEXT NOT NULL,
+  risk_threshold INTEGER,
+  approvers_json TEXT NOT NULL DEFAULT '[]',
+  timeout INTEGER,
+  fallback_on_timeout TEXT NOT NULL DEFAULT 'abort'
+);
+CREATE INDEX IF NOT EXISTS idx_api_tasks_status ON public.api_tasks(status);
+CREATE INDEX IF NOT EXISTS idx_api_tasks_client ON public.api_tasks(client_id);
+CREATE INDEX IF NOT EXISTS idx_api_tasks_agent ON public.api_tasks(agent_id);
+CREATE INDEX IF NOT EXISTS idx_api_artifacts_task ON public.api_artifacts(task_id);
+CREATE INDEX IF NOT EXISTS idx_api_ck_mission ON public.api_governance_checkpoints(mission_id);
+CREATE INDEX IF NOT EXISTS idx_api_ck_status ON public.api_governance_checkpoints(status);
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_tasks TO commander_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_artifacts TO commander_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_governance_checkpoints TO commander_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.api_governance_configs TO commander_app;
 `;
