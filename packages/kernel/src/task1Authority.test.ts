@@ -29,6 +29,7 @@ import {
   KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
   KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
   KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+  KERNEL_MEMORY_SCHEMA_MIGRATIONS,
   KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
   KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
   runTask1ClosureMigrations,
@@ -122,8 +123,25 @@ describe('Task 1 authoritative Class A admission', () => {
   it('installs the PostgreSQL authentication-failure authority migration', () => {
     const id = '2026-08-22.1.auth_failure_authority';
     assert.equal(KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS[0]?.id, id);
-    assert.equal(KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.sql, KERNEL_AUTH_FAILURE_AUTHORITY_SQL);
-    assert.match(KERNEL_AUTH_FAILURE_AUTHORITY_SQL, /GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app/);
+    assert.equal(
+      KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.sql,
+      KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+    );
+    assert.match(
+      KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app/,
+    );
+  });
+
+  it('installs the owner-managed durable memory schema before runtime startup', () => {
+    const descriptor = KERNEL_MEMORY_SCHEMA_MIGRATIONS[0];
+    assert.equal(descriptor?.id, '2026-09-01.1.memory_schema');
+    assert.equal(KERNEL_MIGRATIONS.find(({ id }) => id === descriptor?.id)?.sql, descriptor?.sql);
+    assert.match(descriptor?.sql ?? '', /CREATE TABLE IF NOT EXISTS public\.memory_items/);
+    assert.match(
+      descriptor?.sql ?? '',
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.memory_items TO commander_app/,
+    );
   });
 
   it('installs the approval-binding claim RPC after the campaign2 public wrapper', () => {
@@ -417,7 +435,9 @@ describe('Task 1 authoritative Class A admission', () => {
   });
 
   it('grants the runtime app role read access to the migration ledger', async () => {
-    const pool = new MigrationLedgerPool(new Map(Object.entries(KERNEL_HISTORICAL_MIGRATION_CHECKSUMS)));
+    const pool = new MigrationLedgerPool(
+      new Map(Object.entries(KERNEL_HISTORICAL_MIGRATION_CHECKSUMS)),
+    );
 
     await runKernelMigrations(pool);
 

@@ -52,6 +52,15 @@ class RecordingPool {
 }
 
 describe('PostgresMemoryService', () => {
+  it('can defer schema management to the owner migration', async () => {
+    const pool = new RecordingPool();
+    const service = new PostgresMemoryService({ pool, manageSchema: false });
+
+    await service.initialize();
+
+    expect(pool.calls).toHaveLength(0);
+  });
+
   it('creates the base schema and RLS without requiring pgvector', async () => {
     const pool = new RecordingPool();
     const service = new PostgresMemoryService({ pool });
