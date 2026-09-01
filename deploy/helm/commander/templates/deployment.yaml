@@ -82,7 +82,8 @@ spec:
               for (const [name, mode] of files) {
                 const source = `/source/api-proof/${name}`;
                 const target = `/runtime/api-proof/${name}`;
-                fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
+                fs.rmSync(target, { force: true });
+                fs.copyFileSync(source, target);
                 fs.chownSync(target, {{ .Values.podSecurityContext.runAsUser }}, {{ .Values.podSecurityContext.runAsGroup }});
                 fs.chmodSync(target, mode);
                 const stat = fs.lstatSync(target);
