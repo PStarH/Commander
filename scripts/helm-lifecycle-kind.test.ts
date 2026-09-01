@@ -186,6 +186,28 @@ describe('helm-lifecycle-kind helpers', () => {
     );
   });
 
+  it('selects a terminated API init container when Kubernetes records no waiting reason', () => {
+    const selectContainer = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        selectFailingApiContainerName?: (status: unknown) => string | undefined;
+      }
+    ).selectFailingApiContainerName;
+    assert.equal(typeof selectContainer, 'function');
+
+    assert.equal(
+      selectContainer!({
+        initContainerStatuses: [
+          {
+            name: 'api-proof-tls-materialize',
+            state: { terminated: { reason: 'Error', exitCode: 1 } },
+          },
+        ],
+        containerStatuses: [{ name: 'api', state: { waiting: { reason: 'PodInitializing' } } }],
+      }),
+      'api-proof-tls-materialize',
+    );
+  });
+
   it('retains only an allowlisted API startup code and hash from pod logs', () => {
     const diagnostic = (
       lifecycleHarness as typeof lifecycleHarness & {

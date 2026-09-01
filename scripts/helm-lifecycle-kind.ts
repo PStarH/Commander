@@ -1733,6 +1733,12 @@ export function selectFailingApiContainerName(status: unknown): string | undefin
     'RunContainerError',
     'CrashLoopBackOff',
   ]);
+  const failedTerminationReasons = new Set([
+    'ContainerCannotRun',
+    'Error',
+    'OOMKilled',
+    'StartError',
+  ]);
   for (const field of ['initContainerStatuses', 'containerStatuses'] as const) {
     const containers = jsonArray(podStatus?.[field]);
     if (!containers) continue;
@@ -1740,9 +1746,20 @@ export function selectFailingApiContainerName(status: unknown): string | undefin
       .map((candidate) => jsonRecord(candidate))
       .find((container) => {
         const waiting = jsonRecord(jsonRecord(container?.state)?.waiting);
-        return (
-          typeof container?.name === 'string' && failedWaitingReasons.has(String(waiting?.reason))
-        );
+        if (typeof container?.name !== 'string') return false;
+        if (failedWaitingReasons.has(String(waiting?.reason))) return true;
+        for (const state of [container?.state, container?.lastState]) {
+          const terminated = jsonRecord(jsonRecord(state)?.terminated);
+          const exitCode = terminated?.exitCode;
+          if (
+            typeof terminated?.reason === 'string' &&
+            (failedTerminationReasons.has(terminated.reason) ||
+              (typeof exitCode === 'number' && Number.isInteger(exitCode) && exitCode !== 0))
+          ) {
+            return true;
+          }
+        }
+        return false;
       });
     if (typeof failed?.name === 'string') return failed.name;
   }
