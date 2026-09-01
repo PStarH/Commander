@@ -1938,7 +1938,7 @@ describe('helm-lifecycle-kind helpers', () => {
         bootstrapAuthoritySecret: 'cmdr-external-bootstrap',
         serviceNamespace: 'external-db',
         serviceName: 'external-postgres',
-        serviceClusterIp: '10.96.12.34',
+        podIp: '10.244.0.42',
       },
     });
     assert.match(values, /bundled: false/);
@@ -1949,7 +1949,7 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(values, /name: external-postgres/);
     assert.match(
       values,
-      /egress:\n    databaseCidrs:\n      - 10\.96\.12\.34\/32\n    kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32\n      - 172\.18\.0\.2\/32/,
+      /egress:\n    databaseCidrs:\n      - 10\.244\.0\.42\/32\n    kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32\n      - 172\.18\.0\.2\/32/,
     );
     assert.doesNotMatch(values, /existingSecret: cmdr-external-database-tls/);
   });
