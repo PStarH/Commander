@@ -412,6 +412,9 @@ interface DatabaseIdentityRow {
   database_peer_binding_sha256: string;
 }
 
+const DATABASE_IDENTITY_STARTUP_ATTEMPTS = 5;
+const DATABASE_IDENTITY_STARTUP_RETRY_MS = 250;
+
 export interface Task1DatabaseIdentity {
   installationId: string;
   databasePeerBindingSha256: string;
@@ -420,26 +423,36 @@ export interface Task1DatabaseIdentity {
 export async function readTask1DatabaseIdentity(
   authorityPool: Task1QueryPool,
 ): Promise<Task1DatabaseIdentity> {
-  return withTask1QueryClient(authorityPool, async (client) => {
-    const row = oneRow(
-      (
-        await client.query<DatabaseIdentityRow>(
-          `
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= DATABASE_IDENTITY_STARTUP_ATTEMPTS; attempt += 1) {
+    try {
+      return await withTask1QueryClient(authorityPool, async (client) => {
+        const row = oneRow(
+          (
+            await client.query<DatabaseIdentityRow>(
+              `
 SELECT installation_id::text, database_peer_binding_sha256
 FROM public.commander_database_identity()
 `.trim(),
-        )
-      ).rows,
-      'TASK1_DATABASE_IDENTITY_INVALID',
-    );
-    if (!UUID.test(row.installation_id) || !SHA256.test(row.database_peer_binding_sha256)) {
-      throw new Error('TASK1_DATABASE_IDENTITY_INVALID');
+            )
+          ).rows,
+          'TASK1_DATABASE_IDENTITY_INVALID',
+        );
+        if (!UUID.test(row.installation_id) || !SHA256.test(row.database_peer_binding_sha256)) {
+          throw new Error('TASK1_DATABASE_IDENTITY_INVALID');
+        }
+        return {
+          installationId: row.installation_id,
+          databasePeerBindingSha256: row.database_peer_binding_sha256,
+        };
+      });
+    } catch (error) {
+      lastError = error;
+      if (attempt === DATABASE_IDENTITY_STARTUP_ATTEMPTS) throw error;
+      await new Promise<void>((resolve) => setTimeout(resolve, DATABASE_IDENTITY_STARTUP_RETRY_MS));
     }
-    return {
-      installationId: row.installation_id,
-      databasePeerBindingSha256: row.database_peer_binding_sha256,
-    };
-  });
+  }
+  throw lastError instanceof Error ? lastError : new Error('TASK1_DATABASE_IDENTITY_INVALID');
 }
 
 export interface Task1ReadinessRuntimeOptions {
