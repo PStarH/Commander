@@ -952,6 +952,8 @@ async function startServer(): Promise<void> {
   try {
     const canonicalStore = await createMemoryStore(memoryType, {
       connectionString: process.env.COMMANDER_POSTGRES_URL ?? process.env.DATABASE_URL,
+      manageSchema:
+        memoryType === 'postgres' && process.env.NODE_ENV === 'production' ? false : undefined,
     });
     canonicalMemoryStore = canonicalStore;
     projectMemoryAdapter = new ProjectMemoryStoreAdapter(canonicalStore);

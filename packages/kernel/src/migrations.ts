@@ -46,6 +46,7 @@ import {
 } from './compensationSchema.js';
 import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import { KERNEL_MEMORY_SCHEMA_SQL } from './memorySchema.js';
 
 export const KERNEL_AUTH_FAILURE_AUTHORITY_SQL = `
 CREATE TABLE IF NOT EXISTS commander_auth_failures (
@@ -65,6 +66,14 @@ export interface KernelMigration {
 }
 
 const checksum = (sql: string): string => createHash('sha256').update(sql).digest('hex');
+
+export const KERNEL_MEMORY_SCHEMA_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-01.1.memory_schema',
+    sql: KERNEL_MEMORY_SCHEMA_SQL,
+    checksum: checksum(KERNEL_MEMORY_SCHEMA_SQL),
+  },
+];
 
 const KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM =
   'd76d0dc499b7c2b69abe779252792cf3fd7dd1921e09cd9b8d77e42035f7149d';
@@ -473,6 +482,7 @@ export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
   ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
 ];
 
 export const KERNEL_TASK1_BASELINE_MIGRATIONS: readonly KernelMigration[] = [
@@ -512,6 +522,7 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
   ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';
