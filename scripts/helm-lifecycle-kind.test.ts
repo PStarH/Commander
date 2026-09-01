@@ -164,6 +164,28 @@ describe('helm-lifecycle-kind helpers', () => {
     );
   });
 
+  it('selects the failing API init container when the main container never started', () => {
+    const selectContainer = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        selectFailingApiContainerName?: (status: unknown) => string | undefined;
+      }
+    ).selectFailingApiContainerName;
+    assert.equal(typeof selectContainer, 'function');
+
+    assert.equal(
+      selectContainer!({
+        initContainerStatuses: [
+          {
+            name: 'migration-gate',
+            state: { waiting: { reason: 'CrashLoopBackOff' } },
+          },
+        ],
+        containerStatuses: [{ name: 'api', state: { waiting: { reason: 'PodInitializing' } } }],
+      }),
+      'migration-gate',
+    );
+  });
+
   it('retains only an allowlisted API startup code and hash from pod logs', () => {
     const diagnostic = (
       lifecycleHarness as typeof lifecycleHarness & {
