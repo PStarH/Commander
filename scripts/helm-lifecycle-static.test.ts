@@ -337,6 +337,35 @@ describe('Helm lifecycle static contract', () => {
       assert.equal(renderedNames.has(name), false, `${name} must remain operator-owned`);
   });
 
+  it('allows API migration-gate egress to the exact external database Service CIDR', () => {
+    const rendered = render(false, [
+      '--set',
+      'database.postgres.bundled=false',
+      '--set',
+      'database.postgres.existingSecret=external-database',
+      '--set',
+      'databaseTls.existingSecret=',
+      '--set',
+      'databaseTls.caSecret=external-ca',
+      '--set',
+      'tenantAuthority.bootstrapAuthoritySecret=external-bootstrap-authority',
+      '--set',
+      'networkPolicy.egress.databaseCidrs[0]=10.96.42.7/32',
+    ]);
+    const apiEgress = manifest(rendered, 'NetworkPolicy', 'lifecycle-demo-api-egress');
+    const rule = (
+      (apiEgress.spec?.egress ?? []) as Array<{
+        to?: Array<{ ipBlock?: { cidr?: string } }>;
+        ports?: Array<{ port?: number; protocol?: string }>;
+      }>
+    ).find((candidate) => candidate.to?.some((entry) => entry.ipBlock?.cidr === '10.96.42.7/32'));
+
+    assert.deepEqual(rule, {
+      to: [{ ipBlock: { cidr: '10.96.42.7/32' } }],
+      ports: [{ protocol: 'TCP', port: 5432 }],
+    });
+  });
+
   it('rejects incomplete or ambiguous database endpoint values at schema validation', () => {
     const invalidEndpoints = [
       [{ roles: ['owner'], cidr: { cidr: '10.0.0.1/32', port: 5432 } }],
