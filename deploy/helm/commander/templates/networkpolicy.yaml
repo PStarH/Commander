@@ -199,6 +199,15 @@ spec:
     {{- include "commander.clusterDnsEgress" . | nindent 4 }}
     # PostgreSQL app and tenant-authority roles.
     {{- include "commander.databaseEndpointEgress" (dict "root" . "roles" (list "app" "tenant-authority")) | nindent 4 }}
+    # Exact external PostgreSQL Service CIDRs required by the API migration gate.
+    {{- range .Values.networkPolicy.egress.databaseCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.database.postgres.port }}
+    {{- end }}
     # Redis
     {{- if .Values.redis.enabled }}
     - to:
