@@ -244,13 +244,41 @@ describe('helm-lifecycle-kind helpers', () => {
       diagnostic!('Error: DATABASE_URL_REQUIRED', 'api'),
       /^code=DATABASE_URL_REQUIRED;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,
     );
-    assert.match(
-      diagnostic!(
-        'COMMANDER_MIGRATION_FAILED stage=await code=MIGRATION_GATE_DATABASE_UNAVAILABLE',
-        'migration-gate',
-      ),
-      /^code=COMMANDER_MIGRATION_FAILED;producer=api_entrypoint;transport=kubectl_logs;container=migration-gate;log_sha256=[a-f0-9]{64}$/,
+    const migrationGateResult = diagnostic!(
+      'COMMANDER_MIGRATION_FAILED stage=await code=MIGRATION_GATE_DATABASE_UNAVAILABLE',
+      'migration-gate',
     );
+    assert.match(
+      migrationGateResult,
+      /^code=COMMANDER_MIGRATION_FAILED;producer=api_entrypoint;transport=kubectl_logs;container=migration-gate;migration_gate_code=MIGRATION_GATE_DATABASE_UNAVAILABLE;log_sha256=[a-f0-9]{64}$/,
+    );
+    const migrationGateEvidence = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'fresh-external',
+          passed: false,
+          durationMs: 1,
+          events: [],
+          assertions: [],
+          error: 'TENANT_CUTOVER_API_POD_STARTUP_FAILED:' + migrationGateResult,
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+    assert.deepEqual(migrationGateEvidence.scenarios[0]?.apiStartupFailure, {
+      code: 'COMMANDER_MIGRATION_FAILED',
+      producer: 'api_entrypoint',
+      transport: 'kubectl_logs',
+      container: 'migration-gate',
+      migrationGateCode: 'MIGRATION_GATE_DATABASE_UNAVAILABLE',
+      logSha256: migrationGateResult.match(/log_sha256=([a-f0-9]{64})$/)?.[1],
+    });
     assert.match(
       diagnostic!('COMMANDER_API_STARTUP_FAILED: opaque startup detail', 'api'),
       /^code=COMMANDER_API_STARTUP_FAILED;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,

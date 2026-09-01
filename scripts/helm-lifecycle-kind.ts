@@ -1045,6 +1045,24 @@ const API_POD_TERMINATION_REASONS = [
   'StartError',
 ] as const;
 type ApiPodTerminationReason = (typeof API_POD_TERMINATION_REASONS)[number];
+const MIGRATION_GATE_FAILURE_CODES = [
+  'MIGRATION_GATE_MODE_INVALID',
+  'MIGRATION_GATE_DATABASE_URL_MISSING',
+  'MIGRATION_GATE_DESCRIPTORS_INVALID',
+  'MIGRATION_GATE_TIMEOUT_INVALID',
+  'MIGRATION_GATE_DATABASE_UNAVAILABLE',
+  'COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED',
+  'COMMANDER_DATABASE_TLS_CA_FILE_UNREADABLE',
+  'COMMANDER_DATABASE_TLS_CA_FILE_INVALID',
+  'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_REQUIRED',
+  'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_INVALID',
+  'COMMANDER_DATABASE_DSN_INVALID',
+  'COMMANDER_DATABASE_SSLMODE_VERIFY_FULL_REQUIRED',
+  'COMMANDER_DATABASE_DSN_TLS_OPTION_FORBIDDEN',
+  'COMMANDER_DATABASE_SERVER_CERTIFICATE_INVALID',
+  'COMMANDER_DATABASE_SERVER_SPKI_MISMATCH',
+] as const;
+type MigrationGateFailureCode = (typeof MIGRATION_GATE_FAILURE_CODES)[number];
 
 interface ApiPodTerminationFacts {
   terminationReason: ApiPodTerminationReason;
@@ -1056,6 +1074,7 @@ export interface ApiPodStartupFailureEvidence {
   producer: 'api_entrypoint';
   transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
   container: ApiPodStartupContainer;
+  migrationGateCode?: MigrationGateFailureCode;
   terminationReason?: ApiPodTerminationReason;
   exitCode?: number;
   logSha256: string;
@@ -1262,7 +1281,9 @@ const API_POD_STARTUP_FAILURE_RECORD = new RegExp(
     API_POD_STARTUP_CONTAINERS.join('|') +
     ')(?:;termination_reason=(' +
     API_POD_TERMINATION_REASONS.join('|') +
-    ');exit_code=([0-9]{1,3}))?;log_sha256=([a-f0-9]{64})(?=;|\\n|$)',
+    ');exit_code=([0-9]{1,3}))?(?:;migration_gate_code=(' +
+    MIGRATION_GATE_FAILURE_CODES.join('|') +
+    '))?;log_sha256=([a-f0-9]{64})(?=;|\\n|$)',
 );
 const FIXED_FAILURE_CODE = /\b[A-Z][A-Z0-9_]{1,95}\b/g;
 const LIFECYCLE_FAILURE_CODES = new Set([
@@ -2138,6 +2159,15 @@ export function apiPodStartupFailureDiagnostic(
   const code =
     startupCode ??
     (tail.includes('ERR_MODULE_NOT_FOUND') ? 'COMMANDER_API_RUNTIME_MODULE_NOT_FOUND' : undefined);
+  const migrationGateCode =
+    container === 'migration-gate'
+      ? [...tail.matchAll(/\b(?:MIGRATION_GATE|COMMANDER_DATABASE)_[A-Z0-9_]{1,80}\b/g)]
+          .map(([candidate]) => candidate)
+          .reverse()
+          .find((candidate): candidate is MigrationGateFailureCode =>
+            MIGRATION_GATE_FAILURE_CODES.includes(candidate as MigrationGateFailureCode),
+          )
+      : undefined;
   return (
     'code=' +
     (code ?? 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED') +
@@ -2151,6 +2181,7 @@ export function apiPodStartupFailureDiagnostic(
         ';exit_code=' +
         termination.exitCode
       : '') +
+    (migrationGateCode ? ';migration_gate_code=' + migrationGateCode : '') +
     ';log_sha256=' +
     createHash('sha256').update(tail).digest('hex')
   );
@@ -2165,7 +2196,13 @@ function apiPodLogsAreUnclassified(logs: string, container: ApiPodStartupContain
 function apiPodStartupFailureNeedsRefresh(
   value: ApiPodStartupFailureEvidence | undefined,
 ): boolean {
-  return value === undefined || value.code === 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED';
+  return (
+    value === undefined ||
+    value.code === 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED' ||
+    (value.container === 'migration-gate' &&
+      value.code === 'COMMANDER_MIGRATION_FAILED' &&
+      value.migrationGateCode === undefined)
+  );
 }
 
 function apiPodStartupFailureRank(value: ApiPodStartupFailureEvidence): number {
@@ -2173,6 +2210,7 @@ function apiPodStartupFailureRank(value: ApiPodStartupFailureEvidence): number {
     (value.code !== 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED' ? 8 : 0) +
     (value.logSha256 !== createHash('sha256').update('').digest('hex') ? 4 : 0) +
     (value.transport === 'kubectl_logs' ? 2 : 0) +
+    (value.migrationGateCode !== undefined ? 1 : 0) +
     (value.terminationReason !== undefined ? 1 : 0)
   );
 }
@@ -2202,7 +2240,8 @@ function parseApiPodStartupFailureEvidence(
 ): ApiPodStartupFailureEvidence | undefined {
   const match = error.match(API_POD_STARTUP_FAILURE_RECORD);
   if (!match) return undefined;
-  const [, code, transport, container, terminationReason, exitCode, logSha256] = match;
+  const [, code, transport, container, terminationReason, exitCode, migrationGateCode, logSha256] =
+    match;
   if (
     !hasExactValue(code, API_POD_STARTUP_CODES) ||
     !hasExactValue(container, API_POD_STARTUP_CONTAINERS)
@@ -2220,11 +2259,19 @@ function parseApiPodStartupFailureEvidence(
   ) {
     return undefined;
   }
+  if (
+    (migrationGateCode !== undefined && container !== 'migration-gate') ||
+    (migrationGateCode !== undefined &&
+      !hasExactValue(migrationGateCode, MIGRATION_GATE_FAILURE_CODES))
+  ) {
+    return undefined;
+  }
   return {
     code,
     producer: 'api_entrypoint',
     transport: transport as ApiPodStartupFailureEvidence['transport'],
     container,
+    ...(migrationGateCode !== undefined ? { migrationGateCode } : {}),
     ...(terminationReason !== undefined && exitCode !== undefined
       ? { terminationReason, exitCode: parsedExitCode! }
       : {}),
@@ -2245,6 +2292,7 @@ function apiPodStartupFailureRecord(value: ApiPodStartupFailureEvidence): string
     (value.terminationReason !== undefined && value.exitCode !== undefined
       ? ';termination_reason=' + value.terminationReason + ';exit_code=' + value.exitCode
       : '') +
+    (value.migrationGateCode ? ';migration_gate_code=' + value.migrationGateCode : '') +
     ';log_sha256=' +
     value.logSha256
   );
