@@ -1024,6 +1024,7 @@ const API_POD_STARTUP_CODES = [
   'TASK1_READINESS_KEY_FILE_OWNER_INVALID',
   'TASK1_READINESS_TLS_MATERIAL_INVALID',
   'TASK1_DATABASE_IDENTITY_INVALID',
+  'COMMANDER_MIGRATION_FAILED',
   'COMMANDER_API_STARTUP_FAILED',
   'COMMANDER_API_RUNTIME_MODULE_NOT_FOUND',
   'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED',
@@ -2159,6 +2160,32 @@ function apiPodLogsAreUnclassified(logs: string, container: ApiPodStartupContain
   return apiPodStartupFailureDiagnostic(logs, container).startsWith(
     'code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;',
   );
+}
+
+function apiPodStartupFailureNeedsRefresh(
+  value: ApiPodStartupFailureEvidence | undefined,
+): boolean {
+  return value === undefined || value.code === 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED';
+}
+
+function apiPodStartupFailureRank(value: ApiPodStartupFailureEvidence): number {
+  return (
+    (value.code !== 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED' ? 8 : 0) +
+    (value.logSha256 !== createHash('sha256').update('').digest('hex') ? 4 : 0) +
+    (value.transport === 'kubectl_logs' ? 2 : 0) +
+    (value.terminationReason !== undefined ? 1 : 0)
+  );
+}
+
+function retainApiPodStartupFailure(
+  current: ApiPodStartupFailureEvidence | undefined,
+  candidate: ApiPodStartupFailureEvidence | undefined,
+): ApiPodStartupFailureEvidence | undefined {
+  if (!current) return candidate;
+  if (!candidate) return current;
+  return apiPodStartupFailureRank(candidate) > apiPodStartupFailureRank(current)
+    ? candidate
+    : current;
 }
 
 /** Prefers the current container output only when the terminated container has no safe startup code. */
@@ -3740,10 +3767,12 @@ export async function captureFinalCutoverFailureDiagnostics(
   apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
 }> {
   const observedFailure = await ports.observe(release);
+  const finalApiStartupFailure = apiPodStartupFailureNeedsRefresh(apiStartupFailure)
+    ? await ports.captureApiStartupFailure(release, observedFailure)
+    : undefined;
   return {
     rolloutObservation: retainRolloutObservation(rolloutObservation, observedFailure),
-    apiStartupFailure:
-      apiStartupFailure ?? (await ports.captureApiStartupFailure(release, observedFailure)),
+    apiStartupFailure: retainApiPodStartupFailure(apiStartupFailure, finalApiStartupFailure),
   };
 }
 
@@ -3774,7 +3803,12 @@ async function runCutoverCommand(
   while (!finished) {
     const observedFailure = await observeLiveRolloutFailure(release);
     rolloutObservation = retainRolloutObservation(rolloutObservation, observedFailure);
-    apiStartupFailure ??= await captureApiPodStartupFailure(release, observedFailure);
+    if (apiPodStartupFailureNeedsRefresh(apiStartupFailure)) {
+      apiStartupFailure = retainApiPodStartupFailure(
+        apiStartupFailure,
+        await captureApiPodStartupFailure(release, observedFailure),
+      );
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
