@@ -213,6 +213,7 @@ describe('helm-lifecycle-kind helpers', () => {
       lifecycleHarness as typeof lifecycleHarness & {
         apiPodStartupFailureDiagnostic?: (
           logs: string,
+          container: string,
           transport?: 'kubectl_logs' | 'kubectl_logs_unavailable',
         ) => string;
       }
@@ -224,28 +225,28 @@ describe('helm-lifecycle-kind helpers', () => {
       'postgres://api:secret@database/commander',
       'opaque-api-startup-marker-3281',
     ].join('\n');
-    const result = diagnostic!(logs);
+    const result = diagnostic!(logs, 'api');
 
     assert.match(
       result,
-      /^code=TASK1_READINESS_CERT_FILE_OWNER_INVALID;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+      /^code=TASK1_READINESS_CERT_FILE_OWNER_INVALID;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,
     );
     assert.doesNotMatch(result, /secret|opaque-api-startup-marker-3281/);
     assert.match(
-      diagnostic!('opaque-api-startup-marker-9142'),
-      /^code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+      diagnostic!('opaque-api-startup-marker-9142', 'api-proof-tls-materialize'),
+      /^code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;producer=api_entrypoint;transport=kubectl_logs;container=api-proof-tls-materialize;log_sha256=[a-f0-9]{64}$/,
     );
     assert.match(
-      diagnostic!('Error [ERR_MODULE_NOT_FOUND]: Cannot find package'),
-      /^code=COMMANDER_API_RUNTIME_MODULE_NOT_FOUND;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+      diagnostic!('Error [ERR_MODULE_NOT_FOUND]: Cannot find package', 'api'),
+      /^code=COMMANDER_API_RUNTIME_MODULE_NOT_FOUND;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,
     );
     assert.match(
-      diagnostic!('Error: DATABASE_URL_REQUIRED'),
-      /^code=DATABASE_URL_REQUIRED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+      diagnostic!('Error: DATABASE_URL_REQUIRED', 'api'),
+      /^code=DATABASE_URL_REQUIRED;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,
     );
     assert.match(
-      diagnostic!('COMMANDER_API_STARTUP_FAILED: opaque startup detail'),
-      /^code=COMMANDER_API_STARTUP_FAILED;producer=api_entrypoint;transport=kubectl_logs;log_sha256=[a-f0-9]{64}$/,
+      diagnostic!('COMMANDER_API_STARTUP_FAILED: opaque startup detail', 'api'),
+      /^code=COMMANDER_API_STARTUP_FAILED;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,
     );
 
     const sanitized = sanitizeEvidence({
@@ -274,6 +275,7 @@ describe('helm-lifecycle-kind helpers', () => {
       code: 'TASK1_READINESS_CERT_FILE_OWNER_INVALID',
       producer: 'api_entrypoint',
       transport: 'kubectl_logs',
+      container: 'api',
       logSha256: result.match(/log_sha256=([a-f0-9]{64})$/)?.[1],
     });
     assert.equal(JSON.stringify(sanitized).includes('opaque-api-startup-marker-3281'), false);
@@ -295,8 +297,8 @@ describe('helm-lifecycle-kind helpers', () => {
           assertions: [],
           error:
             'TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;' +
-            'producer=api_entrypoint;transport=kubectl_logs;termination_reason=Error;exit_code=1;' +
-            'log_sha256=' +
+            'producer=api_entrypoint;transport=kubectl_logs;container=api-proof-tls-materialize;' +
+            'termination_reason=Error;exit_code=1;log_sha256=' +
             'a'.repeat(64) +
             ';message=postgres://api:secret@database/commander',
         },
@@ -324,6 +326,7 @@ describe('helm-lifecycle-kind helpers', () => {
       terminationReason: 'Error',
       exitCode: 1,
       logSha256: 'a'.repeat(64),
+      container: 'api-proof-tls-materialize',
     });
     assert.equal(JSON.stringify(sanitized).includes('postgres://'), false);
     assert.equal(sanitized.scenarios[1]?.apiStartupFailure, undefined);
@@ -367,17 +370,29 @@ describe('helm-lifecycle-kind helpers', () => {
   it('uses current API logs when the previous container has no classified startup failure', () => {
     const selectLogs = (
       lifecycleHarness as typeof lifecycleHarness & {
-        selectApiPodStartupLogs?: (previousLogs: string, currentLogs: string) => string;
+        selectApiPodStartupLogs?: (
+          previousLogs: string,
+          currentLogs: string,
+          container: 'api',
+        ) => string;
       }
     ).selectApiPodStartupLogs;
     assert.equal(typeof selectLogs, 'function');
 
     assert.equal(
-      selectLogs!('opaque previous output', 'COMMANDER_API_STARTUP_FAILED: database unavailable'),
+      selectLogs!(
+        'opaque previous output',
+        'COMMANDER_API_STARTUP_FAILED: database unavailable',
+        'api',
+      ),
       'COMMANDER_API_STARTUP_FAILED: database unavailable',
     );
     assert.equal(
-      selectLogs!('DATABASE_URL_REQUIRED', 'COMMANDER_API_STARTUP_FAILED: database unavailable'),
+      selectLogs!(
+        'DATABASE_URL_REQUIRED',
+        'COMMANDER_API_STARTUP_FAILED: database unavailable',
+        'api',
+      ),
       'DATABASE_URL_REQUIRED',
     );
   });
