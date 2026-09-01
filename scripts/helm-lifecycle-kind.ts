@@ -393,7 +393,7 @@ export function buildLifecycleValues(input: {
         bootstrapAuthoritySecret: string;
         serviceNamespace: string;
         serviceName: string;
-        serviceClusterIp: string;
+        podIp: string;
       };
 }): string {
   if (
@@ -414,7 +414,7 @@ export function buildLifecycleValues(input: {
       ![database.serviceNamespace, database.serviceName].every(
         (value) => dnsLabel.test(value) && value.length <= 63,
       ) ||
-      !/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(database.serviceClusterIp))
+      !isIpv4Address(database.podIp))
   ) {
     throw new Error('LIFECYCLE_VALUES_INVALID');
   }
@@ -455,9 +455,7 @@ export function buildLifecycleValues(input: {
           app.kubernetes.io/instance: ${input.release}
           app.kubernetes.io/component: postgres`;
   const databaseCidrs =
-    database.kind === 'external'
-      ? `    databaseCidrs:\n      - ${database.serviceClusterIp}/32\n`
-      : '';
+    database.kind === 'external' ? `    databaseCidrs:\n      - ${database.podIp}/32\n` : '';
   return `tier: demo
 web:
   enabled: false
@@ -3570,7 +3568,6 @@ async function applyPrivateJson(
 }
 
 type ExternalDatabaseFixture = {
-  serviceClusterIp: string;
   hostname: string;
   podIp: string;
 };
@@ -3697,7 +3694,7 @@ async function createExternalDatabaseFixture(input: {
     ]),
     'EXTERNAL_DATABASE_CA_SECRET_CREATE_FAILED',
   );
-  return { serviceClusterIp, hostname, podIp };
+  return { hostname, podIp };
 }
 
 async function observeLiveRolloutFailure(release: string): Promise<RolloutObservation> {
@@ -4404,7 +4401,7 @@ async function runRealExternalTlsLifecycle(
       bootstrapAuthoritySecret: `${release}-bootstrap`,
       serviceNamespace: EXTERNAL_DATABASE_NAMESPACE,
       serviceName: 'external-postgres',
-      serviceClusterIp: external.serviceClusterIp,
+      podIp: external.podIp,
     };
     writeFileSync(
       installValues,
@@ -4602,7 +4599,7 @@ async function runFailedRolloutRecovery(
           bootstrapAuthoritySecret: `${release}-bootstrap`,
           serviceNamespace: EXTERNAL_DATABASE_NAMESPACE,
           serviceName: 'external-postgres',
-          serviceClusterIp: external.serviceClusterIp,
+          podIp: external.podIp,
         },
       }),
       { mode: 0o600 },
