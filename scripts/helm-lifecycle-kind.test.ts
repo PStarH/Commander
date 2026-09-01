@@ -245,6 +245,13 @@ describe('helm-lifecycle-kind helpers', () => {
       /^code=DATABASE_URL_REQUIRED;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,
     );
     assert.match(
+      diagnostic!(
+        'COMMANDER_MIGRATION_FAILED stage=await code=MIGRATION_GATE_DATABASE_UNAVAILABLE',
+        'migration-gate',
+      ),
+      /^code=COMMANDER_MIGRATION_FAILED;producer=api_entrypoint;transport=kubectl_logs;container=migration-gate;log_sha256=[a-f0-9]{64}$/,
+    );
+    assert.match(
       diagnostic!('COMMANDER_API_STARTUP_FAILED: opaque startup detail', 'api'),
       /^code=COMMANDER_API_STARTUP_FAILED;producer=api_entrypoint;transport=kubectl_logs;container=api;log_sha256=[a-f0-9]{64}$/,
     );
@@ -689,6 +696,55 @@ describe('helm-lifecycle-kind helpers', () => {
       },
     });
     assert.equal(startupCaptureCalls, 1);
+  });
+
+  it('replaces an early unclassified API startup capture with final classified evidence', async () => {
+    const terminal = classifyRolloutObservation({
+      exitCode: 0,
+      stderr: '',
+      stdout: JSON.stringify({
+        items: [
+          {
+            kind: 'Pod',
+            metadata: { labels: { 'app.kubernetes.io/component': 'api' } },
+            status: { containerStatuses: [{ state: { waiting: { reason: 'CrashLoopBackOff' } } }] },
+          },
+        ],
+      }),
+    });
+    const early = {
+      code: 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED' as const,
+      producer: 'api_entrypoint' as const,
+      transport: 'kubectl_logs' as const,
+      container: 'migration-gate' as const,
+      logSha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855',
+    };
+    const final = {
+      code: 'COMMANDER_API_STARTUP_FAILED' as const,
+      producer: 'api_entrypoint' as const,
+      transport: 'kubectl_logs' as const,
+      container: 'migration-gate' as const,
+      terminationReason: 'Error' as const,
+      exitCode: 1,
+      logSha256: 'a'.repeat(64),
+    };
+    let startupCaptureCalls = 0;
+
+    const diagnostics = await captureFinalCutoverFailureDiagnostics(
+      'tenant-release',
+      { terminal: terminal.evidence },
+      early,
+      {
+        observe: async () => terminal,
+        captureApiStartupFailure: async () => {
+          startupCaptureCalls += 1;
+          return final;
+        },
+      },
+    );
+
+    assert.equal(startupCaptureCalls, 1);
+    assert.deepEqual(diagnostics.apiStartupFailure, final);
   });
 
   it('sanitizes finite rollout observation records and rejects malicious extra fields', () => {
