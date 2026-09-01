@@ -797,12 +797,23 @@ export interface SanitizedScenarioEvidence {
   failedStage?: LifecycleFailureStage;
   networkPrerequisiteStage?: NetworkPrerequisiteStage;
   failureCodes?: string[];
+  externalDatabaseRoleFailures?: ExternalDatabaseRoleFailureEvidence[];
   helmUninstallResidual?: HelmUninstallResidualEvidence;
   admissionRbacFailure?: AdmissionRbacFailureEvidence;
   failedChecks?: SanitizedCheckFailure[];
   rolloutFailure?: RolloutFailureEvidence;
   rolloutObservation?: RolloutNonterminalEvidence | RolloutQueryEvidence;
   apiStartupFailure?: ApiPodStartupFailureEvidence;
+}
+
+type ExternalDatabaseRole =
+  'owner' | 'app' | 'tenant-authority' | 'scheduler' | 'worker' | 'adapter-ops';
+
+type ExternalDatabaseRoleFailureClass = 'authentication' | 'tls' | 'network' | 'identity' | 'query';
+
+interface ExternalDatabaseRoleFailureEvidence {
+  role: ExternalDatabaseRole;
+  failureClass: ExternalDatabaseRoleFailureClass;
 }
 
 type HelmUninstallResidualResourceKind =
@@ -1307,6 +1318,22 @@ const HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS: readonly HelmUninstallResidualPodC
 
 const HELM_UNINSTALL_RESIDUAL_EVIDENCE =
   /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?:;residual_pod_components=(none|[a-z,-]+))?(?:;residual_terminating_pod_components=(none|[a-z,-]+))?(?=:|$)/;
+
+const EXTERNAL_DATABASE_ROLE_FAILURE_EVIDENCE =
+  /^EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=((?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query)(?:,(?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query))*)(?=:|$)/;
+
+function parseExternalDatabaseRoleFailures(
+  error: string,
+): ExternalDatabaseRoleFailureEvidence[] | undefined {
+  const match = error.match(EXTERNAL_DATABASE_ROLE_FAILURE_EVIDENCE);
+  if (!match) return undefined;
+  const failures = match[1].split(',').map((value) => {
+    const [role, failureClass] = value.split(':');
+    return { role, failureClass } as ExternalDatabaseRoleFailureEvidence;
+  });
+  if (new Set(failures.map(({ role }) => role)).size !== failures.length) return undefined;
+  return failures;
+}
 
 function scenarioFailureCodes(error: string | undefined): string[] | undefined {
   if (!error) return undefined;
@@ -2319,6 +2346,9 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
         const apiStartupFailure = error ? parseApiPodStartupFailureEvidence(error) : undefined;
         const admissionRbacFailure = error ? parseAdmissionRbacFailure(error) : undefined;
         const helmUninstallResidual = error ? parseHelmUninstallResidualEvidence(error) : undefined;
+        const externalDatabaseRoleFailures = error
+          ? parseExternalDatabaseRoleFailures(error)
+          : undefined;
         return {
           name,
           passed,
@@ -2330,6 +2360,7 @@ export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvi
             : {}),
           ...(safeFailureCodes.length > 0 ? { failureCodes: safeFailureCodes } : {}),
           ...(helmUninstallResidual ? { helmUninstallResidual } : {}),
+          ...(externalDatabaseRoleFailures ? { externalDatabaseRoleFailures } : {}),
           ...(admissionRbacFailure ? { admissionRbacFailure } : {}),
           ...(failedChecks.length > 0 ? { failedChecks } : {}),
           ...(rolloutFailure
@@ -3866,6 +3897,7 @@ async function assertExternalRoleConnections(hostname: string): Promise<Assertio
     ['adapter-ops', 'commander_adapter_ops', 'COMMANDER_ADAPTER_OPS_PASSWORD'],
   ] as const;
   const assertions: AssertionResult[] = [];
+  const failures: ExternalDatabaseRoleFailureEvidence[] = [];
   for (const [role, login, passwordVariable] of roles) {
     const script = `export PGPASSWORD="$${passwordVariable}"; exec psql "host=${hostname} port=5432 dbname=commander user=${login} sslmode=verify-full sslrootcert=/run/commander/database-tls/ca.crt" --tuples-only --no-align --command 'SELECT session_user'`;
     const result = await kubectl([
@@ -3884,9 +3916,30 @@ async function assertExternalRoleConnections(hostname: string): Promise<Assertio
       passed,
       detail: passed ? undefined : result.stderr.trim().slice(-2_000),
     });
+    if (!passed) {
+      const failureClass: ExternalDatabaseRoleFailureClass =
+        result.exitCode === 0
+          ? 'identity'
+          : /password authentication failed|role .* does not exist|no pg_hba\.conf entry/i.test(
+                result.stderr,
+              )
+            ? 'authentication'
+            : /certificate|tls|ssl/i.test(result.stderr)
+              ? 'tls'
+              : /could not translate host|connection refused|timed out|timeout|no route/i.test(
+                    result.stderr,
+                  )
+                ? 'network'
+                : 'query';
+      failures.push({ role, failureClass });
+    }
   }
   if (assertions.some(({ passed }) => !passed)) {
-    throw new Error('EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED');
+    throw new Error(
+      `EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=${failures
+        .map(({ role, failureClass }) => `${role}:${failureClass}`)
+        .join(',')}`,
+    );
   }
   return assertions;
 }

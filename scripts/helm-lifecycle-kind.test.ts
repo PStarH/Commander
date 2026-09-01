@@ -2157,6 +2157,36 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|database|cmdr-live/i);
   });
 
+  it('retains canonical failed external database role classes without diagnostics', () => {
+    const sanitized = sanitizeEvidence({
+      generatedAt: '2024-01-01T00:00:00Z',
+      cluster: 'test',
+      kindNodeImage: KIND_NODE_IMAGE,
+      chartPath: '/private/chart',
+      calicoUrl: CALICO_URL,
+      scenarios: [
+        {
+          name: 'real-external-tls-install-upgrade-current-uninstall',
+          passed: false,
+          durationMs: 100,
+          events: [],
+          assertions: [],
+          failedStage: 'network-prerequisites',
+          error:
+            'EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=app:authentication,worker:tls: postgres://private:secret@database/commander',
+        },
+      ],
+      passed: false,
+      sanitized: false,
+    });
+
+    assert.deepEqual(sanitized.scenarios[0]?.externalDatabaseRoleFailures, [
+      { role: 'app', failureClass: 'authentication' },
+      { role: 'worker', failureClass: 'tls' },
+    ]);
+    assert.doesNotMatch(JSON.stringify(sanitized), /postgres:\/\/|private|secret/i);
+  });
+
   it('retains only allowlisted terminating Helm uninstall Pod components', () => {
     const terminatingPodComponents = (
       lifecycleHarness as typeof lifecycleHarness & {
