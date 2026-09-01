@@ -1951,6 +1951,19 @@ describe('helm-lifecycle-kind helpers', () => {
     }
   });
 
+  it('pins external role probes to the validated Service address while retaining TLS hostname', () => {
+    const source = readFileSync(resolve(__dirname, 'helm-lifecycle-kind.ts'), 'utf8');
+    assert.match(
+      source,
+      /assertExternalRoleConnections\(\s*hostname: string,\s*hostAddress: string,?\s*\)/,
+    );
+    assert.match(source, /hostaddr=\$\{hostAddress\} port=5432 dbname=commander/);
+    assert.match(
+      source,
+      /assertExternalRoleConnections\(external\.hostname, external\.serviceClusterIp\)/,
+    );
+  });
+
   it('selects the complete real lifecycle matrix and rejects unknown scenarios', () => {
     assert.deepEqual(selectLifecycleScenarios(), [
       'real-bundled',

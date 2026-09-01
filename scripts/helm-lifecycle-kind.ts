@@ -3887,7 +3887,10 @@ async function operationRowCount(target: PostgresQueryTarget): Promise<number> {
   return lifecycleRowCount(target, 'commander_tenant_cutover_operations');
 }
 
-async function assertExternalRoleConnections(hostname: string): Promise<AssertionResult[]> {
+async function assertExternalRoleConnections(
+  hostname: string,
+  hostAddress: string,
+): Promise<AssertionResult[]> {
   const roles = [
     ['owner', 'commander_owner', 'COMMANDER_OWNER_PASSWORD'],
     ['app', 'commander_app', 'COMMANDER_APP_PASSWORD'],
@@ -3899,7 +3902,7 @@ async function assertExternalRoleConnections(hostname: string): Promise<Assertio
   const assertions: AssertionResult[] = [];
   const failures: ExternalDatabaseRoleFailureEvidence[] = [];
   for (const [role, login, passwordVariable] of roles) {
-    const script = `export PGPASSWORD="$${passwordVariable}"; exec psql "host=${hostname} port=5432 dbname=commander user=${login} sslmode=verify-full sslrootcert=/run/commander/database-tls/ca.crt" --tuples-only --no-align --command 'SELECT session_user'`;
+    const script = `export PGPASSWORD="$${passwordVariable}"; exec psql "host=${hostname} hostaddr=${hostAddress} port=5432 dbname=commander user=${login} sslmode=verify-full sslrootcert=/run/commander/database-tls/ca.crt" --tuples-only --no-align --command 'SELECT session_user'`;
     const result = await kubectl([
       'exec',
       'statefulset/external-postgres',
@@ -4279,7 +4282,7 @@ async function runRealExternalTlsLifecycle(
         passed: firstProofCount >= 1,
         detail: `proofRows=${firstProofCount}`,
       },
-      ...(await assertExternalRoleConnections(external.hostname)),
+      ...(await assertExternalRoleConnections(external.hostname, external.serviceClusterIp)),
     );
     const firstRevision = await helmRevision(release);
     stage = 'cutover-enforce';
