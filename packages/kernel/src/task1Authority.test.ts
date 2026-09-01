@@ -142,6 +142,11 @@ describe('Task 1 authoritative Class A admission', () => {
       descriptor?.sql ?? '',
       /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.memory_items TO commander_app/,
     );
+    assert.match(descriptor?.sql ?? '', /CREATE TABLE IF NOT EXISTS public\.api_tasks/);
+    assert.match(
+      descriptor?.sql ?? '',
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.api_tasks TO commander_app/,
+    );
   });
 
   it('installs the approval-binding claim RPC after the campaign2 public wrapper', () => {
