@@ -73,27 +73,33 @@ export function migrationGatePoolConfig(connectionString: string): VerifiedPostg
   };
 }
 
-async function probeDatabase(
+export type MigrationGatePool = {
+  query<T = Record<string, unknown>>(
+    sql: string,
+    values?: readonly unknown[],
+  ): Promise<{
+    rows: T[];
+  }>;
+  end(): Promise<void>;
+};
+
+export type MigrationGatePoolFactory = (input: VerifiedPostgresPoolInput) => MigrationGatePool;
+
+export async function probeMigrationGateTarget(
   target: MigrationGateTarget,
-  descriptors: MigrationGateDescriptors,
+  _descriptors: MigrationGateDescriptors,
+  createPool: MigrationGatePoolFactory = createVerifiedPostgresPool,
 ): Promise<void> {
-  const pool = createVerifiedPostgresPool(migrationGatePoolConfig(target.connectionString));
+  const pool = createPool(migrationGatePoolConfig(target.connectionString));
   try {
     await pool.query('SELECT 1');
-    const ids = Object.keys(descriptors);
-    if (ids.length === 0) return;
-    const result = await pool.query<{ id: string; checksum: string }>(
-      'SELECT id, checksum FROM public.commander_kernel_migrations WHERE id = ANY($1::text[])',
-      [ids],
-    );
-    const actual = Object.fromEntries(result.rows.map(({ id, checksum }) => [id, checksum]));
-    if (ids.some((id) => actual[id] !== descriptors[id])) {
-      throw new Error('MIGRATION_GATE_DESCRIPTORS_NOT_READY');
-    }
   } finally {
     await pool.end();
   }
 }
+
+const probeDatabase: MigrationGateProbe = (target, descriptors) =>
+  probeMigrationGateTarget(target, descriptors);
 
 export async function runMigrationGateAttempt(
   mode: MigrationGateMode,

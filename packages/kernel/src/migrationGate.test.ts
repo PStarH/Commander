@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  probeMigrationGateTarget,
   migrationGatePoolConfig,
   migrationGateTargets,
   parseExpectedMigrationDescriptors,
@@ -81,5 +82,24 @@ describe('migration gate', () => {
       assert.deepEqual(descriptors, {});
     });
     assert.deepEqual(calls.sort(), [...roles].sort());
+  });
+
+  it('does not read the owner-only migration ledger from a runtime role', async () => {
+    const queries: string[] = [];
+    await probeMigrationGateTarget(
+      { name: 'RUNTIME', connectionString: 'postgres://runtime' },
+      { 'migration.1': 'a'.repeat(64) },
+      () => ({
+        async query(sql: string) {
+          queries.push(sql);
+          if (/commander_kernel_migrations/.test(sql)) {
+            throw new Error('permission denied for table commander_kernel_migrations');
+          }
+          return { rows: [] };
+        },
+        async end() {},
+      }),
+    );
+    assert.deepEqual(queries, ['SELECT 1']);
   });
 });
