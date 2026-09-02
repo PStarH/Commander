@@ -113,6 +113,16 @@ function identityKey(value: HelmReleaseObjectIdentity): string {
   return canonicalBootstrapJson(value);
 }
 
+/** Sort by the code-unit order of the canonical JSON encoding. The task1
+ *  restore-evidence validator re-serializes each reference canonically and
+ *  requires ascending default string order; localeCompare is ICU-dependent —
+ *  it reorders '-ca' suffixes and varies across runner images. */
+function byJsonKey(left: HelmReleaseObjectIdentity, right: HelmReleaseObjectIdentity): number {
+  const leftKey = identityKey(left);
+  const rightKey = identityKey(right);
+  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+}
+
 function secretIdentity(namespace: string, name: unknown): HelmReleaseObjectIdentity {
   return { apiVersion: 'v1', kind: 'Secret', namespace, name: nonEmpty(name) };
 }
@@ -491,9 +501,7 @@ export function projectHelmReleaseRevision(input: {
     const references =
       objectIdentity.kind === 'Secret'
         ? []
-        : [...collectSecretReferences(document, objectIdentity.namespace).values()].sort(
-            (left, right) => identityKey(left).localeCompare(identityKey(right)),
-          );
+        : [...collectSecretReferences(document, objectIdentity.namespace).values()].sort(byJsonKey);
     for (const reference of references) allSecretReferences.set(identityKey(reference), reference);
     objects.push({
       identity: objectIdentity,
@@ -525,9 +533,7 @@ export function projectHelmReleaseRevision(input: {
     rendererInput: {
       format: 'helm-renderer-input-projection/v1',
       values: rendererValues,
-      secretReferences: [...allSecretReferences.values()].sort((left, right) =>
-        identityKey(left).localeCompare(identityKey(right)),
-      ),
+      secretReferences: [...allSecretReferences.values()].sort(byJsonKey),
     },
   };
 }

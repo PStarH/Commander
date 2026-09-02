@@ -2226,6 +2226,54 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.doesNotMatch(JSON.stringify(sanitized), /postgres|private|secret/i);
   });
 
+  it('retries only transient mid-delete Helm uninstall failures', () => {
+    const isTransient = (
+      lifecycleHarness as typeof lifecycleHarness & {
+        isTransientHelmUninstallDeleteFailure?: (result: {
+          stdout: string;
+          stderr: string;
+          exitCode: number;
+        }) => boolean;
+      }
+    ).isTransientHelmUninstallDeleteFailure;
+    assert.equal(typeof isTransient, 'function');
+
+    assert.equal(
+      isTransient!({
+        stdout: '',
+        stderr:
+          'Error: uninstallation completed with 1 error(s): deletion failed: pod "cmdr-live-api-0": internal error',
+        exitCode: 1,
+      }),
+      true,
+    );
+    assert.equal(
+      isTransient!({
+        stdout: '',
+        stderr: 'Error: timed out waiting for the condition: private detail',
+        exitCode: 1,
+      }),
+      false,
+    );
+    assert.equal(
+      isTransient!({
+        stdout: '',
+        stderr: 'Error: uninstall: Release not loaded: cmdr-live: release: not found',
+        exitCode: 1,
+      }),
+      false,
+    );
+    assert.equal(
+      isTransient!({
+        stdout: '',
+        stderr: 'Error: services "cmdr-live-api" is forbidden: private detail',
+        exitCode: 1,
+      }),
+      false,
+    );
+    assert.equal(isTransient!({ stdout: 'uninstalled', stderr: '', exitCode: 0 }), false);
+  });
+
   it('retains only fixed Helm uninstall residual resource kinds', () => {
     const resourceKinds = (
       lifecycleHarness as typeof lifecycleHarness & {
