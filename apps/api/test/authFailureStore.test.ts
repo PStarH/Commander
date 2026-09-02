@@ -1,174 +1,79 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { createAuthFailureStore } from '../src/authFailureStore.js';
+import { createAuthFailureStore, type PgPoolLike } from '../src/authFailureStore.js';
 
-async function withEnvironment(
-  values: Record<string, string | undefined>,
-  run: () => void | Promise<void>,
-): Promise<void> {
-  const previous = new Map<string, string | undefined>();
-  for (const [key, value] of Object.entries(values)) {
-    previous.set(key, process.env[key]);
-    if (value === undefined) delete process.env[key];
-    else process.env[key] = value;
-  }
-  try {
-    await run();
-  } finally {
-    for (const [key, value] of previous) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-  }
-}
+const entry = { count: 2, firstFailureAt: 100, lastFailureAt: 200, lockedUntil: 300 };
 
-describe('AuthFailureStore authority selection', () => {
-  it('fails production startup when AUTH_FAILURE_REDIS_URL is absent', async () => {
-    await withEnvironment(
-      {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: undefined,
-        AUTH_FAILURE_STORE_PATH: undefined,
-      },
-      () => {
-        assert.throws(
-          () => createAuthFailureStore(),
-          /AUTH_FAILURE_REDIS_URL is required in production/,
-        );
-      },
+describe('AuthFailureStore PostgreSQL authority', () => {
+  it('requires a PostgreSQL DSN in production, regardless of Redis configuration', () => {
+    assert.throws(
+      () =>
+        createAuthFailureStore({
+          environment: { NODE_ENV: 'production', AUTH_FAILURE_REDIS_URL: 'redis://legacy' },
+        }),
+      /COMMANDER_AUTH_FAILURE_DATABASE_URL.*required in production/s,
     );
   });
 
-  for (const commanderEnv of ['production', 'prod']) {
-    it(`fails startup for COMMANDER_ENV=${commanderEnv} without Redis`, () => {
-      assert.throws(
-        () =>
-          createAuthFailureStore({
-            environment: {
-              NODE_ENV: 'development',
-              COMMANDER_ENV: commanderEnv,
-            },
-          }),
-        /AUTH_FAILURE_REDIS_URL is required in production/,
-      );
-    });
-  }
-
-  it('uses explicit in-memory state outside production when Redis is not configured', async () => {
-    const store = createAuthFailureStore({
-      environment: { NODE_ENV: 'test' },
-    });
-    const entry = {
-      count: 2,
-      firstFailureAt: 100,
-      lastFailureAt: 200,
-      lockedUntil: 300,
+  it('uses an injected PostgreSQL pool when a production DSN is configured', async () => {
+    const queries: Array<{ sql: string; values?: unknown[] }> = [];
+    const pool: PgPoolLike = {
+      query: async (sql, values) => {
+        queries.push({ sql, values });
+        if (sql.startsWith('SELECT')) return { rows: [{ entry }] };
+        return { rows: [] };
+      },
     };
+    const store = createAuthFailureStore({
+      environment: { NODE_ENV: 'production', DATABASE_URL: 'postgres://app@db/commander' },
+      loadPgPool: async (dsn) => {
+        assert.equal(dsn, 'postgres://app@db/commander');
+        return pool;
+      },
+    });
 
+    assert.deepEqual(await store.get('127.0.0.1'), entry);
+    await store.set('127.0.0.1', entry);
+    await store.delete('127.0.0.1');
+    await store.cleanup(Date.now(), 60_000);
+    assert.equal(queries.some(({ sql }) => sql.includes('commander_auth_failures')), true);
+    assert.equal(
+      queries.some(({ sql }) => sql.includes('INSERT INTO commander_auth_failures')),
+      true,
+    );
+  });
+
+  it('does not connect to PostgreSQL while the middleware module is being loaded', async () => {
+    let loads = 0;
+    const store = createAuthFailureStore({
+      environment: { NODE_ENV: 'production', DATABASE_URL: 'postgres://app@db/commander' },
+      loadPgPool: async () => {
+        loads += 1;
+        return { query: async () => ({ rows: [] }) };
+      },
+    });
+    assert.equal(loads, 0);
+    await store.get('127.0.0.1');
+    assert.equal(loads, 1);
+  });
+
+  it('rejects malformed PostgreSQL entries', async () => {
+    const store = createAuthFailureStore({
+      environment: { NODE_ENV: 'production', DATABASE_URL: 'postgres://app@db/commander' },
+      loadPgPool: async () => ({
+        query: async (sql) =>
+          sql.startsWith('SELECT') ? { rows: [{ entry: { count: 'bad' } }] } : { rows: [] },
+      }),
+    });
+    await assert.rejects(
+      () => store.get('127.0.0.1'),
+      /Postgres auth failure entry is malformed/,
+    );
+  });
+
+  it('uses process-local state only outside production without a DSN', async () => {
+    const store = createAuthFailureStore({ environment: { NODE_ENV: 'test' } });
     await store.set('127.0.0.1', entry);
     assert.deepEqual(await store.get('127.0.0.1'), entry);
-  });
-
-  it('does not fall back when the Redis module loader fails', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => {
-        throw new Error('redis loader unavailable');
-      },
-    });
-
-    await assert.rejects(() => store.get('127.0.0.1'), /redis loader unavailable/);
-  });
-
-  it('does not fall back when Redis connection fails', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: () => ({
-          connect: async () => {
-            throw new Error('redis connection unavailable');
-          },
-          get: async () => null,
-          set: async () => 'OK',
-          del: async () => 0,
-        }),
-      }),
-    });
-
-    await assert.rejects(() => store.get('127.0.0.1'), /redis connection unavailable/);
-  });
-
-  it('configures Redis to fail requests promptly while unavailable', async () => {
-    let receivedOptions: unknown;
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: (options) => {
-          receivedOptions = options;
-          return {
-            connect: async () => undefined,
-            get: async () => null,
-            set: async () => 'OK',
-            del: async () => 0,
-          };
-        },
-      }),
-    });
-
-    assert.equal(await store.get('127.0.0.1'), undefined);
-    assert.deepEqual(receivedOptions, {
-      url: 'redis://authority.invalid:6379',
-      disableOfflineQueue: true,
-      socket: { connectTimeout: 5_000, reconnectStrategy: false },
-    });
-  });
-
-  it('propagates Redis command failures', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: () => ({
-          connect: async () => undefined,
-          get: async () => {
-            throw new Error('redis command failed');
-          },
-          set: async () => 'OK',
-          del: async () => 0,
-        }),
-      }),
-    });
-
-    await assert.rejects(() => store.get('127.0.0.1'), /redis command failed/);
-  });
-
-  it('rejects malformed Redis authority entries', async () => {
-    const store = createAuthFailureStore({
-      environment: {
-        NODE_ENV: 'production',
-        AUTH_FAILURE_REDIS_URL: 'redis://authority.invalid:6379',
-      },
-      loadRedis: async () => ({
-        createClient: () => ({
-          connect: async () => undefined,
-          get: async () => '{"count":"invalid"}',
-          set: async () => 'OK',
-          del: async () => 0,
-        }),
-      }),
-    });
-
-    await assert.rejects(() => store.get('127.0.0.1'), /Redis auth failure entry is malformed/);
   });
 });

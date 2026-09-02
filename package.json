@@ -126,7 +126,7 @@
     "helm:adopt-database-secret": "pnpm exec tsx scripts/helm-adopt-database-secret.ts",
     "helm:prepare-bundled-database-tls": "pnpm exec tsx scripts/helm-prepare-bundled-database-tls.ts",
     "test:task1:prerequisites": "pnpm exec node --import tsx --test scripts/task1-helm-prerequisite.test.ts scripts/task1-helm-prerequisite-command.test.ts scripts/task1-prerequisite-rbac.test.ts scripts/helm-render-tenant-authority-workload-guard.test.ts scripts/helm-prepare-bundled-database-tls.test.ts",
-    "test:helm:lifecycle:static": "pnpm exec node --import tsx --test scripts/chart-content-digest.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts && pnpm exec node --import tsx scripts/helm-lifecycle-static.ts",
+    "test:helm:lifecycle:static": "pnpm exec node --import tsx --test scripts/chart-content-digest.test.ts scripts/helm-post-render-projection.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts && pnpm exec node --import tsx scripts/helm-lifecycle-static.ts",
     "test:helm:lifecycle:kind": "pnpm exec tsx scripts/helm-lifecycle-kind.ts",
     "test:postgres-runtime": "pnpm --filter @commander/postgres-runtime test",
     "test:postgres-pool-bypass": "pnpm exec node --import tsx --test scripts/postgres-pool-bypass.test.ts",

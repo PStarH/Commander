@@ -96,6 +96,67 @@ function resource(rendered: string, kind: string, name: string): string {
 }
 
 describe('Helm lifecycle static contract', () => {
+  it('keeps API file stores on the writable tmp volume', () => {
+    const apiDeployments = [
+      deployment(render(), 'api'),
+      deployment(
+        render(false, [
+          '--set',
+          'database.enabled=false',
+          '--set',
+          'database.backend=sqlite',
+          '--set',
+          'database.postgres.bundled=false',
+        ]),
+        'api',
+      ),
+    ];
+    for (const api of apiDeployments) {
+      assert.match(
+        api,
+        /- name: COMMANDER_WARROOM_FILE\n\s+value: \/tmp\/commander-api\/war-room.json/,
+      );
+      assert.match(
+        api,
+        /- name: COMMANDER_AGENT_STATE_FILE\n\s+value: \/tmp\/commander-api\/agent-state.json/,
+      );
+      assert.match(
+        api,
+        /- name: COMMANDER_ACTION_RATIONALE_FILE\n\s+value: \/tmp\/commander-api\/action-rationales.json/,
+      );
+      assert.match(
+        api,
+        /- name: API_RATE_LIMIT_DB_PATH\n\s+value: \/tmp\/commander-api\/rate-limit.sqlite/,
+      );
+      assert.match(api, /- name: COMMANDER_TRACE_DIR\n\s+value: \/tmp\/commander-api\/traces/);
+      assert.match(api, /- name: tmp\n\s+mountPath: \/tmp/);
+      assert.match(
+        api,
+        /- name: api-runtime-state\n\s+image:.*\n\s+imagePullPolicy:.*\n\s+command: \["node", "-e"\][\s\S]*\/tmp\/commander-api[\s\S]*runAsUser: 0[\s\S]*- name: tmp\n\s+mountPath: \/tmp/,
+      );
+      assert.match(
+        api,
+        /startupProbe:[\s\S]*path: \/health[\s\S]*port: http[\s\S]*failureThreshold: 30[\s\S]*periodSeconds: 2/,
+      );
+    }
+  });
+
+  it('does not bind authentication-failure authority to Redis', () => {
+    const api = deployment(render(false, ['--set', 'redis.enabled=true']), 'api');
+    assert.match(api, /- name: REDIS_URL\n\s+value: redis:\/\/lifecycle-demo-redis:6379/);
+    assert.doesNotMatch(api, /AUTH_FAILURE_REDIS_URL/);
+  });
+
+  it('uses a local TCP readiness probe for the non-authoritative Redis cache', () => {
+    const redis = resource(
+      render(false, ['--set', 'redis.enabled=true']),
+      'StatefulSet',
+      'lifecycle-demo-redis',
+    );
+    assert.match(redis, /readinessProbe:\n\s+tcpSocket:\n\s+port: redis/);
+    assert.doesNotMatch(redis, /redis-cli/);
+  });
+
   it('limits controller transport bootstrap to the three bundled PostgreSQL objects', () => {
     const rendered = render(false, [
       '--set',
@@ -160,6 +221,13 @@ describe('Helm lifecycle static contract', () => {
       if (!/^kind: StatefulSet$/m.test(document))
         assert.doesNotMatch(document, /database-server-tls[\s\S]*tls\.key/);
     }
+  });
+
+  it('renders the bundled PostgreSQL Service with the numeric lifecycle target port', () => {
+    const service = manifest(render(), 'Service', 'lifecycle-demo-postgres');
+    const ports = service.spec?.ports as Array<{ port?: unknown; targetPort?: unknown }>;
+
+    assert.deepEqual(ports, [{ name: 'postgres', port: 5432, protocol: 'TCP', targetPort: 5432 }]);
   });
 
   it('uses revision-safe pre-hooks and never a post-install migration Job', () => {
@@ -241,31 +309,17 @@ describe('Helm lifecycle static contract', () => {
       ports: [{ protocol: 'TCP', port: 15433 }],
     });
 
-    const oldMigrationPolicy = manifest(
-      rendered,
-      'NetworkPolicy',
-      'lifecycle-demo-migration-egress',
-    );
-    const oldSelector = (
-      oldMigrationPolicy.spec?.podSelector as { matchLabels?: Record<string, string> }
+    const migrationPolicy = manifest(rendered, 'NetworkPolicy', 'lifecycle-demo-migration-egress');
+    const migrationSelector = (
+      migrationPolicy.spec?.podSelector as { matchLabels?: Record<string, string> }
     ).matchLabels;
-    assert.deepEqual(oldSelector, {
-      'app.kubernetes.io/name': 'lifecycle-demo',
-      'app.kubernetes.io/instance': 'lifecycle-demo',
-      'app.kubernetes.io/component': 'migration',
-    });
     const hookLabels = {
       'app.kubernetes.io/name': 'lifecycle-demo',
       'app.kubernetes.io/instance': 'lifecycle-demo',
       'commander.io/migration-client-v2': 'true',
       'commander.io/migration-release': 'lifecycle-demo',
     };
-    assert.equal(
-      Object.entries(oldSelector ?? {}).every(
-        ([key, value]) => hookLabels[key as keyof typeof hookLabels] === value,
-      ),
-      false,
-    );
+    assert.deepEqual(migrationSelector, hookLabels);
 
     const stableNames = [
       stablePolicyName('egress\0default\0lifecycle-demo', 'egress'),
@@ -281,6 +335,35 @@ describe('Helm lifecycle static contract', () => {
     const renderedNames = new Set(manifests(rendered).map((value) => value.metadata?.name));
     for (const name of stableNames)
       assert.equal(renderedNames.has(name), false, `${name} must remain operator-owned`);
+  });
+
+  it('allows API migration-gate egress to the exact external database Service CIDR', () => {
+    const rendered = render(false, [
+      '--set',
+      'database.postgres.bundled=false',
+      '--set',
+      'database.postgres.existingSecret=external-database',
+      '--set',
+      'databaseTls.existingSecret=',
+      '--set',
+      'databaseTls.caSecret=external-ca',
+      '--set',
+      'tenantAuthority.bootstrapAuthoritySecret=external-bootstrap-authority',
+      '--set',
+      'networkPolicy.egress.databaseCidrs[0]=10.96.42.7/32',
+    ]);
+    const apiEgress = manifest(rendered, 'NetworkPolicy', 'lifecycle-demo-api-egress');
+    const rule = (
+      (apiEgress.spec?.egress ?? []) as Array<{
+        to?: Array<{ ipBlock?: { cidr?: string } }>;
+        ports?: Array<{ port?: number; protocol?: string }>;
+      }>
+    ).find((candidate) => candidate.to?.some((entry) => entry.ipBlock?.cidr === '10.96.42.7/32'));
+
+    assert.deepEqual(rule, {
+      to: [{ ipBlock: { cidr: '10.96.42.7/32' } }],
+      ports: [{ protocol: 'TCP', port: 5432 }],
+    });
   });
 
   it('rejects incomplete or ambiguous database endpoint values at schema validation', () => {
@@ -340,6 +423,12 @@ describe('Helm lifecycle static contract', () => {
       assert.match(manifest, /name: migration-gate/);
       assert.match(manifest, /migrationGate\.js[\s\S]*await/);
       assert.match(manifest, new RegExp(`key: ["']?${key}["']?`));
+      assert.match(manifest, /COMMANDER_DATABASE_TLS_CA_FILE/);
+      assert.match(manifest, /COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256/);
+      assert.match(
+        manifest,
+        /name: database-public-ca[\s\S]*mountPath: \/run\/commander\/database-tls/,
+      );
       assert.doesNotMatch(manifest, /owner-url|BOOTSTRAP_AUTHORITY/);
     }
   });
@@ -355,7 +444,11 @@ describe('Helm lifecycle static contract', () => {
       /COMMANDER_TENANT_AUTHORITY_PROOF_DNS_NAME[\s\S]*lifecycle-demo-api-proof\.default\.svc\.cluster\.local/,
     );
     assert.match(api, /containerPort: 9443/);
-    assert.match(api, /name: api-proof-tls-materialize[\s\S]*COPYFILE_EXCL/);
+    assert.match(
+      api,
+      /name: api-proof-tls-materialize[\s\S]*fs\.rmSync\(target, \{ force: true \}\)[\s\S]*copyFileSync\(source, target\)/,
+    );
+    assert.doesNotMatch(api, /COPYFILE_EXCL/);
     assert.match(api, /name: api-proof-private-source[\s\S]*readOnly: true/);
     assert.match(api, /name: api-proof-tls-runtime[\s\S]*emptyDir: \{\}/);
     assert.match(api, /\['tls\.crt', 0o444\][\s\S]*\['tls\.key', 0o400\]/);
@@ -371,7 +464,11 @@ describe('Helm lifecycle static contract', () => {
     assert.match(rendered, /name: lifecycle-demo-api-proof/);
     assert.match(
       api,
-      /path: \/ready\/tenant-authority\/v1[\s\S]*port: tenant-proof[\s\S]*scheme: HTTPS/,
+      /readinessProbe:[\s\S]*command:[\s\S]*- node[\s\S]*127\.0\.0\.1[\s\S]*\/ready\/tenant-authority\/v1/,
+    );
+    assert.match(
+      api,
+      /X-Commander-Readiness-Challenge': 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc'/,
     );
     assert.match(
       api,
@@ -433,7 +530,7 @@ describe('Helm lifecycle static contract', () => {
     assert.match(prove, /name: COMMANDER_KUBERNETES_PROOF_RUNTIME[\s\S]*value: "1"/);
     assert.match(
       prove,
-      /serviceAccountToken:[\s\S]*audience: commander-tenant-cutover-proof\/v1[\s\S]*expirationSeconds: 300[\s\S]*path: token/,
+      /serviceAccountToken:[\s\S]*audience: commander-tenant-cutover-proof\/v1[\s\S]*expirationSeconds: 600[\s\S]*path: identity-token[\s\S]*serviceAccountToken:[\s\S]*expirationSeconds: 600[\s\S]*path: api-token/,
     );
     assert.match(
       prove,
@@ -467,9 +564,13 @@ describe('Helm lifecycle static contract', () => {
   });
 
   it('isolates proof pod ingress and allows only database, DNS, and proof-port egress', () => {
-    const rendered = render();
+    const rendered = render(false, [
+      '--set',
+      'networkPolicy.egress.kubernetesApiCidrs[0]=10.96.0.1/32',
+    ]);
     const proofPolicy = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-tenant-cutover-prove');
     assert.match(proofPolicy, /commander\.io\/tenant-authority-proof-reader: "true"/);
+    assert.match(proofPolicy, /app\.kubernetes\.io\/component: tenant-authority-proof-reader/);
     assert.match(proofPolicy, /policyTypes:[\s\S]*- Ingress[\s\S]*- Egress/);
     assert.match(proofPolicy, /ingress: \[\]/);
     assert.match(
@@ -480,6 +581,10 @@ describe('Helm lifecycle static contract', () => {
       proofPolicy,
       /kubernetes\.io\/metadata\.name: kube-system[\s\S]*component: kube-apiserver[\s\S]*port: 6443/,
     );
+    assert.match(
+      proofPolicy,
+      /ipBlock:[\s\S]*cidr: "10\.96\.0\.1\/32"[\s\S]*port: 443[\s\S]*port: 6443/,
+    );
     assert.doesNotMatch(proofPolicy, /namespaceSelector: \{\}/);
     assert.match(proofPolicy, /port: 9443/);
     assert.doesNotMatch(proofPolicy, /port: 4000/);
@@ -487,6 +592,9 @@ describe('Helm lifecycle static contract', () => {
 
     const databaseIngress = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-postgres-ingress');
     assert.match(databaseIngress, /commander\.io\/tenant-authority-proof-reader: "true"/);
+    assert.match(databaseIngress, /commander\.io\/migration-client-v2: "true"/);
+    assert.match(databaseIngress, /commander\.io\/migration-release: "lifecycle-demo"/);
+    assert.doesNotMatch(databaseIngress, /app\.kubernetes\.io\/component: migration/);
     const apiProofIngress = resource(rendered, 'NetworkPolicy', 'lifecycle-demo-api-proof-ingress');
     assert.match(apiProofIngress, /commander\.io\/tenant-authority-proof-reader: "true"/);
     assert.match(apiProofIngress, /port: 9443/);
