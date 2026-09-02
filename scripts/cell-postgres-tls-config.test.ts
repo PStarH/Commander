@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
@@ -79,4 +80,31 @@ describe('cell PostgreSQL TLS configuration', () => {
       assert.match(service, /\/run\/commander\/postgres-tls\/ca\.crt:ro/);
     });
   }
+
+  it('renders Helm postgres TLS runtime bindings when a server SPKI pin is provided', () => {
+    const rendered = execFileSync(
+      'helm',
+      [
+        'template',
+        'cell-enterprise',
+        'deploy/helm/commander',
+        '-f',
+        'deploy/helm/commander/values-enterprise.yaml',
+        '--set',
+        'image.tag=test',
+        '--set',
+        `database.postgres.tls.expectedServerSpkiSha256=${'a'.repeat(64)}`,
+      ],
+      { encoding: 'utf8' },
+    );
+    assert.match(rendered, /name: COMMANDER_DATABASE_TLS_CA_FILE/);
+    assert.match(rendered, /value: \/run\/commander\/postgres-tls\/ca\.crt/);
+    assert.match(rendered, /name: COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256/);
+    assert.match(rendered, /value: "a{64}"/);
+    assert.match(rendered, /- name: postgres-tls\n\s+mountPath: \/run\/commander\/postgres-tls/);
+    assert.match(
+      rendered,
+      /- name: postgres-tls\n\s+secret:\n\s+secretName: "cmdr-db"\n\s+items:\n\s+- key: "ca\.crt"\n\s+path: ca\.crt/,
+    );
+  });
 });

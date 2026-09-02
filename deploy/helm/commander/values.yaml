@@ -241,6 +241,12 @@ database:
     appSecretKey: app-url
     schedulerSecretKey: scheduler-url
     workerSecretKey: worker-url
+    tls:
+      # Enable by setting a 64-hex SPKI pin for the PostgreSQL server certificate.
+      expectedServerSpkiSha256: ''
+      # Defaults to database.postgres.existingSecret when omitted.
+      caSecret: ''
+      caKey: ca.crt
     resources:
       requests:
         cpu: 100m

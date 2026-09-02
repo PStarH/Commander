@@ -52,6 +52,46 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- .Values.database.postgres.workerSecretKey | default "worker-url" -}}
 {{- end -}}
 
+{{- define "commander.databaseTlsEnabled" -}}
+{{- if and (include "commander.postgresBackend" .) .Values.database.postgres.tls.expectedServerSpkiSha256 -}}true{{- end -}}
+{{- end -}}
+
+{{- define "commander.databaseTlsCaSecretName" -}}
+{{- .Values.database.postgres.tls.caSecret | default (include "commander.databaseUrlSecretName" .) -}}
+{{- end -}}
+
+{{- define "commander.databaseTlsCaKey" -}}
+{{- .Values.database.postgres.tls.caKey | default "ca.crt" -}}
+{{- end -}}
+
+{{- define "commander.databaseTlsEnv" -}}
+{{- if include "commander.databaseTlsEnabled" . }}
+- name: COMMANDER_DATABASE_TLS_CA_FILE
+  value: /run/commander/postgres-tls/ca.crt
+- name: COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256
+  value: {{ .Values.database.postgres.tls.expectedServerSpkiSha256 | quote }}
+{{- end -}}
+{{- end -}}
+
+{{- define "commander.databaseTlsVolumeMount" -}}
+{{- if include "commander.databaseTlsEnabled" . }}
+- name: postgres-tls
+  mountPath: /run/commander/postgres-tls
+  readOnly: true
+{{- end -}}
+{{- end -}}
+
+{{- define "commander.databaseTlsVolume" -}}
+{{- if include "commander.databaseTlsEnabled" . }}
+- name: postgres-tls
+  secret:
+    secretName: {{ include "commander.databaseTlsCaSecretName" . | quote }}
+    items:
+      - key: {{ include "commander.databaseTlsCaKey" . | quote }}
+        path: ca.crt
+{{- end -}}
+{{- end -}}
+
 {{- define "commander.bundledPostgres" -}}
 {{- if and .Values.database.enabled (eq .Values.database.backend "postgres") .Values.database.postgres.bundled -}}true{{- end -}}
 {{- end -}}

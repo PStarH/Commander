@@ -208,6 +208,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: {{ include "commander.databaseAppSecretKey" . | quote }}
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             {{- if .Values.observability.otel.enabled }}
             - name: OTEL_EXPORTER_ENDPOINT
@@ -233,6 +234,7 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
             {{- if .Values.persistence.enabled }}
             - name: commander-state
               mountPath: /app/.commander_state
@@ -246,6 +248,7 @@ spec:
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
         {{- if .Values.persistence.enabled }}
         - name: commander-state
           persistentVolumeClaim:
