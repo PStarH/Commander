@@ -73,3 +73,5 @@ jobs:
         with:
           name: kind-lifecycle-evidence
           path: kind-lifecycle-evidence.json
+          if-no-files-found: error
+          retention-days: 30
