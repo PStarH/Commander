@@ -444,14 +444,36 @@ export function buildLifecycleValues(input: {
     database.kind === 'external'
       ? `  bootstrapAuthoritySecret: ${database.bootstrapAuthoritySecret}\n`
       : '';
-  const endpointNamespace =
-    database.kind === 'external' ? database.serviceNamespace : input.namespace;
-  const endpointName =
-    database.kind === 'external' ? database.serviceName : `${input.release}-postgres`;
-  const endpointSelector =
+  // The external fixture must stay ingress-policy-free: a service-kind endpoint
+  // makes the task1 operator place a hook-only ingress policy on the fixture pods,
+  // which default-denies the recreated API pod's migration gate. A /32 CIDR
+  // endpoint yields egress-only ipBlock rules and no ingress policy.
+  const endpointEntry =
     database.kind === 'external'
-      ? `          app.kubernetes.io/name: ${database.serviceName}`
-      : `          app.kubernetes.io/name: ${input.release}
+      ? `    - roles:
+        - owner
+        - app
+        - tenant-authority
+        - scheduler
+        - worker
+        - adapter-ops
+      cidr:
+        cidr: ${database.podIp}/32
+        port: 5432`
+      : `    - roles:
+        - owner
+        - app
+        - tenant-authority
+        - scheduler
+        - worker
+        - adapter-ops
+      service:
+        namespace: ${input.namespace}
+        name: ${input.release}-postgres
+        servicePort: 5432
+        targetPort: 5432
+        podSelector:
+          app.kubernetes.io/name: ${input.release}
           app.kubernetes.io/instance: ${input.release}
           app.kubernetes.io/component: postgres`;
   const databaseCidrs =
@@ -504,20 +526,7 @@ ${databaseCidrs}    kubernetesApiCidrs:
       - ${input.kubernetesApiServiceIp}/32
       - ${input.kubernetesApiEndpointIp}/32
   databaseEndpoints:
-    - roles:
-        - owner
-        - app
-        - tenant-authority
-        - scheduler
-        - worker
-        - adapter-ops
-      service:
-        namespace: ${endpointNamespace}
-        name: ${endpointName}
-        servicePort: 5432
-        targetPort: 5432
-        podSelector:
-${endpointSelector}
+${endpointEntry}
 `;
 }
 
