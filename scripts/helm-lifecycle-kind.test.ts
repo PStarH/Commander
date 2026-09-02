@@ -1945,11 +1945,13 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.match(values, /existingSecret: cmdr-external-database/);
     assert.match(values, /caSecret: cmdr-external-database-ca/);
     assert.match(values, /bootstrapAuthoritySecret: cmdr-external-bootstrap/);
-    assert.match(values, /namespace: external-db/);
-    assert.match(values, /name: external-postgres/);
     assert.match(
       values,
       /egress:\n    databaseCidrs:\n      - 10\.244\.0\.42\/32\n    kubernetesApiCidrs:\n      - 10\.96\.0\.1\/32\n      - 172\.18\.0\.2\/32/,
+    );
+    assert.match(
+      values,
+      /databaseEndpoints:\n    - roles:\n        - owner\n        - app\n        - tenant-authority\n        - scheduler\n        - worker\n        - adapter-ops\n      cidr:\n        cidr: 10\.244\.0\.42\/32\n        port: 5432\n/,
     );
     assert.doesNotMatch(values, /existingSecret: cmdr-external-database-tls/);
   });
