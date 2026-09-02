@@ -34,6 +34,7 @@ jobs:
           name: quarterly-audit-${{ github.run_id }}
           path: docs/audits/
           retention-days: 365
+          if-no-files-found: error
 
       - name: Notify on open gaps
         if: failure()

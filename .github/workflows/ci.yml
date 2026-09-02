@@ -276,6 +276,7 @@ jobs:
           name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
           path: sbom.json
           overwrite: true
+          if-no-files-found: error
 
       - name: Verify core test inventory
         run: pnpm --filter @commander/core test:inventory

@@ -117,6 +117,7 @@ jobs:
           name: compliance-audit-report-${{ github.run_id }}.md
           path: /tmp/compliance-audit-report.md
           retention-days: 90
+          if-no-files-found: error
 
       - name: Upload compliance report (JSON)
         if: always()
@@ -125,6 +126,7 @@ jobs:
           name: compliance-audit-report-${{ github.run_id }}.json
           path: /tmp/compliance-audit-report.json
           retention-days: 365
+          if-no-files-found: error
 
       - name: Upload snapshot history (cross-run persistence)
         if: always()
@@ -133,6 +135,7 @@ jobs:
           name: posture-snapshots-latest
           path: packages/core/.commander/posture-snapshots.json
           retention-days: 365
+          if-no-files-found: error
 
       - name: Generate step summary
         if: always()
