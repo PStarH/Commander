@@ -3301,9 +3301,34 @@ function helmUninstallFailureRecord(
   return `${code};residual_inventory=available;residual_kinds=${residual.resourceKinds?.join(',') || 'none'};residual_pod_components=${residual.podComponents?.join(',') || 'none'};residual_terminating_pod_components=${residual.terminatingPodComponents?.join(',') || 'none'}`;
 }
 
+/** A DELETE that fails mid-wait while pods are still terminating (control-plane
+ *  blip or apiserver connection reset) is transient: the release may already be
+ *  gone, so one bounded retry after pod termination is safe and deterministic. */
+export function isTransientHelmUninstallDeleteFailure(result: CommandResult): boolean {
+  return (
+    result.exitCode !== 0 && classifyHelmUninstallFailure(result) === 'HELM_UNINSTALL_DELETE_FAILED'
+  );
+}
+
 async function requireHelmUninstall(release: string): Promise<string> {
   const result = await helm(['uninstall', release, '-n', NAMESPACE, '--wait']);
   if (result.exitCode === 0) return result.stdout;
+  if (isTransientHelmUninstallDeleteFailure(result)) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 15_000));
+    const retry = await helm([
+      'uninstall',
+      release,
+      '-n',
+      NAMESPACE,
+      '--wait',
+      '--ignore-not-found',
+    ]);
+    if (retry.exitCode === 0) return retry.stdout;
+    return requireCommand(
+      retry,
+      helmUninstallFailureRecord(retry, await helmUninstallResidualEvidence(release)),
+    );
+  }
   return requireCommand(
     result,
     helmUninstallFailureRecord(result, await helmUninstallResidualEvidence(release)),
