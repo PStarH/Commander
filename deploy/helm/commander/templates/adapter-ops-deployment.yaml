@@ -55,6 +55,7 @@ spec:
                   key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             # Same tenant scope as worker — postgres path calls resolveWorkerTenantScope.
             - name: COMMANDER_WORKER_TENANTS
@@ -122,7 +123,9 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
 {{- end }}

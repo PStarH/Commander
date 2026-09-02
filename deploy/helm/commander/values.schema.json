@@ -26,7 +26,15 @@
           "properties": {
             "bundled": { "type": "boolean" },
             "password": { "type": "string", "maxLength": 0 },
-            "existingSecret": { "type": "string" }
+            "existingSecret": { "type": "string" },
+            "tls": {
+              "type": "object",
+              "properties": {
+                "expectedServerSpkiSha256": { "type": "string", "pattern": "^$|^[a-f0-9]{64}$" },
+                "caSecret": { "type": "string" },
+                "caKey": { "type": "string", "minLength": 1 }
+              }
+            }
           }
         }
       }
