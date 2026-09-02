@@ -123,6 +123,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 {{- define "commander.proofReaderLabels" -}}
 app.kubernetes.io/name: {{ include "commander.fullname" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: tenant-authority-proof-reader
 commander.io/tenant-authority-proof-reader: "true"
 commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
 {{- end -}}
@@ -146,8 +147,33 @@ commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
           key: {{ $key | quote }}
     - name: COMMANDER_MIGRATION_EXPECTED_DESCRIPTORS
       value: {{ $root.Values.tenantAuthority.expectedMigrationDescriptors | quote }}
+    {{- include "commander.databaseTlsEnv" $root | nindent 4 }}
   securityContext:
     {{- include "commander.cellSecurityContext" $root | nindent 4 }}
+  volumeMounts:
+    {{- include "commander.databaseTlsVolumeMount" $root | nindent 4 }}
+{{- end -}}
+
+{{- define "commander.databaseTlsEnv" -}}
+- name: COMMANDER_DATABASE_TLS_CA_FILE
+  value: /run/commander/database-tls/ca.crt
+- name: COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256
+  value: {{ .Values.databaseTls.expectedServerSpkiSha256 | quote }}
+{{- end -}}
+
+{{- define "commander.databaseTlsVolumeMount" -}}
+- name: database-public-ca
+  mountPath: /run/commander/database-tls
+  readOnly: true
+{{- end -}}
+
+{{- define "commander.databaseTlsVolume" -}}
+- name: database-public-ca
+  secret:
+    secretName: {{ include "commander.databaseTlsCaSecretName" . | quote }}
+    items:
+      - key: {{ .Values.databaseTls.caKey | quote }}
+        path: ca.crt
 {{- end -}}
 
 {{- define "commander.postgresBackend" -}}

@@ -87,7 +87,8 @@ function assertLifecycleNetworkContract(
     {
       'app.kubernetes.io/name': releaseName,
       'app.kubernetes.io/instance': releaseName,
-      'app.kubernetes.io/component': 'migration',
+      'commander.io/migration-client-v2': 'true',
+      'commander.io/migration-release': releaseName,
     },
   );
 

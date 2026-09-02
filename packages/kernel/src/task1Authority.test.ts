@@ -27,6 +27,9 @@ import {
   KERNEL_TASK2_FORWARD_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
   KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
+  KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+  KERNEL_MEMORY_SCHEMA_MIGRATIONS,
   KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
   KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
   runTask1ClosureMigrations,
@@ -51,6 +54,7 @@ function sqlResult<T>(rows: T[]): SqlQueryResult<T> {
 
 class MigrationLedgerClient implements SqlClient {
   readonly appliedMigrationIds: string[] = [];
+  readonly statements: string[] = [];
 
   constructor(private readonly ledger: Map<string, string>) {}
 
@@ -59,6 +63,7 @@ class MigrationLedgerClient implements SqlClient {
     values: readonly unknown[] = [],
   ): Promise<SqlQueryResult<T>> {
     const normalized = sql.replace(/\s+/g, ' ').trim();
+    this.statements.push(normalized);
     if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') {
       return sqlResult<T>([]);
     }
@@ -115,6 +120,35 @@ class MigrationLedgerPool implements SqlPool {
 }
 
 describe('Task 1 authoritative Class A admission', () => {
+  it('installs the PostgreSQL authentication-failure authority migration', () => {
+    const id = '2026-08-22.1.auth_failure_authority';
+    assert.equal(KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS[0]?.id, id);
+    assert.equal(
+      KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.sql,
+      KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+    );
+    assert.match(
+      KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app/,
+    );
+  });
+
+  it('installs the owner-managed durable memory schema before runtime startup', () => {
+    const descriptor = KERNEL_MEMORY_SCHEMA_MIGRATIONS[0];
+    assert.equal(descriptor?.id, '2026-09-01.1.memory_schema');
+    assert.equal(KERNEL_MIGRATIONS.find(({ id }) => id === descriptor?.id)?.sql, descriptor?.sql);
+    assert.match(descriptor?.sql ?? '', /CREATE TABLE IF NOT EXISTS public\.memory_items/);
+    assert.match(
+      descriptor?.sql ?? '',
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.memory_items TO commander_app/,
+    );
+    assert.match(descriptor?.sql ?? '', /CREATE TABLE IF NOT EXISTS public\.api_tasks/);
+    assert.match(
+      descriptor?.sql ?? '',
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.api_tasks TO commander_app/,
+    );
+  });
+
   it('installs the approval-binding claim RPC after the campaign2 public wrapper', () => {
     const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
     const campaign2Index = ids.indexOf('2026-07-29.2.campaign2_critical_authority_hardening');
@@ -402,6 +436,20 @@ describe('Task 1 authoritative Class A admission', () => {
     assert.deepEqual(
       pool.client.appliedMigrationIds,
       KERNEL_TASK1_FORWARD_MIGRATIONS.map((migration) => migration.id),
+    );
+  });
+
+  it('grants the runtime app role read access to the migration ledger', async () => {
+    const pool = new MigrationLedgerPool(
+      new Map(Object.entries(KERNEL_HISTORICAL_MIGRATION_CHECKSUMS)),
+    );
+
+    await runKernelMigrations(pool);
+
+    assert.ok(
+      pool.client.statements.includes(
+        'GRANT SELECT ON commander_kernel_migrations TO commander_app',
+      ),
     );
   });
 

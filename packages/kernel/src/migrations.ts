@@ -46,6 +46,18 @@ import {
 } from './compensationSchema.js';
 import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import { KERNEL_MEMORY_SCHEMA_SQL } from './memorySchema.js';
+
+export const KERNEL_AUTH_FAILURE_AUTHORITY_SQL = `
+CREATE TABLE IF NOT EXISTS commander_auth_failures (
+  ip TEXT PRIMARY KEY,
+  entry JSONB NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS commander_auth_failures_expires_idx
+  ON commander_auth_failures (expires_at);
+GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app;
+`;
 
 export interface KernelMigration {
   id: string;
@@ -54,6 +66,14 @@ export interface KernelMigration {
 }
 
 const checksum = (sql: string): string => createHash('sha256').update(sql).digest('hex');
+
+export const KERNEL_MEMORY_SCHEMA_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-01.1.memory_schema',
+    sql: KERNEL_MEMORY_SCHEMA_SQL,
+    checksum: checksum(KERNEL_MEMORY_SCHEMA_SQL),
+  },
+];
 
 const KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM =
   'd76d0dc499b7c2b69abe779252792cf3fd7dd1921e09cd9b8d77e42035f7149d';
@@ -364,6 +384,14 @@ export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigr
   },
 ];
 
+export const KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-22.1.auth_failure_authority',
+    sql: KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+    checksum: checksum(KERNEL_AUTH_FAILURE_AUTHORITY_SQL),
+  },
+];
+
 /** Must follow campaign2's public five-argument claim wrapper creation. */
 export const KERNEL_COMPENSATION_APPROVAL_BINDING_MIGRATIONS: readonly KernelMigration[] = [
   {
@@ -453,6 +481,8 @@ export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
 ];
 
 export const KERNEL_TASK1_BASELINE_MIGRATIONS: readonly KernelMigration[] = [
@@ -491,6 +521,8 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';
@@ -501,6 +533,45 @@ export interface MigrationRunOptions {
 }
 
 export type Task1ClosurePhase = 'expand' | 'enforce';
+export type MigrationExecutionPhase = 'baseline' | 'lifecycle' | Task1ClosurePhase;
+
+function migrationExecutionFailure(
+  error: unknown,
+  migration: KernelMigration,
+  phase: MigrationExecutionPhase,
+): Error {
+  const sqlstate =
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    /^[0-9A-Z]{5}$/.test(error.code)
+      ? error.code
+      : undefined;
+  if (!sqlstate) return error instanceof Error ? error : new Error('COMMANDER_MIGRATION_FAILED');
+
+  return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), {
+    migrationId: migration.id,
+    phase,
+    sqlstate,
+  });
+}
+
+async function applyMigration(
+  client: SqlClient,
+  migration: KernelMigration,
+  phase: MigrationExecutionPhase,
+): Promise<void> {
+  try {
+    await client.query(migration.sql);
+    await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
+      migration.id,
+      migration.checksum,
+    ]);
+  } catch (error) {
+    throw migrationExecutionFailure(error, migration, phase);
+  }
+}
 
 const TASK1_DESCRIPTOR_NAMES = ['lifecycle', 'expand', 'enforce'] as const;
 type Task1DescriptorName = (typeof TASK1_DESCRIPTOR_NAMES)[number];
@@ -533,7 +604,10 @@ export async function applyTask1ClosureDescriptorSet(
     }
   }
 
-  for (const migration of selectedTask1ClosureMigrations(descriptorSet)) {
+  const migrations = selectedTask1ClosureMigrations(descriptorSet);
+  const phase: MigrationExecutionPhase =
+    migrations.length === 1 ? 'lifecycle' : migrations.length === 2 ? 'expand' : 'enforce';
+  for (const migration of migrations) {
     const existing = await client.query<{ checksum: string }>(
       'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
       [migration.id],
@@ -544,11 +618,7 @@ export async function applyTask1ClosureDescriptorSet(
       }
       continue;
     }
-    await client.query(migration.sql);
-    await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
-      migration.id,
-      migration.checksum,
-    ]);
+    await applyMigration(client, migration, phase);
   }
 }
 
@@ -683,11 +753,7 @@ export async function runKernelMigrations(
           throw new Error(`Kernel migration checksum mismatch for ${migration.id}`);
         continue;
       }
-      await client.query(migration.sql);
-      await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
-        migration.id,
-        migration.checksum,
-      ]);
+      await applyMigration(client, migration, 'baseline');
     }
 
     // Ensure the migration owner can bypass RLS for operational queries and the
@@ -711,6 +777,7 @@ export async function runKernelMigrations(
         END IF;
       END $$;
     `);
+    await client.query('GRANT SELECT ON commander_kernel_migrations TO commander_app');
 
     await client.query('COMMIT');
   } catch (error) {
