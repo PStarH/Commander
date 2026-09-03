@@ -15,7 +15,11 @@ import {
   seedTask1ReadinessTenant,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
-import { KERNEL_TASK1_BASELINE_MIGRATIONS, KERNEL_TASK1_CLOSURE_MIGRATIONS } from './migrations.js';
+import {
+  KERNEL_MIGRATIONS,
+  KERNEL_TASK1_BASELINE_MIGRATIONS,
+  KERNEL_TASK1_CLOSURE_MIGRATIONS,
+} from './migrations.js';
 import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 import type { Task1RolloutProofReceipt } from './task1RolloutProof.js';
 
@@ -427,9 +431,20 @@ describe('kernel owner migration entrypoint', () => {
     const pool = new OwnerBootstrapLedgerPool();
     await bootstrap!(pool, 'enforce');
 
+    // After the enforce closure lands, the forward list gains post-closure
+    // descriptors (auth-persistence schema included) and is re-applied so a
+    // single bootstrap leaves the database complete for the API.
     assert.deepEqual(pool.client.appliedMigrationIds, [
       ...KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id }) => id),
       ...KERNEL_TASK1_CLOSURE_MIGRATIONS.map(({ id }) => id),
+      ...KERNEL_MIGRATIONS.filter(
+        (migration) =>
+          // The historical task2 schema is superseded once the canonical
+          // enforce closure is recorded, and runKernelMigrations skips it.
+          migration.id !== '2026-07-26.2.task2_reconciliation_schema' &&
+          !KERNEL_TASK1_BASELINE_MIGRATIONS.some(({ id }) => id === migration.id) &&
+          !KERNEL_TASK1_CLOSURE_MIGRATIONS.some(({ id }) => id === migration.id),
+      ).map(({ id }) => id),
     ]);
   });
 

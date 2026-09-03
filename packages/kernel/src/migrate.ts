@@ -139,6 +139,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'proof_runtime',
   'bootstrap_kernel',
   'bootstrap_closure',
+  'bootstrap_kernel_post_closure',
   'owner_pool_configuration',
   'owner_pool_connect',
   'bootstrap_context',
@@ -351,6 +352,12 @@ export async function bootstrapTask1OwnerAppendMigrations(
   );
   await atOwnerMigrationFailureStage('bootstrap_closure', () =>
     runTask1ClosureMigrations(pool, command === 'expand' ? 'expand' : 'enforce'),
+  );
+  // Mirror the CLI: once the enforce closure exists, the forward list gains
+  // post-closure descriptors (auth-persistence schema included). Re-run so a
+  // single bootstrap leaves the database complete for the API.
+  await atOwnerMigrationFailureStage('bootstrap_kernel_post_closure', () =>
+    runKernelMigrations(pool, { requiredRole: 'owner' }),
   );
 }
 
@@ -895,6 +902,12 @@ async function main() {
     await runKernelMigrations(activePool, { requiredRole: 'owner' });
     if (closurePhase) {
       await runTask1ClosureMigrations(activePool, closurePhase);
+      // The forward-migration list is gated on the canonical enforce closure
+      // (a fresh install has not recorded it until the line above). Re-run the
+      // pass so post-closure descriptors — notably the auth-persistence schema
+      // the API requires at first boot — apply in the same job instead of
+      // waiting for a second migration run.
+      await runKernelMigrations(activePool, { requiredRole: 'owner' });
       await seedTask1ReadinessTenant(activePool);
     }
     // Seed cell tenants so register_worker can admit worker LOGIN registrations.
