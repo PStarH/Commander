@@ -117,9 +117,7 @@ class PostgresAuthFailureStore implements AuthFailureStore {
   async set(ip: string, entry: AuthFailureEntry): Promise<void> {
     const pool = await this.getPool();
     const ttlSeconds =
-      entry.lockedUntil > Date.now()
-        ? Math.ceil((entry.lockedUntil - Date.now()) / 1000)
-        : 60 * 60;
+      entry.lockedUntil > Date.now() ? Math.ceil((entry.lockedUntil - Date.now()) / 1000) : 60 * 60;
     await pool.query(
       `INSERT INTO commander_auth_failures (ip, entry, expires_at)
        VALUES ($1, $2::jsonb, now() + make_interval(secs => $3))
@@ -148,7 +146,9 @@ export function getAuthFailureStore(): AuthFailureStore {
 
 export function authFailureDsn(env: NodeJS.ProcessEnv): string | undefined {
   const dsn =
-    env.COMMANDER_AUTH_FAILURE_DATABASE_URL ?? env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL;
+    env.COMMANDER_AUTH_FAILURE_DATABASE_URL ??
+    env.COMMANDER_KERNEL_DATABASE_URL ??
+    env.DATABASE_URL;
   return typeof dsn === 'string' && dsn.trim().length > 0 ? dsn.trim() : undefined;
 }
 
