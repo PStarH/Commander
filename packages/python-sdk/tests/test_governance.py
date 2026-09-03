@@ -32,14 +32,13 @@ class TestGovernance:
             )
 
         mock_api.post("/api/governance/checkpoints").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                checkpoint = await client.create_checkpoint(
-                    mission_id="m1",
-                    task_id="t1",
-                    agent_id="a1",
-                    task_description="desc",
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            checkpoint = await client.create_checkpoint(
+                mission_id="m1",
+                task_id="t1",
+                agent_id="a1",
+                task_description="desc",
+            )
         assert checkpoint.id == "cp_1"
         assert checkpoint.status == CheckpointStatus("pending")
 
@@ -55,9 +54,8 @@ class TestGovernance:
                 "status": "pending",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                checkpoint = await client.get_checkpoint("cp_1")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            checkpoint = await client.get_checkpoint("cp_1")
         assert checkpoint.id == "cp_1"
 
     async def test_list_checkpoints(self, mock_api: respx.MockRouter) -> None:
@@ -77,9 +75,8 @@ class TestGovernance:
                 "count": 1,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.list_checkpoints(mission_id="m1")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.list_checkpoints(mission_id="m1")
         assert result.count == 1
         assert result.checkpoints[0].mission_id == "m1"
 
@@ -100,11 +97,10 @@ class TestGovernance:
         mock_api.post("/api/governance/checkpoints/cp_1/approve").mock(
             side_effect=check_body
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                checkpoint = await client.approve_checkpoint(
-                    "cp_1", "reviewer_1", reason="looks good"
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            checkpoint = await client.approve_checkpoint(
+                "cp_1", "reviewer_1", reason="looks good"
+            )
         assert checkpoint.status == CheckpointStatus("approved")
 
     async def test_reject_checkpoint(self, mock_api: respx.MockRouter) -> None:
@@ -117,10 +113,9 @@ class TestGovernance:
                 "rejection_reason": "risky",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                checkpoint = await client.reject_checkpoint(
-                    "cp_1", "reviewer_1", "risky"
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            checkpoint = await client.reject_checkpoint(
+                "cp_1", "reviewer_1", "risky"
+            )
         assert checkpoint.status == CheckpointStatus("rejected")
         assert checkpoint.rejection_reason == "risky"

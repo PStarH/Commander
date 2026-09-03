@@ -11,6 +11,8 @@ from commander import (
     ApprovalPatternRemoved,
     ApprovalPolicyResult,
     CommanderClient,
+    ConfidenceReport,
+    ConfidenceThresholdInfo,
     ConflictDetectionResult,
     ConflictSummary,
     CostDashboardResponse,
@@ -33,8 +35,6 @@ from commander import (
     ToolPolicy,
     TraceTimelineNode,
     UnifiedApprovalConfig,
-    ConfidenceReport,
-    ConfidenceThresholdInfo,
 )
 from commander._gateway_client import CommanderGatewayClient, verify_action_evidence
 from commander._types import KillSwitchUpdateInput, ProposeActionInput
@@ -605,11 +605,10 @@ class TestCanonicalActionGatewaySurface:
         mock_api.post("/v1/actions/run-action-1/reconcile").respond(202, json=fixture)
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                result = await client.reconcile_action(
-                    "run-action-1", idempotency_key="reconcile-action-0001"
-                )
+        ) as client, mock_api:
+            result = await client.reconcile_action(
+                "run-action-1", idempotency_key="reconcile-action-0001"
+            )
 
         assert result.model_dump(by_alias=True) == fixture
 
@@ -626,12 +625,11 @@ class TestCanonicalActionGatewaySurface:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                with pytest.raises(Exception) as caught:
-                    await client.reconcile_action(
-                        "run-action-1", idempotency_key="reconcile-action-0002"
-                    )
+        ) as client, mock_api:
+            with pytest.raises(Exception) as caught:
+                await client.reconcile_action(
+                    "run-action-1", idempotency_key="reconcile-action-0002"
+                )
 
         assert caught.value.status == status
         assert caught.value.code == code
@@ -668,13 +666,12 @@ class TestCanonicalActionGatewaySurface:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                await client.propose_action(ProposeActionInput(**ACTION_INPUT))
-                assert (
-                    route.calls.last.request.headers["Idempotency-Key"]
-                    == "action-key-0001"
-                )
+        ) as client, mock_api:
+            await client.propose_action(ProposeActionInput(**ACTION_INPUT))
+            assert (
+                route.calls.last.request.headers["Idempotency-Key"]
+                == "action-key-0001"
+            )
 
     async def test_kill_switch_methods_use_canonical_paths(
         self, mock_api: respx.MockRouter
@@ -699,27 +696,26 @@ class TestCanonicalActionGatewaySurface:
         ).respond(204)
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                listed = await client.list_kill_switches()
-                updated = await client.put_kill_switch(
-                    "tool",
-                    "ticket.create",
-                    KillSwitchUpdateInput(enabled=True, reason="incident response"),
-                    idempotency_key="kill-put-0001",
-                )
-                await client.remove_kill_switch(
-                    "tool", "ticket.create", idempotency_key="kill-delete-0001"
-                )
-                assert list_route.called and put_route.called and delete_route.called
-                assert (
-                    put_route.calls.last.request.headers["Idempotency-Key"]
-                    == "kill-put-0001"
-                )
-                assert (
-                    delete_route.calls.last.request.headers["Idempotency-Key"]
-                    == "kill-delete-0001"
-                )
+        ) as client, mock_api:
+            listed = await client.list_kill_switches()
+            updated = await client.put_kill_switch(
+                "tool",
+                "ticket.create",
+                KillSwitchUpdateInput(enabled=True, reason="incident response"),
+                idempotency_key="kill-put-0001",
+            )
+            await client.remove_kill_switch(
+                "tool", "ticket.create", idempotency_key="kill-delete-0001"
+            )
+            assert list_route.called and put_route.called and delete_route.called
+            assert (
+                put_route.calls.last.request.headers["Idempotency-Key"]
+                == "kill-put-0001"
+            )
+            assert (
+                delete_route.calls.last.request.headers["Idempotency-Key"]
+                == "kill-delete-0001"
+            )
         assert listed[0].model_dump(by_alias=True) == fixture
         assert updated.model_dump(by_alias=True) == fixture
 

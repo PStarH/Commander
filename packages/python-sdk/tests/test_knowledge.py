@@ -34,14 +34,13 @@ class TestKnowledgeDocuments:
             )
 
         mock_api.post("/api/knowledge/documents").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                doc = await client.upload_document(
-                    content="doc content",
-                    name="doc.md",
-                    type="markdown",
-                    tags=["tag1"],
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            doc = await client.upload_document(
+                content="doc content",
+                name="doc.md",
+                type="markdown",
+                tags=["tag1"],
+            )
         assert doc.id == "doc_1"
         assert doc.status == "indexed"
         assert doc.chunk_count == 2
@@ -63,9 +62,8 @@ class TestKnowledgeDocuments:
                 "limit": 20,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.list_documents(page=1, limit=20)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.list_documents(page=1, limit=20)
         assert result.total == 1
         assert result.documents[0].id == "doc_1"
 
@@ -73,16 +71,14 @@ class TestKnowledgeDocuments:
         mock_api.get("/api/knowledge/documents/doc_1").respond(
             200, json={"id": "doc_1", "name": "doc.md", "type": "markdown"}
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                doc = await client.get_document("doc_1")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            doc = await client.get_document("doc_1")
         assert doc.id == "doc_1"
 
     async def test_delete_document(self, mock_api: respx.MockRouter) -> None:
         mock_api.delete("/api/knowledge/documents/doc_1").respond(204)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                await client.delete_document("doc_1")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            await client.delete_document("doc_1")
 
 
 class TestKnowledgeSearch:
@@ -108,11 +104,10 @@ class TestKnowledgeSearch:
             )
 
         mock_api.post("/api/knowledge/search").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.search_knowledge(
-                    "query", top_k=5, doc_ids=["doc_1"]
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.search_knowledge(
+                "query", top_k=5, doc_ids=["doc_1"]
+            )
         assert result.total == 1
         assert result.results[0].score == 0.95
 
@@ -132,9 +127,8 @@ class TestKnowledgeSearch:
                 ],
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.rag_query("question", top_k=3)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.rag_query("question", top_k=3)
         assert result.query == "question"
         assert result.context == "relevant context"
         assert len(result.sources) == 1
@@ -148,8 +142,7 @@ class TestKnowledgeSearch:
                 "total_size_bytes": 1024,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                stats = await client.knowledge_stats()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            stats = await client.knowledge_stats()
         assert stats.total_documents == 10
         assert stats.total_chunks == 50

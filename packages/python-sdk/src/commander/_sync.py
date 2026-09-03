@@ -15,7 +15,7 @@ from ._client import CommanderClient as _CommanderClient
 def _make_sync_method(name: str):
     """Create a synchronous wrapper for an async CommanderClient method."""
 
-    def _sync_method(self: "CommanderClientSync", *args: Any, **kwargs: Any) -> Any:
+    def _sync_method(self: CommanderClientSync, *args: Any, **kwargs: Any) -> Any:
         return asyncio.run(getattr(self._get_client(), name)(*args, **kwargs))
 
     # Copy docstring and signature metadata for better introspection.
@@ -26,8 +26,8 @@ def _make_sync_method(name: str):
 
 
 def _attach_sync_methods(
-    cls: type["CommanderClientSync"],
-) -> type["CommanderClientSync"]:
+    cls: type[CommanderClientSync],
+) -> type[CommanderClientSync]:
     """Attach sync wrappers for every public async method on CommanderClient."""
     skip = {"close", "__aenter__", "__aexit__"}
     for name, method in inspect.getmembers(

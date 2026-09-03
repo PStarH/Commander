@@ -13,6 +13,7 @@ This test is skipped unless INTEGRATION=1 is set.
 from __future__ import annotations
 
 import os
+
 import pytest
 
 from commander import CommanderClient

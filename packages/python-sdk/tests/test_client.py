@@ -8,20 +8,21 @@ import httpx
 import pytest
 import respx
 
-from commander import CommanderClient, __all__ as commander_exports
-from commander._gateway_client import CommanderGatewayClient
-from commander._types import (
-    ActionApprovalInput,
-    ActionCompensationApprovalInput,
-    ActionCompensationInput,
-    ProposeActionInput,
-)
+from commander import CommanderClient
+from commander import __all__ as commander_exports
 from commander._exceptions import (
     AuthenticationError,
     ConnectionError,
     NotFoundError,
     RateLimitError,
     ServerError,
+)
+from commander._gateway_client import CommanderGatewayClient
+from commander._types import (
+    ActionApprovalInput,
+    ActionCompensationApprovalInput,
+    ActionCompensationInput,
+    ProposeActionInput,
 )
 
 
@@ -75,31 +76,27 @@ class TestClientRequests:
         self, mock_api: respx.MockRouter
     ) -> None:
         mock_api.get("/health").respond(401, text="Unauthorized")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(AuthenticationError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(AuthenticationError):
+                await client._request("GET", "/health")
 
     async def test_404_maps_to_not_found(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/nowhere").respond(404, text="Not found")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(NotFoundError):
-                    await client._request("GET", "/nowhere")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(NotFoundError):
+                await client._request("GET", "/nowhere")
 
     async def test_429_maps_to_rate_limit(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/health").respond(429, text="Too fast")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(RateLimitError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(RateLimitError):
+                await client._request("GET", "/health")
 
     async def test_500_maps_to_server_error(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/health").respond(500, text="Internal error")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(ServerError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(ServerError):
+                await client._request("GET", "/health")
 
     async def test_retry_on_connection_error(self, mock_api: respx.MockRouter) -> None:
         # Simulate 2 failures then success
@@ -119,10 +116,9 @@ class TestClientRequests:
         mock_api.get("/health").mock(
             side_effect=httpx.ConnectError("connection refused")
         )
-        async with CommanderClient(api_key="test", max_retries=2) as client:
-            async with mock_api:
-                with pytest.raises(ConnectionError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test", max_retries=2) as client, mock_api:
+            with pytest.raises(ConnectionError):
+                await client._request("GET", "/health")
 
 
 ACTION_FIXTURES = {
@@ -178,11 +174,10 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                result = await client.simulate_action(ProposeActionInput(**ACTION_FIXTURES["input"]))
-                assert route.called
-                assert route.calls.last.request.url.path == "/v1/actions/simulate"
+        ) as client, mock_api:
+            result = await client.simulate_action(ProposeActionInput(**ACTION_FIXTURES["input"]))
+            assert route.called
+            assert route.calls.last.request.url.path == "/v1/actions/simulate"
         assert result.simulation_id == "sim-1"
 
     async def test_propose_action_sends_idempotency_key(self, mock_api: respx.MockRouter) -> None:
@@ -191,12 +186,11 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action, replay, accepted = await client.propose_action(
-                    ProposeActionInput(**ACTION_FIXTURES["input"])
-                )
-                assert route.calls.last.request.headers["Idempotency-Key"] == "action-key-0001"
+        ) as client, mock_api:
+            action, replay, accepted = await client.propose_action(
+                ProposeActionInput(**ACTION_FIXTURES["input"])
+            )
+            assert route.calls.last.request.headers["Idempotency-Key"] == "action-key-0001"
         assert action.run_id == "run-action-1"
         assert replay is False
         assert accepted is True
@@ -207,10 +201,9 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action = await client.get_action("run-action-1")
-                assert route.called
+        ) as client, mock_api:
+            action = await client.get_action("run-action-1")
+            assert route.called
         assert action.run_id == "run-action-1"
 
     async def test_approve_action_posts_bindings(self, mock_api: respx.MockRouter) -> None:
@@ -224,16 +217,15 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action = await client.approve_action(
-                    "run-action-1", approval, idempotency_key="approve-action-0001"
-                )
-                assert route.called
-                assert (
-                    route.calls.last.request.headers["Idempotency-Key"]
-                    == "approve-action-0001"
-                )
+        ) as client, mock_api:
+            action = await client.approve_action(
+                "run-action-1", approval, idempotency_key="approve-action-0001"
+            )
+            assert route.called
+            assert (
+                route.calls.last.request.headers["Idempotency-Key"]
+                == "approve-action-0001"
+            )
         assert action.run_id == "run-action-1"
 
     async def test_reject_action_posts_reason(self, mock_api: respx.MockRouter) -> None:
@@ -243,18 +235,17 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action = await client.reject_action(
-                    "run-action-1",
-                    reason="too risky",
-                    idempotency_key="reject-action-0001",
-                )
-                assert route.called
-                assert (
-                    route.calls.last.request.headers["Idempotency-Key"]
-                    == "reject-action-0001"
-                )
+        ) as client, mock_api:
+            action = await client.reject_action(
+                "run-action-1",
+                reason="too risky",
+                idempotency_key="reject-action-0001",
+            )
+            assert route.called
+            assert (
+                route.calls.last.request.headers["Idempotency-Key"]
+                == "reject-action-0001"
+            )
         assert action.state == "FAILED"
 
     async def test_get_action_evidence(self, mock_api: respx.MockRouter) -> None:
@@ -270,10 +261,9 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                evidence = await client.get_action_evidence("run-action-1")
-                assert route.called
+        ) as client, mock_api:
+            evidence = await client.get_action_evidence("run-action-1")
+            assert route.called
         assert evidence.receipt["bundleId"] == "bundle-1"
         assert evidence.verification.ok is True
 
@@ -329,20 +319,19 @@ class TestGatewayClient:
 
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                requested = await client.request_action_compensation(
-                    "run-action-1", compensation, idempotency_key="compensation-request-1"
-                )
-                approved = await client.approve_action_compensation(
-                    "run-action-1",
-                    "authorization-1",
-                    approval,
-                    idempotency_key="compensation-approve-1",
-                )
-                assert request_route.called
-                assert approve_route.called
-                assert request_route.calls.last.request.headers["Idempotency-Key"] == "compensation-request-1"
-                assert approve_route.calls.last.request.headers["Idempotency-Key"] == "compensation-approve-1"
+        ) as client, mock_api:
+            requested = await client.request_action_compensation(
+                "run-action-1", compensation, idempotency_key="compensation-request-1"
+            )
+            approved = await client.approve_action_compensation(
+                "run-action-1",
+                "authorization-1",
+                approval,
+                idempotency_key="compensation-approve-1",
+            )
+            assert request_route.called
+            assert approve_route.called
+            assert request_route.calls.last.request.headers["Idempotency-Key"] == "compensation-request-1"
+            assert approve_route.calls.last.request.headers["Idempotency-Key"] == "compensation-approve-1"
         assert requested.state == "AWAITING_APPROVAL"
         assert approved.accepted is True
