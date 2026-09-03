@@ -136,7 +136,9 @@ export interface Task1LifecycleRequest {
         resolvedModelSha256: string;
         imageDigest: string;
       };
-  verifyCurrent?: () => Promise<{ status: 'proven'; proof: unknown } | { status: 'absent' }>;
+  verifyCurrent?: (
+    operation: Task1LifecycleOperation,
+  ) => Promise<{ status: 'proven'; proof: unknown } | { status: 'absent' }>;
   verifyRecoveryPredecessor?: (candidate: {
     platformBinding: Task1PlatformBinding;
     configuration: Record<string, unknown>;
@@ -432,7 +434,7 @@ export class Task1LifecycleLedger {
 
       const current = state.currentRuntimeOperationVersion ? state.currentOperation : undefined;
       const proof = current
-        ? ((await request.verifyCurrent?.()) ?? { status: 'absent' as const })
+        ? ((await request.verifyCurrent?.(current)) ?? { status: 'absent' as const })
         : undefined;
       const currentIsLive = proof?.status === 'proven';
       const requestedKind = operationKind(request.command);

@@ -23,6 +23,8 @@ export interface MemoryBootstrapOptions {
   retention?: MemoryRetentionPolicy;
   /** Explicit scope used by test/bootstrap callers that are outside a request context. */
   tenantId?: string;
+  /** Set false when an owner migration creates the schema before the runtime starts. */
+  manageSchema?: boolean;
 }
 
 /**
@@ -67,6 +69,7 @@ export async function createMemoryStore(
           process.env.COMMANDER_POSTGRES_URL ??
           process.env.DATABASE_URL,
         retention: options?.retention,
+        manageSchema: options?.manageSchema,
       });
       await service.initialize();
       return new MemoryStoreFacade(service);

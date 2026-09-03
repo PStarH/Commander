@@ -149,6 +149,8 @@ class RecordingClient implements SqlClient {
   readonly statements: string[] = [];
   readonly bindings: unknown[][] = [];
   failDescriptor = false;
+  lifecycleTableDiscoveryFailure = false;
+  snapshotTransactionFailure: 'begin' | 'commit' | undefined;
   existingLifecycleState: {
     state: 'fresh_pending' | 'legacy_pending' | 'expanded' | 'enforced';
     pending_configuration_sha256: string | null;
@@ -182,7 +184,19 @@ class RecordingClient implements SqlClient {
   ): Promise<SqlQueryResult<T>> {
     this.statements.push(sql.replace(/\s+/g, ' ').trim());
     this.bindings.push([...values]);
+    if (
+      this.snapshotTransactionFailure === 'begin' &&
+      sql === 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'
+    ) {
+      throw new Error('postgres://snapshot:secret@db/commander begin-opaque-marker');
+    }
+    if (this.snapshotTransactionFailure === 'commit' && sql === 'COMMIT') {
+      throw new Error('postgres://snapshot:secret@db/commander commit-opaque-marker');
+    }
     if (sql.includes("to_regclass('public.commander_tenant_cutover_state')")) {
+      if (this.lifecycleTableDiscoveryFailure) {
+        throw new Error('lifecycle-table-discovery-opaque-marker');
+      }
       return result<T>([
         this.lifecycleTables === 'absent'
           ? {
@@ -202,6 +216,9 @@ class RecordingClient implements SqlClient {
                 proof_table: 'commander_tenant_cutover_rollout_proofs',
               },
       ] as T[]);
+    }
+    if (sql.includes("to_regclass('public.commander_kernel_migrations')")) {
+      return result<T>([{ exists: this.ledgerRows.length > 0 } as T]);
     }
     if (sql.includes('SELECT state::text, state_version::text, pending_configuration_sha256')) {
       return result<T>(
@@ -223,6 +240,7 @@ class RecordingClient implements SqlClient {
           bootstrap_oid: '10',
           bootstrap_name: 'postgres',
           bootstrap_superuser: true,
+          catalog_version: '202307071',
         } as T,
       ]);
     }
@@ -307,9 +325,678 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     const client = new RecordingClient();
     const context = await loadTask1BootstrapContext(client as unknown as PoolClient);
     assert.equal(context.sessionUser, 'postgres');
+    assert.equal(context.catalogVersion, '202307071');
     assert.match(client.statements[0]!, /authority\.rolname = session_user/i);
+    assert.match(client.statements[0]!, /current_setting\('server_version_num'\)/i);
+    assert.match(client.statements[0]!, /WHEN 16 THEN '202307071'/i);
     assert.doesNotMatch(client.statements[0]!, /pg_catalog\.session_user/i);
   });
+
+  it('loads the bootstrap catalog contract without a superuser-only control function', async () => {
+    const client = new RecordingClient();
+    await loadTask1BootstrapContext(client as unknown as PoolClient);
+
+    assert.doesNotMatch(client.statements[0]!, /pg_catalog\.pg_control_system\(\)/i);
+    assert.match(client.statements[0]!, /current_setting\('server_version_num'\)/i);
+  });
+
+  it('classifies bootstrap authority failures without reflecting their detail', async () => {
+    const client = new RecordingClient();
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => {
+              throw new Error('postgres://bootstrap:secret@db/commander private detail');
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'bootstrap_context',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies prepared-request canonical validation before lifecycle discovery', async () => {
+    const client = new RecordingClient();
+    const invalidPrepared = { ...prepared, configurationSha256: 'f'.repeat(64) };
+
+    await assert.rejects(
+      () => initializeTask1LifecycleBoundary({ client, prepared: invalidPrepared }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_prepared_request_validation',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(client.statements.length, 0);
+  });
+
+  it('classifies initial lifecycle-table discovery failures before state mutation', async () => {
+    const client = new RecordingClient();
+    client.lifecycleTableDiscoveryFailure = true;
+
+    await assert.rejects(
+      () => initializeTask1LifecycleBoundary({ client, prepared }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_table_discovery',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
+    );
+  });
+
+  it('classifies candidate peer observation failures after bootstrap context succeeds', async () => {
+    const client = new RecordingClient();
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => {
+              throw new Error('candidate-peer-opaque-marker');
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_candidate_peer_observation',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies a declared candidate peer binding mismatch after observation', async () => {
+    const client = new RecordingClient();
+    const declaredPeerInput = createDatabasePeerBindingInput({
+      roles: roles.map((role) => ({ role, host: 'db.example', port: 5433 })),
+      expectedServerSpkiSha256: 'f'.repeat(64),
+      ca: { mountIdentity: 'database-ca', path: '/ca.crt', publicBytesSha256: '0'.repeat(64) },
+    });
+    const mismatchedPrepared = {
+      ...prepared,
+      businessConfiguration: {
+        ...prepared.businessConfiguration,
+        databasePeerBindingInput: declaredPeerInput,
+      },
+      configuration: {
+        ...prepared.configuration,
+        databasePeerBindingInput: declaredPeerInput,
+      },
+      configurationSha256: canonicalBootstrapSha256({
+        ...prepared.configuration,
+        databasePeerBindingInput: declaredPeerInput,
+      }),
+    };
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared: mismatchedPrepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_candidate_peer_validation',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies S0 collection failures after candidate validation without state mutation', async () => {
+    const client = new RecordingClient();
+    let candidateObserved = false;
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => {
+              candidateObserved = true;
+              return { input: peerInput, binding: peerBinding };
+            },
+            collectInventory: async () => {
+              assert.equal(candidateObserved, true);
+              throw Object.assign(new Error('prebootstrap-s0-opaque-marker'), {
+                catalogStep: 'functions',
+              });
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_prebootstrap_snapshot',
+        );
+        assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+        assert.equal((error as { catalogStep?: unknown }).catalogStep, 'functions');
+        return true;
+      },
+    );
+
+    assert.equal(candidateObserved, true);
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
+    );
+  });
+
+  it('classifies a fresh S0/S1 comparison failure without state mutation', async () => {
+    const client = new RecordingClient();
+    let collection = 0;
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            collectInventory: async () => {
+              collection += 1;
+              const observed = inventory();
+              return collection === 2 ? { ...observed, catalogVersion: '202307072' } : observed;
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_prebootstrap_snapshot_comparison',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(collection, 2);
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
+    );
+  });
+
+  it('classifies post-snapshot planning failures before state mutation', async () => {
+    const client = new RecordingClient();
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            collectInventory: async () => inventory(),
+            verifyCatalogBaseline: () => {
+              throw new Error('post-snapshot-planning-opaque-marker');
+            },
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_initialization_planning',
+        );
+        return true;
+      },
+    );
+
+    assert.equal(
+      client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+      false,
+    );
+  });
+
+  it('classifies descriptor transaction failures after initialization planning', async () => {
+    const client = new RecordingClient();
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => {
+              throw new Error('descriptor-transaction-opaque-marker');
+            },
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_descriptor_transaction',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies post-transaction peer re-observation failures', async () => {
+    const client = new RecordingClient();
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => {
+              throw new Error('peer-reobservation-opaque-marker');
+            },
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => inventory(),
+            verifyLockedCatalogState: () => undefined,
+            applyCatalogHardening: async () => undefined,
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_peer_reobservation',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies a post-transaction peer-input consistency failure', async () => {
+    const client = new RecordingClient();
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => ({
+              input: { ...peerInput, expectedServerSpkiSha256: 'e'.repeat(64) },
+              binding: peerBinding,
+            }),
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => inventory(),
+            verifyLockedCatalogState: () => undefined,
+            applyCatalogHardening: async () => undefined,
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_peer_reobservation_input_consistency',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies a post-transaction candidate peer-binding validation failure', async () => {
+    const client = new RecordingClient();
+    const mismatchedCandidateBinding = createDatabasePeerBinding({
+      roles: peerBinding.roles.map((role, index) =>
+        index === 0 ? { ...role, databaseOid: '16385' } : role,
+      ),
+    });
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({
+              input: peerInput,
+              binding: mismatchedCandidateBinding,
+            }),
+            observePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => inventory(),
+            verifyLockedCatalogState: () => undefined,
+            applyCatalogHardening: async () => undefined,
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_peer_reobservation_candidate_binding_validation',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies a post-transaction observed peer-binding validation failure', async () => {
+    const client = new RecordingClient();
+    const mismatchedObservedBinding = createDatabasePeerBinding({
+      roles: peerBinding.roles.map((role, index) =>
+        index === 0 ? { ...role, databaseOid: '16385' } : role,
+      ),
+    });
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => ({
+              input: peerInput,
+              binding: mismatchedObservedBinding,
+            }),
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => inventory(),
+            verifyLockedCatalogState: () => undefined,
+            applyCatalogHardening: async () => undefined,
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_peer_reobservation_observed_binding_validation',
+        );
+        return true;
+      },
+    );
+  });
+
+  it('classifies a post-transaction peer-binding consistency failure', async () => {
+    const client = new RecordingClient();
+    const mismatchedObservedBinding = createDatabasePeerBinding({
+      roles: peerBinding.roles.map((role) => ({
+        ...role,
+        databaseOid: '16385',
+      })),
+    });
+
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+              catalogVersion: '202307071',
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => ({
+              input: peerInput,
+              binding: mismatchedObservedBinding,
+            }),
+            collectInventory: async () => inventory(),
+            collectLockedInventory: async () => inventory(),
+            verifyLockedCatalogState: () => undefined,
+            applyCatalogHardening: async () => undefined,
+            proofKeySha256: () => '9'.repeat(64),
+            applyRoleCredentials: async () => undefined,
+            instantiateManifestSha256: (kind) =>
+              kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) => {
+        assert.equal(
+          (error as { ownerStage?: unknown }).ownerStage,
+          'lifecycle_peer_reobservation_binding_consistency',
+        );
+        return true;
+      },
+    );
+  });
+
+  for (const snapshotTransaction of ['begin', 'commit'] as const) {
+    it(`classifies the S0 ${snapshotTransaction} transaction boundary without state mutation`, async () => {
+      const client = new RecordingClient();
+      client.snapshotTransactionFailure = snapshotTransaction;
+
+      await assert.rejects(
+        () =>
+          initializeTask1LifecycleBoundary({
+            client,
+            prepared,
+            dependencies: {
+              loadBootstrapContext: async () => ({
+                sessionUser: 'postgres',
+                authority: bootstrapIdentities.authority,
+                bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+                catalogVersion: '202307071',
+              }),
+              observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+              collectInventory: async () => inventory(),
+            },
+          }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { ownerStage?: unknown }).ownerStage,
+            'lifecycle_prebootstrap_snapshot',
+          );
+          assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+          assert.equal(
+            (error as { snapshotTransaction?: unknown }).snapshotTransaction,
+            snapshotTransaction,
+          );
+          return true;
+        },
+      );
+
+      assert.equal(
+        client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+        false,
+      );
+    });
+  }
+
+  for (const snapshotValidation of [
+    'bootstrap_validation',
+    'identity_validation',
+    'product_source_validation',
+    'catalog_version_validation',
+    'origin_classification',
+  ] as const) {
+    it(`carries the S0 ${snapshotValidation} marker without lifecycle mutation`, async () => {
+      const client = new RecordingClient();
+
+      await assert.rejects(
+        () =>
+          initializeTask1LifecycleBoundary({
+            client,
+            prepared,
+            dependencies: {
+              loadBootstrapContext: async () => ({
+                sessionUser: 'postgres',
+                authority: bootstrapIdentities.authority,
+                bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+                catalogVersion: '202307071',
+              }),
+              observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+              collectInventory: async () => {
+                throw Object.assign(
+                  new Error('postgres://snapshot:secret@db/commander validation-opaque-marker'),
+                  { snapshotValidation },
+                );
+              },
+            },
+          }),
+        (error: unknown) => {
+          assert.equal(
+            (error as { ownerStage?: unknown }).ownerStage,
+            'lifecycle_prebootstrap_snapshot',
+          );
+          assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+          assert.equal(
+            (error as { snapshotValidation?: unknown }).snapshotValidation,
+            snapshotValidation,
+          );
+          return true;
+        },
+      );
+
+      assert.equal(
+        client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+        false,
+      );
+    });
+  }
+
+  for (const originClassificationStep of [
+    'fresh_catalog_shape',
+    'role_envelope',
+    'role_attributes',
+    'memberships',
+    'public_acl',
+  ] as const) {
+    it(`carries the S0 ${originClassificationStep} classification step without lifecycle mutation`, async () => {
+      const client = new RecordingClient();
+
+      await assert.rejects(
+        () =>
+          initializeTask1LifecycleBoundary({
+            client,
+            prepared,
+            dependencies: {
+              loadBootstrapContext: async () => ({
+                sessionUser: 'postgres',
+                authority: bootstrapIdentities.authority,
+                bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+                catalogVersion: '202307071',
+              }),
+              observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+              collectInventory: async () => {
+                throw Object.assign(
+                  new Error('postgres://snapshot:secret@db/commander classification-opaque-marker'),
+                  {
+                    snapshotValidation: 'origin_classification',
+                    originClassificationStep,
+                  },
+                );
+              },
+            },
+          }),
+        (error: unknown) => {
+          assert.equal((error as { snapshot?: unknown }).snapshot, 's0');
+          assert.equal(
+            (error as { originClassificationStep?: unknown }).originClassificationStep,
+            originClassificationStep,
+          );
+          return true;
+        },
+      );
+
+      assert.equal(
+        client.statements.some((statement) => /\b(?:INSERT|UPDATE|DELETE)\b/i.test(statement)),
+        false,
+      );
+    });
+  }
 
   it('derives bundled bootstrap authority in memory from the sealed owner peer', () => {
     assert.equal(
@@ -415,6 +1102,40 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
       );
       assert.ok(client.statements.includes(`ROLE_CREDENTIALS_${envelope}`));
     }
+  });
+
+  it('reuses the exact baseline ledger bootstrapped before fresh lifecycle initialization', async () => {
+    const client = new RecordingClient();
+    client.ledgerRows = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({
+      id,
+      checksum,
+    }));
+    await runTask1LifecycleDescriptorStateTransaction(
+      client,
+      async () => undefined,
+      'fresh',
+      undefined,
+      testCatalogTransaction(),
+    );
+    const lockIndex = client.statements.indexOf(
+      'LOCK TABLE public.commander_kernel_migrations IN ACCESS EXCLUSIVE MODE',
+    );
+    const ledgerReadIndex = client.statements.findIndex(
+      (sql) => sql.includes('SELECT id, checksum') && sql.includes('commander_kernel_migrations'),
+    );
+    assert.ok(lockIndex >= 0, 'exact baseline reuse must acquire the migration ledger lock');
+    assert.ok(
+      lockIndex < ledgerReadIndex,
+      'exact baseline reuse must lock the migration ledger before validating its rows',
+    );
+    assert.equal(
+      client.bindings.filter(
+        (values) =>
+          typeof values[0] === 'string' &&
+          KERNEL_TASK1_BASELINE_MIGRATIONS.some(({ id }) => values[0] === id),
+      ).length,
+      0,
+    );
   });
 
   it('creates a populated legacy pending boundary with explicit role enablement and rejects a forged ledger first', async () => {
@@ -764,35 +1485,92 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     let bootstrapChecks = 0;
     let peerChecks = 0;
 
-    await initializeTask1LifecycleBoundary({
-      client,
-      prepared,
-      dependencies: {
-        collectInventory: async () => {
-          inventoryCollections += 1;
-          return inventory();
-        },
-        loadBootstrapContext: async () => {
-          bootstrapChecks += 1;
-          return {
-            sessionUser: 'postgres',
-            authority: bootstrapIdentities.authority,
-            bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
-          };
-        },
-        observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
-        observePeers: async () => {
-          peerChecks += 1;
-          return { input: peerInput, binding: peerBinding };
-        },
-        proofKeySha256: () => '9'.repeat(64),
-        instantiateManifestSha256: (_kind, _identities) =>
-          _kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+    const retryDependencies = {
+      collectInventory: async () => {
+        inventoryCollections += 1;
+        return inventory();
       },
-    });
+      loadBootstrapContext: async () => {
+        bootstrapChecks += 1;
+        return {
+          sessionUser: 'postgres',
+          authority: bootstrapIdentities.authority,
+          bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+        };
+      },
+      observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+      observePeers: async () => {
+        peerChecks += 1;
+        return { input: peerInput, binding: peerBinding };
+      },
+      proofKeySha256: () => '9'.repeat(64),
+      instantiateManifestSha256: (kind: 'historical' | 'hardened') =>
+        kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+    };
+
+    await initializeTask1LifecycleBoundary({ client, prepared, dependencies: retryDependencies });
     assert.equal(inventoryCollections, 0, 'pending retry must not recollect S0/S1');
     assert.equal(bootstrapChecks, 1);
     assert.equal(peerChecks, 1);
+
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS,
+    ].map(({ id, checksum }) => ({ id, checksum }));
+    await initializeTask1LifecycleBoundary({ client, prepared, dependencies: retryDependencies });
+    assert.equal(bootstrapChecks, 2);
+    assert.equal(peerChecks, 2);
+
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, 2),
+    ].map(({ id, checksum }) => ({ id, checksum }));
+    await assert.rejects(
+      () => initializeTask1LifecycleBoundary({ client, prepared, dependencies: retryDependencies }),
+      /MIGRATION_LEDGER_TAMPERED/,
+    );
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS,
+    ].map(({ id, checksum }) => ({ id, checksum }));
+
+    const changedObservedBinding = createDatabasePeerBinding({
+      roles: roles.map((role) => ({
+        role,
+        host: 'db.example',
+        port: 5432,
+        tlsServerSans: { dns: ['db.example'], ip: [] },
+        serverSpkiSha256: 'f'.repeat(64),
+        databaseOid: '16385',
+        databaseName: 'commander',
+      })),
+    });
+    await assert.rejects(
+      () =>
+        initializeTask1LifecycleBoundary({
+          client,
+          prepared,
+          dependencies: {
+            loadBootstrapContext: async () => ({
+              sessionUser: 'postgres',
+              authority: bootstrapIdentities.authority,
+              bootstrapSuperuser: bootstrapIdentities.bootstrapSuperuser,
+            }),
+            observeCandidatePeers: async () => ({ input: peerInput, binding: peerBinding }),
+            observePeers: async () => ({
+              input: peerInput,
+              binding: changedObservedBinding,
+            }),
+            proofKeySha256: () => '9'.repeat(64),
+            instantiateManifestSha256: (_kind, _identities) =>
+              _kind === 'historical' ? '7'.repeat(64) : '8'.repeat(64),
+          },
+        }),
+      (error: unknown) =>
+        error instanceof Error &&
+        (error as Error & { ownerStage?: unknown }).ownerStage ===
+          'lifecycle_peer_reobservation_binding_consistency',
+    );
   });
 
   it('rejects lifecycle tables without the sole state row and partial lifecycle tables', async () => {

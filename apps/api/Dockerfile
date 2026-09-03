@@ -50,6 +50,16 @@ RUN pnpm install --frozen-lockfile \
 
 # ---- Stage 3: Build ----
 FROM base AS build
+# The lifecycle harness supplies the checked-out commit so BuildKit cannot
+# reuse a source/build layer from a different revision. Ordinary Compose/CD
+# builds do not pass it, so only validate when the arg is present.
+ARG COMMANDER_SOURCE_REVISION
+RUN if [ -n "$COMMANDER_SOURCE_REVISION" ]; then \
+      case "$COMMANDER_SOURCE_REVISION" in \
+        *[!0-9a-f]* ) echo "COMMANDER_SOURCE_REVISION_INVALID" >&2; exit 1 ;; \
+      esac; \
+      [ "${#COMMANDER_SOURCE_REVISION}" -eq 40 ] || { echo "COMMANDER_SOURCE_REVISION_INVALID" >&2; exit 1; }; \
+    fi
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/packages/contracts/node_modules ./packages/contracts/node_modules
 COPY --from=deps /app/packages/plugin-sdk/node_modules ./packages/plugin-sdk/node_modules

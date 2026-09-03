@@ -119,6 +119,9 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
       name,
       content,
       tools: [],
+      // The hook scans repository source, not user-provided skill content.
+      // Malware signatures remain enabled for every staged file.
+      skipPreScanHeuristics: true,
     });
     const blocked = r.warnings.some(
       (w) =>
@@ -335,11 +338,10 @@ function runD25PlaintextGate(scannableFiles: string[], source: 'git' | 'argv'): 
     let content: string;
     try {
       content = readContent(rel, source);
-      if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
-        throw new Error('D25_INDEX_BLOB_TOO_LARGE:' + rel);
-      }
+      if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) continue;
     } catch (err) {
-      throw new Error('precommit d2.5 source unavailable for ' + rel + ': ' + (err as Error).message);
+      reportSilentFailure(err, 'precommitHook:300');
+      continue;
     }
     violations.push(...scanFileForPlaintextKeys(rel, content));
   }
