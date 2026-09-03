@@ -348,6 +348,42 @@ describe('execution kernel semantics', () => {
     assert.equal((await kernel.getRun(claimed!.runId, 'tenant-a'))?.state, 'FAILED');
   });
 
+  it('keeps an expired lease reconcilable when an effect was already admitted', async () => {
+    const kernel = new InMemoryKernelRepository();
+    await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
+    seedOperationsReadiness(kernel, 'tenant-a');
+    const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });
+    assert.ok(claimed?.lease);
+    const admitted = await kernel.admitEffect({
+      id: 'effect-expired-lease',
+      runId: claimed!.runId,
+      stepId: claimed!.id,
+      tenantId: claimed!.tenantId,
+      type: 'http.write',
+      idempotencyKey: 'expired-lease-effect',
+      policyDecisionId: 'decision-1',
+      policySnapshotId: 'policy-v1',
+      actionDigest: 'a'.repeat(64),
+      request: { target: 'x' },
+      lease: claimed!.lease,
+      actor: 'worker-1',
+    });
+    assert.equal(admitted.admitted, true);
+
+    const reclaimed = await kernel.reclaimExpiredLeases(new Date(Date.now() + 60_001));
+
+    assert.equal(reclaimed[0]?.state, 'WAITING_FOR_RECONCILIATION');
+    assert.equal(
+      (await kernel.getStep(claimed!.id, claimed!.tenantId))?.state,
+      'WAITING_FOR_RECONCILIATION',
+    );
+    assert.equal(
+      (await kernel.getEffect('effect-expired-lease', claimed!.tenantId))?.state,
+      'COMPLETION_UNKNOWN',
+    );
+    assert.equal((await kernel.getRun(claimed!.runId, claimed!.tenantId))?.state, 'RUNNING');
+  });
+
   it('applies worker capability and tenant-wide concurrency constraints at claim time', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.setTenantConcurrencyLimit('tenant-a', 1);

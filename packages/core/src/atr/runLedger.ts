@@ -34,12 +34,15 @@ import { getGlobalEventSourcingEngine } from '../runtime/eventSourcingEngine';
 
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import type { CompensableAction, RunState, RunTransaction } from './types';
 import { LeaseManager, type AcquireResult } from './leaseManager';
 import { IdempotencyStore, getIdempotencyStore } from './idempotencyStore';
 import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export interface RunLedgerConfig {
   filePath: string;
@@ -70,7 +73,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (_silentE_) {
   reportSilentFailure(_silentE_, 'runLedger:67');
 }

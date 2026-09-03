@@ -34,7 +34,7 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
-  enumerateIndexedWarnings,
+  enumerateHighWarnings,
   evaluateIndexedWarnings,
   readGitBlob,
   readIndexedContent,
@@ -186,19 +186,31 @@ async function runScannerGate(): Promise<void> {
       });
       continue;
     }
+    const stagedResult = await scanContent(rel, content);
     const headContent = staged.source === 'git' ? readGitBlob(REPO_ROOT, 'HEAD', rel) : undefined;
-    const stagedWarnings = await enumerateIndexedWarnings(
-      content,
-      async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
-    );
+    const headResult = headContent === undefined ? undefined : await scanContent(rel, headContent);
+    const stagedWarnings = [
+      ...stagedResult.warnings.filter(
+        (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
+      ),
+      ...(await enumerateHighWarnings(
+        content,
+        async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
+      )),
+    ] as ScannerWarning[];
     const headWarnings =
-      headContent === undefined
+      headContent === undefined || headResult === undefined
         ? []
-        : await enumerateIndexedWarnings(
-            headContent,
-            async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
-          );
-    const policy = evaluateIndexedWarnings(stagedWarnings, headWarnings);
+        : [
+            ...headResult.warnings.filter(
+              (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
+            ),
+            ...(await enumerateHighWarnings(
+              headContent,
+              async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
+            )),
+          ];
+    const policy = evaluateIndexedWarnings(stagedWarnings, headWarnings as ScannerWarning[]);
     for (const warning of policy.inherited) {
       console.log(
         '[D3 hook] inherited high warning ' +

@@ -44,4 +44,42 @@ describe('owner migration seeds', () => {
     );
     assert.equal(writes, 0);
   });
+
+  it('seeds enabled tenant-authority allowlist rows without disabling existing tenants', async () => {
+    const calls: Array<{ sql: string; values?: readonly unknown[] }> = [];
+    const client: ClaimSecretSeedClient = {
+      async query(sql: string, values?: readonly unknown[]) {
+        calls.push({ sql, values });
+      },
+    };
+
+    assert.equal(typeof ownerSeeds.seedTenantAuthorityAllowedTenants, 'function');
+    await ownerSeeds.seedTenantAuthorityAllowedTenants(client, ['tenant-a', ' tenant-b ']);
+
+    assert.deepEqual(
+      calls.map((call) => call.values),
+      [['tenant-a'], ['tenant-b']],
+    );
+    assert.ok(
+      calls.every((call) =>
+        /INSERT INTO commander_tenant_authority_allowed_tenants/.test(call.sql),
+      ),
+    );
+    assert.ok(calls.every((call) => /enabled = true/.test(call.sql)));
+  });
+
+  it('rejects wildcard tenant-authority rows before writing', async () => {
+    let writes = 0;
+    const client: ClaimSecretSeedClient = {
+      async query() {
+        writes += 1;
+      },
+    };
+
+    await assert.rejects(
+      ownerSeeds.seedTenantAuthorityAllowedTenants(client, ['*']),
+      /TENANT_AUTHORITY_ALLOWED_TENANT_INVALID/,
+    );
+    assert.equal(writes, 0);
+  });
 });

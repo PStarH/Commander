@@ -12,6 +12,7 @@ import {
   KERNEL_TASK1_FINAL_SCHEMA_VERSION,
   KERNEL_TASK1_REPLAY_GATE_SCHEMA_VERSION,
   KERNEL_TASK1_RUNTIME_AUTHORITY_CLOSURE_SQL,
+  KERNEL_CLAIM_SQL,
 } from './schema.js';
 import {
   KERNEL_2026072116_MIGRATIONS,
@@ -25,11 +26,25 @@ import {
   KERNEL_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
+  KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
+  KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  KERNEL_AUTH_PERSISTENCE_CHECKSUM,
+  KERNEL_MEMORY_SCHEMA_MIGRATIONS,
+  KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
   runTask1ClosureMigrations,
   runKernelMigrations,
 } from './migrations.js';
 import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
-import { KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL } from './task1TenantContext.js';
+import {
+  KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL,
+} from './task1TenantContext.js';
+import {
+  KERNEL_COMPENSATION_APPROVAL_BINDING_SQL,
+  KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+} from './compensationSchema.js';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
@@ -39,6 +54,7 @@ function sqlResult<T>(rows: T[]): SqlQueryResult<T> {
 
 class MigrationLedgerClient implements SqlClient {
   readonly appliedMigrationIds: string[] = [];
+  readonly statements: string[] = [];
 
   constructor(private readonly ledger: Map<string, string>) {}
 
@@ -47,6 +63,7 @@ class MigrationLedgerClient implements SqlClient {
     values: readonly unknown[] = [],
   ): Promise<SqlQueryResult<T>> {
     const normalized = sql.replace(/\s+/g, ' ').trim();
+    this.statements.push(normalized);
     if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') {
       return sqlResult<T>([]);
     }
@@ -103,6 +120,125 @@ class MigrationLedgerPool implements SqlPool {
 }
 
 describe('Task 1 authoritative Class A admission', () => {
+  it('installs the PostgreSQL auth-persistence authority migration', () => {
+    const id = '2026-08-25.1.auth_persistence_schema';
+    assert.equal(KERNEL_AUTH_PERSISTENCE_MIGRATIONS[0]?.id, id);
+    assert.equal(
+      KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.checksum,
+      KERNEL_AUTH_PERSISTENCE_CHECKSUM,
+    );
+    const sql = KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.sql ?? '';
+    assert.match(
+      sql,
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE[\s\S]*commander_auth_failures[\s\S]*TO commander_app/,
+    );
+    assert.match(sql, /CREATE TABLE commander_auth_failures \(/);
+  });
+
+  it('installs the owner-managed durable memory schema before runtime startup', () => {
+    const descriptor = KERNEL_MEMORY_SCHEMA_MIGRATIONS[0];
+    assert.equal(descriptor?.id, '2026-09-01.1.memory_schema');
+    assert.equal(KERNEL_MIGRATIONS.find(({ id }) => id === descriptor?.id)?.sql, descriptor?.sql);
+    assert.match(descriptor?.sql ?? '', /CREATE TABLE IF NOT EXISTS public\.memory_items/);
+    assert.match(
+      descriptor?.sql ?? '',
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.memory_items TO commander_app/,
+    );
+    assert.match(descriptor?.sql ?? '', /CREATE TABLE IF NOT EXISTS public\.api_tasks/);
+    assert.match(
+      descriptor?.sql ?? '',
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public\.api_tasks TO commander_app/,
+    );
+  });
+
+  it('installs the approval-binding claim RPC after the campaign2 public wrapper', () => {
+    const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
+    const campaign2Index = ids.indexOf('2026-07-29.2.campaign2_critical_authority_hardening');
+    const approvalBindingIndex = ids.indexOf(
+      '2026-08-08.4.compensation_approval_binding_claim_rpc',
+    );
+    assert.ok(campaign2Index >= 0);
+    assert.ok(approvalBindingIndex > campaign2Index);
+    assert.equal(
+      KERNEL_MIGRATIONS.find(
+        ({ id }) => id === '2026-08-08.4.compensation_approval_binding_claim_rpc',
+      )?.sql,
+      KERNEL_COMPENSATION_APPROVAL_BINDING_SQL,
+    );
+  });
+
+  it('installs compensation terminal closure after the approval-bound claim RPC', () => {
+    const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
+    const campaign2Index = ids.indexOf('2026-07-29.2.campaign2_critical_authority_hardening');
+    const approvalBindingIndex = ids.indexOf(
+      '2026-08-08.4.compensation_approval_binding_claim_rpc',
+    );
+    const terminalClosureId = '2026-08-08.5.compensation_terminal_closure';
+    const terminalClosureIndex = ids.indexOf(terminalClosureId);
+    assert.ok(campaign2Index >= 0);
+    assert.ok(approvalBindingIndex >= 0);
+    assert.ok(terminalClosureIndex > approvalBindingIndex);
+    assert.ok(approvalBindingIndex > campaign2Index);
+    assert.equal(
+      KERNEL_MIGRATIONS.find(({ id }) => id === terminalClosureId)?.sql,
+      KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+    );
+  });
+
+  it('overrides the immutable baseline claim RPC with the governed-run guard', () => {
+    const baseline = KERNEL_2026072116_MIGRATIONS.find(({ id }) => id.endsWith('.claim'));
+    const guardId = '2026-08-08.6.compensation_claim_guard';
+    const forward = KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS.find(({ id }) => id === guardId);
+    assert.ok(baseline);
+    assert.ok(forward);
+    assert.doesNotMatch(baseline.sql, /compensationRequestId/i);
+    assert.match(KERNEL_CLAIM_SQL, /r\.metadata->>'compensationRequestId'\s+IS NULL/i);
+    assert.equal(forward.sql, KERNEL_CLAIM_SQL);
+    const ids = KERNEL_FORWARD_MIGRATIONS.map(({ id }) => id);
+    assert.ok(ids.indexOf(guardId) > ids.indexOf(baseline.id));
+    assert.equal(KERNEL_MIGRATIONS.find(({ id }) => id === guardId)?.sql, KERNEL_CLAIM_SQL);
+  });
+
+  it('installs the clock-safe tenant-context close as a new forward descriptor', () => {
+    const id = '2026-08-08.7.task1_tenant_context_clock_safety';
+    const forward = KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS.find(
+      ({ id: migrationId }) => migrationId === id,
+    );
+    assert.ok(forward);
+    assert.equal(forward.sql, KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL);
+    assert.equal(
+      KERNEL_FORWARD_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+    assert.equal(
+      KERNEL_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+    assert.equal(
+      KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS[
+        '2026-07-27.3.task1_authenticated_tenant_authority_enforce'
+      ],
+      '9994edfd6cd1cb7f68b538b4b0f04d1f73435a003b6dba958da7ccdcffc42fc5',
+    );
+  });
+
+  it('installs bind timestamp monotonicity as a new forward descriptor', () => {
+    const id = '2026-08-09.1.task1_tenant_context_bind_monotonicity';
+    const forward = KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS.find(
+      ({ id: migrationId }) => migrationId === id,
+    );
+    assert.ok(forward);
+    assert.equal(forward.sql, KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL);
+    assert.equal(
+      KERNEL_FORWARD_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+    assert.equal(
+      KERNEL_MIGRATIONS.find(({ id: migrationId }) => migrationId === id)?.sql,
+      forward.sql,
+    );
+  });
+
   it('ships the admission split and role closure as a new forward migration', () => {
     assert.equal(KERNEL_TASK1_FINAL_SCHEMA_VERSION, '2026-07-25.1');
     assert.ok(
@@ -302,6 +438,20 @@ describe('Task 1 authoritative Class A admission', () => {
     assert.deepEqual(
       pool.client.appliedMigrationIds,
       KERNEL_TASK1_FORWARD_MIGRATIONS.map((migration) => migration.id),
+    );
+  });
+
+  it('grants the runtime app role read access to the migration ledger', async () => {
+    const pool = new MigrationLedgerPool(
+      new Map(Object.entries(KERNEL_HISTORICAL_MIGRATION_CHECKSUMS)),
+    );
+
+    await runKernelMigrations(pool);
+
+    assert.ok(
+      pool.client.statements.includes(
+        'GRANT SELECT ON commander_kernel_migrations TO commander_app',
+      ),
     );
   });
 

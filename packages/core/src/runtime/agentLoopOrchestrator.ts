@@ -58,9 +58,20 @@ import { classifyLLMError, computeBackoff } from './llmRetry';
 import { isConfidentResponse } from './entropyGater';
 import { now, delay, generateId } from './runtimeHelpers';
 import { getGlobalTenantProvider } from './tenantProvider';
+import { parseStructuredOutput } from './structuredOutput';
 import type { CrossAgentEvent } from '../security/crossAgentCorrelator';
 import type { PreLoopSetupResult, EscalationChain } from './preLoopSetup';
 import type { InitResult } from './runInitializer';
+
+/**
+ * These errors are runtime feedback about tool routing, not an execution
+ * failure. The model can recover by explaining the unavailable capability or
+ * choosing another path; the original error remains in the tool-result step
+ * and is therefore still visible to audit/telemetry consumers.
+ */
+function isRecoverableFrameworkToolError(error: string): boolean {
+  return /^(?:error:\s*)?(?:TOOL_NOT_FOUND|TOOL_NOT_ALLOWED)(?::|\s|$)/i.test(error.trim());
+}
 
 export interface AgentLoopOrchestratorDeps {
   getConfig(): AgentRuntimeConfig;
@@ -136,6 +147,80 @@ export class AgentLoopOrchestrator {
     // pollution. The model's reasoning quality will not recover.
     let consecutiveDegenerationCount = 0;
 
+    // A final answer after a required tool failed or was blocked is not a
+    // successful business outcome. Route it through terminal failure so the
+    // scheduler aborts the run and compensation remains available.
+    const recordTerminalFailure = async (
+      error: string,
+      failureSummary: string = error,
+    ): Promise<AgentExecutionResult> => {
+      this.deps.getCircuitBreaker().onFailure();
+      init.circuitReleased = true;
+      this.deps.onCircuitReleased();
+      return this.deps.getRunTelemetryRecorder().recordFailure({
+        ctx,
+        runId,
+        routing,
+        taskType,
+        lastError: error,
+        failureSummary,
+        lastErrorIsPermanent: true,
+        totalTokens,
+        steps,
+        startTime,
+        tenantId,
+        costEstimate,
+        state,
+        request,
+      });
+    };
+
+    // The tool phase returns failures for its final model-request batch. This
+    // avoids inferring batch boundaries from the flattened execution history.
+    let latestToolFailures: Array<{ name: string; error: string }> = [];
+
+    // Operator pauses are signalled while an LLM or tool is in flight. Consume
+    // the flag only after that work reaches a durable boundary so no external
+    // side effect is interrupted halfway through its own transaction.
+    const pauseAtCheckpoint = async (
+      attempt: number,
+    ): Promise<AgentExecutionResult | undefined> => {
+      if (!this.deps.getCheckpointingPhase().isPaused(runId)) return undefined;
+
+      const summary = 'Paused at checkpoint: operator_pause';
+      state.pauseRequested = true;
+      state.totalTokenUsage = totalTokens;
+      state.steps = steps;
+      await this.deps.getCheckpointingPhase().checkpointPaused(ctx, state, {
+        request,
+        attempt,
+        stepNumber: steps.length,
+        exitSummary: summary,
+      });
+      const totalDurationMs = Date.now() - startTime;
+      const result: AgentExecutionResult = {
+        runId,
+        agentId: ctx.agentId,
+        missionId: ctx.missionId,
+        status: 'interrupted',
+        summary,
+        steps,
+        totalTokenUsage: totalTokens,
+        totalDurationMs,
+      };
+      tracer.recordDecision(runId, summary, steps.length);
+      bus.publish('agent.interrupted', ctx.agentId, { runId, reason: 'operator_pause' });
+      return result;
+    };
+
+    const normalizeStructuredResponse = (candidate: LLMResponse): void => {
+      if (!ctx.outputSchema || candidate.toolCalls?.length) return;
+      const parsed = parseStructuredOutput(candidate);
+      if (parsed.success) {
+        candidate.content = JSON.stringify(parsed.data) ?? candidate.content;
+      }
+    };
+
     // Cost enforcement is handled by EnterpriseSecurityGateway.preLLMCheck
     // (→ UnifiedCostAuthority) inside the LLM call path. The legacy
     // CostGuard.evaluateRequest() previously duplicated this check on
@@ -171,6 +256,10 @@ export class AgentLoopOrchestrator {
       ctx.guard?.check(0);
 
       if (response) {
+        // Provider-native parsed output must become the canonical content used
+        // by verification, history, and the terminal result. Keep raw text
+        // unchanged when parsing fails so the schema verifier can fail closed.
+        normalizeStructuredResponse(response);
         // DeterminismCapture: record LLM response for event replay recovery (Path A).
         // Fire-and-forget — capture failures never block the critical path.
         try {
@@ -420,7 +509,9 @@ export class AgentLoopOrchestrator {
           response: toolExecResponse,
           earlyExit,
           interruptData,
+          operatorPaused,
           largestFileWriteContent: toolExecLargestFileWriteContent,
+          latestToolFailures: toolExecLatestToolFailures = [],
         } = await this.deps.getToolExecutionHandler().executeStep({
           ctx,
           runId,
@@ -438,6 +529,15 @@ export class AgentLoopOrchestrator {
         });
         response = toolExecResponse;
         largestFileWriteContent = toolExecLargestFileWriteContent;
+        latestToolFailures = toolExecLatestToolFailures;
+
+        if (operatorPaused) {
+          const paused = await pauseAtCheckpoint(attempt);
+          if (paused) return paused;
+        }
+
+        const pausedAfterResponse = await pauseAtCheckpoint(attempt);
+        if (pausedAfterResponse) return pausedAfterResponse;
 
         // FreezeDry: update run state with current step progress so the
         // freeze manifest reflects the latest step at crash time.
@@ -615,6 +715,12 @@ export class AgentLoopOrchestrator {
               error: (e as Error)?.message,
             });
           }
+          if (scannedSummary.startsWith('[Content blocked:')) {
+            return await recordTerminalFailure(
+              'CONTENT_BLOCKED: final response rejected by security scanner',
+              scannedSummary,
+            );
+          }
           const totalDurationMs = Date.now() - startTime;
           const result: AgentExecutionResult = {
             runId,
@@ -784,6 +890,9 @@ export class AgentLoopOrchestrator {
           stepNumber: steps.length,
         });
 
+        const pausedAfterToolCheckpoint = await pauseAtCheckpoint(attempt);
+        if (pausedAfterToolCheckpoint) return pausedAfterToolCheckpoint;
+
         // Enforce sub-agent progress and step limits
         ctx.guard?.check(evidenceCount);
 
@@ -912,6 +1021,9 @@ export class AgentLoopOrchestrator {
           lastError,
         });
 
+        const pausedAfterVerification = await pauseAtCheckpoint(attempt);
+        if (pausedAfterVerification) return pausedAfterVerification;
+
         // Tier 3.2: Record reflection from this verification attempt so future
         // retries can learn from prior outcomes (Reflexion: Shinn et al., 2023).
         const reflectionInsight: ReflectionEntry = verifReport.passed
@@ -993,6 +1105,7 @@ export class AgentLoopOrchestrator {
               if (!reflexionResponse) break;
 
               response = reflexionResponse;
+              normalizeStructuredResponse(response);
               totalTokens.promptTokens += reflexionResponse.usage.promptTokens;
               totalTokens.completionTokens += reflexionResponse.usage.completionTokens;
               totalTokens.totalTokens += reflexionResponse.usage.totalTokens;
@@ -1174,11 +1287,34 @@ export class AgentLoopOrchestrator {
           }
         }
 
+        // A caller-provided schema is a hard contract. Once the retry budget
+        // is exhausted, never turn the last invalid response into success.
+        if (ctx.outputSchema && !verifReport.passed) {
+          const schemaSignal = verifReport.signals[0];
+          const detail =
+            (schemaSignal as { message?: string } | undefined)?.message ??
+            'structured output did not satisfy the requested schema';
+          return await recordTerminalFailure(
+            `STRUCTURED_OUTPUT_INVALID: ${detail}`,
+            `Structured output rejected: ${detail}`,
+          );
+        }
+
         // Content safety scan before returning result
         // Reasoning models (MiMo, DeepSeek-R) put output in reasoning_content.
         // Merge so downstream code (synthesis, summary) can read it.
         let safeContent =
           response.content || (response as { reasoning_content?: string }).reasoning_content || '';
+        if (ctx.outputSchema) {
+          const structured = parseStructuredOutput(response);
+          if (!structured.success) {
+            return await recordTerminalFailure(
+              'STRUCTURED_OUTPUT_INVALID: response was not parseable JSON',
+              'Structured output rejected: response was not parseable JSON',
+            );
+          }
+          safeContent = JSON.stringify(structured.data) ?? '';
+        }
         try {
           const scanResult = await this.deps.getContentScanner().scan(safeContent);
           if (!scanResult.isSafe) {
@@ -1280,6 +1416,21 @@ export class AgentLoopOrchestrator {
             safeContent =
               '[Output truncated: model degeneration detected — ' + rep.description + ']';
           }
+        }
+
+        const failedTool = latestToolFailures.find(
+          (failure) => !isRecoverableFrameworkToolError(failure.error),
+        );
+        if (failedTool) {
+          return await recordTerminalFailure(
+            `TOOL_EXECUTION_FAILED: ${failedTool.name}: ${failedTool.error}`,
+          );
+        }
+        if (safeContent.startsWith('[Content blocked:')) {
+          return await recordTerminalFailure(
+            'CONTENT_BLOCKED: final response rejected by security scanner',
+            safeContent,
+          );
         }
 
         const totalDurationMs = Date.now() - startTime;

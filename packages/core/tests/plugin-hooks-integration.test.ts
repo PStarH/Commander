@@ -21,6 +21,7 @@ import type {
   BeforeBackendSelectContext,
   AfterBackendSelectContext,
 } from '../src/pluginManager';
+import type { ExecutionBackend } from '../src/sandbox/types';
 import { ExecutionRouter } from '../src/sandbox/executionRouter';
 import type { ExecutionBackend } from '../src/sandbox/types';
 

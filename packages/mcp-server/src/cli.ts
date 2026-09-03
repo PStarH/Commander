@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { assertActionGatewayConfigured, startStdioServer } from './stdioServer';
 
 const HELP = `
@@ -82,6 +84,11 @@ export function run(argv: string[] = process.argv): void {
   );
 }
 
-if (require.main === module) {
+/** True when this ESM module was launched as the CLI entrypoint. */
+export function isDirectCliInvocation(moduleUrl: string, argv1 = process.argv[1]): boolean {
+  return Boolean(argv1) && fileURLToPath(moduleUrl) === resolve(argv1!);
+}
+
+if (isDirectCliInvocation(import.meta.url)) {
   run();
 }

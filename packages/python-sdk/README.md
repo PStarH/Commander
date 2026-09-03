@@ -6,6 +6,11 @@
 
 Python SDK for [Commander](https://github.com/PStarH/Commander) - multi-agent orchestration via HTTP.
 
+> **Alpha / non-production-ready:** the SDK and Enterprise Gateway are alpha. Provider calls,
+> prompts, responses, traces, and memory may be persisted or sent to the configured provider.
+> Review the repository [privacy boundary](../../PRIVACY.md), redact public reports, and do not
+> use unattended production workloads without your own validation.
+
 ```bash
 pip install commander-ai
 ```

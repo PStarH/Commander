@@ -459,6 +459,90 @@ async function loadAction(
   return metadata ? { run, metadata } : null;
 }
 
+interface CompensationEvidenceBinding {
+  tenantId: string;
+  originalRunId: string;
+  originalEffectId: string;
+  compensationRunId: string;
+  compensationEffectId: string;
+  actionDigest: string;
+}
+
+function metadataString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function parseCompensationEvidenceBinding(run: KernelRun): CompensationEvidenceBinding | null {
+  const compensation = run.metadata.compensation;
+  if (typeof compensation !== 'object' || compensation === null || Array.isArray(compensation)) {
+    return null;
+  }
+  const authorization = (compensation as Record<string, unknown>).authorization;
+  if (typeof authorization !== 'object' || authorization === null || Array.isArray(authorization)) {
+    return null;
+  }
+  const value = authorization as Record<string, unknown>;
+  const schema = metadataString(value.schema);
+  const tenantId = metadataString(value.tenantId);
+  const originalRunId = metadataString(value.originalRunId);
+  const originalEffectId = metadataString(value.originalEffectId);
+  const compensationRunId = metadataString(value.compensationRunId);
+  const compensationEffectId = metadataString(value.compensationEffectId);
+  const actionDigest = metadataString(value.actionDigest);
+  if (
+    schema !== 'commander.compensation/v1' ||
+    tenantId === null ||
+    originalRunId === null ||
+    originalEffectId === null ||
+    compensationRunId === null ||
+    compensationEffectId === null ||
+    actionDigest === null ||
+    !/^[a-f0-9]{64}$/.test(actionDigest)
+  ) {
+    return null;
+  }
+  return {
+    tenantId,
+    originalRunId,
+    originalEffectId,
+    compensationRunId,
+    compensationEffectId,
+    actionDigest,
+  };
+}
+
+async function resolveEvidenceTarget(
+  kernel: V1KernelGateway,
+  runId: string,
+  tenantId: string,
+): Promise<{ run: KernelRun; actionDigest: string } | null> {
+  const loaded = await loadAction(kernel, runId, tenantId);
+  if (loaded) return { run: loaded.run, actionDigest: loaded.metadata.actionDigest };
+
+  const run = await kernel.getRun(runId, tenantId);
+  if (!run) return null;
+  const binding = parseCompensationEvidenceBinding(run);
+  if (
+    !binding ||
+    binding.tenantId !== tenantId ||
+    binding.compensationRunId !== run.id ||
+    binding.compensationRunId !== runId
+  ) {
+    return null;
+  }
+  const effect = await kernel.getEffect(binding.compensationEffectId, tenantId);
+  if (
+    !effect ||
+    effect.tenantId !== tenantId ||
+    effect.runId !== run.id ||
+    !effect.type.startsWith('compensate.') ||
+    effect.actionDigest !== binding.actionDigest
+  ) {
+    return null;
+  }
+  return { run, actionDigest: binding.actionDigest };
+}
+
 async function renderAction(
   kernel: V1KernelGateway,
   run: KernelRun,
@@ -987,6 +1071,7 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       type: parsed.data.compensationEffectType,
       originalEffectId: originalEffect.id,
       adapterVersion: parsed.data.adapterVersion,
+      destination,
       forwardResponse: originalEffect.response,
       compensationPatch: parsed.data.compensationPatch,
     };
@@ -1190,9 +1275,9 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
         },
       });
     }
-    const loaded = await loadAction(kernel, req.params.runId, tenantId);
-    if (!loaded) return actionNotFound(res);
-    const record = await kernel.getEvidence(loaded.run.id, tenantId);
+    const evidenceTarget = await resolveEvidenceTarget(kernel, req.params.runId, tenantId);
+    if (!evidenceTarget) return actionNotFound(res);
+    const record = await kernel.getEvidence(evidenceTarget.run.id, tenantId);
     if (!record?.anchoredAt || !record.signature) {
       return res.status(503).json({
         error: {
@@ -1204,12 +1289,13 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     try {
       if (
         record.tenantId !== tenantId ||
-        record.runId !== loaded.run.id ||
+        record.runId !== evidenceTarget.run.id ||
         record.body.scope.tenantId !== tenantId ||
-        record.body.scope.runId !== loaded.run.id ||
+        record.body.scope.runId !== evidenceTarget.run.id ||
         record.bundleId !== record.body.bundleId ||
         record.actionDigest !== record.body.actionDigest ||
-        record.contentHash !== record.body.contentHash
+        record.contentHash !== record.body.contentHash ||
+        record.actionDigest !== evidenceTarget.actionDigest
       ) {
         throw new Error('EVIDENCE_RECORD_BINDING_INVALID');
       }

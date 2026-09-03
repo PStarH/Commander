@@ -5,6 +5,6 @@
   "breach": false,
   "details": "FailClosedPersistor + AuditChainLedger.logEvent both throw AUDIT_PERSIST_FAILED (KC-5d fail-closed). persistor=AUDIT_PERSIST_FAILED (fail-closed): /var/folders/p6/t9z5m71d5bx12pm7fvrf0pyc0000; ledger=AUDIT_PERSIST_FAILED (fail-closed): /var/folders/p6/t9z5m71d5bx12pm7fvrf0pyc0000",
   "artifacts": [],
-  "gitSha": "258767cd75d990ce64ff861484187b5d6b7ce828",
-  "ranAt": "2026-07-30T08:48:34.381Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:34:44.274Z"
 }

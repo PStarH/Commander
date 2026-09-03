@@ -783,6 +783,7 @@ BEGIN
     'type',p_authorization->>'compensationEffectType',
     'originalEffectId',p_authorization->>'originalEffectId',
     'adapterVersion',p_authorization->>'adapterVersion',
+    'destination',v_effect.request->'destination',
     'forwardResponse',COALESCE(v_effect.response,'{}'::jsonb),
     'compensationPatch',p_authorization->'compensationPatch'
   ));
@@ -861,7 +862,10 @@ BEGIN
     IF v_request.authorization_id<>v_auth.id THEN
       RETURN jsonb_build_object('accepted',false,'requestId',v_request_id,'reason','ACTION_DIGEST_MISMATCH');
     END IF;
-    RETURN jsonb_build_object('accepted',v_request.state<>'ESCALATED','request',to_jsonb(v_request),'replayed',true,
+    RETURN jsonb_build_object('accepted',v_request.state<>'ESCALATED','request',to_jsonb(v_request) || jsonb_build_object(
+      'destination',COALESCE((SELECT request->'destination' FROM public.commander_effects
+        WHERE id=v_request.original_effect_id AND tenant_id=v_request.tenant_id), 'null'::jsonb)),
+      'replayed',true,
       'requestId',v_request_id,'reason',v_request.escalation_reason);
   END IF;
   SELECT * INTO v_effect FROM public.commander_effects
@@ -872,7 +876,8 @@ BEGIN
     THEN v_reason := 'FORWARD_RECEIPT_MISMATCH';
   ELSIF public.commander_compensation_hash_v1(jsonb_build_object(
       'type',v_auth.compensation_effect_type,'originalEffectId',v_auth.original_effect_id,
-      'adapterVersion',v_auth.adapter_version,'forwardResponse',COALESCE(v_effect.response,'{}'::jsonb),
+      'adapterVersion',v_auth.adapter_version,'destination',v_effect.request->'destination',
+      'forwardResponse',COALESCE(v_effect.response,'{}'::jsonb),
       'compensationPatch',v_auth.compensation_patch))<>v_auth.action_digest
     THEN v_reason := 'ACTION_DIGEST_MISMATCH';
   ELSIF v_auth.decision='deny' THEN v_reason := 'POLICY_DENIED';
@@ -955,7 +960,8 @@ BEGIN
   INSERT INTO public.commander_outbox(id,event_id,tenant_id,topic,key,payload)
     VALUES(v_outbox_id,v_event_id,v_auth.tenant_id,'commander.kernel.compensation.requested',v_request_id,
       jsonb_build_object('requestId',v_request_id,'authorizationId',v_auth.id,'tenantId',v_auth.tenant_id,'actionDigest',v_auth.action_digest));
-  RETURN jsonb_build_object('accepted',true,'request',to_jsonb(v_request),'replayed',false);
+  RETURN jsonb_build_object('accepted',true,'request',to_jsonb(v_request) || jsonb_build_object(
+    'destination',v_effect.request->'destination'),'replayed',false);
 END
 $fn$;
 
@@ -1023,6 +1029,7 @@ BEGIN
       'id',v_request.id,'tenantId',v_request.tenant_id,'originalRunId',v_request.original_run_id,
       'originalEffectId',v_request.original_effect_id,'compensationRunId',v_request.compensation_run_id,
       'compensationStepId',v_request.compensation_step_id,'adapterVersion',v_request.adapter_version,
+      'destination',v_effect.request->'destination',
       'compensationEffectType',v_request.compensation_effect_type,'compensationPatch',v_request.compensation_patch,
       'forwardReceiptHash',v_request.forward_receipt_hash,'authorizationId',v_request.authorization_id,
       'reconcilePolicy',v_request.reconcile_policy,'state',v_request.state,'claimWorkerId',v_request.claim_worker_id,
@@ -1082,6 +1089,7 @@ BEGIN
      AND tenant_id=v_request.tenant_id AND topic='commander.kernel.compensation.requested'
      AND claim_token=p_admission->>'outboxClaimToken' AND published_at IS NULL FOR UPDATE;
   v_request_payload := jsonb_build_object('originalEffectId',v_request.original_effect_id,
+    'destination',v_original.request->'destination',
     'forwardResponse',COALESCE(v_original.response,'{}'::jsonb),'compensationPatch',v_auth.compensation_patch);
   IF v_request.id IS NULL OR v_auth.id IS NULL OR v_original.id IS NULL OR v_step.id IS NULL OR v_outbox.id IS NULL
      OR v_outbox.payload->>'requestId'<>v_request.id OR v_outbox.payload->>'authorizationId'<>v_auth.id
@@ -1271,7 +1279,834 @@ GRANT EXECUTE ON FUNCTION public.park_compensation_unknown(jsonb) TO commander_a
 GRANT EXECUTE ON FUNCTION public.finalize_compensation(jsonb) TO commander_adapter_ops;
 `;
 
+export const KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL = String.raw`
+CREATE OR REPLACE FUNCTION public.get_compensation_authorization(
+  p_authorization_id text,
+  p_tenant_id text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_authorization public.commander_compensation_authorizations%ROWTYPE;
+BEGIN
+  IF session_user <> 'commander_app'
+     OR NULLIF(p_authorization_id, '') IS NULL
+     OR NULLIF(p_tenant_id, '') IS NULL
+     OR public.commander_authenticated_app_tenant() IS DISTINCT FROM p_tenant_id THEN
+    RETURN NULL;
+  END IF;
+
+  SELECT * INTO v_authorization
+    FROM public.commander_compensation_authorizations
+   WHERE id = p_authorization_id AND tenant_id = p_tenant_id;
+  IF NOT FOUND THEN RETURN NULL; END IF;
+
+  RETURN jsonb_build_object(
+    'id', v_authorization.id,
+    'tenantId', v_authorization.tenant_id,
+    'originalRunId', v_authorization.original_run_id,
+    'originalEffectId', v_authorization.original_effect_id,
+    'compensationEffectType', v_authorization.compensation_effect_type,
+    'adapterVersion', v_authorization.adapter_version,
+    'compensationPatch', v_authorization.compensation_patch,
+    'forwardReceiptHash', v_authorization.forward_receipt_hash,
+    'policyDecisionId', v_authorization.policy_decision_id,
+    'policySnapshotId', v_authorization.policy_snapshot_id,
+    'decision', v_authorization.decision,
+    'actionDigest', v_authorization.action_digest,
+    'expiresAt', v_authorization.expires_at,
+    'approvalInteractionId', v_authorization.approval_interaction_id
+  );
+END
+$fn$;
+
+ALTER FUNCTION public.get_compensation_authorization(text, text) OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.get_compensation_authorization(text, text)
+  FROM PUBLIC, commander_app, commander_worker, commander_adapter_ops;
+GRANT EXECUTE ON FUNCTION public.get_compensation_authorization(text, text) TO commander_app;
+`;
+
+/**
+ * Project the answered approval binding into adapter-ops claim output without
+ * changing the original durable claim function or its migration checksum.
+ */
+export const KERNEL_COMPENSATION_APPROVAL_BINDING_SQL = String.raw`
+CREATE OR REPLACE FUNCTION public.claim_compensation_request_v2(
+  p_request_id text,p_outbox_message_id text,p_worker_id text,p_worker_generation bigint,
+  p_claim_secret text,p_lease_ttl_ms integer DEFAULT 60000,p_now timestamptz DEFAULT clock_timestamp()
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_result jsonb;
+  v_authorization jsonb;
+  v_interaction public.commander_interactions%ROWTYPE;
+  v_binding jsonb;
+BEGIN
+  v_result := public.claim_compensation_request(
+    p_request_id,p_outbox_message_id,p_worker_id,p_worker_generation,
+    p_claim_secret
+  );
+  IF v_result IS NULL THEN RETURN NULL; END IF;
+
+  v_authorization := v_result->'authorization';
+  IF v_authorization->>'decision' <> 'require_approval' THEN
+    RETURN jsonb_set(v_result, '{authorization,approvalBinding}', 'null'::jsonb, true);
+  END IF;
+
+  SELECT * INTO v_interaction
+    FROM public.commander_interactions
+   WHERE id = v_authorization->>'approvalInteractionId'
+     AND status = 'answered';
+  IF NOT FOUND
+     OR v_interaction.response->>'approved' <> 'true'
+     OR NULLIF(v_interaction.response->>'approvedBy', '') IS NULL
+     OR v_interaction.response->>'actionDigest' <> v_authorization->>'actionDigest'
+     OR v_interaction.response->>'policySnapshotId' <> v_authorization->>'policySnapshotId'
+     OR v_interaction.expires_at <= clock_timestamp() THEN
+    RETURN jsonb_set(v_result, '{authorization,approvalBinding}', 'null'::jsonb, true);
+  END IF;
+
+  v_binding := jsonb_build_object(
+    'approvalId', v_interaction.id,
+    'approverPrincipalId', v_interaction.response->>'approvedBy',
+    'actionDigest', v_interaction.response->>'actionDigest',
+    'policySnapshotId', v_interaction.response->>'policySnapshotId',
+    'expiresAt', v_interaction.expires_at
+  );
+  RETURN jsonb_set(v_result, '{authorization,approvalBinding}', v_binding, true);
+END
+$fn$;
+
+ALTER FUNCTION public.claim_compensation_request_v2(text,text,text,bigint,text,integer,timestamptz)
+  OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.claim_compensation_request_v2(text,text,text,bigint,text,integer,timestamptz)
+  FROM PUBLIC, commander_app, commander_worker;
+GRANT EXECUTE ON FUNCTION public.claim_compensation_request_v2(text,text,text,bigint,text,integer,timestamptz)
+  TO commander_adapter_ops;
+`;
+
 export const KERNEL_COMPENSATION_PERSISTENCE_SQL =
   KERNEL_COMPENSATION_REQUEST_SQL +
   KERNEL_COMPENSATION_ADAPTER_OPS_SQL +
   KERNEL_COMPENSATION_AUTHORITY_V2_SQL;
+
+/** Forward-only closure for canonical v2 compensation terminal semantics. */
+export const KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL = String.raw`
+ALTER FUNCTION public.claim_compensation_request(
+  text,text,text,bigint,text
+) RENAME TO claim_compensation_request_pre_terminal_closure;
+
+CREATE FUNCTION public.claim_compensation_request(
+  p_request_id text,p_outbox_message_id text,p_worker_id text,p_worker_generation bigint,
+  p_claim_secret text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_result jsonb;
+  v_now timestamptz:=clock_timestamp();
+  v_request_id text;
+  v_original_run_id text;
+  v_compensation_run_id text;
+  v_compensation_step_id text;
+  v_tenant_id text;
+  v_original_run_state text;
+  v_original_run_version bigint;
+  v_compensation_run_version bigint;
+  v_event_id text;
+  v_event_payload jsonb;
+BEGIN
+  v_result:=public.claim_compensation_request_pre_terminal_closure(
+    p_request_id,p_outbox_message_id,p_worker_id,p_worker_generation,
+    p_claim_secret);
+  IF v_result IS NULL THEN RETURN NULL; END IF;
+  v_request_id:=v_result #>> '{request,id}';
+  v_original_run_id:=v_result #>> '{request,originalRunId}';
+  v_compensation_run_id:=v_result #>> '{request,compensationRunId}';
+  v_compensation_step_id:=v_result #>> '{request,compensationStepId}';
+  v_tenant_id:=v_result #>> '{request,tenantId}';
+  UPDATE public.commander_runs
+     SET version=version+1,updated_at=v_now
+   WHERE id=v_compensation_run_id AND tenant_id=v_tenant_id AND state='COMPENSATING'
+   RETURNING version INTO v_compensation_run_version;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'COMPENSATION_RUN_TRANSITION_REJECTED' USING ERRCODE='55000';
+  END IF;
+  v_event_id:=gen_random_uuid()::text;
+  v_event_payload:=jsonb_build_object(
+    'requestId',v_request_id,'originalRunId',v_original_run_id,
+    'compensationRunId',v_compensation_run_id);
+  INSERT INTO public.commander_events(
+    id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
+    actor,schema_version,payload,occurred_at
+  ) VALUES (
+    v_event_id,'run',v_compensation_run_id,v_compensation_run_version,'run.compensating',
+    v_tenant_id,v_compensation_run_id,v_compensation_step_id,p_worker_id,'v2',v_event_payload,v_now);
+  INSERT INTO public.commander_outbox(
+    id,event_id,tenant_id,topic,key,payload,available_at,created_at
+  ) VALUES (
+    gen_random_uuid()::text,v_event_id,v_tenant_id,'commander.run.compensating',
+    v_compensation_run_id,v_event_payload||jsonb_build_object(
+      'eventId',v_event_id,'type','run.compensating','runId',v_compensation_run_id,
+      'stepId',v_compensation_step_id,'tenantId',v_tenant_id),v_now,v_now);
+  SELECT state INTO v_original_run_state
+    FROM public.commander_runs
+   WHERE id=v_original_run_id AND tenant_id=v_tenant_id
+   FOR UPDATE;
+  UPDATE public.commander_runs
+     SET state='COMPENSATING',
+         version=version+CASE WHEN state='COMPENSATING' THEN 0 ELSE 1 END,
+         terminal_at=NULL,
+         updated_at=v_now
+   WHERE id=v_original_run_id
+     AND tenant_id=v_tenant_id
+     AND state IN ('PENDING','RUNNING','PAUSED','SUCCEEDED','FAILED','CANCELLED','COMPENSATING')
+   RETURNING version INTO v_original_run_version;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'COMPENSATION_ORIGINAL_RUN_TRANSITION_REJECTED' USING ERRCODE='55000';
+  END IF;
+  IF v_original_run_state<>'COMPENSATING' THEN
+    v_event_id:=gen_random_uuid()::text;
+    INSERT INTO public.commander_events(
+      id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,
+      actor,schema_version,payload,occurred_at
+    ) VALUES (
+      v_event_id,'run',v_original_run_id,v_original_run_version,'run.compensating',
+      v_tenant_id,v_original_run_id,p_worker_id,'v2',v_event_payload,v_now);
+    INSERT INTO public.commander_outbox(
+      id,event_id,tenant_id,topic,key,payload,available_at,created_at
+    ) VALUES (
+      gen_random_uuid()::text,v_event_id,v_tenant_id,'commander.run.compensating',
+      v_original_run_id,v_event_payload||jsonb_build_object(
+        'eventId',v_event_id,'type','run.compensating','runId',v_original_run_id,
+        'stepId',NULL,'tenantId',v_tenant_id),v_now,v_now);
+  END IF;
+  RETURN v_result;
+END
+$fn$;
+
+ALTER FUNCTION public.apply_task3_compensation_mutation(jsonb,text)
+  RENAME TO apply_task3_compensation_mutation_pre_terminal_closure;
+
+CREATE FUNCTION public.apply_task3_compensation_mutation(p_input jsonb,p_disposition text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $fn$
+DECLARE
+  v_result jsonb;
+  v_request public.commander_compensation_requests%ROWTYPE;
+  v_effect public.commander_effects%ROWTYPE;
+  v_now timestamptz:=clock_timestamp();
+  v_event_id text;
+  v_event_sequence bigint;
+  v_step_event_id text;
+  v_compensation_run_event_id text;
+  v_original_run_event_id text;
+  v_step_version bigint;
+  v_compensation_run_version bigint;
+  v_original_run_version bigint;
+  v_original_run_state text;
+  v_original_run_event_present boolean := false;
+  v_step_event_type text;
+  v_compensation_run_event_type text;
+  v_original_run_event_type text;
+  v_event_payload jsonb;
+BEGIN
+  v_result:=public.apply_task3_compensation_mutation_pre_terminal_closure(
+    p_input,p_disposition);
+  IF COALESCE((v_result->>'applied')::boolean,false)=false
+     OR p_disposition NOT IN ('COMPLETED','CONFIRMED_NOT_APPLIED')
+     OR COALESCE((v_result->>'replayed')::boolean,false) THEN
+    RETURN v_result;
+  END IF;
+  SELECT * INTO v_request
+    FROM public.commander_compensation_requests
+   WHERE id=p_input->>'requestId' AND tenant_id=p_input->>'tenantId';
+  SELECT * INTO v_effect
+    FROM public.commander_effects
+   WHERE id=p_input->>'effectId' AND tenant_id=p_input->>'tenantId';
+  IF v_request.id IS NULL OR v_effect.id IS NULL THEN
+    RAISE EXCEPTION 'COMPENSATION_TERMINAL_EVENT_CONTEXT_MISSING' USING ERRCODE='55000';
+  END IF;
+  v_event_payload:=jsonb_build_object(
+    'requestId',v_request.id,
+    'originalRunId',v_request.original_run_id,
+    'originalEffectId',v_request.original_effect_id,
+    'compensationRunId',v_request.compensation_run_id,
+    'compensationEffectId',v_effect.id,
+    'disposition',p_disposition);
+  IF p_disposition='COMPLETED' THEN
+    UPDATE public.commander_steps
+       SET state='SUCCEEDED',version=version+1,updated_at=v_now
+     WHERE id=v_request.compensation_step_id AND tenant_id=v_request.tenant_id
+       AND state='SUCCEEDED'
+     RETURNING version INTO v_step_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_STEP_TERMINAL_TRANSITION_REJECTED' USING ERRCODE='55000';
+    END IF;
+    UPDATE public.commander_runs
+       SET state='SUCCEEDED',version=version+1,terminal_at=v_now,updated_at=v_now
+     WHERE id=v_request.compensation_run_id AND tenant_id=v_request.tenant_id
+       AND state='SUCCEEDED'
+     RETURNING version INTO v_compensation_run_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_RUN_TERMINAL_TRANSITION_REJECTED' USING ERRCODE='55000';
+    END IF;
+    SELECT state, version
+      INTO v_original_run_state, v_original_run_version
+      FROM public.commander_runs
+     WHERE id=v_request.original_run_id
+       AND tenant_id=v_request.tenant_id
+     FOR UPDATE;
+    IF NOT FOUND OR v_original_run_state NOT IN ('COMPENSATING','COMPENSATED') THEN
+      RAISE EXCEPTION 'COMPENSATION_ORIGINAL_RUN_TERMINAL_TRANSITION_REJECTED' USING ERRCODE='55000';
+    END IF;
+    IF v_original_run_state='COMPENSATING' THEN
+      UPDATE public.commander_runs
+         SET state='COMPENSATED',version=version+1,terminal_at=v_now,updated_at=v_now
+       WHERE id=v_request.original_run_id
+         AND tenant_id=v_request.tenant_id
+         AND state='COMPENSATING'
+       RETURNING version INTO v_original_run_version;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'COMPENSATION_ORIGINAL_RUN_TERMINAL_TRANSITION_REJECTED' USING ERRCODE='55000';
+      END IF;
+    ELSE
+      -- The pre-terminal mutation already changed COMPENSATING to COMPENSATED
+      -- without advancing its version. Advance only when this terminal event
+      -- is absent; a committed terminal event makes a retry a no-op for this
+      -- aggregate and must not allocate another sequence.
+      SELECT EXISTS (
+        SELECT 1
+          FROM public.commander_events AS existing_event
+         WHERE existing_event.tenant_id=v_request.tenant_id
+           AND existing_event.aggregate_type='run'
+           AND existing_event.aggregate_id=v_request.original_run_id
+           AND existing_event.type='run.compensated'
+      ) INTO v_original_run_event_present;
+      IF NOT v_original_run_event_present THEN
+        UPDATE public.commander_runs AS original_run
+           SET version=original_run.version+1,updated_at=v_now
+         WHERE original_run.id=v_request.original_run_id
+           AND original_run.tenant_id=v_request.tenant_id
+           AND original_run.state='COMPENSATED'
+         RETURNING version INTO v_original_run_version;
+      END IF;
+    END IF;
+    v_step_event_type:='step.succeeded';
+    v_compensation_run_event_type:='run.succeeded';
+    v_original_run_event_type:='run.compensated';
+  ELSE
+    UPDATE public.commander_steps
+       SET state='FAILED',version=version+1,updated_at=v_now
+     WHERE id=v_request.compensation_step_id AND tenant_id=v_request.tenant_id
+       AND state='FAILED'
+     RETURNING version INTO v_step_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_STEP_TERMINAL_TRANSITION_REJECTED' USING ERRCODE='55000';
+    END IF;
+    UPDATE public.commander_runs
+       SET state='FAILED',version=version+1,terminal_at=v_now,updated_at=v_now
+     WHERE id=v_request.compensation_run_id AND tenant_id=v_request.tenant_id
+       AND state='FAILED'
+     RETURNING version INTO v_compensation_run_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_RUN_TERMINAL_TRANSITION_REJECTED' USING ERRCODE='55000';
+    END IF;
+    UPDATE public.commander_runs
+       SET state='FAILED',version=version+1,terminal_at=v_now,updated_at=v_now
+     WHERE id=v_request.original_run_id
+       AND tenant_id=v_request.tenant_id
+       AND state='COMPENSATING'
+     RETURNING version INTO v_original_run_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_ORIGINAL_RUN_TERMINAL_TRANSITION_REJECTED' USING ERRCODE='55000';
+    END IF;
+    v_step_event_type:='step.failed';
+    v_compensation_run_event_type:='run.failed';
+    v_original_run_event_type:='run.failed';
+  END IF;
+  v_step_event_id:=gen_random_uuid()::text;
+  v_compensation_run_event_id:=gen_random_uuid()::text;
+  INSERT INTO public.commander_events(
+    id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
+    actor,schema_version,payload,occurred_at
+  ) VALUES
+    (v_step_event_id,'step',v_request.compensation_step_id,v_step_version,v_step_event_type,
+     v_request.tenant_id,v_request.compensation_run_id,v_request.compensation_step_id,
+     p_input->>'actor','v2',v_event_payload,v_now),
+    (v_compensation_run_event_id,'run',v_request.compensation_run_id,
+     v_compensation_run_version,v_compensation_run_event_type,v_request.tenant_id,
+     v_request.compensation_run_id,v_request.compensation_step_id,
+     p_input->>'actor','v2',v_event_payload,v_now);
+  IF NOT v_original_run_event_present THEN
+    v_original_run_event_id:=gen_random_uuid()::text;
+    INSERT INTO public.commander_events(
+      id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
+      actor,schema_version,payload,occurred_at
+    ) VALUES (
+      v_original_run_event_id,'run',v_request.original_run_id,v_original_run_version,
+      v_original_run_event_type,v_request.tenant_id,v_request.original_run_id,NULL,
+      p_input->>'actor','v2',v_event_payload,v_now);
+  END IF;
+  INSERT INTO public.commander_outbox(
+    id,event_id,tenant_id,topic,key,payload,available_at,created_at
+  ) VALUES
+    (gen_random_uuid()::text,v_step_event_id,v_request.tenant_id,
+     'commander.'||v_step_event_type,v_request.compensation_run_id,
+     v_event_payload||jsonb_build_object(
+       'eventId',v_step_event_id,'type',v_step_event_type,
+       'runId',v_request.compensation_run_id,'stepId',v_request.compensation_step_id,
+       'tenantId',v_request.tenant_id),v_now,v_now),
+    (gen_random_uuid()::text,v_compensation_run_event_id,v_request.tenant_id,
+     'commander.'||v_compensation_run_event_type,v_request.compensation_run_id,
+     v_event_payload||jsonb_build_object(
+       'eventId',v_compensation_run_event_id,'type',v_compensation_run_event_type,
+       'runId',v_request.compensation_run_id,'stepId',v_request.compensation_step_id,
+       'tenantId',v_request.tenant_id),v_now,v_now);
+  IF NOT v_original_run_event_present THEN
+    INSERT INTO public.commander_outbox(
+      id,event_id,tenant_id,topic,key,payload,available_at,created_at
+    ) VALUES (
+      gen_random_uuid()::text,v_original_run_event_id,v_request.tenant_id,
+      'commander.'||v_original_run_event_type,v_request.original_run_id,
+      v_event_payload||jsonb_build_object(
+        'eventId',v_original_run_event_id,'type',v_original_run_event_type,
+        'runId',v_request.original_run_id,'stepId',NULL,
+        'tenantId',v_request.tenant_id),v_now,v_now);
+  END IF;
+  IF p_disposition='CONFIRMED_NOT_APPLIED' THEN RETURN v_result; END IF;
+  SELECT COALESCE(MAX(sequence),0)+1 INTO v_event_sequence
+    FROM public.commander_events
+   WHERE aggregate_type='effect' AND aggregate_id=v_effect.id;
+  v_event_id:=gen_random_uuid()::text;
+  INSERT INTO public.commander_events(
+    id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
+    actor,schema_version,payload,occurred_at
+  ) VALUES (
+    v_event_id,'effect',v_effect.id,v_event_sequence,'compensation.completed',
+    v_request.tenant_id,v_request.compensation_run_id,v_request.compensation_step_id,
+    p_input->>'actor','v2',v_event_payload,v_now);
+  INSERT INTO public.commander_outbox(
+    id,event_id,tenant_id,topic,key,payload,available_at,created_at
+  ) VALUES (
+    gen_random_uuid()::text,v_event_id,v_request.tenant_id,
+    'commander.compensation.completed',v_request.compensation_run_id,
+    v_event_payload||jsonb_build_object(
+      'eventId',v_event_id,'type','compensation.completed',
+      'runId',v_request.compensation_run_id,'stepId',v_request.compensation_step_id,
+      'tenantId',v_request.tenant_id),v_now,v_now);
+  RETURN v_result;
+END
+$fn$;
+
+ALTER FUNCTION public.claim_compensation_request_pre_terminal_closure(
+  text,text,text,bigint,text
+) OWNER TO commander_owner;
+ALTER FUNCTION public.claim_compensation_request(text,text,text,bigint,text)
+  OWNER TO commander_owner;
+ALTER FUNCTION public.apply_task3_compensation_mutation_pre_terminal_closure(jsonb,text)
+  OWNER TO commander_owner;
+ALTER FUNCTION public.apply_task3_compensation_mutation(jsonb,text) OWNER TO commander_owner;
+
+REVOKE ALL ON FUNCTION public.claim_compensation_request_pre_terminal_closure(
+  text,text,text,bigint,text
+) FROM PUBLIC,commander_adapter_ops;
+REVOKE ALL ON FUNCTION public.apply_task3_compensation_mutation_pre_terminal_closure(jsonb,text)
+  FROM PUBLIC,commander_adapter_ops;
+REVOKE ALL ON FUNCTION public.claim_compensation_request(text,text,text,bigint,text) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.apply_task3_compensation_mutation(jsonb,text) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.claim_compensation_request(text,text,text,bigint,text)
+  TO commander_adapter_ops;
+`;
+
+/**
+ * Close compensation requests that are reconciled by the generic effect
+ * reconciler. Compensation execution normally finalizes through the
+ * compensation worker, but a timed-out remote action is claimed by the
+ * reconcile worker after the compensation outbox has been handed off. The
+ * generic mutation must therefore also advance the compensation authority in
+ * the same transaction, or the original run remains COMPENSATING forever.
+ */
+export const KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_SQL = String.raw`
+ALTER FUNCTION public.apply_reconcile_effect_with_evidence_v1(
+  text,text,text,text,bigint,text,text,jsonb,jsonb
+) RENAME TO apply_reconcile_effect_with_evidence_pre_compensation_closure;
+
+CREATE FUNCTION public.apply_reconcile_effect_with_evidence_v1(
+  p_mutation text,
+  p_tenant_id text,
+  p_effect_id text,
+  p_worker_id text,
+  p_worker_generation bigint,
+  p_claim_secret text,
+  p_claim_token text,
+  p_payload jsonb,
+  p_evidence jsonb
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $fn$
+DECLARE
+  v_result jsonb;
+  v_effect public.commander_effects%ROWTYPE;
+  v_request public.commander_compensation_requests%ROWTYPE;
+  v_compensation_run public.commander_runs%ROWTYPE;
+  v_original_run public.commander_runs%ROWTYPE;
+  v_now timestamptz := clock_timestamp();
+  v_event_payload jsonb;
+  v_step_event_id text;
+  v_compensation_run_event_id text;
+  v_original_run_event_id text;
+  v_effect_event_id text;
+  v_effect_sequence bigint;
+  v_original_run_version bigint;
+  v_compensation_run_version bigint;
+  v_original_run_event_present boolean := false;
+  v_step_event_type text;
+  v_compensation_run_event_type text;
+  v_original_run_event_type text;
+BEGIN
+  v_result := public.apply_reconcile_effect_with_evidence_pre_compensation_closure(
+    p_mutation,p_tenant_id,p_effect_id,p_worker_id,p_worker_generation,
+    p_claim_secret,p_claim_token,p_payload,p_evidence);
+  IF COALESCE((v_result->>'applied')::boolean,false) = false
+     OR COALESCE((v_result->>'replayed')::boolean,false)
+     OR p_mutation NOT IN ('COMPLETE','CONFIRM_NOT_APPLIED','ESCALATE') THEN
+    RETURN v_result;
+  END IF;
+
+  SELECT * INTO v_effect
+    FROM public.commander_effects
+   WHERE id=p_effect_id AND tenant_id=p_tenant_id;
+  IF NOT FOUND OR v_effect.type NOT LIKE 'compensate.%' THEN
+    RETURN v_result;
+  END IF;
+
+  SELECT * INTO v_request
+    FROM public.commander_compensation_requests
+   WHERE compensation_effect_id=v_effect.id AND tenant_id=p_tenant_id
+   FOR UPDATE;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_REQUEST_MISSING' USING ERRCODE='55000';
+  END IF;
+  IF v_request.state <> 'COMPLETION_UNKNOWN' THEN
+    RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_REQUEST_TERMINAL_RACE' USING ERRCODE='55000';
+  END IF;
+
+  IF p_mutation='ESCALATE' THEN
+    UPDATE public.commander_compensation_requests
+       SET state='ESCALATED',updated_at=v_now
+     WHERE id=v_request.id AND tenant_id=p_tenant_id
+       AND state='COMPLETION_UNKNOWN';
+    RETURN v_result;
+  END IF;
+
+  SELECT * INTO v_compensation_run
+    FROM public.commander_runs
+   WHERE id=v_request.compensation_run_id AND tenant_id=p_tenant_id
+   FOR UPDATE;
+  SELECT * INTO v_original_run
+    FROM public.commander_runs
+   WHERE id=v_request.original_run_id AND tenant_id=p_tenant_id
+   FOR UPDATE;
+  IF v_compensation_run.id IS NULL OR v_original_run.id IS NULL THEN
+    RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_RUN_MISSING' USING ERRCODE='55000';
+  END IF;
+
+  v_event_payload := jsonb_build_object(
+    'requestId',v_request.id,
+    'originalRunId',v_request.original_run_id,
+    'originalEffectId',v_request.original_effect_id,
+    'compensationRunId',v_request.compensation_run_id,
+    'compensationEffectId',v_effect.id,
+    'disposition',CASE WHEN p_mutation='COMPLETE' THEN 'COMPLETED'
+      ELSE 'CONFIRMED_NOT_APPLIED' END);
+
+  IF p_mutation='COMPLETE' THEN
+    IF v_compensation_run.state <> 'COMPENSATING'
+       OR v_original_run.state NOT IN ('COMPENSATING','COMPENSATED') THEN
+      RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_TERMINAL_TRANSITION_REJECTED'
+        USING ERRCODE='55000';
+    END IF;
+    UPDATE public.commander_compensation_requests
+       SET state='COMPLETED',updated_at=v_now
+     WHERE id=v_request.id AND tenant_id=p_tenant_id
+       AND state='COMPLETION_UNKNOWN';
+    UPDATE public.commander_runs
+       SET state='SUCCEEDED',version=version+1,terminal_at=v_now,updated_at=v_now
+     WHERE id=v_compensation_run.id AND tenant_id=p_tenant_id
+       AND state='COMPENSATING'
+     RETURNING version INTO v_compensation_run_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_RUN_TERMINAL_TRANSITION_REJECTED'
+        USING ERRCODE='55000';
+    END IF;
+    IF v_original_run.state='COMPENSATING' THEN
+      UPDATE public.commander_runs
+         SET state='COMPENSATED',version=version+1,terminal_at=v_now,updated_at=v_now
+       WHERE id=v_original_run.id AND tenant_id=p_tenant_id
+         AND state='COMPENSATING'
+       RETURNING version INTO v_original_run_version;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_ORIGINAL_RUN_TRANSITION_REJECTED'
+          USING ERRCODE='55000';
+      END IF;
+    ELSE
+      SELECT EXISTS (
+        SELECT 1 FROM public.commander_events
+         WHERE tenant_id=p_tenant_id AND aggregate_type='run'
+           AND aggregate_id=v_original_run.id AND type='run.compensated'
+      ) INTO v_original_run_event_present;
+      IF NOT v_original_run_event_present THEN
+        UPDATE public.commander_runs
+           SET version=version+1,updated_at=v_now
+         WHERE id=v_original_run.id AND tenant_id=p_tenant_id
+           AND state='COMPENSATED'
+         RETURNING version INTO v_original_run_version;
+      END IF;
+    END IF;
+    v_step_event_type:='step.succeeded';
+    v_compensation_run_event_type:='run.succeeded';
+    v_original_run_event_type:='run.compensated';
+  ELSE
+    IF v_compensation_run.state <> 'COMPENSATING'
+       OR v_original_run.state <> 'COMPENSATING' THEN
+      RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_TERMINAL_TRANSITION_REJECTED'
+        USING ERRCODE='55000';
+    END IF;
+    UPDATE public.commander_compensation_requests
+       SET state='CONFIRMED_NOT_APPLIED',updated_at=v_now
+     WHERE id=v_request.id AND tenant_id=p_tenant_id
+       AND state='COMPLETION_UNKNOWN';
+    UPDATE public.commander_runs
+       SET state='FAILED',version=version+1,terminal_at=v_now,updated_at=v_now
+     WHERE id=v_compensation_run.id AND tenant_id=p_tenant_id
+       AND state='COMPENSATING'
+     RETURNING version INTO v_compensation_run_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_RUN_TERMINAL_TRANSITION_REJECTED'
+        USING ERRCODE='55000';
+    END IF;
+    UPDATE public.commander_runs
+       SET state='FAILED',version=version+1,terminal_at=v_now,updated_at=v_now
+     WHERE id=v_original_run.id AND tenant_id=p_tenant_id
+       AND state='COMPENSATING'
+     RETURNING version INTO v_original_run_version;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'COMPENSATION_RECONCILIATION_ORIGINAL_RUN_TRANSITION_REJECTED'
+        USING ERRCODE='55000';
+    END IF;
+    v_step_event_type:='step.failed';
+    v_compensation_run_event_type:='run.failed';
+    v_original_run_event_type:='run.failed';
+  END IF;
+
+  v_step_event_id:=gen_random_uuid()::text;
+  v_compensation_run_event_id:=gen_random_uuid()::text;
+  INSERT INTO public.commander_events(
+    id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
+    actor,schema_version,payload,occurred_at
+  ) VALUES
+    (v_step_event_id,'step',v_request.compensation_step_id,
+      (SELECT version FROM public.commander_steps
+        WHERE id=v_request.compensation_step_id AND tenant_id=p_tenant_id),
+      v_step_event_type,p_tenant_id,v_request.compensation_run_id,
+      v_request.compensation_step_id,p_worker_id,'v2',v_event_payload,v_now),
+    (v_compensation_run_event_id,'run',v_request.compensation_run_id,
+      v_compensation_run_version,v_compensation_run_event_type,p_tenant_id,
+      v_request.compensation_run_id,v_request.compensation_step_id,p_worker_id,
+      'v2',v_event_payload,v_now);
+  IF NOT v_original_run_event_present THEN
+    v_original_run_event_id:=gen_random_uuid()::text;
+    INSERT INTO public.commander_events(
+      id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
+      actor,schema_version,payload,occurred_at
+    ) VALUES (
+      v_original_run_event_id,'run',v_request.original_run_id,
+      v_original_run_version,v_original_run_event_type,p_tenant_id,
+      v_request.original_run_id,NULL,p_worker_id,'v2',v_event_payload,v_now);
+  END IF;
+
+  IF p_mutation='COMPLETE' THEN
+    SELECT COALESCE(MAX(sequence),0)+1 INTO v_effect_sequence
+      FROM public.commander_events
+     WHERE aggregate_type='effect' AND aggregate_id=v_effect.id;
+    v_effect_event_id:=gen_random_uuid()::text;
+    INSERT INTO public.commander_events(
+      id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
+      actor,schema_version,payload,occurred_at
+    ) VALUES (
+      v_effect_event_id,'effect',v_effect.id,v_effect_sequence,
+      'compensation.completed',p_tenant_id,v_request.compensation_run_id,
+      v_request.compensation_step_id,p_worker_id,'v2',v_event_payload,v_now);
+  END IF;
+
+  INSERT INTO public.commander_outbox(
+    id,event_id,tenant_id,topic,key,payload,available_at,created_at
+  ) VALUES
+    (gen_random_uuid()::text,v_step_event_id,p_tenant_id,
+      'commander.'||v_step_event_type,v_request.compensation_run_id,
+      v_event_payload||jsonb_build_object('eventId',v_step_event_id,
+        'type',v_step_event_type,'runId',v_request.compensation_run_id,
+        'stepId',v_request.compensation_step_id,'tenantId',p_tenant_id),v_now,v_now),
+    (gen_random_uuid()::text,v_compensation_run_event_id,p_tenant_id,
+      'commander.'||v_compensation_run_event_type,v_request.compensation_run_id,
+      v_event_payload||jsonb_build_object('eventId',v_compensation_run_event_id,
+        'type',v_compensation_run_event_type,'runId',v_request.compensation_run_id,
+        'stepId',v_request.compensation_step_id,'tenantId',p_tenant_id),v_now,v_now);
+  IF NOT v_original_run_event_present THEN
+    INSERT INTO public.commander_outbox(
+      id,event_id,tenant_id,topic,key,payload,available_at,created_at
+    ) VALUES (
+      gen_random_uuid()::text,v_original_run_event_id,p_tenant_id,
+      'commander.'||v_original_run_event_type,v_request.original_run_id,
+      v_event_payload||jsonb_build_object('eventId',v_original_run_event_id,
+        'type',v_original_run_event_type,'runId',v_request.original_run_id,
+        'stepId',NULL,'tenantId',p_tenant_id),v_now,v_now);
+  END IF;
+  IF p_mutation='COMPLETE' THEN
+    INSERT INTO public.commander_outbox(
+      id,event_id,tenant_id,topic,key,payload,available_at,created_at
+    ) VALUES (
+      gen_random_uuid()::text,v_effect_event_id,p_tenant_id,
+      'commander.compensation.completed',v_request.compensation_run_id,
+      v_event_payload||jsonb_build_object('eventId',v_effect_event_id,
+        'type','compensation.completed','runId',v_request.compensation_run_id,
+        'stepId',v_request.compensation_step_id,'tenantId',p_tenant_id),v_now,v_now);
+  END IF;
+  RETURN v_result;
+END
+$fn$;
+
+ALTER FUNCTION public.apply_reconcile_effect_with_evidence_pre_compensation_closure(
+  text,text,text,text,bigint,text,text,jsonb,jsonb
+) OWNER TO commander_owner;
+ALTER FUNCTION public.apply_reconcile_effect_with_evidence_v1(
+  text,text,text,text,bigint,text,text,jsonb,jsonb
+) OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.apply_reconcile_effect_with_evidence_v1(
+  text,text,text,text,bigint,text,text,jsonb,jsonb
+) FROM PUBLIC,commander_app,commander_tenant_authority,commander_worker,commander_scheduler;
+GRANT EXECUTE ON FUNCTION public.apply_reconcile_effect_with_evidence_v1(
+  text,text,text,text,bigint,text,text,jsonb,jsonb
+) TO commander_adapter_ops;
+`;
+
+/**
+ * Bind legacy durable compensation requests to an immutable evidence target.
+ * The worker claim/outbox protocol remains unchanged; only the run metadata
+ * gains the protocol-scoped identifiers required by the evidence endpoint.
+ */
+export const KERNEL_COMPENSATION_METADATA_BINDING_SQL = String.raw`
+ALTER FUNCTION public.request_compensation(text,text,text)
+  RENAME TO request_compensation_pre_metadata_binding;
+
+CREATE FUNCTION public.request_compensation(
+  p_tenant_id text,
+  p_authorization_id text,
+  p_actor text
+) RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $function$
+DECLARE
+  v_result jsonb;
+  v_request jsonb;
+  v_auth public.commander_compensation_authorizations%ROWTYPE;
+  v_effect public.commander_effects%ROWTYPE;
+  v_original_run public.commander_runs%ROWTYPE;
+  v_compensation_effect_id text;
+  v_compensation_request jsonb;
+  v_binding jsonb;
+  v_metadata jsonb;
+BEGIN
+  v_result := public.request_compensation_pre_metadata_binding(
+    p_tenant_id,p_authorization_id,p_actor);
+  IF COALESCE((v_result->>'accepted')::boolean,false) = false THEN
+    RETURN v_result;
+  END IF;
+
+  v_request := v_result->'request';
+  SELECT * INTO v_auth
+    FROM public.commander_compensation_authorizations
+   WHERE id=p_authorization_id AND tenant_id=p_tenant_id;
+  SELECT * INTO v_effect
+    FROM public.commander_effects
+   WHERE id=v_auth.original_effect_id AND tenant_id=p_tenant_id;
+  SELECT * INTO v_original_run
+    FROM public.commander_runs
+   WHERE id=v_auth.original_run_id AND tenant_id=p_tenant_id;
+  IF v_auth.id IS NULL OR v_effect.id IS NULL OR v_original_run.id IS NULL
+     OR NULLIF(v_request->>'id','') IS NULL THEN
+    RETURN v_result;
+  END IF;
+
+  v_compensation_effect_id := COALESCE(
+    NULLIF(v_request->>'compensation_effect_id',''),
+    'effect_'||substr(public.commander_compensation_hash_v1(jsonb_build_object(
+      'requestId',v_request->>'id','originalEffectId',v_auth.original_effect_id)),1,40));
+  v_compensation_request := jsonb_build_object(
+    'originalEffectId',v_auth.original_effect_id,
+    'destination',v_effect.request->'destination',
+    'forwardResponse',COALESCE(v_effect.response,'{}'::jsonb),
+    'compensationPatch',v_auth.compensation_patch);
+  v_binding := jsonb_build_object(
+    'schema','commander.compensation/v1',
+    'authorizationId',v_auth.id,
+    'requestId',v_request->>'id',
+    'tenantId',v_auth.tenant_id,
+    'originalRunId',v_auth.original_run_id,
+    'originalEffectId',v_auth.original_effect_id,
+    'originalRunStateAtRequest',v_original_run.state,
+    'compensationRunId',v_request->>'compensation_run_id',
+    'compensationStepId',v_request->>'compensation_step_id',
+    'compensationEffectId',v_compensation_effect_id,
+    'compensationEffectType',v_auth.compensation_effect_type,
+    'compensationRequest',v_compensation_request,
+    'idempotencyKey','cmp:'||v_auth.original_effect_id||':'||v_auth.adapter_version,
+    'forwardReceipt',COALESCE(v_effect.response,'{}'::jsonb),
+    'forwardReceiptHash',v_auth.forward_receipt_hash,
+    'requestHash',public.commander_compensation_hash_v1(v_compensation_request),
+    'adapterVersion',v_auth.adapter_version,
+    'policyDecisionId',v_auth.policy_decision_id,
+    'policySnapshotId',v_auth.policy_snapshot_id,
+    'actionDigest',v_auth.action_digest,
+    'decisionEffect',v_auth.decision,
+    'authorizationExpiresAt',v_auth.expires_at,
+    'approvalBinding','null'::jsonb);
+  SELECT metadata INTO v_metadata
+   FROM public.commander_runs
+   WHERE id=v_request->>'compensation_run_id' AND tenant_id=p_tenant_id
+   FOR UPDATE;
+  IF NOT FOUND THEN RETURN v_result; END IF;
+  v_metadata := jsonb_set(
+    jsonb_set(
+      jsonb_set(COALESCE(v_metadata,'{}'::jsonb),'{compensationRequestId}',to_jsonb(v_request->>'id'),true),
+      '{authorizationId}',to_jsonb(v_auth.id),true),
+    '{compensation}',jsonb_build_object(
+      'authorization',v_binding,
+      'disposition',COALESCE(v_metadata #> '{compensation,disposition}','"PENDING"'::jsonb)),true);
+   UPDATE public.commander_runs
+     SET metadata=v_metadata,updated_at=clock_timestamp()
+   WHERE id=v_request->>'compensation_run_id' AND tenant_id=p_tenant_id;
+  RETURN v_result;
+END
+$function$;
+
+ALTER FUNCTION public.request_compensation(text,text,text) OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.request_compensation(text,text,text)
+  FROM PUBLIC,commander_worker,commander_adapter_ops,commander_scheduler;
+GRANT EXECUTE ON FUNCTION public.request_compensation(text,text,text) TO commander_app;
+`;

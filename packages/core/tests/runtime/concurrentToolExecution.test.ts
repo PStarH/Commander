@@ -90,8 +90,10 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
       makeContext({ availableTools: ['fail1', 'fail2', 'fail3'] }),
     );
 
-    // The runtime should complete (LLM gets error messages back and finishes)
-    expect(result.status).toBe('success');
+    // A final LLM response cannot turn failed tool effects into a successful
+    // run. The failure remains visible for recovery and compensation.
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('TOOL_EXECUTION_FAILED');
 
     // Verify circuit breaker recorded failures via the runtime's public API
     const breakerRegistry = runtime.getBreakerRegistry();
@@ -115,8 +117,9 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
 
     const result = await runtime.execute(makeContext({ availableTools: ['failing-tool'] }));
 
-    // Runtime should still complete
-    expect(result.status).toBe('success');
+    // Runtime must report the failed effect instead of a false success.
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('TOOL_EXECUTION_FAILED');
 
     // Flush DLQ and check entries
     runtime.flushDeadLetterQueue();
@@ -237,8 +240,9 @@ describe('E2E: Concurrent tool execution through AgentRuntime', () => {
 
     const result = await runtime.execute(makeContext({ availableTools: ['ok-tool', 'fail-tool'] }));
 
-    // Should complete without hanging
-    expect(result.status).toBe('success');
+    // Should terminate without hanging, while preserving the failed status.
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('TOOL_EXECUTION_FAILED');
   });
 
   it('accumulates token usage across multiple tool-call rounds', async () => {

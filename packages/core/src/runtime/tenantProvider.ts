@@ -7,18 +7,21 @@
  *  - SimpleTenantProvider: static config map for multi-tenant deployments
  */
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 // NOTE: ThreeLayerMemory is imported lazily to break a value-import cycle:
 // threeLayerMemory → tenantProvider → tenantContext → tenantAwareSingleton →
 // tenantContext → tenantProvider. Loading it at module load time creates a
 // circular dependency. The lazy wrappers below resolve it on first use.
 import { getCurrentTenantId as readCurrentTenantId, setMultiTenantEnabled } from './tenantContext';
 
+const nodeRequire = createRequire(import.meta.url);
+
 let _ThreeLayerMemory: typeof import('../threeLayerMemory').ThreeLayerMemory | null = null;
 let _getGlobalThreeLayerMemory:
   typeof import('../threeLayerMemory').getGlobalThreeLayerMemory | null = null;
 function lazyThreeLayerMemoryClass(): typeof import('../threeLayerMemory').ThreeLayerMemory {
   if (!_ThreeLayerMemory) {
-    const mod = require('../threeLayerMemory');
+    const mod = nodeRequire('../threeLayerMemory');
     _ThreeLayerMemory = mod.ThreeLayerMemory;
     _getGlobalThreeLayerMemory = mod.getGlobalThreeLayerMemory;
   }

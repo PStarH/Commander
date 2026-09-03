@@ -138,6 +138,31 @@ export class CheckpointingPhase {
   }
 
   /**
+   * Persist an operator pause without moving the checkpoint into the terminal
+   * directory. The ATR transaction is already PAUSED by pauseRun(); keeping
+   * this snapshot active is what makes the run resumable after cleanup.
+   */
+  async checkpointPaused(
+    ctx: AgentExecutionContext,
+    state: AgentExecutionState,
+    payload: CheckpointTerminalPayload,
+  ): Promise<void> {
+    this.checkpointer.checkpoint(
+      this.buildCheckpointPayload(
+        ctx,
+        state,
+        'interrupted',
+        payload,
+        payload.stepNumber,
+        payload.attempt,
+        payload.lastError,
+        payload.exitSummary,
+      ),
+    );
+    state.phaseCheckpointIds.interrupted = state.runId;
+  }
+
+  /**
    * Terminal-phase checkpoint. Writes via `terminalCheckpoint(...)` so the
    * completed/ subdirectory receives the snapshot and active files are removed.
    */
@@ -371,12 +396,15 @@ export class CheckpointingPhase {
     };
     lastError?: string;
     totalDurationMs: number;
+    leaseToken?: string;
+    fencingEpoch?: number;
   } {
     const baseMessages = 'messages' in payload.request ? payload.request.messages : [];
     const tokenUsage = state.totalTokenUsage;
     const stepDurations = state.steps.map((s) => s.durationMs);
     const projectContext =
       'projectContext' in payload ? payload.projectContext : state.activeProjectContext;
+    const runHandle = this.getRunHandle();
 
     return {
       runId: state.runId,
@@ -403,6 +431,8 @@ export class CheckpointingPhase {
       },
       lastError: lastErrorOverride ?? state.lastError,
       totalDurationMs: Date.now() - state.startedAt,
+      leaseToken: runHandle?.leaseToken,
+      fencingEpoch: runHandle?.fencingEpoch,
     };
   }
 }

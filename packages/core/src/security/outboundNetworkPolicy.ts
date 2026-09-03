@@ -218,6 +218,7 @@ const DEFAULT_ALLOWLIST: readonly string[] = [
   'api.mistral.ai',
   'api.x.ai',
   'api.mimo.com',
+  'apihub.agnes-ai.com',
 ];
 
 /**

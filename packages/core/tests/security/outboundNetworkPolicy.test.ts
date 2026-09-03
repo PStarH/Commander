@@ -48,6 +48,7 @@ describe('OutboundNetworkPolicy', () => {
       expect(cfg.allowlist).not.toContain('localhost');
       expect(cfg.allowlist).not.toContain('127.0.0.1');
       expect(cfg.allowlist).toContain('api.openai.com');
+      expect(cfg.allowlist).toContain('apihub.agnes-ai.com');
     });
 
     it('allows subdomains of allowlisted domains', () => {

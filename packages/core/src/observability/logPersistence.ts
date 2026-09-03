@@ -13,7 +13,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { mkdirSync, existsSync, unlinkSync, readdirSync } from 'node:fs';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -86,7 +89,7 @@ export class LogPersistence {
 
     try {
       // Lazy require to avoid crash if better-sqlite3 not installed
-      const Database = require('better-sqlite3');
+      const Database = nodeRequire('better-sqlite3');
       this.db = new Database(this.dbPath);
 
       // WAL mode + concurrency safety

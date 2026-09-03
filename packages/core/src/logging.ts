@@ -5,6 +5,10 @@
  * 提供统一的日志记录、指标收集和监控接口
  */
 
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
+
 // ========================================
 // Log Types
 // ========================================
@@ -118,7 +122,7 @@ export class Logger {
     this.logPersistenceChecked = true;
     if (process.env.COMMANDER_LOG_PERSIST !== 'true') return null;
     try {
-      const { getGlobalLogPersistence } = require('./observability/logPersistence');
+      const { getGlobalLogPersistence } = nodeRequire('./observability/logPersistence');
       const instance = getGlobalLogPersistence();
       this.logPersistenceHook = instance as typeof this.logPersistenceHook;
     } catch {
@@ -449,7 +453,7 @@ export class LegacyMetricsAdapter {
     // the in-memory time-series store. This preserves backward compatibility
     // while unifying the two collectors.
     try {
-      const { getMetricsCollector } = require('./runtime/metricsCollector');
+      const { getMetricsCollector } = nodeRequire('./runtime/metricsCollector');
       this.runtimeCollector = getMetricsCollector();
     } catch {
       // Runtime collector not available — use in-memory fallback

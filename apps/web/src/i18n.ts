@@ -54,12 +54,14 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.sso': 'SSO',
     'nav.poc': 'POC Center',
     'nav.slo': 'SLO',
+    'nav.research': 'Research',
     'poc.sectionLabel': 'Enterprise Scenarios',
     'poc.title': 'Proof-of-Value Center',
     'poc.desc':
       'Illustrative reference scenarios for Commander pilots across finance, manufacturing, and healthcare. These are demo scenarios, not real customer pilots.',
     'poc.disclaimer':
       'These are illustrative reference scenarios, not real customer pilots. Figures are representative demo data, not customer-reported results. Real, attributable pilot case studies will be published here as they become available.',
+    'poc.source': 'Source: synthetic demo data; no customer pilot evidence',
     'poc.metric.scenarios': 'Illustrative scenarios',
     'poc.metric.industries': 'Industries',
     'poc.metric.avgDuration': 'Illustrative Duration',
@@ -79,11 +81,11 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.scope.finance.2': 'Multi-agent topology: dispatcher → analyst → verifier',
     'poc.scope.finance.3': 'Mandatory mTLS + capability-token gating on tool calls',
     'poc.metric.compliance': 'Audit accuracy',
-    'poc.detail.compliance': 'human-equivalent decision quality',
+    'poc.detail.compliance': 'illustrative decision-quality target, not a verified result',
     'poc.metric.review': 'Analyst review time',
     'poc.detail.review': 'automated evidence packs',
     'poc.metric.latency': 'p95 alert latency',
-    'poc.detail.latency': 'end-to-end SLA',
+    'poc.detail.latency': 'illustrative latency target, not an SLA',
     'poc.industry.manufacturing': 'Manufacturing',
     'poc.customer.manufacturing': 'Illustrative manufacturing workflow — predictive maintenance',
     'poc.useCase.manufacturing':
@@ -105,11 +107,28 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.scope.healthcare.2': 'Three-layer memory with tenant isolation per hospital',
     'poc.scope.healthcare.3': 'LLM-as-judge quality gate on every note',
     'poc.metric.pii': 'PII leakage events',
-    'poc.detail.pii': 'redaction + DLP verified',
+    'poc.detail.pii': 'illustrative redaction/DLP target, not a verified result',
     'poc.metric.document': 'Documentation throughput',
     'poc.detail.document': 'clinician time recovered',
     'poc.metric.audit': 'Audit coverage',
-    'poc.detail.audit': 'all generations logged',
+    'poc.detail.audit': 'illustrative audit-coverage target, not a verified result',
+    'research.sectionLabel': 'Research Preview',
+    'research.title': 'Research Participation',
+    'research.desc':
+      'How Commander handles research participation, consent, and data boundaries while the project is in alpha.',
+    'research.consent.title': 'Consent',
+    'research.consent.body':
+      'Participating in a research or evaluation task means you consent to your prompts, configuration, and locally generated traces being used to improve the product. This is not an option in the repository today — any opt-in flow will ask for consent separately and never silently enroll you.',
+    'research.used.title': 'What is used',
+    'research.used.body':
+      'Only data you choose to enter and the local traces the evaluation itself produces. Commander does not phone home, does not upload results to a vendor backend, and has no telemetry by default.',
+    'research.withdraw.title': 'Withdrawal',
+    'research.withdraw.body':
+      'You can stop participating at any time by closing the evaluation, deleting the local state, and removing any data you already sent to an LLM provider you configured.',
+    'research.feedback.title': 'Feedback',
+    'research.feedback.body':
+      'Voluntary feedback you share (issues, discussions, interviews) is used only with your permission; redact prompts, logs, PII, and secrets before submitting.',
+    'research.privacy.link': 'See PRIVACY.md for the full boundary.',
   },
   'zh-CN': {
     'nav.dashboard': '仪表盘',
@@ -132,12 +151,14 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'nav.sso': 'SSO 登录',
     'nav.poc': 'POC 中心',
     'nav.slo': 'SLO',
+    'nav.research': '研究参与',
     'poc.sectionLabel': '企业示例场景',
     'poc.title': '价值验证中心',
     'poc.desc':
       '金融、制造和医疗三个行业 Commander 试点的示例参考场景。这些是演示场景，并非真实客户试点。',
     'poc.disclaimer':
       '这些是示例参考场景，并非真实客户试点。数据为代表性演示数据，不是客户报告的真实结果。真实、可归属的试点案例将在可用后在此发布。',
+    'poc.source': '数据来源：合成演示数据；没有客户试点证据',
     'poc.metric.scenarios': '示例场景数',
     'poc.metric.industries': '覆盖行业',
     'poc.metric.avgDuration': '示例周期',
@@ -155,11 +176,11 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.scope.finance.2': '多智能体拓扑：调度员 → 分析师 → 校验员',
     'poc.scope.finance.3': '工具调用强制 mTLS + 能力令牌管控',
     'poc.metric.compliance': '审计准确率',
-    'poc.detail.compliance': '达到人工等价决策质量',
+    'poc.detail.compliance': '示例决策质量目标，不是已验证结果',
     'poc.metric.review': '分析师复核时间',
     'poc.detail.review': '证据包自动化生成',
     'poc.metric.latency': 'P95 告警延迟',
-    'poc.detail.latency': '端到端 SLA',
+    'poc.detail.latency': '示例延迟目标，不是 SLA',
     'poc.industry.manufacturing': '制造业',
     'poc.customer.manufacturing': '演示：制造业预测性维护工作流',
     'poc.useCase.manufacturing': '基于遥测、维修日志与供应商手册对产线停机进行根因分析。',
@@ -179,11 +200,27 @@ const TRANSLATIONS: Record<Locale, Record<string, string>> = {
     'poc.scope.healthcare.2': '按医院隔离的三层记忆与租户隔离',
     'poc.scope.healthcare.3': '每条笔记经 LLM-as-Judge 质量门',
     'poc.metric.pii': 'PII 泄露事件',
-    'poc.detail.pii': '脱敏与 DLP 验证通过',
+    'poc.detail.pii': '示例脱敏/DLP 目标，不是已验证结果',
     'poc.metric.document': '文档产出效率',
     'poc.detail.document': '节省临床医生时间',
     'poc.metric.audit': '审计覆盖率',
-    'poc.detail.audit': '全部生成内容可审计',
+    'poc.detail.audit': '示例审计覆盖目标，不是已验证结果',
+    'research.sectionLabel': '研究预览',
+    'research.title': '研究参与',
+    'research.desc': '说明 Commander 在 alpha 阶段如何处理研究参与、同意与数据边界。',
+    'research.consent.title': '知情同意',
+    'research.consent.body':
+      '参与研究或评估任务，即表示你同意将提示词、配置与本地生成的轨迹用于改进产品。当前仓库中并非默认选项——任何加入流程都会单独征得同意，绝不静默登记。',
+    'research.used.title': '使用范围',
+    'research.used.body':
+      '仅使用你主动输入的数据以及评估本身产生的本地轨迹。Commander 默认不联网回传、不向厂商后端上传结果、无遥测。',
+    'research.withdraw.title': '退出',
+    'research.withdraw.body':
+      '可随时停止参与：关闭评估、删除本地状态，并删除已发送至所配置 LLM 提供商的任何数据。',
+    'research.feedback.title': '反馈',
+    'research.feedback.body':
+      '你自愿分享的反馈（Issue、讨论、访谈）仅在获得许可后使用；提交前请对提示词、日志、PII 与密钥进行脱敏。',
+    'research.privacy.link': '完整边界见 PRIVACY.md。',
   },
 };
 

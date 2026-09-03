@@ -812,6 +812,7 @@ BEGIN
     v_escalation_code := p_payload #>> '{}';
     IF v_escalation_code NOT IN (
       'RECONCILE_ADAPTER_NOT_FOUND','RECONCILE_QUERY_UNSUPPORTED',
+      'COMPENSATION_QUERY_UNSUPPORTED',
       'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED'
     ) THEN
       RETURN jsonb_build_object('applied', false, 'reason', 'CLAIM_REPLAY_CONFLICT');
@@ -967,6 +968,21 @@ GRANT EXECUTE ON FUNCTION public.confirm_effect_not_applied(text, text, text, bi
 GRANT EXECUTE ON FUNCTION public.reschedule_reconcile_effect(text, text, text, bigint, text, text, jsonb) TO commander_adapter_ops;
 GRANT EXECUTE ON FUNCTION public.escalate_reconcile_effect(text, text, text, bigint, text, text, jsonb) TO commander_adapter_ops;
 `;
+
+const TASK2_RECONCILIATION_COMPENSATION_QUERY_MARKER = "      'COMPENSATION_QUERY_UNSUPPORTED',\n";
+if (
+  !KERNEL_TASK2_RECONCILIATION_RPCS_SQL.includes(TASK2_RECONCILIATION_COMPENSATION_QUERY_MARKER)
+) {
+  throw new Error('TASK2_COMPENSATION_QUERY_REPAIR_MARKER_MISSING');
+}
+
+/** Immutable source used by the historical RPC descriptor before compensation query escalation. */
+export const KERNEL_TASK2_RECONCILIATION_RPCS_SQL_HISTORICAL =
+  KERNEL_TASK2_RECONCILIATION_RPCS_SQL.replace(TASK2_RECONCILIATION_COMPENSATION_QUERY_MARKER, '');
+
+/** Forward repair for the compensation-specific query escalation reason. */
+export const KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_SQL =
+  KERNEL_TASK2_RECONCILIATION_RPCS_SQL;
 
 export const KERNEL_TASK2_ROLE_CLOSURE_SQL = String.raw`
 REVOKE ALL ON TABLE public.commander_reconcile_protocol_config FROM PUBLIC;

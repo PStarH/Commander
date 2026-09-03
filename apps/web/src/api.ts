@@ -1386,6 +1386,7 @@ export interface OnboardingSaveConfigPayload {
 
 export interface OnboardingFirstTaskResult {
   success: boolean;
+  source: 'real' | 'simulated';
   result?: string;
   error?: string;
   provider?: string;
