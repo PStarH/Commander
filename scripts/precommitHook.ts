@@ -157,6 +157,57 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
 
 // ── Main ─────────────────────────────────────────────────────────────────
 
+// ── Merge-aware baseline helpers ─────────────────────────────────────────
+
+/**
+ * Revisions whose warnings count as pre-existing for this commit. On a merge
+ * commit the result descends from both parents, so findings present in either
+ * parent are inherited rather than introduced. Reads MERGE_HEAD only when it
+ * exists; any failure falls back to HEAD-only baselining. CI argv replay has
+ * no git context and gets an empty baseline (scan everything).
+ */
+export function collectBaselineRevisions(repoRoot: string): string[] {
+  try {
+    const mergeHead = execFileSync('git', ['rev-parse', '--verify', 'MERGE_HEAD'], {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return mergeHead ? ['HEAD', mergeHead] : ['HEAD'];
+  } catch {
+    return ['HEAD'];
+  }
+}
+
+/**
+ * Warnings inherited from the baseline revisions: the union of high-severity
+ * findings present in any parent. evaluateIndexedWarnings compares per-
+ * fingerprint counts between staged and baseline, so duplicating entries from
+ * both parents keeps inherited warnings inherited even when the same finding
+ * exists on both sides.
+ */
+export async function collectBaselineWarnings(
+  rel: string,
+  revisions: string[],
+): Promise<ScannerWarning[]> {
+  const warnings: ScannerWarning[] = [];
+  for (const revision of revisions) {
+    const content = readGitBlob(REPO_ROOT, revision, rel);
+    if (content === undefined) continue;
+    const result = await scanContent(rel, content);
+    warnings.push(
+      ...result.warnings.filter(
+        (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
+      ),
+      ...(await enumerateHighWarnings(
+        content,
+        async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
+      )),
+    );
+  }
+  return warnings;
+}
+
 async function runScannerGate(): Promise<void> {
   const staged = getStagedFiles();
   const scannable = staged.files.filter((f) => SCANNABLE_EXT.test(f));
@@ -187,8 +238,6 @@ async function runScannerGate(): Promise<void> {
       continue;
     }
     const stagedResult = await scanContent(rel, content);
-    const headContent = staged.source === 'git' ? readGitBlob(REPO_ROOT, 'HEAD', rel) : undefined;
-    const headResult = headContent === undefined ? undefined : await scanContent(rel, headContent);
     const stagedWarnings = [
       ...stagedResult.warnings.filter(
         (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
@@ -199,17 +248,9 @@ async function runScannerGate(): Promise<void> {
       )),
     ] as ScannerWarning[];
     const headWarnings =
-      headContent === undefined || headResult === undefined
-        ? []
-        : [
-            ...headResult.warnings.filter(
-              (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
-            ),
-            ...(await enumerateHighWarnings(
-              headContent,
-              async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
-            )),
-          ];
+      staged.source === 'git'
+        ? await collectBaselineWarnings(rel, collectBaselineRevisions(REPO_ROOT))
+        : [];
     const policy = evaluateIndexedWarnings(stagedWarnings, headWarnings as ScannerWarning[]);
     for (const warning of policy.inherited) {
       console.log(
