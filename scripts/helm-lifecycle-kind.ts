@@ -7,12 +7,23 @@
  * the Commander chart. Produces sanitized evidence JSON.
  */
 
-import { execFile, execFileSync, ExecFileOptions, spawn } from 'node:child_process';
+import { execFile, execFileSync, type ExecFileOptions } from 'node:child_process';
 import { X509Certificate, createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { arch, tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { dump, load } from 'js-yaml';
+import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
+import { isAllowedHelmDiagnosticCode } from './helm-diagnostic-policy.js';
+import { defaultCommand, runHelmTenantCutoverCli } from './helm-tenant-cutover.js';
+import {
+  createTask1KubectlPorts,
+  loadTask1PrerequisiteCommandContext,
+  renderTask1AdmissionPair,
+  runTask1AdmissionAdministrator,
+  runTask1PrerequisiteOperator,
+} from './task1-helm-prerequisite-command.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -64,10 +75,39 @@ export const CALICO_URL =
   'https://raw.githubusercontent.com/projectcalico/calico/v3.29.0/manifests/calico.yaml';
 export const PRODUCTION_IMAGE = 'commander-lifecycle-api:kind';
 export const NAMESPACE = 'commander-lifecycle';
+
+export function productionImageBuildArguments(sourceRevision: string): string[] {
+  if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
+    throw new Error('PRODUCTION_IMAGE_SOURCE_REVISION_INVALID');
+  }
+  return [
+    'buildx',
+    'build',
+    '--load',
+    '--tag',
+    PRODUCTION_IMAGE,
+    '--build-arg',
+    'COMMANDER_SOURCE_REVISION=' + sourceRevision,
+  ];
+}
+
+export function productionImageSourceRevision(
+  env: Pick<NodeJS.ProcessEnv, 'GITHUB_SHA'>,
+  readHead: () => string,
+): string {
+  const sourceRevision = env.GITHUB_SHA?.trim() || readHead().trim();
+  if (!/^[0-9a-f]{40}$/.test(sourceRevision)) {
+    throw new Error('PRODUCTION_IMAGE_SOURCE_REVISION_INVALID');
+  }
+  return sourceRevision;
+}
+
 const EXTERNAL_DATABASE_NAMESPACE = 'commander-external-database';
 const RUN_ID = `${Date.now().toString(36)}-${process.pid}`;
 const CALICO_IMAGES = calicoImagesForArchitecture(arch());
 const POSTGRES_IMAGE = postgresImageForArchitecture(arch());
+const SERVICE_ACCOUNT_SUBJECT =
+  /^system:serviceaccount:([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?):([a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?)$/;
 
 function scenarioRelease(prefix: string): string {
   return `${prefix}-${RUN_ID}`;
@@ -118,6 +158,143 @@ export function namespaceCleanupArgs(namespace: string): string[] {
   ];
 }
 
+export function serviceAccountTokenArgs(token: string, commandArgs: readonly string[]): string[] {
+  if (!token || /\s/.test(token)) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
+  return ['--token', token, ...commandArgs];
+}
+
+export function tokenOnlyKubeconfig(server: string, certificateAuthorityData: string): string {
+  try {
+    const endpoint = new URL(server);
+    if (
+      endpoint.protocol !== 'https:' ||
+      !endpoint.hostname ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.search ||
+      endpoint.hash ||
+      !['', '/'].includes(endpoint.pathname)
+    ) {
+      throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+    }
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+  const decodedCertificateAuthority = Buffer.from(certificateAuthorityData, 'base64');
+  if (
+    decodedCertificateAuthority.length === 0 ||
+    decodedCertificateAuthority.toString('base64') !== certificateAuthorityData
+  ) {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+  return dump(
+    {
+      apiVersion: 'v1',
+      clusters: [
+        {
+          cluster: {
+            'certificate-authority-data': certificateAuthorityData,
+            server,
+          },
+          name: 'operator-cluster',
+        },
+      ],
+      contexts: [
+        {
+          context: { cluster: 'operator-cluster', user: 'operator-token' },
+          name: 'operator-token',
+        },
+      ],
+      'current-context': 'operator-token',
+      kind: 'Config',
+      users: [{ name: 'operator-token', user: {} }],
+    },
+    { noRefs: true, sortKeys: true },
+  );
+}
+
+export function operatorKubectlArgs(
+  token: string,
+  kubeconfigPath: string,
+  commandArgs: readonly string[],
+): string[] {
+  if (!kubeconfigPath.startsWith('/') || /\0/.test(kubeconfigPath)) {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+  return ['--kubeconfig', kubeconfigPath, ...serviceAccountTokenArgs(token, commandArgs)];
+}
+
+export function operatorTokenReview(token: string): Record<string, unknown> {
+  if (!token || /\s/.test(token)) {
+    throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
+  }
+  return {
+    apiVersion: 'authentication.k8s.io/v1',
+    kind: 'TokenReview',
+    spec: {
+      token,
+    },
+  };
+}
+
+export function verifyOperatorTokenReview(review: unknown, subject: string): void {
+  if (!SERVICE_ACCOUNT_SUBJECT.test(subject)) {
+    throw new Error('TENANT_POLICY_SUBJECT_MISMATCH');
+  }
+  const status = jsonRecord(jsonRecord(review)?.status);
+  const user = jsonRecord(status?.user);
+  if (status?.authenticated !== true || typeof user?.username !== 'string') {
+    throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
+  }
+  if (user.username !== subject) throw new Error('TENANT_POLICY_SUBJECT_MISMATCH');
+}
+
+export function operatorSubjectAccessReview(
+  subject: string,
+  verb: string,
+  resource: string,
+  name?: string,
+): Record<string, unknown> {
+  if (!SERVICE_ACCOUNT_SUBJECT.test(subject) || !/^[a-z]+$/.test(verb)) {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  const [resourceName, ...groupParts] = resource.split('.');
+  if (!resourceName || !/^[a-z]+(?:[a-z0-9-]*[a-z0-9])?$/.test(resourceName)) {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  return {
+    apiVersion: 'authorization.k8s.io/v1',
+    kind: 'SubjectAccessReview',
+    spec: {
+      user: subject,
+      resourceAttributes: {
+        verb,
+        group: groupParts.join('.'),
+        resource: resourceName,
+        ...(name ? { name } : {}),
+      },
+    },
+  };
+}
+
+export function verifyOperatorSubjectAccessReview(review: unknown): boolean {
+  const status = jsonRecord(jsonRecord(review)?.status);
+  if (typeof status?.allowed !== 'boolean') {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  return status.allowed;
+}
+
+export function prerequisiteAdmissionCleanupCommands(name: string): string[][] {
+  if (!/^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$/.test(name)) {
+    throw new Error('TENANT_POLICY_ADMISSION_NAME_INVALID');
+  }
+  return [
+    'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+    'validatingadmissionpolicies.admissionregistration.k8s.io',
+  ].map((resource) => ['delete', resource, name, '--ignore-not-found=true', '--wait=true']);
+}
+
 export function controlPlaneReadinessSelectors(): string[] {
   return [
     'component=etcd',
@@ -134,6 +311,37 @@ export function assertHelmVersion(version: string): void {
 export function proofReaderName(namespace: string, release: string): string {
   const suffix = createHash('sha256').update(`${namespace}/${release}`).digest('hex').slice(0, 16);
   return `commander-proof-reader-${suffix}`;
+}
+
+export function proofReaderCanIArgs(input: {
+  verb: string;
+  resource: string;
+  resourceName: string;
+  identity: string;
+  namespace: string;
+}): string[] {
+  const [resource, subresource] = input.resource.split('/', 2);
+  return [
+    'auth',
+    'can-i',
+    input.verb,
+    input.resourceName ? resource + '/' + input.resourceName : resource,
+    ...(subresource ? [`--subresource=${subresource}`] : []),
+    '--as',
+    input.identity,
+    '-n',
+    input.namespace,
+  ];
+}
+
+export function proofReaderCanIResultPasses(input: {
+  expected: 'yes' | 'no';
+  exitCode: number;
+  stdout: string;
+}): boolean {
+  return (
+    input.exitCode === (input.expected === 'yes' ? 0 : 1) && input.stdout.trim() === input.expected
+  );
 }
 
 export function productionImageReferences(digest: string): { source: string; target: string } {
@@ -174,8 +382,10 @@ export function buildLifecycleValues(input: {
   imageDigest: string;
   databaseSpkiSha256: string;
   logLevel: 'info' | 'warn';
+  kubernetesApiServiceIp: string;
+  kubernetesApiEndpointIp: string;
   database?:
-    | { kind: 'bundled' }
+    | { kind: 'bundled'; secretName?: string }
     | {
         kind: 'external';
         secretName: string;
@@ -183,12 +393,14 @@ export function buildLifecycleValues(input: {
         bootstrapAuthoritySecret: string;
         serviceNamespace: string;
         serviceName: string;
-        serviceClusterIp: string;
+        podIp: string;
       };
 }): string {
   if (
     !/^sha256:[a-f0-9]{64}$/.test(input.imageDigest) ||
-    !/^[a-f0-9]{64}$/.test(input.databaseSpkiSha256)
+    !/^[a-f0-9]{64}$/.test(input.databaseSpkiSha256) ||
+    !isIpv4Address(input.kubernetesApiServiceIp) ||
+    !isIpv4Address(input.kubernetesApiEndpointIp)
   ) {
     throw new Error('LIFECYCLE_VALUES_INVALID');
   }
@@ -202,11 +414,11 @@ export function buildLifecycleValues(input: {
       ![database.serviceNamespace, database.serviceName].every(
         (value) => dnsLabel.test(value) && value.length <= 63,
       ) ||
-      !/^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/.test(database.serviceClusterIp))
+      !isIpv4Address(database.podIp))
   ) {
     throw new Error('LIFECYCLE_VALUES_INVALID');
   }
-  const postgresValues =
+  let postgresValues =
     database.kind === 'bundled'
       ? `    bundled: true
     user: postgres
@@ -214,6 +426,16 @@ export function buildLifecycleValues(input: {
       enabled: false`
       : `    bundled: false
     existingSecret: ${database.secretName}`;
+  const bundledDatabaseSecret =
+    database.kind === 'bundled' && database.secretName
+      ? '    existingSecret: ' + database.secretName + '\n'
+      : '';
+  if (bundledDatabaseSecret) {
+    postgresValues = postgresValues.replace(
+      '    persistence:',
+      bundledDatabaseSecret + '    persistence:',
+    );
+  }
   const databaseTlsValues =
     database.kind === 'bundled'
       ? `  existingSecret: ${input.release}-database-tls`
@@ -222,20 +444,40 @@ export function buildLifecycleValues(input: {
     database.kind === 'external'
       ? `  bootstrapAuthoritySecret: ${database.bootstrapAuthoritySecret}\n`
       : '';
-  const endpointNamespace =
-    database.kind === 'external' ? database.serviceNamespace : input.namespace;
-  const endpointName =
-    database.kind === 'external' ? database.serviceName : `${input.release}-postgres`;
-  const endpointSelector =
+  // The external fixture must stay ingress-policy-free: a service-kind endpoint
+  // makes the task1 operator place a hook-only ingress policy on the fixture pods,
+  // which default-denies the recreated API pod's migration gate. A /32 CIDR
+  // endpoint yields egress-only ipBlock rules and no ingress policy.
+  const endpointEntry =
     database.kind === 'external'
-      ? `          app.kubernetes.io/name: ${database.serviceName}`
-      : `          app.kubernetes.io/name: ${input.release}
+      ? `    - roles:
+        - owner
+        - app
+        - tenant-authority
+        - scheduler
+        - worker
+        - adapter-ops
+      cidr:
+        cidr: ${database.podIp}/32
+        port: 5432`
+      : `    - roles:
+        - owner
+        - app
+        - tenant-authority
+        - scheduler
+        - worker
+        - adapter-ops
+      service:
+        namespace: ${input.namespace}
+        name: ${input.release}-postgres
+        servicePort: 5432
+        targetPort: 5432
+        podSelector:
+          app.kubernetes.io/name: ${input.release}
           app.kubernetes.io/instance: ${input.release}
           app.kubernetes.io/component: postgres`;
   const databaseCidrs =
-    database.kind === 'external'
-      ? `  egress:\n    databaseCidrs:\n      - ${database.serviceClusterIp}/32\n`
-      : '';
+    database.kind === 'external' ? `    databaseCidrs:\n      - ${database.podIp}/32\n` : '';
   return `tier: demo
 web:
   enabled: false
@@ -248,7 +490,9 @@ adapterOps:
 persistence:
   enabled: false
 redis:
-  enabled: false
+  enabled: true
+  persistence:
+    enabled: false
 api:
   replicas: 2
   secrets:
@@ -275,21 +519,14 @@ ${bootstrapAuthority}  apiProof:
     privateSecret: ${input.release}-api-proof-private
 networkPolicy:
   enabled: true
-${databaseCidrs}  databaseEndpoints:
-    - roles:
-        - owner
-        - app
-        - tenant-authority
-        - scheduler
-        - worker
-        - adapter-ops
-      service:
-        namespace: ${endpointNamespace}
-        name: ${endpointName}
-        servicePort: 5432
-        targetPort: 5432
-        podSelector:
-${endpointSelector}
+  migrationOperator:
+    subject: system:serviceaccount:${input.namespace}:tenant-migration-operator
+  egress:
+${databaseCidrs}    kubernetesApiCidrs:
+      - ${input.kubernetesApiServiceIp}/32
+      - ${input.kubernetesApiEndpointIp}/32
+  databaseEndpoints:
+${endpointEntry}
 `;
 }
 
@@ -450,19 +687,25 @@ export function assertProofPodContract(pod: unknown, expectedServiceAccount: str
   const sources = Array.isArray(tokenVolume?.projected?.sources)
     ? tokenVolume.projected.sources
     : [];
-  const token = sources
+  const tokens = sources
     .map((source) =>
       source && typeof source === 'object'
         ? (source as { serviceAccountToken?: Record<string, unknown> }).serviceAccountToken
         : undefined,
     )
-    .find(Boolean);
+    .filter((token): token is Record<string, unknown> => token !== undefined);
+  const identityToken = tokens.find(
+    (token) => token.audience === 'commander-tenant-cutover-proof/v1',
+  );
+  const apiToken = tokens.find((token) => !Object.hasOwn(token, 'audience'));
   if (
     spec?.serviceAccountName !== expectedServiceAccount ||
     spec.automountServiceAccountToken !== false ||
-    token?.audience !== 'commander-tenant-cutover-proof/v1' ||
-    token.expirationSeconds !== 300 ||
-    token.path !== 'token'
+    tokens.length !== 2 ||
+    identityToken?.expirationSeconds !== 600 ||
+    identityToken.path !== 'identity-token' ||
+    apiToken?.expirationSeconds !== 600 ||
+    apiToken.path !== 'api-token'
   ) {
     throw new Error('PROOF_POD_CONTRACT_INVALID');
   }
@@ -478,6 +721,7 @@ export interface CommandResult {
   stdout: string;
   stderr: string;
   exitCode: number;
+  errorCode?: string;
 }
 
 export interface ScenarioEvidence {
@@ -486,10 +730,47 @@ export interface ScenarioEvidence {
   durationMs: number;
   events: Record<string, unknown>[];
   assertions: AssertionResult[];
+  failedStage?: LifecycleFailureStage;
+  networkPrerequisiteStage?: NetworkPrerequisiteStage;
   rbac?: AssertionResult[];
   networkPolicy?: AssertionResult[];
   error?: string;
 }
+
+export type LifecycleFailureStage =
+  | 'scenario-execution'
+  | 'namespace-reset'
+  | 'namespace-create'
+  | 'certificate-material'
+  | 'tls-secrets'
+  | 'external-database-fixture'
+  | 'lifecycle-values'
+  | 'cutover-install'
+  | 'api-ready'
+  | 'network-prerequisites'
+  | 'cutover-enforce'
+  | 'current-proof'
+  | 'post-cutover-validation'
+  | 'helm-uninstall'
+  | 'release-cleanup'
+  | 'recovery-failed-install'
+  | 'recovery-retry';
+
+const NETWORK_PREREQUISITE_STAGES = [
+  'read-release-values',
+  'materialize-values',
+  'write-values',
+  'load-context',
+  'render-admission',
+  'install-admission',
+  'issue-operator-token',
+  'verify-operator-token',
+  'write-operator-kubeconfig',
+  'operator-verify',
+  'admission-cleanup',
+] as const;
+
+type NetworkPrerequisiteStage = (typeof NETWORK_PREREQUISITE_STAGES)[number];
 
 export interface AssertionResult {
   description: string;
@@ -507,8 +788,1521 @@ export interface HarnessEvidence {
   rbac?: AssertionResult[];
   networkPolicy?: AssertionResult[];
   rolloutRecovery?: ScenarioEvidence;
+  image?: {
+    digest: string;
+    sourceRevision?: string;
+  };
+  ownerFailureEvidence?: OwnerFailureEvidence[];
   passed: boolean;
   sanitized: boolean;
+}
+
+export interface SanitizedScenarioEvidence {
+  name: string;
+  passed: boolean;
+  durationMs: number;
+  failedStage?: LifecycleFailureStage;
+  networkPrerequisiteStage?: NetworkPrerequisiteStage;
+  failureCodes?: string[];
+  externalDatabaseRoleFailures?: ExternalDatabaseRoleFailureEvidence[];
+  helmUninstallResidual?: HelmUninstallResidualEvidence;
+  admissionRbacFailure?: AdmissionRbacFailureEvidence;
+  failedChecks?: SanitizedCheckFailure[];
+  rolloutFailure?: RolloutFailureEvidence;
+  rolloutObservation?: RolloutNonterminalEvidence | RolloutQueryEvidence;
+  apiStartupFailure?: ApiPodStartupFailureEvidence;
+}
+
+type ExternalDatabaseRole =
+  'owner' | 'app' | 'tenant-authority' | 'scheduler' | 'worker' | 'adapter-ops';
+
+type ExternalDatabaseRoleFailureClass = 'authentication' | 'tls' | 'network' | 'identity' | 'query';
+
+interface ExternalDatabaseRoleFailureEvidence {
+  role: ExternalDatabaseRole;
+  failureClass: ExternalDatabaseRoleFailureClass;
+}
+
+type HelmUninstallResidualResourceKind =
+  | 'clusterrole'
+  | 'clusterrolebinding'
+  | 'configmap'
+  | 'deployment'
+  | 'horizontalpodautoscaler'
+  | 'ingress'
+  | 'job'
+  | 'networkpolicy'
+  | 'persistentvolumeclaim'
+  | 'pod'
+  | 'poddisruptionbudget'
+  | 'replicaset'
+  | 'role'
+  | 'rolebinding'
+  | 'secret'
+  | 'service'
+  | 'serviceaccount'
+  | 'statefulset';
+
+type HelmUninstallResidualPodComponent =
+  | 'adapter-ops'
+  | 'api'
+  | 'kernel-ops'
+  | 'postgres'
+  | 'redis'
+  | 'tenant-authority-proof-reader'
+  | 'web'
+  | 'worker';
+
+interface HelmUninstallResidualEvidence {
+  inventory: 'available' | 'unavailable';
+  resourceKinds?: HelmUninstallResidualResourceKind[];
+  podComponents?: HelmUninstallResidualPodComponent[];
+  terminatingPodComponents?: HelmUninstallResidualPodComponent[];
+}
+
+interface AdmissionRbacFailureEvidence {
+  verb: 'create' | 'update' | 'patch' | 'delete' | 'list' | 'watch';
+  resource:
+    | 'validatingadmissionpolicies.admissionregistration.k8s.io'
+    | 'validatingadmissionpolicybindings.admissionregistration.k8s.io';
+}
+
+const ADMISSION_RBAC_FAILURES = {
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED: {
+    verb: 'create',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_UPDATE_ALLOWED: {
+    verb: 'update',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_PATCH_ALLOWED: {
+    verb: 'patch',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_DELETE_ALLOWED: {
+    verb: 'delete',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_LIST_ALLOWED: {
+    verb: 'list',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_POLICY_WATCH_ALLOWED: {
+    verb: 'watch',
+    resource: 'validatingadmissionpolicies.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_CREATE_ALLOWED: {
+    verb: 'create',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_UPDATE_ALLOWED: {
+    verb: 'update',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_PATCH_ALLOWED: {
+    verb: 'patch',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_DELETE_ALLOWED: {
+    verb: 'delete',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_LIST_ALLOWED: {
+    verb: 'list',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+  TENANT_POLICY_ADMISSION_RBAC_BINDING_WATCH_ALLOWED: {
+    verb: 'watch',
+    resource: 'validatingadmissionpolicybindings.admissionregistration.k8s.io',
+  },
+} as const satisfies Record<string, AdmissionRbacFailureEvidence>;
+
+type SanitizedCheckGroup = 'scenario' | 'rbac' | 'networkPolicy';
+
+interface SanitizedCheckFailure {
+  group: SanitizedCheckGroup;
+  index: number;
+}
+
+export interface SanitizedHarnessEvidence {
+  generatedAt: string;
+  cluster: string;
+  kindNodeImage: string;
+  calicoUrl: string;
+  scenarios: SanitizedScenarioEvidence[];
+  bootstrapFailure?: {
+    stage: BootstrapFailureStage;
+    code: 'KIND_LIFECYCLE_BOOTSTRAP_FAILED' | 'KIND_LIFECYCLE_KIND_PROVISION_FAILED';
+  };
+  processFailure?: {
+    source: 'uncaught-exception' | 'unhandled-rejection';
+    code: 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION' | 'KIND_LIFECYCLE_UNHANDLED_REJECTION';
+    cause: ProcessFailureCause;
+    location: ProcessFailureLocation;
+  };
+  image?: {
+    digest: string;
+    sourceRevision?: string;
+  };
+  ownerFailureEvidence?: OwnerFailureEvidence[];
+  passed: boolean;
+  sanitized: true;
+}
+
+export type BootstrapFailureStage =
+  | 'harness-bootstrap'
+  | 'kind-provisioning'
+  | 'scenario-selection'
+  | 'helm-version'
+  | 'production-image'
+  | 'source-revision'
+  | 'kind-cluster'
+  | 'runtime-images'
+  | 'calico-install'
+  | 'production-image-load'
+  | 'control-plane-readiness'
+  | 'kubernetes-api-service'
+  | 'kubernetes-api-endpoint'
+  | 'scenario-execution'
+  | 'cluster-cleanup';
+
+export type ProcessFailureCause =
+  | 'EPIPE'
+  | 'ECONNRESET'
+  | 'ERR_STREAM_DESTROYED'
+  | 'ERR_STREAM_PREMATURE_CLOSE'
+  | 'ERR_STREAM_WRITE_AFTER_END'
+  | 'ERR_SOCKET_CLOSED'
+  | 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+  | 'ERROR'
+  | 'TYPE_ERROR'
+  | 'RANGE_ERROR'
+  | 'SYNTAX_ERROR'
+  | 'AGGREGATE_ERROR'
+  | 'UNKNOWN';
+
+export type ProcessFailureLocation =
+  'lifecycle-harness' | 'tenant-cutover' | 'task1-prerequisite' | 'node-runtime' | 'unknown';
+
+export interface OwnerFailureEvidence {
+  code: string;
+  producer: 'owner_entrypoint';
+  transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
+  ownerStage?: OwnerMigrationFailureStage;
+  proofCode?: 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID';
+  proofInvariant?: string;
+  snapshot?: 's0' | 's1';
+  catalogStep?: OwnerMigrationCatalogStep;
+  snapshotTransaction?: 'begin' | 'commit';
+  snapshotValidation?: OwnerMigrationSnapshotValidation;
+  originClassificationStep?: OwnerMigrationOriginClassificationStep;
+  migration?: string;
+  phase?: 'baseline' | 'lifecycle' | 'expand' | 'enforce';
+  sqlstate?: string;
+  logSha256: string;
+}
+
+const API_POD_STARTUP_CODES = [
+  'COMMANDER_TENANT_AUTHORITY_PROOF_PORT_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE_INVALID',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_PORT_INVALID',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_CERT_FILE_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_KEY_FILE_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_PROOF_DNS_NAME_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256_REQUIRED',
+  'DATABASE_URL_REQUIRED',
+  'COMMANDER_TENANT_AUTHORITY_DATABASE_URL_REQUIRED',
+  'TASK1_READINESS_TLS_PATH_INVALID',
+  'TASK1_READINESS_PROOF_DNS_NAME_INVALID',
+  'TASK1_READINESS_RUNTIME_IDENTITY_INVALID',
+  'TASK1_READINESS_DATABASE_URLS_MUST_BE_DISTINCT',
+  'TASK1_READINESS_APP_DATABASE_URL_INVALID',
+  'TASK1_READINESS_APP_DATABASE_ROLE_INVALID',
+  'TASK1_READINESS_AUTHORITY_DATABASE_URL_INVALID',
+  'TASK1_READINESS_AUTHORITY_DATABASE_ROLE_INVALID',
+  'TASK1_READINESS_FILE_OWNERSHIP_UNSUPPORTED',
+  'TASK1_READINESS_CERT_FILE_INVALID',
+  'TASK1_READINESS_KEY_FILE_INVALID',
+  'TASK1_READINESS_CERT_FILE_MODE_INVALID',
+  'TASK1_READINESS_KEY_FILE_MODE_INVALID',
+  'TASK1_READINESS_CERT_FILE_OWNER_INVALID',
+  'TASK1_READINESS_KEY_FILE_OWNER_INVALID',
+  'TASK1_READINESS_TLS_MATERIAL_INVALID',
+  'TASK1_DATABASE_IDENTITY_INVALID',
+  'COMMANDER_MIGRATION_FAILED',
+  'COMMANDER_API_STARTUP_FAILED',
+  'COMMANDER_API_RUNTIME_MODULE_NOT_FOUND',
+  'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED',
+] as const;
+
+type ApiPodStartupCode = (typeof API_POD_STARTUP_CODES)[number];
+const API_POD_STARTUP_CONTAINERS = [
+  'api',
+  'api-runtime-state',
+  'api-proof-tls-materialize',
+  'migration-gate',
+] as const;
+type ApiPodStartupContainer = (typeof API_POD_STARTUP_CONTAINERS)[number];
+const API_POD_TERMINATION_REASONS = [
+  'ContainerCannotRun',
+  'Error',
+  'OOMKilled',
+  'StartError',
+] as const;
+type ApiPodTerminationReason = (typeof API_POD_TERMINATION_REASONS)[number];
+const MIGRATION_GATE_FAILURE_CODES = [
+  'MIGRATION_GATE_MODE_INVALID',
+  'MIGRATION_GATE_DATABASE_URL_MISSING',
+  'MIGRATION_GATE_DESCRIPTORS_INVALID',
+  'MIGRATION_GATE_TIMEOUT_INVALID',
+  'MIGRATION_GATE_DATABASE_UNAVAILABLE',
+  'COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED',
+  'COMMANDER_DATABASE_TLS_CA_FILE_UNREADABLE',
+  'COMMANDER_DATABASE_TLS_CA_FILE_INVALID',
+  'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_REQUIRED',
+  'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_INVALID',
+  'COMMANDER_DATABASE_DSN_INVALID',
+  'COMMANDER_DATABASE_SSLMODE_VERIFY_FULL_REQUIRED',
+  'COMMANDER_DATABASE_DSN_TLS_OPTION_FORBIDDEN',
+  'COMMANDER_DATABASE_SERVER_CERTIFICATE_INVALID',
+  'COMMANDER_DATABASE_SERVER_SPKI_MISMATCH',
+] as const;
+type MigrationGateFailureCode = (typeof MIGRATION_GATE_FAILURE_CODES)[number];
+
+interface ApiPodTerminationFacts {
+  terminationReason: ApiPodTerminationReason;
+  exitCode: number;
+}
+
+export interface ApiPodStartupFailureEvidence {
+  code: ApiPodStartupCode;
+  producer: 'api_entrypoint';
+  transport: 'kubectl_logs' | 'kubectl_logs_unavailable';
+  container: ApiPodStartupContainer;
+  migrationGateCode?: MigrationGateFailureCode;
+  terminationReason?: ApiPodTerminationReason;
+  exitCode?: number;
+  logSha256: string;
+}
+
+export type RolloutResourceKind = 'Deployment' | 'Job' | 'Pod';
+export type RolloutComponent =
+  | 'api'
+  | 'worker'
+  | 'kernel-ops'
+  | 'adapter-ops'
+  | 'postgres'
+  | 'redis'
+  | 'migration'
+  | 'tenant-cutover-proof';
+export type RolloutReasonCode =
+  | 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED'
+  | 'JOB_DEADLINE_EXCEEDED'
+  | 'JOB_BACKOFF_LIMIT_EXCEEDED'
+  | 'POD_UNSCHEDULABLE'
+  | 'POD_IMAGE_PULL_FAILED'
+  | 'POD_CONTAINER_CONFIG_ERROR'
+  | 'POD_CONTAINER_START_FAILED'
+  | 'POD_CONTAINER_TERMINATED'
+  | 'POD_OOM_KILLED'
+  | 'POD_CRASH_LOOP_BACKOFF';
+export type RolloutNonterminalReasonCode =
+  'DEPLOYMENT_UNAVAILABLE' | 'JOB_ACTIVE' | 'POD_NOT_READY';
+
+export interface RolloutFailureEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED';
+  resourceKind: RolloutResourceKind;
+  component: RolloutComponent;
+  reasonCode: RolloutReasonCode;
+}
+
+export interface RolloutEmptyEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_EMPTY';
+}
+
+export interface RolloutNonterminalResourceEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL';
+  resourceKind: RolloutResourceKind;
+  component: RolloutComponent;
+  reasonCode: RolloutNonterminalReasonCode;
+}
+
+export type RolloutNonterminalEvidence = RolloutEmptyEvidence | RolloutNonterminalResourceEvidence;
+
+export interface RolloutQueryEvidence {
+  code: 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' | 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT';
+}
+
+export type RolloutObservation =
+  | { kind: 'terminal'; evidence: RolloutFailureEvidence }
+  | { kind: 'success'; evidence?: RolloutNonterminalEvidence }
+  | { kind: 'query-failure'; code: RolloutQueryEvidence['code'] };
+
+export interface RolloutObservationState {
+  terminal?: RolloutFailureEvidence;
+  nonterminal?: RolloutNonterminalEvidence;
+  queryFailure?: RolloutQueryEvidence;
+}
+
+// A rendered release's status response legitimately exceeds 64 KiB. The observer
+// retains it only in-process and emits a finite classification, never the response.
+const ROLLOUT_OBSERVATION_MAX_BYTES = 1024 * 1024;
+const ROLLOUT_OBSERVATION_MAX_ITEMS = 64;
+const ROLLOUT_COMPONENTS: readonly RolloutComponent[] = [
+  'api',
+  'worker',
+  'kernel-ops',
+  'adapter-ops',
+  'postgres',
+  'redis',
+  'migration',
+  'tenant-cutover-proof',
+];
+const ROLLOUT_RESOURCE_KINDS: readonly RolloutResourceKind[] = ['Deployment', 'Job', 'Pod'];
+const ROLLOUT_REASON_CODES: readonly RolloutReasonCode[] = [
+  'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED',
+  'JOB_DEADLINE_EXCEEDED',
+  'JOB_BACKOFF_LIMIT_EXCEEDED',
+  'POD_UNSCHEDULABLE',
+  'POD_IMAGE_PULL_FAILED',
+  'POD_CONTAINER_CONFIG_ERROR',
+  'POD_CONTAINER_START_FAILED',
+  'POD_CONTAINER_TERMINATED',
+  'POD_OOM_KILLED',
+  'POD_CRASH_LOOP_BACKOFF',
+];
+const ROLLOUT_NONTERMINAL_REASON_CODES: readonly RolloutNonterminalReasonCode[] = [
+  'DEPLOYMENT_UNAVAILABLE',
+  'JOB_ACTIVE',
+  'POD_NOT_READY',
+];
+const ROLLOUT_FAILURE_RECORD = new RegExp(
+  '(?:^|:)TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED|JOB_DEADLINE_EXCEEDED|JOB_BACKOFF_LIMIT_EXCEEDED|POD_UNSCHEDULABLE|POD_IMAGE_PULL_FAILED|POD_CONTAINER_CONFIG_ERROR|POD_CONTAINER_START_FAILED|POD_CONTAINER_TERMINATED|POD_OOM_KILLED|POD_CRASH_LOOP_BACKOFF)(?=:code=|\\n|$)',
+);
+const ROLLOUT_NONTERMINAL_RECORD = new RegExp(
+  '(?:^|:)TENANT_CUTOVER_ROLLOUT_NONTERMINAL:resource_kind=(Deployment|Job|Pod);component=(api|worker|kernel-ops|adapter-ops|postgres|redis|migration|tenant-cutover-proof);reason_code=(DEPLOYMENT_UNAVAILABLE|JOB_ACTIVE|POD_NOT_READY)(?=\\n|$)',
+);
+const ROLLOUT_OBSERVATION_CODE_RECORD = new RegExp(
+  '(?:^|:)(TENANT_CUTOVER_ROLLOUT_QUERY_FAILED|TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT|TENANT_CUTOVER_ROLLOUT_EMPTY)(?=\\n|$)',
+);
+
+type OwnerMigrationFailureStage =
+  | 'input'
+  | 'proof_runtime'
+  | 'bootstrap_kernel'
+  | 'bootstrap_closure'
+  | 'owner_pool_configuration'
+  | 'owner_pool_connect'
+  | 'bootstrap_context'
+  | 'bootstrap_context_authority_url'
+  | 'bootstrap_context_pool_configuration'
+  | 'bootstrap_context_pool_connect'
+  | 'bootstrap_context_catalog_query'
+  | 'bootstrap_context_pool_close'
+  | 'lifecycle_initialize'
+  | 'lifecycle_pinned_manifest_validation'
+  | 'lifecycle_prepared_request_validation'
+  | 'lifecycle_table_discovery'
+  | 'lifecycle_candidate_peer_observation'
+  | 'lifecycle_candidate_peer_validation'
+  | 'lifecycle_prebootstrap_snapshot'
+  | 'lifecycle_prebootstrap_snapshot_comparison'
+  | 'lifecycle_initialization_planning'
+  | 'lifecycle_descriptor_transaction'
+  | 'lifecycle_peer_reobservation'
+  | 'lifecycle_peer_reobservation_input_consistency'
+  | 'lifecycle_peer_reobservation_candidate_binding_validation'
+  | 'lifecycle_peer_reobservation_observed_binding_validation'
+  | 'lifecycle_peer_reobservation_binding_consistency'
+  | 'lifecycle_transaction'
+  | 'current_read'
+  | 'rollout_proof';
+
+type OwnerMigrationCatalogStep =
+  | 'search_path'
+  | 'identity'
+  | 'ledger'
+  | 'namespaces'
+  | 'relations'
+  | 'functions'
+  | 'types'
+  | 'extensions'
+  | 'policies'
+  | 'triggers'
+  | 'roles'
+  | 'memberships'
+  | 'role_settings'
+  | 'database_acl'
+  | 'schema_acls'
+  | 'default_acls'
+  | 'product_has_rows';
+
+type OwnerMigrationSnapshotValidation =
+  | 'bootstrap_validation'
+  | 'identity_validation'
+  | 'product_source_validation'
+  | 'catalog_version_validation'
+  | 'origin_classification';
+
+type OwnerMigrationOriginClassificationStep =
+  'fresh_catalog_shape' | 'role_envelope' | 'role_attributes' | 'memberships' | 'public_acl';
+
+const OWNER_FAILURE_STAGE =
+  '(input|proof_runtime|bootstrap_kernel|bootstrap_closure|owner_pool_configuration|owner_pool_connect|bootstrap_context|bootstrap_context_authority_url|bootstrap_context_pool_configuration|bootstrap_context_pool_connect|bootstrap_context_catalog_query|bootstrap_context_pool_close|lifecycle_initialize|lifecycle_pinned_manifest_validation|lifecycle_prepared_request_validation|lifecycle_table_discovery|lifecycle_candidate_peer_observation|lifecycle_candidate_peer_validation|lifecycle_prebootstrap_snapshot|lifecycle_prebootstrap_snapshot_comparison|lifecycle_initialization_planning|lifecycle_descriptor_transaction|lifecycle_peer_reobservation|lifecycle_peer_reobservation_input_consistency|lifecycle_peer_reobservation_candidate_binding_validation|lifecycle_peer_reobservation_observed_binding_validation|lifecycle_peer_reobservation_binding_consistency|lifecycle_transaction|current_read|rollout_proof)';
+const OWNER_FAILURE_CATALOG_STEP =
+  '(search_path|identity|ledger|namespaces|relations|functions|types|extensions|policies|triggers|roles|memberships|role_settings|database_acl|schema_acls|default_acls|product_has_rows)';
+const OWNER_FAILURE_SNAPSHOT_TRANSACTION = '(begin|commit)';
+const OWNER_FAILURE_SNAPSHOT_VALIDATION =
+  '(bootstrap_validation|identity_validation|product_source_validation|catalog_version_validation|origin_classification)';
+const OWNER_FAILURE_ORIGIN_CLASSIFICATION_STEP =
+  '(fresh_catalog_shape|role_envelope|role_attributes|memberships|public_acl)';
+const PROOF_OWNER_FAILURE_RECORD =
+  /(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);owner_stage=rollout_proof;proof_code=(TENANT_CUTOVER_KUBERNETES_PROOF_INVALID);proof_invariant=(task1KubernetesProofObserver\.(?:ts|js):[1-9][0-9]*:[1-9][0-9]*);log_sha256=([a-f0-9]{64})(?=\n|$)/;
+const OWNER_FAILURE_RECORD = new RegExp(
+  '(?:^|:)code=COMMANDER_MIGRATION_FAILED;producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)' +
+    '(?:;owner_stage=' +
+    OWNER_FAILURE_STAGE +
+    ')?(?:;snapshot=(s0|s1)(?:;catalog_step=' +
+    OWNER_FAILURE_CATALOG_STEP +
+    '|;snapshot_transaction=' +
+    OWNER_FAILURE_SNAPSHOT_TRANSACTION +
+    '|;snapshot_validation=' +
+    OWNER_FAILURE_SNAPSHOT_VALIDATION +
+    '(?:;origin_classification_step=' +
+    OWNER_FAILURE_ORIGIN_CLASSIFICATION_STEP +
+    ')?' +
+    ')' +
+    ')?(?:;migration=([0-9]{4}-[0-9]{2}-[0-9]{2}\\.[0-9]+\\.[a-z0-9_]+);phase=(baseline|lifecycle|expand|enforce);sqlstate=([0-9A-Z]{5}))?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
+);
+const GENERIC_OWNER_FAILURE_RECORD = new RegExp(
+  '(?:^|:)code=((?:COMMANDER|TASK1|TENANT_CUTOVER)_[A-Z0-9_]{1,80});producer=owner_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable)(?:;owner_stage=' +
+    OWNER_FAILURE_STAGE +
+    ')?;log_sha256=([a-f0-9]{64})(?=\\n|$)',
+);
+const API_POD_STARTUP_FAILURE_RECORD = new RegExp(
+  '(?:^|:)TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=(' +
+    API_POD_STARTUP_CODES.join('|') +
+    ');producer=api_entrypoint;transport=(kubectl_logs|kubectl_logs_unavailable);container=(' +
+    API_POD_STARTUP_CONTAINERS.join('|') +
+    ')(?:;termination_reason=(' +
+    API_POD_TERMINATION_REASONS.join('|') +
+    ');exit_code=([0-9]{1,3}))?(?:;migration_gate_code=(' +
+    MIGRATION_GATE_FAILURE_CODES.join('|') +
+    '))?;log_sha256=([a-f0-9]{64})(?=;|\\n|$)',
+);
+const FIXED_FAILURE_CODE = /\b[A-Z][A-Z0-9_]{1,95}\b/g;
+const LIFECYCLE_FAILURE_CODES = new Set([
+  'API_DEPLOYMENT_NOT_AVAILABLE',
+  'API_PROOF_SERVICE_INVALID',
+  'EPHEMERAL_LIFECYCLE_RESOURCE_CLEANUP_FAILED',
+  'EXTERNAL_DATABASE_CLEANUP_FAILED',
+  'EXTERNAL_DATABASE_POD_IP_INVALID',
+  'EXTERNAL_DATABASE_SERVICE_INVALID',
+  'EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED',
+  'HELM_HISTORY_FAILED',
+  'HELM_HISTORY_INVALID',
+  'HELM_UNINSTALL_CLEANUP_FAILED',
+  'HELM_UNINSTALL_DELETE_FAILED',
+  'HELM_UNINSTALL_DELETE_FORBIDDEN',
+  'HELM_UNINSTALL_FAILED',
+  'HELM_UNINSTALL_RELEASE_NOT_FOUND',
+  'HELM_UNINSTALL_WAIT_TIMEOUT',
+  'KUBECTL_JSON_FAILED',
+  'KUBECTL_JSON_INVALID',
+  'KIND_LIFECYCLE_SCENARIO_EXECUTION_FAILED',
+  'LIFECYCLE_ROW_COUNT_INVALID',
+  'NAMESPACE_RESET_FAILED',
+  'NETWORK_POLICY_CANARY_CLEANUP_FAILED',
+  'NETWORK_POLICY_CANARY_CREATE_FAILED',
+  'NETWORK_POLICY_CANARY_TIMEOUT',
+  'NETWORK_POLICY_POSITIVE_CANARY_INVALID',
+  'PROOF_READER_RBAC_INVALID',
+  'PROOF_ROW_QUERY_FAILED',
+  'RECOVERED_API_DEPLOYMENT_NOT_AVAILABLE',
+  'ROLLOUT_FAILURE_NOT_OBSERVED',
+]);
+
+const HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS: readonly HelmUninstallResidualResourceKind[] = [
+  'clusterrole',
+  'clusterrolebinding',
+  'configmap',
+  'deployment',
+  'horizontalpodautoscaler',
+  'ingress',
+  'job',
+  'networkpolicy',
+  'persistentvolumeclaim',
+  'pod',
+  'poddisruptionbudget',
+  'replicaset',
+  'role',
+  'rolebinding',
+  'secret',
+  'service',
+  'serviceaccount',
+  'statefulset',
+];
+
+const HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS: readonly HelmUninstallResidualPodComponent[] = [
+  'adapter-ops',
+  'api',
+  'kernel-ops',
+  'postgres',
+  'redis',
+  'tenant-authority-proof-reader',
+  'web',
+  'worker',
+];
+
+const HELM_UNINSTALL_RESIDUAL_EVIDENCE =
+  /^(?:HELM_UNINSTALL_DELETE_FAILED|HELM_UNINSTALL_DELETE_FORBIDDEN|HELM_UNINSTALL_FAILED|HELM_UNINSTALL_RELEASE_NOT_FOUND|HELM_UNINSTALL_WAIT_TIMEOUT);residual_inventory=(available|unavailable)(?:;residual_kinds=(none|[a-z,]+))?(?:;residual_pod_components=(none|[a-z,-]+))?(?:;residual_terminating_pod_components=(none|[a-z,-]+))?(?=:|$)/;
+
+const EXTERNAL_DATABASE_ROLE_FAILURE_EVIDENCE =
+  /^EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=((?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query)(?:,(?:owner|app|tenant-authority|scheduler|worker|adapter-ops):(?:authentication|tls|network|identity|query))*)(?=[:\n]|$)/;
+
+function parseExternalDatabaseRoleFailures(
+  error: string,
+): ExternalDatabaseRoleFailureEvidence[] | undefined {
+  const match = error.match(EXTERNAL_DATABASE_ROLE_FAILURE_EVIDENCE);
+  if (!match) return undefined;
+  const failures = match[1].split(',').map((value) => {
+    const [role, failureClass] = value.split(':');
+    return { role, failureClass } as ExternalDatabaseRoleFailureEvidence;
+  });
+  if (new Set(failures.map(({ role }) => role)).size !== failures.length) return undefined;
+  return failures;
+}
+
+function scenarioFailureCodes(error: string | undefined): string[] | undefined {
+  if (!error) return undefined;
+  const boundedError = error.length <= 8_192 ? error : error.slice(0, 4_096) + error.slice(-4_096);
+  const codes = [
+    ...new Set([
+      ...(boundedError.match(FIXED_FAILURE_CODE) ?? []).filter(
+        (code) => isAllowedHelmDiagnosticCode(code) || LIFECYCLE_FAILURE_CODES.has(code),
+      ),
+    ]),
+  ].slice(0, 8);
+  return codes.length > 0 ? codes : undefined;
+}
+
+function isHelmUninstallResidualResourceKind(
+  value: string,
+): value is HelmUninstallResidualResourceKind {
+  return HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.some((kind) => kind === value);
+}
+
+function isHelmUninstallResidualPodComponent(
+  value: string,
+): value is HelmUninstallResidualPodComponent {
+  return HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.some((component) => component === value);
+}
+
+function parseHelmUninstallResidualValues<T extends string>(
+  encoded: string,
+  isAllowed: (value: string) => value is T,
+): T[] | undefined {
+  if (encoded === 'none') return [];
+  const values = encoded.split(',');
+  if (
+    values.length === 0 ||
+    new Set(values).size !== values.length ||
+    values.some((value) => !isAllowed(value))
+  ) {
+    return undefined;
+  }
+  return values;
+}
+
+function parseHelmUninstallResidualEvidence(
+  error: string,
+): HelmUninstallResidualEvidence | undefined {
+  const match = error.match(HELM_UNINSTALL_RESIDUAL_EVIDENCE);
+  if (!match) return undefined;
+  const inventory = match[1];
+  const encodedKinds = match[2];
+  const encodedPodComponents = match[3];
+  const encodedTerminatingPodComponents = match[4];
+  if (inventory === 'unavailable') {
+    return encodedKinds === undefined &&
+      encodedPodComponents === undefined &&
+      encodedTerminatingPodComponents === undefined
+      ? { inventory }
+      : undefined;
+  }
+  if (
+    encodedKinds === undefined ||
+    encodedPodComponents === undefined ||
+    encodedTerminatingPodComponents === undefined
+  ) {
+    return undefined;
+  }
+  const parsedKinds = parseHelmUninstallResidualValues(
+    encodedKinds,
+    isHelmUninstallResidualResourceKind,
+  );
+  const parsedPodComponents = parseHelmUninstallResidualValues(
+    encodedPodComponents,
+    isHelmUninstallResidualPodComponent,
+  );
+  const parsedTerminatingPodComponents = parseHelmUninstallResidualValues(
+    encodedTerminatingPodComponents,
+    isHelmUninstallResidualPodComponent,
+  );
+  if (
+    !parsedKinds ||
+    !parsedPodComponents ||
+    !parsedTerminatingPodComponents ||
+    parsedTerminatingPodComponents.some((component) => !parsedPodComponents.includes(component))
+  ) {
+    return undefined;
+  }
+  return {
+    inventory,
+    ...(parsedKinds.length > 0
+      ? {
+          resourceKinds: HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.filter((kind) =>
+            parsedKinds.includes(kind),
+          ),
+        }
+      : {}),
+    ...(parsedPodComponents.length > 0
+      ? {
+          podComponents: HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) =>
+            parsedPodComponents.includes(component),
+          ),
+        }
+      : {}),
+    ...(parsedTerminatingPodComponents.length > 0
+      ? {
+          terminatingPodComponents: HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) =>
+            parsedTerminatingPodComponents.includes(component),
+          ),
+        }
+      : {}),
+  };
+}
+
+function parseAdmissionRbacFailure(error: string): AdmissionRbacFailureEvidence | undefined {
+  const code = error.split(':', 1)[0];
+  if (!code) return undefined;
+  return Object.entries(ADMISSION_RBAC_FAILURES).find(([candidate]) => candidate === code)?.[1];
+}
+
+function failedCheckEvidence(
+  group: SanitizedCheckGroup,
+  checks: readonly AssertionResult[] | undefined,
+): SanitizedCheckFailure[] {
+  if (!checks) return [];
+  return checks.reduce<SanitizedCheckFailure[]>((failed, check, index) => {
+    if (!check.passed) failed.push({ group, index: index + 1 });
+    return failed;
+  }, []);
+}
+
+function jsonRecord(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+export function materializeNetworkPrerequisiteValues(
+  values: string,
+  apiProofSpkiSha256: string,
+  release: string,
+): Record<string, unknown> {
+  let parsed: unknown;
+  try {
+    parsed = load(values);
+  } catch {
+    throw new Error('TENANT_POLICY_RELEASE_VALUES_INVALID');
+  }
+  const parsedValues = jsonRecord(parsed);
+  const tenantAuthority = jsonRecord(parsedValues?.tenantAuthority);
+  const apiProof = jsonRecord(tenantAuthority?.apiProof);
+  const networkPolicy = jsonRecord(parsedValues?.networkPolicy);
+  const chartContentSha256 = tenantAuthority?.chartContentSha256;
+  const proofPort = apiProof?.port;
+  if (
+    !parsedValues ||
+    !tenantAuthority ||
+    !apiProof ||
+    !networkPolicy ||
+    typeof chartContentSha256 !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(chartContentSha256) ||
+    typeof proofPort !== 'number' ||
+    !Number.isSafeInteger(proofPort) ||
+    proofPort < 1 ||
+    proofPort > 65535 ||
+    !/^[a-f0-9]{64}$/.test(apiProofSpkiSha256)
+  ) {
+    throw new Error('TENANT_POLICY_RELEASE_VALUES_INVALID');
+  }
+  tenantAuthority.platformBinding = { chartContentSha256 };
+  tenantAuthority.apiProof = {
+    ...apiProof,
+    publicCertificateSpkiSha256: apiProofSpkiSha256,
+    serviceName: release + '-api-proof',
+    servicePort: proofPort,
+    targetPort: proofPort,
+    podSelector: {
+      'app.kubernetes.io/name': release,
+      'app.kubernetes.io/instance': release,
+      'app.kubernetes.io/component': 'api',
+    },
+    dnsSan: release + '-api-proof.' + NAMESPACE + '.svc.cluster.local',
+  };
+  networkPolicy.clusterDomain = 'cluster.local';
+  return parsedValues;
+}
+
+function jsonArray(value: unknown): unknown[] | undefined {
+  return Array.isArray(value) ? value : undefined;
+}
+
+function hasExactValue<T extends string>(value: unknown, values: readonly T[]): value is T {
+  return typeof value === 'string' && values.includes(value as T);
+}
+
+function rolloutComponent(
+  metadata: Record<string, unknown> | undefined,
+): RolloutComponent | undefined {
+  const labels = jsonRecord(metadata?.labels);
+  if (!labels) return undefined;
+  if (labels['commander.io/migration-client-v2'] === 'true') return 'migration';
+  if (labels['commander.io/tenant-authority-proof-reader'] === 'true') {
+    return 'tenant-cutover-proof';
+  }
+  return hasExactValue(labels['app.kubernetes.io/component'], ROLLOUT_COMPONENTS)
+    ? labels['app.kubernetes.io/component']
+    : undefined;
+}
+
+function conditionReason(
+  status: Record<string, unknown> | undefined,
+  type: string,
+  state: string,
+): string | undefined {
+  const conditions = jsonArray(status?.conditions);
+  if (!conditions) return undefined;
+  for (const candidate of conditions) {
+    const condition = jsonRecord(candidate);
+    if (
+      condition?.type === type &&
+      condition.status === state &&
+      typeof condition.reason === 'string'
+    ) {
+      return condition.reason;
+    }
+  }
+  return undefined;
+}
+
+function hasCondition(
+  status: Record<string, unknown> | undefined,
+  type: string,
+  state: string,
+): boolean {
+  const conditions = jsonArray(status?.conditions);
+  return (
+    conditions?.some((candidate) => {
+      const condition = jsonRecord(candidate);
+      return condition?.type === type && condition.status === state;
+    }) ?? false
+  );
+}
+
+function podWaitingReason(status: Record<string, unknown> | undefined): string | undefined {
+  for (const field of ['initContainerStatuses', 'containerStatuses']) {
+    const containers = jsonArray(status?.[field]);
+    if (!containers) continue;
+    for (const candidate of containers) {
+      const container = jsonRecord(candidate);
+      const state = jsonRecord(container?.state);
+      const waiting = jsonRecord(state?.waiting);
+      if (typeof waiting?.reason === 'string') return waiting.reason;
+    }
+  }
+  return undefined;
+}
+
+function podLastTerminationReason(status: Record<string, unknown> | undefined): string | undefined {
+  for (const field of ['initContainerStatuses', 'containerStatuses'] as const) {
+    const containers = status?.[field];
+    if (!Array.isArray(containers)) continue;
+    for (const candidate of containers) {
+      const container = jsonRecord(candidate);
+      const lastState = jsonRecord(container?.lastState);
+      const terminated = jsonRecord(lastState?.terminated);
+      if (typeof terminated?.reason === 'string') return terminated.reason;
+    }
+  }
+  return undefined;
+}
+
+function podHasNonzeroTermination(status: Record<string, unknown> | undefined): boolean {
+  for (const field of ['initContainerStatuses', 'containerStatuses'] as const) {
+    const containers = jsonArray(status?.[field]);
+    if (!containers) continue;
+    for (const candidate of containers) {
+      const container = jsonRecord(candidate);
+      const state = jsonRecord(container?.state);
+      const terminated = jsonRecord(state?.terminated);
+      const exitCode = terminated?.exitCode;
+      if (
+        typeof exitCode === 'number' &&
+        Number.isInteger(exitCode) &&
+        exitCode > 0 &&
+        exitCode <= 255
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/** Extracts the fixed, non-sensitive termination facts for the API container only. */
+export function apiPodTerminationFacts(status: unknown): ApiPodTerminationFacts | undefined {
+  const containerStatuses = jsonArray(jsonRecord(status)?.containerStatuses);
+  const apiContainer = containerStatuses
+    ?.map((candidate) => jsonRecord(candidate))
+    .find((candidate) => candidate?.name === 'api');
+  const lastState = jsonRecord(apiContainer?.lastState);
+  const currentState = jsonRecord(apiContainer?.state);
+  const terminated = jsonRecord(lastState?.terminated) ?? jsonRecord(currentState?.terminated);
+  const reason = terminated?.reason;
+  const exitCode = terminated?.exitCode;
+  if (
+    !hasExactValue(reason, API_POD_TERMINATION_REASONS) ||
+    typeof exitCode !== 'number' ||
+    !Number.isInteger(exitCode) ||
+    exitCode < 0 ||
+    exitCode > 255
+  ) {
+    return undefined;
+  }
+  return { terminationReason: reason, exitCode };
+}
+
+function rolloutReasonForItem(
+  resourceKind: RolloutResourceKind,
+  status: Record<string, unknown> | undefined,
+  component?: RolloutComponent,
+  spec?: Record<string, unknown>,
+): RolloutReasonCode | undefined {
+  if (resourceKind === 'Deployment') {
+    return conditionReason(status, 'Progressing', 'False') === 'ProgressDeadlineExceeded'
+      ? 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED'
+      : undefined;
+  }
+  if (resourceKind === 'Job') {
+    const reason = conditionReason(status, 'Failed', 'True');
+    if (reason === 'DeadlineExceeded') return 'JOB_DEADLINE_EXCEEDED';
+    if (reason === 'BackoffLimitExceeded') return 'JOB_BACKOFF_LIMIT_EXCEEDED';
+    const failed = status?.failed;
+    if (
+      spec?.backoffLimit === 0 &&
+      typeof failed === 'number' &&
+      Number.isInteger(failed) &&
+      failed > 0
+    ) {
+      return 'JOB_BACKOFF_LIMIT_EXCEEDED';
+    }
+    return undefined;
+  }
+  if (conditionReason(status, 'PodScheduled', 'False') === 'Unschedulable') {
+    return 'POD_UNSCHEDULABLE';
+  }
+  if (status?.phase === 'Failed' && podHasNonzeroTermination(status)) {
+    return 'POD_CONTAINER_TERMINATED';
+  }
+  switch (podWaitingReason(status)) {
+    case 'ErrImagePull':
+    case 'ImagePullBackOff':
+      return 'POD_IMAGE_PULL_FAILED';
+    case 'CreateContainerConfigError':
+    case 'CreateContainerError':
+      return 'POD_CONTAINER_CONFIG_ERROR';
+    case 'RunContainerError':
+      return 'POD_CONTAINER_START_FAILED';
+    case 'CrashLoopBackOff':
+      return podLastTerminationReason(status) === 'OOMKilled'
+        ? 'POD_OOM_KILLED'
+        : 'POD_CRASH_LOOP_BACKOFF';
+    default:
+      return undefined;
+  }
+}
+
+function rolloutNonterminalReasonForItem(
+  resourceKind: RolloutResourceKind,
+  status: Record<string, unknown> | undefined,
+): RolloutNonterminalReasonCode | undefined {
+  if (resourceKind === 'Deployment') {
+    return hasCondition(status, 'Available', 'False') ? 'DEPLOYMENT_UNAVAILABLE' : undefined;
+  }
+  if (resourceKind === 'Job') {
+    return typeof status?.active === 'number' && status.active > 0 ? 'JOB_ACTIVE' : undefined;
+  }
+  return hasCondition(status, 'Ready', 'False') ? 'POD_NOT_READY' : undefined;
+}
+
+/** Selects a failed API pod deterministically so diagnostics never use a healthy replica. */
+export function selectFailingApiPodName(items: readonly unknown[]): string | undefined {
+  return items
+    .map((item) => jsonRecord(item))
+    .filter((item): item is Record<string, unknown> => item !== undefined)
+    .filter((item) => rolloutReasonForItem('Pod', jsonRecord(item.status)) !== undefined)
+    .map((item) => jsonRecord(item.metadata)?.name)
+    .filter((name): name is string => typeof name === 'string' && name.length > 0)
+    .sort()[0];
+}
+
+/** Selects the failing init/container so startup diagnostics do not assume the API process ran. */
+export function selectFailingApiContainerName(status: unknown): string | undefined {
+  const podStatus = jsonRecord(status);
+  const failedWaitingReasons = new Set([
+    'ErrImagePull',
+    'ImagePullBackOff',
+    'CreateContainerConfigError',
+    'CreateContainerError',
+    'RunContainerError',
+    'CrashLoopBackOff',
+  ]);
+  const failedTerminationReasons = new Set([
+    'ContainerCannotRun',
+    'Error',
+    'OOMKilled',
+    'StartError',
+  ]);
+  for (const field of ['initContainerStatuses', 'containerStatuses'] as const) {
+    const containers = jsonArray(podStatus?.[field]);
+    if (!containers) continue;
+    const failed = containers
+      .map((candidate) => jsonRecord(candidate))
+      .find((container) => {
+        const waiting = jsonRecord(jsonRecord(container?.state)?.waiting);
+        if (typeof container?.name !== 'string') return false;
+        if (failedWaitingReasons.has(String(waiting?.reason))) return true;
+        for (const state of [container?.state, container?.lastState]) {
+          const terminated = jsonRecord(jsonRecord(state)?.terminated);
+          const exitCode = terminated?.exitCode;
+          if (
+            typeof terminated?.reason === 'string' &&
+            (failedTerminationReasons.has(terminated.reason) ||
+              (typeof exitCode === 'number' && Number.isInteger(exitCode) && exitCode !== 0))
+          ) {
+            return true;
+          }
+        }
+        return false;
+      });
+    if (typeof failed?.name === 'string') return failed.name;
+  }
+  return undefined;
+}
+
+function classifyRolloutFailureItem(value: unknown): RolloutFailureEvidence | undefined {
+  const item = jsonRecord(value);
+  if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
+  const component = rolloutComponent(jsonRecord(item.metadata));
+  const reasonCode = rolloutReasonForItem(
+    item.kind,
+    jsonRecord(item.status),
+    component,
+    jsonRecord(item.spec),
+  );
+  if (!component || !reasonCode) return undefined;
+  return {
+    code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+    resourceKind: item.kind,
+    component,
+    reasonCode,
+  };
+}
+
+function classifyRolloutNonterminalItem(
+  value: unknown,
+): RolloutNonterminalResourceEvidence | undefined {
+  const item = jsonRecord(value);
+  if (!item || !hasExactValue(item.kind, ROLLOUT_RESOURCE_KINDS)) return undefined;
+  const component = rolloutComponent(jsonRecord(item.metadata));
+  const reasonCode = rolloutNonterminalReasonForItem(item.kind, jsonRecord(item.status));
+  if (!component || !reasonCode) return undefined;
+  return {
+    code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+    resourceKind: item.kind,
+    component,
+    reasonCode,
+  };
+}
+
+function rolloutFailurePriority(value: RolloutFailureEvidence): number {
+  switch (value.reasonCode) {
+    case 'POD_UNSCHEDULABLE':
+      return 0;
+    case 'POD_IMAGE_PULL_FAILED':
+      return 1;
+    case 'POD_CONTAINER_CONFIG_ERROR':
+      return 2;
+    case 'POD_CONTAINER_START_FAILED':
+      return 3;
+    case 'POD_CONTAINER_TERMINATED':
+      return 4;
+    case 'POD_CRASH_LOOP_BACKOFF':
+      return 5;
+    case 'JOB_DEADLINE_EXCEEDED':
+      return 6;
+    case 'JOB_BACKOFF_LIMIT_EXCEEDED':
+      return 7;
+    case 'DEPLOYMENT_PROGRESS_DEADLINE_EXCEEDED':
+      return 8;
+  }
+}
+
+function rolloutFailureKey(value: RolloutFailureEvidence): string {
+  return value.resourceKind + '/' + value.component + '/' + value.reasonCode;
+}
+
+function rolloutResourcePriority(value: { resourceKind: RolloutResourceKind }): number {
+  switch (value.resourceKind) {
+    case 'Pod':
+      return 0;
+    case 'Job':
+      return 1;
+    case 'Deployment':
+      return 2;
+  }
+}
+
+function compareRolloutEvidence(
+  left: { resourceKind: RolloutResourceKind; component: RolloutComponent; reasonCode: string },
+  right: { resourceKind: RolloutResourceKind; component: RolloutComponent; reasonCode: string },
+): number {
+  return (
+    rolloutResourcePriority(left) - rolloutResourcePriority(right) ||
+    left.component.localeCompare(right.component) ||
+    left.reasonCode.localeCompare(right.reasonCode)
+  );
+}
+
+function selectRolloutEvidence<
+  T extends {
+    resourceKind: RolloutResourceKind;
+    component: RolloutComponent;
+    reasonCode: string;
+  },
+>(values: readonly T[]): T | undefined {
+  return values.reduce<T | undefined>(
+    (selected, candidate) =>
+      selected === undefined || compareRolloutEvidence(candidate, selected) < 0
+        ? candidate
+        : selected,
+    undefined,
+  );
+}
+
+/** Retains a single canonical observation across Helm's atomic rollback window. */
+export function retainRolloutFailureEvidence(
+  previous: RolloutFailureEvidence | undefined,
+  candidate: RolloutFailureEvidence | undefined,
+): RolloutFailureEvidence | undefined {
+  if (!candidate) return previous;
+  if (!previous) return candidate;
+  const candidatePriority = rolloutFailurePriority(candidate);
+  const previousPriority = rolloutFailurePriority(previous);
+  if (candidatePriority < previousPriority) return candidate;
+  if (candidatePriority > previousPriority) return previous;
+  return rolloutFailureKey(candidate) < rolloutFailureKey(previous) ? candidate : previous;
+}
+
+/** Parses Kubernetes status JSON and returns only a fixed rollout-failure vocabulary. */
+export function classifyRolloutFailureJson(value: string): RolloutFailureEvidence | undefined {
+  const observation = classifyRolloutObservation({ exitCode: 0, stdout: value, stderr: '' });
+  return observation.kind === 'terminal' ? observation.evidence : undefined;
+}
+
+/** Classifies one bounded kubectl observation into a finite safe vocabulary. */
+export function classifyRolloutObservation(result: CommandResult): RolloutObservation {
+  if (result.exitCode !== 0) {
+    return {
+      kind: 'query-failure',
+      code:
+        result.errorCode === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+          ? 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT'
+          : 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED',
+    };
+  }
+  if (Buffer.byteLength(result.stdout) > ROLLOUT_OBSERVATION_MAX_BYTES) {
+    return { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT' };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    return { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' };
+  }
+  const root = jsonRecord(parsed);
+  const items = jsonArray(root?.items);
+  if (!items || items.length > ROLLOUT_OBSERVATION_MAX_ITEMS) {
+    return { kind: 'query-failure', code: 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' };
+  }
+  if (items.length === 0) {
+    return { kind: 'success', evidence: { code: 'TENANT_CUTOVER_ROLLOUT_EMPTY' } };
+  }
+  const terminal = selectRolloutEvidence(
+    items.flatMap((item) => {
+      const evidence = classifyRolloutFailureItem(item);
+      return evidence === undefined ? [] : [evidence];
+    }),
+  );
+  if (terminal) return { kind: 'terminal', evidence: terminal };
+  const nonterminal = selectRolloutEvidence(
+    items.flatMap((item) => {
+      const evidence = classifyRolloutNonterminalItem(item);
+      return evidence === undefined ? [] : [evidence];
+    }),
+  );
+  return { kind: 'success', ...(nonterminal ? { evidence: nonterminal } : {}) };
+}
+
+/** Retains terminal evidence; successful polls replace all nonterminal state. */
+export function retainRolloutObservation(
+  previous: RolloutObservationState | undefined,
+  candidate: RolloutObservation,
+): RolloutObservationState {
+  if (previous?.terminal) return previous;
+  if (candidate.kind === 'terminal') return { terminal: candidate.evidence };
+  if (candidate.kind === 'success') {
+    return candidate.evidence ? { nonterminal: candidate.evidence } : {};
+  }
+  return { queryFailure: { code: candidate.code } };
+}
+
+/** Extracts the strict rollout record and never returns raw Kubernetes fields. */
+export function parseRolloutFailureEvidence(error: string): RolloutFailureEvidence | undefined {
+  const match = error.match(ROLLOUT_FAILURE_RECORD);
+  if (!match) return undefined;
+  const [, resourceKind, component, reasonCode] = match;
+  if (
+    !hasExactValue(resourceKind, ROLLOUT_RESOURCE_KINDS) ||
+    !hasExactValue(component, ROLLOUT_COMPONENTS) ||
+    !hasExactValue(reasonCode, ROLLOUT_REASON_CODES)
+  ) {
+    return undefined;
+  }
+  return {
+    code: 'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED',
+    resourceKind,
+    component,
+    reasonCode,
+  };
+}
+
+function parseRolloutObservationEvidence(
+  error: string,
+): RolloutNonterminalEvidence | RolloutQueryEvidence | undefined {
+  const nonterminal = error.match(ROLLOUT_NONTERMINAL_RECORD);
+  if (nonterminal) {
+    const [, resourceKind, component, reasonCode] = nonterminal;
+    if (
+      hasExactValue(resourceKind, ROLLOUT_RESOURCE_KINDS) &&
+      hasExactValue(component, ROLLOUT_COMPONENTS) &&
+      hasExactValue(reasonCode, ROLLOUT_NONTERMINAL_REASON_CODES)
+    ) {
+      return {
+        code: 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL',
+        resourceKind,
+        component,
+        reasonCode,
+      };
+    }
+  }
+  const code = error.match(ROLLOUT_OBSERVATION_CODE_RECORD)?.[1];
+  return code === 'TENANT_CUTOVER_ROLLOUT_QUERY_FAILED' ||
+    code === 'TENANT_CUTOVER_ROLLOUT_OUTPUT_LIMIT' ||
+    code === 'TENANT_CUTOVER_ROLLOUT_EMPTY'
+    ? { code }
+    : undefined;
+}
+
+function rolloutFailureRecord(value: RolloutFailureEvidence): string {
+  return (
+    'TENANT_CUTOVER_ROLLOUT_RESOURCE_FAILED:resource_kind=' +
+    value.resourceKind +
+    ';component=' +
+    value.component +
+    ';reason_code=' +
+    value.reasonCode
+  );
+}
+
+function rolloutObservationRecord(
+  value: RolloutNonterminalEvidence | RolloutQueryEvidence,
+): string {
+  return value.code === 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL'
+    ? value.code +
+        ':resource_kind=' +
+        value.resourceKind +
+        ';component=' +
+        value.component +
+        ';reason_code=' +
+        value.reasonCode
+    : value.code;
+}
+
+/** Extract only the canonical owner diagnostic record, never the original error text. */
+export function parseOwnerFailureEvidence(error: string): OwnerFailureEvidence | undefined {
+  const proof = error.match(PROOF_OWNER_FAILURE_RECORD);
+  if (proof) {
+    return {
+      code: 'COMMANDER_MIGRATION_FAILED',
+      producer: 'owner_entrypoint',
+      transport: proof[1] as OwnerFailureEvidence['transport'],
+      ownerStage: 'rollout_proof',
+      proofCode: proof[2] as OwnerFailureEvidence['proofCode'],
+      proofInvariant: proof[3]!,
+      logSha256: proof[4]!,
+    };
+  }
+  const match = OWNER_FAILURE_RECORD.exec(error);
+  if (!match) {
+    const generic = error.match(GENERIC_OWNER_FAILURE_RECORD);
+    if (!generic) return undefined;
+    if (!isAllowedHelmDiagnosticCode(generic[1]!)) return undefined;
+    return {
+      code: generic[1] as OwnerFailureEvidence['code'],
+      producer: 'owner_entrypoint',
+      transport: generic[2] as OwnerFailureEvidence['transport'],
+      ...(generic[3] ? { ownerStage: generic[3] as OwnerMigrationFailureStage } : {}),
+      logSha256: generic[4]!,
+    };
+  }
+  const [
+    ,
+    transport,
+    ownerStage,
+    snapshot,
+    catalogStep,
+    snapshotTransaction,
+    snapshotValidation,
+    originClassificationStep,
+    migration,
+    phase,
+    sqlstate,
+    logSha256,
+  ] = match;
+  const evidence: OwnerFailureEvidence = {
+    code: 'COMMANDER_MIGRATION_FAILED',
+    producer: 'owner_entrypoint',
+    transport: transport as OwnerFailureEvidence['transport'],
+    logSha256,
+  };
+  if (ownerStage) evidence.ownerStage = ownerStage as OwnerMigrationFailureStage;
+  if (snapshot && catalogStep) {
+    evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
+    evidence.catalogStep = catalogStep as OwnerMigrationCatalogStep;
+  } else if (snapshot && snapshotTransaction) {
+    evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
+    evidence.snapshotTransaction =
+      snapshotTransaction as OwnerFailureEvidence['snapshotTransaction'];
+  } else if (snapshot && snapshotValidation) {
+    evidence.snapshot = snapshot as OwnerFailureEvidence['snapshot'];
+    evidence.snapshotValidation = snapshotValidation as OwnerMigrationSnapshotValidation;
+    if (snapshotValidation === 'origin_classification' && originClassificationStep) {
+      evidence.originClassificationStep =
+        originClassificationStep as OwnerMigrationOriginClassificationStep;
+    }
+  }
+  if (migration && phase && sqlstate) {
+    evidence.migration = migration;
+    evidence.phase = phase as OwnerFailureEvidence['phase'];
+    evidence.sqlstate = sqlstate;
+  }
+  return evidence;
+}
+
+/** Re-emits only the parsed owner fields after the harness discards child-process output. */
+export function ownerFailureEvidenceRecord(value: OwnerFailureEvidence): string {
+  return [
+    'code=' + value.code,
+    'producer=' + value.producer,
+    'transport=' + value.transport,
+    ...(value.ownerStage ? ['owner_stage=' + value.ownerStage] : []),
+    ...(value.proofCode ? ['proof_code=' + value.proofCode] : []),
+    ...(value.proofInvariant ? ['proof_invariant=' + value.proofInvariant] : []),
+    ...(value.snapshot ? ['snapshot=' + value.snapshot] : []),
+    ...(value.catalogStep ? ['catalog_step=' + value.catalogStep] : []),
+    ...(value.snapshotTransaction ? ['snapshot_transaction=' + value.snapshotTransaction] : []),
+    ...(value.snapshotValidation ? ['snapshot_validation=' + value.snapshotValidation] : []),
+    ...(value.originClassificationStep
+      ? ['origin_classification_step=' + value.originClassificationStep]
+      : []),
+    ...(value.migration ? ['migration=' + value.migration] : []),
+    ...(value.phase ? ['phase=' + value.phase] : []),
+    ...(value.sqlstate ? ['sqlstate=' + value.sqlstate] : []),
+    'log_sha256=' + value.logSha256,
+  ].join(';');
+}
+
+/** Converts the prior API container output to a fixed code and digest without retaining the output. */
+export function apiPodStartupFailureDiagnostic(
+  logs: string,
+  container: ApiPodStartupContainer,
+  transport: ApiPodStartupFailureEvidence['transport'] = 'kubectl_logs',
+  termination?: ApiPodTerminationFacts,
+): string {
+  const tail = logs.slice(-4_096);
+  const startupCode = [
+    ...(tail.match(/\b(?:(?:COMMANDER|TASK1)_[A-Z0-9_]{1,80}|DATABASE_URL_REQUIRED)\b/g) ?? []),
+  ]
+    .reverse()
+    .find((candidate): candidate is ApiPodStartupCode =>
+      API_POD_STARTUP_CODES.includes(candidate as ApiPodStartupCode),
+    );
+  const code =
+    startupCode ??
+    (tail.includes('ERR_MODULE_NOT_FOUND') ? 'COMMANDER_API_RUNTIME_MODULE_NOT_FOUND' : undefined);
+  const migrationGateCode =
+    container === 'migration-gate'
+      ? [...tail.matchAll(/\b(?:MIGRATION_GATE|COMMANDER_DATABASE)_[A-Z0-9_]{1,80}\b/g)]
+          .map(([candidate]) => candidate)
+          .reverse()
+          .find((candidate): candidate is MigrationGateFailureCode =>
+            MIGRATION_GATE_FAILURE_CODES.includes(candidate as MigrationGateFailureCode),
+          )
+      : undefined;
+  return (
+    'code=' +
+    (code ?? 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED') +
+    ';producer=api_entrypoint;transport=' +
+    transport +
+    ';container=' +
+    container +
+    (termination
+      ? ';termination_reason=' +
+        termination.terminationReason +
+        ';exit_code=' +
+        termination.exitCode
+      : '') +
+    (migrationGateCode ? ';migration_gate_code=' + migrationGateCode : '') +
+    ';log_sha256=' +
+    createHash('sha256').update(tail).digest('hex')
+  );
+}
+
+function apiPodLogsAreUnclassified(logs: string, container: ApiPodStartupContainer): boolean {
+  return apiPodStartupFailureDiagnostic(logs, container).startsWith(
+    'code=TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED;',
+  );
+}
+
+function apiPodStartupFailureNeedsRefresh(
+  value: ApiPodStartupFailureEvidence | undefined,
+): boolean {
+  return (
+    value === undefined ||
+    value.code === 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED' ||
+    (value.container === 'migration-gate' &&
+      value.code === 'COMMANDER_MIGRATION_FAILED' &&
+      value.migrationGateCode === undefined)
+  );
+}
+
+function apiPodStartupFailureRank(value: ApiPodStartupFailureEvidence): number {
+  return (
+    (value.code !== 'TENANT_CUTOVER_API_POD_LOG_UNCLASSIFIED' ? 8 : 0) +
+    (value.logSha256 !== createHash('sha256').update('').digest('hex') ? 4 : 0) +
+    (value.transport === 'kubectl_logs' ? 2 : 0) +
+    (value.migrationGateCode !== undefined ? 1 : 0) +
+    (value.terminationReason !== undefined ? 1 : 0)
+  );
+}
+
+function retainApiPodStartupFailure(
+  current: ApiPodStartupFailureEvidence | undefined,
+  candidate: ApiPodStartupFailureEvidence | undefined,
+): ApiPodStartupFailureEvidence | undefined {
+  if (!current) return candidate;
+  if (!candidate) return current;
+  return apiPodStartupFailureRank(candidate) > apiPodStartupFailureRank(current)
+    ? candidate
+    : current;
+}
+
+/** Prefers the current container output only when the terminated container has no safe startup code. */
+export function selectApiPodStartupLogs(
+  previousLogs: string,
+  currentLogs: string,
+  container: ApiPodStartupContainer,
+): string {
+  return apiPodLogsAreUnclassified(previousLogs, container) ? currentLogs : previousLogs;
+}
+
+function parseApiPodStartupFailureEvidence(
+  error: string,
+): ApiPodStartupFailureEvidence | undefined {
+  const match = error.match(API_POD_STARTUP_FAILURE_RECORD);
+  if (!match) return undefined;
+  const [, code, transport, container, terminationReason, exitCode, migrationGateCode, logSha256] =
+    match;
+  if (
+    !hasExactValue(code, API_POD_STARTUP_CODES) ||
+    !hasExactValue(container, API_POD_STARTUP_CONTAINERS)
+  ) {
+    return undefined;
+  }
+  const parsedExitCode = exitCode === undefined ? undefined : Number(exitCode);
+  if (
+    (terminationReason === undefined) !== (parsedExitCode === undefined) ||
+    (terminationReason !== undefined &&
+      (!hasExactValue(terminationReason, API_POD_TERMINATION_REASONS) ||
+        !Number.isInteger(parsedExitCode) ||
+        parsedExitCode < 0 ||
+        parsedExitCode > 255))
+  ) {
+    return undefined;
+  }
+  if (
+    (migrationGateCode !== undefined && container !== 'migration-gate') ||
+    (migrationGateCode !== undefined &&
+      !hasExactValue(migrationGateCode, MIGRATION_GATE_FAILURE_CODES))
+  ) {
+    return undefined;
+  }
+  return {
+    code,
+    producer: 'api_entrypoint',
+    transport: transport as ApiPodStartupFailureEvidence['transport'],
+    container,
+    ...(migrationGateCode !== undefined ? { migrationGateCode } : {}),
+    ...(terminationReason !== undefined && exitCode !== undefined
+      ? { terminationReason, exitCode: parsedExitCode! }
+      : {}),
+    logSha256,
+  };
+}
+
+function apiPodStartupFailureRecord(value: ApiPodStartupFailureEvidence): string {
+  return (
+    'TENANT_CUTOVER_API_POD_STARTUP_FAILED:code=' +
+    value.code +
+    ';producer=' +
+    value.producer +
+    ';transport=' +
+    value.transport +
+    ';container=' +
+    value.container +
+    (value.terminationReason !== undefined && value.exitCode !== undefined
+      ? ';termination_reason=' + value.terminationReason + ';exit_code=' + value.exitCode
+      : '') +
+    (value.migrationGateCode ? ';migration_gate_code=' + value.migrationGateCode : '') +
+    ';log_sha256=' +
+    value.logSha256
+  );
 }
 
 interface HarnessOptions {
@@ -522,27 +2316,278 @@ function rootDir(): string {
   return resolve(__dirname, '..');
 }
 
+class HarnessBootstrapError extends Error {
+  constructor(readonly stage: BootstrapFailureStage) {
+    super('KIND_LIFECYCLE_BOOTSTRAP_FAILED');
+  }
+}
+
+let activeBootstrapStage: BootstrapFailureStage = 'harness-bootstrap';
+
+export function bootstrapFailureStage(error: unknown): BootstrapFailureStage {
+  return error instanceof HarnessBootstrapError ? error.stage : 'harness-bootstrap';
+}
+
+export async function runBootstrapStage<T>(
+  stage: BootstrapFailureStage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  activeBootstrapStage = stage;
+  writeBootstrapFailureEvidence(stage);
+  try {
+    return await operation();
+  } catch {
+    throw new HarnessBootstrapError(stage);
+  }
+}
+
+function bootstrapFailureCode(
+  stage: BootstrapFailureStage,
+): 'KIND_LIFECYCLE_BOOTSTRAP_FAILED' | 'KIND_LIFECYCLE_KIND_PROVISION_FAILED' {
+  return stage === 'kind-provisioning'
+    ? 'KIND_LIFECYCLE_KIND_PROVISION_FAILED'
+    : 'KIND_LIFECYCLE_BOOTSTRAP_FAILED';
+}
+
+export function bootstrapFailureEvidence(
+  stage: BootstrapFailureStage = 'harness-bootstrap',
+): SanitizedHarnessEvidence {
+  return {
+    generatedAt: new Date().toISOString(),
+    cluster: CLUSTER_NAME,
+    kindNodeImage: KIND_NODE_IMAGE,
+    calicoUrl: CALICO_URL,
+    scenarios: [],
+    bootstrapFailure: {
+      stage,
+      code: bootstrapFailureCode(stage),
+    },
+    passed: false,
+    sanitized: true,
+  };
+}
+
+export function processFailureCause(error: unknown): ProcessFailureCause {
+  const code =
+    error && typeof error === 'object' && typeof (error as NodeJS.ErrnoException).code === 'string'
+      ? (error as NodeJS.ErrnoException).code
+      : undefined;
+  if (
+    code === 'EPIPE' ||
+    code === 'ECONNRESET' ||
+    code === 'ERR_STREAM_DESTROYED' ||
+    code === 'ERR_STREAM_PREMATURE_CLOSE' ||
+    code === 'ERR_STREAM_WRITE_AFTER_END' ||
+    code === 'ERR_SOCKET_CLOSED' ||
+    code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER'
+  ) {
+    return code;
+  }
+  if (error instanceof TypeError) return 'TYPE_ERROR';
+  if (error instanceof RangeError) return 'RANGE_ERROR';
+  if (error instanceof SyntaxError) return 'SYNTAX_ERROR';
+  if (error instanceof AggregateError) return 'AGGREGATE_ERROR';
+  if (error instanceof Error) return 'ERROR';
+  return 'UNKNOWN';
+}
+
+export function processFailureLocation(error: unknown): ProcessFailureLocation {
+  const stack = error instanceof Error ? error.stack : undefined;
+  if (!stack) return 'unknown';
+  if (/[/\\]scripts[/\\]helm-lifecycle-kind\.(?:ts|js)(?::\d+)?/.test(stack)) {
+    return 'lifecycle-harness';
+  }
+  if (/[/\\]scripts[/\\]helm-tenant-cutover\.(?:ts|js)(?::\d+)?/.test(stack)) {
+    return 'tenant-cutover';
+  }
+  if (/[/\\]scripts[/\\]task1-helm-prerequisite-command\.(?:ts|js)(?::\d+)?/.test(stack)) {
+    return 'task1-prerequisite';
+  }
+  return stack.includes('node:') ? 'node-runtime' : 'unknown';
+}
+
+export function uncaughtExceptionEvidence(
+  stage: BootstrapFailureStage = activeBootstrapStage,
+  origin: NodeJS.UncaughtExceptionOrigin = 'uncaughtException',
+  error?: unknown,
+): SanitizedHarnessEvidence {
+  return {
+    ...bootstrapFailureEvidence(stage),
+    processFailure: {
+      source: origin === 'unhandledRejection' ? 'unhandled-rejection' : 'uncaught-exception',
+      code:
+        origin === 'unhandledRejection'
+          ? 'KIND_LIFECYCLE_UNHANDLED_REJECTION'
+          : 'KIND_LIFECYCLE_UNCAUGHT_EXCEPTION',
+      cause: processFailureCause(error),
+      location: processFailureLocation(error),
+    },
+  };
+}
+
+function writeSanitizedEvidence(evidence: SanitizedHarnessEvidence): void {
+  const evidencePath = resolve(rootDir(), 'kind-lifecycle-evidence.json');
+  writeFileSync(evidencePath, JSON.stringify(evidence, null, 2) + '\n', { mode: 0o600 });
+  process.stdout.write('Evidence written to ' + evidencePath + '\n');
+}
+
+export function writeBootstrapFailureEvidence(
+  stage: BootstrapFailureStage = 'harness-bootstrap',
+): void {
+  writeSanitizedEvidence(bootstrapFailureEvidence(stage));
+}
+
+function installUncaughtExceptionEvidenceCapture(): void {
+  process.once('uncaughtExceptionMonitor', (error, origin) => {
+    writeSanitizedEvidence(uncaughtExceptionEvidence(activeBootstrapStage, origin, error));
+  });
+}
+
 function fixturePath(name: string): string {
   return resolve(__dirname, 'fixtures', 'helm-lifecycle', name);
 }
 
-export function sanitizeEvidence(evidence: HarnessEvidence): HarnessEvidence {
-  const secretPatterns = [
-    // Postgres DSNs and URLs
-    [/postgres(?:ql)?:\/\/[^\s"']+/, 'postgres://***@***'],
-    // Generic password/token/key values
-    [/"password"\s*:\s*"[^"]*"/, '"password": "***"'],
-    [/"token"\s*:\s*"[^"]*"/, '"token": "***"'],
-    // PEM blocks
-    [/-----BEGIN [A-Z ]+-----[\s\S]*?-----END [A-Z ]+-----/, '[PEM_REDACTED]'],
-  ];
-  const text = JSON.stringify(evidence);
-  const sanitized = secretPatterns.reduce((acc, [pattern, replacement]) => {
-    return acc.replace(new RegExp(pattern, 'g'), String(replacement));
-  }, text);
-  const out = JSON.parse(sanitized) as HarnessEvidence;
-  out.sanitized = true;
-  return out;
+function isNetworkPrerequisiteStage(value: unknown): value is NetworkPrerequisiteStage {
+  return (
+    typeof value === 'string' &&
+    NETWORK_PREREQUISITE_STAGES.includes(value as NetworkPrerequisiteStage)
+  );
+}
+
+export function sanitizeEvidence(evidence: HarnessEvidence): SanitizedHarnessEvidence {
+  return {
+    generatedAt: evidence.generatedAt,
+    cluster: evidence.cluster,
+    kindNodeImage: evidence.kindNodeImage,
+    calicoUrl: evidence.calicoUrl,
+    ...(evidence.image
+      ? {
+          image: {
+            digest: evidence.image.digest,
+            ...(evidence.image.sourceRevision
+              ? { sourceRevision: evidence.image.sourceRevision }
+              : {}),
+          },
+        }
+      : {}),
+    scenarios: evidence.scenarios.map(
+      ({
+        name,
+        passed,
+        durationMs,
+        failedStage,
+        networkPrerequisiteStage,
+        assertions,
+        rbac,
+        networkPolicy,
+        error,
+      }) => {
+        const safeFailureCodes = [
+          ...new Set([
+            ...(rbac?.some(({ passed }) => !passed) ? ['PROOF_READER_RBAC_INVALID'] : []),
+            ...(scenarioFailureCodes(error) ?? []),
+          ]),
+        ];
+        const failedChecks = [
+          ...failedCheckEvidence('scenario', assertions),
+          ...failedCheckEvidence('rbac', rbac),
+          ...failedCheckEvidence('networkPolicy', networkPolicy),
+        ];
+        const rolloutFailure = error ? parseRolloutFailureEvidence(error) : undefined;
+        const rolloutObservation = error ? parseRolloutObservationEvidence(error) : undefined;
+        const apiStartupFailure = error ? parseApiPodStartupFailureEvidence(error) : undefined;
+        const admissionRbacFailure = error ? parseAdmissionRbacFailure(error) : undefined;
+        const helmUninstallResidual = error ? parseHelmUninstallResidualEvidence(error) : undefined;
+        const externalDatabaseRoleFailures = error
+          ? parseExternalDatabaseRoleFailures(error)
+          : undefined;
+        return {
+          name,
+          passed,
+          durationMs,
+          ...(failedStage ? { failedStage } : {}),
+          ...(failedStage === 'network-prerequisites' &&
+          isNetworkPrerequisiteStage(networkPrerequisiteStage)
+            ? { networkPrerequisiteStage }
+            : {}),
+          ...(safeFailureCodes.length > 0 ? { failureCodes: safeFailureCodes } : {}),
+          ...(helmUninstallResidual ? { helmUninstallResidual } : {}),
+          ...(externalDatabaseRoleFailures ? { externalDatabaseRoleFailures } : {}),
+          ...(admissionRbacFailure ? { admissionRbacFailure } : {}),
+          ...(failedChecks.length > 0 ? { failedChecks } : {}),
+          ...(rolloutFailure
+            ? {
+                rolloutFailure: {
+                  code: rolloutFailure.code,
+                  resourceKind: rolloutFailure.resourceKind,
+                  component: rolloutFailure.component,
+                  reasonCode: rolloutFailure.reasonCode,
+                },
+              }
+            : {}),
+          ...(rolloutObservation
+            ? {
+                rolloutObservation:
+                  rolloutObservation.code === 'TENANT_CUTOVER_ROLLOUT_NONTERMINAL'
+                    ? {
+                        code: rolloutObservation.code,
+                        resourceKind: rolloutObservation.resourceKind,
+                        component: rolloutObservation.component,
+                        reasonCode: rolloutObservation.reasonCode,
+                      }
+                    : { code: rolloutObservation.code },
+              }
+            : {}),
+          ...(apiStartupFailure ? { apiStartupFailure } : {}),
+        };
+      },
+    ),
+    ...(evidence.ownerFailureEvidence
+      ? {
+          ownerFailureEvidence: evidence.ownerFailureEvidence.map((failure) => ({
+            code: failure.code,
+            producer: failure.producer,
+            transport: failure.transport,
+            ...(failure.ownerStage ? { ownerStage: failure.ownerStage } : {}),
+            ...(failure.proofCode ? { proofCode: failure.proofCode } : {}),
+            ...(failure.proofInvariant ? { proofInvariant: failure.proofInvariant } : {}),
+            ...(failure.snapshot ? { snapshot: failure.snapshot } : {}),
+            ...(failure.catalogStep ? { catalogStep: failure.catalogStep } : {}),
+            ...(failure.snapshotTransaction
+              ? { snapshotTransaction: failure.snapshotTransaction }
+              : {}),
+            ...(failure.snapshotValidation
+              ? { snapshotValidation: failure.snapshotValidation }
+              : {}),
+            ...(failure.originClassificationStep
+              ? { originClassificationStep: failure.originClassificationStep }
+              : {}),
+            ...(failure.migration ? { migration: failure.migration } : {}),
+            ...(failure.phase ? { phase: failure.phase } : {}),
+            ...(failure.sqlstate ? { sqlstate: failure.sqlstate } : {}),
+            logSha256: failure.logSha256,
+          })),
+        }
+      : {}),
+    passed: evidence.passed,
+    sanitized: true,
+  };
+}
+
+type ExecFileErrorEmitter = Pick<NodeJS.EventEmitter, 'on'>;
+
+export function observeExecFileFailures(
+  process: ExecFileErrorEmitter & {
+    stdin?: ExecFileErrorEmitter | null;
+    stdout?: ExecFileErrorEmitter | null;
+    stderr?: ExecFileErrorEmitter | null;
+  },
+  fail: (error: Error) => void,
+): void {
+  process.on('error', fail);
+  process.stdin?.on('error', fail);
+  process.stdout?.on('error', fail);
+  process.stderr?.on('error', fail);
 }
 
 function runCmd(
@@ -551,13 +2596,28 @@ function runCmd(
   options: ExecFileOptions = {},
 ): Promise<CommandResult> {
   return new Promise((resolve) => {
-    execFile(file, args, { ...options, encoding: 'utf8' as const }, (error, stdout, stderr) => {
+    let settled = false;
+    const settle = (
+      error: (Error & { code?: string | number }) | null,
+      stdout: string,
+      stderr: string,
+    ) => {
+      if (settled) return;
+      settled = true;
       resolve({
         stdout: stdout ?? '',
         stderr: stderr ?? '',
         exitCode: error ? (typeof error.code === 'number' ? error.code : 1) : 0,
+        ...(error && typeof error.code === 'string' ? { errorCode: error.code } : {}),
       });
-    });
+    };
+    const child = execFile(
+      file,
+      args,
+      { ...options, encoding: 'utf8' as const },
+      (error, stdout, stderr) => settle(error, stdout ?? '', stderr ?? ''),
+    );
+    observeExecFileFailures(child, (error) => settle(error, '', ''));
   });
 }
 
@@ -693,12 +2753,14 @@ export async function loadPinnedRuntimeImages(): Promise<void> {
 export async function buildProductionImage(): Promise<string> {
   const metadataDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-image-'));
   const metadataFile = resolve(metadataDirectory, 'metadata.json');
+  const revision = productionImageSourceRevision(process.env, () =>
+    requireCommand(
+      runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
+      'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
+    ),
+  );
   const build = await runCmd('docker', [
-    'buildx',
-    'build',
-    '--load',
-    '--tag',
-    PRODUCTION_IMAGE,
+    ...productionImageBuildArguments(revision),
     '--metadata-file',
     metadataFile,
     '--file',
@@ -721,6 +2783,7 @@ export async function buildProductionImage(): Promise<string> {
     throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
   }
   process.env.COMMANDER_LIFECYCLE_IMAGE_DIGEST = digest;
+  process.env.COMMANDER_LIFECYCLE_IMAGE_SOURCE_REVISION = revision;
   return digest;
 }
 
@@ -835,12 +2898,216 @@ export async function buildAndLoadProductionImage(): Promise<void> {
   await loadProductionImage(await buildProductionImage());
 }
 
-function kubectl(args: string[]): Promise<CommandResult> {
-  return runCmd('kubectl', args);
+function kubectl(args: string[], options: ExecFileOptions = {}): Promise<CommandResult> {
+  return runCmd('kubectl', args, options);
 }
 
 function helm(args: string[]): Promise<CommandResult> {
   return runCmd('helm', args);
+}
+
+async function currentClusterTokenOnlyKubeconfig(): Promise<string> {
+  try {
+    const server = requireCommand(
+      await kubectl([
+        'config',
+        'view',
+        '--minify',
+        '--raw',
+        '--output=jsonpath={.clusters[0].cluster.server}',
+      ]),
+      'TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID',
+    ).trim();
+    const certificateAuthorityData = requireCommand(
+      await kubectl([
+        'config',
+        'view',
+        '--minify',
+        '--raw',
+        '--output=jsonpath={.clusters[0].cluster.certificate-authority-data}',
+      ]),
+      'TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID',
+    ).trim();
+    return tokenOnlyKubeconfig(server, certificateAuthorityData);
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_KUBECONFIG_INVALID');
+  }
+}
+
+async function verifyIssuedOperatorToken(token: string, subject: string): Promise<void> {
+  let review: unknown;
+  try {
+    review = JSON.parse(
+      await defaultCommand(
+        'kubectl',
+        ['create', '--filename', '-', '--output', 'json'],
+        canonicalBootstrapJson(operatorTokenReview(token)) + '\n',
+      ),
+    );
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_TOKEN_INVALID');
+  }
+  verifyOperatorTokenReview(review, subject);
+}
+
+async function operatorSubjectAccessDecision(
+  subject: string,
+  verb: string,
+  resource: string,
+  name?: string,
+): Promise<boolean> {
+  let review: unknown;
+  try {
+    review = JSON.parse(
+      await defaultCommand(
+        'kubectl',
+        ['create', '--filename', '-', '--output', 'json'],
+        canonicalBootstrapJson(operatorSubjectAccessReview(subject, verb, resource, name)) + '\n',
+      ),
+    );
+  } catch {
+    throw new Error('TENANT_POLICY_OPERATOR_RBAC_REVIEW_FAILED');
+  }
+  return verifyOperatorSubjectAccessReview(review);
+}
+
+export function prerequisiteRetryableFailure(code: string): boolean {
+  return code === 'TENANT_POLICY_ADMISSION_NOT_READY';
+}
+
+class NetworkPrerequisiteError extends Error {
+  readonly networkPrerequisiteStage: NetworkPrerequisiteStage;
+
+  constructor(networkPrerequisiteStage: NetworkPrerequisiteStage, cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'NetworkPrerequisiteError';
+    this.networkPrerequisiteStage = networkPrerequisiteStage;
+  }
+}
+
+function networkPrerequisiteFailureStage(error: unknown): NetworkPrerequisiteStage | undefined {
+  return error instanceof NetworkPrerequisiteError ? error.networkPrerequisiteStage : undefined;
+}
+
+async function prepareNetworkPrerequisites(
+  release: string,
+  valuesPath: string,
+  apiProofSpkiSha256: string,
+): Promise<() => Promise<void>> {
+  const subject = 'system:serviceaccount:' + NAMESPACE + ':tenant-migration-operator';
+  const resolvedValuesPath = valuesPath + '.network-prerequisites';
+  const operatorKubeconfigPath = resolvedValuesPath + '.operator-kubeconfig';
+  let stage: NetworkPrerequisiteStage = 'read-release-values';
+  try {
+    const resolvedValues = requireCommand(
+      await helm(['get', 'values', release, '-n', NAMESPACE, '--all', '-o', 'yaml']),
+      'TENANT_POLICY_RELEASE_VALUES_FAILED',
+    );
+    stage = 'materialize-values';
+    const parsedValues = materializeNetworkPrerequisiteValues(
+      resolvedValues,
+      apiProofSpkiSha256,
+      release,
+    );
+    stage = 'write-values';
+    writeFileSync(resolvedValuesPath, dump(parsedValues, { noRefs: true, sortKeys: true }), {
+      mode: 0o600,
+    });
+    const args = [
+      '--namespace',
+      NAMESPACE,
+      '--release',
+      release,
+      '--values',
+      resolvedValuesPath,
+      '--stage',
+      'network',
+      '--migration-operator-subject',
+      subject,
+    ];
+    stage = 'load-context';
+    const context = await loadTask1PrerequisiteCommandContext(args, rootDir());
+    stage = 'render-admission';
+    const admissionName = renderTask1AdmissionPair(context, 'network').policy.metadata.name;
+    const cleanupAdmission = async (): Promise<void> => {
+      for (const commandArgs of prerequisiteAdmissionCleanupCommands(admissionName)) {
+        await defaultCommand('kubectl', commandArgs);
+      }
+    };
+    const adminPorts = createTask1KubectlPorts((commandArgs, stdin) =>
+      defaultCommand('kubectl', commandArgs, stdin),
+    );
+    try {
+      stage = 'install-admission';
+      await runTask1AdmissionAdministrator(context, adminPorts);
+
+      stage = 'issue-operator-token';
+      const token = requireCommand(
+        await kubectl([
+          'create',
+          'token',
+          'tenant-migration-operator',
+          '-n',
+          NAMESPACE,
+          '--duration=10m',
+        ]),
+        'TENANT_POLICY_OPERATOR_TOKEN_FAILED',
+      ).trim();
+      if (!token) throw new Error('TENANT_POLICY_OPERATOR_TOKEN_FAILED');
+      stage = 'verify-operator-token';
+      await verifyIssuedOperatorToken(token, subject);
+      stage = 'write-operator-kubeconfig';
+      writeFileSync(operatorKubeconfigPath, await currentClusterTokenOnlyKubeconfig(), {
+        mode: 0o600,
+      });
+      const tokenOnlyOperatorPorts = createTask1KubectlPorts(
+        (commandArgs, stdin) =>
+          defaultCommand(
+            'kubectl',
+            operatorKubectlArgs(token, operatorKubeconfigPath, commandArgs),
+            stdin,
+          ),
+        async () => token,
+      );
+      const operatorPorts = {
+        ...tokenOnlyOperatorPorts,
+        canI: (verb: string, resource: string, name?: string) =>
+          operatorSubjectAccessDecision(subject, verb, resource, name),
+      };
+      const deadline = Date.now() + 120_000;
+      while (true) {
+        try {
+          stage = 'operator-verify';
+          await runTask1PrerequisiteOperator(context, operatorPorts);
+          return cleanupAdmission;
+        } catch (error) {
+          if (
+            !(error instanceof Error) ||
+            !prerequisiteRetryableFailure(error.message) ||
+            Date.now() >= deadline
+          ) {
+            throw error;
+          }
+          await new Promise((resolveWait) => setTimeout(resolveWait, 250));
+        }
+      }
+    } catch (error) {
+      const failedStage = stage;
+      stage = 'admission-cleanup';
+      try {
+        await cleanupAdmission();
+      } catch (cleanupError) {
+        throw new NetworkPrerequisiteError(stage, cleanupError);
+      }
+      throw new NetworkPrerequisiteError(failedStage, error);
+    }
+  } catch (error) {
+    if (error instanceof NetworkPrerequisiteError) throw error;
+    throw new NetworkPrerequisiteError(stage, error);
+  } finally {
+    rmSync(resolvedValuesPath, { force: true });
+    rmSync(operatorKubeconfigPath, { force: true });
+  }
 }
 
 async function createNamespace(namespace = NAMESPACE): Promise<void> {
@@ -885,6 +3152,189 @@ function requireCommand(result: CommandResult, code: string): string {
   return result.stdout;
 }
 
+export function classifyHelmUninstallFailure(result: CommandResult): string {
+  const output = `${result.stderr}\n${result.stdout}`;
+  if (/timed out waiting for the condition|context deadline exceeded/i.test(output)) {
+    return 'HELM_UNINSTALL_WAIT_TIMEOUT';
+  }
+  if (/\brelease\b\s*:?[\t ]*(?:not loaded|not found)\b/i.test(output)) {
+    return 'HELM_UNINSTALL_RELEASE_NOT_FOUND';
+  }
+  if (/forbidden|unauthorized|permission denied/i.test(output)) {
+    return 'HELM_UNINSTALL_DELETE_FORBIDDEN';
+  }
+  if (/failed to delete|unable to delete|deletion failed/i.test(output)) {
+    return 'HELM_UNINSTALL_DELETE_FAILED';
+  }
+  return 'HELM_UNINSTALL_FAILED';
+}
+
+const HELM_UNINSTALL_RESOURCE_KIND_BY_OUTPUT_PREFIX: Record<
+  string,
+  HelmUninstallResidualResourceKind
+> = {
+  'clusterrole.rbac.authorization.k8s.io': 'clusterrole',
+  'clusterrolebinding.rbac.authorization.k8s.io': 'clusterrolebinding',
+  configmap: 'configmap',
+  'deployment.apps': 'deployment',
+  'horizontalpodautoscaler.autoscaling': 'horizontalpodautoscaler',
+  'ingress.networking.k8s.io': 'ingress',
+  'job.batch': 'job',
+  'networkpolicy.networking.k8s.io': 'networkpolicy',
+  persistentvolumeclaim: 'persistentvolumeclaim',
+  pod: 'pod',
+  'poddisruptionbudget.policy': 'poddisruptionbudget',
+  'replicaset.apps': 'replicaset',
+  'role.rbac.authorization.k8s.io': 'role',
+  'rolebinding.rbac.authorization.k8s.io': 'rolebinding',
+  secret: 'secret',
+  service: 'service',
+  serviceaccount: 'serviceaccount',
+  'statefulset.apps': 'statefulset',
+};
+
+export function helmUninstallResidualResourceKinds(
+  output: string,
+): HelmUninstallResidualResourceKind[] {
+  const found = new Set<HelmUninstallResidualResourceKind>();
+  for (const line of output.split(/\r?\n/)) {
+    const prefix = line.trim().split('/', 1)[0];
+    const kind = prefix ? HELM_UNINSTALL_RESOURCE_KIND_BY_OUTPUT_PREFIX[prefix] : undefined;
+    if (kind) found.add(kind);
+  }
+  return HELM_UNINSTALL_RESIDUAL_RESOURCE_KINDS.filter((kind) => found.has(kind));
+}
+
+export function helmUninstallResidualPodComponents(
+  value: unknown,
+): HelmUninstallResidualPodComponent[] {
+  const items = jsonArray(jsonRecord(value)?.items);
+  if (!items) return [];
+  const found = new Set<HelmUninstallResidualPodComponent>();
+  for (const item of items) {
+    const labels = jsonRecord(jsonRecord(item)?.metadata)?.labels;
+    const component = jsonRecord(labels)?.['app.kubernetes.io/component'];
+    if (typeof component === 'string' && isHelmUninstallResidualPodComponent(component)) {
+      found.add(component);
+    }
+  }
+  return HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) => found.has(component));
+}
+
+export function helmUninstallResidualTerminatingPodComponents(
+  value: unknown,
+): HelmUninstallResidualPodComponent[] {
+  const items = jsonArray(jsonRecord(value)?.items);
+  if (!items) return [];
+  const found = new Set<HelmUninstallResidualPodComponent>();
+  for (const item of items) {
+    const metadata = jsonRecord(jsonRecord(item)?.metadata);
+    const labels = jsonRecord(metadata?.labels);
+    const component = labels?.['app.kubernetes.io/component'];
+    if (
+      typeof metadata?.deletionTimestamp === 'string' &&
+      typeof component === 'string' &&
+      isHelmUninstallResidualPodComponent(component)
+    ) {
+      found.add(component);
+    }
+  }
+  return HELM_UNINSTALL_RESIDUAL_POD_COMPONENTS.filter((component) => found.has(component));
+}
+
+async function helmUninstallResidualEvidence(
+  release: string,
+): Promise<HelmUninstallResidualEvidence> {
+  const namespacedResult = await kubectl([
+    'get',
+    'pods,deployments,statefulsets,replicasets,jobs,services,configmaps,secrets,serviceaccounts,roles,rolebindings,networkpolicies,persistentvolumeclaims,horizontalpodautoscalers,ingresses,poddisruptionbudgets',
+    '-n',
+    NAMESPACE,
+    '-l',
+    `app.kubernetes.io/instance=${release}`,
+    '-o',
+    'name',
+  ]);
+  if (namespacedResult.exitCode !== 0) return { inventory: 'unavailable' };
+  const clusterScopedResult = await kubectl([
+    'get',
+    'clusterroles,clusterrolebindings',
+    '-l',
+    'commander.io/purpose=tenant-authority-prerequisite',
+    '-o',
+    'name',
+  ]);
+  if (clusterScopedResult.exitCode !== 0) return { inventory: 'unavailable' };
+  const podInventoryResult = await kubectl([
+    'get',
+    'pods',
+    '-n',
+    NAMESPACE,
+    '-l',
+    `app.kubernetes.io/instance=${release}`,
+    '-o',
+    'json',
+  ]);
+  if (podInventoryResult.exitCode !== 0) return { inventory: 'unavailable' };
+  let podInventory: unknown;
+  try {
+    podInventory = JSON.parse(podInventoryResult.stdout) as unknown;
+  } catch {
+    return { inventory: 'unavailable' };
+  }
+  return {
+    inventory: 'available',
+    resourceKinds: helmUninstallResidualResourceKinds(
+      namespacedResult.stdout + '\n' + clusterScopedResult.stdout,
+    ),
+    podComponents: helmUninstallResidualPodComponents(podInventory),
+    terminatingPodComponents: helmUninstallResidualTerminatingPodComponents(podInventory),
+  };
+}
+
+function helmUninstallFailureRecord(
+  result: CommandResult,
+  residual: HelmUninstallResidualEvidence,
+): string {
+  const code = classifyHelmUninstallFailure(result);
+  if (residual.inventory === 'unavailable') return `${code};residual_inventory=unavailable`;
+  return `${code};residual_inventory=available;residual_kinds=${residual.resourceKinds?.join(',') || 'none'};residual_pod_components=${residual.podComponents?.join(',') || 'none'};residual_terminating_pod_components=${residual.terminatingPodComponents?.join(',') || 'none'}`;
+}
+
+/** A DELETE that fails mid-wait while pods are still terminating (control-plane
+ *  blip or apiserver connection reset) is transient: the release may already be
+ *  gone, so one bounded retry after pod termination is safe and deterministic. */
+export function isTransientHelmUninstallDeleteFailure(result: CommandResult): boolean {
+  return (
+    result.exitCode !== 0 && classifyHelmUninstallFailure(result) === 'HELM_UNINSTALL_DELETE_FAILED'
+  );
+}
+
+async function requireHelmUninstall(release: string): Promise<string> {
+  const result = await helm(['uninstall', release, '-n', NAMESPACE, '--wait']);
+  if (result.exitCode === 0) return result.stdout;
+  if (isTransientHelmUninstallDeleteFailure(result)) {
+    await new Promise((resolveWait) => setTimeout(resolveWait, 15_000));
+    const retry = await helm([
+      'uninstall',
+      release,
+      '-n',
+      NAMESPACE,
+      '--wait',
+      '--ignore-not-found',
+    ]);
+    if (retry.exitCode === 0) return retry.stdout;
+    return requireCommand(
+      retry,
+      helmUninstallFailureRecord(retry, await helmUninstallResidualEvidence(release)),
+    );
+  }
+  return requireCommand(
+    result,
+    helmUninstallFailureRecord(result, await helmUninstallResidualEvidence(release)),
+  );
+}
+
 async function kubectlJson(args: string[]): Promise<Record<string, unknown>> {
   const output = requireCommand(await kubectl([...args, '-o', 'json']), 'KUBECTL_JSON_FAILED');
   const parsed = JSON.parse(output) as unknown;
@@ -892,6 +3342,46 @@ async function kubectlJson(args: string[]): Promise<Record<string, unknown>> {
     throw new Error('KUBECTL_JSON_INVALID');
   }
   return parsed as Record<string, unknown>;
+}
+
+function isIpv4Address(value: string): boolean {
+  const octets = value.split('.');
+  return (
+    octets.length === 4 &&
+    octets.every((octet) => /^(?:0|[1-9][0-9]{0,2})$/.test(octet) && Number(octet) <= 255)
+  );
+}
+
+async function kubernetesApiServiceIp(): Promise<string> {
+  const service = await kubectlJson(['get', 'service', 'kubernetes', '-n', 'default']);
+  const clusterIp = (service.spec as { clusterIP?: unknown } | undefined)?.clusterIP;
+  if (typeof clusterIp !== 'string' || !isIpv4Address(clusterIp)) {
+    throw new Error('KUBERNETES_API_SERVICE_INVALID');
+  }
+  return clusterIp;
+}
+
+async function kubernetesApiEndpointIp(): Promise<string> {
+  const nodes = await kubectlJson(['get', 'nodes', '-l', 'node-role.kubernetes.io/control-plane']);
+  const items = Array.isArray(nodes.items) ? nodes.items : [];
+  const addresses = (items[0] as { status?: { addresses?: unknown[] } } | undefined)?.status
+    ?.addresses;
+  const internalIps = Array.isArray(addresses)
+    ? addresses
+        .filter(
+          (address): address is { type: string; address: string } =>
+            !!address &&
+            typeof address === 'object' &&
+            (address as { type?: unknown }).type === 'InternalIP' &&
+            typeof (address as { address?: unknown }).address === 'string',
+        )
+        .map((address) => address.address)
+        .filter(isIpv4Address)
+    : [];
+  if (items.length !== 1 || internalIps.length !== 1) {
+    throw new Error('KUBERNETES_API_ENDPOINT_INVALID');
+  }
+  return internalIps[0]!;
 }
 
 async function ensureControlPlaneReady(): Promise<void> {
@@ -930,7 +3420,7 @@ function generateCertificateMaterial(
   namespace: string,
   release: string,
   databaseDnsNames?: string[],
-): { databaseSpkiSha256: string } {
+): { databaseSpkiSha256: string; apiProofSpkiSha256: string } {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const openssl = (args: string[]) => {
     const result = runCmdSync('openssl', args, { cwd: directory });
@@ -1009,7 +3499,10 @@ function generateCertificateMaterial(
     `${release}-api-proof.${namespace}.svc`,
     `${release}-api-proof.${namespace}.svc.cluster.local`,
   ]);
-  return { databaseSpkiSha256: certificateSpkiSha256(resolve(directory, 'postgres.crt')) };
+  return {
+    databaseSpkiSha256: certificateSpkiSha256(resolve(directory, 'postgres.crt')),
+    apiProofSpkiSha256: certificateSpkiSha256(resolve(directory, 'api-proof.crt')),
+  };
 }
 
 async function createLifecycleTlsSecrets(
@@ -1109,8 +3602,8 @@ async function applyPrivateJson(
 }
 
 type ExternalDatabaseFixture = {
-  serviceClusterIp: string;
   hostname: string;
+  podIp: string;
 };
 
 async function createExternalDatabaseFixture(input: {
@@ -1180,6 +3673,17 @@ async function createExternalDatabaseFixture(input: {
   if (typeof serviceClusterIp !== 'string' || !serviceClusterIp) {
     throw new Error('EXTERNAL_DATABASE_SERVICE_INVALID');
   }
+  const pod = await kubectlJson([
+    'get',
+    'pod',
+    'external-postgres-0',
+    '-n',
+    EXTERNAL_DATABASE_NAMESPACE,
+  ]);
+  const podIp = jsonRecord(pod.status)?.podIP;
+  if (typeof podIp !== 'string' || !isIpv4Address(podIp)) {
+    throw new Error('EXTERNAL_DATABASE_POD_IP_INVALID');
+  }
   const roleLogins: Record<string, string> = {
     owner: 'commander_owner',
     app: 'commander_app',
@@ -1224,121 +3728,194 @@ async function createExternalDatabaseFixture(input: {
     ]),
     'EXTERNAL_DATABASE_CA_SECRET_CREATE_FAILED',
   );
-  return { serviceClusterIp, hostname };
+  return { hostname, podIp };
 }
 
-async function inspectLiveProofPod(release: string, imageDigest: string): Promise<boolean> {
-  const result = await kubectl([
-    'get',
-    'pods',
-    '-n',
-    NAMESPACE,
-    '-l',
-    `commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`,
-    '-o',
-    'json',
-  ]);
-  if (result.exitCode !== 0) return false;
-  const parsed = JSON.parse(result.stdout) as { items?: unknown[] };
-  if (parsed.items?.length !== 1) return false;
-  const pod = parsed.items[0];
-  if (!pod) return false;
-  assertProofPodContract(pod, proofReaderName(NAMESPACE, release));
-  const spec = (pod as { spec?: { containers?: unknown[] } }).spec;
-  const containers = Array.isArray(spec?.containers) ? spec.containers : [];
-  const container = containers[0] as
-    | {
-        image?: unknown;
-        command?: unknown;
-        env?: Array<{
-          name?: unknown;
-          valueFrom?: { secretKeyRef?: { name?: unknown; key?: unknown } };
-        }>;
-      }
-    | undefined;
-  const owner = container?.env?.find(({ name }) => name === 'COMMANDER_OWNER_DATABASE_URL');
+async function observeLiveRolloutFailure(release: string): Promise<RolloutObservation> {
+  const result = await kubectl(
+    [
+      'get',
+      'deployments,jobs,pods',
+      '-n',
+      NAMESPACE,
+      '-l',
+      'app.kubernetes.io/instance=' + release,
+      '-o',
+      'json',
+    ],
+    { maxBuffer: ROLLOUT_OBSERVATION_MAX_BYTES },
+  );
+  return classifyRolloutObservation(result);
+}
+
+async function captureApiPodStartupFailure(
+  release: string,
+  observation: RolloutObservation,
+): Promise<ApiPodStartupFailureEvidence | undefined> {
   if (
-    containers.length !== 1 ||
-    container?.image !== `commander-lifecycle-api@${imageDigest}` ||
-    JSON.stringify(container.command) !==
-      JSON.stringify(['node', 'packages/kernel/dist/migrate.js', 'tenant-cutover-prove']) ||
-    typeof owner?.valueFrom?.secretKeyRef?.name !== 'string' ||
-    !owner.valueFrom.secretKeyRef.name.startsWith(`${release}-proof-owner-v`) ||
-    owner.valueFrom.secretKeyRef.key !== 'owner-url'
+    observation.kind !== 'terminal' ||
+    observation.evidence.resourceKind !== 'Pod' ||
+    observation.evidence.component !== 'api' ||
+    observation.evidence.reasonCode !== 'POD_CRASH_LOOP_BACKOFF'
   ) {
-    throw new Error('PROOF_POD_RUNTIME_CONTRACT_INVALID');
+    return undefined;
   }
-  const exposed = await kubectl([
-    'get',
-    'service',
-    '-n',
-    NAMESPACE,
-    '-l',
-    `commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`,
-    '-o',
-    'name',
-  ]);
-  if (exposed.exitCode !== 0 || exposed.stdout.trim()) {
-    throw new Error('PROOF_POD_SERVICE_EXPOSURE_INVALID');
+  const pods = await kubectl(
+    [
+      'get',
+      'pods',
+      '-n',
+      NAMESPACE,
+      '-l',
+      'app.kubernetes.io/instance=' + release + ',app.kubernetes.io/component=api',
+      '-o',
+      'json',
+    ],
+    { maxBuffer: ROLLOUT_OBSERVATION_MAX_BYTES },
+  );
+  if (pods.exitCode !== 0) return undefined;
+  let parsed: Record<string, unknown> | undefined;
+  try {
+    parsed = jsonRecord(JSON.parse(pods.stdout));
+  } catch {
+    return undefined;
   }
-  return true;
+  const podItems = jsonArray(parsed?.items) ?? [];
+  const podName = selectFailingApiPodName(podItems);
+  if (!podName) return undefined;
+  const pod = podItems
+    .map((item) => jsonRecord(item))
+    .find((item) => jsonRecord(item?.metadata)?.name === podName);
+  const termination = apiPodTerminationFacts(pod?.status);
+  const selectedContainer = selectFailingApiContainerName(pod?.status);
+  const containerName = hasExactValue(selectedContainer, API_POD_STARTUP_CONTAINERS)
+    ? selectedContainer
+    : 'api';
+  let logs = await kubectl(
+    ['logs', podName, '-c', containerName, '--previous', '-n', NAMESPACE, '--tail=80'],
+    { maxBuffer: 16 * 1024 },
+  );
+  if (logs.exitCode !== 0 || apiPodLogsAreUnclassified(logs.stdout, containerName)) {
+    const currentLogs = await kubectl(
+      ['logs', podName, '-c', containerName, '-n', NAMESPACE, '--tail=80'],
+      { maxBuffer: 16 * 1024 },
+    );
+    if (currentLogs.exitCode === 0) {
+      logs = {
+        ...currentLogs,
+        stdout: selectApiPodStartupLogs(
+          logs.exitCode === 0 ? logs.stdout : '',
+          currentLogs.stdout,
+          containerName,
+        ),
+      };
+    }
+  }
+  const transport: ApiPodStartupFailureEvidence['transport'] =
+    logs.exitCode === 0 ? 'kubectl_logs' : 'kubectl_logs_unavailable';
+  const diagnostic = apiPodStartupFailureDiagnostic(
+    logs.exitCode === 0 ? logs.stdout : '',
+    containerName,
+    transport,
+    termination,
+  );
+  return parseApiPodStartupFailureEvidence('TENANT_CUTOVER_API_POD_STARTUP_FAILED:' + diagnostic);
+}
+
+type CutoverFailureDiagnosticPorts = {
+  observe: (release: string) => Promise<RolloutObservation>;
+  captureApiStartupFailure: (
+    release: string,
+    observation: RolloutObservation,
+  ) => Promise<ApiPodStartupFailureEvidence | undefined>;
+};
+
+const cutoverFailureDiagnosticPorts: CutoverFailureDiagnosticPorts = {
+  observe: observeLiveRolloutFailure,
+  captureApiStartupFailure: captureApiPodStartupFailure,
+};
+
+/** Takes one final bounded observation after a cutover failure reaches completion. */
+export async function captureFinalCutoverFailureDiagnostics(
+  release: string,
+  rolloutObservation: RolloutObservationState | undefined,
+  apiStartupFailure: ApiPodStartupFailureEvidence | undefined,
+  ports: CutoverFailureDiagnosticPorts = cutoverFailureDiagnosticPorts,
+): Promise<{
+  rolloutObservation: RolloutObservationState;
+  apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
+}> {
+  const observedFailure = await ports.observe(release);
+  const finalApiStartupFailure = apiPodStartupFailureNeedsRefresh(apiStartupFailure)
+    ? await ports.captureApiStartupFailure(release, observedFailure)
+    : undefined;
+  return {
+    rolloutObservation: retainRolloutObservation(rolloutObservation, observedFailure),
+    apiStartupFailure: retainApiPodStartupFailure(apiStartupFailure, finalApiStartupFailure),
+  };
 }
 
 async function runCutoverCommand(
   command: 'install' | 'enforce',
   release: string,
   values: string,
-  requireLiveProofPod: boolean,
-): Promise<{ proofPodObserved: boolean; stdout: string }> {
+): Promise<void> {
   const valuesText = readFileSync(values, 'utf8');
   const digest = valuesText.match(/^\s*digest:\s*(sha256:[a-f0-9]{64})\s*$/m)?.[1];
   if (!digest) throw new Error('PRODUCTION_IMAGE_DIGEST_INVALID');
-  const args = [
-    'exec',
-    'tsx',
-    'scripts/helm-tenant-cutover.ts',
-    command,
-    '--namespace',
-    NAMESPACE,
-    '--release',
-    release,
-    '--values',
-    values,
-  ];
-  const child = spawn('pnpm', args, {
-    cwd: rootDir(),
-    env: process.env,
-    shell: false,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  const stdout: Buffer[] = [];
-  const stderr: Buffer[] = [];
-  child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
   let finished = false;
-  let exitCode = -1;
-  const completion = new Promise<void>((resolveCompletion, reject) => {
-    child.once('error', reject);
-    child.once('close', (code) => {
-      exitCode = code ?? 1;
+  let cutoverFailure: unknown;
+  const completion = runHelmTenantCutoverCli(
+    [command, '--namespace', NAMESPACE, '--release', release, '--values', values],
+    rootDir(),
+  ).then(
+    () => {
       finished = true;
-      resolveCompletion();
-    });
-  });
-  let proofPodObserved = false;
+    },
+    (error: unknown) => {
+      cutoverFailure = error;
+      finished = true;
+    },
+  );
+  let rolloutObservation: RolloutObservationState | undefined;
+  let apiStartupFailure: ApiPodStartupFailureEvidence | undefined;
   while (!finished) {
-    proofPodObserved = (await inspectLiveProofPod(release, digest)) || proofPodObserved;
+    const observedFailure = await observeLiveRolloutFailure(release);
+    rolloutObservation = retainRolloutObservation(rolloutObservation, observedFailure);
+    if (apiPodStartupFailureNeedsRefresh(apiStartupFailure)) {
+      apiStartupFailure = retainApiPodStartupFailure(
+        apiStartupFailure,
+        await captureApiPodStartupFailure(release, observedFailure),
+      );
+    }
     await new Promise((resolveWait) => setTimeout(resolveWait, 100));
   }
   await completion;
-  if (exitCode !== 0) {
-    const detail = Buffer.concat(stderr).toString('utf8').trim().slice(-4_000);
-    throw new Error(`HELM_TENANT_CUTOVER_FAILED${detail ? `: ${detail}` : ''}`);
+  if (cutoverFailure !== undefined) {
+    ({ rolloutObservation, apiStartupFailure } = await captureFinalCutoverFailureDiagnostics(
+      release,
+      rolloutObservation,
+      apiStartupFailure,
+    ));
+    const failureMessage = cutoverFailure instanceof Error ? cutoverFailure.message : '';
+    const childCodes = scenarioFailureCodes(failureMessage) ?? [];
+    const ownerFailure = parseOwnerFailureEvidence(failureMessage);
+    const failureCodes = [...new Set(['HELM_TENANT_CUTOVER_FAILED', ...childCodes])];
+    const diagnostic = rolloutObservation?.terminal
+      ? rolloutFailureRecord(rolloutObservation.terminal)
+      : rolloutObservation?.nonterminal
+        ? rolloutObservationRecord(rolloutObservation.nonterminal)
+        : rolloutObservation?.queryFailure
+          ? rolloutObservationRecord(rolloutObservation.queryFailure)
+          : 'TENANT_CUTOVER_ROLLOUT_RESOURCE_UNCLASSIFIED';
+    throw new Error(
+      failureCodes.join(':') +
+        ':' +
+        diagnostic +
+        (ownerFailure ? ':' + ownerFailureEvidenceRecord(ownerFailure) : '') +
+        (apiStartupFailure ? ':' + apiPodStartupFailureRecord(apiStartupFailure) : ''),
+    );
   }
-  if (requireLiveProofPod && !proofPodObserved) {
-    throw new Error('LIVE_PROOF_POD_NOT_OBSERVED');
-  }
-  return { proofPodObserved, stdout: Buffer.concat(stdout).toString('utf8') };
 }
 
 async function assertProofReaderRbac(release: string): Promise<AssertionResult[]> {
@@ -1378,26 +3955,21 @@ async function assertProofReaderRbac(release: string): Promise<AssertionResult[]
     ['impersonate', 'users', '', 'no'],
     ['watch', 'pods', '', 'no'],
   ] as const) {
-    const check = await kubectl([
-      'auth',
-      'can-i',
-      verb,
-      resource,
-      ...(resourceName ? [resourceName] : []),
-      '--as',
-      identity,
-      '-n',
-      NAMESPACE,
-    ]);
+    const check = await kubectl(
+      proofReaderCanIArgs({ verb, resource, resourceName, identity, namespace: NAMESPACE }),
+    );
     results.push({
       description: `proof-reader RBAC ${verb} ${resource}${
         resourceName ? `/${resourceName}` : ''
       } is ${expected}`,
-      passed: check.exitCode === 0 && check.stdout.trim() === expected,
+      passed: proofReaderCanIResultPasses({
+        expected,
+        exitCode: check.exitCode,
+        stdout: check.stdout,
+      }),
       detail: check.stderr.trim() || undefined,
     });
   }
-  if (results.some(({ passed }) => !passed)) throw new Error('PROOF_READER_RBAC_INVALID');
   return results;
 }
 
@@ -1432,7 +4004,7 @@ async function runNetworkPolicyCanaries(
   )},port:9443},()=>finish(0));socket.setTimeout(5000,()=>finish(42));socket.on('error',()=>finish(43));`;
   const applyCanary = async (name: string, labelled: boolean) => {
     const labels = labelled
-      ? `app.kubernetes.io/name=${release},app.kubernetes.io/instance=${release},commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`
+      ? `app.kubernetes.io/name=${release},app.kubernetes.io/instance=${release},app.kubernetes.io/component=tenant-authority-proof-reader,commander.io/tenant-authority-proof-reader=true,commander.io/tenant-authority-proof-release=${release}`
       : 'commander.io/network-policy-negative-canary=true';
     requireCommand(
       await kubectl([
@@ -1519,7 +4091,10 @@ async function operationRowCount(target: PostgresQueryTarget): Promise<number> {
   return lifecycleRowCount(target, 'commander_tenant_cutover_operations');
 }
 
-async function assertExternalRoleConnections(hostname: string): Promise<AssertionResult[]> {
+async function assertExternalRoleConnections(
+  hostname: string,
+  hostAddress: string,
+): Promise<AssertionResult[]> {
   const roles = [
     ['owner', 'commander_owner', 'COMMANDER_OWNER_PASSWORD'],
     ['app', 'commander_app', 'COMMANDER_APP_PASSWORD'],
@@ -1529,8 +4104,9 @@ async function assertExternalRoleConnections(hostname: string): Promise<Assertio
     ['adapter-ops', 'commander_adapter_ops', 'COMMANDER_ADAPTER_OPS_PASSWORD'],
   ] as const;
   const assertions: AssertionResult[] = [];
+  const failures: ExternalDatabaseRoleFailureEvidence[] = [];
   for (const [role, login, passwordVariable] of roles) {
-    const script = `export PGPASSWORD="$${passwordVariable}"; exec psql "host=${hostname} port=5432 dbname=commander user=${login} sslmode=verify-full sslrootcert=/run/commander/database-tls/ca.crt" --tuples-only --no-align --command 'SELECT session_user'`;
+    const script = `export PGPASSWORD="$${passwordVariable}"; exec psql "host=${hostname} hostaddr=${hostAddress} port=5432 dbname=commander user=${login} sslmode=verify-full sslrootcert=/run/commander/database-tls/ca.crt" --tuples-only --no-align --command 'SELECT session_user'`;
     const result = await kubectl([
       'exec',
       'statefulset/external-postgres',
@@ -1547,9 +4123,30 @@ async function assertExternalRoleConnections(hostname: string): Promise<Assertio
       passed,
       detail: passed ? undefined : result.stderr.trim().slice(-2_000),
     });
+    if (!passed) {
+      const failureClass: ExternalDatabaseRoleFailureClass =
+        result.exitCode === 0
+          ? 'identity'
+          : /password authentication failed|role .* does not exist|no pg_hba\.conf entry/i.test(
+                result.stderr,
+              )
+            ? 'authentication'
+            : /certificate|tls|ssl/i.test(result.stderr)
+              ? 'tls'
+              : /could not translate host|connection refused|timed out|timeout|no route/i.test(
+                    result.stderr,
+                  )
+                ? 'network'
+                : 'query';
+      failures.push({ role, failureClass });
+    }
   }
   if (assertions.some(({ passed }) => !passed)) {
-    throw new Error('EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED');
+    throw new Error(
+      `EXTERNAL_DATABASE_SIX_ROLE_AUTHENTICATION_FAILED;failed_roles=${failures
+        .map(({ role, failureClass }) => `${role}:${failureClass}`)
+        .join(',')}`,
+    );
   }
   return assertions;
 }
@@ -1582,7 +4179,32 @@ async function helmRevision(release: string): Promise<string> {
   return String(revision);
 }
 
-async function assertReleaseCleanup(release: string): Promise<void> {
+export async function waitForCleanupCheck(
+  check: () => Promise<void>,
+  failureCode: string,
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+): Promise<void> {
+  const timeoutMs = options.timeoutMs ?? 60_000;
+  const pollIntervalMs = options.pollIntervalMs ?? 250;
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    try {
+      await check();
+      return;
+    } catch (error) {
+      if (!(error instanceof Error) || error.message !== failureCode) throw error;
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) throw new Error(failureCode);
+    await new Promise((resolveWait) =>
+      setTimeout(resolveWait, Math.min(pollIntervalMs, remainingMs)),
+    );
+  }
+}
+
+async function assertReleaseCleanup(release: string, allowRetry = true): Promise<void> {
   for (const resources of [
     'all',
     'configmaps,secrets,serviceaccounts',
@@ -1600,22 +4222,37 @@ async function assertReleaseCleanup(release: string): Promise<void> {
       'name',
     ]);
     if (result.exitCode !== 0 || result.stdout.trim()) {
-      throw new Error('HELM_UNINSTALL_CLEANUP_FAILED');
+      if (!allowRetry) throw new Error('HELM_UNINSTALL_CLEANUP_FAILED');
+      await waitForCleanupCheck(
+        () => assertReleaseCleanup(release, false),
+        'HELM_UNINSTALL_CLEANUP_FAILED',
+      );
+      return;
     }
   }
 }
 
-async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvidence> {
+async function runRealBundledLifecycle(
+  imageDigest: string,
+  kubernetesApiIp: string,
+  kubernetesApiEndpoint: string,
+): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-live');
   const assertions: AssertionResult[] = [];
   const databaseTarget = { namespace: NAMESPACE, statefulSet: `${release}-postgres` };
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-lifecycle-'));
+  let cleanupNetworkPrerequisites: (() => Promise<void>) | undefined;
+  let stage: LifecycleFailureStage = 'namespace-reset';
   try {
     requireCommand(await kubectl(namespaceCleanupArgs(NAMESPACE)), 'NAMESPACE_RESET_FAILED');
+    stage = 'namespace-create';
     await createNamespace();
+    stage = 'certificate-material';
     const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release);
+    stage = 'tls-secrets';
     await createLifecycleTlsSecrets(stateDirectory, NAMESPACE, release);
+    stage = 'lifecycle-values';
     const installValues = resolve(stateDirectory, 'values-install.yaml');
     const upgradeValues = resolve(stateDirectory, 'values-upgrade.yaml');
     writeFileSync(
@@ -1626,6 +4263,8 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
+        kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
       }),
       { mode: 0o600 },
     );
@@ -1637,18 +4276,25 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
+        kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
+        database: { kind: 'bundled', secretName: release + '-database-bootstrap' },
       }),
       { mode: 0o600 },
     );
 
-    const installed = await runCutoverCommand('install', release, installValues, true);
-    assertions.push({
-      description: 'fresh bundled install used an observed live proof Pod',
-      passed: installed.proofPodObserved,
-    });
+    stage = 'cutover-install';
+    await runCutoverCommand('install', release, installValues);
+    stage = 'api-ready';
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
+    );
+    stage = 'network-prerequisites';
+    cleanupNetworkPrerequisites = await prepareNetworkPrerequisites(
+      release,
+      installValues,
+      material.apiProofSpkiSha256,
     );
     const firstProofCount = await proofRowCount(databaseTarget);
     assertions.push({
@@ -1658,7 +4304,8 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
     });
     const firstRevision = await helmRevision(release);
 
-    const upgraded = await runCutoverCommand('enforce', release, upgradeValues, true);
+    stage = 'cutover-enforce';
+    await runCutoverCommand('enforce', release, upgradeValues);
     const secondProofCount = await proofRowCount(databaseTarget);
     const secondRevision = await helmRevision(release);
     assertions.push(
@@ -1669,12 +4316,13 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
       },
       {
         description: 'post-upgrade challenged API proof appended another proof row',
-        passed: upgraded.proofPodObserved && secondProofCount > firstProofCount,
+        passed: secondProofCount > firstProofCount,
         detail: `proofRows=${firstProofCount}->${secondProofCount}`,
       },
     );
 
-    await runCutoverCommand('enforce', release, upgradeValues, false);
+    stage = 'current-proof';
+    await runCutoverCommand('enforce', release, upgradeValues);
     const noOpRevision = await helmRevision(release);
     const noOpProofCount = await proofRowCount(databaseTarget);
     assertions.push(
@@ -1689,17 +4337,19 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
       },
     );
 
+    stage = 'post-cutover-validation';
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
+    await cleanupNetworkPrerequisites();
+    cleanupNetworkPrerequisites = undefined;
     assertions.push({
       description: 'owner Jobs, proof Jobs, Pods, ConfigMaps, and owner Secrets were cleaned',
       passed: true,
     });
-    requireCommand(
-      await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
-      'HELM_UNINSTALL_FAILED',
-    );
+    stage = 'helm-uninstall';
+    await requireHelmUninstall(release);
+    stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
       description: 'Helm uninstall removed every release-owned object',
@@ -1715,7 +4365,16 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
       rbac,
       networkPolicy,
     };
-  } catch (error) {
+  } catch (caught) {
+    const networkPrerequisiteStage = networkPrerequisiteFailureStage(caught);
+    let error = caught;
+    if (cleanupNetworkPrerequisites) {
+      try {
+        await cleanupNetworkPrerequisites();
+      } catch (cleanupError) {
+        error = cleanupError;
+      }
+    }
     const diagnostics = await kubectl(['get', 'pods,jobs', '-n', NAMESPACE, '-o', 'wide']);
     return {
       name: 'real-bundled-install-upgrade-current-uninstall',
@@ -1723,6 +4382,8 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
       durationMs: Date.now() - startedAt,
       events: await getEvents(NAMESPACE),
       assertions,
+      failedStage: stage,
+      ...(networkPrerequisiteStage ? { networkPrerequisiteStage } : {}),
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
@@ -1732,11 +4393,17 @@ async function runRealBundledLifecycle(imageDigest: string): Promise<ScenarioEvi
   }
 }
 
-async function runRealExternalTlsLifecycle(imageDigest: string): Promise<ScenarioEvidence> {
+async function runRealExternalTlsLifecycle(
+  imageDigest: string,
+  kubernetesApiIp: string,
+  kubernetesApiEndpoint: string,
+): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-external');
   const assertions: AssertionResult[] = [];
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-external-'));
+  let cleanupNetworkPrerequisites: (() => Promise<void>) | undefined;
+  let stage: LifecycleFailureStage = 'namespace-reset';
   const databaseTarget = {
     namespace: EXTERNAL_DATABASE_NAMESPACE,
     statefulSet: 'external-postgres',
@@ -1744,16 +4411,21 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
   try {
     for (const namespace of [NAMESPACE, EXTERNAL_DATABASE_NAMESPACE]) {
       requireCommand(await kubectl(namespaceCleanupArgs(namespace)), 'NAMESPACE_RESET_FAILED');
+      stage = 'namespace-create';
       await createNamespace(namespace);
     }
+    stage = 'certificate-material';
     const hostname = `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc.cluster.local`;
     const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release, [
       'external-postgres',
       `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc`,
       hostname,
     ]);
+    stage = 'tls-secrets';
     await createApiProofSecrets(stateDirectory, NAMESPACE, release);
+    stage = 'external-database-fixture';
     const external = await createExternalDatabaseFixture({ directory: stateDirectory, release });
+    stage = 'lifecycle-values';
     const installValues = resolve(stateDirectory, 'values-install.yaml');
     const upgradeValues = resolve(stateDirectory, 'values-upgrade.yaml');
     const database = {
@@ -1763,7 +4435,7 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
       bootstrapAuthoritySecret: `${release}-bootstrap`,
       serviceNamespace: EXTERNAL_DATABASE_NAMESPACE,
       serviceName: 'external-postgres',
-      serviceClusterIp: external.serviceClusterIp,
+      podIp: external.podIp,
     };
     writeFileSync(
       installValues,
@@ -1773,6 +4445,8 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
+        kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
         database,
       }),
       { mode: 0o600 },
@@ -1785,31 +4459,38 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'warn',
+        kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
         database,
       }),
       { mode: 0o600 },
     );
 
-    const installed = await runCutoverCommand('install', release, installValues, true);
+    stage = 'cutover-install';
+    await runCutoverCommand('install', release, installValues);
+    stage = 'api-ready';
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'API_DEPLOYMENT_NOT_AVAILABLE',
     );
+    stage = 'network-prerequisites';
+    cleanupNetworkPrerequisites = await prepareNetworkPrerequisites(
+      release,
+      installValues,
+      material.apiProofSpkiSha256,
+    );
     const firstProofCount = await proofRowCount(databaseTarget);
     assertions.push(
-      {
-        description: 'external TLS install observed the real in-cluster proof Pod',
-        passed: installed.proofPodObserved,
-      },
       {
         description: 'external TLS post-install challenge appended a proof row',
         passed: firstProofCount >= 1,
         detail: `proofRows=${firstProofCount}`,
       },
-      ...(await assertExternalRoleConnections(external.hostname)),
+      ...(await assertExternalRoleConnections(external.hostname, external.podIp)),
     );
     const firstRevision = await helmRevision(release);
-    const upgraded = await runCutoverCommand('enforce', release, upgradeValues, true);
+    stage = 'cutover-enforce';
+    await runCutoverCommand('enforce', release, upgradeValues);
     const secondRevision = await helmRevision(release);
     const secondProofCount = await proofRowCount(databaseTarget);
     assertions.push(
@@ -1819,11 +4500,12 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
       },
       {
         description: 'external TLS post-upgrade challenge appended another proof row',
-        passed: upgraded.proofPodObserved && secondProofCount > firstProofCount,
+        passed: secondProofCount > firstProofCount,
         detail: `proofRows=${firstProofCount}->${secondProofCount}`,
       },
     );
-    await runCutoverCommand('enforce', release, upgradeValues, false);
+    stage = 'current-proof';
+    await runCutoverCommand('enforce', release, upgradeValues);
     const currentRevision = await helmRevision(release);
     const currentProofCount = await proofRowCount(databaseTarget);
     assertions.push(
@@ -1836,13 +4518,15 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
         passed: currentProofCount > secondProofCount,
       },
     );
+    stage = 'post-cutover-validation';
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
-    requireCommand(
-      await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
-      'HELM_UNINSTALL_FAILED',
-    );
+    await cleanupNetworkPrerequisites();
+    cleanupNetworkPrerequisites = undefined;
+    stage = 'helm-uninstall';
+    await requireHelmUninstall(release);
+    stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     requireCommand(
       await kubectl(namespaceCleanupArgs(EXTERNAL_DATABASE_NAMESPACE)),
@@ -1869,7 +4553,16 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
       rbac,
       networkPolicy,
     };
-  } catch (error) {
+  } catch (caught) {
+    const networkPrerequisiteStage = networkPrerequisiteFailureStage(caught);
+    let error = caught;
+    if (cleanupNetworkPrerequisites) {
+      try {
+        await cleanupNetworkPrerequisites();
+      } catch (cleanupError) {
+        error = cleanupError;
+      }
+    }
     const diagnostics = await kubectl(['get', 'pods,jobs', '-A', '-o', 'wide']);
     return {
       name: 'real-external-tls-install-upgrade-current-uninstall',
@@ -1877,6 +4570,8 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
       durationMs: Date.now() - startedAt,
       events: await getEvents(NAMESPACE),
       assertions,
+      failedStage: stage,
+      ...(networkPrerequisiteStage ? { networkPrerequisiteStage } : {}),
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
@@ -1886,17 +4581,40 @@ async function runRealExternalTlsLifecycle(imageDigest: string): Promise<Scenari
   }
 }
 
-async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEvidence> {
+async function runFailedRolloutRecovery(
+  imageDigest: string,
+  kubernetesApiIp: string,
+  kubernetesApiEndpoint: string,
+): Promise<ScenarioEvidence> {
   const startedAt = Date.now();
   const release = scenarioRelease('cmdr-recovery');
   const assertions: AssertionResult[] = [];
   const stateDirectory = mkdtempSync(resolve(tmpdir(), 'commander-kind-recovery-'));
-  const databaseTarget = { namespace: NAMESPACE, statefulSet: `${release}-postgres` };
+  const databaseTarget = {
+    namespace: EXTERNAL_DATABASE_NAMESPACE,
+    statefulSet: 'external-postgres',
+  };
+  let stage: LifecycleFailureStage = 'namespace-reset';
   try {
-    requireCommand(await kubectl(namespaceCleanupArgs(NAMESPACE)), 'NAMESPACE_RESET_FAILED');
-    await createNamespace();
-    const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release);
-    await createLifecycleTlsSecrets(stateDirectory, NAMESPACE, release, 'postgres.key');
+    for (const namespace of [NAMESPACE, EXTERNAL_DATABASE_NAMESPACE]) {
+      requireCommand(await kubectl(namespaceCleanupArgs(namespace)), 'NAMESPACE_RESET_FAILED');
+    }
+    stage = 'namespace-create';
+    for (const namespace of [NAMESPACE, EXTERNAL_DATABASE_NAMESPACE]) {
+      await createNamespace(namespace);
+    }
+    stage = 'certificate-material';
+    const hostname = `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc.cluster.local`;
+    const material = generateCertificateMaterial(stateDirectory, NAMESPACE, release, [
+      'external-postgres',
+      `external-postgres.${EXTERNAL_DATABASE_NAMESPACE}.svc`,
+      hostname,
+    ]);
+    stage = 'tls-secrets';
+    await createApiProofSecrets(stateDirectory, NAMESPACE, release, 'postgres.key');
+    stage = 'external-database-fixture';
+    const external = await createExternalDatabaseFixture({ directory: stateDirectory, release });
+    stage = 'lifecycle-values';
     const values = resolve(stateDirectory, 'values.yaml');
     writeFileSync(
       values,
@@ -1906,12 +4624,24 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
         imageDigest,
         databaseSpkiSha256: material.databaseSpkiSha256,
         logLevel: 'info',
+        kubernetesApiServiceIp: kubernetesApiIp,
+        kubernetesApiEndpointIp: kubernetesApiEndpoint,
+        database: {
+          kind: 'external' as const,
+          secretName: `${release}-database`,
+          caSecret: `${release}-database-ca`,
+          bootstrapAuthoritySecret: `${release}-bootstrap`,
+          serviceNamespace: EXTERNAL_DATABASE_NAMESPACE,
+          serviceName: 'external-postgres',
+          podIp: external.podIp,
+        },
       }),
       { mode: 0o600 },
     );
     let firstFailure: unknown;
+    stage = 'recovery-failed-install';
     try {
-      await runCutoverCommand('install', release, values, false);
+      await runCutoverCommand('install', release, values);
     } catch (error) {
       firstFailure = error;
     }
@@ -1935,8 +4665,10 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
       },
     );
 
+    stage = 'recovery-retry';
     await replaceApiProofPrivateSecret(stateDirectory, NAMESPACE, release);
-    const recovered = await runCutoverCommand('install', release, values, true);
+    await runCutoverCommand('install', release, values);
+    stage = 'api-ready';
     requireCommand(
       await waitForDeployment(`${release}-api`, '10m'),
       'RECOVERED_API_DEPLOYMENT_NOT_AVAILABLE',
@@ -1951,17 +4683,17 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
       },
       {
         description: 'recovered rollout ran the challenged proof Job and appended a proof row',
-        passed: recovered.proofPodObserved && proofCountAfterRetry > proofCountAfterFailure,
+        passed: proofCountAfterRetry > proofCountAfterFailure,
         detail: `proofRows=${proofCountAfterFailure}->${proofCountAfterRetry}`,
       },
     );
+    stage = 'post-cutover-validation';
     const rbac = await assertProofReaderRbac(release);
     const networkPolicy = await runNetworkPolicyCanaries(release, imageDigest);
     await assertEphemeralResourcesCleaned(release);
-    requireCommand(
-      await helm(['uninstall', release, '-n', NAMESPACE, '--wait']),
-      'HELM_UNINSTALL_FAILED',
-    );
+    stage = 'helm-uninstall';
+    await requireHelmUninstall(release);
+    stage = 'release-cleanup';
     await assertReleaseCleanup(release);
     assertions.push({
       description: 'recovered release and every ephemeral owner/proof resource were cleaned',
@@ -1984,6 +4716,7 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
       durationMs: Date.now() - startedAt,
       events: await getEvents(NAMESPACE),
       assertions,
+      failedStage: stage,
       error: `${error instanceof Error ? error.message : String(error)}${
         diagnostics.stdout.trim() ? `\n${diagnostics.stdout.trim()}` : ''
       }`,
@@ -1993,23 +4726,72 @@ async function runFailedRolloutRecovery(imageDigest: string): Promise<ScenarioEv
   }
 }
 
-async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
-  const selectedScenarios = selectLifecycleScenarios(opts.scenarioFilter);
-  assertHelmVersion(requireCommand(await helm(['version', '--short']), 'HELM_VERSION_FAILED'));
-  const imageDigest = opts.reuseProductionImage
-    ? await inspectReusableProductionImage()
-    : await buildProductionImage();
+const SCENARIO_EVIDENCE_NAMES: Readonly<Record<LifecycleScenarioName, string>> = {
+  'real-bundled': 'real-bundled-install-upgrade-current-uninstall',
+  'real-external-tls': 'real-external-tls-install-upgrade-current-uninstall',
+  'failed-rollout-recovery': 'failed-rollout-exact-retry-recovery',
+};
 
-  if (!kindClusterExists(CLUSTER_NAME)) {
-    await createKindCluster(CLUSTER_NAME);
+export async function runLifecycleScenario(
+  scenario: LifecycleScenarioName,
+  operation: () => Promise<ScenarioEvidence>,
+): Promise<ScenarioEvidence> {
+  const startedAt = Date.now();
+  try {
+    return await operation();
+  } catch {
+    return {
+      name: SCENARIO_EVIDENCE_NAMES[scenario],
+      passed: false,
+      durationMs: Date.now() - startedAt,
+      events: [],
+      assertions: [],
+      failedStage: 'scenario-execution',
+      error: 'KIND_LIFECYCLE_SCENARIO_EXECUTION_FAILED',
+    };
   }
-  await loadPinnedRuntimeImages();
-  await installCalico();
-  await loadProductionImage(imageDigest);
-  await ensureControlPlaneReady();
+}
+
+async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
+  const selectedScenarios = await runBootstrapStage('scenario-selection', async () =>
+    selectLifecycleScenarios(opts.scenarioFilter),
+  );
+  await runBootstrapStage('helm-version', async () => {
+    assertHelmVersion(requireCommand(await helm(['version', '--short']), 'HELM_VERSION_FAILED'));
+  });
+  const imageDigest = await runBootstrapStage('production-image', async () =>
+    opts.reuseProductionImage ? inspectReusableProductionImage() : buildProductionImage(),
+  );
+  const imageSourceRevision = opts.reuseProductionImage
+    ? undefined
+    : await runBootstrapStage('source-revision', async () =>
+        productionImageSourceRevision(process.env, () =>
+          requireCommand(
+            runCmdSync('git', ['rev-parse', 'HEAD'], { cwd: rootDir() }),
+            'PRODUCTION_IMAGE_SOURCE_REVISION_INVALID',
+          ),
+        ),
+      );
+
+  if (!(await runBootstrapStage('kind-cluster', async () => kindClusterExists(CLUSTER_NAME)))) {
+    await runBootstrapStage('kind-cluster', async () => createKindCluster(CLUSTER_NAME));
+  }
+  await runBootstrapStage('runtime-images', loadPinnedRuntimeImages);
+  await runBootstrapStage('calico-install', installCalico);
+  await runBootstrapStage('production-image-load', async () => loadProductionImage(imageDigest));
+  await runBootstrapStage('control-plane-readiness', ensureControlPlaneReady);
+  const kubernetesApiIp = await runBootstrapStage('kubernetes-api-service', kubernetesApiServiceIp);
+  const kubernetesApiEndpoint = await runBootstrapStage(
+    'kubernetes-api-endpoint',
+    kubernetesApiEndpointIp,
+  );
   const runners: Record<
     LifecycleScenarioName,
-    (selectedDigest: string) => Promise<ScenarioEvidence>
+    (
+      selectedDigest: string,
+      selectedKubernetesApiIp: string,
+      selectedKubernetesApiEndpoint: string,
+    ) => Promise<ScenarioEvidence>
   > = {
     'real-bundled': runRealBundledLifecycle,
     'real-external-tls': runRealExternalTlsLifecycle,
@@ -2017,7 +4799,13 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   };
   const scenarios: ScenarioEvidence[] = [];
   for (const scenario of selectedScenarios) {
-    scenarios.push(await runners[scenario](imageDigest));
+    scenarios.push(
+      await runBootstrapStage('scenario-execution', async () =>
+        runLifecycleScenario(scenario, () =>
+          runners[scenario](imageDigest, kubernetesApiIp, kubernetesApiEndpoint),
+        ),
+      ),
+    );
   }
   const rbac = scenarios.flatMap((scenario) => scenario.rbac ?? []);
   const networkPolicy = scenarios.flatMap((scenario) => scenario.networkPolicy ?? []);
@@ -2026,7 +4814,7 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   );
 
   if (!opts.keepCluster) {
-    await deleteKindCluster(CLUSTER_NAME);
+    await runBootstrapStage('cluster-cleanup', async () => deleteKindCluster(CLUSTER_NAME));
   }
 
   const rawEvidence: HarnessEvidence = {
@@ -2039,6 +4827,13 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
     rbac,
     networkPolicy,
     rolloutRecovery,
+    image: {
+      digest: imageDigest,
+      ...(imageSourceRevision ? { sourceRevision: imageSourceRevision } : {}),
+    },
+    ownerFailureEvidence: scenarios.flatMap(({ error }) =>
+      typeof error === 'string' ? [parseOwnerFailureEvidence(error)].filter(Boolean) : [],
+    ),
     passed: aggregateScenarioPass(scenarios),
     sanitized: false,
   };
@@ -2046,9 +4841,7 @@ async function runAll(opts: HarnessOptions): Promise<HarnessEvidence> {
   const evidence = sanitizeEvidence(rawEvidence);
   evidence.sanitized = true;
 
-  const evidencePath = resolve(rootDir(), 'kind-lifecycle-evidence.json');
-  writeFileSync(evidencePath, JSON.stringify(evidence, null, 2));
-  process.stdout.write(`Evidence written to ${evidencePath}\n`);
+  writeSanitizedEvidence(evidence);
 
   return evidence;
 }
@@ -2070,15 +4863,26 @@ function parseArgs(): HarnessOptions {
 
 export { runAll };
 
-if (import.meta.url === `file://${process.argv[1]}`) {
-  (async () => {
-    const opts = parseArgs();
-    const evidence = await runAll(opts);
-    process.exitCode = evidence.passed ? 0 : 1;
-  })().catch((error) => {
-    process.stderr.write(
-      `harness failed: ${error instanceof Error ? error.message : String(error)}\n`,
-    );
-    process.exit(1);
-  });
+if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {
+  if (process.argv[2] === 'bootstrap-evidence') {
+    if (process.argv[3] === undefined || process.argv[3] === 'harness-bootstrap') {
+      writeBootstrapFailureEvidence();
+    } else if (process.argv[3] === 'kind-provisioning') {
+      writeBootstrapFailureEvidence('kind-provisioning');
+    } else {
+      process.stderr.write('bootstrap evidence failed: KIND_BOOTSTRAP_EVIDENCE_ARGUMENT_INVALID\n');
+      process.exitCode = 1;
+    }
+  } else {
+    installUncaughtExceptionEvidenceCapture();
+    (async () => {
+      const opts = parseArgs();
+      const evidence = await runAll(opts);
+      process.exitCode = evidence.passed ? 0 : 1;
+    })().catch((error) => {
+      writeBootstrapFailureEvidence(bootstrapFailureStage(error));
+      process.stderr.write('harness failed: KIND_LIFECYCLE_BOOTSTRAP_FAILED\n');
+      process.exitCode = 1;
+    });
+  }
 }

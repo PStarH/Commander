@@ -6,7 +6,10 @@ import { load } from 'js-yaml';
 import { canonicalBootstrapJson } from '../packages/kernel/src/canonicalBootstrap.js';
 import { verifyChartContentDigest } from './chart-content-digest.js';
 import {
+  TASK1_SELECTOR_CAN_MATCH_H_CEL,
+  TASK1_SELECTOR_REQUIREMENTS_CEL,
   createTask1PrerequisitePolicyConfig,
+  task1CelDynLiteral,
   type Task1PrerequisiteInput,
 } from './task1-helm-prerequisite.js';
 
@@ -19,8 +22,7 @@ const LABEL_KEY =
   /^(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?\/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?$/;
 const LABEL_VALUE = /^(?:[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?)?$/;
 
-export const TASK1_SELECTOR_CAN_MATCH_H_CEL =
-  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))";
+export { TASK1_SELECTOR_CAN_MATCH_H_CEL };
 
 export type Task1PrerequisiteStage = 'network' | 'workload';
 
@@ -61,7 +63,6 @@ export interface Task1PrerequisiteContext {
 export interface Task1PrerequisiteCommandPorts {
   get(kind: string, name: string, namespace?: string): Promise<Task1KubernetesObject | null>;
   create(object: Task1KubernetesObject): Promise<Task1KubernetesObject>;
-  tokenReview(): Promise<string>;
   canI(verb: string, resource: string, name?: string): Promise<boolean>;
   dryRunCreate(object: Task1KubernetesObject): Promise<boolean>;
   readPublicCertificate(namespace: string, secretName: string, key: string): Promise<string>;
@@ -426,40 +427,52 @@ function networkGuardValidations(context: Task1PrerequisiteContext): Array<Recor
     annotations: policy.metadata.annotations,
     spec: policy.spec,
   }));
-  const allowedJcs = canonicalBootstrapJson(allowed)
-    .replaceAll('\\', '\\\\')
-    .replaceAll("'", "\\'");
+  const allowedCel = task1CelDynLiteral(allowed);
   const operator = context.request.migrationOperatorSubject.replaceAll("'", "\\'");
   const protectedNames = policies.map((policy) => `'${policy.metadata.name}'`).join(',');
+  const labelEquals = (resource: 'object' | 'oldObject', key: string, value: string) =>
+    `'${key}' in ${resource}.metadata.labels && ${resource}.metadata.labels['${key}'] == '${value}'`;
+  const hookLabelsMatch = (resource: 'object' | 'oldObject') =>
+    Object.entries(hookLabels(context))
+      .map(([key, value]) => labelEquals(resource, key, value))
+      .join(' && ');
+  const ownerProofPodException =
+    '(' +
+    labelEquals('object', 'app.kubernetes.io/component', 'tenant-authority-proof-reader') +
+    ' && ' +
+    labelEquals('object', 'commander.io/tenant-authority-proof-reader', 'true') +
+    ' && ' +
+    labelEquals('object', 'commander.io/tenant-authority-proof-release', context.request.release) +
+    " && 'commander.io/tenant-cutover-owner-execution' in object.metadata.labels)";
   return [
     {
       expression: `request.resource.resource != 'networkpolicies' || request.operation == 'CREATE' || !(object.metadata.name in [${protectedNames}])`,
       message: 'protected stable policies are create-only',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username != '${operator}' || (request.operation == 'CREATE' && ${allowedJcs}.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.annotations == object.metadata.annotations && p.spec == object.spec))`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username != '" +
+        operator +
+        "' || (request.operation == 'CREATE' && " +
+        allowedCel +
+        '.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.annotations == object.metadata.annotations && p.spec == object.spec))',
       message: 'migration operator may create only an exact rendered stable policy',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username == '${operator}' || request.operation == 'DELETE' || !has(object.spec.egress) || size(object.spec.egress) == 0 || !(${TASK1_SELECTOR_CAN_MATCH_H_CEL})`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username == '" +
+        operator +
+        "' || request.operation == 'DELETE' || !has(dyn(object).spec.egress) || size(dyn(object).spec.egress) == 0 || !(" +
+        TASK1_SELECTOR_CAN_MATCH_H_CEL +
+        ')',
       message: 'non-operator NetworkPolicy must not add egress to a protected hook selector',
     },
     {
-      expression: `request.resource.resource != 'pods' || request.operation != 'CREATE' || !(${Object.entries(
-        hookLabels(context),
-      )
-        .map(([key, value]) => `object.metadata.labels['${key}'] == '${value}'`)
-        .join(' && ')}) || !('${'app.kubernetes.io/component'}' in object.metadata.labels)`,
+      expression: `request.resource.resource != 'pods' || request.operation != 'CREATE' || !(${hookLabelsMatch('object')}) || !('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}`,
       message: 'migration hook Pods may not carry the legacy component label',
     },
     {
-      expression: `request.resource.resource != 'pods' || request.operation != 'UPDATE' || !(${Object.entries(
-        hookLabels(context),
-      )
-        .map(([key, value]) => `oldObject.metadata.labels['${key}'] == '${value}'`)
-        .join(' && ')}) || ((${Object.entries(hookLabels(context))
-        .map(([key, value]) => `object.metadata.labels['${key}'] == '${value}'`)
-        .join(' && ')}) && !('${'app.kubernetes.io/component'}' in object.metadata.labels))`,
+      expression: `request.resource.resource != 'pods' || request.operation != 'UPDATE' || !(${hookLabelsMatch('oldObject')}) || ((${hookLabelsMatch('object')}) && (!('${'app.kubernetes.io/component'}' in object.metadata.labels) || ${ownerProofPodException}))`,
       message: 'migration hook Pod labels are immutable',
     },
   ];
@@ -471,11 +484,11 @@ function workloadGuardValidations(
   const release = context.request.release.replaceAll("'", "\\'");
   return [
     {
-      expression: `object.metadata.name != '${release}-api' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'api' && object.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.spec.template.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.metadata.annotations['commander.io/tenant-authority-phase'] in ['expand', 'enforce'] && object.metadata.annotations['commander.io/tenant-authority-phase'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-phase'] && object.metadata.annotations['commander.io/tenant-authority-image-digest'].matches('^sha256:[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-image-digest'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-image-digest'] && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'].matches('^[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] && object.spec.template.spec.containers.filter(c, c.name == 'api').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'api' && c.image.endsWith('@' + object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST' && e.value == object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256' && e.value == object.metadata.annotations['commander.io/tenant-authority-configuration-sha256']) && c.readinessProbe.httpGet.path == '/ready/tenant-authority/v1'))`,
+      expression: `object.metadata.name != '${release}-api' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'api' && object.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.spec.template.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.metadata.annotations['commander.io/tenant-authority-phase'] in ['expand', 'enforce'] && object.metadata.annotations['commander.io/tenant-authority-phase'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-phase'] && object.metadata.annotations['commander.io/tenant-authority-image-digest'].matches('^sha256:[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-image-digest'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-image-digest'] && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'].matches('^[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] && object.spec.template.spec.containers.filter(c, c.name == 'api').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'api' && c.image.endsWith('@' + object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST' && e.value == object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256' && e.value == object.metadata.annotations['commander.io/tenant-authority-configuration-sha256']) && c.readinessProbe.exec.command.exists(a, a.contains('/ready/tenant-authority/v1'))))`,
       message: 'tenant-authority API workload must preserve exact context-aware metadata',
     },
     {
-      expression: `object.metadata.name != '${release}-postgres' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'postgres' && object.spec.serviceName == '${release}-postgres' && object.spec.template.metadata.annotations['commander.io/database-transport-content-sha256'].matches('^[0-9a-f]{64}$') && object.spec.template.spec.volumes.filter(v, v.name == 'database-tls').size() == 1 && object.spec.template.spec.volumes.exists(v, v.name == 'database-tls' && has(v.secret) && v.secret.defaultMode == 288 && v.secret.items.exists(i, i.key == 'ca.crt' && i.path == 'ca.crt') && v.secret.items.exists(i, i.key == 'tls.crt' && i.path == 'tls.crt') && v.secret.items.exists(i, i.key == 'tls.key' && i.path == 'tls.key')) && object.spec.template.spec.containers.filter(c, c.name == 'postgres').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'postgres' && c.args.exists(a, a == 'ssl=on') && c.args.exists(a, a == 'ssl_ca_file=/run/commander/database-tls/ca.crt') && c.args.exists(a, a == 'ssl_cert_file=/run/commander/database-tls/tls.crt') && c.args.exists(a, a == 'ssl_key_file=/run/commander/database-tls/tls.key') && c.volumeMounts.exists(m, m.name == 'database-tls' && m.mountPath == '/run/commander/database-tls' && m.readOnly == true) && c.volumeMounts.exists(m, m.name == 'postgres-data' && m.mountPath == '/var/lib/postgresql/data')) && ((has(object.spec.volumeClaimTemplates) && object.spec.volumeClaimTemplates.size() == 1 && object.spec.volumeClaimTemplates[0].metadata.name == 'postgres-data') || object.spec.template.spec.volumes.exists(v, v.name == 'postgres-data' && has(v.emptyDir))))`,
+      expression: `object.metadata.name != '${release}-postgres' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'postgres' && dyn(object).spec.serviceName == '${release}-postgres' && object.spec.template.metadata.annotations['commander.io/database-transport-content-sha256'].matches('^[0-9a-f]{64}$') && object.spec.template.spec.volumes.filter(v, v.name == 'database-tls').size() == 1 && object.spec.template.spec.volumes.exists(v, v.name == 'database-tls' && has(v.secret) && v.secret.defaultMode == 288 && v.secret.items.exists(i, i.key == 'ca.crt' && i.path == 'ca.crt') && v.secret.items.exists(i, i.key == 'tls.crt' && i.path == 'tls.crt') && v.secret.items.exists(i, i.key == 'tls.key' && i.path == 'tls.key')) && object.spec.template.spec.containers.filter(c, c.name == 'postgres').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'postgres' && c.args.exists(a, a == 'ssl=on') && c.args.exists(a, a == 'ssl_ca_file=/run/commander/database-tls/ca.crt') && c.args.exists(a, a == 'ssl_cert_file=/run/commander/database-tls/tls.crt') && c.args.exists(a, a == 'ssl_key_file=/run/commander/database-tls/tls.key') && c.volumeMounts.exists(m, m.name == 'database-tls' && m.mountPath == '/run/commander/database-tls' && m.readOnly == true) && c.volumeMounts.exists(m, m.name == 'postgres-data' && m.mountPath == '/var/lib/postgresql/data')) && ((has(dyn(object).spec.volumeClaimTemplates) && dyn(object).spec.volumeClaimTemplates.size() == 1 && dyn(object).spec.volumeClaimTemplates[0].metadata.name == 'postgres-data') || object.spec.template.spec.volumes.exists(v, v.name == 'postgres-data' && has(v.emptyDir))))`,
       message: 'bundled PostgreSQL must preserve exact TLS transport and data-volume identity',
     },
   ];
@@ -508,16 +521,28 @@ export function renderTask1AdmissionPair(
                   apiVersions: ['v1'],
                   operations: ['CREATE', 'UPDATE', 'DELETE'],
                   resources: ['networkpolicies'],
+                  scope: '*',
                 },
                 {
                   apiGroups: [''],
                   apiVersions: ['v1'],
                   operations: ['CREATE', 'UPDATE'],
                   resources: ['pods'],
+                  scope: '*',
                 },
               ]
-            : [{ apiGroups, apiVersions: ['v1'], operations: ['CREATE', 'UPDATE'], resources }],
+            : [
+                {
+                  apiGroups,
+                  apiVersions: ['v1'],
+                  operations: ['CREATE', 'UPDATE'],
+                  resources,
+                  scope: '*',
+                },
+              ],
         matchPolicy: 'Equivalent',
+        namespaceSelector: {},
+        objectSelector: {},
       },
       ...(stage === 'network'
         ? {
@@ -526,8 +551,7 @@ export function renderTask1AdmissionPair(
               { name: 'componentKey', expression: "'app.kubernetes.io/component'" },
               {
                 name: 'selectorRequirements',
-                expression:
-                  "request.resource.resource != 'networkpolicies' ? [] : (has(object.spec.podSelector.matchLabels) ? object.spec.podSelector.matchLabels.map(k, {'key': k, 'operator': 'In', 'values': [object.spec.podSelector.matchLabels[k]]}) : []) + (has(object.spec.podSelector.matchExpressions) ? object.spec.podSelector.matchExpressions : [])",
+                expression: TASK1_SELECTOR_REQUIREMENTS_CEL,
               },
             ],
           }
@@ -544,6 +568,7 @@ export function renderTask1AdmissionPair(
       policyName: nameValue,
       validationActions: ['Deny'],
       matchResources: {
+        matchPolicy: 'Equivalent',
         namespaceSelector:
           stage === 'network'
             ? {
@@ -565,6 +590,7 @@ export function renderTask1AdmissionPair(
             : {
                 matchLabels: { 'kubernetes.io/metadata.name': context.request.namespace },
               },
+        objectSelector: {},
       },
     },
   };
@@ -606,7 +632,14 @@ async function ensureCreateOnly(
   }
   for (let index = 0; index < objects.length; index += 1) {
     const expected = objects[index]!;
-    if (!existing[index]) await ports.create(expected);
+    if (!existing[index]) {
+      try {
+        await ports.create(expected);
+      } catch (error) {
+        if (error instanceof SyntaxError) fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+        throw error;
+      }
+    }
     const observed = await ports.get(
       expected.kind,
       expected.metadata.name,
@@ -641,10 +674,11 @@ function deploymentReady(
     if (!Array.isArray(api.env)) return false;
     const environment = new Map(api.env.map(record).map((item) => [item.name, item.value]));
     const readinessProbe = record(api.readinessProbe);
-    const httpGet = record(readinessProbe.httpGet);
+    const execProbe = record(readinessProbe.exec);
+    const execCommand = Array.isArray(execProbe.command) ? execProbe.command : [];
     const replicas = spec.replicas;
     return (
-      metadata.name === `${context.request.release}-api` &&
+      metadata.name === context.request.release + '-api' &&
       labels['app.kubernetes.io/instance'] === context.request.release &&
       labels['app.kubernetes.io/component'] === 'api' &&
       metadata.generation === status.observedGeneration &&
@@ -667,11 +701,13 @@ function deploymentReady(
       templateAnnotations['commander.io/tenant-authority-configuration-sha256'] ===
         context.configurationSha256 &&
       typeof api.image === 'string' &&
-      api.image.endsWith(`@${context.imageDigest}`) &&
+      api.image.endsWith('@' + context.imageDigest) &&
       environment.get('COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST') === context.imageDigest &&
       environment.get('COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256') ===
         context.configurationSha256 &&
-      httpGet.path === '/ready/tenant-authority/v1'
+      execCommand.some(
+        (value) => typeof value === 'string' && value.includes('/ready/tenant-authority/v1'),
+      )
     );
   } catch {
     return false;
@@ -705,11 +741,45 @@ function admissionReady(policy: Task1KubernetesObject): boolean {
     const checking = record(status.typeChecking);
     return (
       policy.metadata.generation === status.observedGeneration &&
-      Array.isArray(checking.expressionWarnings) &&
-      checking.expressionWarnings.length === 0
+      (checking.expressionWarnings === undefined ||
+        (Array.isArray(checking.expressionWarnings) && checking.expressionWarnings.length === 0))
     );
   } catch {
     return false;
+  }
+}
+
+function admissionRbacFailureCode(resource: string, verb: string): string {
+  const policy = resource === 'validatingadmissionpolicies.admissionregistration.k8s.io';
+  const binding = resource === 'validatingadmissionpolicybindings.admissionregistration.k8s.io';
+  if (!policy && !binding) return 'TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD';
+  switch (verb) {
+    case 'create':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_CREATE_ALLOWED';
+    case 'update':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_UPDATE_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_UPDATE_ALLOWED';
+    case 'patch':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_PATCH_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_PATCH_ALLOWED';
+    case 'delete':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_DELETE_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_DELETE_ALLOWED';
+    case 'list':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_LIST_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_LIST_ALLOWED';
+    case 'watch':
+      return policy
+        ? 'TENANT_POLICY_ADMISSION_RBAC_POLICY_WATCH_ALLOWED'
+        : 'TENANT_POLICY_ADMISSION_RBAC_BINDING_WATCH_ALLOWED';
+    default:
+      return 'TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD';
   }
 }
 
@@ -729,8 +799,9 @@ async function requireAdmission(
     'validatingadmissionpolicybindings.admissionregistration.k8s.io',
   ]) {
     for (const verb of ['create', 'update', 'patch', 'delete', 'list', 'watch']) {
-      if (await ports.canI(verb, resource, pair.policy.metadata.name))
-        fail('TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD');
+      if (await ports.canI(verb, resource, pair.policy.metadata.name)) {
+        fail(admissionRbacFailureCode(resource, verb));
+      }
     }
   }
 }
@@ -826,8 +897,6 @@ export async function runTask1PrerequisiteOperator(
   context: Task1PrerequisiteContext,
   ports: Task1PrerequisiteCommandPorts,
 ): Promise<void> {
-  if ((await ports.tokenReview()) !== context.request.migrationOperatorSubject)
-    fail('TENANT_POLICY_SUBJECT_MISMATCH');
   await requireAdmission(context, 'network', ports);
   if (context.request.stage === 'workload') {
     await requireReadyDeployment(context, ports);
@@ -920,7 +989,11 @@ export function createTask1KubectlPorts(
       if (namespace) args.push('--namespace', namespace);
       const output = await runCommand(args);
       if (!output.trim()) return null;
-      return JSON.parse(output) as Task1KubernetesObject;
+      try {
+        return JSON.parse(output) as Task1KubernetesObject;
+      } catch {
+        fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+      }
     },
     async create(object) {
       return JSON.parse(
@@ -930,23 +1003,46 @@ export function createTask1KubectlPorts(
         ),
       ) as Task1KubernetesObject;
     },
-    async tokenReview() {
-      const token = await readFile('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf8');
-      const review = JSON.parse(
-        await runCommand(
-          ['create', '--filename', '-', '--output', 'json'],
-          `${canonicalBootstrapJson({ apiVersion: 'authentication.k8s.io/v1', kind: 'TokenReview', spec: { token: token.trim() } })}\n`,
-        ),
-      ) as Record<string, unknown>;
-      const status = record(review.status);
-      const user = record(status.user);
-      if (status.authenticated !== true) fail('TENANT_POLICY_TOKEN_REVIEW_FAILED');
-      return string(user.username);
-    },
     async canI(verb, resource, objectName) {
-      const args = ['auth', 'can-i', verb, resource];
-      if (objectName) args.push('--resource-name', objectName);
-      return (await runCommand(args)).trim() === 'yes';
+      const [resourceName, ...groupParts] = resource.split('.');
+      if (!resourceName) fail('TENANT_POLICY_KUBERNETES_RESOURCE_INVALID');
+      try {
+        const review = JSON.parse(
+          await runCommand(
+            ['create', '--filename', '-', '--output', 'json'],
+            canonicalBootstrapJson({
+              apiVersion: 'authorization.k8s.io/v1',
+              kind: 'SelfSubjectAccessReview',
+              spec: {
+                resourceAttributes: {
+                  verb,
+                  group: groupParts.join('.'),
+                  resource: resourceName,
+                  ...(objectName ? { name: objectName } : {}),
+                },
+              },
+            }) + '\n',
+          ),
+        ) as unknown;
+        const status =
+          review && typeof review === 'object' && !Array.isArray(review)
+            ? (review as Record<string, unknown>).status
+            : undefined;
+        if (!status || typeof status !== 'object' || Array.isArray(status))
+          fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+        const allowed = (status as Record<string, unknown>).allowed;
+        if (allowed === true) return true;
+        if (allowed === false) return false;
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          error.message === 'TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN'
+        ) {
+          throw error;
+        }
+        fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
+      }
+      fail('TENANT_POLICY_KUBERNETES_COMMAND_FAILED');
     },
     async dryRunCreate(object) {
       try {
