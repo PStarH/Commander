@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   ACTION_OPERATIONS_FAULT_POINTS,
   buildActionOperationsPreflight,
   parseActionOperationsProofArgs,
+  runExternalActionOperationsCampaign,
   runActionOperationsProof,
   verifyActionOperationsArtifactHashes,
   type ActionOperationsCampaignObservation,
@@ -55,6 +59,40 @@ function completeObservation(): ActionOperationsCampaignObservation {
     log: { events: ['forward-query', 'compensation-query'] },
     evidence: { verification: 'valid' },
   };
+}
+
+async function withExternalDriver(
+  records: { log: Record<string, unknown>; evidence: Record<string, unknown> },
+  run: (output: string, environment: ActionOperationsProofEnvironment) => Promise<void>,
+): Promise<void> {
+  const directory = await mkdtemp(join(tmpdir(), 'action-operations-driver-'));
+  const driver = join(directory, 'driver.mjs');
+  const output = join(directory, 'output');
+  const { log: _log, evidence: _evidence, ...observation } = completeObservation();
+  await writeFile(
+    driver,
+    `import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+const output = process.argv[process.argv.indexOf('--output') + 1];
+mkdirSync(output, { recursive: true });
+writeFileSync(join(output, 'observation.json'), process.env.DRIVER_OBSERVATION);
+writeFileSync(join(output, 'log.json'), process.env.DRIVER_LOG);
+writeFileSync(join(output, 'evidence.json'), process.env.DRIVER_EVIDENCE);
+`,
+    'utf8',
+  );
+  try {
+    await run(output, {
+      ...githubEnvironment(),
+      COMMANDER_ACTION_OPERATIONS_DRIVER: process.execPath,
+      COMMANDER_ACTION_OPERATIONS_DRIVER_ARGS: JSON.stringify([driver]),
+      DRIVER_OBSERVATION: JSON.stringify(observation),
+      DRIVER_LOG: JSON.stringify(records.log),
+      DRIVER_EVIDENCE: JSON.stringify(records.evidence),
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 }
 
 describe('action-operations proof preflight', () => {
@@ -162,6 +200,44 @@ describe('action-operations proof preflight', () => {
 });
 
 describe('action-operations proof artifacts', () => {
+  it('accepts only the independent driver artifacts and binds their sanitized records', async () => {
+    await withExternalDriver(
+      { log: { events: ['forward-query'] }, evidence: { verification: 'valid' } },
+      async (output, environment) => {
+        const observation = await runExternalActionOperationsCampaign(
+          buildActionOperationsPreflight(
+            { provider: 'github', faultCampaign: 'full', output: 'artifacts/proof' },
+            environment,
+          ),
+          output,
+          environment,
+        );
+        assert.deepEqual(observation.log, { events: ['forward-query'] });
+        assert.deepEqual(observation.evidence, { verification: 'valid' });
+      },
+    );
+  });
+
+  it('rejects sensitive fields in external driver artifacts', async () => {
+    await withExternalDriver(
+      { log: { authorization: 'Bearer never-retain-me' }, evidence: { verification: 'valid' } },
+      async (output, environment) => {
+        await assert.rejects(
+          () =>
+            runExternalActionOperationsCampaign(
+              buildActionOperationsPreflight(
+                { provider: 'github', faultCampaign: 'full', output: 'artifacts/proof' },
+                environment,
+              ),
+              output,
+              environment,
+            ),
+          /sensitive field/i,
+        );
+      },
+    );
+  });
+
   it('emits PROVEN only for a clean full real-provider campaign', async () => {
     const result = await runActionOperationsProof(
       { provider: 'github', faultCampaign: 'full', output: 'artifacts/proof' },
