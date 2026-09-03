@@ -1054,4 +1054,58 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations.length, 1);
     assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
   });
+
+  it('fails closed for an oversized staged source under .commander', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-precommit-policy-'));
+    const primary = process.cwd();
+    const linked = path.join(tempRoot, 'linked');
+    const fixture = path.join('.commander', 'oversized-policy-fixture.ts');
+
+    const git = (cwd: string, args: string[]) =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' });
+    const runHook = () =>
+      execFileSync(
+        process.execPath,
+        ['--import', 'tsx', path.join(primary, 'scripts', 'precommitHook.ts')],
+        {
+          cwd: linked,
+          encoding: 'utf8',
+          stdio: 'pipe',
+        },
+      );
+    const linkDependencies = () => {
+      const links = [
+        ['node_modules', 'node_modules'],
+        [
+          path.join('packages', 'core', 'node_modules'),
+          path.join('packages', 'core', 'node_modules'),
+        ],
+      ];
+      for (const [target, source] of links) {
+        const destination = path.join(linked, target);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.symlinkSync(
+          path.join(primary, source),
+          destination,
+          process.platform === 'win32' ? 'junction' : 'dir',
+        );
+      }
+    };
+
+    try {
+      git(primary, ['worktree', 'add', '--detach', linked]);
+      linkDependencies();
+      fs.mkdirSync(path.join(linked, '.commander'), { recursive: true });
+      fs.writeFileSync(path.join(linked, fixture), 'x'.repeat(500 * 1024 + 1));
+      git(linked, ['add', fixture]);
+
+      assert.throws(runHook, /precommit scanner gate failed/);
+    } finally {
+      try {
+        git(primary, ['worktree', 'remove', '--force', linked]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    }
+  });
 });
