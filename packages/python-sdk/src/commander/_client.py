@@ -8,7 +8,7 @@ import os
 import random
 from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Self
+from typing import Any
 
 import httpx
 
@@ -227,7 +227,7 @@ class CommanderClient:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> CommanderClient:  # noqa: PYI034 - typing.Self needs Python 3.11
         return self
 
     async def __aexit__(self, *args: object) -> None:
