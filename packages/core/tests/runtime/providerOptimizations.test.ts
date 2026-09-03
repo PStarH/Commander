@@ -22,9 +22,12 @@ import { OpenAIProvider } from '../../src/runtime/providers/openaiProvider';
 import { AnthropicProvider } from '../../src/runtime/providers/anthropicProvider';
 import { MistralProvider } from '../../src/runtime/providers/mistralProvider';
 import { CohereProvider } from '../../src/runtime/providers/cohereProvider';
+import { AgnesProvider } from '../../src/runtime/providers/agnesProvider';
 import {
   BaseOpenAICompatibleProvider,
+  callOpenAICompatibleAPI,
   buildOpenAIBody,
+  parseOpenAIStream,
 } from '../../src/runtime/providers/baseOpenAICompatible';
 import type { LLMRequest, LLMResponse } from '../../src/runtime/types/llm';
 import { CostModel, DEFAULT_PRICING } from '../../src/observability/costModel';
@@ -227,6 +230,68 @@ describe('Provider Performance Optimizations', () => {
     });
   });
 
+  describe('BaseOpenAICompatible — enterprise tool-call safety', () => {
+    const tool = {
+      name: 'change_approval_status',
+      description: 'Change an approval status',
+      inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
+    };
+
+    it('disables provider-side parallel tool calls by default', () => {
+      const body = buildOpenAIBody(makeRequest({ tools: [tool] }), 'agnes-2.5-flash', 'agnes');
+      assert.strictEqual(body.parallel_tool_calls, false);
+    });
+
+    it('retries transient network failures before surfacing the provider error', async () => {
+      const originalFetch = global.fetch;
+      let attempts = 0;
+      global.fetch = (async () => {
+        attempts++;
+        if (attempts === 1) throw new TypeError('fetch failed: ECONNRESET');
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }) as typeof fetch;
+
+      try {
+        const response = await callOpenAICompatibleAPI(
+          {
+            apiKey: 'test',
+            baseUrl: 'https://api.example.test/v1',
+            defaultModel: 'agnes-2.5-flash',
+            name: 'agnes',
+          },
+          makeRequest({
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+          'agnes-2.5-flash',
+        );
+        assert.strictEqual(response.content, 'ok');
+        assert.strictEqual(attempts, 2);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('preserves stream tool-call finish reason and removes duplicate same-argument calls', async () => {
+      const sse = [
+        `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 0, id: 'call-1', type: 'function', function: { name: 'lookup', arguments: '{"id":"42"}' } }] }, finish_reason: null }] })}`,
+        `data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ index: 1, id: 'call-2', type: 'function', function: { name: 'lookup', arguments: '{"id":"42"}' } }] }, finish_reason: 'tool_calls' }] })}`,
+        'data: [DONE]',
+        '',
+      ].join('\n');
+      const parsed = await parseOpenAIStream(new Response(sse), {
+        debug: () => undefined,
+      } as never);
+      assert.strictEqual(parsed.finishReason, 'tool_calls');
+      assert.strictEqual(parsed.toolCalls.length, 1);
+    });
+  });
+
   describe('BaseOpenAICompatible — reasoning_effort propagation', () => {
     it('includes reasoning_effort when reasoningConfig.enabled is true', () => {
       const req = makeRequest({
@@ -258,6 +323,89 @@ describe('Provider Performance Optimizations', () => {
       });
       const body = buildOpenAIBody(req, 'test-model');
       assert.strictEqual(body.reasoning_effort, 'none');
+    });
+
+    it('does not add flat reasoning fields when a provider supplies a thinking envelope', () => {
+      const req = makeRequest({
+        reasoningConfig: { enabled: true, effort: 'high', budget: 2048 },
+      });
+      const body = buildOpenAIBody(req, 'test-model', 'agnes', {
+        chat_template_kwargs: { enable_thinking: true },
+      });
+      assert.deepStrictEqual(body.chat_template_kwargs, { enable_thinking: true });
+      assert.strictEqual(body.reasoning_effort, undefined);
+      assert.strictEqual(body.max_thinking_tokens, undefined);
+    });
+  });
+
+  describe('Agnes — text-format tool call normalization', () => {
+    it('normalizes XML-like tool calls into executable toolCalls', async () => {
+      const provider = new AgnesProvider({ apiKey: 'test' });
+      const originalFetch = global.fetch;
+      global.fetch = (async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content:
+                    '<tool_call>\n<function=lookup_ticket>\n<parameter=ticket_id>INC-123</parameter>\n</function>\n</tool_call>',
+                },
+                finish_reason: 'stop',
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 12, total_tokens: 22 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        )) as typeof fetch;
+
+      try {
+        const result = await provider.call(
+          makeRequest({
+            model: 'agnes-2.5-flash',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: false },
+          }),
+        );
+        assert.strictEqual(result.content, '');
+        assert.deepStrictEqual(result.toolCalls, [
+          {
+            id: result.toolCalls?.[0]?.id,
+            name: 'lookup_ticket',
+            arguments: { ticket_id: 'INC-123' },
+          },
+        ]);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+
+    it('normalizes XML-like tool calls from a streaming response', async () => {
+      const provider = new AgnesProvider({ apiKey: 'test' });
+      const originalFetch = global.fetch;
+      const sse = [
+        `data: ${JSON.stringify({ choices: [{ delta: { content: '<tool_call>\n<function=lookup_ticket>\n<parameter=ticket_id>INC-456</parameter>\n</function>\n</tool_call>' }, finish_reason: 'stop' }] })}`,
+        'data: [DONE]',
+        '',
+      ].join('\n');
+      global.fetch = (async () =>
+        new Response(sse, {
+          status: 200,
+          headers: { 'Content-Type': 'text/event-stream' },
+        })) as typeof fetch;
+
+      try {
+        const result = await provider.call(
+          makeRequest({
+            model: 'agnes-2.5-flash',
+            cacheConfig: { cacheSystemPrompt: false, cacheTools: false, useCacheControl: true },
+          }),
+        );
+        assert.strictEqual(result.content, '');
+        assert.strictEqual(result.toolCalls?.[0]?.name, 'lookup_ticket');
+        assert.deepStrictEqual(result.toolCalls?.[0]?.arguments, { ticket_id: 'INC-456' });
+      } finally {
+        global.fetch = originalFetch;
+      }
     });
   });
 

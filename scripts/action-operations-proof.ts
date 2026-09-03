@@ -226,14 +226,16 @@ function assertRealDestination(provider: ActionOperationsProvider, destination: 
 }
 
 export function parseActionOperationsProofArgs(argv: string[]): ActionOperationsProofArgs {
+  // pnpm forwards the separator used by `pnpm run <script> -- <args>`.
+  const normalized = argv[0] === '--' ? argv.slice(1) : argv;
   const values = new Map<string, string>();
-  for (let index = 0; index < argv.length; index += 1) {
-    const key = argv[index];
+  for (let index = 0; index < normalized.length; index += 1) {
+    const key = normalized[index];
     if (!key?.startsWith('--')) throw new Error(`unexpected argument: ${key ?? ''}`);
     if (!['--provider', '--fault-campaign', '--output'].includes(key)) {
       throw new Error(`unknown argument: ${key}`);
     }
-    const value = argv[index + 1];
+    const value = normalized[index + 1];
     if (!value || value.startsWith('--')) throw new Error(`${key} requires a value`);
     if (values.has(key)) throw new Error(`${key} may be supplied only once`);
     values.set(key, value);

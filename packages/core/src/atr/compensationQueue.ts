@@ -31,8 +31,11 @@ import { reportSilentFailure } from '../silentFailureReporter';
  */
 
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { getCurrentTenantId } from '../runtime/tenantContext';
+
+const nodeRequire = createRequire(import.meta.url);
 
 interface BetterSqlite3Stmt {
   run(...params: unknown[]): { changes: number; lastInsertRowid: number | bigint };
@@ -49,7 +52,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (_silentE_) {
   reportSilentFailure(_silentE_, 'compensationQueue:52');
 }

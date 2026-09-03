@@ -60,7 +60,8 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
     ]);
     runtime.registerProvider('mock', provider1);
     const result1 = await runtime.execute(makeContext({ availableTools: ['flaky-tool'] }));
-    expect(result1.status).toBe('success');
+    expect(result1.status).toBe('failed');
+    expect(result1.error).toContain('TOOL_EXECUTION_FAILED');
 
     // Run 2: same tool should be available (not blocked by stale breaker)
     const provider2 = new ScriptedLLMProvider([
@@ -117,7 +118,8 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
     ]);
     runtime.registerProvider('mock', provider1);
     const result1 = await runtime.execute(makeContext({ availableTools: ['bad-tool'] }));
-    expect(result1.status).toBe('success');
+    expect(result1.status).toBe('failed');
+    expect(result1.error).toContain('TOOL_EXECUTION_FAILED');
     runtime.flushDeadLetterQueue();
 
     // Run 2: different tool, should succeed without DLQ interference
@@ -155,8 +157,10 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
       const result = await runtime.execute(
         makeContext({ availableTools: [toolName], goal: `Run ${i}` }),
       );
-      // All runs should complete (failures are handled gracefully)
-      expect(result.status).toBe('success');
+      // Successful effects succeed; failed effects remain failed instead of
+      // being hidden by the model's final response.
+      expect(result.status).toBe(useOk ? 'success' : 'failed');
+      if (!useOk) expect(result.error).toContain('TOOL_EXECUTION_FAILED');
     }
   });
 

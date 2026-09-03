@@ -12,6 +12,10 @@
 // Metric Types
 // ============================================================================
 
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
+
 export type MetricType = 'counter' | 'gauge' | 'histogram';
 
 export interface MetricLabel {
@@ -89,7 +93,7 @@ export class MetricsCollector {
     if (tenantId) return tenantId;
     try {
       // Lazy require to avoid circular import at module load time.
-      const { getCurrentTenantId } = require('./tenantContext');
+      const { getCurrentTenantId } = nodeRequire('./tenantContext');
       return getCurrentTenantId() ?? undefined;
     } catch {
       return undefined;

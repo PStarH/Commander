@@ -19,6 +19,7 @@ import type {
   AdmitEffectRequest,
   AdmitEffectResult,
   KernelEffect,
+  KernelRunState,
   KernelStep,
   KernelStepState,
   MarkEffectCompletionUnknownRequest,
@@ -59,6 +60,7 @@ import {
 } from './ops/compensationConsumer.js';
 import { createReconcilePolicy, nextReconcileAfter } from './reconcilePolicy.js';
 import { canonicalCompensationHash } from './ops/compensationAuthority.js';
+import { durableCompensationMetadataAuthorization } from './ops/compensationPersistence.js';
 import {
   reqString,
   reqInteger,
@@ -681,7 +683,8 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
            JOIN commander_tenant_execution_control c ON c.tenant_id=s.tenant_id
            LEFT JOIN commander_tenant_execution_limits l ON l.tenant_id=s.tenant_id
            WHERE s.state IN ('PENDING','RETRY_WAIT') AND s.scheduled_at <= ?
-             AND r.state IN ('PENDING','RUNNING')${tenantClause}
+             AND r.state IN ('PENDING','RUNNING')
+             AND json_extract(r.metadata, '$.compensationRequestId') IS NULL${tenantClause}
              AND c.paused=0
              AND (? = '[]' OR s.kind IN (SELECT value FROM json_each(?)))
              AND u.running_steps < COALESCE(l.max_concurrent_steps, 2147483647)
@@ -904,6 +907,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             type: authorization.compensationEffectType,
             originalEffectId: authorization.originalEffectId,
             adapterVersion: authorization.adapterVersion,
+            destination: reqJsonObject('commander_effects', effect, 'request').destination,
             forwardResponse: response,
             compensationPatch: authorization.compensationPatch,
           }) !== authorization.actionDigest
@@ -1037,6 +1041,18 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         );
         const effect = effectResult.rows[0];
         if (!effect) return { accepted: false, requestId, reason: 'FORWARD_EFFECT_NOT_FOUND' };
+        const originalRunResult = await client.query<{ state: string }>(
+          'SELECT state FROM commander_runs WHERE id=? AND tenant_id=?',
+          [authorization.originalRunId, input.tenantId],
+        );
+        const originalRunState = originalRunResult.rows[0]?.state;
+        if (!originalRunState)
+          return { accepted: false, requestId, reason: 'FORWARD_EFFECT_NOT_FOUND' };
+        const effectRequest = reqJsonObject('commander_effects', effect, 'request');
+        const destination = effectRequest.destination;
+        if (typeof destination !== 'string' || destination.length === 0) {
+          return { accepted: false, requestId, reason: 'FORWARD_EFFECT_NOT_FOUND' };
+        }
         const response = effect.response ?? {};
         if (canonicalCompensationHash(response) !== authorization.forwardReceiptHash)
           return { accepted: false, requestId, reason: 'FORWARD_RECEIPT_MISMATCH' };
@@ -1045,6 +1061,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             type: authorization.compensationEffectType,
             originalEffectId: authorization.originalEffectId,
             adapterVersion: authorization.adapterVersion,
+            destination,
             forwardResponse: response,
             compensationPatch: authorization.compensationPatch,
           }) !== authorization.actionDigest
@@ -1075,8 +1092,24 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         }
         const compensationRunId = `run_${canonicalCompensationHash({ requestId, purpose: 'compensation' }).slice(0, 40)}`;
         const compensationStepId = `step_${canonicalCompensationHash({ requestId, purpose: 'compensation' }).slice(0, 32)}`;
+        const compensationEffectId = `effect_${canonicalCompensationHash({
+          requestId,
+          originalEffectId: authorization.originalEffectId,
+        }).slice(0, 40)}`;
         const reconcilePolicy = createReconcilePolicy({ unknownAt: new Date().toISOString() });
         const workGraphHash = canonicalCompensationHash({ compensationStepId });
+        const metadataAuthorization = durableCompensationMetadataAuthorization({
+          authorization,
+          requestId,
+          compensationRunId,
+          compensationStepId,
+          compensationEffectId,
+          originalRunStateAtRequest: originalRunState as KernelRunState,
+          originalEffect: {
+            request: effectRequest,
+            response: parseJsonValue(effect.response) as Record<string, unknown>,
+          },
+        });
         await client.query(
           `INSERT INTO commander_runs(
              id,tenant_id,intent_hash,work_graph_hash,work_graph_version,policy_snapshot_id,state,metadata
@@ -1088,7 +1121,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             workGraphHash,
             'action-gateway-compensation/v2',
             authorization.policySnapshotId,
-            { compensationRequestId: requestId, authorizationId: authorization.id },
+            {
+              compensationRequestId: requestId,
+              authorizationId: authorization.id,
+              compensation: { authorization: metadataAuthorization, disposition: 'PENDING' },
+            },
           ],
         );
         await client.query(
@@ -1197,11 +1234,13 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           compensationStepId,
           adapterVersion: authorization.adapterVersion,
           compensationEffectType: authorization.compensationEffectType,
+          destination,
           compensationPatch: authorization.compensationPatch,
           forwardReceiptHash: authorization.forwardReceiptHash,
           authorizationId: authorization.id,
           reconcilePolicy,
           state: 'AUTHORIZED',
+          compensationEffectId,
         };
         return { accepted: true, request, replayed: false };
       },
@@ -1219,6 +1258,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       compensationStepId: String(row.compensation_step_id),
       adapterVersion: String(row.adapter_version),
       compensationEffectType: String(row.compensation_effect_type),
+      destination: typeof row.destination === 'string' ? row.destination : '',
       compensationPatch: row.compensation_patch as Record<string, unknown>,
       forwardReceiptHash: String(row.forward_receipt_hash),
       authorizationId: String(row.authorization_id),
@@ -1391,6 +1431,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         [request.originalEffectId, request.tenantId],
       );
       const originalEffect = effectResult.rows[0];
+      const originalRequest = originalEffect
+        ? reqJsonObject('commander_effects', originalEffect, 'request')
+        : undefined;
+      request.destination =
+        typeof originalRequest?.destination === 'string' ? originalRequest.destination : '';
       const payload = message?.payload as Record<string, unknown> | undefined;
       if (
         !message ||
@@ -1503,10 +1548,16 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           request.tenantId,
         );
         const effectResult = await client.query<Record<string, unknown>>(
-          'SELECT response FROM commander_effects WHERE id=? AND tenant_id=?',
+          'SELECT request,response FROM commander_effects WHERE id=? AND tenant_id=?',
           [request.originalEffectId, request.tenantId],
         );
-        const forwardResponse = effectResult.rows[0]?.response;
+        const originalEffect = effectResult.rows[0];
+        const originalRequest = originalEffect
+          ? reqJsonObject('commander_effects', originalEffect, 'request')
+          : undefined;
+        request.destination =
+          typeof originalRequest?.destination === 'string' ? originalRequest.destination : '';
+        const forwardResponse = originalEffect?.response;
         if (
           !authorization ||
           request.state !== 'CLAIMED' ||
@@ -1519,6 +1570,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           JSON.stringify(input.request) !==
             JSON.stringify({
               originalEffectId: request.originalEffectId,
+              destination: originalRequest?.destination,
               forwardResponse,
               compensationPatch: authorization.compensationPatch,
             })

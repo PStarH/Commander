@@ -6,7 +6,15 @@ import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import { getGlobalThreeLayerMemory, resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
 import { SingleFlightRequestCache } from '../../src/runtime/singleFlightRequestCache';
-import type { AgentExecutionContext, Tool, ToolDefinition } from '../../src/runtime/types';
+import { resolveResourceGovernorTimeout } from '../../src/runtime/serviceInitializer';
+import type {
+  AgentExecutionContext,
+  LLMProvider,
+  LLMRequest,
+  LLMResponse,
+  Tool,
+  ToolDefinition,
+} from '../../src/runtime/types';
 
 describe('AgentRuntime', () => {
   let runtime: AgentRuntime;
@@ -90,6 +98,51 @@ describe('AgentRuntime', () => {
       expect(mockProvider.lastRequest!.messages[1].role).toBe('system');
       expect(mockProvider.lastRequest!.messages[2].role).toBe('user');
     });
+
+    it('honors an operator pause at the first checkpoint after an in-flight LLM call', async () => {
+      let markStarted!: () => void;
+      let releaseProvider!: () => void;
+      const started = new Promise<void>((resolve) => {
+        markStarted = resolve;
+      });
+      const providerReleased = new Promise<void>((resolve) => {
+        releaseProvider = resolve;
+      });
+      const pausableProvider: LLMProvider = {
+        name: 'openai',
+        call: async (request: LLMRequest): Promise<LLMResponse> => {
+          markStarted();
+          await providerReleased;
+          return {
+            content: 'The incident handoff is ready.',
+            model: request.model,
+            usage: { promptTokens: 10, completionTokens: 8, totalTokens: 18 },
+            finishReason: 'stop',
+          };
+        },
+      };
+      runtime.registerProvider('openai', pausableProvider);
+
+      const execution = runtime.execute(
+        makeContext({ goal: 'Return a concise incident handoff without calling tools.' }),
+      );
+      await started;
+      const active = runtime.getActiveRuns();
+      expect(active).toHaveLength(1);
+      const runId = active[0]!.runId;
+      const activeCheckpoint = runtime.getCheckpointer().resume(runId);
+      expect(activeCheckpoint?.phase).toBe('started');
+      expect(activeCheckpoint?.leaseToken).toEqual(expect.any(String));
+      expect(activeCheckpoint?.fencingEpoch).toEqual(expect.any(Number));
+      expect(runtime.pauseRun(runId)).toBe(true);
+      releaseProvider();
+
+      const result = await execution;
+      expect(result.status).toBe('interrupted');
+      expect(result.summary).toContain('operator_pause');
+      expect(runtime.isPaused(runId)).toBe(true);
+      expect(runtime.getCheckpointer().resume(runId)?.phase).toBe('interrupted');
+    });
   });
 
   describe('error handling', () => {
@@ -107,6 +160,269 @@ describe('AgentRuntime', () => {
   });
 
   describe('tool execution', () => {
+    it('stops the next enterprise tool after an operator pause during a tool call', async () => {
+      let firstToolCalls = 0;
+      let secondToolCalls = 0;
+      let providerCalls = 0;
+      const pausableProvider: LLMProvider = {
+        name: 'openai',
+        call: async (request: LLMRequest): Promise<LLMResponse> => {
+          providerCalls++;
+          if (providerCalls === 1) {
+            return {
+              content: '',
+              model: request.model,
+              usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+              finishReason: 'tool_calls',
+              toolCalls: [
+                { id: 'lookup-1', name: 'lookup_change', arguments: { changeId: 'CHG-1' } },
+              ],
+            };
+          }
+          return {
+            content: 'The change is paused before approval.',
+            model: request.model,
+            usage: { promptTokens: 10, completionTokens: 6, totalTokens: 16 },
+            finishReason: 'stop',
+          };
+        },
+      };
+      runtime.registerProvider('openai', pausableProvider);
+
+      const lookup: Tool = {
+        definition: {
+          name: 'lookup_change',
+          description: 'Read-only change lookup.',
+          inputSchema: {
+            type: 'object',
+            properties: { changeId: { type: 'string' } },
+            required: ['changeId'],
+            additionalProperties: false,
+          },
+          riskMetadata: { sideEffect: 'none' },
+        },
+        isReadOnly: true,
+        isConcurrencySafe: false,
+        execute: async () => {
+          firstToolCalls++;
+          const runId = runtime.getActiveRuns()[0]?.runId;
+          if (!runId) throw new Error('active run missing');
+          expect(runtime.pauseRun(runId)).toBe(true);
+          return JSON.stringify({ changeId: 'CHG-1', risk: 'high' });
+        },
+      };
+      const approval: Tool = {
+        definition: {
+          name: 'request_approval',
+          description: 'Submit a human approval request.',
+          inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+          riskMetadata: { sideEffect: 'external_egress' },
+        },
+        isReadOnly: false,
+        destructive: true,
+        riskLevel: 'high',
+        execute: async () => {
+          secondToolCalls++;
+          return JSON.stringify({ status: 'pending' });
+        },
+      };
+      runtime.registerTool('lookup_change', lookup);
+      runtime.registerTool('request_approval', approval);
+
+      const result = await runtime.execute(
+        makeContext({
+          goal: 'Look up CHG-1, then request approval only if the operator has not paused the run.',
+          availableTools: ['lookup_change', 'request_approval'],
+        }),
+      );
+
+      expect(result.status).toBe('interrupted');
+      expect(firstToolCalls).toBe(1);
+      expect(secondToolCalls).toBe(0);
+      expect(providerCalls).toBe(1);
+      expect(result.summary).toContain('operator_pause');
+      expect(runtime.getCheckpointer().resume(result.runId)?.phase).toBe('interrupted');
+    });
+
+    it('stops follow-up tool work when an operator pauses an in-flight tool externally', async () => {
+      let firstToolCalls = 0;
+      let secondToolCalls = 0;
+      let providerCalls = 0;
+      let markToolStarted!: () => void;
+      let releaseFirstTool!: () => void;
+      const toolStarted = new Promise<void>((resolve) => {
+        markToolStarted = resolve;
+      });
+      const firstToolReleased = new Promise<void>((resolve) => {
+        releaseFirstTool = resolve;
+      });
+      const provider: LLMProvider = {
+        name: 'openai',
+        call: async (request: LLMRequest): Promise<LLMResponse> => {
+          providerCalls++;
+          if (providerCalls === 1) {
+            return {
+              content: '',
+              model: request.model,
+              usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+              finishReason: 'tool_calls',
+              toolCalls: [
+                { id: 'lookup-1', name: 'lookup_change', arguments: { changeId: 'CHG-3' } },
+              ],
+            };
+          }
+          return {
+            content: '',
+            model: request.model,
+            usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+            finishReason: 'tool_calls',
+            toolCalls: [
+              { id: 'approval-1', name: 'request_approval', arguments: { changeId: 'CHG-3' } },
+            ],
+          };
+        },
+      };
+      runtime.registerProvider('openai', provider);
+      runtime.registerTool('lookup_change', {
+        definition: {
+          name: 'lookup_change',
+          description: 'Read-only change lookup.',
+          inputSchema: { type: 'object', properties: { changeId: { type: 'string' } } },
+          riskMetadata: { sideEffect: 'none' },
+        },
+        isReadOnly: true,
+        execute: async () => {
+          firstToolCalls++;
+          markToolStarted();
+          await firstToolReleased;
+          return JSON.stringify({ changeId: 'CHG-3', risk: 'high' });
+        },
+      });
+      runtime.registerTool('request_approval', {
+        definition: {
+          name: 'request_approval',
+          description: 'Submit a human approval request.',
+          inputSchema: { type: 'object', properties: { changeId: { type: 'string' } } },
+          riskMetadata: { sideEffect: 'external_egress' },
+        },
+        destructive: true,
+        riskLevel: 'high',
+        execute: async () => {
+          secondToolCalls++;
+          return JSON.stringify({ status: 'pending' });
+        },
+      });
+
+      const execution = runtime.execute(
+        makeContext({
+          goal: 'Look up CHG-3, then request approval after the lookup completes.',
+          availableTools: ['lookup_change', 'request_approval'],
+        }),
+      );
+      await toolStarted;
+      const runId = runtime.getActiveRuns()[0]?.runId;
+      expect(runId).toBeTruthy();
+      expect(runtime.pauseRun(runId!)).toBe(true);
+      releaseFirstTool();
+
+      const result = await execution;
+      expect(result.status).toBe('interrupted');
+      expect(firstToolCalls).toBe(1);
+      expect(secondToolCalls).toBe(0);
+      expect(providerCalls).toBe(1);
+      expect(result.summary).toContain('operator_pause');
+      expect(runtime.getCheckpointer().resume(result.runId)?.phase).toBe('interrupted');
+    });
+
+    it('does not dispatch a later tool from the same paused LLM response', async () => {
+      let firstToolCalls = 0;
+      let secondToolCalls = 0;
+      let providerCalls = 0;
+      const provider: LLMProvider = {
+        name: 'openai',
+        call: async (request: LLMRequest): Promise<LLMResponse> => {
+          providerCalls++;
+          return {
+            content: '',
+            model: request.model,
+            usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+            finishReason: 'tool_calls',
+            toolCalls: [
+              { id: 'lookup-1', name: 'lookup_change', arguments: { changeId: 'CHG-2' } },
+              { id: 'approval-1', name: 'request_approval', arguments: { changeId: 'CHG-2' } },
+            ],
+          };
+        },
+      };
+      runtime.registerProvider('openai', provider);
+
+      runtime.registerTool('lookup_change', {
+        definition: {
+          name: 'lookup_change',
+          description: 'Read-only change lookup.',
+          inputSchema: { type: 'object', properties: { changeId: { type: 'string' } } },
+          riskMetadata: { sideEffect: 'none' },
+        },
+        isReadOnly: true,
+        isConcurrencySafe: false,
+        execute: async () => {
+          firstToolCalls++;
+          const runId = runtime.getActiveRuns()[0]?.runId;
+          if (!runId) throw new Error('active run missing');
+          expect(runtime.pauseRun(runId)).toBe(true);
+          return JSON.stringify({ changeId: 'CHG-2', risk: 'high' });
+        },
+      });
+      runtime.registerTool('request_approval', {
+        definition: {
+          name: 'request_approval',
+          description: 'Submit a human approval request.',
+          inputSchema: { type: 'object', properties: { changeId: { type: 'string' } } },
+          riskMetadata: { sideEffect: 'external_egress' },
+        },
+        destructive: true,
+        riskLevel: 'high',
+        execute: async () => {
+          secondToolCalls++;
+          return JSON.stringify({ status: 'pending' });
+        },
+      });
+
+      const result = await runtime.execute(
+        makeContext({
+          goal: 'Look up CHG-2, then request approval only if the operator has not paused the run.',
+          availableTools: ['lookup_change', 'request_approval'],
+        }),
+      );
+
+      expect(result.status).toBe('interrupted');
+      expect(firstToolCalls).toBe(1);
+      expect(secondToolCalls).toBe(0);
+      expect(providerCalls).toBe(1);
+      expect(result.summary).toContain('operator_pause');
+    });
+
+    it('fails closed when structured output remains invalid after retries', async () => {
+      const localRuntime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 }, router);
+      const provider = new MockLLMProvider('openai', { defaultResponse: 'not json' });
+      localRuntime.registerProvider('openai', provider);
+
+      const result = await localRuntime.execute(
+        makeContext({
+          goal: 'Return a JSON object matching the response schema.',
+          outputSchema: {
+            type: 'object',
+            properties: { answer: { type: 'string' } },
+            required: ['answer'],
+            additionalProperties: false,
+          },
+        }),
+      );
+
+      expect(result.status).toBe('failed');
+      expect(result.error).toContain('STRUCTURED_OUTPUT_INVALID');
+    });
+
     it('registers and retrieves tools', () => {
       const searchTool: Tool = {
         definition: {
@@ -179,6 +495,19 @@ describe('AgentRuntime', () => {
       const config = runtime.getConfig();
       expect(config.maxRetries).toBe(1);
       expect(config.defaultModelTier).toBe('standard');
+    });
+
+    it('aligns the global resource governor with the LLM timeout by default', () => {
+      expect(resolveResourceGovernorTimeout({ llmTimeoutMs: 120_000 })).toBe(120_000);
+    });
+
+    it('honors an explicit resource governor timeout', () => {
+      expect(
+        resolveResourceGovernorTimeout({
+          llmTimeoutMs: 120_000,
+          resourceGovernor: { timeoutMs: 45_000 },
+        }),
+      ).toBe(45_000);
     });
   });
 

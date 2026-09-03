@@ -1,4 +1,7 @@
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import {
+  createVerifiedPostgresPool,
+  type VerifiedPostgresPoolInput,
+} from '@commander/postgres-runtime';
 import type { Pool } from 'pg';
 import { pathToFileURL } from 'node:url';
 import {
@@ -7,19 +10,32 @@ import {
   applyTask1ClosureDescriptorSet,
   type Task1ClosurePhase,
 } from './migrations.js';
-import { seedDemoTicketAllowlist, seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
+import {
+  seedDemoTicketAllowlist,
+  seedTenantAuthorityAllowedTenants,
+  seedWorkerAllowedTenants,
+  type ClaimSecretSeedClient,
+} from './seedWorkerClaimSecret.js';
 import {
   runTask1OwnerCommand,
   parseTask1OwnerCommandInput,
   type Task1OwnerCommandMode,
+  type Task1OwnerPreparedRequest,
   type Task1HelmRestoreEvidence,
 } from './task1LifecycleOwnerCommand.js';
 import { initializeTask1LifecycleBoundary } from './task1LifecycleInitialize.js';
+import {
+  TASK1_CATALOG_COLLECTION_STEPS,
+  TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS,
+  TASK1_CATALOG_SNAPSHOT_VALIDATIONS,
+} from './task1Catalog.js';
+import type { SqlClient, SqlPool } from './postgres.js';
 import {
   PostgresTask1LifecycleOwnerTransactions,
   Task1LifecycleLedger,
   type Task1LifecycleOperation,
 } from './task1LifecycleLedger.js';
+import type { TenantCutoverCommand } from './tenantCutoverStateMachine.js';
 import {
   isTask1RolloutProofForOperation,
   Task1RolloutProofRuntime,
@@ -49,6 +65,13 @@ export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0 && t !== '*');
+}
+
+const TASK1_READINESS_TENANT = 'commander/readiness/v1';
+
+/** The API's fixed tenant-context readiness challenge must be authorized by the owner migration. */
+export async function seedTask1ReadinessTenant(client: ClaimSecretSeedClient): Promise<void> {
+  await seedTenantAuthorityAllowedTenants(client, [TASK1_READINESS_TENANT]);
 }
 
 /** Populated-volume upgrade gate: role init scripts only run on first database creation. */
@@ -89,6 +112,207 @@ export function resolveMigrationDatabaseUrl(env: NodeJS.ProcessEnv): string | un
   return env.COMMANDER_OWNER_DATABASE_URL ?? env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL;
 }
 
+/** Keep lifecycle owner Jobs bounded when database connection or query waits stop progressing. */
+export function ownerMigrationPoolConfig(connectionString: string): VerifiedPostgresPoolInput {
+  return {
+    connectionString,
+    connectionTimeoutMillis: 5_000,
+    query_timeout: 30_000,
+    lock_timeout: 30_000,
+  };
+}
+
+/** Keep every lifecycle migration path bounded independently of the Kubernetes Job deadline. */
+export function migrationPoolConfig(
+  action: string | undefined,
+  connectionString: string,
+): VerifiedPostgresPoolInput {
+  return isTask1OwnerCommandMode(action) || action === 'tenant-cutover-migrate'
+    ? ownerMigrationPoolConfig(connectionString)
+    : { connectionString };
+}
+
+const MIGRATION_ID = /^[0-9]{4}-[0-9]{2}-[0-9]{2}\.[0-9]+\.[a-z0-9_]+$/;
+const POSTGRES_SQLSTATE = /^[0-9A-Z]{5}$/;
+export const OWNER_MIGRATION_FAILURE_STAGES = [
+  'input',
+  'proof_runtime',
+  'bootstrap_kernel',
+  'bootstrap_closure',
+  'owner_pool_configuration',
+  'owner_pool_connect',
+  'bootstrap_context',
+  'bootstrap_context_authority_url',
+  'bootstrap_context_pool_configuration',
+  'bootstrap_context_pool_connect',
+  'bootstrap_context_catalog_query',
+  'bootstrap_context_pool_close',
+  'lifecycle_initialize',
+  'lifecycle_pinned_manifest_validation',
+  'lifecycle_prepared_request_validation',
+  'lifecycle_table_discovery',
+  'lifecycle_candidate_peer_observation',
+  'lifecycle_candidate_peer_validation',
+  'lifecycle_prebootstrap_snapshot',
+  'lifecycle_prebootstrap_snapshot_comparison',
+  'lifecycle_initialization_planning',
+  'lifecycle_descriptor_transaction',
+  'lifecycle_peer_reobservation',
+  'lifecycle_peer_reobservation_input_consistency',
+  'lifecycle_peer_reobservation_candidate_binding_validation',
+  'lifecycle_peer_reobservation_observed_binding_validation',
+  'lifecycle_peer_reobservation_binding_consistency',
+  'lifecycle_transaction',
+  'current_read',
+  'rollout_proof',
+] as const;
+export type OwnerMigrationFailureStage = (typeof OWNER_MIGRATION_FAILURE_STAGES)[number];
+
+function isOwnerMigrationFailureStage(value: unknown): value is OwnerMigrationFailureStage {
+  return (
+    typeof value === 'string' &&
+    (OWNER_MIGRATION_FAILURE_STAGES as readonly string[]).includes(value)
+  );
+}
+
+/** Emit a fixed progress marker that the Helm owner can retain without exposing migration output. */
+export function ownerMigrationProgressRecord(ownerStage: OwnerMigrationFailureStage): string {
+  return 'COMMANDER_MIGRATION_PROGRESS;owner_stage=' + ownerStage;
+}
+
+let ownerMigrationProgressReporter: ((ownerStage: OwnerMigrationFailureStage) => void) | undefined;
+
+function isTask1CatalogCollectionStep(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_COLLECTION_STEPS as readonly string[]).includes(value)
+  );
+}
+
+function isSnapshotTransaction(value: unknown): value is 'begin' | 'commit' {
+  return value === 'begin' || value === 'commit';
+}
+
+function isSnapshotValidation(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_SNAPSHOT_VALIDATIONS as readonly string[]).includes(value)
+  );
+}
+
+function isOriginClassificationStep(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    (TASK1_CATALOG_ORIGIN_CLASSIFICATION_STEPS as readonly string[]).includes(value)
+  );
+}
+
+function withOwnerMigrationFailureStage(
+  error: unknown,
+  ownerStage: OwnerMigrationFailureStage,
+): unknown {
+  if (!error || typeof error !== 'object') {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
+  }
+  const failure = error as { ownerStage?: unknown };
+  if (isOwnerMigrationFailureStage(failure.ownerStage)) return error;
+  try {
+    Object.defineProperty(error, 'ownerStage', {
+      configurable: true,
+      enumerable: true,
+      value: ownerStage,
+      writable: true,
+    });
+    return error;
+  } catch {
+    return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), { ownerStage });
+  }
+}
+
+async function atOwnerMigrationFailureStage<T>(
+  ownerStage: OwnerMigrationFailureStage,
+  operation: () => Promise<T>,
+): Promise<T> {
+  ownerMigrationProgressReporter?.(ownerStage);
+  try {
+    return await operation();
+  } catch (error) {
+    throw withOwnerMigrationFailureStage(error, ownerStage);
+  }
+}
+
+/** Return the owner Job's fixed, non-sensitive migration failure record. */
+export function migrationFailureDiagnostic(error: unknown): string {
+  if (!error || typeof error !== 'object') return 'COMMANDER_MIGRATION_FAILED';
+  const failure = error as {
+    migrationId?: unknown;
+    ownerStage?: unknown;
+    snapshot?: unknown;
+    catalogStep?: unknown;
+    snapshotTransaction?: unknown;
+    snapshotValidation?: unknown;
+    originClassificationStep?: unknown;
+    phase?: unknown;
+    sqlstate?: unknown;
+    code?: unknown;
+    diagnostic?: unknown;
+  };
+  if (!isOwnerMigrationFailureStage(failure.ownerStage)) return 'COMMANDER_MIGRATION_FAILED';
+  let diagnostic = 'COMMANDER_MIGRATION_FAILED;owner_stage=' + failure.ownerStage;
+  if (
+    failure.ownerStage === 'lifecycle_prebootstrap_snapshot' &&
+    (failure.snapshot === 's0' || failure.snapshot === 's1')
+  ) {
+    const hasCatalogStep = isTask1CatalogCollectionStep(failure.catalogStep);
+    const hasSnapshotTransaction = isSnapshotTransaction(failure.snapshotTransaction);
+    const hasSnapshotValidation = isSnapshotValidation(failure.snapshotValidation);
+    if (
+      Number(hasCatalogStep) + Number(hasSnapshotTransaction) + Number(hasSnapshotValidation) ===
+      1
+    ) {
+      diagnostic += ';snapshot=' + failure.snapshot;
+      diagnostic += hasCatalogStep
+        ? ';catalog_step=' + failure.catalogStep
+        : hasSnapshotTransaction
+          ? ';snapshot_transaction=' + failure.snapshotTransaction
+          : ';snapshot_validation=' + failure.snapshotValidation;
+      if (
+        failure.snapshotValidation === 'origin_classification' &&
+        isOriginClassificationStep(failure.originClassificationStep)
+      ) {
+        diagnostic += ';origin_classification_step=' + failure.originClassificationStep;
+      }
+    }
+  }
+  if (
+    failure.ownerStage === 'rollout_proof' &&
+    failure.code === 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID' &&
+    typeof failure.diagnostic === 'string' &&
+    /^task1KubernetesProofObserver\.(?:ts|js):[1-9][0-9]*:[1-9][0-9]*$/.test(failure.diagnostic)
+  ) {
+    diagnostic += ';proof_code=' + failure.code + ';proof_invariant=' + failure.diagnostic;
+  }
+  if (
+    typeof failure.migrationId !== 'string' ||
+    !MIGRATION_ID.test(failure.migrationId) ||
+    typeof failure.phase !== 'string' ||
+    !['baseline', 'lifecycle', 'expand', 'enforce'].includes(failure.phase) ||
+    typeof failure.sqlstate !== 'string' ||
+    !POSTGRES_SQLSTATE.test(failure.sqlstate)
+  ) {
+    return diagnostic;
+  }
+  return (
+    diagnostic +
+    ';migration=' +
+    failure.migrationId +
+    ';phase=' +
+    failure.phase +
+    ';sqlstate=' +
+    failure.sqlstate
+  );
+}
+
 export function parseTask1ClosureMigrationPhase(
   args: readonly string[],
   env: NodeJS.ProcessEnv,
@@ -115,6 +339,42 @@ const TASK1_OWNER_COMMAND_MODES = new Set<Task1OwnerCommandMode>([
 
 export function isTask1OwnerCommandMode(value: string | undefined): value is Task1OwnerCommandMode {
   return value !== undefined && TASK1_OWNER_COMMAND_MODES.has(value as Task1OwnerCommandMode);
+}
+
+/** Apply the historical and phase-gated migration descriptors for an explicit migration action. */
+export async function bootstrapTask1OwnerAppendMigrations(
+  pool: SqlPool,
+  command: TenantCutoverCommand,
+): Promise<void> {
+  await atOwnerMigrationFailureStage('bootstrap_kernel', () =>
+    runKernelMigrations(pool, { requiredRole: 'owner' }),
+  );
+  await atOwnerMigrationFailureStage('bootstrap_closure', () =>
+    runTask1ClosureMigrations(pool, command === 'expand' ? 'expand' : 'enforce'),
+  );
+}
+
+export async function runTask1OwnerAppendBootstrap(
+  pool: SqlPool,
+  prepared: Task1OwnerPreparedRequest,
+  dependencies: {
+    initialize?: (client: SqlClient, request: Task1OwnerPreparedRequest) => Promise<void>;
+    applyClosure?: (pool: SqlPool, phase: Task1ClosurePhase) => Promise<void>;
+  } = {},
+): Promise<void> {
+  const initialize =
+    dependencies.initialize ??
+    ((client, request) => initializeTask1LifecycleBoundary({ client, prepared: request }));
+  const applyClosure = dependencies.applyClosure ?? runTask1ClosureMigrations;
+  const client = await atOwnerMigrationFailureStage('owner_pool_connect', () => pool.connect());
+  try {
+    await atOwnerMigrationFailureStage('lifecycle_initialize', () => initialize(client, prepared));
+  } finally {
+    client.release();
+  }
+  await atOwnerMigrationFailureStage('bootstrap_closure', () =>
+    applyClosure(pool, prepared.command === 'expand' ? 'expand' : 'enforce'),
+  );
 }
 
 function operationFromDatabaseRow(row: Record<string, unknown>): Task1LifecycleOperation {
@@ -406,28 +666,61 @@ export async function runTask1OwnerMode(
   pool: Pool,
   proof: {
     proveCurrent?(operation: Task1LifecycleOperation): Promise<Task1RolloutProofReceipt>;
+    challengeCurrent?(
+      operation: Task1LifecycleOperation,
+    ): Promise<Task1RecoveryPredecessorChallenge | { status: 'absent' }>;
     verifyRecoveryPredecessor?(
       operation: Task1LifecycleOperation,
     ): Promise<Task1RecoveryPredecessorChallenge | { status: 'absent' }>;
   } = {},
 ): Promise<Record<string, unknown>> {
   const prepared =
-    mode === 'tenant-cutover-append' ? parseTask1OwnerCommandInput(stdin) : undefined;
+    mode === 'tenant-cutover-append'
+      ? await atOwnerMigrationFailureStage('input', async () => parseTask1OwnerCommandInput(stdin))
+      : undefined;
+  if (prepared) await runTask1OwnerAppendBootstrap(pool, prepared);
   const ledger = new Task1LifecycleLedger(
     new PostgresTask1LifecycleOwnerTransactions(pool, {
       initialize: prepared
-        ? (client) => initializeTask1LifecycleBoundary({ client, prepared })
+        ? (client) =>
+            atOwnerMigrationFailureStage('lifecycle_initialize', () =>
+              initializeTask1LifecycleBoundary({ client, prepared }),
+            )
         : undefined,
       applyTransition: ({ client, operation }) =>
-        applyTask1ClosureDescriptorSet(client, operation.descriptorSet),
+        atOwnerMigrationFailureStage('lifecycle_transaction', () =>
+          applyTask1ClosureDescriptorSet(client, operation.descriptorSet),
+        ),
     }),
   );
-  return runTask1OwnerCommand(mode, stdin, {
-    execute: (request) => ledger.execute(request),
-    current: () => currentTask1Operation(pool),
-    proveCurrent: proof.proveCurrent,
-    verifyRecoveryPredecessor: proof.verifyRecoveryPredecessor,
-  });
+  return atOwnerMigrationFailureStage('input', () =>
+    runTask1OwnerCommand(mode, stdin, {
+      execute: (request) =>
+        atOwnerMigrationFailureStage('lifecycle_transaction', () =>
+          ledger.execute({
+            ...request,
+            verifyCurrent: proof.challengeCurrent
+              ? (operation) =>
+                  atOwnerMigrationFailureStage('rollout_proof', () =>
+                    proof.challengeCurrent!(operation),
+                  )
+              : undefined,
+          }),
+        ),
+      current: () =>
+        atOwnerMigrationFailureStage('current_read', () => currentTask1Operation(pool)),
+      proveCurrent: proof.proveCurrent
+        ? (operation) =>
+            atOwnerMigrationFailureStage('rollout_proof', () => proof.proveCurrent!(operation))
+        : undefined,
+      verifyRecoveryPredecessor: proof.verifyRecoveryPredecessor
+        ? (operation) =>
+            atOwnerMigrationFailureStage('rollout_proof', () =>
+              proof.verifyRecoveryPredecessor!(operation),
+            )
+        : undefined,
+    }),
+  );
 }
 
 export function createTask1ComposeProofRuntime(
@@ -456,7 +749,9 @@ export function createTask1ComposeProofRuntime(
   });
 }
 
-const KUBERNETES_PROOF_TOKEN_FILE = '/var/run/secrets/commander.io/proof-api/token';
+const KUBERNETES_PROOF_IDENTITY_TOKEN_FILE =
+  '/var/run/secrets/commander.io/proof-api/identity-token';
+const KUBERNETES_API_TOKEN_FILE = '/var/run/secrets/commander.io/proof-api/api-token';
 const KUBERNETES_PROOF_CA_FILE = '/var/run/secrets/commander.io/proof-api/ca.crt';
 const KUBERNETES_API_PROOF_CA_FILE = '/run/commander/api-proof-public/ca.crt';
 const KUBERNETES_RELEASE_PROJECTION_FILE = '/run/commander/release-projection/projection.json';
@@ -476,17 +771,20 @@ export function createTask1KubernetesProofRuntime(
   if (!Number.isSafeInteger(port) || port > 65535) {
     throw new Error('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
   }
-  const readToken = async (): Promise<string> =>
-    (await readFile(KUBERNETES_PROOF_TOKEN_FILE, 'utf8')).trim();
+  const readIdentityToken = async (): Promise<string> =>
+    (await readFile(KUBERNETES_PROOF_IDENTITY_TOKEN_FILE, 'utf8')).trim();
+  const readApiToken = async (): Promise<string> =>
+    (await readFile(KUBERNETES_API_TOKEN_FILE, 'utf8')).trim();
   const api = createTask1KubernetesProofApi({
     hostname: host,
     port,
-    readToken,
+    readToken: readApiToken,
     readCa: () => readTask1ProofCa(KUBERNETES_PROOF_CA_FILE),
   });
   const observer = createTask1KubernetesProofObserver({
     api,
-    readProjectedTokenIdentity: async () => parseTask1ProjectedTokenIdentity(await readToken()),
+    readProjectedTokenIdentity: async () =>
+      parseTask1ProjectedTokenIdentity(await readIdentityToken()),
     readReleaseProjection: async () => {
       const bytes = await readFile(KUBERNETES_RELEASE_PROJECTION_FILE, 'utf8');
       if (Buffer.byteLength(bytes, 'utf8') > 16 * 1024 * 1024 || !bytes.endsWith('\n')) {
@@ -557,21 +855,30 @@ export async function readTask1OwnerInput(
 }
 
 async function main() {
-  const databaseUrl = resolveMigrationDatabaseUrl(process.env);
-  if (!databaseUrl) {
-    console.error('Missing owner migration database URL');
-    process.exit(1);
-  }
-
-  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
+  let pool: Pool | undefined;
+  const action = process.argv[2];
+  const previousOwnerMigrationProgressReporter = ownerMigrationProgressReporter;
+  ownerMigrationProgressReporter = (ownerStage) => {
+    process.stderr.write(ownerMigrationProgressRecord(ownerStage) + '\n');
+  };
   try {
-    const action = process.argv[2];
+    const activePool = await atOwnerMigrationFailureStage('owner_pool_configuration', async () => {
+      const databaseUrl = resolveMigrationDatabaseUrl(process.env);
+      if (!databaseUrl) throw new Error('COMMANDER_MIGRATION_FAILED');
+      return createVerifiedPostgresPool(migrationPoolConfig(action, databaseUrl));
+    });
+    pool = activePool;
     if (isTask1OwnerCommandMode(action)) {
-      const stdin = await readTask1OwnerInput();
-      const proofRuntime = createTask1ProofRuntime(pool, process.env);
-      const response = await runTask1OwnerMode(action, stdin, pool, {
+      const stdin = await atOwnerMigrationFailureStage('input', () => readTask1OwnerInput());
+      const proofRuntime = await atOwnerMigrationFailureStage('proof_runtime', async () =>
+        createTask1ProofRuntime(activePool, process.env),
+      );
+      const response = await runTask1OwnerMode(action, stdin, activePool, {
         proveCurrent: proofRuntime
           ? (operation) => proofRuntime.proveCurrent(operation)
+          : undefined,
+        challengeCurrent: proofRuntime
+          ? (operation) => proofRuntime.challengeCurrent(operation)
           : undefined,
         verifyRecoveryPredecessor: proofRuntime
           ? (operation) => proofRuntime.challengeRecoveryPredecessor(operation)
@@ -583,11 +890,12 @@ async function main() {
     const closurePhase = parseTask1ClosureMigrationPhase(process.argv.slice(2), process.env);
     const adapterOpsPassword = resolveAdapterOpsPassword(process.env);
     if (adapterOpsPassword) {
-      await ensureAdapterOpsLogin(pool, adapterOpsPassword);
+      await ensureAdapterOpsLogin(activePool, adapterOpsPassword);
     }
-    await runKernelMigrations(pool, { requiredRole: 'owner' });
+    await runKernelMigrations(activePool, { requiredRole: 'owner' });
     if (closurePhase) {
-      await runTask1ClosureMigrations(pool, closurePhase);
+      await runTask1ClosureMigrations(activePool, closurePhase);
+      await seedTask1ReadinessTenant(activePool);
     }
     // Seed cell tenants so register_worker can admit worker LOGIN registrations.
     // Prefer COMMANDER_WORKER_ALLOWED_TENANTS; fall back to COMMANDER_WORKER_TENANTS.
@@ -595,10 +903,10 @@ async function main() {
       process.env.COMMANDER_WORKER_ALLOWED_TENANTS ?? process.env.COMMANDER_WORKER_TENANTS,
     );
     if (tenants.length > 0) {
-      await seedWorkerAllowedTenants(pool, tenants);
+      await seedWorkerAllowedTenants(activePool, tenants);
       console.log(`Seeded commander_worker_allowed_tenants: ${tenants.join(',')}`);
       if (process.env.COMMANDER_ENABLE_DEMO_TICKET === '1') {
-        await seedDemoTicketAllowlist(pool, tenants);
+        await seedDemoTicketAllowlist(activePool, tenants);
         console.log(`Seeded demo ticket effect policy: ${tenants.join(',')}`);
       }
     }
@@ -607,13 +915,14 @@ async function main() {
         ? `Task 1 ${closurePhase} migrations applied successfully`
         : 'Kernel migrations applied successfully',
     );
-  } catch {
+  } catch (error) {
     // Database errors can echo DSNs, bind values, or generated SQL. The lifecycle evidence uses
     // owner-side error codes; this general entrypoint never reflects exception text to its logs.
-    console.error('Migration failed: COMMANDER_MIGRATION_FAILED');
+    console.error('Migration failed: ' + migrationFailureDiagnostic(error));
     process.exit(1);
   } finally {
-    await pool.end();
+    ownerMigrationProgressReporter = previousOwnerMigrationProgressReporter;
+    await pool?.end();
   }
 }
 

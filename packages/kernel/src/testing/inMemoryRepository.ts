@@ -66,6 +66,7 @@ import {
   canonicalCompensationHash,
   type GovernedCompensationAuthorization,
 } from '../ops/compensationAuthority.js';
+import { durableCompensationMetadataAuthorization } from '../ops/compensationPersistence.js';
 import { KernelInvariantError } from '../types.js';
 import { createReconcilePolicy, nextReconcileAfter } from '../reconcilePolicy.js';
 import { assertRunTransition, assertStepTransition } from '../transitionValidation.js';
@@ -525,6 +526,7 @@ export class InMemoryKernelRepository implements KernelRepository {
           ['PENDING', 'RETRY_WAIT'].includes(step.state) &&
           !this.tenantControls.get(step.tenantId)?.paused &&
           ['PENDING', 'RUNNING'].includes(this.runs.get(step.runId)?.state ?? 'FAILED') &&
+          this.runs.get(step.runId)?.metadata.compensationRequestId == null &&
           Date.parse(step.scheduledAt) <= at.getTime() &&
           step.dependencies.every((id) =>
             ['SUCCEEDED', 'SKIPPED'].includes(this.steps.get(id)?.state ?? 'FAILED'),
@@ -609,7 +611,17 @@ export class InMemoryKernelRepository implements KernelRepository {
       )
       .slice(0, limit)) {
       const retryable = step.attempt < step.maxAttempts;
-      const nextState = retryable ? 'RETRY_WAIT' : 'FAILED';
+      const hasAdmittedEffect = [...this.effects.values()].some(
+        (effect) =>
+          effect.stepId === step.id &&
+          effect.tenantId === step.tenantId &&
+          effect.state === 'ADMITTED',
+      );
+      const nextState = hasAdmittedEffect
+        ? 'WAITING_FOR_RECONCILIATION'
+        : retryable
+          ? 'RETRY_WAIT'
+          : 'FAILED';
       assertStepTransition(step.state, nextState);
       const fencingEpoch = step.lease?.fencingEpoch ?? 0;
       if (step.lease) this.lastFencingEpoch.set(step.id, step.lease.fencingEpoch);
@@ -617,11 +629,11 @@ export class InMemoryKernelRepository implements KernelRepository {
       step.version++;
       step.lease = undefined;
       step.updatedAt = at.toISOString();
-      step.scheduledAt = retryable ? at.toISOString() : step.scheduledAt;
+      step.scheduledAt = !hasAdmittedEffect && retryable ? at.toISOString() : step.scheduledAt;
       step.error = {
         code: 'LEASE_EXPIRED',
         message: 'Worker lease expired before terminal transition',
-        retryable,
+        retryable: !hasAdmittedEffect && retryable,
       };
       this.event(
         'step',
@@ -635,7 +647,7 @@ export class InMemoryKernelRepository implements KernelRepository {
         { attempt: step.attempt },
       );
       this.parkOrphanAdmittedEffects(step, 'lease_expired', 'kernel.recovery');
-      if (!retryable) {
+      if (!retryable && !hasAdmittedEffect) {
         if (!this.requestCompensationIfNeeded(step, fencingEpoch, 'kernel.recovery', at)) {
           this.finish(step.runId, 'kernel.recovery');
         }
@@ -977,6 +989,12 @@ export class InMemoryKernelRepository implements KernelRepository {
     };
   }
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
+    return this.admitEffectValidated(request, false);
+  }
+  private async admitEffectValidated(
+    request: AdmitEffectRequest,
+    canonicalCompensationAdmission: boolean,
+  ): Promise<AdmitEffectResult> {
     // Fail-closed: never let a blank policySnapshotId / lease.workerId slip
     // through to storage where it would otherwise coerce to 'legacy-unbound'.
     if (!request.policySnapshotId || !request.policySnapshotId.trim()) {
@@ -997,7 +1015,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     ) {
       return { admitted: false, reason: 'LEASE_LOST' };
     }
-    if (isCompensation) {
+    if (isCompensation && !canonicalCompensationAdmission) {
       const run = this.runs.get(request.runId);
       const authorization = run ? this.compensationAuthorization(run) : null;
       const stepAuthorization = (step.input as { authorization?: unknown }).authorization;
@@ -1247,7 +1265,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       effect.tenantId !== request.tenantId ||
       effect.state !== 'ADMITTED' ||
       step.state !== 'RUNNING' ||
-      run.state !== 'RUNNING' ||
+      !['RUNNING', 'COMPENSATING'].includes(run.state) ||
       (request.lease !== undefined && !live(step.lease, request.lease))
     )
       return null;
@@ -1770,10 +1788,194 @@ export class InMemoryKernelRepository implements KernelRepository {
       requestFingerprint,
       result: clone(result),
     });
-    if (mutation === 'COMPLETE' || mutation === 'CONFIRM_NOT_APPLIED') {
+    if (effect.type.startsWith('compensate.')) {
+      this.closeReconciledCompensation(effect, mutation, payload, input.workerId, observedAt);
+    } else if (mutation === 'COMPLETE' || mutation === 'CONFIRM_NOT_APPLIED') {
       this.finish(effect.runId, input.workerId);
     }
     return result;
+  }
+
+  private closeReconciledCompensation(
+    effect: KernelEffect,
+    mutation: 'COMPLETE' | 'CONFIRM_NOT_APPLIED' | 'RESCHEDULE' | 'ESCALATE',
+    payload: Record<string, unknown> | ReconcileQueryError | string,
+    actor: string,
+    observedAt: string,
+  ): void {
+    const request = [...this.compensationRequests.values()].find(
+      (candidate) =>
+        candidate.tenantId === effect.tenantId && candidate.compensationEffectId === effect.id,
+    );
+    if (!request) {
+      throw new KernelInvariantError(
+        'COMPENSATION_RECONCILIATION_REQUEST_MISSING',
+        `No compensation reconciliation request exists for effect ${effect.id}`,
+      );
+    }
+    if (mutation === 'RESCHEDULE') return;
+    if (request.state !== 'COMPLETION_UNKNOWN') {
+      throw new KernelInvariantError(
+        'COMPENSATION_RECONCILIATION_REQUEST_TERMINAL_RACE',
+        `Compensation reconciliation request ${request.id} is already terminal`,
+      );
+    }
+    if (mutation === 'ESCALATE') {
+      request.state = 'ESCALATED';
+      return;
+    }
+    const step = this.steps.get(request.compensationStepId);
+    const compensationRun = this.runs.get(request.compensationRunId);
+    const originalRun = this.runs.get(request.originalRunId);
+    if (!step || !compensationRun || !originalRun) {
+      throw new KernelInvariantError(
+        'COMPENSATION_RECONCILIATION_RUN_MISSING',
+        `Compensation reconciliation state is missing its run or step for request ${request.id}`,
+      );
+    }
+    const eventPayload = {
+      requestId: request.id,
+      originalRunId: request.originalRunId,
+      originalEffectId: request.originalEffectId,
+      compensationRunId: request.compensationRunId,
+      compensationEffectId: effect.id,
+      disposition: mutation === 'COMPLETE' ? 'COMPLETED' : 'CONFIRMED_NOT_APPLIED',
+    };
+    const nextSequence = (aggregateType: KernelEvent['aggregateType'], aggregateId: string) =>
+      this.events
+        .filter(
+          (event) => event.aggregateType === aggregateType && event.aggregateId === aggregateId,
+        )
+        .reduce((highest, event) => Math.max(highest, event.sequence), 0) + 1;
+    let originalTerminalEvent = false;
+    if (mutation === 'COMPLETE') {
+      if (
+        compensationRun.state !== 'COMPENSATING' ||
+        !['COMPENSATING', 'COMPENSATED'].includes(originalRun.state)
+      ) {
+        throw new KernelInvariantError(
+          'COMPENSATION_RECONCILIATION_TERMINAL_TRANSITION_REJECTED',
+          `Cannot complete compensation reconciliation request ${request.id} from its current run state`,
+        );
+      }
+      request.state = 'COMPLETED';
+      compensationRun.state = 'SUCCEEDED';
+      compensationRun.version += 1;
+      compensationRun.updatedAt = observedAt;
+      compensationRun.terminalAt = observedAt;
+      if (originalRun.state === 'COMPENSATING') {
+        originalRun.state = 'COMPENSATED';
+        originalRun.version += 1;
+        originalRun.updatedAt = observedAt;
+        originalRun.terminalAt = observedAt;
+      } else {
+        originalTerminalEvent = this.events.some(
+          (event) =>
+            event.aggregateType === 'run' &&
+            event.aggregateId === originalRun.id &&
+            event.type === 'run.compensated',
+        );
+        if (!originalTerminalEvent) {
+          originalRun.version += 1;
+          originalRun.updatedAt = observedAt;
+        }
+      }
+      this.event(
+        'step',
+        step.id,
+        step.version,
+        'step.succeeded',
+        step.tenantId,
+        step.runId,
+        step.id,
+        actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        compensationRun.id,
+        compensationRun.version,
+        'run.succeeded',
+        compensationRun.tenantId,
+        compensationRun.id,
+        step.id,
+        actor,
+        eventPayload,
+      );
+      if (!originalTerminalEvent) {
+        this.event(
+          'run',
+          originalRun.id,
+          originalRun.version,
+          'run.compensated',
+          originalRun.tenantId,
+          originalRun.id,
+          undefined,
+          actor,
+          eventPayload,
+        );
+      }
+      this.event(
+        'effect',
+        effect.id,
+        nextSequence('effect', effect.id),
+        'compensation.completed',
+        effect.tenantId,
+        effect.runId,
+        effect.stepId,
+        actor,
+        eventPayload,
+      );
+      return;
+    }
+    if (compensationRun.state !== 'COMPENSATING' || originalRun.state !== 'COMPENSATING') {
+      throw new KernelInvariantError(
+        'COMPENSATION_RECONCILIATION_TERMINAL_TRANSITION_REJECTED',
+        `Cannot confirm non-application for compensation reconciliation request ${request.id} from its current run state`,
+      );
+    }
+    request.state = 'CONFIRMED_NOT_APPLIED';
+    compensationRun.state = 'FAILED';
+    compensationRun.version += 1;
+    compensationRun.updatedAt = observedAt;
+    compensationRun.terminalAt = observedAt;
+    originalRun.state = 'FAILED';
+    originalRun.version += 1;
+    originalRun.updatedAt = observedAt;
+    originalRun.terminalAt = observedAt;
+    this.event(
+      'step',
+      step.id,
+      step.version,
+      'step.failed',
+      step.tenantId,
+      step.runId,
+      step.id,
+      actor,
+      eventPayload,
+    );
+    this.event(
+      'run',
+      compensationRun.id,
+      compensationRun.version,
+      'run.failed',
+      compensationRun.tenantId,
+      compensationRun.id,
+      step.id,
+      actor,
+      eventPayload,
+    );
+    this.event(
+      'run',
+      originalRun.id,
+      originalRun.version,
+      'run.failed',
+      originalRun.tenantId,
+      originalRun.id,
+      undefined,
+      actor,
+      eventPayload,
+    );
   }
   async rescheduleReconcile(input: RescheduleReconcileInput): Promise<boolean> {
     const effect = this.effects.get(input.effectId);
@@ -1950,8 +2152,10 @@ export class InMemoryKernelRepository implements KernelRepository {
       return { accepted: true, request: clone(existing), replayed: true };
     }
     const originalEffect = this.effects.get(authorization.originalEffectId);
+    const originalRun = this.runs.get(authorization.originalRunId);
     if (
       !originalEffect ||
+      !originalRun ||
       originalEffect.tenantId !== input.tenantId ||
       originalEffect.runId !== authorization.originalRunId ||
       originalEffect.state !== 'COMPLETED' ||
@@ -1967,6 +2171,10 @@ export class InMemoryKernelRepository implements KernelRepository {
       type: authorization.compensationEffectType,
       originalEffectId: authorization.originalEffectId,
       adapterVersion: authorization.adapterVersion,
+      destination:
+        typeof originalEffect.request.destination === 'string'
+          ? originalEffect.request.destination
+          : '',
       forwardResponse,
       compensationPatch: authorization.compensationPatch,
     });
@@ -2005,6 +2213,10 @@ export class InMemoryKernelRepository implements KernelRepository {
     }
     const compensationRunId = `run_${canonicalCompensationHash({ requestId, purpose: 'compensation' }).slice(0, 40)}`;
     const compensationStepId = `step_${canonicalCompensationHash({ requestId, purpose: 'compensation' }).slice(0, 32)}`;
+    const compensationEffectId = `effect_${canonicalCompensationHash({
+      requestId,
+      originalEffectId: authorization.originalEffectId,
+    }).slice(0, 40)}`;
     const request: KernelCompensationRequest = {
       id: requestId,
       tenantId: input.tenantId,
@@ -2014,12 +2226,26 @@ export class InMemoryKernelRepository implements KernelRepository {
       compensationStepId,
       adapterVersion: authorization.adapterVersion,
       compensationEffectType: authorization.compensationEffectType,
+      destination:
+        typeof originalEffect.request.destination === 'string'
+          ? originalEffect.request.destination
+          : '',
       compensationPatch: clone(authorization.compensationPatch),
       forwardReceiptHash: authorization.forwardReceiptHash,
       authorizationId: authorization.id,
       reconcilePolicy: createReconcilePolicy({ unknownAt: now() }),
       state: 'AUTHORIZED',
+      compensationEffectId,
     };
+    const metadataAuthorization = durableCompensationMetadataAuthorization({
+      authorization,
+      requestId,
+      compensationRunId,
+      compensationStepId,
+      compensationEffectId,
+      originalRunStateAtRequest: originalRun.state,
+      originalEffect,
+    });
     await this.createRun(
       {
         id: compensationRunId,
@@ -2028,7 +2254,11 @@ export class InMemoryKernelRepository implements KernelRepository {
         workGraphHash: canonicalCompensationHash({ compensationStepId }),
         workGraphVersion: 'action-gateway-compensation/v2',
         policySnapshotId: authorization.policySnapshotId,
-        metadata: { compensationRequestId: requestId, authorizationId: authorization.id },
+        metadata: {
+          compensationRequestId: requestId,
+          authorizationId: authorization.id,
+          compensation: { authorization: metadataAuthorization, disposition: 'PENDING' },
+        },
         steps: [{ id: compensationStepId, kind: 'tool', input: { requestId } }],
       },
       input.actor,
@@ -2176,11 +2406,22 @@ export class InMemoryKernelRepository implements KernelRepository {
     }
     const authorization = this.compensationAuthorizations.get(request.authorizationId);
     const originalEffect = this.effects.get(request.originalEffectId);
+    const originalRun = this.runs.get(request.originalRunId);
     if (
       !authorization ||
       authorization.tenantId !== request.tenantId ||
       message.payload.actionDigest !== authorization.actionDigest ||
       !originalEffect?.response ||
+      !originalRun ||
+      ![
+        'PENDING',
+        'RUNNING',
+        'PAUSED',
+        'SUCCEEDED',
+        'FAILED',
+        'CANCELLED',
+        'COMPENSATING',
+      ].includes(originalRun.state) ||
       canonicalCompensationHash(originalEffect.response) !== authorization.forwardReceiptHash
     ) {
       return null;
@@ -2220,7 +2461,37 @@ export class InMemoryKernelRepository implements KernelRepository {
       originalEffectId: request.originalEffectId,
     }).slice(0, 40)}`;
     run.state = 'COMPENSATING';
+    run.version += 1;
     run.updatedAt = at.toISOString();
+    this.event(
+      'run',
+      run.id,
+      run.version,
+      'run.compensating',
+      run.tenantId,
+      run.id,
+      step.id,
+      input.workerId,
+      { requestId: request.id, originalRunId: originalRun.id },
+    );
+    const originalRunTransitioned = originalRun.state !== 'COMPENSATING';
+    if (originalRunTransitioned) originalRun.version += 1;
+    originalRun.state = 'COMPENSATING';
+    originalRun.terminalAt = undefined;
+    originalRun.updatedAt = at.toISOString();
+    if (originalRunTransitioned) {
+      this.event(
+        'run',
+        originalRun.id,
+        originalRun.version,
+        'run.compensating',
+        originalRun.tenantId,
+        originalRun.id,
+        undefined,
+        input.workerId,
+        { requestId: request.id, compensationRunId: run.id },
+      );
+    }
     step.state = 'RUNNING';
     step.version += 1;
     step.updatedAt = at.toISOString();
@@ -2249,6 +2520,7 @@ export class InMemoryKernelRepository implements KernelRepository {
   async admitCompensationEffect(
     input: AdmitEffectRequest & {
       requestId: string;
+      requestClaimToken: string;
       outboxMessageId: string;
       outboxClaimToken: string;
     },
@@ -2267,6 +2539,7 @@ export class InMemoryKernelRepository implements KernelRepository {
       request.compensationRunId !== input.runId ||
       request.compensationStepId !== input.stepId ||
       request.tenantId !== input.tenantId ||
+      request.claimToken !== input.requestClaimToken ||
       request.claimToken !== input.outboxClaimToken ||
       input.outboxMessageId !==
         [...this.outbox.values()].find((m) => m.id === input.outboxMessageId)?.id ||
@@ -2277,13 +2550,14 @@ export class InMemoryKernelRepository implements KernelRepository {
       canonical(input.request) !==
         canonical({
           originalEffectId: request.originalEffectId,
+          destination: originalEffect.request.destination,
           forwardResponse: originalEffect.response,
           compensationPatch: authorization.compensationPatch,
         })
     ) {
       return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
     }
-    return this.admitEffect(input);
+    return this.admitEffectValidated(input, true);
   }
 
   private compensationMutation(
@@ -2423,20 +2697,134 @@ export class InMemoryKernelRepository implements KernelRepository {
     }
     assertEvidenceRecordBoundToEffect(input.evidence, projectedEffect);
     await this.appendEvidence(input.evidence);
+    const terminalAt = now();
+    const eventPayload = {
+      requestId: request.id,
+      originalRunId: originalRun.id,
+      originalEffectId: request.originalEffectId,
+      compensationRunId: run.id,
+      compensationEffectId: effect.id,
+      disposition: input.disposition,
+    };
     if (input.disposition === 'COMPLETED') {
       request.state = 'COMPLETED';
       step.state = 'SUCCEEDED';
       step.output = clone(input.response ?? {});
+      step.version += 1;
+      step.updatedAt = terminalAt;
       run.state = 'SUCCEEDED';
-      run.terminalAt = now();
-      if (originalRun.state === 'COMPENSATING') originalRun.state = 'COMPENSATED';
+      run.version += 1;
+      run.updatedAt = terminalAt;
+      run.terminalAt = terminalAt;
+      if (originalRun.state === 'COMPENSATING') {
+        originalRun.state = 'COMPENSATED';
+        originalRun.version += 1;
+        originalRun.updatedAt = terminalAt;
+        originalRun.terminalAt = terminalAt;
+      }
+      this.event(
+        'step',
+        step.id,
+        step.version,
+        'step.succeeded',
+        step.tenantId,
+        step.runId,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        run.id,
+        run.version,
+        'run.succeeded',
+        run.tenantId,
+        run.id,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        originalRun.id,
+        originalRun.version,
+        'run.compensated',
+        originalRun.tenantId,
+        originalRun.id,
+        undefined,
+        input.actor,
+        eventPayload,
+      );
+      const sequence =
+        this.events
+          .filter((event) => event.aggregateType === 'effect' && event.aggregateId === effect.id)
+          .reduce((highest, event) => Math.max(highest, event.sequence), 0) + 1;
+      this.event(
+        'effect',
+        effect.id,
+        sequence,
+        'compensation.completed',
+        effect.tenantId,
+        effect.runId,
+        effect.stepId,
+        input.actor,
+        {
+          originalRunId: originalRun.id,
+          originalEffectId: request.originalEffectId,
+          compensationRunId: run.id,
+          compensationEffectId: effect.id,
+        },
+      );
     } else if (input.disposition === 'CONFIRMED_NOT_APPLIED') {
       effect.state = 'CONFIRMED_NOT_APPLIED';
       effect.response = clone(input.response ?? {});
       request.state = 'CONFIRMED_NOT_APPLIED';
       step.state = 'FAILED';
+      step.version += 1;
+      step.updatedAt = terminalAt;
       run.state = 'FAILED';
-      run.terminalAt = now();
+      run.version += 1;
+      run.updatedAt = terminalAt;
+      run.terminalAt = terminalAt;
+      if (originalRun.state === 'COMPENSATING') {
+        originalRun.state = 'FAILED';
+        originalRun.version += 1;
+        originalRun.updatedAt = terminalAt;
+        originalRun.terminalAt = terminalAt;
+      }
+      this.event(
+        'step',
+        step.id,
+        step.version,
+        'step.failed',
+        step.tenantId,
+        step.runId,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        run.id,
+        run.version,
+        'run.failed',
+        run.tenantId,
+        run.id,
+        step.id,
+        input.actor,
+        eventPayload,
+      );
+      this.event(
+        'run',
+        originalRun.id,
+        originalRun.version,
+        'run.failed',
+        originalRun.tenantId,
+        originalRun.id,
+        undefined,
+        input.actor,
+        eventPayload,
+      );
     } else {
       request.state = 'ESCALATED';
       step.state = 'WAITING_FOR_HUMAN';

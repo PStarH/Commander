@@ -70,7 +70,7 @@ export function parseTask1ProjectedTokenIdentity(token: string): Task1ProjectedT
     fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   const expires = safeEpochSeconds(payload.exp);
   const issued = safeEpochSeconds(payload.iat);
-  if (expires <= issued || expires - issued > 5 * 60) {
+  if (expires <= issued) {
     fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   }
   const kubernetes = record(payload['kubernetes.io'], 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
@@ -94,9 +94,13 @@ export function parseTask1ProjectedTokenIdentity(token: string): Task1ProjectedT
   )
     fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   const expiresAt = new Date(expires * 1_000);
-  if (!Number.isFinite(expiresAt.getTime())) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const issuedAt = new Date(issued * 1_000);
+  if (!Number.isFinite(issuedAt.getTime()) || !Number.isFinite(expiresAt.getTime())) {
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  }
   return {
     audience: AUDIENCE,
+    issuedAt: issuedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
     namespace,
     serviceAccountName,
@@ -153,7 +157,9 @@ export function createTask1KubernetesProofApi(
   return {
     async read(input) {
       const [token, ca] = await Promise.all([options.readToken(), options.readCa()]);
-      parseTask1ProjectedTokenIdentity(token);
+      if (!token || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {
+        fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+      }
       if (!Buffer.isBuffer(ca) || ca.length === 0) {
         fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
       }

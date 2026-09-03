@@ -133,7 +133,7 @@ function runtime(transaction: RecordingTransaction, overrides: Record<string, un
 }
 
 describe('Task 1 rollout proof runtime', () => {
-  it('challenges a recovery predecessor without treating it as current or appending a proof row', async () => {
+  it('challenges a current operation without appending a proof row', async () => {
     let transactionOpened = false;
     const { instance, challenges } = runtime(new RecordingTransaction(), {
       transactions: {
@@ -145,7 +145,7 @@ describe('Task 1 rollout proof runtime', () => {
       createChallenge: () => Buffer.alloc(32, 9),
     });
 
-    const result = await instance.challengeRecoveryPredecessor(operation());
+    const result = await instance.challengeCurrent(operation());
 
     assert.equal(result.status, 'proven');
     assert.equal(challenges.length, 1);

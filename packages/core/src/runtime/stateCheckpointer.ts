@@ -14,6 +14,7 @@ import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { LLMMessage, TokenUsage } from './types';
 import type { LeaseManager } from '../atr/leaseManager';
+import { getCurrentTenantId } from './tenantContext';
 import { getMetricsCollector } from './metricsCollector';
 import { CheckpointStore, type CheckpointSnapshot } from './checkpointStore';
 import {
@@ -132,7 +133,7 @@ export class StateCheckpointer {
       return false;
     }
     const live = this.leaseManager.validate(state.runId, state.leaseToken, state.fencingEpoch, {
-      tenantId: this.tenantId,
+      tenantId: this.tenantId ?? getCurrentTenantId(),
     });
     if (!live) {
       getGlobalLogger().warn('StateCheckpointer', 'Fenced: checkpoint write rejected', {
@@ -362,7 +363,7 @@ export class StateCheckpointer {
     if (!state) return null;
     if (this.leaseManager && state.leaseToken && typeof state.fencingEpoch === 'number') {
       const live = this.leaseManager.validate(runId, state.leaseToken, state.fencingEpoch, {
-        tenantId: this.tenantId,
+        tenantId: this.tenantId ?? getCurrentTenantId(),
       });
       if (!live) {
         getGlobalLogger().warn('StateCheckpointer', 'Fenced: checkpoint read rejected', {
@@ -387,7 +388,7 @@ export class StateCheckpointer {
     if (!state) return null;
     if (this.leaseManager && state.leaseToken && typeof state.fencingEpoch === 'number') {
       const live = this.leaseManager.validate(runId, state.leaseToken, state.fencingEpoch, {
-        tenantId: this.tenantId,
+        tenantId: this.tenantId ?? getCurrentTenantId(),
       });
       if (!live) {
         getGlobalLogger().warn('StateCheckpointer', 'Fenced: checkpoint read rejected (async)', {
@@ -448,6 +449,7 @@ export class StateCheckpointer {
       const raw = fs.readFileSync(filePath, 'utf-8');
       return JSON.parse(raw) as CheckpointState;
     } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null;
       getGlobalLogger().warn('StateCheckpointer', 'Failed to read checkpoint file', {
         error: (e as Error)?.message,
         filePath,

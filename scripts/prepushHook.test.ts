@@ -1,46 +1,47 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
 
-describe('pre-push hook', () => {
-  it('runs the formatter from the linked worktree root', () => {
-    const repoRoot = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+describe('pre-push format hook', () => {
+  it('checks only the explicit CI replay paths', () => {
+    const result = spawnSync(
+      'pnpm',
+      ['exec', 'tsx', 'scripts/prepushHook.ts', 'scripts/task1-helm-prerequisite-command.ts'],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, CORE_PREPUSH_HOOK: '1' },
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Prettier check on 1 changed path/);
+  });
+
+  it('checks only files changed by the pre-push ref update', () => {
+    const local = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const remote = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
+    const result = spawnSync('pnpm', ['exec', 'tsx', 'scripts/prepushHook.ts'], {
       encoding: 'utf8',
-    }).trim();
+      input: 'refs/heads/test ' + local + ' refs/heads/test ' + remote + '\n',
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Prettier check on 2 changed path\(s\)/);
+  });
+
+  it('resolves the linked worktree root when Git supplies its administrative directory', () => {
+    const local = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    const remote = execFileSync('git', ['rev-parse', 'HEAD^'], { encoding: 'utf8' }).trim();
     const gitDir = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-dir'], {
       encoding: 'utf8',
     }).trim();
-    const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-prepush-hook-'));
-    const fakePnpm = path.join(binDir, 'pnpm');
-    fs.writeFileSync(fakePnpm, '#!/bin/sh\nprintf "%s" "$PWD" >&2\nexit 1\n');
-    fs.chmodSync(fakePnpm, 0o755);
+    const result = spawnSync('pnpm', ['exec', 'tsx', 'scripts/prepushHook.ts'], {
+      encoding: 'utf8',
+      env: { ...process.env, GIT_DIR: gitDir },
+      input: 'refs/heads/test ' + local + ' refs/heads/test ' + remote + '\n',
+    });
 
-    try {
-      assert.throws(
-        () =>
-          execFileSync(process.execPath, ['--import', 'tsx', 'scripts/prepushHook.ts'], {
-            cwd: repoRoot,
-            encoding: 'utf8',
-            env: {
-              ...process.env,
-              GIT_DIR: gitDir,
-              PATH: binDir + path.delimiter + process.env.PATH,
-            },
-            stdio: 'pipe',
-          }),
-        (error: Error & { stderr?: string }) => {
-          assert.match(
-            String(error.stderr),
-            new RegExp(repoRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
-          );
-          return true;
-        },
-      );
-    } finally {
-      fs.rmSync(binDir, { recursive: true, force: true });
-    }
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /Prettier check on 2 changed path\(s\)/);
   });
 });

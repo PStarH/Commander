@@ -31,7 +31,10 @@ import {
   verifyRunMissing,
   type DrilledRun,
 } from '../packages/kernel/src/disasterRecovery.js';
-import { createDrillRun } from '../packages/kernel/src/drillWorkload.js';
+import {
+  createDrillRun,
+  resolveDrillTenantContextConfig,
+} from '../packages/kernel/src/drillWorkload.js';
 import { createVerifiedPostgresPool } from '../packages/postgres-runtime/src/index.js';
 import { verifyEvidenceReceipt, type EvidenceVerificationResult } from './verify-evidence.js';
 import {
@@ -110,6 +113,7 @@ export interface DrillReport {
 
 const RPO_TARGET_MS = 5 * 60 * 1000;
 const RTO_TARGET_MS = 60 * 60 * 1000;
+export const DRILL_KILL_SWITCH_RELATION = 'commander_action_kill_switches';
 
 export function parseDatabaseUrl(url: string): DsnParts {
   const parsed = new URL(url);
@@ -185,6 +189,20 @@ export function buildDrPostgresEnv(
     PGSSLMODE: 'verify-full',
     PGSSLROOTCERT: caFile,
   };
+}
+
+export function buildPgRestoreArgs(database: string, dumpFile: string): string[] {
+  return ['--no-owner', '--no-acl', `--dbname=${database}`, dumpFile];
+}
+
+export function isIgnorablePgRestoreCompatibilityFailure(stderr: string): boolean {
+  const normalized = stderr.replace(/\r\n/g, '\n').trim();
+  return (
+    normalized ===
+    `pg_restore: error: could not execute query: ERROR:  unrecognized configuration parameter "transaction_timeout"
+Command was: SET transaction_timeout = 0;
+pg_restore: warning: errors ignored on restore: 1`
+  );
 }
 
 /**
@@ -798,9 +816,23 @@ async function main(): Promise<void> {
   const restoreDbUrl = process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
   assertDrTlsConfiguration(dbUrl, restoreDbUrl);
   const restoredDsn = parseDatabaseUrl(restoreDbUrl);
-  const redactSecrets = [sourceDsn.password, restoredDsn.password, dbUrl, restoreDbUrl].filter(
-    Boolean,
-  );
+  const drillTenantContext = resolveDrillTenantContextConfig();
+  const authorityDsn = drillTenantContext.authorityDatabaseUrl
+    ? parseDatabaseUrl(drillTenantContext.authorityDatabaseUrl)
+    : null;
+  const runtimeDsn = drillTenantContext.runtimeDatabaseUrl
+    ? parseDatabaseUrl(drillTenantContext.runtimeDatabaseUrl)
+    : null;
+  const redactSecrets = [
+    sourceDsn.password,
+    restoredDsn.password,
+    authorityDsn?.password ?? '',
+    runtimeDsn?.password ?? '',
+    dbUrl,
+    restoreDbUrl,
+    drillTenantContext.authorityDatabaseUrl ?? '',
+    drillTenantContext.runtimeDatabaseUrl ?? '',
+  ].filter(Boolean);
 
   const drillId = `drill_${new Date().toISOString().replace(/[:.]/g, '-')}_${randomUUID().slice(0, 8)}`;
   const drillBackupPath = restoreBackupDirectory(mode, backupPath, drillId);
@@ -885,7 +917,7 @@ async function main(): Promise<void> {
 
     if (mode === 'full' || mode === 'backup') {
       console.log('[1/6] Sentinel runA (before cutoff)...');
-      runA = await createDrillRun(dbUrl);
+      runA = await createDrillRun(dbUrl, drillTenantContext);
       report.sentinel.runA = runA;
       lastCommittedAt = queryRunCommittedAt(sourceDsn, runA.id, runPsql);
 
@@ -910,7 +942,7 @@ async function main(): Promise<void> {
       console.log(`  Backup completed in ${report.backup.durationMs}ms`);
 
       console.log('[3/6] Sentinel runB (after cutoff — must be absent after restore)...');
-      runB = await createDrillRun(dbUrl);
+      runB = await createDrillRun(dbUrl, drillTenantContext);
       report.sentinel.runB = runB;
     }
 
@@ -959,11 +991,22 @@ async function main(): Promise<void> {
       // certificate/key identity before pg_restore can write anything.
       await verifyDrDatabaseTlsConnection(restoreDbUrl);
       report.tls.restoreVerified = true;
-      execFileSync('pg_restore', ['--no-owner', '--no-acl', dumpFile], {
-        env: buildDrPostgresEnv(restoredDsn),
-        stdio: 'pipe',
-        timeout: 5 * 60 * 1000,
-      });
+      try {
+        execFileSync('pg_restore', buildPgRestoreArgs(restoredDsn.database, dumpFile), {
+          env: buildDrPostgresEnv(restoredDsn),
+          stdio: 'pipe',
+          timeout: 5 * 60 * 1000,
+        });
+      } catch (error) {
+        const stderr =
+          typeof error === 'object' && error !== null && 'stderr' in error
+            ? String((error as { stderr?: unknown }).stderr ?? '')
+            : '';
+        if (!isIgnorablePgRestoreCompatibilityFailure(stderr)) throw error;
+        console.log(
+          '  pg_restore compatibility warning accepted: restore server does not expose transaction_timeout',
+        );
+      }
       independentRestore = true;
       report.restore.independent = true;
       report.restoredDsn = {
@@ -987,7 +1030,7 @@ async function main(): Promise<void> {
       report.validation.timersTableExists = tableExists(restoredDsn, 'commander_timers');
       report.validation.effects = tableExists(restoredDsn, 'commander_effects');
       report.validation.interactions = tableExists(restoredDsn, 'commander_interactions');
-      report.validation.killSwitches = tableExists(restoredDsn, 'commander_kill_switches');
+      report.validation.killSwitches = tableExists(restoredDsn, DRILL_KILL_SWITCH_RELATION);
       Object.assign(report.validation, assessRestoredEvidence(restoredDsn, runPsql));
       if (retainedJwksArtifact && report.validation.evidenceReceiptsRestored) {
         try {
@@ -1116,6 +1159,16 @@ function buildRedactSecrets(): string[] {
       process.env.RST_DATABASE_URL ?? buildRestoreDatabaseUrl(dbUrl, restorePort);
     secrets.push(restoreDbUrl);
     secrets.push(parseDatabaseUrl(restoreDbUrl).password);
+    const authorityDbUrl = process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL;
+    if (authorityDbUrl) {
+      secrets.push(authorityDbUrl);
+      secrets.push(parseDatabaseUrl(authorityDbUrl).password);
+    }
+    const runtimeDbUrl = process.env.COMMANDER_APP_DATABASE_URL;
+    if (runtimeDbUrl) {
+      secrets.push(runtimeDbUrl);
+      secrets.push(parseDatabaseUrl(runtimeDbUrl).password);
+    }
   } catch {
     /* ignore malformed DSN */
   }

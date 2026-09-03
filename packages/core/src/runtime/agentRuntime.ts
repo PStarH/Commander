@@ -108,11 +108,13 @@ import { ToolCallRetryLoopDetector } from './tool/toolCallRetryLoopDetector';
 import { ToolCallSecurityGate } from './tool/toolCallSecurityGate';
 import { TenantContextResolver } from './tenant/tenantContextResolver';
 import { ReflexionGenerator } from './reflexionGenerator';
+import { compileSchema } from './toolCallValidator';
 import { getGlobalLogger } from '../logging';
 import { getDataRetentionJanitor } from '../storage/dataRetention';
 import { getCostEstimator } from './costEstimator';
 import { ExecutionContext, taskTypeToCategory } from './executionContext';
 import { detectTaskType } from './taskAnalyzer';
+
 // TokenSentinel and CostGuard imports removed — both superseded by
 // UnifiedCostAuthority (UCA). The legacy classes remain as @deprecated
 // thin shells for backward compatibility but are no longer invoked
@@ -265,6 +267,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         getRunHandle: () => this.runContext.runHandle,
         getLedgerCtx: () => this.runContext.ledgerCtx,
         getActiveRuns: () => new Set(this.runLifecycle?.getActiveRuns() ?? []),
+        isRunPaused: (runId) => this.checkpointingPhase?.isPaused(runId) ?? false,
         getPromotedTools: () => this.runContext.promotedTools as Set<string>,
         generateActionId: () => this.generateActionId(),
       },
@@ -371,6 +374,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getConfig: () => this.config,
       getGovernor: () => this.runContext.governor,
       getRouter: () => this.router,
+      getSmartRouter: () => this.smartRouter,
       getTools: () => this.tools,
       setPromotedTools: (tools: Set<string>) => {
         this.runContext.setPromotedTools(tools);
@@ -411,6 +415,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getSlidingWindow: () => this.runContext.slidingWindow,
       getMemory: () => this.memory,
       getCompactor: () => this.compactor,
+      isRunPaused: (runId) => this.checkpointingPhase?.isPaused(runId) ?? false,
       normalizeToolCall: (tc) => normalizeToolCall(tc),
       applyPreToolCallGates: (
         tc,
@@ -702,10 +707,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
     if (!tool.compiledSchema && def.inputSchema) {
       try {
-        const { compileSchema } = require('./toolCallValidator');
         tool.compiledSchema = compileSchema(def.inputSchema);
-      } catch {
-        /* best-effort */
+      } catch (err) {
+        getGlobalLogger().warn('AgentRuntime', 'Failed to compile tool input schema', {
+          toolName: name,
+          error: (err as Error)?.message,
+        });
       }
     }
     this.tools.set(name, tool);
@@ -907,23 +914,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
 
     try {
-      init = await this.runInitializer.initialize(ctx);
+      init = await runWithTenant(tenantId, () => this.runInitializer.initialize(ctx));
       tenantId = init.tenantId;
       tenantCfg = init.tenantCfg;
       this.runContext.setRunHandle(init.runHandle);
 
       let execResult: AgentExecutionResult | undefined;
       try {
-        execResult = await runWithTenant(
-          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-          async () => {
-            const setup = await this.preLoopSetup.prepare(ctx, init);
-            if ('status' in setup) {
-              return setup;
-            }
-            return await this.agentLoopOrchestrator.run(ctx, init, setup);
-          },
-        );
+        execResult = await runWithTenant(tenantId, async () => {
+          const setup = await this.preLoopSetup.prepare(ctx, init);
+          if ('status' in setup) {
+            return setup;
+          }
+          return await this.agentLoopOrchestrator.run(ctx, init, setup);
+        });
 
         // GAP-08: Call scheduler abortRun for failed runs — triggers compensation
         // for any recorded compensable actions and releases the scheduler-level lease.
@@ -936,7 +940,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               runId: init.runId,
               leaseToken: handle.leaseToken,
               fencingEpoch: handle.fencingEpoch,
-              tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+              tenantId,
               reason: execResult.error ?? 'execution failed',
             });
           } catch (e) {
@@ -959,17 +963,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
         // Cleanup is delegated to FinallyCleanupHandler (circuit breaker release,
         // run lifecycle, tenant/lane/concurrency slot release, tracer completion,
         // SLO check, OTel export, SOP auto-export, store flush, tenant restore).
-        await this.finallyCleanupHandler.cleanup({
-          runId: init.runId,
-          ctx,
-          circuitReleased: init.circuitReleased,
-          tenantCfg,
-          tenantId,
-          currentLane: init.currentLane,
-          startTime: init.startTime,
-          execResult,
-          tenantOverrides,
-        });
+        await runWithTenant(tenantId, () =>
+          this.finallyCleanupHandler.cleanup({
+            runId: init.runId,
+            ctx,
+            circuitReleased: init.circuitReleased,
+            tenantCfg,
+            tenantId,
+            currentLane: init.currentLane,
+            startTime: init.startTime,
+            execResult,
+            tenantOverrides,
+          }),
+        );
       }
     } finally {
       this.runContext.exit();

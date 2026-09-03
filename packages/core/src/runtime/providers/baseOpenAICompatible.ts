@@ -18,6 +18,7 @@ import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types'
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
+import { parseTextToolCalls } from '../toolCallRepair';
 
 // ============================================================================
 // Shared Types
@@ -43,7 +44,7 @@ export interface OpenAIStreamChunk {
        */
       reasoning?: string;
       tool_calls?: Array<{
-        index: number;
+        index?: number;
         id?: string;
         type: string;
         function: { name?: string; arguments?: string };
@@ -100,6 +101,7 @@ export async function parseOpenAIStream(
   reasoningContent: string;
   toolCalls: Array<{ id: string; name: string; arguments: string }>;
   usage: OpenAICompletionsUsage | null;
+  finishReason: string | null;
 }> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error('OpenAI-compatible: No response body from streaming endpoint');
@@ -107,10 +109,61 @@ export async function parseOpenAIStream(
   let content = '';
   let reasoningContent = '';
   const toolCalls: Array<{ id: string; name: string; arguments: string }> = [];
-  let currentTool: { id: string; name: string; arguments: string } | null = null;
+  const toolsByIndex = new Map<number, { id: string; name: string; arguments: string }>();
   let usage: OpenAICompletionsUsage | null = null;
+  let finishReason: string | null = null;
   let buffer = '';
   const decoder = new TextDecoder();
+  const toolIndexById = new Map<string, number>();
+  let nextImplicitToolIndex = 0;
+  let lastImplicitToolIndex: number | undefined;
+
+  const processLine = (line: string): void => {
+    const trimmed = line.trim();
+    if (!trimmed || !trimmed.startsWith('data: ')) return;
+    const jsonStr = trimmed.slice(6);
+    if (jsonStr === '[DONE]') return;
+
+    try {
+      const chunk: OpenAIStreamChunk = JSON.parse(jsonStr);
+      if (chunk.usage) usage = chunk.usage;
+
+      for (const choice of chunk.choices ?? []) {
+        const delta = choice.delta;
+        if (choice.finish_reason) finishReason = choice.finish_reason;
+        if (delta.content) content += delta.content;
+        if (delta.reasoning_content) reasoningContent += delta.reasoning_content;
+        if (delta.reasoning) reasoningContent += delta.reasoning;
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const indexed = Number.isInteger(tc.index) ? tc.index : undefined;
+            const identified = tc.id ? toolIndexById.get(tc.id) : undefined;
+            const index =
+              indexed ??
+              identified ??
+              (tc.id
+                ? nextImplicitToolIndex++
+                : (lastImplicitToolIndex ?? nextImplicitToolIndex++));
+            if (tc.id) toolIndexById.set(tc.id, index);
+            if (indexed === undefined) lastImplicitToolIndex = index;
+            let tool = toolsByIndex.get(index);
+            if (!tool) {
+              tool = { id: tc.id ?? `tool_${index}`, name: '', arguments: '' };
+              toolsByIndex.set(index, tool);
+              toolCalls.push(tool);
+            }
+            if (tc.id) tool.id = tc.id;
+            if (tc.function?.name) tool.name += tc.function.name;
+            if (tc.function?.arguments) tool.arguments += tc.function.arguments;
+          }
+        }
+      }
+    } catch (e) {
+      logger.debug('BaseOpenAI', 'Skipping malformed stream chunk', {
+        error: (e as Error)?.message,
+      });
+    }
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -120,45 +173,20 @@ export async function parseOpenAIStream(
     const lines = buffer.split('\n');
     buffer = lines.pop() ?? '';
 
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || !trimmed.startsWith('data: ')) continue;
-      const jsonStr = trimmed.slice(6);
-      if (jsonStr === '[DONE]') continue;
-
-      try {
-        const chunk: OpenAIStreamChunk = JSON.parse(jsonStr);
-        if (chunk.usage) usage = chunk.usage;
-
-        for (const choice of chunk.choices ?? []) {
-          const delta = choice.delta;
-          if (delta.content) content += delta.content;
-          // Standard reasoning_content (DeepSeek/MiMo) — primary source.
-          if (delta.reasoning_content) reasoningContent += delta.reasoning_content;
-          // OpenRouter streams reasoning under `delta.reasoning` — fall back
-          // so reasoning is captured when reasoning_content is absent.
-          if (delta.reasoning) reasoningContent += delta.reasoning;
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              if (tc.id) {
-                currentTool = { id: tc.id, name: tc.function?.name ?? '', arguments: '' };
-                toolCalls.push(currentTool);
-              }
-              if (currentTool && tc.function?.arguments) {
-                currentTool.arguments += tc.function.arguments;
-              }
-            }
-          }
-        }
-      } catch (e) {
-        logger.debug('BaseOpenAI', 'Skipping malformed stream chunk', {
-          error: (e as Error)?.message,
-        });
-      }
-    }
+    for (const line of lines) processLine(line);
   }
 
-  return { content, reasoningContent, toolCalls, usage };
+  // Some proxies close the stream without a trailing newline. Process the
+  // final buffered SSE record so the last argument/usage chunk is not lost.
+  if (buffer.trim()) processLine(buffer);
+
+  return {
+    content,
+    reasoningContent,
+    toolCalls: dedupeStreamToolCalls(toolCalls),
+    usage,
+    finishReason,
+  };
 }
 
 /**
@@ -187,6 +215,62 @@ interface OpenAIResponseUsage {
   completion_tokens?: number;
   total_tokens?: number;
   prompt_tokens_details?: { cached_tokens?: number };
+}
+
+type NormalizedToolCall = { id: string; name: string; arguments: Record<string, unknown> };
+
+/** Stable enough for tool arguments, which are JSON values produced by providers. */
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? String(value);
+  if (Array.isArray(value)) return `[${value.map((item) => stableJson(item)).join(',')}]`;
+  const object = value as Record<string, unknown>;
+  return `{${Object.keys(object)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(object[key])}`)
+    .join(',')}}`;
+}
+
+/**
+ * Providers occasionally emit the same tool call more than once in one
+ * assistant turn. Treat exact name+argument duplicates as one call so an
+ * idempotency key cannot be defeated by provider-generated call IDs.
+ */
+function dedupeToolCalls(toolCalls: NormalizedToolCall[]): NormalizedToolCall[] {
+  const seen = new Set<string>();
+  return toolCalls.filter((toolCall) => {
+    const key = `${toolCall.name}\n${stableJson(toolCall.arguments)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeStreamToolCalls(
+  toolCalls: Array<{ id: string; name: string; arguments: string }>,
+): Array<{ id: string; name: string; arguments: string }> {
+  const seen = new Set<string>();
+  return toolCalls.filter((toolCall) => {
+    let args: unknown = toolCall.arguments;
+    try {
+      args = JSON.parse(toolCall.arguments || '{}');
+    } catch {
+      // Keep the raw argument string as the identity when it is malformed.
+    }
+    const key = `${toolCall.name}\n${stableJson(args)}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function normalizeFinishReason(
+  reason: string | null | undefined,
+  hasToolCalls: boolean,
+): LLMResponse['finishReason'] {
+  if (reason === 'length') return 'length';
+  if (reason === 'error') return 'error';
+  if (reason === 'tool_calls' || hasToolCalls) return 'tool_calls';
+  return 'stop';
 }
 
 export function parseOpenAIResponse(
@@ -235,6 +319,8 @@ export function parseOpenAIResponse(
     }
   }
 
+  if (toolCalls && toolCalls.length > 1) toolCalls = dedupeToolCalls(toolCalls);
+
   // Merge reasoning_content into content for models that put output there.
   // Prefer the standard `reasoning_content` field (DeepSeek/MiMo); fall back
   // to OpenRouter's `reasoning` field so reasoning is captured regardless of
@@ -248,14 +334,7 @@ export function parseOpenAIResponse(
     content,
     model,
     usage: tokenUsage,
-    finishReason:
-      choice?.finish_reason === 'stop'
-        ? 'stop'
-        : choice?.finish_reason === 'tool_calls'
-          ? 'tool_calls'
-          : choice?.finish_reason === 'length'
-            ? 'length'
-            : 'stop',
+    finishReason: normalizeFinishReason(choice?.finish_reason, !!toolCalls?.length),
     toolCalls,
     parsed: tryParseOpenAICompatibleStructured(content, responseFormat),
     reasoning_content: reasoningContent,
@@ -309,7 +388,11 @@ export function buildOpenAIBody(
 
   if (request.tools && request.tools.length > 0) {
     body.tools = FormatBridge.adaptToolsForProvider(request.tools, providerName);
-    body.parallel_tool_calls = true;
+    const configuredParallelToolCalls = extra.parallel_tool_calls;
+    body.parallel_tool_calls =
+      typeof configuredParallelToolCalls === 'boolean'
+        ? configuredParallelToolCalls
+        : (request.parallelToolCalls ?? false);
   }
 
   // Provider-native structured output for OpenAI-compatible endpoints
@@ -347,7 +430,12 @@ export function buildOpenAIBody(
   // reasoning directives. The subclass's `reasoning` object (spread into the
   // body above) already carries the equivalent configuration.
   const rc = request.reasoningConfig;
-  if (rc?.enabled && !('reasoning' in extra)) {
+  if (
+    rc?.enabled &&
+    !('reasoning' in extra) &&
+    !('chat_template_kwargs' in extra) &&
+    !('thinking' in extra)
+  ) {
     if (rc.effort) body.reasoning_effort = rc.effort;
     if (rc.budget && rc.budget > 0) body.max_thinking_tokens = rc.budget;
   }
@@ -392,7 +480,7 @@ export async function callOpenAICompatibleAPI(
   const authHeaderName = config.authHeaderName ?? 'Authorization';
   const authHeaderPrefix = config.authHeaderPrefix ?? 'Bearer ';
 
-  // Retry transient HTTP errors (429, 5xx) at the provider level.
+  // Retry transient HTTP and network errors at the provider level.
   // This catches rate limits before they bubble up to the runtime's
   // retry loop, which has limited error context.
   const MAX_HTTP_RETRIES = 4; // 5 total attempts
@@ -402,20 +490,41 @@ export async function callOpenAICompatibleAPI(
   let lastError: Error | undefined;
 
   for (let httpAttempt = 0; httpAttempt <= MAX_HTTP_RETRIES; httpAttempt++) {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        [authHeaderName]: `${authHeaderPrefix}${config.apiKey}`,
-        ...config.extraHeaders,
-      },
-      body: JSON.stringify({ ...body, stream: useStreaming }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          [authHeaderName]: `${authHeaderPrefix}${config.apiKey}`,
+          ...config.extraHeaders,
+        },
+        body: JSON.stringify({ ...body, stream: useStreaming }),
+      });
+    } catch (err) {
+      if (!isRetryableNetworkError(err) || httpAttempt >= MAX_HTTP_RETRIES) throw err;
+
+      const delayMs = computeHttpBackoff(httpAttempt, BASE_BACKOFF_MS, MAX_BACKOFF_MS);
+      logger.warn('BaseOpenAI', `Retrying ${config.name} after network failure`, {
+        attempt: httpAttempt + 1,
+        maxAttempts: MAX_HTTP_RETRIES + 1,
+        delayMs,
+        endpoint: url,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      await waitForRetry(delayMs);
+      lastError = err instanceof Error ? err : new Error(String(err));
+      continue;
+    }
 
     if (response.ok) {
       // Success — parse the response
       if (useStreaming) {
         const streamed = await parseOpenAIStream(response, logger);
+        const extractedTextToolCalls =
+          streamed.toolCalls.length === 0 && streamed.content && extractTextToolCalls
+            ? extractTextToolCalls(streamed.content)
+            : null;
         const tokenUsage: TokenUsage = streamed.usage
           ? {
               promptTokens: streamed.usage.prompt_tokens,
@@ -425,30 +534,37 @@ export async function callOpenAICompatibleAPI(
             }
           : { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
+        const normalizedToolCalls =
+          streamed.toolCalls.length > 0
+            ? streamed.toolCalls.map((tc) => {
+                let parsed: Record<string, unknown> = {};
+                try {
+                  parsed = JSON.parse(tc.arguments || '{}');
+                } catch (err) {
+                  reportSilentFailure(err, 'baseOpenAICompatible:347');
+                  try {
+                    parsed = JSON.parse(`{${tc.arguments}}`);
+                  } catch (err) {
+                    reportSilentFailure(err, 'baseOpenAICompatible:351');
+                    parsed = { raw: tc.arguments };
+                  }
+                }
+                return { id: tc.id, name: tc.name, arguments: parsed };
+              })
+            : (extractedTextToolCalls ?? []);
+
+        const toolCalls =
+          normalizedToolCalls.length > 0 ? dedupeToolCalls(normalizedToolCalls) : undefined;
         return {
-          content: streamed.content,
+          content: toolCalls?.length ? '' : streamed.content,
           model,
           usage: tokenUsage,
-          finishReason: 'stop',
-          toolCalls:
-            streamed.toolCalls.length > 0
-              ? streamed.toolCalls.map((tc) => {
-                  let parsed: Record<string, unknown> = {};
-                  try {
-                    parsed = JSON.parse(tc.arguments || '{}');
-                  } catch (err) {
-                    reportSilentFailure(err, 'baseOpenAICompatible:347');
-                    try {
-                      parsed = JSON.parse(`{${tc.arguments}}`);
-                    } catch (err) {
-                      reportSilentFailure(err, 'baseOpenAICompatible:351');
-                      parsed = { raw: tc.arguments };
-                    }
-                  }
-                  return { id: tc.id, name: tc.name, arguments: parsed };
-                })
-              : undefined,
-          parsed: tryParseOpenAICompatibleStructured(streamed.content, request.responseFormat),
+          finishReason: normalizeFinishReason(streamed.finishReason, !!toolCalls?.length),
+          toolCalls,
+          parsed: tryParseOpenAICompatibleStructured(
+            toolCalls?.length ? '' : streamed.content,
+            request.responseFormat,
+          ),
           reasoning_content: streamed.reasoningContent || undefined,
         };
       }
@@ -483,10 +599,7 @@ export async function callOpenAICompatibleAPI(
         endpoint: url,
       });
 
-      await new Promise<void>((resolve) => {
-        const t = setTimeout(resolve, delayMs);
-        t.unref?.();
-      });
+      await waitForRetry(delayMs);
 
       lastError = new Error(`${config.name} API error ${response.status}: ${errorBody}`);
       continue;
@@ -498,6 +611,20 @@ export async function callOpenAICompatibleAPI(
 
   // All HTTP retries exhausted
   throw lastError ?? new Error(`${config.name} API: all retry attempts exhausted`);
+}
+
+function isRetryableNetworkError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const error = err as { name?: unknown; message?: unknown; code?: unknown };
+  if (error.name === 'AbortError') return false;
+  const message = `${String(error.message ?? '')} ${String(error.code ?? '')}`;
+  return /fetch failed|network|econnreset|econnrefused|enotfound|eai_again|etimedout|esockettimedout|socket hang up|epipe/i.test(
+    message,
+  );
+}
+
+function waitForRetry(delayMs: number): Promise<void> {
+  return new Promise<void>((resolve) => setTimeout(resolve, delayMs));
 }
 
 /** Exponential backoff with jitter for HTTP-level retries. */
@@ -545,9 +672,10 @@ export abstract class BaseOpenAICompatibleProvider implements LLMProvider {
   }
   /** Override for providers that emit text-format tool calls */
   protected extractTextToolCalls(
-    _content: string,
+    content: string,
   ): Array<{ id: string; name: string; arguments: Record<string, unknown> }> | null {
-    return null;
+    const parsed = parseTextToolCalls(content);
+    return parsed.length > 0 ? parsed : null;
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {

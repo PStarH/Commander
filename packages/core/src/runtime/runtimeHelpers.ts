@@ -128,6 +128,17 @@ export interface ToolEffectClassification extends Pick<
   compensationToolName?: string;
 }
 
+/**
+ * Optional policy metadata declared by a tool author. Explicit declarations
+ * take precedence over name-based heuristics so enterprise tools are not
+ * classified from an accidental substring in their name.
+ */
+export interface ToolEffectMetadata {
+  isReadOnly?: boolean;
+  riskLevel?: 'low' | 'medium' | 'high';
+  destructive?: boolean;
+}
+
 type ToolCategory = ToolEffectClassification['category'];
 
 function readOnlyEffect(
@@ -246,23 +257,52 @@ const LEGACY_COMPENSATION_TOOLS: Record<string, ToolCategory> = {
 export function classifyToolEffect(
   name: string,
   args: Record<string, unknown> = {},
+  metadata?: ToolEffectMetadata,
 ): ToolEffectClassification {
   const lower = name.toLowerCase();
   const action = typeof args.action === 'string' ? args.action.toLowerCase() : '';
 
   const consolidated = CONSOLIDATED_EFFECTS[lower];
-  if (consolidated) {
-    return { ...(consolidated[action] ?? mutationEffect('unknown', lower)) };
+  const inferred = consolidated
+    ? (consolidated[action] ?? mutationEffect('unknown', lower))
+    : (LEGACY_READ_EFFECTS[lower] ??
+      (LEGACY_COMPENSATION_TOOLS[lower]
+        ? mutationEffect(LEGACY_COMPENSATION_TOOLS[lower], lower, lower)
+        : mutationKeywordsEffect(lower)));
+
+  if (!metadata) return { ...inferred };
+
+  const riskLevel = metadata.riskLevel ?? inferred.riskLevel;
+  const hasExplicitReadOnly = metadata.isReadOnly !== undefined;
+  const hasExplicitDestructive = metadata.destructive !== undefined;
+  let isReadOnly = metadata.isReadOnly ?? inferred.isReadOnly;
+  let destructive = metadata.destructive ?? inferred.destructive;
+
+  // Explicit booleans are authoritative. A contradictory destructive=true
+  // declaration wins and fails closed; read-only tools cannot be destructive.
+  if (metadata.destructive === true) {
+    destructive = true;
+    isReadOnly = false;
+  } else if (metadata.isReadOnly === true) {
+    isReadOnly = true;
+    destructive = false;
+  } else if (metadata.isReadOnly === false && !hasExplicitDestructive) {
+    isReadOnly = false;
+    destructive = true;
+  } else if (!hasExplicitReadOnly && !hasExplicitDestructive) {
+    if (metadata.riskLevel === 'low') {
+      isReadOnly = true;
+      destructive = false;
+    } else if (metadata.riskLevel === 'high') {
+      destructive = true;
+      isReadOnly = false;
+    }
   }
 
-  const legacyRead = LEGACY_READ_EFFECTS[lower];
-  if (legacyRead) return { ...legacyRead };
+  return { ...inferred, riskLevel, destructive, isReadOnly };
+}
 
-  const legacyCompensationCategory = LEGACY_COMPENSATION_TOOLS[lower];
-  if (legacyCompensationCategory) {
-    return mutationEffect(legacyCompensationCategory, lower, lower);
-  }
-
+function mutationKeywordsEffect(lower: string): ToolEffectClassification {
   const mutationKeywords = ['write', 'edit', 'delete', 'mkdir', 'mv', 'cp', 'bash', 'shell', 'git'];
   if (mutationKeywords.some((keyword) => lower.includes(keyword))) {
     return mutationEffect(
@@ -270,10 +310,13 @@ export function classifyToolEffect(
       lower,
     );
   }
-
   return mutationEffect('unknown', lower);
 }
 
-export function isMutationTool(name: string, args: Record<string, unknown> = {}): boolean {
-  return classifyToolEffect(name, args).destructive;
+export function isMutationTool(
+  name: string,
+  args: Record<string, unknown> = {},
+  metadata?: ToolEffectMetadata,
+): boolean {
+  return classifyToolEffect(name, args, metadata).destructive;
 }

@@ -129,7 +129,9 @@ export function POCPage() {
         aria-label="Illustrative scenarios disclaimer"
       >
         <ShieldCheck size={14} style={{ color: 'var(--accent-amber)', flexShrink: 0 }} />
-        <span>{t('poc.disclaimer')}</span>
+        <span>
+          {t('poc.disclaimer')} {t('poc.source')}
+        </span>
       </div>
 
       <div className="metric-row">

@@ -19,9 +19,12 @@
  *   monitor.stop(); // Stop monitoring
  */
 
+import { createRequire } from 'node:module';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getSecurityAuditLogger, type SecurityEvent } from './securityAuditLogger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -352,7 +355,7 @@ export class SecurityMonitor {
 
     // Publish on MessageBus
     try {
-      const { getMessageBus } = require('../runtime/messageBus');
+      const { getMessageBus } = nodeRequire('../runtime/messageBus');
       const bus = getMessageBus();
       bus.publish('security.alert', 'SecurityMonitor', fullAlert, {
         priority: alert.level === 'critical' ? 'critical' : 'high',
@@ -365,7 +368,7 @@ export class SecurityMonitor {
     // AgentSOC integration: create incidents from security alerts
     // This wires the monitoring pipeline into the SOC operations center
     try {
-      const { getAgentSoc } = require('./agentSoc');
+      const { getAgentSoc } = nodeRequire('./agentSoc');
       const soc = getAgentSoc();
       soc.createIncident({
         event: {

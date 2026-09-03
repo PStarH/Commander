@@ -5,6 +5,6 @@
   "breach": false,
   "details": "At-rest encryption verified: EncryptedSecretsVault stores secrets encrypted (AES-256-GCM). listSecrets() returns metadata only (no plaintext). allowlist contains COMMANDER_AUDIT_CHAIN_KEY=true, COMMANDER_MANIFEST_KEY=true. Both noted as Vault-injected. Audit chain uses HMAC-SHA256 with production fail-closed.",
   "artifacts": [],
-  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
-  "ranAt": "2026-07-16T10:24:22.086Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:36:12.059Z"
 }

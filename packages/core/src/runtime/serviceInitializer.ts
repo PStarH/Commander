@@ -70,6 +70,7 @@ import { bootstrapRuntimeAdmission } from './runtimeAdmission';
 import { startAuditAggregatorBridge } from '../security/auditAggregatorBridge';
 import { installProcessCrashHandlers } from './processCrashSafety';
 import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
+import { getRunLedgerBundle } from '../atr/runLedger';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
 import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '../security/capabilityToken';
 import {
@@ -85,6 +86,8 @@ import { getOTelExporter } from './openTelemetryExporter';
 import { getGlobalEventSourcingEngine } from './eventSourcingEngine';
 import { getGlobalEventSourcingSubscriber } from './eventSourcingSubscriber';
 import { bootstrapMemoryPersistence, resolveMemoryStoreType } from '../memory/utils';
+import { registerDefaultInvariants } from '../security/securityInvariantVerifier';
+import { getSupervisionTreeRegistry } from './supervisionTree';
 
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { DeadLetterQueue } from './deadLetterQueue';
@@ -104,8 +107,16 @@ interface ServiceInitializerConfig {
     tenantId?: string;
   } | null;
   getActiveRuns: () => Set<string>;
+  isRunPaused?: (runId: string) => boolean;
   getPromotedTools: () => Set<string>;
   generateActionId: () => string;
+}
+
+/** Keep the process-wide fetch timeout at least as long as the LLM step timeout. */
+export function resolveResourceGovernorTimeout(
+  config: Pick<AgentRuntimeConfig, 'llmTimeoutMs' | 'resourceGovernor'>,
+): number {
+  return config.resourceGovernor?.timeoutMs ?? config.llmTimeoutMs ?? 120_000;
 }
 
 export interface InitializedServices {
@@ -152,8 +163,15 @@ export function initializeServices(
   svcConfig: ServiceInitializerConfig,
   tools: Map<string, import('./types').Tool>,
 ): InitializedServices {
-  const { config, getRunHandle, getLedgerCtx, getActiveRuns, getPromotedTools, generateActionId } =
-    svcConfig;
+  const {
+    config,
+    getRunHandle,
+    getLedgerCtx,
+    getActiveRuns,
+    isRunPaused,
+    getPromotedTools,
+    generateActionId,
+  } = svcConfig;
 
   // Reset any prior global fetch governor from previous tests/benchmarks.
   resetGlobalFetchGovernor();
@@ -175,10 +193,15 @@ export function initializeServices(
 
   const slidingWindow = new SlidingWindowOrchestrator();
 
+  // The scheduler and checkpoint authorization must share the same lease
+  // authority. Constructing a second LeaseManager breaks fencing in memory
+  // mode and can reject every checkpoint written by an active run.
+  const leaseManager = getRunLedgerBundle().lease;
   const reliabilityEngine = new ReliabilityEngine({
     circuitThreshold: CIRCUIT_BREAKER_THRESHOLD,
     circuitRecoveryMs: CIRCUIT_BREAKER_RECOVERY_MS,
     circuitProviderName: 'agentRuntime',
+    leaseManager,
     circuitTransitionHandler: (from, to, provider) => {
       try {
         getIntentLog(undefined).write({
@@ -301,7 +324,6 @@ export function initializeServices(
 
   const samplesStore = new SamplesStore();
   const resolvedTraceStore = new PersistentTraceStore();
-  const leaseManager = new LeaseManager();
   const stepTimeout = new StepTimeoutManager();
   const fallbackChain = new ProviderFallbackChain<import('./types').LLMResponse>();
 
@@ -466,7 +488,8 @@ export function initializeServices(
   if (resourceGovernorEnabled) {
     try {
       installGlobalFetchGovernor({
-        timeoutMs: config.resourceGovernor?.timeoutMs ?? 30_000,
+        timeoutMs: resolveResourceGovernorTimeout(config),
+        maxPayloadBytes: config.resourceGovernor?.maxPayloadBytes,
       });
     } catch (err) {
       getGlobalLogger().warn('ServiceInitializer', 'Failed to install global fetch governor', {
@@ -479,7 +502,6 @@ export function initializeServices(
   // These invariants are checked at every critical execution point (tool execution,
   // LLM call, agent spawn) to ensure security properties always hold.
   try {
-    const { registerDefaultInvariants } = require('../security/securityInvariantVerifier');
     registerDefaultInvariants();
     getGlobalLogger().info(
       'ServiceInitializer',
@@ -511,6 +533,7 @@ export function initializeServices(
     cacheManager,
     dlq: resolvedDlq,
     getRunHandle,
+    isRunPaused,
     config,
     reflexionGenerator,
     stepTimeout,
@@ -737,7 +760,6 @@ export function initializeServices(
   // makes restart decisions, never contains business logic.
   let supervisor: import('./supervisionTree').Supervisor | null = null;
   try {
-    const { getSupervisionTreeRegistry } = require('./supervisionTree');
     const registry = getSupervisionTreeRegistry();
     supervisor = registry.createSupervisor({
       id: `sup_root_${getGlobalTenantProvider().getCurrentTenantId() ?? 'default'}`,

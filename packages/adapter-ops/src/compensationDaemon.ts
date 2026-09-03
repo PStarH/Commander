@@ -13,6 +13,7 @@ import {
 import type { ActionAdapterRegistry } from '@commander/action-adapters';
 import {
   opsLoopErrorCode,
+  opsLoopErrorMessage,
   type OpsLoopTelemetryEvent,
   type OpsLoopHealth,
 } from './reconciliationDaemon.js';
@@ -319,6 +320,7 @@ export class CompensationDaemon {
       type: 'ops_loop_tick_failed',
       loop: 'compensation',
       errorCode,
+      ...(opsLoopErrorMessage(error) ? { errorMessage: opsLoopErrorMessage(error) } : {}),
       at,
     });
   }
