@@ -1,9 +1,9 @@
 /**
  * Shared authentication-failure authority.
  *
- * Production requires Redis so lockouts are consistent across API replicas.
- * Development and tests use the explicitly named process-local implementation
- * when no Redis URL is configured.
+ * Production uses PostgreSQL so lockout state is consistent across API
+ * replicas. Development and tests use the explicitly named process-local
+ * implementation when no database URL is configured.
  */
 
 import { isProductionEnv } from './envSignal.js';
@@ -22,27 +22,16 @@ export interface AuthFailureStore {
   cleanup(now: number, windowMs: number): Promise<void>;
 }
 
-interface RedisClient {
-  connect(): Promise<unknown>;
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string, options: { EX: number }): Promise<string | null>;
-  del(key: string): Promise<number>;
-  on?(event: 'error', listener: (error: Error) => void): unknown;
+export interface PgPoolLike {
+  query(sql: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  end?: () => Promise<void>;
 }
 
-interface RedisModule {
-  createClient(options: {
-    url: string;
-    disableOfflineQueue: true;
-    socket: { connectTimeout: number; reconnectStrategy: false };
-  }): RedisClient;
-}
-
-export type RedisModuleLoader = () => Promise<RedisModule>;
+export type PgPoolLoader = (dsn: string) => PgPoolLike | Promise<PgPoolLike>;
 
 export interface CreateAuthFailureStoreOptions {
   environment?: NodeJS.ProcessEnv;
-  loadRedis?: RedisModuleLoader;
+  loadPgPool?: PgPoolLoader;
 }
 
 class InMemoryAuthFailureStore implements AuthFailureStore {
@@ -73,17 +62,11 @@ function isNonNegativeFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0;
 }
 
-function parseAuthFailureEntry(raw: string): AuthFailureEntry {
-  let value: unknown;
-  try {
-    value = JSON.parse(raw);
-  } catch (error) {
-    throw new Error('Redis auth failure entry is malformed', { cause: error });
+function parseAuthFailureEntry(raw: unknown): AuthFailureEntry {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new Error('Postgres auth failure entry is malformed');
   }
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    throw new Error('Redis auth failure entry is malformed');
-  }
-  const entry = value as Record<string, unknown>;
+  const entry = raw as Record<string, unknown>;
   if (
     !Number.isSafeInteger(entry.count) ||
     !isNonNegativeFiniteNumber(entry.count) ||
@@ -91,7 +74,7 @@ function parseAuthFailureEntry(raw: string): AuthFailureEntry {
     !isNonNegativeFiniteNumber(entry.lastFailureAt) ||
     !isNonNegativeFiniteNumber(entry.lockedUntil)
   ) {
-    throw new Error('Redis auth failure entry is malformed');
+    throw new Error('Postgres auth failure entry is malformed');
   }
   return {
     count: entry.count,
@@ -101,83 +84,86 @@ function parseAuthFailureEntry(raw: string): AuthFailureEntry {
   };
 }
 
-async function loadRedisModule(): Promise<RedisModule> {
-  return import('redis');
+async function defaultLoadPgPool(dsn: string): Promise<PgPoolLike> {
+  const { createVerifiedPostgresPool } = await import('@commander/postgres-runtime');
+  return createVerifiedPostgresPool({ connectionString: dsn });
 }
 
-class RedisAuthFailureStore implements AuthFailureStore {
-  private readonly clientPromise: Promise<RedisClient>;
+class PostgresAuthFailureStore implements AuthFailureStore {
+  private poolPromise: Promise<PgPoolLike> | undefined;
 
   constructor(
-    url: string,
-    loadRedis: RedisModuleLoader,
-    private readonly prefix = 'commander:auth-failures:',
-  ) {
-    this.clientPromise = this.connect(url, loadRedis);
-  }
+    private readonly dsn: string,
+    private readonly loadPgPool: PgPoolLoader,
+  ) {}
 
-  private async connect(url: string, loadRedis: RedisModuleLoader): Promise<RedisClient> {
-    const redis = await loadRedis();
-    const client = redis.createClient({
-      url,
-      disableOfflineQueue: true,
-      socket: { connectTimeout: 5_000, reconnectStrategy: false },
-    });
-    client.on?.('error', (error) => {
-      process.stderr.write(`[Auth] Redis auth failure store error: ${error.message}\n`);
-    });
-    await client.connect();
-    return client;
-  }
-
-  private key(ip: string): string {
-    return `${this.prefix}${ip}`;
+  private getPool(): Promise<PgPoolLike> {
+    if (!this.poolPromise) {
+      this.poolPromise = Promise.resolve().then(() => this.loadPgPool(this.dsn));
+    }
+    return this.poolPromise;
   }
 
   async get(ip: string): Promise<AuthFailureEntry | undefined> {
-    const client = await this.clientPromise;
-    const raw = await client.get(this.key(ip));
-    return raw === null ? undefined : parseAuthFailureEntry(raw);
+    const pool = await this.getPool();
+    const result = await pool.query(
+      'SELECT entry FROM commander_auth_failures WHERE ip = $1 AND expires_at > now()',
+      [ip],
+    );
+    const row = result.rows[0];
+    return row ? parseAuthFailureEntry(row.entry) : undefined;
   }
 
   async set(ip: string, entry: AuthFailureEntry): Promise<void> {
-    const client = await this.clientPromise;
+    const pool = await this.getPool();
     const ttlSeconds =
-      entry.lockedUntil > Date.now() ? Math.ceil((entry.lockedUntil - Date.now()) / 1000) : 60 * 60;
-    await client.set(this.key(ip), JSON.stringify(entry), { EX: Math.max(ttlSeconds, 1) });
+      entry.lockedUntil > Date.now()
+        ? Math.ceil((entry.lockedUntil - Date.now()) / 1000)
+        : 60 * 60;
+    await pool.query(
+      `INSERT INTO commander_auth_failures (ip, entry, expires_at)
+       VALUES ($1, $2::jsonb, now() + make_interval(secs => $3))
+       ON CONFLICT (ip) DO UPDATE SET entry = EXCLUDED.entry, expires_at = EXCLUDED.expires_at`,
+      [ip, JSON.stringify(entry), ttlSeconds],
+    );
   }
 
   async delete(ip: string): Promise<void> {
-    const client = await this.clientPromise;
-    await client.del(this.key(ip));
+    const pool = await this.getPool();
+    await pool.query('DELETE FROM commander_auth_failures WHERE ip = $1', [ip]);
   }
 
   async cleanup(_now: number, _windowMs: number): Promise<void> {
-    // Redis TTL owns expiration. Awaiting the connection still surfaces an
-    // unavailable authority to the caller's cleanup error reporting.
-    await this.clientPromise;
+    const pool = await this.getPool();
+    await pool.query('DELETE FROM commander_auth_failures WHERE expires_at <= now()');
   }
 }
 
 let sharedStore: AuthFailureStore | null = null;
 
 export function getAuthFailureStore(): AuthFailureStore {
-  if (!sharedStore) {
-    sharedStore = createAuthFailureStore();
-  }
+  if (!sharedStore) sharedStore = createAuthFailureStore();
   return sharedStore;
+}
+
+export function authFailureDsn(env: NodeJS.ProcessEnv): string | undefined {
+  const dsn =
+    env.COMMANDER_AUTH_FAILURE_DATABASE_URL ?? env.COMMANDER_KERNEL_DATABASE_URL ?? env.DATABASE_URL;
+  return typeof dsn === 'string' && dsn.trim().length > 0 ? dsn.trim() : undefined;
 }
 
 export function createAuthFailureStore(
   options: CreateAuthFailureStoreOptions = {},
 ): AuthFailureStore {
   const environment = options.environment ?? process.env;
-  const redisUrl = environment.AUTH_FAILURE_REDIS_URL;
-  if (redisUrl) {
-    return new RedisAuthFailureStore(redisUrl, options.loadRedis ?? loadRedisModule);
-  }
+  const dsn = authFailureDsn(environment);
+  if (dsn) return new PostgresAuthFailureStore(dsn, options.loadPgPool ?? defaultLoadPgPool);
   if (isProductionEnv(environment)) {
-    throw new Error('AUTH_FAILURE_REDIS_URL is required in production');
+    throw new Error(
+      'COMMANDER_AUTH_FAILURE_DATABASE_URL (or COMMANDER_KERNEL_DATABASE_URL / DATABASE_URL) ' +
+        'is required in production for the authentication-failure authority. The Redis backend ' +
+        '(AUTH_FAILURE_REDIS_URL) has been removed.',
+    );
   }
   return new InMemoryAuthFailureStore();
 }

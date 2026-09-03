@@ -15,7 +15,7 @@ const audience = 'commander-tenant-cutover-proof/v1';
 function token(overrides: Record<string, unknown> = {}): string {
   const payload = {
     aud: [audience],
-    exp: 1785258300,
+    exp: 1785258600,
     iat: 1785258000,
     iss: 'https://kubernetes.default.svc.cluster.local',
     sub: 'system:serviceaccount:commander:commander-proof-reader-c48e77f6d68ea66c',
@@ -71,7 +71,8 @@ describe('Task 1 Kubernetes proof runtime', () => {
   it('derives only the bound proof-reader Pod identity from the projected JWT', () => {
     assert.deepEqual(parseTask1ProjectedTokenIdentity(token()), {
       audience,
-      expiresAt: '2026-07-28T17:05:00.000Z',
+      issuedAt: '2026-07-28T17:00:00.000Z',
+      expiresAt: '2026-07-28T17:10:00.000Z',
       namespace: 'commander',
       serviceAccountName: 'commander-proof-reader-c48e77f6d68ea66c',
       podName: 'proof-pod',
@@ -88,8 +89,21 @@ describe('Task 1 Kubernetes proof runtime', () => {
     );
   });
 
+  it('accepts a pod-bound token whose expiration Kubernetes extends beyond the requested lifetime', () => {
+    assert.deepEqual(parseTask1ProjectedTokenIdentity(token({ exp: 1816794000 })), {
+      audience,
+      issuedAt: '2026-07-28T17:00:00.000Z',
+      expiresAt: '2027-07-28T17:00:00.000Z',
+      namespace: 'commander',
+      serviceAccountName: 'commander-proof-reader-c48e77f6d68ea66c',
+      podName: 'proof-pod',
+      podUid: 'proof-pod-uid',
+    });
+  });
+
   it('reads exact Kubernetes resources over authenticated cluster-CA HTTPS', async () => {
     const fixture = tlsFixture();
+    const kubernetesApiToken = token({ aud: ['https://kubernetes.default.svc'] });
     const requests: Array<{ url: string; authorization: string | undefined }> = [];
     const server = createServer({ cert: fixture.cert, key: fixture.key }, (request, response) => {
       requests.push({
@@ -107,7 +121,7 @@ describe('Task 1 Kubernetes proof runtime', () => {
       const api = createTask1KubernetesProofApi({
         hostname: 'localhost',
         port: address.port,
-        readToken: async () => token(),
+        readToken: async () => kubernetesApiToken,
         readCa: async () => fixture.cert,
       });
       assert.deepEqual(
@@ -134,11 +148,11 @@ describe('Task 1 Kubernetes proof runtime', () => {
       assert.deepEqual(requests, [
         {
           url: '/api/v1/namespaces/commander/services/release-a-api-proof',
-          authorization: `Bearer ${token()}`,
+          authorization: `Bearer ${kubernetesApiToken}`,
         },
         {
           url: '/api/v1/namespaces/commander/pods?labelSelector=app.kubernetes.io%2Fcomponent%3Dapi%2Capp.kubernetes.io%2Finstance%3Drelease-a',
-          authorization: `Bearer ${token()}`,
+          authorization: `Bearer ${kubernetesApiToken}`,
         },
       ]);
       await assert.rejects(

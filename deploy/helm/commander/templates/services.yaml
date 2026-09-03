@@ -96,7 +96,7 @@ spec:
   type: ClusterIP
   ports:
     - port: {{ .Values.database.postgres.port }}
-      targetPort: postgres
+      targetPort: {{ .Values.database.postgres.port }}
       protocol: TCP
       name: postgres
   selector:

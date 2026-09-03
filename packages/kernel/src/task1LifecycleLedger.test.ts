@@ -257,7 +257,10 @@ describe('Task 1 lifecycle operation ledger', () => {
     const next = await fixture.ledger.execute({
       ...base,
       command: 'enforce',
-      verifyCurrent: async () => ({ status: 'proven', proof: { challenge: 'live' } }),
+      verifyCurrent: async (current) => {
+        assert.equal(current, recovery);
+        return { status: 'proven', proof: { challenge: 'live' } };
+      },
       applyTransition: async () => undefined,
     });
     assert.equal(next.action, 'append');

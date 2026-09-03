@@ -402,6 +402,13 @@ export class Task1RolloutProofRuntime {
     return { status: 'proven', proof: response };
   }
 
+  async challengeCurrent(
+    expected: Task1LifecycleOperation,
+  ): Promise<Task1RecoveryPredecessorChallenge> {
+    const { response } = await this.challengeOperation(expected);
+    return { status: 'proven', proof: response };
+  }
+
   async proveCurrent(expected: Task1LifecycleOperation): Promise<Task1RolloutProofReceipt> {
     const proofAttemptId = (this.options.createProofAttemptId ?? randomUUID)();
     if (!UUID.test(proofAttemptId)) fail('TENANT_CUTOVER_PROOF_ATTEMPT_INVALID');
