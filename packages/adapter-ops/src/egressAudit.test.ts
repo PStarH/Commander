@@ -5,10 +5,7 @@
  */
 import { test, describe } from 'node:test';
 import * as assert from 'node:assert/strict';
-import {
-  assertEgressAllowlistBeforeDaemonStart,
-  assertEgressUrlAllowed,
-} from './egress.js';
+import { assertEgressAllowlistBeforeDaemonStart, assertEgressUrlAllowed } from './egress.js';
 
 describe('egress allowlist fail-closed (AUDIT-F1)', () => {
   test('empty allowlist refuses daemon start on non-demo cells (baseline behaviour kept)', () => {
@@ -32,7 +29,9 @@ describe('egress allowlist fail-closed (AUDIT-F1)', () => {
     assert.doesNotThrow(() =>
       assertEgressAllowlistBeforeDaemonStart('unspecified', ['api.github.com', '10.0.0.0/8']),
     );
-    assert.doesNotThrow(() => assertEgressUrlAllowed('https://api.github.com/x', ['api.github.com']));
+    assert.doesNotThrow(() =>
+      assertEgressUrlAllowed('https://api.github.com/x', ['api.github.com']),
+    );
     assert.throws(
       () => assertEgressUrlAllowed('https://evil.example/x', ['api.github.com']),
       /ADAPTER_OPS_EGRESS_DENIED/,

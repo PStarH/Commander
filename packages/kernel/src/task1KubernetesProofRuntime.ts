@@ -1,5 +1,9 @@
 import { request } from 'node:https';
-import type { Task1KubernetesProofApi, Task1KubernetesProofReadRequest, Task1ProjectedTokenIdentity } from './task1KubernetesProofObserver.js';
+import type {
+  Task1KubernetesProofApi,
+  Task1KubernetesProofReadRequest,
+  Task1ProjectedTokenIdentity,
+} from './task1KubernetesProofObserver.js';
 
 type JsonRecord = Record<string, unknown>;
 
@@ -7,7 +11,8 @@ const AUDIENCE = 'commander-tenant-cutover-proof/v1';
 const SERVICE_ACCOUNT = /^commander-proof-reader-[0-9a-f]{16}$/;
 const DNS_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const DNS_SUBDOMAIN = /^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$/;
-const LABEL_KEY = /^(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?\/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?$/;
+const LABEL_KEY =
+  /^(?:[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?\/)?[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?$/;
 const LABEL_VALUE = /^(?:[A-Za-z0-9](?:[-_.A-Za-z0-9]{0,61}[A-Za-z0-9])?)?$/;
 const MAX_TOKEN_BYTES = 16 * 1024;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -43,9 +48,11 @@ function safeEpochSeconds(value: unknown): number {
 
 export function parseTask1ProjectedTokenIdentity(token: string): Task1ProjectedTokenIdentity {
   if (
-    typeof token !== 'string' || token.length === 0 ||
+    typeof token !== 'string' ||
+    token.length === 0 ||
     Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES
-  ) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  )
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   const parts = token.split('.');
   if (parts.length !== 3 || parts.some((part) => part.length === 0)) {
     fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
@@ -59,12 +66,11 @@ export function parseTask1ProjectedTokenIdentity(token: string): Task1ProjectedT
   } catch {
     return fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   }
-  if (
-    !Array.isArray(payload.aud) || payload.aud.length !== 1 || payload.aud[0] !== AUDIENCE
-  ) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  if (!Array.isArray(payload.aud) || payload.aud.length !== 1 || payload.aud[0] !== AUDIENCE)
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   const expires = safeEpochSeconds(payload.exp);
   const issued = safeEpochSeconds(payload.iat);
-  if (expires <= issued || expires - issued > 5 * 60) {
+  if (expires <= issued) {
     fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   }
   const kubernetes = record(payload['kubernetes.io'], 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
@@ -81,14 +87,20 @@ export function parseTask1ProjectedTokenIdentity(token: string): Task1ProjectedT
   const podName = nonempty(pod.name, 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   const podUid = nonempty(pod.uid, 'TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   if (
-    !DNS_LABEL.test(namespace) || !DNS_SUBDOMAIN.test(podName) ||
+    !DNS_LABEL.test(namespace) ||
+    !DNS_SUBDOMAIN.test(podName) ||
     !SERVICE_ACCOUNT.test(serviceAccountName) ||
     payload.sub !== `system:serviceaccount:${namespace}:${serviceAccountName}`
-  ) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  )
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
   const expiresAt = new Date(expires * 1_000);
-  if (!Number.isFinite(expiresAt.getTime())) fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  const issuedAt = new Date(issued * 1_000);
+  if (!Number.isFinite(issuedAt.getTime()) || !Number.isFinite(expiresAt.getTime())) {
+    fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+  }
   return {
     audience: AUDIENCE,
+    issuedAt: issuedAt.toISOString(),
     expiresAt: expiresAt.toISOString(),
     namespace,
     serviceAccountName,
@@ -132,9 +144,12 @@ export function createTask1KubernetesProofApi(
   options: Task1KubernetesProofApiOptions,
 ): Task1KubernetesProofApi {
   if (
-    !DNS_SUBDOMAIN.test(options.hostname) || !Number.isInteger(options.port) ||
-    options.port <= 0 || options.port > 65535
-  ) fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
+    !DNS_SUBDOMAIN.test(options.hostname) ||
+    !Number.isInteger(options.port) ||
+    options.port <= 0 ||
+    options.port > 65535
+  )
+    fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
   const timeoutMs = options.timeoutMs ?? 2_000;
   if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 2_000) {
     fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
@@ -142,7 +157,9 @@ export function createTask1KubernetesProofApi(
   return {
     async read(input) {
       const [token, ca] = await Promise.all([options.readToken(), options.readCa()]);
-      parseTask1ProjectedTokenIdentity(token);
+      if (!token || Buffer.byteLength(token, 'utf8') > MAX_TOKEN_BYTES) {
+        fail('TENANT_CUTOVER_KUBERNETES_TOKEN_INVALID');
+      }
       if (!Buffer.isBuffer(ca) || ca.length === 0) {
         fail('TENANT_CUTOVER_KUBERNETES_CONFIGURATION_INVALID');
       }
@@ -155,49 +172,54 @@ export function createTask1KubernetesProofApi(
           if (error) reject(error);
           else resolve(value);
         };
-        const call = request({
-          hostname: options.hostname,
-          port: options.port,
-          path,
-          method: 'GET',
-          agent: false,
-          ca,
-          rejectUnauthorized: true,
-          minVersion: 'TLSv1.2',
-          headers: {
-            Accept: 'application/json',
-            Authorization: `Bearer ${token}`,
+        const call = request(
+          {
+            hostname: options.hostname,
+            port: options.port,
+            path,
+            method: 'GET',
+            agent: false,
+            ca,
+            rejectUnauthorized: true,
+            minVersion: 'TLSv1.2',
+            headers: {
+              Accept: 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
           },
-        }, (response) => {
-          if (response.statusCode !== 200) {
-            response.resume();
-            finish(new Error('TENANT_CUTOVER_KUBERNETES_API_REJECTED'));
-            return;
-          }
-          const chunks: Buffer[] = [];
-          let bytes = 0;
-          response.on('data', (chunk: Buffer) => {
-            bytes += chunk.byteLength;
-            if (bytes > MAX_RESPONSE_BYTES) {
-              call.destroy(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
+          (response) => {
+            if (response.statusCode !== 200) {
+              response.resume();
+              finish(new Error('TENANT_CUTOVER_KUBERNETES_API_REJECTED'));
               return;
             }
-            chunks.push(chunk);
-          });
-          response.once('end', () => {
-            try {
-              const body = Buffer.concat(chunks).toString('utf8');
-              if (!body || body.includes('\0')) {
-                finish(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
+            const chunks: Buffer[] = [];
+            let bytes = 0;
+            response.on('data', (chunk: Buffer) => {
+              bytes += chunk.byteLength;
+              if (bytes > MAX_RESPONSE_BYTES) {
+                call.destroy(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
                 return;
               }
-              finish(undefined, JSON.parse(body) as unknown);
-            } catch {
-              finish(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
-            }
-          });
-        });
-        call.setTimeout(timeoutMs, () => call.destroy(new Error('TENANT_CUTOVER_KUBERNETES_TIMEOUT')));
+              chunks.push(chunk);
+            });
+            response.once('end', () => {
+              try {
+                const body = Buffer.concat(chunks).toString('utf8');
+                if (!body || body.includes('\0')) {
+                  finish(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
+                  return;
+                }
+                finish(undefined, JSON.parse(body) as unknown);
+              } catch {
+                finish(new Error('TENANT_CUTOVER_KUBERNETES_RESPONSE_INVALID'));
+              }
+            });
+          },
+        );
+        call.setTimeout(timeoutMs, () =>
+          call.destroy(new Error('TENANT_CUTOVER_KUBERNETES_TIMEOUT')),
+        );
         call.once('error', (error) => finish(error));
         call.end();
       });

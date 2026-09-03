@@ -106,12 +106,11 @@ async def test_stream_from_response():
         "data: [DONE]\n"
         "\n"
     )
-    async with httpx.AsyncClient() as client:
-        async with respx.mock(base_url="http://localhost:3001") as mock:
-            mock.get("/api/v1/stream/sid").respond(
-                200, text=sse, headers={"Content-Type": "text/event-stream"}
-            )
-            response = await client.get("http://localhost:3001/api/v1/stream/sid")
-            events = [e async for e in CommanderSSEStream.iter_from_response(response)]
+    async with httpx.AsyncClient() as client, respx.mock(base_url="http://localhost:3001") as mock:
+        mock.get("/api/v1/stream/sid").respond(
+            200, text=sse, headers={"Content-Type": "text/event-stream"}
+        )
+        response = await client.get("http://localhost:3001/api/v1/stream/sid")
+        events = [e async for e in CommanderSSEStream.iter_from_response(response)]
     assert len(events) == 1
     assert events[0].data["x"] == 1

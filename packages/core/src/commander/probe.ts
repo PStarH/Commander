@@ -266,7 +266,7 @@ const PROVIDER_DEFAULT_MODELS: Record<string, string> = {
   xai: 'grok-2-latest',
   anyscale: 'meta-llama/Llama-3.3-70B-Instruct',
   deepinfra: 'meta-llama/Llama-3.3-70B-Instruct-Turbo',
-  agnes: 'agnes-2.0-flash',
+  agnes: 'agnes-2.5-flash',
 };
 
 const PROVIDER_TIERS: Record<string, 'local' | 'cloud' | 'premium'> = {

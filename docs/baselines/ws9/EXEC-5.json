@@ -5,6 +5,6 @@
   "breach": false,
   "details": "Effect-broker (ReversibilityGate) wired and functional: blockWithoutCallback=true (default), shell_execute=irreversible (irreversible). Gate enforces fail-closed: unknown tools blocked, irreversible tools require approval. Startup check: gate is constructible and active in production path.",
   "artifacts": [],
-  "gitSha": "f0746024c53ea343e3287d21c3ecd395e83467e1",
-  "ranAt": "2026-07-16T10:24:22.597Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:38:25.471Z"
 }

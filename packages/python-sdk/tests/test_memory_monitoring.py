@@ -31,14 +31,13 @@ class TestMemory:
             )
 
         mock_api.post("/api/v1/memory").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.memory_write(
-                    "test content",
-                    importance=0.8,
-                    tags=["tag1"],
-                    layer="episodic",
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.memory_write(
+                "test content",
+                importance=0.8,
+                tags=["tag1"],
+                layer="episodic",
+            )
         assert result.id == "mem_123"
         assert not result.rejected
 
@@ -51,9 +50,8 @@ class TestMemory:
                 "rejection_reason": "quality_gate",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.memory_write("bad content")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.memory_write("bad content")
         assert result.rejected
         assert result.rejection_reason == "quality_gate"
 
@@ -75,14 +73,13 @@ class TestMemory:
                 "total": 1,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.memory_query(
-                    keywords=["sql"],
-                    layer="episodic",
-                    importance_threshold=0.3,
-                    limit=10,
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.memory_query(
+                keywords=["sql"],
+                layer="episodic",
+                importance_threshold=0.3,
+                limit=10,
+            )
         assert result.total == 1
         assert result.items[0].content == "test"
         assert result.items[0].importance == 0.7
@@ -99,9 +96,8 @@ class TestMemory:
                 "total_memory_used": 50000,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                stats = await client.memory_stats()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            stats = await client.memory_stats()
         assert stats.total_entries == 100
         assert stats.by_layer["episodic"] == 60
         assert stats.average_importance == 0.65
@@ -113,12 +109,11 @@ class TestMemory:
             return httpx.Response(400, text="memory.write requires non-empty content.")
 
         mock_api.post("/api/v1/memory").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                from commander._exceptions import ValidationError
+        async with CommanderClient(api_key="test") as client, mock_api:
+            from commander._exceptions import ValidationError
 
-                with pytest.raises(ValidationError):
-                    await client.memory_write("")
+            with pytest.raises(ValidationError):
+                await client.memory_write("")
 
 
 class TestMonitoring:
@@ -133,9 +128,8 @@ class TestMonitoring:
                 "timestamp": "2026-01-01T00:00:00Z",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                health = await client.health()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            health = await client.health()
         assert health.status == "ok"
         assert health.active_sessions == 3
 
@@ -150,9 +144,8 @@ class TestMonitoring:
                 ],
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                detailed = await client.health_detailed()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            detailed = await client.health_detailed()
         assert detailed["status"] == "healthy"
 
     async def test_system_status(self, mock_api: respx.MockRouter) -> None:
@@ -164,9 +157,8 @@ class TestMonitoring:
                 "subscriber_counts": {"agent.started": 3},
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                status = await client.system_status()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            status = await client.system_status()
         assert status.active_sessions == 2
         assert "agent.started" in status.bus_topics
 
@@ -176,7 +168,6 @@ class TestMonitoring:
             text='# HELP commander_executions_total Total executions\n# TYPE commander_executions_total counter\ncommander_executions_total{status="success"} 42\n',
             headers={"Content-Type": "text/plain"},
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                metrics = await client.metrics()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            metrics = await client.metrics()
         assert "commander_executions_total" in metrics

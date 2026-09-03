@@ -3,7 +3,7 @@
     {
       "id": "kernel-task1-readiness-challenge-client",
       "path": "packages/kernel/src/task1ReadinessChallengeClient.ts",
-      "sourceSha256": "bbd14098d629b1af6c694a1a6c8e161f172e07314826e68bfbf871cc56725bc8",
+      "sourceSha256": "b9c99e3f74c57336f78e5ebd79ccb151be4d0a195cb51bceba0bd0ca4bb5c7aa",
       "owner": "@commander/kernel",
       "reason": "TLS-pinned challenged readiness proof client; no effect execution",
       "expiresAt": "2027-07-29",
@@ -12,7 +12,7 @@
     {
       "id": "kernel-task1-compose-proof-relay-client",
       "path": "packages/kernel/src/task1ComposeProofRuntime.ts",
-      "sourceSha256": "6e0b7a71ecb3b5a73b302ef8201fb8b63cfcc01428f85e4a2e37fbe0b773fe77",
+      "sourceSha256": "db529a3cd2729d5dbeaa973989bfa0f068098260f180b8bbaeb223b0bcf43dca",
       "owner": "@commander/kernel",
       "reason": "Attempt-authenticated local Unix relay client for closed Compose topology DTOs",
       "expiresAt": "2027-07-29",
@@ -21,7 +21,7 @@
     {
       "id": "kernel-task1-kubernetes-proof-api-client",
       "path": "packages/kernel/src/task1KubernetesProofRuntime.ts",
-      "sourceSha256": "cb67ef5a3020d19eab7e53a04a843b617cbdf5cd45d26ddd6b323e60c0e7fa0f",
+      "sourceSha256": "93beffb0a634789e1b1783807983fcd5652e65a62740915d5fe5652468d83a54",
       "owner": "@commander/kernel",
       "reason": "Projected-token and cluster-CA client for the proof-reader Kubernetes API allowlist",
       "expiresAt": "2027-07-29",

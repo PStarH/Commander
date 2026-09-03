@@ -340,7 +340,10 @@ export async function runDesignPartnerTechnicalProof(
   }
   if (sourceFailures.length > 0) {
     const endedAt = now();
-    return { manifest: emptyManifest(config, source, startedAt, endedAt, sourceFailures), artifacts: {} };
+    return {
+      manifest: emptyManifest(config, source, startedAt, endedAt, sourceFailures),
+      artifacts: {},
+    };
   }
 
   let campaign: DesignPartnerCampaignResult;
@@ -360,7 +363,8 @@ export async function runDesignPartnerTechnicalProof(
     'campaign-observation.json': `${stableJson(campaign.observation)}\n`,
   };
   for (const name of REQUIRED_DRIVER_ARTIFACTS) {
-    if (typeof campaign.artifacts[name] !== 'string') failures.push(`DRIVER_ARTIFACT_MISSING:${name}`);
+    if (typeof campaign.artifacts[name] !== 'string')
+      failures.push(`DRIVER_ARTIFACT_MISSING:${name}`);
   }
   for (const [name, body] of Object.entries(artifacts)) {
     if (!retainedArtifactSafe(name, body)) failures.push(`RETAINED_ARTIFACT_UNSAFE:${name}`);
@@ -596,14 +600,11 @@ async function runDisasterRecoveryGate(outputDirectory: string): Promise<Disaste
     reportSha256: sha256(body),
     evidenceReceiptsRestored: validation.evidenceReceiptsRestored === true,
     evidenceAnchorsRestored: validation.evidenceAnchorsRestored === true,
-    identityOutcomeAccountingPreserved:
-      validation.identityOutcomeAccountingPreserved === true,
+    identityOutcomeAccountingPreserved: validation.identityOutcomeAccountingPreserved === true,
   };
 }
 
-async function runSigningRotationGate(
-  rotationEvidence: string,
-): Promise<SigningRotationGate> {
+async function runSigningRotationGate(rotationEvidence: string): Promise<SigningRotationGate> {
   const command = await runCommand(
     'pnpm',
     ['exec', 'tsx', 'scripts/verify-rotation-signoff.ts', '--json', '--quiet'],
@@ -652,11 +653,7 @@ async function main(): Promise<void> {
     const publicKeyPem = await readFile(resolve(args.customerPublicKey), 'utf8');
     const field = runDesignPartnerFieldReview({ technicalManifest, acceptance, publicKeyPem });
     await mkdir(outputDirectory, { recursive: true });
-    await writeFile(
-      join(outputDirectory, 'field-manifest.json'),
-      `${stableJson(field)}\n`,
-      'utf8',
-    );
+    await writeFile(join(outputDirectory, 'field-manifest.json'), `${stableJson(field)}\n`, 'utf8');
     process.stdout.write(`Design Partner ${field.verdict} -> ${outputDirectory}\n`);
     if (!field.passed) process.exitCode = 1;
     return;
@@ -669,8 +666,7 @@ async function main(): Promise<void> {
     captureSource: async () => captureSource(),
     runCampaign: (value) => runExternalCampaign(value, args.config, outputDirectory),
     runDisasterRecoveryGate: () => runDisasterRecoveryGate(outputDirectory),
-    runSigningRotationGate: ({ rotationEvidence }) =>
-      runSigningRotationGate(rotationEvidence),
+    runSigningRotationGate: ({ rotationEvidence }) => runSigningRotationGate(rotationEvidence),
     outputDirectory,
   });
   await writeTechnicalResult(outputDirectory, result);

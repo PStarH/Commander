@@ -149,13 +149,16 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
   // 完成并回调
   const handleFinish = useCallback(async () => {
     try {
-      await completeOnboarding(['welcome', 'provider', 'first-task', 'complete']);
+      const steps = ['welcome', 'provider'];
+      if (onboardingStatus?.hasRunTask) steps.push('first-task');
+      steps.push('complete');
+      await completeOnboarding(steps);
     } catch {
       // 即使标记失败也允许进入控制台
     } finally {
       onComplete?.();
     }
-  }, [onComplete]);
+  }, [onComplete, onboardingStatus?.hasRunTask]);
 
   return (
     <div className="page" style={{ maxWidth: '760px', margin: '0 auto' }}>
@@ -180,6 +183,11 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
             跳过引导
           </button>
         </div>
+      </div>
+
+      <div className="banner" role="note" style={{ marginBottom: '14px' }}>
+        <AlertTriangle size={14} /> Commander is alpha and not production-ready. This guide may show
+        simulated output when no provider is available; simulated output is not a real task result.
       </div>
 
       {/* 步骤进度条 */}
@@ -376,7 +384,7 @@ function WelcomeStep() {
         <div>
           <h2 style={{ fontSize: '1.2rem' }}>欢迎使用 Commander</h2>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-            生产级多 Agent 编排框架 — 从 POC 到生产的可靠路径
+            Alpha 多 Agent 编排预览 — 用于本地评估与开发
           </p>
         </div>
       </div>
@@ -389,8 +397,8 @@ function WelcomeStep() {
           marginBottom: '18px',
         }}
       >
-        调研显示 93% 的企业 Agent 项目卡在 POC→生产阶段，上手体验是关键。本向导将带你完成 LLM
-        provider 连接、首个任务运行，并熟悉核心能力。
+        本向导将带你完成 LLM provider 连接、首个任务运行，并熟悉核心能力。Commander 当前为
+        alpha，尚未达到生产就绪标准。
       </p>
 
       <div style={{ display: 'grid', gap: '10px' }}>
@@ -687,6 +695,7 @@ function FirstTaskStep({
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [resultSuccess, setResultSuccess] = useState<boolean | null>(null);
+  const [resultSource, setResultSource] = useState<'real' | 'simulated' | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // 加载示例任务
@@ -713,11 +722,13 @@ function FirstTaskStep({
     setError(null);
     setResult(null);
     setResultSuccess(null);
+    setResultSource(null);
     try {
       const res = await runFirstTask(task.trim());
       setResult(res.result ?? '');
-      setResultSuccess(res.success);
-      await onRan();
+      setResultSuccess(res.success && res.source === 'real');
+      setResultSource(res.source);
+      if (res.success && res.source === 'real') await onRan();
     } catch (err) {
       setError(err instanceof Error ? err.message : '运行失败');
     } finally {
@@ -834,7 +845,12 @@ function FirstTaskStep({
             }}
           >
             {resultSuccess ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
-            {resultSuccess ? '执行成功' : '已返回示例结果'}
+            {resultSuccess ? '真实 provider 执行成功' : '已返回模拟结果，未计入真实任务'}
+            {resultSource && (
+              <span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>
+                · source={resultSource}
+              </span>
+            )}
           </div>
           <pre
             style={{
@@ -928,7 +944,7 @@ function CompleteStep() {
         <div>
           <h2 style={{ fontSize: '1.2rem' }}>配置完成</h2>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-            你已具备运行生产级多 Agent 任务的基础配置
+            你已完成 alpha 评估环境的基础配置
           </p>
         </div>
       </div>

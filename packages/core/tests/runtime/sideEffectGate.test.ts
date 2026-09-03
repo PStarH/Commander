@@ -206,6 +206,138 @@ describe('consolidated tool effect classification', () => {
     },
   );
 
+  it('does not trust low-risk or non-destructive hints as read-only authority', async () => {
+    const evaluate = vi.fn(async (..._args: unknown[]) => ({
+      allowed: false,
+      reversibility: 'irreversible' as const,
+      reason: 'unknown adapter requires approval',
+      requiresHumanApproval: true,
+    }));
+    const execute = vi.fn(async () => 'must not execute');
+    const service = new ToolExecutionService({
+      tools: new Map([
+        [
+          'customer_write_audit_report',
+          {
+            definition: {
+              name: 'customer_write_audit_report',
+              description: 'Enterprise adapter with conflicting weak metadata',
+              inputSchema: {},
+            },
+            riskLevel: 'low',
+            destructive: false,
+            execute,
+          },
+        ],
+      ]),
+      compensationService: {
+        getRegistry: () => ({
+          assessReversibility: () => 'partially_reversible',
+          recordAction: vi.fn(),
+          compensate: async () => ({ success: true }),
+        }),
+        handleMutationToolFailure: async () => undefined,
+      } as never,
+      cacheManager: {} as never,
+      dlq: {} as never,
+      getRunHandle: () => null,
+      config: { timeoutMs: 1000, observationMaskWindow: 4 } as never,
+      reflexionGenerator: {} as never,
+      stepTimeout: {} as never,
+      getPromotedTools: () => new Set(),
+      generateActionId: () => 'weak-metadata-action',
+      getBreakerRegistry: () => ({ get: () => null }) as never,
+      reversibilityGate: { evaluate } as never,
+    });
+
+    const result = await service.execute(
+      'run-weak-metadata',
+      {
+        id: 'weak-metadata-call',
+        name: 'customer_write_audit_report',
+        arguments: { reportId: 'R-1' },
+      },
+      'agent-weak-metadata',
+    );
+
+    expect(result.error).toContain('REVERSIBILITY_GATE_BLOCKED');
+    expect(execute).not.toHaveBeenCalled();
+    expect(evaluate).toHaveBeenCalledTimes(1);
+    expect(evaluate.mock.calls[0]).toHaveLength(3);
+  });
+
+  it('stops at the final execution boundary when a pause arrives after ATR admission', async () => {
+    let admitted = false;
+    const execute = vi.fn(async () => 'must not execute');
+    setSideEffectGate({
+      admit: async () => {
+        admitted = true;
+        return {
+          replayed: false,
+          actionId: 'paused-action',
+          decision: { decision: 'allow', decisionId: 'decision-1' },
+          decisionId: 'decision-1',
+        };
+      },
+    } as never);
+
+    const service = new ToolExecutionService({
+      tools: new Map([
+        [
+          'customer_mutation',
+          {
+            definition: {
+              name: 'customer_mutation',
+              description: 'Mutation fixture',
+              inputSchema: {},
+            },
+            destructive: true,
+            riskLevel: 'high',
+            execute,
+          },
+        ],
+      ]),
+      compensationService: {
+        getRegistry: () => ({
+          assessReversibility: () => 'partially_reversible',
+          recordAction: vi.fn(),
+          compensate: async () => ({ success: true }),
+        }),
+        handleMutationToolFailure: async () => undefined,
+      } as never,
+      cacheManager: {} as never,
+      dlq: {} as never,
+      getRunHandle: () => null,
+      isRunPaused: () => admitted,
+      config: { timeoutMs: 1000, observationMaskWindow: 4 } as never,
+      reflexionGenerator: {} as never,
+      stepTimeout: {} as never,
+      getPromotedTools: () => new Set(),
+      generateActionId: () => 'paused-action',
+      getBreakerRegistry: () => ({ get: () => null }) as never,
+      reversibilityGate: {
+        evaluate: async () => ({
+          allowed: true,
+          reversibility: 'reversible',
+          reason: 'fixture',
+          requiresHumanApproval: false,
+        }),
+      } as never,
+    });
+
+    try {
+      const result = await service.execute(
+        'run-paused-after-admission',
+        { id: 'paused-call', name: 'customer_mutation', arguments: { id: 'C-1' } },
+        'agent-paused-after-admission',
+      );
+      expect(result.error).toContain('OPERATOR_PAUSE');
+      expect(execute).not.toHaveBeenCalled();
+    } finally {
+      resetSideEffectGate();
+    }
+  });
+
   it.each(CONSOLIDATED_EFFECT_CASES)(
     'tracks %s action=%s through ToolExecutionHandler',
     (name, action, destructive) => {
@@ -220,12 +352,60 @@ describe('consolidated tool effect classification', () => {
     },
   );
 
+  it('honors explicit tool risk metadata over name heuristics', () => {
+    const readOnlyEnterpriseTool = {
+      isReadOnly: true,
+      riskLevel: 'low' as const,
+      destructive: false,
+    };
+    const effect = classifyToolEffect(
+      'customer_write_audit_report',
+      { format: 'json' },
+      readOnlyEnterpriseTool,
+    );
+
+    expect(effect).toMatchObject({
+      isReadOnly: true,
+      destructive: false,
+      riskLevel: 'low',
+    });
+    expect(isMutationTool('customer_write_audit_report', {}, readOnlyEnterpriseTool)).toBe(false);
+  });
+
   it.each([
     ['file_read', { path: 'README.md' }],
     ['memory_recall', { key: 'decision' }],
   ])('keeps the local semantic read control %s reversible', async (toolName, args) => {
     const decision = await new ReversibilityGate().evaluate(toolName, args);
     expect(decision).toMatchObject({ allowed: true, reversibility: 'reversible' });
+  });
+
+  it('allows an explicitly read-only enterprise adapter without weakening external egress gates', async () => {
+    const gate = new ReversibilityGate({ blockWithoutCallback: true });
+
+    const adapterRead = await gate.evaluate(
+      'customer_change_lookup',
+      { changeId: 'CR-8472' },
+      undefined,
+      { isReadOnly: true },
+    );
+    expect(adapterRead).toMatchObject({
+      allowed: true,
+      reversibility: 'reversible',
+      requiresHumanApproval: false,
+    });
+
+    const externalRead = await gate.evaluate(
+      'web_fetch',
+      { url: 'https://api.example.test/change/CR-8472' },
+      undefined,
+      { isReadOnly: true },
+    );
+    expect(externalRead).toMatchObject({
+      allowed: false,
+      reversibility: 'irreversible',
+      requiresHumanApproval: true,
+    });
   });
 
   it.each([

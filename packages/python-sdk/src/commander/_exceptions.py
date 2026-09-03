@@ -2,7 +2,19 @@
 
 
 class CommanderError(Exception):
-    """Base exception for all Commander SDK errors."""
+    """Base exception for all Commander SDK errors.
+
+    HTTP context is attached by the transport layer when an error is mapped
+    from a response, so callers can inspect status/code without parsing text.
+    """
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.status: int | None = None
+        self.status_code: int | None = None
+        self.code: str | None = None
+        self.details: object | None = None
+        self.body: str | None = None
 
 
 class AuthenticationError(CommanderError):

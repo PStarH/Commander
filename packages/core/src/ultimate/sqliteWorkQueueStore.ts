@@ -1,11 +1,14 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import type { WorkQueueStore } from './workQueueStore';
 import type { WorkItem, WorkStatus } from './workCoordinator';
 import { getCurrentTenantId } from '../runtime/tenantContext';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export interface SqliteWorkQueueStoreConfig {
   filePath: string;
@@ -26,7 +29,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (_silentE_) {
   reportSilentFailure(_silentE_, 'sqliteWorkQueueStore:28');
 }

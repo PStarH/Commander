@@ -34,6 +34,18 @@ export function warningFingerprint(warning: ScannerWarning): string {
     .digest('hex');
 }
 
+function warningPolicyIdentity(warning: ScannerWarning): string {
+  return createHash('sha256')
+    .update(
+      JSON.stringify({
+        severity: warning.severity,
+        category: warning.category,
+        message: warning.message,
+      }),
+    )
+    .digest('hex');
+}
+
 function isMalwareOrCritical(warning: ScannerWarning): boolean {
   return warning.severity === 'critical' || warning.category.startsWith('malware.');
 }
@@ -125,6 +137,39 @@ function enclosingCall(node: ts.Node): ts.CallExpression | ts.NewExpression | un
   return undefined;
 }
 
+function bindingElementForName(
+  bindingName: ts.BindingName,
+  name: string,
+): ts.BindingElement | undefined {
+  if (ts.isIdentifier(bindingName)) return undefined;
+  for (const element of bindingName.elements) {
+    if (ts.isOmittedExpression(element)) continue;
+    if (ts.isIdentifier(element.name) && element.name.text === name) return element;
+    const nested = bindingElementForName(element.name, name);
+    if (nested !== undefined) return nested;
+  }
+  return undefined;
+}
+
+function declarationForName(
+  declaration: ts.VariableDeclaration | ts.ParameterDeclaration,
+  name: string,
+): ts.Declaration | undefined {
+  if (ts.isIdentifier(declaration.name)) {
+    return declaration.name.text === name ? declaration : undefined;
+  }
+  return bindingElementForName(declaration.name, name);
+}
+
+function bindingOwnerDeclaration(
+  binding: ts.BindingElement,
+): ts.VariableDeclaration | ts.ParameterDeclaration | undefined {
+  for (let current: ts.Node | undefined = binding; current; current = current.parent) {
+    if (ts.isVariableDeclaration(current) || ts.isParameter(current)) return current;
+  }
+  return undefined;
+}
+
 function declarationFromStatements(
   sourceFile: ts.SourceFile,
   statements: ts.NodeArray<ts.Statement>,
@@ -158,9 +203,8 @@ function declarationFromStatements(
     }
     if (!ts.isVariableStatement(statement)) continue;
     for (const declaration of statement.declarationList.declarations) {
-      if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
-        result = declaration;
-      }
+      const match = declarationForName(declaration, name);
+      if (match !== undefined) result = match;
     }
   }
   return result;
@@ -176,31 +220,31 @@ function findLocalDeclaration(
     if (ts.isVariableDeclaration(scope) && ts.isVariableDeclarationList(scope.parent)) {
       for (const declaration of scope.parent.declarations) {
         if (declaration.getStart(sourceFile) >= position) break;
-        if (ts.isIdentifier(declaration.name) && declaration.name.text === name) {
-          return declaration;
-        }
+        const match = declarationForName(declaration, name);
+        if (match !== undefined) return match;
       }
     }
     if (ts.isCatchClause(scope)) {
       const variableDeclaration = scope.variableDeclaration;
-      if (variableDeclaration !== undefined && ts.isIdentifier(variableDeclaration.name)) {
-        if (variableDeclaration.name.text === name) return variableDeclaration;
+      if (variableDeclaration !== undefined) {
+        const match = declarationForName(variableDeclaration, name);
+        if (match !== undefined) return match;
       }
     }
     if (ts.isForStatement(scope) && scope.initializer !== undefined) {
       if (ts.isVariableDeclarationList(scope.initializer)) {
         const declaration = scope.initializer.declarations.find(
-          (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
+          (candidate) => declarationForName(candidate, name) !== undefined,
         );
-        if (declaration !== undefined) return declaration;
+        if (declaration !== undefined) return declarationForName(declaration, name);
       }
     }
     if (ts.isForInStatement(scope) || ts.isForOfStatement(scope)) {
       if (ts.isVariableDeclarationList(scope.initializer)) {
         const declaration = scope.initializer.declarations.find(
-          (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
+          (candidate) => declarationForName(candidate, name) !== undefined,
         );
-        if (declaration !== undefined) return declaration;
+        if (declaration !== undefined) return declarationForName(declaration, name);
       }
     }
     if (ts.isBlock(scope) || ts.isSourceFile(scope)) {
@@ -209,9 +253,9 @@ function findLocalDeclaration(
     }
     if (isExecutableFunction(scope)) {
       const parameter = scope.parameters.find(
-        (candidate) => ts.isIdentifier(candidate.name) && candidate.name.text === name,
+        (candidate) => declarationForName(candidate, name) !== undefined,
       );
-      if (parameter !== undefined) return parameter;
+      if (parameter !== undefined) return declarationForName(parameter, name);
     }
   }
   return undefined;
@@ -321,6 +365,9 @@ function writesToDeclaration(
 }
 
 function declarationText(sourceFile: ts.SourceFile, declaration: ts.Declaration): string {
+  if (ts.isFunctionDeclaration(declaration)) {
+    return 'function:' + (declaration.name?.text ?? 'anonymous');
+  }
   if (
     ts.isImportClause(declaration) ||
     ts.isImportSpecifier(declaration) ||
@@ -330,15 +377,37 @@ function declarationText(sourceFile: ts.SourceFile, declaration: ts.Declaration)
       if (ts.isImportDeclaration(current)) return current.getText(sourceFile);
     }
   }
+  if (ts.isBindingElement(declaration)) {
+    const owner = bindingOwnerDeclaration(declaration);
+    if (owner !== undefined) return owner.getText(sourceFile);
+  }
   return declaration.getText(sourceFile);
 }
 
+function bindingInitializerInputs(binding: ts.BindingElement): ts.Identifier[] {
+  const inputs: ts.Identifier[] = [];
+  for (let current: ts.Node | undefined = binding; current; current = current.parent) {
+    if (ts.isBindingElement(current) && current.initializer !== undefined) {
+      inputs.push(...referencedIdentifiers(current.initializer));
+    }
+    if (ts.isVariableDeclaration(current) || ts.isParameter(current)) {
+      if (current.initializer !== undefined) {
+        inputs.push(...referencedIdentifiers(current.initializer));
+      }
+      return inputs;
+    }
+  }
+  return inputs;
+}
+
 function declarationInputs(declaration: ts.Declaration): ts.Identifier[] {
+  if (ts.isBindingElement(declaration)) {
+    return bindingInitializerInputs(declaration);
+  }
   if (
     ts.isVariableDeclaration(declaration) ||
     ts.isParameter(declaration) ||
-    ts.isPropertyDeclaration(declaration) ||
-    ts.isBindingElement(declaration)
+    ts.isPropertyDeclaration(declaration)
   ) {
     return declaration.initializer === undefined
       ? []
@@ -383,7 +452,11 @@ function stableBindingIdentity(
     ts.isGetAccessorDeclaration(node) ||
     ts.isSetAccessorDeclaration(node)
   ) {
-    return node.name.getText(sourceFile);
+    const modifiers = ts.getModifiers(node) ?? [];
+    const dispatch = modifiers.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword)
+      ? 'static'
+      : 'instance';
+    return dispatch + ':' + node.name.getText(sourceFile);
   }
   if (ts.isConstructorDeclaration(node)) return 'constructor';
   if (ts.isFunctionExpression(node) && node.name !== undefined) return node.name.text;
@@ -394,6 +467,22 @@ function stableBindingIdentity(
   }
   if (ts.isPropertyAssignment(parent) || ts.isPropertyDeclaration(parent)) {
     return 'property:' + parent.name.getText(sourceFile);
+  }
+  if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+    const index = parent.arguments?.findIndex((argument) => argument === node) ?? -1;
+    if (index >= 0) return 'argument:' + index + ':' + parent.expression.getText(sourceFile);
+  }
+  if (ts.isReturnStatement(parent)) return 'return';
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === node
+  ) {
+    return 'assignment:' + parent.left.getText(sourceFile);
+  }
+  if (ts.isArrayLiteralExpression(parent)) {
+    const structure = expressionStructure(sourceFile, node);
+    if (structure.length > 0) return 'array:' + structure.join('/');
   }
   return undefined;
 }
@@ -420,14 +509,7 @@ function lexicalScopeIdentity(
       if (body === undefined) return undefined;
       const binding = stableBindingIdentity(current, sourceFile);
       if (binding === undefined) return undefined;
-      identities.push(
-        'function:' +
-          current.kind +
-          ':' +
-          binding +
-          ':' +
-          sourceFile.text.slice(current.getStart(sourceFile), body.getStart(sourceFile)),
-      );
+      identities.push('function:' + current.kind + ':' + binding);
     } else if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
       const identity = classIdentity(current, sourceFile);
       if (identity === undefined) return undefined;
@@ -445,13 +527,13 @@ function containsNode(container: ts.Node, node: ts.Node): boolean {
 
 function controlFlowDependencies(
   sourceFile: ts.SourceFile,
-  call: ts.CallExpression | ts.NewExpression,
+  warning: ts.Node,
   boundary: ts.Node,
 ): { descriptors: string[]; roots: ts.Identifier[] } {
   const descriptors: string[] = [];
   const roots: ts.Identifier[] = [];
   for (
-    let current: ts.Node | undefined = call.parent;
+    let current: ts.Node | undefined = warning.parent;
     current && current !== boundary;
     current = current.parent
   ) {
@@ -459,31 +541,31 @@ function controlFlowDependencies(
     let branch = '';
     if (ts.isIfStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call)
+      branch = containsNode(current.expression, warning)
         ? 'condition'
-        : containsNode(current.thenStatement, call)
+        : containsNode(current.thenStatement, warning)
           ? 'then'
           : 'else';
     } else if (ts.isWhileStatement(current) || ts.isDoStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call) ? 'condition' : 'body';
+      branch = containsNode(current.expression, warning) ? 'condition' : 'body';
     } else if (ts.isForStatement(current) && current.condition !== undefined) {
       expression = current.condition;
-      branch = containsNode(current.condition, call) ? 'condition' : 'body';
+      branch = containsNode(current.condition, warning) ? 'condition' : 'body';
     } else if (ts.isForInStatement(current) || ts.isForOfStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call) ? 'expression' : 'body';
+      branch = containsNode(current.expression, warning) ? 'expression' : 'body';
     } else if (ts.isSwitchStatement(current)) {
       expression = current.expression;
-      branch = containsNode(current.expression, call) ? 'expression' : 'clause';
+      branch = containsNode(current.expression, warning) ? 'expression' : 'clause';
     } else if (ts.isCaseClause(current)) {
       expression = current.expression;
       branch = 'case';
     } else if (ts.isConditionalExpression(current)) {
       expression = current.condition;
-      branch = containsNode(current.whenTrue, call)
+      branch = containsNode(current.whenTrue, warning)
         ? 'true'
-        : containsNode(current.whenFalse, call)
+        : containsNode(current.whenFalse, warning)
           ? 'false'
           : 'condition';
     } else if (
@@ -491,7 +573,7 @@ function controlFlowDependencies(
       (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
         current.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
         current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) &&
-      containsNode(current.right, call)
+      containsNode(current.right, warning)
     ) {
       expression = current.left;
       branch = 'right:' + current.operatorToken.getText(sourceFile);
@@ -506,11 +588,11 @@ function controlFlowDependencies(
 
 function warningStatementText(
   sourceFile: ts.SourceFile,
-  call: ts.CallExpression | ts.NewExpression,
+  warning: ts.Node,
   scope: ExecutableFunction,
 ): string {
   for (
-    let current: ts.Node | undefined = call;
+    let current: ts.Node | undefined = warning;
     current && current !== scope;
     current = current.parent
   ) {
@@ -523,7 +605,92 @@ function warningStatementText(
       return current.getText(sourceFile);
     }
   }
-  return call.getText(sourceFile);
+  return warning.getText(sourceFile);
+}
+
+function warningExpressionAnchor(
+  node: ts.Node,
+): ts.TemplateExpression | ts.NoSubstitutionTemplateLiteral | ts.StringLiteral | undefined {
+  for (let current: ts.Node | undefined = node; current; current = current.parent) {
+    if (
+      ts.isTemplateExpression(current) ||
+      ts.isNoSubstitutionTemplateLiteral(current) ||
+      ts.isStringLiteral(current)
+    ) {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+function warningExpressionStatementText(
+  sourceFile: ts.SourceFile,
+  expression: ts.Node,
+  scope: ExecutableFunction,
+): string {
+  for (
+    let current: ts.Node | undefined = expression.parent;
+    current && current !== scope;
+    current = current.parent
+  ) {
+    if (ts.isPropertyAssignment(current)) return current.getText(sourceFile);
+  }
+  return warningStatementText(sourceFile, expression, scope);
+}
+
+function declarationListKind(declaration: ts.VariableDeclaration): string {
+  const flags = declaration.parent.flags;
+  if ((flags & ts.NodeFlags.Const) !== 0) return 'const';
+  if ((flags & ts.NodeFlags.Let) !== 0) return 'let';
+  return 'var';
+}
+
+function expressionStructure(sourceFile: ts.SourceFile, expression: ts.Node): string[] {
+  const structure: string[] = [];
+  let child = expression;
+  for (
+    let current: ts.Node | undefined = expression.parent;
+    current && !ts.isSourceFile(current);
+    child = current, current = current.parent
+  ) {
+    if (ts.isVariableDeclaration(current)) {
+      structure.push(
+        'binding:' + declarationListKind(current) + ':' + current.name.getText(sourceFile),
+      );
+    } else if (ts.isPropertyAssignment(current)) {
+      structure.push('property:' + current.name.getText(sourceFile));
+    } else if (ts.isArrayLiteralExpression(current)) {
+      const elementIndex = current.elements.findIndex((element) => element === child);
+      if (elementIndex >= 0) structure.push('array-element:' + elementIndex);
+    }
+  }
+  return structure.reverse();
+}
+
+function warningContextText(
+  sourceFile: ts.SourceFile,
+  statement: string,
+  anchor: ts.Node,
+  evidence: string,
+): string {
+  const anchorText = anchor.getText(sourceFile);
+  if (anchorText.length === 0 || !statement.includes(anchorText)) return statement;
+  return statement.replace(anchorText, warningEvidencePrefix(evidence));
+}
+
+function commentAtPosition(
+  content: string,
+  position: number,
+  evidence: string,
+): string | undefined {
+  const inlineCodeDelimiter = String.fromCharCode(96);
+  if (!evidence.startsWith(inlineCodeDelimiter) || !evidence.endsWith(inlineCodeDelimiter)) {
+    return undefined;
+  }
+  const lineStart = content.lastIndexOf('\n', position) + 1;
+  const nextLine = content.indexOf('\n', position);
+  const line = content.slice(lineStart, nextLine < 0 ? content.length : nextLine);
+  return line.trimStart().startsWith('//') ? line : undefined;
 }
 
 function sourceOccurrenceFingerprint(
@@ -531,6 +698,12 @@ function sourceOccurrenceFingerprint(
   index: number,
   evidence: string,
 ): string | undefined {
+  const comment = commentAtPosition(content, index, evidence);
+  if (comment !== undefined) {
+    return createHash('sha256')
+      .update(JSON.stringify({ scope: 'comment', text: comment }))
+      .digest('hex');
+  }
   const sourceFile = ts.createSourceFile(
     'precommit-scanner-source.ts',
     content,
@@ -540,21 +713,39 @@ function sourceOccurrenceFingerprint(
   );
   const located = nodeAtPosition(sourceFile, index);
   const call = located === undefined ? undefined : enclosingCall(located);
-  if (call === undefined) {
-    const topLevelStatement =
-      located === undefined ? undefined : enclosingTopLevelStatement(located);
-    if (topLevelStatement === undefined) return undefined;
-    return createHash('sha256')
-      .update(
-        JSON.stringify({ scope: 'top-level', statement: topLevelStatement.getText(sourceFile) }),
-      )
-      .digest('hex');
-  }
-
-  const functionScope = enclosingFunction(call);
-  const topLevelStatement = enclosingTopLevelStatement(call);
+  const expressionAnchor = located === undefined ? undefined : warningExpressionAnchor(located);
+  const anchor = expressionAnchor ?? call ?? located;
+  if (anchor === undefined) return undefined;
+  const functionScope = enclosingFunction(anchor);
+  const topLevelStatement = enclosingTopLevelStatement(anchor);
   if (functionScope === undefined) {
     if (topLevelStatement === undefined) return undefined;
+    if (expressionAnchor !== undefined) {
+      const controls = controlFlowDependencies(sourceFile, anchor, sourceFile);
+      const dependencies = collectDependencyClosure(
+        sourceFile,
+        [...referencedIdentifiers(anchor), ...controls.roots],
+        anchor.getStart(sourceFile),
+      );
+      return createHash('sha256')
+        .update(
+          JSON.stringify({
+            scope: 'top-level',
+            warning: ts.isImportDeclaration(topLevelStatement)
+              ? warningEvidencePrefix(evidence)
+              : warningContextText(
+                  sourceFile,
+                  topLevelStatement.getText(sourceFile),
+                  anchor,
+                  evidence,
+                ),
+            structure: expressionStructure(sourceFile, anchor),
+            controls: controls.descriptors,
+            dependencies: dependencies ?? ['unresolved'],
+          }),
+        )
+        .digest('hex');
+    }
     return createHash('sha256')
       .update(
         JSON.stringify({ scope: 'top-level', statement: topLevelStatement.getText(sourceFile) }),
@@ -564,22 +755,35 @@ function sourceOccurrenceFingerprint(
 
   const scopeIdentity = lexicalScopeIdentity(sourceFile, functionScope);
   if (scopeIdentity === undefined) return undefined;
-  const controls = controlFlowDependencies(sourceFile, call, functionScope);
-  const argumentReferences = call.arguments?.flatMap(referencedIdentifiers) ?? [];
+  const controls = controlFlowDependencies(sourceFile, anchor, sourceFile);
+  const argumentReferences =
+    expressionAnchor !== undefined
+      ? referencedIdentifiers(anchor)
+      : ts.isCallExpression(anchor) || ts.isNewExpression(anchor)
+        ? (anchor.arguments?.flatMap(referencedIdentifiers) ?? [])
+        : referencedIdentifiers(anchor.parent);
   const dependencies = collectDependencyClosure(
     sourceFile,
     [...argumentReferences, ...controls.roots],
-    call.getStart(sourceFile),
+    anchor.getStart(sourceFile),
   );
-  if (dependencies === undefined) return undefined;
 
   return createHash('sha256')
     .update(
       JSON.stringify({
         scopeIdentity,
-        warningStatement: warningStatementText(sourceFile, call, functionScope),
+        warningStatement:
+          expressionAnchor === undefined
+            ? warningStatementText(sourceFile, anchor, functionScope)
+            : warningContextText(
+                sourceFile,
+                warningExpressionStatementText(sourceFile, expressionAnchor, functionScope),
+                anchor,
+                evidence,
+              ),
+        structure: expressionStructure(sourceFile, anchor),
         controls: controls.descriptors,
-        dependencies,
+        dependencies: dependencies ?? ['unresolved'],
       }),
     )
     .digest('hex');
@@ -651,15 +855,18 @@ export function evaluateIndexedWarnings(
   const violations: ScannerPolicyViolation[] = [];
   const baselineOccurrences = new Map<string, string[]>();
   const consumedBaselineOccurrences = new Map<string, Set<number>>();
-  const unmatchedStagedWarnings: ScannerPolicyAuditWarning[] = [];
+  const unmatchedStagedWarnings: Array<{
+    audit: ScannerPolicyAuditWarning;
+    policyIdentity: string;
+  }> = [];
 
   for (const warning of headWarnings) {
     if (!isHighWarning(warning) || isMalwareOrCritical(warning)) continue;
     if (warning.sourceFingerprint === undefined) continue;
-    const fingerprint = warningFingerprint(warning);
-    const occurrences = baselineOccurrences.get(fingerprint) ?? [];
+    const policyIdentity = warningPolicyIdentity(warning);
+    const occurrences = baselineOccurrences.get(policyIdentity) ?? [];
     occurrences.push(warning.sourceFingerprint);
-    baselineOccurrences.set(fingerprint, occurrences);
+    baselineOccurrences.set(policyIdentity, occurrences);
   }
 
   for (const warning of stagedWarnings) {
@@ -675,25 +882,26 @@ export function evaluateIndexedWarnings(
       continue;
     }
 
-    const baseline = baselineOccurrences.get(audit.fingerprint) ?? [];
-    const consumed = consumedBaselineOccurrences.get(audit.fingerprint) ?? new Set<number>();
+    const policyIdentity = warningPolicyIdentity(warning);
+    const baseline = baselineOccurrences.get(policyIdentity) ?? [];
+    const consumed = consumedBaselineOccurrences.get(policyIdentity) ?? new Set<number>();
     const match = baseline.findIndex(
       (sourceFingerprint, index) =>
         !consumed.has(index) && sourceFingerprint === warning.sourceFingerprint,
     );
     if (match >= 0) {
       consumed.add(match);
-      consumedBaselineOccurrences.set(audit.fingerprint, consumed);
+      consumedBaselineOccurrences.set(policyIdentity, consumed);
       inherited.push(audit);
     } else {
-      unmatchedStagedWarnings.push(audit);
+      unmatchedStagedWarnings.push({ audit, policyIdentity });
     }
   }
 
-  for (const audit of unmatchedStagedWarnings) {
+  for (const { audit, policyIdentity } of unmatchedStagedWarnings) {
     violations.push({
       ...audit,
-      reason: baselineOccurrences.has(audit.fingerprint)
+      reason: baselineOccurrences.has(policyIdentity)
         ? 'duplicate_high_warning'
         : 'new_high_warning',
     });

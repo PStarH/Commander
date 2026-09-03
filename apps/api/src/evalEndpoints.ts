@@ -176,24 +176,25 @@ export function createEvalRouter(): Router {
     requireEvalTenant,
     validateBody(judgeSchema),
     async (req: Request, res: Response) => {
-    try {
-      const engine = getSharedJudgeEngine() ?? getGlobalLLMJudgeEngine();
-      if (!engine) {
-        res.status(503).json({ error: 'JudgeEngine not initialized (plugin may be disabled)' });
-        return;
+      try {
+        const engine = getSharedJudgeEngine() ?? getGlobalLLMJudgeEngine();
+        if (!engine) {
+          res.status(503).json({ error: 'JudgeEngine not initialized (plugin may be disabled)' });
+          return;
+        }
+        const target: JudgeTarget = {
+          input: req.body.input,
+          output: req.body.output,
+          expected: req.body.expected,
+          evaluatedModel: req.body.evaluatedModel,
+        };
+        const result = await engine.judge(target);
+        res.json(result);
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
       }
-      const target: JudgeTarget = {
-        input: req.body.input,
-        output: req.body.output,
-        expected: req.body.expected,
-        evaluatedModel: req.body.evaluatedModel,
-      };
-      const result = await engine.judge(target);
-      res.json(result);
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+    },
+  );
 
   router.get('/api/eval/datasets', requireEvalTenant, (req: Request, res: Response) => {
     try {

@@ -772,13 +772,22 @@ describe('worker plane', () => {
     assert.ok(registered.claimSecret, 'register must return claimSecret');
     const secret = registered.claimSecret;
     // Drive one heartbeat via registry semantics used by WorkerService.heartbeat
-    const hb = await registry.heartbeat(registered.id, registered.generation, 0, registered.claimSecret!);
+    const hb = await registry.heartbeat(
+      registered.id,
+      registered.generation,
+      0,
+      registered.claimSecret!,
+    );
     assert.ok(hb);
     assert.equal(hb.claimSecret, undefined, 'heartbeat must not re-issue claimSecret');
     // Service-internal preserve path: pollOnce needs secret after heartbeat timer would have run
     await (service as unknown as { heartbeat: () => Promise<void> }).heartbeat();
     const worker = (service as unknown as { worker: { claimSecret?: string } }).worker;
-    assert.equal(worker.claimSecret, secret, 'WorkerService must preserve claimSecret after heartbeat');
+    assert.equal(
+      worker.claimSecret,
+      secret,
+      'WorkerService must preserve claimSecret after heartbeat',
+    );
     await service.stop();
   });
 

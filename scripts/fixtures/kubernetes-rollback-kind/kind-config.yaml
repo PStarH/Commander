@@ -1,0 +1,36 @@
+# G5 企业验收专用 kind-config：在 helm-lifecycle 基线（disableDefaultCNI + control-plane）上
+# 启用 API server audit（audit-log-path 指向脚本默认 /var/log/kubernetes/audit.log，
+# audit-policy 经 extraMounts 挂入容器）。kind 容器名 = commander-control-plane，与脚本默认一致。
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: commander
+networking:
+  disableDefaultCNI: true
+nodes:
+  - role: control-plane
+    extraMounts:
+      # 挂载目录而非单文件：virtiofs 对单文件 bind mount 不可靠，
+      # kubelet 为 apiserver 静态 Pod 创建 hostPath volume 时读不到文件。
+      - hostPath: /Users/sampan/Documents/GitHub/Commander/scripts/fixtures/kubernetes-rollback-kind/audit
+        containerPath: /etc/kubernetes/audit
+        readOnly: true
+    kubeadmConfigPatches:
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            audit-log-path: /var/log/kubernetes/audit.log
+            audit-policy-file: /etc/kubernetes/audit/policy.yaml
+            audit-log-maxage: "30"
+            audit-log-maxbackup: "10"
+            audit-log-maxsize: "100"
+          extraVolumes:
+            - name: audit
+              hostPath: /etc/kubernetes/audit
+              mountPath: /etc/kubernetes/audit
+              readOnly: true
+              pathType: Directory
+            - name: audit-log
+              hostPath: /var/log/kubernetes
+              mountPath: /var/log/kubernetes
+              pathType: DirectoryOrCreate

@@ -262,9 +262,10 @@ metadata:
 
 describe('helm-cell-assert', () => {
   it('requires both exact enterprise ten-second intervals on the adapter-ops Deployment', () => {
-    const deployment = DEMO_SNIPPET.match(
-      /apiVersion: apps\/v1\nkind: Deployment\nmetadata:\n  name: cell-adapter-ops[\s\S]*?(?=\n---)/,
-    )?.[0] ?? '';
+    const deployment =
+      DEMO_SNIPPET.match(
+        /apiVersion: apps\/v1\nkind: Deployment\nmetadata:\n  name: cell-adapter-ops[\s\S]*?(?=\n---)/,
+      )?.[0] ?? '';
     assert.throws(
       () => assertEnterpriseAdapterOpsTiming(loadYamlDocuments(deployment)),
       /COMMANDER_RECONCILE_INTERVAL_MS/,
@@ -330,12 +331,14 @@ spec:
   });
 
   it('rejects adapter-ops missing COMMANDER_WORKER_TENANTS', () => {
-    const bad = DEMO_SNIPPET.replace(
-      /name: cell-adapter-ops[\s\S]*?value: local/,
-      (block) => block.replace(/\n\s*- name: COMMANDER_WORKER_TENANTS\n\s*value: local/, ''),
+    const bad = DEMO_SNIPPET.replace(/name: cell-adapter-ops[\s\S]*?value: local/, (block) =>
+      block.replace(/\n\s*- name: COMMANDER_WORKER_TENANTS\n\s*value: local/, ''),
     );
     const docs = loadYamlDocuments(bad);
-    assert.throws(() => assertHelmCellTopology(docs, 'demo'), /adapter-ops.*COMMANDER_WORKER_TENANTS|H14/);
+    assert.throws(
+      () => assertHelmCellTopology(docs, 'demo'),
+      /adapter-ops.*COMMANDER_WORKER_TENANTS|H14/,
+    );
   });
 
   it('rejects adapter-ops replicas != 1', () => {
@@ -356,7 +359,10 @@ spec:
   });
 
   it('rejects adapter-ops without its persisted claim-secret mount', () => {
-    const bad = DEMO_SNIPPET.replace(/\n\s*volumeMounts:\n\s*- name: claim-secrets\n\s*mountPath: \/var\/run\/commander\/adapter-ops\n\s*volumes:\n\s*- name: claim-secrets\n\s*emptyDir: \{\}/, '');
+    const bad = DEMO_SNIPPET.replace(
+      /\n\s*volumeMounts:\n\s*- name: claim-secrets\n\s*mountPath: \/var\/run\/commander\/adapter-ops\n\s*volumes:\n\s*- name: claim-secrets\n\s*emptyDir: \{\}/,
+      '',
+    );
     assert.throws(
       () => assertHelmCellTopology(loadYamlDocuments(bad), 'demo'),
       /claim.secret|mount|H20/i,
@@ -364,7 +370,10 @@ spec:
   });
 
   it('rejects missing CREATE ROLE LOGIN', () => {
-    const bad = DEMO_SNIPPET.replace(/CREATE ROLE commander_worker WITH LOGIN[^\n]*/, 'CREATE ROLE commander_worker NOLOGIN');
+    const bad = DEMO_SNIPPET.replace(
+      /CREATE ROLE commander_worker WITH LOGIN[^\n]*/,
+      'CREATE ROLE commander_worker NOLOGIN',
+    );
     const docs = loadYamlDocuments(bad);
     assert.throws(() => assertHelmCellTopology(docs, 'demo'), /CREATE ROLE|LOGIN|H15/);
   });
@@ -372,7 +381,10 @@ spec:
   it('rejects worker missing capability secretKeyRef', () => {
     const bad = DEMO_SNIPPET.replace(capabilityEnv(), '');
     const docs = loadYamlDocuments(bad);
-    assert.throws(() => assertHelmCellTopology(docs, 'demo'), /COMMANDER_CAPABILITY_PRIVATE_KEY_PEM|H16/);
+    assert.throws(
+      () => assertHelmCellTopology(docs, 'demo'),
+      /COMMANDER_CAPABILITY_PRIVATE_KEY_PEM|H16/,
+    );
   });
 
   it('rejects worker HMAC capability-token-key path', () => {

@@ -324,8 +324,31 @@ function createStablePolicies(
   );
 }
 
-const SELECTOR_CAN_MATCH_H_CEL =
-  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))";
+export const TASK1_SELECTOR_CAN_MATCH_H_CEL =
+  "variables.selectorRequirements.all(r, r.key in variables.hookLabels ? (r.operator == 'In' ? variables.hookLabels[r.key] in r.values : r.operator == 'NotIn' ? !(variables.hookLabels[r.key] in r.values) : r.operator == 'Exists' ? true : false) : r.key == variables.componentKey ? r.operator == 'DoesNotExist' : (!(r.operator == 'DoesNotExist' && variables.selectorRequirements.exists(o, o.key == r.key && o.operator != 'DoesNotExist')) && (r.operator != 'In' || r.values.exists(v, variables.selectorRequirements.all(o, o.key != r.key || (o.operator == 'In' ? v in o.values : o.operator == 'NotIn' ? !(v in o.values) : o.operator == 'Exists' ? true : false)))))" +
+  ')';
+
+export const TASK1_SELECTOR_REQUIREMENTS_CEL =
+  "request.resource.resource != 'networkpolicies' ? [] : (has(object.spec.podSelector.matchLabels) ? object.spec.podSelector.matchLabels.map(k, {'key': dyn(k), 'operator': dyn('In'), 'values': dyn([object.spec.podSelector.matchLabels[k]])}) : []) + (has(object.spec.podSelector.matchExpressions) ? object.spec.podSelector.matchExpressions : [])";
+
+export function task1CelDynLiteral(value: unknown): string {
+  if (value === null) return 'null';
+  if (typeof value === 'string') return JSON.stringify(value);
+  if (typeof value === 'boolean') return String(value);
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value);
+  if (Array.isArray(value))
+    return '[' + value.map((item) => 'dyn(' + task1CelDynLiteral(item) + ')').join(',') + ']';
+  if (typeof value === 'object')
+    return (
+      '{' +
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => JSON.stringify(key) + ':dyn(' + task1CelDynLiteral(item) + ')')
+        .join(',') +
+      '}'
+    );
+  return invalid();
+}
 
 function networkGuardValidations(
   migrationOperatorSubject: string,
@@ -338,9 +361,7 @@ function networkGuardValidations(
     labels: policyLabelSet,
     spec,
   }));
-  const allowedJcs = canonicalBootstrapJson(allowed)
-    .replaceAll('\\', '\\\\')
-    .replaceAll("'", "\\'");
+  const allowedCel = task1CelDynLiteral(allowed);
   const operator = migrationOperatorSubject.replaceAll("'", "\\'");
   const protectedNames = policies.map((policy) => `'${policy.name}'`).join(',');
   const fixed = Object.entries(labels)
@@ -355,11 +376,21 @@ function networkGuardValidations(
       message: 'protected stable policies are create-only',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username != '${operator}' || (request.operation == 'CREATE' && ${allowedJcs}.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.spec == object.spec))`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username != '" +
+        operator +
+        "' || (request.operation == 'CREATE' && " +
+        allowedCel +
+        '.exists(p, p.namespace == object.metadata.namespace && p.name == object.metadata.name && p.labels == object.metadata.labels && p.spec == object.spec))',
       message: 'migration operator may create only an exact rendered stable policy',
     },
     {
-      expression: `request.resource.resource != 'networkpolicies' || request.userInfo.username == '${operator}' || request.operation == 'DELETE' || !has(object.spec.egress) || size(object.spec.egress) == 0 || !(${SELECTOR_CAN_MATCH_H_CEL})`,
+      expression:
+        "request.resource.resource != 'networkpolicies' || request.userInfo.username == '" +
+        operator +
+        "' || request.operation == 'DELETE' || !has(dyn(object).spec.egress) || size(dyn(object).spec.egress) == 0 || !(" +
+        TASK1_SELECTOR_CAN_MATCH_H_CEL +
+        ')',
       message: 'non-operator NetworkPolicy must not add egress to a protected hook selector',
     },
     {
@@ -377,11 +408,11 @@ function workloadGuardValidations(releaseName: string): Array<Record<string, str
   const release = releaseName.replaceAll("'", "\\'");
   return [
     {
-      expression: `object.metadata.name != '${release}-api' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'api' && object.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.spec.template.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.metadata.annotations['commander.io/tenant-authority-phase'] in ['expand', 'enforce'] && object.metadata.annotations['commander.io/tenant-authority-phase'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-phase'] && object.metadata.annotations['commander.io/tenant-authority-image-digest'].matches('^sha256:[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-image-digest'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-image-digest'] && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'].matches('^[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] && object.spec.template.spec.containers.filter(c, c.name == 'api').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'api' && c.image.endsWith('@' + object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST' && e.value == object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256' && e.value == object.metadata.annotations['commander.io/tenant-authority-configuration-sha256']) && c.readinessProbe.httpGet.path == '/ready/tenant-authority/v1'))`,
+      expression: `object.metadata.name != '${release}-api' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'api' && object.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.spec.template.metadata.annotations['commander.io/tenant-context-aware'] == 'true' && object.metadata.annotations['commander.io/tenant-authority-phase'] in ['expand', 'enforce'] && object.metadata.annotations['commander.io/tenant-authority-phase'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-phase'] && object.metadata.annotations['commander.io/tenant-authority-image-digest'].matches('^sha256:[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-image-digest'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-image-digest'] && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'].matches('^[0-9a-f]{64}$') && object.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] == object.spec.template.metadata.annotations['commander.io/tenant-authority-configuration-sha256'] && object.spec.template.spec.containers.filter(c, c.name == 'api').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'api' && c.image.endsWith('@' + object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST' && e.value == object.metadata.annotations['commander.io/tenant-authority-image-digest']) && c.env.exists(e, e.name == 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256' && e.value == object.metadata.annotations['commander.io/tenant-authority-configuration-sha256']) && c.readinessProbe.exec.command.exists(a, a.contains('/ready/tenant-authority/v1'))))`,
       message: 'tenant-authority API workload must preserve exact context-aware metadata',
     },
     {
-      expression: `object.metadata.name != '${release}-postgres' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'postgres' && object.spec.serviceName == '${release}-postgres' && object.spec.template.metadata.annotations['commander.io/database-transport-content-sha256'].matches('^[0-9a-f]{64}$') && object.spec.template.spec.volumes.filter(v, v.name == 'database-tls').size() == 1 && object.spec.template.spec.volumes.exists(v, v.name == 'database-tls' && has(v.secret) && v.secret.defaultMode == 288 && v.secret.items.exists(i, i.key == 'ca.crt' && i.path == 'ca.crt') && v.secret.items.exists(i, i.key == 'tls.crt' && i.path == 'tls.crt') && v.secret.items.exists(i, i.key == 'tls.key' && i.path == 'tls.key')) && object.spec.template.spec.containers.filter(c, c.name == 'postgres').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'postgres' && c.args.exists(a, a == 'ssl=on') && c.args.exists(a, a == 'ssl_ca_file=/run/commander/database-tls/ca.crt') && c.args.exists(a, a == 'ssl_cert_file=/run/commander/database-tls/tls.crt') && c.args.exists(a, a == 'ssl_key_file=/run/commander/database-tls/tls.key') && c.volumeMounts.exists(m, m.name == 'database-tls' && m.mountPath == '/run/commander/database-tls' && m.readOnly == true) && c.volumeMounts.exists(m, m.name == 'postgres-data' && m.mountPath == '/var/lib/postgresql/data')) && ((has(object.spec.volumeClaimTemplates) && object.spec.volumeClaimTemplates.size() == 1 && object.spec.volumeClaimTemplates[0].metadata.name == 'postgres-data') || object.spec.template.spec.volumes.exists(v, v.name == 'postgres-data' && has(v.emptyDir))))`,
+      expression: `object.metadata.name != '${release}-postgres' || (object.metadata.labels['app.kubernetes.io/instance'] == '${release}' && object.metadata.labels['app.kubernetes.io/component'] == 'postgres' && dyn(object).spec.serviceName == '${release}-postgres' && object.spec.template.metadata.annotations['commander.io/database-transport-content-sha256'].matches('^[0-9a-f]{64}$') && object.spec.template.spec.volumes.filter(v, v.name == 'database-tls').size() == 1 && object.spec.template.spec.volumes.exists(v, v.name == 'database-tls' && has(v.secret) && v.secret.defaultMode == 288 && v.secret.items.exists(i, i.key == 'ca.crt' && i.path == 'ca.crt') && v.secret.items.exists(i, i.key == 'tls.crt' && i.path == 'tls.crt') && v.secret.items.exists(i, i.key == 'tls.key' && i.path == 'tls.key')) && object.spec.template.spec.containers.filter(c, c.name == 'postgres').size() == 1 && object.spec.template.spec.containers.exists(c, c.name == 'postgres' && c.args.exists(a, a == 'ssl=on') && c.args.exists(a, a == 'ssl_ca_file=/run/commander/database-tls/ca.crt') && c.args.exists(a, a == 'ssl_cert_file=/run/commander/database-tls/tls.crt') && c.args.exists(a, a == 'ssl_key_file=/run/commander/database-tls/tls.key') && c.volumeMounts.exists(m, m.name == 'database-tls' && m.mountPath == '/run/commander/database-tls' && m.readOnly == true) && c.volumeMounts.exists(m, m.name == 'postgres-data' && m.mountPath == '/var/lib/postgresql/data')) && ((has(dyn(object).spec.volumeClaimTemplates) && dyn(object).spec.volumeClaimTemplates.size() == 1 && dyn(object).spec.volumeClaimTemplates[0].metadata.name == 'postgres-data') || object.spec.template.spec.volumes.exists(v, v.name == 'postgres-data' && has(v.emptyDir))))`,
       message: 'bundled PostgreSQL must preserve exact TLS transport and data-volume identity',
     },
   ];
@@ -411,12 +442,14 @@ function createAdmissionGuard(
                 apiVersions: ['v1'],
                 operations: ['CREATE', 'UPDATE', 'DELETE'],
                 resources: ['networkpolicies'],
+                scope: '*',
               },
               {
                 apiGroups: [''],
                 apiVersions: ['v1'],
                 operations: ['CREATE', 'UPDATE'],
                 resources: ['pods'],
+                scope: '*',
               },
             ]
           : [
@@ -425,9 +458,12 @@ function createAdmissionGuard(
                 apiVersions: ['v1'],
                 operations: ['CREATE', 'UPDATE'],
                 resources: ['deployments', 'statefulsets'],
+                scope: '*',
               },
             ],
       matchPolicy: 'Equivalent',
+      namespaceSelector: {},
+      objectSelector: {},
     },
     ...(stage === 'network'
       ? {
@@ -436,8 +472,7 @@ function createAdmissionGuard(
             { name: 'componentKey', expression: "'app.kubernetes.io/component'" },
             {
               name: 'selectorRequirements',
-              expression:
-                "request.resource.resource != 'networkpolicies' ? [] : (has(object.spec.podSelector.matchLabels) ? object.spec.podSelector.matchLabels.map(k, {'key': k, 'operator': 'In', 'values': [object.spec.podSelector.matchLabels[k]]}) : []) + (has(object.spec.podSelector.matchExpressions) ? object.spec.podSelector.matchExpressions : [])",
+              expression: TASK1_SELECTOR_REQUIREMENTS_CEL,
             },
           ],
         }
@@ -462,6 +497,7 @@ function createAdmissionGuard(
     policyName: guardName,
     validationActions: ['Deny'],
     matchResources: {
+      matchPolicy: 'Equivalent',
       namespaceSelector:
         stage === 'network'
           ? {
@@ -474,6 +510,7 @@ function createAdmissionGuard(
               ],
             }
           : { matchLabels: { 'kubernetes.io/metadata.name': namespace } },
+      objectSelector: {},
     },
   };
   return {

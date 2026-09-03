@@ -191,7 +191,9 @@ async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
     if (!raw) return [];
     const events: TraceEvent[] = [];
     const lines = raw.split('\n');
-    for (const line of lines.length > MAX_LINES_PER_FILE ? lines.slice(-MAX_LINES_PER_FILE) : lines) {
+    for (const line of lines.length > MAX_LINES_PER_FILE
+      ? lines.slice(-MAX_LINES_PER_FILE)
+      : lines) {
       try {
         events.push(JSON.parse(line) as TraceEvent);
       } catch (err) {

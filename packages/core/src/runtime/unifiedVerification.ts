@@ -43,11 +43,27 @@ interface SchemaProperty {
   required?: boolean;
   type?: string;
   description?: string;
+  properties?: Record<string, SchemaProperty>;
+  items?: SchemaProperty;
+  enum?: unknown[];
+  additionalProperties?: boolean;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
 }
 
 interface SchemaDefinition {
+  type?: string;
   properties?: Record<string, SchemaProperty>;
   required?: string[];
+  items?: SchemaProperty;
+  enum?: unknown[];
+  additionalProperties?: boolean;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
 }
 
 // ============================================================================
@@ -358,47 +374,159 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
   }
 
   const schema = ctx.schema as SchemaDefinition;
-  if (!schema.properties) return { signals, confidence: 1.0 };
+  validateSchemaValue(parsed, schema, '', signals);
+  const penalty = signals.reduce(
+    (total, signal) => total + (signal.severity === 'high' ? 0.3 : 0.15),
+    0,
+  );
+  return { signals, confidence: Math.max(0, 1 - penalty) };
+}
 
-  const obj = parsed as Record<string, unknown>;
-  for (const [key, def] of Object.entries(schema.properties)) {
-    const defObj = def as Record<string, unknown>;
-    if (defObj.required && obj[key] === undefined) {
-      signals.push({
-        stage: 1,
-        source: 'schema',
-        severity: 'high',
-        location: key,
-        message: `Missing required field: "${key}"`,
-        suggestion: `Add "${key}" to the output`,
-      });
-      confidence -= 0.3;
-    }
-    if (obj[key] !== undefined && defObj.type) {
-      const typeMap: Record<string, string> = {
-        string: 'string',
-        number: 'number',
-        integer: 'number',
-        boolean: 'boolean',
-        array: 'object',
-        object: 'object',
-      };
-      const expected = typeMap[defObj.type as string];
-      if (expected && typeof obj[key] !== expected) {
-        signals.push({
-          stage: 1,
-          source: 'schema',
-          severity: 'medium',
-          location: key,
-          message: `"${key}": expected ${defObj.type}, got ${typeof obj[key]}`,
-          suggestion: `Change "${key}" to type ${defObj.type}`,
-        });
-        confidence -= 0.15;
-      }
+function schemaPath(path: string, key: string): string {
+  return path ? `${path}.${key}` : key;
+}
+
+function schemaValueType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function addSchemaSignal(
+  signals: VerificationSignal[],
+  severity: 'medium' | 'high',
+  location: string,
+  message: string,
+  suggestion: string,
+): void {
+  signals.push({
+    stage: 1,
+    source: 'schema',
+    severity,
+    ...(location ? { location } : {}),
+    message,
+    suggestion,
+  });
+}
+
+function validateSchemaValue(
+  value: unknown,
+  schema: SchemaDefinition | SchemaProperty,
+  path: string,
+  signals: VerificationSignal[],
+): void {
+  const type = schema.type;
+  if (schema.enum && !schema.enum.some((candidate) => Object.is(candidate, value))) {
+    addSchemaSignal(
+      signals,
+      'medium',
+      path,
+      `${path || 'Output'} must be one of ${schema.enum.map((candidate) => JSON.stringify(candidate)).join(', ')}`,
+      'Use one of the values declared by the schema',
+    );
+  }
+
+  if (type) {
+    const actual = schemaValueType(value);
+    const validType =
+      (type === 'number' && actual === 'number' && Number.isFinite(value)) ||
+      (type === 'integer' && actual === 'number' && Number.isInteger(value)) ||
+      (type !== 'number' && type !== 'integer' && actual === type);
+    if (!validType) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'}: expected ${type}, got ${actual}`,
+        `Change ${path || 'the output'} to type ${type}`,
+      );
+      return;
     }
   }
 
-  return { signals, confidence: Math.max(0, confidence) };
+  if (typeof value === 'number') {
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must be >= ${schema.minimum}`,
+        'Increase the numeric value to satisfy the schema',
+      );
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must be <= ${schema.maximum}`,
+        'Decrease the numeric value to satisfy the schema',
+      );
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must contain at least ${schema.minItems} items`,
+        'Add items required by the schema',
+      );
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must contain at most ${schema.maxItems} items`,
+        'Remove items until the schema limit is met',
+      );
+    }
+    if (schema.items) {
+      value.forEach((item, index) =>
+        validateSchemaValue(item, schema.items!, `${path}[${index}]`, signals),
+      );
+    }
+  }
+
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
+  const obj = value as Record<string, unknown>;
+  const properties = schema.properties ?? {};
+  const required = new Set<string>(Array.isArray(schema.required) ? schema.required : []);
+  for (const [key, definition] of Object.entries(properties)) {
+    if (definition.required === true) required.add(key);
+  }
+  for (const key of required) {
+    if (obj[key] === undefined) {
+      addSchemaSignal(
+        signals,
+        'high',
+        schemaPath(path, key),
+        `Missing required field: "${schemaPath(path, key)}"`,
+        `Add "${key}" to the output`,
+      );
+    }
+  }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(obj)) {
+      if (!(key in properties)) {
+        addSchemaSignal(
+          signals,
+          'high',
+          schemaPath(path, key),
+          `Unexpected field: "${schemaPath(path, key)}"`,
+          'Remove fields that are not declared by the schema',
+        );
+      }
+    }
+  }
+  for (const [key, definition] of Object.entries(properties)) {
+    if (obj[key] !== undefined) {
+      validateSchemaValue(obj[key], definition, schemaPath(path, key), signals);
+    }
+  }
 }
 
 // ============================================================================
@@ -596,6 +724,21 @@ export class UnifiedVerificationPipeline {
       allSignals.push(...s1.signals);
       overallConfidence = Math.min(overallConfidence, s1.confidence);
       stagesRun.push(1);
+      // A supplied JSON Schema is an executable contract. Any Stage 1
+      // violation must fail verification even when the remaining confidence
+      // score would otherwise clear the generic threshold (for example, one
+      // unexpected field only reduces confidence to 0.7).
+      if (s1.signals.length > 0) {
+        return this.buildReport(
+          false,
+          s1.confidence,
+          allSignals,
+          tokensUsed,
+          stagesRun,
+          taskType,
+          'schema_invalid',
+        );
+      }
     }
 
     // Task-aware confidence adjustment: calculation tasks need stricter verification

@@ -7,21 +7,82 @@
 
 import { createHash, randomUUID } from 'node:crypto';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
-import { PostgresKernelRepository } from './postgres.js';
+import { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
+import { seedTenantAuthorityAllowedTenants } from './seedWorkerClaimSecret.js';
 
 export interface CreatedRun {
   id: string;
   tenantId: string;
 }
 
-export async function createDrillRun(databaseUrl: string): Promise<CreatedRun> {
+export interface DrillTenantContextConfig {
+  authorityDatabaseUrl?: string;
+  runtimeDatabaseUrl?: string;
+  phase?: 'enforce';
+}
+
+export function resolveDrillTenantContextConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): DrillTenantContextConfig {
+  const raw = env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL?.trim();
+  if (!raw) return {};
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error('DRILL_TENANT_AUTHORITY_DATABASE_URL_INVALID');
+  }
+  if (
+    (url.protocol !== 'postgres:' && url.protocol !== 'postgresql:') ||
+    decodeURIComponent(url.username) !== 'commander_tenant_authority'
+  ) {
+    throw new Error('DRILL_TENANT_AUTHORITY_DATABASE_ROLE_INVALID');
+  }
+  const runtimeDatabaseUrl = env.COMMANDER_APP_DATABASE_URL?.trim();
+  if (!runtimeDatabaseUrl) throw new Error('DRILL_APP_DATABASE_URL_REQUIRED');
+  let runtimeUrl: URL;
+  try {
+    runtimeUrl = new URL(runtimeDatabaseUrl);
+  } catch {
+    throw new Error('DRILL_APP_DATABASE_URL_INVALID');
+  }
+  if (
+    (runtimeUrl.protocol !== 'postgres:' && runtimeUrl.protocol !== 'postgresql:') ||
+    decodeURIComponent(runtimeUrl.username) !== 'commander_app'
+  ) {
+    throw new Error('DRILL_APP_DATABASE_ROLE_INVALID');
+  }
+  return { authorityDatabaseUrl: raw, runtimeDatabaseUrl, phase: 'enforce' };
+}
+
+export async function createDrillRun(
+  databaseUrl: string,
+  tenantContext: DrillTenantContextConfig = resolveDrillTenantContextConfig(),
+): Promise<CreatedRun> {
   const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
+  const runtimePool = tenantContext.runtimeDatabaseUrl
+    ? createVerifiedPostgresPool({ connectionString: tenantContext.runtimeDatabaseUrl })
+    : pool;
+  const authorityPool = tenantContext.authorityDatabaseUrl
+    ? createVerifiedPostgresPool({ connectionString: tenantContext.authorityDatabaseUrl })
+    : undefined;
   try {
     await runKernelMigrations(pool);
-    const repo = new PostgresKernelRepository(pool);
     const tenantId = `tenant-drill-${Date.now()}`;
     const id = `run_${randomUUID().slice(0, 8)}`;
+    if (authorityPool) {
+      await seedTenantAuthorityAllowedTenants(pool, [tenantId]);
+    }
+    const repo = new PostgresKernelRepository(
+      runtimePool,
+      authorityPool
+        ? {
+            tenantContextAuthority: new PostgresTenantContextAuthority(authorityPool),
+            tenantContextPhase: tenantContext.phase ?? 'enforce',
+          }
+        : undefined,
+    );
     const run = await repo.createRun(
       {
         id,
@@ -36,6 +97,8 @@ export async function createDrillRun(databaseUrl: string): Promise<CreatedRun> {
     );
     return { id: run.id, tenantId: run.tenantId };
   } finally {
+    await authorityPool?.end();
+    if (runtimePool !== pool) await runtimePool.end();
     await pool.end();
   }
 }

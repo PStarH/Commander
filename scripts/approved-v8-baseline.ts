@@ -43,8 +43,10 @@ export function parseApprovedV8Baseline(text: string): ApprovedV8Baseline {
   if (
     keys.join(',') !== 'commitSha,format,treeSha' ||
     record.format !== FORMAT ||
-    typeof record.commitSha !== 'string' || !OBJECT_ID.test(record.commitSha) ||
-    typeof record.treeSha !== 'string' || !OBJECT_ID.test(record.treeSha)
+    typeof record.commitSha !== 'string' ||
+    !OBJECT_ID.test(record.commitSha) ||
+    typeof record.treeSha !== 'string' ||
+    !OBJECT_ID.test(record.treeSha)
   ) {
     fail('APPROVED_V8_BASELINE_INVALID');
   }
@@ -81,7 +83,10 @@ function matchingFiles(root: string, commitSha: string, pattern: string): string
   });
   if (result.status === 1) return [];
   if (result.status !== 0) fail('APPROVED_V8_BASELINE_SOURCE_SCAN_FAILED');
-  return result.stdout.split('\n').map((line) => line.trim()).filter(Boolean);
+  return result.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
 }
 
 export function verifyApprovedV8Baseline(
@@ -164,7 +169,9 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   try {
     main();
   } catch (error) {
-    process.stderr.write(`${error instanceof Error ? error.message : 'APPROVED_V8_BASELINE_FAILED'}\n`);
+    process.stderr.write(
+      `${error instanceof Error ? error.message : 'APPROVED_V8_BASELINE_FAILED'}\n`,
+    );
     process.exitCode = 1;
   }
 }

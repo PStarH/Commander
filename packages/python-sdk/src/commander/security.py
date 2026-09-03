@@ -23,11 +23,10 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
-from typing import Any
-from enum import Enum
 from collections import Counter
-
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, ClassVar
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SanitizeContext
@@ -77,7 +76,7 @@ class UniversalSanitizer:
     """
 
     # ── PII patterns ──────────────────────────────────────────────────────────
-    PII_PATTERNS: list[tuple[str, re.Pattern, str]] = [
+    PII_PATTERNS: ClassVar[list[tuple[str, re.Pattern, str]]] = [
         ("api_key", re.compile(r"\b(sk-[a-zA-Z0-9]{20,})\b"), "sk-[REDACTED]"),
         (
             "anthropic_key",
@@ -141,7 +140,7 @@ class UniversalSanitizer:
     ]
 
     # ── XSS patterns ──────────────────────────────────────────────────────────
-    XSS_PATTERNS: list[tuple[str, re.Pattern, str]] = [
+    XSS_PATTERNS: ClassVar[list[tuple[str, re.Pattern, str]]] = [
         (
             "script_tag",
             re.compile(
@@ -178,7 +177,7 @@ class UniversalSanitizer:
     # CRITICAL: The full_injection_block pattern must be first — it removes
     # the ENTIRE injection payload (not just framing) so the LLM never sees
     # the malicious instructions inside.
-    PROMPT_INJECTION_PATTERNS: list[tuple[str, re.Pattern, str]] = [
+    PROMPT_INJECTION_PATTERNS: ClassVar[list[tuple[str, re.Pattern, str]]] = [
         # AgentDojo important_instructions: remove entire <INFORMATION>...</INFORMATION> block
         # This catches the complete injection including the payload instructions
         (
@@ -329,12 +328,7 @@ class UniversalSanitizer:
                     patterns.append(name)
                     result = pattern.sub(replacement, result)
 
-        if ctx in ("output", "log"):
-            if self.CONTROL_CHARS.search(result):
-                patterns.append("control_chars")
-                result = self.CONTROL_CHARS.sub("", result)
-
-        elif ctx == "tool_args":
+        if ctx in ("output", "log") or ctx == "tool_args":
             if self.CONTROL_CHARS.search(result):
                 patterns.append("control_chars")
                 result = self.CONTROL_CHARS.sub("", result)
@@ -414,7 +408,7 @@ class PromptInjectionDetector:
     """
 
     # High-confidence injection patterns (broader than sanitizer patterns)
-    INJECTION_PATTERNS: list[tuple[str, re.Pattern]] = [
+    INJECTION_PATTERNS: ClassVar[list[tuple[str, re.Pattern]]] = [
         (
             "system_prompt_leak",
             re.compile(
@@ -559,7 +553,7 @@ class ReversibilityGate:
     # Irreversible tools (require human approval in Commander)
     # NOTE: delete_file is NOT here — it's a legitimate tool in agent workflows.
     # Instead, suspicious delete patterns are handled in SUSPICIOUS_TOOL_PATTERNS.
-    IRREVERSIBLE_TOOLS = {
+    IRREVERSIBLE_TOOLS: ClassVar[set[str]] = {
         "git_push",
         "shell_execute",
         "python_execute",
@@ -570,7 +564,7 @@ class ReversibilityGate:
     }
 
     # Dangerous argument patterns
-    DANGEROUS_ARG_PATTERNS: list[tuple[str, re.Pattern]] = [
+    DANGEROUS_ARG_PATTERNS: ClassVar[list[tuple[str, re.Pattern]]] = [
         (
             "destructive_shell",
             re.compile(
@@ -611,7 +605,7 @@ class ReversibilityGate:
     # Key insight: these tools are legitimate for user tasks, so we only block
     # when the arguments match injection-driven patterns (e.g., sending to
     # known attacker addresses, forwarding security codes).
-    SUSPICIOUS_TOOL_PATTERNS: dict[str, dict] = {
+    SUSPICIOUS_TOOL_PATTERNS: ClassVar[dict[str, dict]] = {
         "send_email": {
             # Only block when sending to known attacker addresses
             "blocked_recipients": re.compile(

@@ -69,8 +69,8 @@ using tenant-aware singletons. In production, instances outside an explicit tena
 
 | #     | Item                                                                | Status | Owner          | Evidence                                                                                                                                                                                                                                                                                                                                      | Target                         |
 | ----- | ------------------------------------------------------------------- | ------ | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
-| SLO-1 | `test:slo` cron-bound CI check (latency / cost / drift regression)  | ✅     | @observability | `scripts/bench-slo-baseline.ts` (4 SLO measurements with fail-loud catch: actualMs=NaN/passed=false/reason=err on throw); `.github/workflows/slo-bench.yml` daily cron at 07:00 UTC + drift gate (today.summary.failed must be 0; new failures vs yesterday ≤ input threshold); 7,10,30,60s thresholds for recovery/failover/compensation/dlq | 2026-Q4 (delivered 2026-07-07) |
-| SLO-2 | Public SLO dashboard (99.5% API success rate, <2s p95 CI target) | 🟡     | @ops           | `docs/slo.md`, `apps/web/src/pages/SLOPage.tsx` + `/slo` route, `docs/baselines/slo-baseline.2026-07-06.json` baseline. **The 99.5% / <2s figures are CI baseline measurements, not production SLA attainment.** | 2026-Q3 (dashboard wired; production window pending) |
+| SLO-1 | `test:slo` cron-bound CI check (latency / cost / drift regression)  | ✅     | @observability | `scripts/bench-slo-baseline.ts` (4 SLO measurements with fail-loud catch: actualMs=NaN/passed=false/reason=err on throw); `.github/workflows/slo-bench.yml` daily cron at 07:00 UTC + drift gate (today.summary.failed must be 0; new failures vs yesterday ≤ input threshold); 5,10,30,60s thresholds for recovery/failover/compensation/dlq | 2026-Q4 (delivered 2026-07-07) |
+| SLO-2 | Public SLO dashboard (99.95% API availability, <5s p95 schedule CI target) | 🟡     | @ops           | `docs/slo.md`, `apps/web/src/pages/SLOPage.tsx` + `/slo` route, `docs/baselines/slo-baseline.2026-07-20.json` baseline. **The 99.95% / <5s figures are CI baseline measurements, not production SLA attainment.** | 2026-Q3 (dashboard wired; production window pending) |
 
 ### Data governance
 
@@ -122,7 +122,7 @@ release time.
 | #    | Item                                                                                                         | Status | Target                         |
 | ---- | ------------------------------------------------------------------------------------------------------------ | ------ | ------------------------------ |
 | P2-1 | RASP extensions G1 hardened across attack surfaces (output sanitizer, network egress filter, plugin scanner) | 🟡     | 2026-Q4                        |
-| P2-2 | Adversarial-corpus CI gate (`adversarial-corpus.yml`) covering ≥60 attack patterns                           | ✅     | 2026-Q3 (delivered 2026-06-29) |
+| P2-2 | Adversarial-corpus CI gate (`adversarial-corpus.yml`) — 47 baseline attack scenarios (ATTACK_SCENARIOS) + LLM-generated novel variants (default corpus cap 50) | ✅     | 2026-Q3 (delivered 2026-06-29) |
 | P2-3 | EU AI Act Article 12/13/14 + ISO 42001 + NIST AI RMF compliance reporters                                    | ✅     | 2026-Q3 (delivered)            |
 | P2-4 | Post-quantum crypto primitive (SHAKE-256, PQ-safe MAC)                                                       | ✅     | 2026-Q3 (delivered)            |
 

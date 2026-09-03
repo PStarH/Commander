@@ -2,14 +2,14 @@
 /**
  * L4-A golden demo — deterministic in-memory Action Gateway harness.
  *
- * Runs eight named checks against the real kernel repository, Action Gateway
+ * Runs ten named checks against the real kernel repository, Action Gateway
  * router, EffectBroker, and demo.ticket.create adapter. No external DB required.
  *
  * Usage: pnpm demo:l4-a
  */
 
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import express from 'express';
 import { verifyEvidenceBundle } from '@commander/effect-broker';
@@ -17,7 +17,9 @@ import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
   EffectBroker,
+  buildTerminalEvidenceRecordFromKernel,
   canonicalRequestHash,
+  createEvidenceSigner,
 } from '@commander/effect-broker';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import {
@@ -28,7 +30,7 @@ import {
   createWorkerPolicyEvaluator,
 } from '../packages/worker-plane/src/index.js';
 import { InMemoryTicketAdapter } from '../packages/worker-plane/src/ticketAdapter.js';
-import type { V1KernelGateway } from '../apps/api/src/v1GatewayKernel.js';
+import type { GatewayEvidenceRecord, V1KernelGateway } from '../apps/api/src/v1GatewayKernel.js';
 import { createV1GatewayRouter } from '../apps/api/src/v1GatewayEndpoints.js';
 import { CommanderGatewayClient } from '../packages/sdk/src/v1/client.js';
 
@@ -38,12 +40,14 @@ export const GOLDEN_DEMO_TENANT = 'l4-a-demo-tenant';
 export const GOLDEN_DEMO_CHECKS = [
   'policy-simulation',
   'propose-approve-execute',
+  'approval-rejection-failed',
   'exact-approval-binding',
   'kill-switch-blocks',
   'evidence-verification',
   'completion-unknown',
   'reconcile',
   'sdk-policy-equivalence',
+  'cleanup',
 ] as const;
 
 export type GoldenDemoCheckName = (typeof GOLDEN_DEMO_CHECKS)[number];
@@ -73,7 +77,74 @@ const BASE_ACTION = {
 
 class InMemoryGateway implements V1KernelGateway {
   readonly repository = new InMemoryKernelRepository();
+  readonly evidenceSigner = createEvidenceSigner({
+    privateKeyPem: generateKeyPairSync('ed25519')
+      .privateKey.export({ format: 'pem', type: 'pkcs8' })
+      .toString(),
+    keyId: 'l4-a-demo-evidence',
+  });
   private readonly submissions = new Map<string, string>();
+
+  constructor() {
+    const drainIdentity = 'db:commander_adapter_ops';
+    const registeredAt = new Date(Date.now() - 1_000);
+    const lastHeartbeatAt = new Date();
+    this.repository.seedTestWorker('l4-a-reconcile-drain', [GOLDEN_DEMO_TENANT], 1, {
+      capabilities: ['effect.reconcile'],
+      identitySubject: drainIdentity,
+      registeredAt,
+      lastHeartbeatAt,
+    });
+    this.repository.seedTestWorker('l4-a-compensation-drain', [GOLDEN_DEMO_TENANT], 1, {
+      capabilities: ['effect.compensate'],
+      identitySubject: drainIdentity,
+      registeredAt,
+      lastHeartbeatAt,
+    });
+  }
+
+  getOperationsReadiness(tenantId: string, now?: Date) {
+    return this.repository.getOperationsReadiness(tenantId, now);
+  }
+
+  getEvidenceRepositoryAvailability() {
+    return this.repository.checkEvidenceRepositoryAvailability();
+  }
+
+  createInteraction(
+    input: Parameters<InMemoryKernelRepository['createInteraction']>[0],
+    actor: string,
+  ) {
+    return this.repository.createInteraction(input, actor);
+  }
+
+  async getEvidence(runId: string, tenantId: string): Promise<GatewayEvidenceRecord | null> {
+    const record = await this.repository.getEvidence(runId, tenantId);
+    return record
+      ? {
+          ...record,
+          body: record.body as GatewayEvidenceRecord['body'],
+        }
+      : null;
+  }
+
+  async requestReconcile(effectId: string, tenantId: string, actor: string) {
+    return this.repository.requestReconcile({ effectId, tenantId, actor });
+  }
+
+  createCompensationAuthorization(
+    input: Parameters<InMemoryKernelRepository['createCompensationAuthorization']>[0],
+  ) {
+    return this.repository.createCompensationAuthorization(input);
+  }
+
+  getCompensationAuthorization(authorizationId: string, tenantId: string) {
+    return this.repository.getCompensationAuthorization(authorizationId, tenantId);
+  }
+
+  requestCompensation(input: Parameters<InMemoryKernelRepository['requestCompensation']>[0]) {
+    return this.repository.requestCompensation(input);
+  }
 
   async submit(input: Parameters<V1KernelGateway['submit']>[0]) {
     const runId = `run_${createHash('sha256')
@@ -154,10 +225,13 @@ interface DemoHarness {
   gateway: InMemoryGateway;
   baseUrl: string;
   server: Server;
+  get closed(): boolean;
   close: () => Promise<void>;
 }
 
 async function startHarness(gateway: InMemoryGateway): Promise<DemoHarness> {
+  const previousEvidenceJwks = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+  process.env.COMMANDER_EVIDENCE_JWKS_JSON = JSON.stringify(gateway.evidenceSigner.jwks);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -175,14 +249,23 @@ async function startHarness(gateway: InMemoryGateway): Promise<DemoHarness> {
   const address = server.address();
   assert.ok(address && typeof address !== 'string');
   const baseUrl = `http://127.0.0.1:${address.port}`;
+  let closed = false;
   return {
     gateway,
     baseUrl,
     server,
-    close: () =>
-      new Promise<void>((resolve, reject) =>
+    get closed() {
+      return closed;
+    },
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      await new Promise<void>((resolve, reject) =>
         server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      );
+      if (previousEvidenceJwks === undefined) delete process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+      else process.env.COMMANDER_EVIDENCE_JWKS_JSON = previousEvidenceJwks;
+    },
   };
 }
 
@@ -212,7 +295,11 @@ function approvalBinding(action: {
   };
 }
 
-async function createDemoWorker(kernel: InMemoryKernelRepository, tickets: InMemoryTicketAdapter) {
+async function createDemoWorker(
+  kernel: InMemoryKernelRepository,
+  tickets: InMemoryTicketAdapter,
+  evidenceSigner: InMemoryGateway['evidenceSigner'],
+) {
   await kernel.setAllowlistEntry(GOLDEN_DEMO_TENANT, 'demo.ticket.create', true);
   const issuer = CapabilityTokenIssuer.generate({
     issuer: 'commander-worker',
@@ -232,7 +319,12 @@ async function createDemoWorker(kernel: InMemoryKernelRepository, tickets: InMem
     // 签名是 (tickets = adapter)，不能传 { tickets } 对象字面量
     bootstrap.createWorkerEffectExecutor(tickets),
     { append: async () => {} },
-    { requireRequestBinding: true, localWorkerId: 'l4-a-demo-worker' },
+    {
+      requireRequestBinding: true,
+      localWorkerId: 'l4-a-demo-worker',
+      evidenceSigner,
+      requireEvidencePersistence: true,
+    },
   );
   const worker = new WorkerService(
     {
@@ -304,7 +396,7 @@ async function checkProposeApproveExecute(
   gateway: InMemoryGateway,
 ): Promise<void> {
   const tickets = new InMemoryTicketAdapter();
-  const { worker } = await createDemoWorker(gateway.repository, tickets);
+  const { worker } = await createDemoWorker(gateway.repository, tickets, gateway.evidenceSigner);
   await worker.start();
   try {
     const proposed = await postJson(baseUrl, '/v1/actions', {
@@ -327,6 +419,28 @@ async function checkProposeApproveExecute(
   } finally {
     await worker.stop();
   }
+}
+
+async function checkApprovalRejectionFailed(baseUrl: string): Promise<void> {
+  const proposed = await postJson(baseUrl, '/v1/actions', {
+    ...BASE_ACTION,
+    destination: 'demo://tickets/approval',
+    idempotencyKey: 'l4-a-reject',
+  });
+  assert.equal(proposed.status, 202);
+  const action = (await proposed.json()) as { action: { runId: string; state: string } };
+  assert.equal(action.action.state, 'AWAITING_APPROVAL');
+
+  const rejected = await postJson(baseUrl, `/v1/actions/${action.action.runId}/reject`, {
+    reason: 'l4-a demo rejection',
+  });
+  assert.equal(rejected.status, 200);
+  const rejectedPayload = (await rejected.json()) as { action: { state: string } };
+  assert.equal(rejectedPayload.action.state, 'FAILED');
+
+  const current = await fetch(`${baseUrl}/v1/actions/${action.action.runId}`);
+  assert.equal(current.status, 200);
+  assert.equal(((await current.json()) as { action: { state: string } }).action.state, 'FAILED');
 }
 
 async function checkExactApprovalBinding(baseUrl: string, gateway: InMemoryGateway): Promise<void> {
@@ -581,16 +695,38 @@ async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGatew
     lease: claimed.lease,
     actor: 'l4-a-evidence-worker',
   });
-  await gateway.repository.completeEffect(
+  const response = {
+    status: 'ok',
+    body: 'SENSITIVE_EFFECT_RESPONSE',
+    access_token: 'SENSITIVE_RESPONSE_TOKEN',
+  };
+  const recordedAt = new Date().toISOString();
+  const evidenceRecord = await buildTerminalEvidenceRecordFromKernel({
+    kernel: {
+      listEffectsForRun: (runId, tenantId) => gateway.repository.listEffectsForRun(runId, tenantId),
+      listEvents: (runId, tenantId) => gateway.repository.listEvents(runId, tenantId),
+    },
+    signer: gateway.evidenceSigner,
+    tenantId: GOLDEN_DEMO_TENANT,
+    runId: run!.id,
+    effectId: metadata.effectId,
+    projectedState: 'COMPLETED',
+    response,
+    terminalEvent: {
+      type: 'effect.completed',
+      severity: 'low',
+      details: { source: 'l4-a-golden-demo' },
+    },
+    recordedAt,
+    retentionUntil: new Date(Date.parse(recordedAt) + 60 * 60 * 1_000).toISOString(),
+  });
+  await gateway.repository.completeEffectWithEvidence(
     metadata.effectId,
     GOLDEN_DEMO_TENANT,
     claimed.lease,
-    {
-      status: 'ok',
-      body: 'SENSITIVE_EFFECT_RESPONSE',
-      access_token: 'SENSITIVE_RESPONSE_TOKEN',
-    },
+    response,
     'l4-a-evidence-worker',
+    evidenceRecord,
   );
   await gateway.repository.completeStep({
     stepId: claimed.id,
@@ -605,17 +741,17 @@ async function checkEvidenceVerification(baseUrl: string, gateway: InMemoryGatew
   assert.equal(evidence.status, 200);
   const evidenceText = await evidence.text();
   const evidencePayload = JSON.parse(evidenceText) as {
-    bundle: {
+    receipt: {
       schemaVersion: string;
       scope: { runId: string };
       effects: Array<{ responseSummary: { status: string } }>;
     };
     verification: { ok: boolean };
   };
-  assert.equal(evidencePayload.bundle.schemaVersion, 'l3-11.v0');
-  assert.equal(evidencePayload.bundle.scope.runId, payload.action.runId);
+  assert.equal(evidencePayload.receipt.schemaVersion, 'l3-11.v0');
+  assert.equal(evidencePayload.receipt.scope.runId, payload.action.runId);
   assert.equal(evidencePayload.verification.ok, true);
-  assert.equal(verifyEvidenceBundle(evidencePayload.bundle as never).ok, true);
+  assert.equal(verifyEvidenceBundle(evidencePayload.receipt as never).ok, true);
   for (const secret of [
     'SENSITIVE_TOOL_ARGUMENT',
     'SENSITIVE_AUTH_TOKEN',
@@ -705,11 +841,12 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
     }
   ).action;
 
+  // propose 仅创建 run/step，effect 尚未 admit：契约为 404 ACTION_NOT_FOUND
   const noUnknown = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
-  assert.equal(noUnknown.status, 409);
+  assert.equal(noUnknown.status, 404);
   assert.equal(
     ((await noUnknown.json()) as { error: { code: string } }).error.code,
-    'NO_RECONCILABLE_EFFECT',
+    'ACTION_NOT_FOUND',
   );
 
   const approved = await postJson(
@@ -756,13 +893,15 @@ async function checkReconcile(baseUrl: string, gateway: InMemoryGateway): Promis
   });
 
   const reconcile = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
-  assert.equal(reconcile.status, 501);
+  assert.equal(reconcile.status, 202);
   const reconcilePayload = (await reconcile.json()) as {
-    error: { code: string };
+    scheduled: boolean;
     effectId: string;
+    state: string;
   };
-  assert.equal(reconcilePayload.error.code, 'RECONCILER_NOT_CONFIGURED');
+  assert.equal(reconcilePayload.scheduled, true);
   assert.equal(reconcilePayload.effectId, metadata.effectId);
+  assert.equal(reconcilePayload.state, 'COMPLETION_UNKNOWN');
 }
 
 async function checkSdkPolicyEquivalence(baseUrl: string): Promise<void> {
@@ -787,11 +926,12 @@ async function checkSdkPolicyEquivalence(baseUrl: string): Promise<void> {
 }
 
 const CHECK_RUNNERS: Record<
-  GoldenDemoCheckName,
+  Exclude<GoldenDemoCheckName, 'cleanup'>,
   (baseUrl: string, gateway: InMemoryGateway) => Promise<void>
 > = {
   'policy-simulation': (baseUrl) => checkPolicySimulation(baseUrl),
   'propose-approve-execute': (baseUrl, gateway) => checkProposeApproveExecute(baseUrl, gateway),
+  'approval-rejection-failed': (baseUrl) => checkApprovalRejectionFailed(baseUrl),
   'exact-approval-binding': (baseUrl, gateway) => checkExactApprovalBinding(baseUrl, gateway),
   'kill-switch-blocks': (baseUrl, gateway) => checkKillSwitchBlocks(baseUrl, gateway),
   'evidence-verification': (baseUrl, gateway) => checkEvidenceVerification(baseUrl, gateway),
@@ -800,16 +940,34 @@ const CHECK_RUNNERS: Record<
   'sdk-policy-equivalence': (baseUrl) => checkSdkPolicyEquivalence(baseUrl),
 };
 
+async function checkHarnessCleanup(
+  harness: DemoHarness,
+  previousEvidenceJwks: string | undefined,
+): Promise<void> {
+  await harness.close();
+  assert.equal(harness.closed, true);
+  assert.equal(process.env.COMMANDER_EVIDENCE_JWKS_JSON, previousEvidenceJwks);
+  await assert.rejects(
+    fetch(`${harness.baseUrl}/v1/actions/simulate`),
+    (error: unknown) => error instanceof TypeError,
+  );
+}
+
 export async function runGoldenDemo(options: { silent?: boolean } = {}): Promise<GoldenDemoResult> {
   const started = Date.now();
   const checks: GoldenDemoCheckResult[] = [];
 
   for (const name of GOLDEN_DEMO_CHECKS) {
+    const previousEvidenceJwks = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
     const gateway = new InMemoryGateway();
     const harness = await startHarness(gateway);
     try {
       try {
-        await CHECK_RUNNERS[name](harness.baseUrl, gateway);
+        if (name === 'cleanup') {
+          await checkHarnessCleanup(harness, previousEvidenceJwks);
+        } else {
+          await CHECK_RUNNERS[name](harness.baseUrl, gateway);
+        }
         checks.push({ name, passed: true });
         if (!options.silent) {
           console.log(`[l4-a-golden-demo] PASS ${name}`);

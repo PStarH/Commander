@@ -104,9 +104,16 @@ function makeTokenPair() {
 }
 
 function makeBroker(opts: {
-  policy?: ReturnType<typeof createWorkerPolicyEvaluator> | { evaluate: (...args: never[]) => Promise<unknown> };
+  policy?:
+    | ReturnType<typeof createWorkerPolicyEvaluator>
+    | { evaluate: (...args: never[]) => Promise<unknown> };
   kernel?: Partial<EffectKernelPort>;
-  executor?: { execute: (input: { type: string; request: Record<string, unknown> }) => Promise<Record<string, unknown>> };
+  executor?: {
+    execute: (input: {
+      type: string;
+      request: Record<string, unknown>;
+    }) => Promise<Record<string, unknown>>;
+  };
 }) {
   const { issuer, verifier } = makeTokenPair();
   const kernel: EffectKernelPort = {
@@ -135,18 +142,42 @@ function makeBroker(opts: {
 
 describe('effectGate helpers (L3-03a)', () => {
   it('isProductionEffectGate respects NODE_ENV / enterprise / require flag', async () => {
-    await withEnv({ NODE_ENV: 'production', COMMANDER_PROFILE: undefined, COMMANDER_REQUIRE_EFFECT_BROKER: undefined }, () => {
-      assert.equal(isProductionEffectGate(), true);
-    });
-    await withEnv({ NODE_ENV: 'test', COMMANDER_PROFILE: 'enterprise', COMMANDER_REQUIRE_EFFECT_BROKER: undefined }, () => {
-      assert.equal(isProductionEffectGate(), true);
-    });
-    await withEnv({ NODE_ENV: 'test', COMMANDER_PROFILE: undefined, COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, () => {
-      assert.equal(isProductionEffectGate(), true);
-    });
-    await withEnv({ NODE_ENV: 'test', COMMANDER_PROFILE: undefined, COMMANDER_REQUIRE_EFFECT_BROKER: undefined }, () => {
-      assert.equal(isProductionEffectGate(), false);
-    });
+    await withEnv(
+      {
+        NODE_ENV: 'production',
+        COMMANDER_PROFILE: undefined,
+        COMMANDER_REQUIRE_EFFECT_BROKER: undefined,
+      },
+      () => {
+        assert.equal(isProductionEffectGate(), true);
+      },
+    );
+    await withEnv(
+      {
+        NODE_ENV: 'test',
+        COMMANDER_PROFILE: 'enterprise',
+        COMMANDER_REQUIRE_EFFECT_BROKER: undefined,
+      },
+      () => {
+        assert.equal(isProductionEffectGate(), true);
+      },
+    );
+    await withEnv(
+      { NODE_ENV: 'test', COMMANDER_PROFILE: undefined, COMMANDER_REQUIRE_EFFECT_BROKER: '1' },
+      () => {
+        assert.equal(isProductionEffectGate(), true);
+      },
+    );
+    await withEnv(
+      {
+        NODE_ENV: 'test',
+        COMMANDER_PROFILE: undefined,
+        COMMANDER_REQUIRE_EFFECT_BROKER: undefined,
+      },
+      () => {
+        assert.equal(isProductionEffectGate(), false);
+      },
+    );
   });
 
   it('mustRouteExternalEffectThroughBroker: explicit external, prod default, catalog localOnly', async () => {
@@ -160,10 +191,17 @@ describe('effectGate helpers (L3-03a)', () => {
         false,
       );
     });
-    await withEnv({ NODE_ENV: 'test', COMMANDER_PROFILE: undefined, COMMANDER_REQUIRE_EFFECT_BROKER: undefined }, () => {
-      assert.equal(mustRouteExternalEffectThroughBroker({}), false);
-      assert.equal(mustRouteExternalEffectThroughBroker({ localOnly: true }), false);
-    });
+    await withEnv(
+      {
+        NODE_ENV: 'test',
+        COMMANDER_PROFILE: undefined,
+        COMMANDER_REQUIRE_EFFECT_BROKER: undefined,
+      },
+      () => {
+        assert.equal(mustRouteExternalEffectThroughBroker({}), false);
+        assert.equal(mustRouteExternalEffectThroughBroker({ localOnly: true }), false);
+      },
+    );
   });
 });
 
@@ -192,7 +230,14 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
     };
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const executor = new ToolStepExecutor(
-        { get: () => ({ execute: async () => { handlerInvoked = true; return {}; } }) },
+        {
+          get: () => ({
+            execute: async () => {
+              handlerInvoked = true;
+              return {};
+            },
+          }),
+        },
         stubBroker,
       );
       const step = createMockStep({
@@ -204,7 +249,10 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
           capabilityToken: 'tok',
         },
       });
-      const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      const result = await executor.execute(step, {
+        signal: ac.signal,
+        worker: createMockWorker(),
+      });
       assert.equal(handlerInvoked, false);
       assert.equal(brokerInvoked, true);
       assert.deepEqual((result as { result: unknown }).result, { via: 'broker' });
@@ -222,9 +270,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
       const executor = new ToolStepExecutor(
         {
           get: (name) =>
-            name === 'echo'
-              ? { execute: async (args) => ({ echo: args.message }) }
-              : null,
+            name === 'echo' ? { execute: async (args) => ({ echo: args.message }) } : null,
         },
         stubBroker,
         undefined,
@@ -233,7 +279,10 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
       const step = createMockStep({
         input: { toolName: 'echo', args: { message: 'hi' }, localOnly: true },
       });
-      const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      const result = await executor.execute(step, {
+        signal: ac.signal,
+        worker: createMockWorker(),
+      });
       assert.deepEqual((result as { result: unknown }).result, { echo: 'hi' });
     });
   });
@@ -300,7 +349,11 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
         }),
       },
       kernel: { isActionAllowed: async () => false },
-      executor: { execute: async () => { throw new Error('must not execute'); } },
+      executor: {
+        execute: async () => {
+          throw new Error('must not execute');
+        },
+      },
     });
     const request = { url: 'https://example.test' };
     const token = issuer.issue({
@@ -389,10 +442,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
 describe('L3-03a ConnectorStepExecutor production monopoly', () => {
   it('7a. Prod construction without broker throws', async () => {
     await withEnv({ NODE_ENV: 'production' }, () => {
-      assert.throws(
-        () => new ConnectorStepExecutor(),
-        /EFFECT_BROKER_UNAVAILABLE/,
-      );
+      assert.throws(() => new ConnectorStepExecutor(), /EFFECT_BROKER_UNAVAILABLE/);
     });
   });
 
@@ -432,7 +482,10 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
           capabilityToken: 'tok',
         },
       });
-      const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      const result = await executor.execute(step, {
+        signal: ac.signal,
+        worker: createMockWorker(),
+      });
       assert.equal(registryHit, false);
       assert.equal(brokerHit, true);
       assert.deepEqual((result as { result: unknown }).result, { rows: [] });
@@ -471,7 +524,10 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
           localOnly: true,
         },
       });
-      const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      const result = await executor.execute(step, {
+        signal: ac.signal,
+        worker: createMockWorker(),
+      });
       assert.deepEqual((result as { result: unknown }).result, { op: 'get', args: { key: 'k' } });
     });
   });
@@ -483,7 +539,11 @@ describe('L3-03a static: executors have no direct external IO', () => {
     const forbidden = /\b(fetch|execSync|spawn|child_process)\b/;
     for (const file of files) {
       const src = readFileSync(join(__dirname, file), 'utf8');
-      assert.equal(forbidden.test(src), false, `${file} must not contain direct external IO primitives`);
+      assert.equal(
+        forbidden.test(src),
+        false,
+        `${file} must not contain direct external IO primitives`,
+      );
     }
   });
 });

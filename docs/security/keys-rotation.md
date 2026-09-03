@@ -49,7 +49,8 @@ Every secret referenced via `process.env.X` indirection in Commander source. Cat
 **Operator rules**
 
 - Schedule the rotation in the calendar BEFORE the deadline hits. A "missed by 5 days" rotation still counts as a security incident.
-- Use the `commander-rotate <env-var-name> --audit` CLI (to be implemented) for atomic rotate + audit-linked confirmation.
+- Use the `commander-rotate <env-var-name> --audit` CLI for an audit-linked rotation intent and confirmation. The CLI never accepts or reads a secret value.
+- Save the JSON `rotationReceipt` emitted by an audited invocation as the operator receipt. Verify it independently with `pnpm --silent rotate:receipt:verify -- <receipt.json> --audit-dir <persist-dir>` before closing the ticket.
 - Never rotate during a freeze window (Black Friday, end-of-quarter, etc.) unless emergency rotation is required (§3).
 
 ---
@@ -72,9 +73,29 @@ Runbook (5 steps):
 4. **Verify** — run `pnpm benchmark:verify` (week-2 hardening) and spot-check a representative fleet run using the new key.
 5. **Audit + notify** — append a dated section to this file (or its successor) with: incident ID, rotation timestamp, revocation confirmation timestamp, downstream-key-cascade (e.g., audit-chain-key also rotated because it absorbed the old env-var). Ping Head of Security + CISO within **24 hours**.
 
+### §3.1 — Rotation receipt contract
+
+An audited `commander-rotate --json` invocation emits a `rotationReceipt` object and persists the matching HMAC-chained audit entry. The receipt is evidence of the operator action, not proof that a provider accepted the new secret; provider deployment and health verification remain explicit runbook steps.
+
+```json
+{
+  "schema": "commander-key-rotation-receipt/v1",
+  "envVar": "OPENAI_API_KEY",
+  "rotationId": "2026-06-23T03:53:00Z-ciso",
+  "action": "attempt",
+  "auditRecordId": "acl_...",
+  "chainId": "...",
+  "sequence": 1,
+  "timestamp": "2026-06-23T03:53:01.000Z",
+  "hmac": "<64 lowercase hex characters>"
+}
+```
+
+The independent verifier accepts either the complete `commander-rotate --json` result or the extracted `rotationReceipt`. It checks the persisted chain, record identity, sequence, timestamp, event type, environment-variable name, rotation id, and HMAC. It never reads a live secret. A receipt verifies only when the audit directory and `COMMANDER_AUDIT_CHAIN_KEY` used to create it are available; a missing key or altered ledger is a hard failure.
+
 Recovery is not complete until the on-call can answer: "Which tickets / consumers / chains used the old key, and did any of them accept traffic between compromise-confirmation and rotate-deploy?" — typically answered via the supply-chain attestor's generated `SpdxDocument` (CTL-010).
 
-### §3.1 — Incident log
+### §3.2 — Incident log
 
 | Date       | Incident ID        | Secret          | Trigger                 | Status     | Notes                                                                                                                                                                                                             |
 | ---------- | ------------------ | --------------- | ----------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -202,6 +223,15 @@ git log -1 --format='%aI  %s' <Signed-Commit SHA>
 
 # Confirm the GPG binding:
 git verify-commit <Signed-Commit SHA>
+
+# Generate an audited attempt and save its JSON rotationReceipt:
+pnpm --silent rotate -- OPENAI_API_KEY --attempt --audit --json > rotation-attempt.json
+
+# Confirm only after the persisted attempt exists:
+pnpm --silent rotate -- OPENAI_API_KEY --confirm <rotation-id> --audit --json > rotation-confirm.json
+
+# Independently verify a saved receipt against the persisted HMAC chain:
+pnpm --silent rotate:receipt:verify -- rotation-confirm.json --audit-dir .commander_security
 
 # D3.0: emit a compact JSON status payload for shell pipelines / `jq`:
 npx tsx scripts/verify-rotation-signoff.ts --json | jq '.reasons[]'

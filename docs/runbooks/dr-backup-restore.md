@@ -58,9 +58,27 @@ pg_basebackup -D /backup/commander-base -Fp -Xs -P
 - [ ] Restored signed receipts and anchors verify independently
 - [ ] Active and terminal actions retain identity and outcome accounting
 
+## Automated drill gate
+
+Run the full drill from a protected runner with the source and restore
+PostgreSQL TLS settings present:
+
+```bash
+pnpm --silent dr:verify --full --backup-path ./dr-backups --jwks-path ./dr-backups/jwks.json
+```
+
+Treat the generated `drill-report.json` as PASS only when all of these are
+true: `overall` is `PASS`, `honestyLevel` is `ENFORCED`, `restore.independent`
+is true, `tls.sourceVerified` and `tls.restoreVerified` are true, and
+`validation.evidenceReceiptsVerified` equals `validation.evidenceReceiptCount`.
+The TLS fields mean the verified pool completed CA, hostname, and SPKI checks
+for the source and restore targets; a libpq command succeeding without those
+preflights is not sufficient evidence. Missing `DATABASE_URL`, CA, SPKI, or
+retained JWKS fails closed rather than producing a PASS report.
+
 ## RPO / RTO targets (enterprise default)
 
-- RPO: 15 minutes (WAL / frequent SQLite backup)
+- RPO: 5 minutes (WAL / frequent SQLite backup; verified by `scripts/dr-backup-verify.ts`)
 - RTO: 1 hour (documented restore + bootstrap)
 
 Adjust per customer contract; never claim stronger numbers without drill evidence.

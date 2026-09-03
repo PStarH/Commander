@@ -183,10 +183,7 @@ describe('Helm release projection', () => {
       credentialManifest.replace('namespace: commander', 'deletionTimestamp: 2026-07-29T00:00:00Z'),
       `${credentialManifest}\n---\n${credentialManifest.split('---')[0]}`,
     ]) {
-      assert.throws(
-        () => materialize(malformed),
-        /TENANT_CUTOVER_RESTORE_PROJECTION_INVALID/,
-      );
+      assert.throws(() => materialize(malformed), /TENANT_CUTOVER_RESTORE_PROJECTION_INVALID/);
     }
     assert.throws(
       () =>
@@ -203,13 +200,15 @@ describe('Helm release projection', () => {
   });
 
   it('refuses to project a retained credential from a deleting Secret', () => {
-    const deletingManifest = manifest.replace(
-      '  namespace: commander',
-      '  namespace: commander\n  deletionTimestamp: 2026-07-29T00:00:00Z',
-    ).replace(
-      '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
-      `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
-    );
+    const deletingManifest = manifest
+      .replace(
+        '  namespace: commander',
+        '  namespace: commander\n  deletionTimestamp: 2026-07-29T00:00:00Z',
+      )
+      .replace(
+        '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
+        `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
+      );
     assert.throws(
       () =>
         projectHelmReleaseRevision({
@@ -224,10 +223,15 @@ describe('Helm release projection', () => {
   });
 
   it('requires the retained Secret source name to be independently referenced by the release', () => {
-    const credentialManifest = manifest.replace(
-      '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
-      `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
-    ).replace('name: commander-database\n                  key: owner-url', 'name: other-database\n                  key: owner-url');
+    const credentialManifest = manifest
+      .replace(
+        '  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=',
+        `  owner-url: cG9zdGdyZXM6Ly9zZWNyZXQ=\n  postgres-password: ${Buffer.from(historicalPassword).toString('base64')}`,
+      )
+      .replace(
+        'name: commander-database\n                  key: owner-url',
+        'name: other-database\n                  key: owner-url',
+      );
     assert.throws(
       () =>
         projectHelmReleaseRevision({
@@ -257,6 +261,79 @@ describe('Helm release projection', () => {
         }),
       /TENANT_CUTOVER_RESTORE_PROJECTION_INVALID/,
     );
+  });
+
+  it('orders renderer secret references by canonical JSON code-unit order', () => {
+    // 'database-ca' sorts before 'database' under localeCompare (ICU-dependent)
+    // but after it under the default string order the task1 restore-evidence
+    // validator re-derives from JSON.stringify. The projection must use the
+    // validator's ordering.
+    const dualSecretManifest = `${manifest}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: commander-api-tls
+  namespace: commander
+spec:
+  selector:
+    matchLabels: { app: commander-api-tls }
+  template:
+    metadata:
+      labels: { app: commander-api-tls }
+    spec:
+      containers:
+        - name: api
+          image: ghcr.io/commander/api@sha256:${'a'.repeat(64)}
+          env:
+            - name: DATABASE_CA
+              valueFrom:
+                secretKeyRef:
+                  name: commander-database-ca
+                  key: ca.crt
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: commander-database
+                  key: owner-url
+`;
+    const projection = projectHelmReleaseRevision({
+      namespace: 'commander',
+      releaseName: 'commander',
+      revision: '7',
+      manifest: dualSecretManifest,
+      values: `tenantAuthority:\n  chartContentSha256: ${chart}\n`,
+    });
+    const serialized = (reference: { name: string }): string => JSON.stringify(reference);
+    const references = projection.rendererInput.secretReferences as Array<{ name: string }>;
+    assert.deepEqual(
+      references.map((reference) => reference.name),
+      [...references.map((reference) => reference.name)].sort((left, right) => {
+        const leftRef = references.find((reference) => reference.name === left)!;
+        const rightRef = references.find((reference) => reference.name === right)!;
+        return serialized(leftRef) < serialized(rightRef)
+          ? -1
+          : serialized(leftRef) > serialized(rightRef)
+            ? 1
+            : 0;
+      }),
+    );
+    assert.equal(
+      references.some((reference) => reference.name === 'commander-database'),
+      true,
+    );
+    assert.equal(
+      references.some((reference) => reference.name === 'commander-database-ca'),
+      true,
+    );
+    // The exact historical regression: localeCompare placed -ca first.
+    const databaseIndex = references.findIndex(
+      (reference) => reference.name === 'commander-database',
+    );
+    const databaseCaIndex = references.findIndex(
+      (reference) => reference.name === 'commander-database-ca',
+    );
+    assert.ok(databaseIndex < databaseCaIndex);
   });
 
   it('rejects duplicate identities and a revision without a sealed chart digest', () => {

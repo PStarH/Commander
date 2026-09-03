@@ -1,0 +1,14 @@
+# G5 企业验收专用 audit policy：捕获 deployments 的 patch 请求（ResponseComplete 级，
+# 含 requestObject.annotations 供 actionMarkerWriteAudit 匹配 commander.io/action-marker）。
+apiVersion: audit.k8s.io/v1
+kind: Policy
+omitStages:
+  - RequestReceived
+rules:
+  - level: RequestResponse
+    verbs: ["patch"]
+    resources:
+      - group: "apps"
+        resources: ["deployments"]
+  # 兜底：其余事件不落盘，避免日志膨胀影响 tail -n 10000 窗口
+  - level: None

@@ -6,8 +6,8 @@ import asyncio
 import json
 import os
 import random
-from datetime import datetime, timezone
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -26,12 +26,12 @@ from ._types import (
     AgentState,
     ApiKeyCreateResult,
     ApiKeyList,
-    AppSettings,
     ApprovalAuditLog,
     ApprovalMode,
     ApprovalModeUpdated,
     ApprovalPatternRemoved,
     ApprovalPolicyResult,
+    AppSettings,
     AuditLogs,
     AuditSourceInfo,
     AuditStats,
@@ -42,14 +42,16 @@ from ._types import (
     ChatStreamEvent,
     Checkpoint,
     CheckpointList,
+    ConfidenceReport,
+    ConfidenceThresholdInfo,
     ConflictDetectionResult,
     ConflictSummary,
     CostBudget,
     CostDashboardResponse,
     CostRecords,
-    CostTimeRange,
     CostReport,
     CostSummary,
+    CostTimeRange,
     DlqEntry,
     DlqReplayResult,
     DlqStats,
@@ -94,8 +96,8 @@ from ._types import (
     ProjectMemoryItem,
     RagQueryResult,
     ReactiveConflictResult,
-    ReportingStatus,
     ReplayResult,
+    ReportingStatus,
     ResumeResponse,
     RollbackResponse,
     SDKReliabilityStats,
@@ -122,8 +124,6 @@ from ._types import (
     WorkflowDefinition,
     WorkflowExecution,
     WorkflowList,
-    ConfidenceReport,
-    ConfidenceThresholdInfo,
 )
 
 _DEFAULT_BASE_URL = "http://localhost:3001"
@@ -227,7 +227,7 @@ class CommanderClient:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> CommanderClient:
+    async def __aenter__(self) -> CommanderClient:  # noqa: PYI034 - typing.Self needs Python 3.11
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -499,7 +499,7 @@ class CommanderClient:
                     },
                 )
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - agent failures must be captured, not propagated
             error = str(exc)
             handle.status = "failed"
             handle.completed_at = datetime.now(timezone.utc).isoformat()
@@ -543,7 +543,7 @@ class CommanderClient:
         for handler in list(self._event_handlers):
             try:
                 handler(event)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - one failing handler must not disrupt the others
                 # One failing handler must not disrupt the others.
                 pass
 
@@ -622,20 +622,20 @@ class CommanderClient:
         try:
             dlq_stats = await self.get_dlq_stats()
             dlq_total_entries = dlq_stats.total_entries
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         try:
             compensation = await self._request("GET", "/api/v1/compensation")
             if isinstance(compensation, dict):
                 pending_compensations = int(compensation.get("pending", 0) or 0)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         try:
             checkpoints = await self.list_checkpoints()
             checkpoint_count = checkpoints.count
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         try:
@@ -649,7 +649,7 @@ class CommanderClient:
                         circuit_state = component["status"].upper()
                     if name == "circuit_breaker" and "failures" in component:
                         circuit_failures = int(component["failures"])
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         return SDKReliabilityStats(
@@ -878,7 +878,7 @@ class CommanderClient:
         agent_id: str | None = None,
         mission_id: str | None = None,
         project_id: str | None = None,
-    ) -> "_ChatSSEStream":
+    ) -> _ChatSSEStream:
         """Send a streaming chat message to an agent.
 
         Returns:
@@ -2499,7 +2499,7 @@ class _ChatSSEStream:
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                if line.startswith(":") or line.startswith("id:"):
+                if line.startswith((":", "id:")):
                     continue
                 if line.startswith("event:"):
                     current_event = line[len("event:") :].strip()

@@ -261,8 +261,11 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
       generateActionId: () => 'test',
       getBreakerRegistry: () => ({ get: () => null }) as never,
     });
-    (svc as unknown as { recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> }).recentToolCalls =
-      [{ name: 'file_search', arguments: { q: 'x' } }];
+    (
+      svc as unknown as {
+        recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+      }
+    ).recentToolCalls = [{ name: 'file_search', arguments: { q: 'x' } }];
 
     await svc.triggerSpeculativeExecution();
 
@@ -341,13 +344,84 @@ describe('SpeculativeExecutor - triggerSpeculativeExecution integration', () => 
       getBreakerRegistry: () => ({ get: () => null }) as never,
     });
 
-    (svc as unknown as { recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }> }).recentToolCalls =
-      [{ name: 'file_search', arguments: { q: 'x' } }];
+    (
+      svc as unknown as {
+        recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+      }
+    ).recentToolCalls = [{ name: 'file_search', arguments: { q: 'x' } }];
 
     await svc.triggerSpeculativeExecution(undefined, 'test-capability-token');
 
     expect(executeCalled).toBe(false);
     expect(cacheSetCalled).toBe(false);
+
+    vi.doUnmock('../../src/security/securityGuardianFacade');
+    vi.doUnmock('../../src/security/capabilityToken');
+    vi.doUnmock('../../src/security/biscuitCapabilityAdapter');
+    vi.resetModules();
+  });
+
+  it('requires explicit read-only metadata before speculative execution', async () => {
+    vi.resetModules();
+    vi.doMock('../../src/security/securityGuardianFacade', () => ({
+      checkToolGuardian: () => ({ allowed: true }),
+    }));
+    vi.doMock('../../src/security/capabilityToken', async (importOriginal) => {
+      const actual = await importOriginal<typeof import('../../src/security/capabilityToken')>();
+      return {
+        ...actual,
+        getCapabilityTokenVerifier: () => ({ verify: () => ({ ok: true }) }),
+      };
+    });
+    vi.doMock('../../src/security/biscuitCapabilityAdapter', async (importOriginal) => {
+      const actual =
+        await importOriginal<typeof import('../../src/security/biscuitCapabilityAdapter')>();
+      return {
+        ...actual,
+        BiscuitCapabilityAdapter: {
+          ...actual.BiscuitCapabilityAdapter,
+          isBiscuitToken: () => false,
+        },
+      };
+    });
+
+    const { ToolExecutionService } = await import('../../src/runtime/toolExecutionService');
+    const { getPatternTracker } = await import('../../src/runtime/speculativeExecutor');
+    let executeCalled = false;
+    const mockTool = {
+      isReadOnly: false,
+      execute: async () => {
+        executeCalled = true;
+        return 'must not run';
+      },
+    };
+    const tracker = getPatternTracker();
+    for (let i = 0; i < 10; i++) tracker.recordSequence(['file_search', 'file_read']);
+
+    const svc = new ToolExecutionService({
+      tools: new Map([['file_read', mockTool as never]]),
+      compensationService: {} as never,
+      cacheManager: { getToolCache: () => ({ get: () => null, set: () => {} }) } as never,
+      dlq: {} as never,
+      getRunHandle: () => null,
+      config: {
+        speculativeExecution: { enabled: true },
+        securityMonitor: { enabled: true },
+      } as never,
+      reflexionGenerator: {} as never,
+      stepTimeout: {} as never,
+      getPromotedTools: () => new Set(),
+      generateActionId: () => 'test',
+      getBreakerRegistry: () => ({ get: () => null }) as never,
+    });
+    (
+      svc as unknown as {
+        recentToolCalls: Array<{ name: string; arguments: Record<string, unknown> }>;
+      }
+    ).recentToolCalls = [{ name: 'file_search', arguments: { q: 'x' } }];
+
+    await svc.triggerSpeculativeExecution(undefined, 'test-capability-token');
+    expect(executeCalled).toBe(false);
 
     vi.doUnmock('../../src/security/securityGuardianFacade');
     vi.doUnmock('../../src/security/capabilityToken');

@@ -44,8 +44,18 @@ const ACTION_OPERATIONS = [
   { path: '/actions/{runId}/reconcile', method: 'post', success: '202', requestBody: false },
   { path: '/actions/{runId}/evidence', method: 'get', success: '200', requestBody: false },
   { path: '/actions/kill-switches', method: 'get', success: '200', requestBody: false },
-  { path: '/actions/kill-switches/{scope}/{value}', method: 'put', success: '200', requestBody: true },
-  { path: '/actions/kill-switches/{scope}/{value}', method: 'delete', success: '204', requestBody: false },
+  {
+    path: '/actions/kill-switches/{scope}/{value}',
+    method: 'put',
+    success: '200',
+    requestBody: true,
+  },
+  {
+    path: '/actions/kill-switches/{scope}/{value}',
+    method: 'delete',
+    success: '204',
+    requestBody: false,
+  },
 ] as const;
 
 type OpenApiSchema = {
@@ -69,7 +79,6 @@ type OpenApiOperation = {
 };
 
 describe('OpenAPI Spec Conformance', () => {
-
   describe('OpenAPI 3.1.0 structure', () => {
     it('has correct openapi version', () => {
       assert.equal(OPENAPI_V1_SPEC.openapi, '3.1.0');
@@ -116,7 +125,9 @@ describe('OpenAPI Spec Conformance', () => {
           const operation = (pathItem as Record<string, unknown>)[method] as
             { parameters?: Array<Record<string, unknown>> } | undefined;
           if (!operation) continue;
-          const paramNames = (operation.parameters ?? []).map(resolveParamName).filter(Boolean) as string[];
+          const paramNames = (operation.parameters ?? [])
+            .map(resolveParamName)
+            .filter(Boolean) as string[];
           assert.ok(
             paramNames.includes('Idempotency-Key'),
             `POST/PUT/PATCH/DELETE at ${path} must have Idempotency-Key parameter`,
@@ -137,19 +148,42 @@ describe('OpenAPI Spec Conformance', () => {
       const schemas = OPENAPI_V1_SPEC.components?.schemas;
       assert.ok(schemas, 'Must have component schemas');
       const required = [
-        'Run', 'Step', 'WorkGraph', 'Interaction', 'Artifact',
-        'PolicyBundle', 'Effect', 'AgentDefinition', 'ToolDefinition',
-        'ConnectorDefinition', 'KernelEvent', 'Error',
-        'CreateRunRequest', 'CreateInteractionResponseRequest',
-        'ActionProposeRequest', 'ActionDecision', 'ActionSimulation',
-        'GovernedAction', 'ActionApprovalRequest', 'ActionRejectionRequest',
-        'ActionSimulationResponse', 'ActionResponse', 'ActionProposeResponse',
-        'ActionReconcileAccepted', 'ActionEvidence', 'ActionError',
-        'ActionKillSwitch', 'ActionKillSwitchUpdate',
-        'ActionKillSwitchListResponse', 'ActionKillSwitchResponse',
+        'Run',
+        'Step',
+        'WorkGraph',
+        'Interaction',
+        'Artifact',
+        'PolicyBundle',
+        'Effect',
+        'AgentDefinition',
+        'ToolDefinition',
+        'ConnectorDefinition',
+        'KernelEvent',
+        'Error',
+        'CreateRunRequest',
+        'CreateInteractionResponseRequest',
+        'ActionProposeRequest',
+        'ActionDecision',
+        'ActionSimulation',
+        'GovernedAction',
+        'ActionApprovalRequest',
+        'ActionRejectionRequest',
+        'ActionSimulationResponse',
+        'ActionResponse',
+        'ActionProposeResponse',
+        'ActionReconcileAccepted',
+        'ActionEvidence',
+        'ActionError',
+        'ActionKillSwitch',
+        'ActionKillSwitchUpdate',
+        'ActionKillSwitchListResponse',
+        'ActionKillSwitchResponse',
       ];
       for (const name of required) {
-        assert.ok((schemas as Record<string, unknown>)[name], `Must have component schema: ${name}`);
+        assert.ok(
+          (schemas as Record<string, unknown>)[name],
+          `Must have component schema: ${name}`,
+        );
       }
     });
 
@@ -339,10 +373,7 @@ describe('OpenAPI Spec Conformance', () => {
         '/connectors',
       ];
       for (const expected of expectedPaths) {
-        assert.ok(
-          paths.includes(expected),
-          `OpenAPI spec must cover path: ${expected}`,
-        );
+        assert.ok(paths.includes(expected), `OpenAPI spec must cover path: ${expected}`);
       }
     });
 
@@ -354,7 +385,9 @@ describe('OpenAPI Spec Conformance', () => {
       function resolveParam(p: Record<string, unknown>): { name: string; in: string } | null {
         if (p.$ref) {
           const refPath = (p.$ref as string).replace('#/components/parameters/', '');
-          const resolved = (componentParams as Record<string, { name?: string; in?: string }>)[refPath];
+          const resolved = (componentParams as Record<string, { name?: string; in?: string }>)[
+            refPath
+          ];
           if (resolved?.name && resolved?.in) {
             return { name: resolved.name, in: resolved.in };
           }
@@ -441,7 +474,10 @@ describe('OpenAPI Spec Conformance', () => {
         const errors = Object.entries(operation.responses ?? {}).filter(
           ([status]) => Number(status) >= 400,
         );
-        assert.ok(errors.length > 0, `${expected.method.toUpperCase()} ${expected.path} needs errors`);
+        assert.ok(
+          errors.length > 0,
+          `${expected.method.toUpperCase()} ${expected.path} needs errors`,
+        );
         for (const [, response] of errors) {
           const resolved = response.$ref
             ? responseComponents[response.$ref.replace('#/components/responses/', '')]
@@ -471,7 +507,14 @@ describe('OpenAPI Spec Conformance', () => {
 
     for (const [fixtureName, schemaName] of Object.entries(fixtures)) {
       it(`${fixtureName}.json validates against ${schemaName}`, () => {
-        const fixturePath = join(__dirname, '..', 'fixtures', 'actions', 'v1', `${fixtureName}.json`);
+        const fixturePath = join(
+          __dirname,
+          '..',
+          'fixtures',
+          'actions',
+          'v1',
+          `${fixtureName}.json`,
+        );
         const fixture = JSON.parse(readFileSync(fixturePath, 'utf8')) as unknown;
         const result = validateResource(schemaName as never, fixture);
         assert.equal(result.ok, true, result.errors.join('; '));
@@ -489,10 +532,7 @@ describe('OpenAPI Spec Conformance', () => {
   describe('JSON Schema registry completeness', () => {
     it('all schemas have $id', () => {
       for (const [name, schema] of Object.entries(CONTRACT_SCHEMAS)) {
-        assert.ok(
-          (schema as { $id?: string }).$id,
-          `Schema '${name}' must have $id`,
-        );
+        assert.ok((schema as { $id?: string }).$id, `Schema '${name}' must have $id`);
       }
     });
 

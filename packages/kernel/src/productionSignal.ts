@@ -35,9 +35,11 @@ export function isProductionEnvironment(env: ProductionSignalEnv): boolean {
  * `COMMANDER_ALLOW_RLS_BYPASS` remains an explicit, documented escape hatch —
  * but only via its exact opt-in values, and it is logged as a warning.
  */
-export function mustRefuseMissingAppRole(env: ProductionSignalEnv & {
-  COMMANDER_ALLOW_RLS_BYPASS?: string;
-}): boolean {
+export function mustRefuseMissingAppRole(
+  env: ProductionSignalEnv & {
+    COMMANDER_ALLOW_RLS_BYPASS?: string;
+  },
+): boolean {
   if (!isProductionEnvironment(env)) return false;
   const bypass = (env.COMMANDER_ALLOW_RLS_BYPASS ?? '').toLowerCase();
   return !['1', 'true', 'yes'].includes(bypass);

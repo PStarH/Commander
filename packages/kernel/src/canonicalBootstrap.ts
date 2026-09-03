@@ -94,10 +94,27 @@ export interface OriginBindingV1 {
 const SHA256 = /^[0-9a-f]{64}$/;
 const POSITIVE_DECIMAL = /^[1-9][0-9]*$/;
 const PREBOOTSTRAP_KEYS = [
-  'format', 'postgresVersion', 'catalogVersion', 'databaseIdentity', 'ledger', 'namespaces',
-  'relations', 'functions', 'types', 'extensions', 'policies', 'triggers', 'productSources',
-  'productHasRows', 'roles', 'memberships', 'roleSettings', 'databaseAcl', 'schemaAcls',
-  'defaultAcls', 'bootstrapIdentities',
+  'format',
+  'postgresVersion',
+  'catalogVersion',
+  'databaseIdentity',
+  'ledger',
+  'namespaces',
+  'relations',
+  'functions',
+  'types',
+  'extensions',
+  'policies',
+  'triggers',
+  'productSources',
+  'productHasRows',
+  'roles',
+  'memberships',
+  'roleSettings',
+  'databaseAcl',
+  'schemaAcls',
+  'defaultAcls',
+  'bootstrapIdentities',
 ] as const;
 
 function invalid(suffix = ''): never {
@@ -179,20 +196,30 @@ function byteCompare(left: string, right: string): number {
 }
 
 function record(value: unknown, errorCode: string): Record<string, unknown> {
-  if (value === null || typeof value !== 'object' || Array.isArray(value)) throw new Error(errorCode);
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    throw new Error(errorCode);
   return value as Record<string, unknown>;
 }
 
-function exactKeys(value: Record<string, unknown>, keys: readonly string[], errorCode: string): void {
+function exactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+  errorCode: string,
+): void {
   const actual = Object.keys(value).sort(byteCompare);
   const expected = [...keys].sort(byteCompare);
-  if (canonicalBootstrapJson(actual) !== canonicalBootstrapJson(expected)) throw new Error(errorCode);
+  if (canonicalBootstrapJson(actual) !== canonicalBootstrapJson(expected))
+    throw new Error(errorCode);
 }
 
 function normalizedIp(value: string): string {
   const version = isIP(value);
   if (version === 0) throw new Error('DATABASE_PEER_BINDING_INVALID_IP_SAN');
-  if (version === 4) return value.split('.').map((part) => String(Number(part))).join('.');
+  if (version === 4)
+    return value
+      .split('.')
+      .map((part) => String(Number(part)))
+      .join('.');
   const hostname = new URL(`https://[${value}]/`).hostname;
   return hostname.slice(1, -1).toLowerCase();
 }
@@ -237,7 +264,11 @@ function normalizeSha256(value: string, errorCode: string): string {
 }
 
 function normalizePath(value: string): string {
-  if (!value.startsWith('/') || value.includes('\\') || value.split('/').some((part) => part === '.' || part === '..')) {
+  if (
+    !value.startsWith('/') ||
+    value.includes('\\') ||
+    value.split('/').some((part) => part === '.' || part === '..')
+  ) {
     throw new Error('DATABASE_PEER_BINDING_INVALID_CA_PATH');
   }
   return value;
@@ -252,11 +283,13 @@ export function createDatabasePeerBindingInput(input: {
   if (!input.ca.mountIdentity) throw new Error('DATABASE_PEER_BINDING_INVALID_CA_IDENTITY');
   return {
     format: 'database_peer_binding_input/v1',
-    roles: input.roles.map(({ role, host, port }) => ({
-      role,
-      host: normalizedHost(host),
-      port: normalizePort(port),
-    })).sort((left, right) => byteCompare(left.role, right.role)),
+    roles: input.roles
+      .map(({ role, host, port }) => ({
+        role,
+        host: normalizedHost(host),
+        port: normalizePort(port),
+      }))
+      .sort((left, right) => byteCompare(left.role, right.role)),
     expectedServerSpkiSha256: normalizeSha256(
       input.expectedServerSpkiSha256,
       'DATABASE_PEER_BINDING_INVALID_EXPECTED_SPKI',
@@ -277,34 +310,39 @@ export function createDatabasePeerBinding(input: {
   roles: readonly DatabasePeerBindingRoleV1[];
 }): DatabasePeerBindingV1 {
   assertRoleSet(input.roles);
-  const roles = input.roles.map((entry): DatabasePeerBindingRoleV1 => {
-    if (!POSITIVE_DECIMAL.test(entry.databaseOid) || !entry.databaseName) {
-      throw new Error('DATABASE_PEER_BINDING_INVALID_DATABASE_IDENTITY');
-    }
-    return {
-      role: entry.role,
-      host: normalizedHost(entry.host),
-      port: normalizePort(entry.port),
-      tlsServerSans: {
-        dns: uniqueSorted(entry.tlsServerSans.dns, normalizedDns),
-        ip: uniqueSorted(entry.tlsServerSans.ip, normalizedIp),
-      },
-      serverSpkiSha256: normalizeSha256(
-        entry.serverSpkiSha256,
-        'DATABASE_PEER_BINDING_INVALID_OBSERVED_SPKI',
-      ),
-      databaseOid: entry.databaseOid,
-      databaseName: entry.databaseName,
-    };
-  }).sort((left, right) => byteCompare(left.role, right.role));
+  const roles = input.roles
+    .map((entry): DatabasePeerBindingRoleV1 => {
+      if (!POSITIVE_DECIMAL.test(entry.databaseOid) || !entry.databaseName) {
+        throw new Error('DATABASE_PEER_BINDING_INVALID_DATABASE_IDENTITY');
+      }
+      return {
+        role: entry.role,
+        host: normalizedHost(entry.host),
+        port: normalizePort(entry.port),
+        tlsServerSans: {
+          dns: uniqueSorted(entry.tlsServerSans.dns, normalizedDns),
+          ip: uniqueSorted(entry.tlsServerSans.ip, normalizedIp),
+        },
+        serverSpkiSha256: normalizeSha256(
+          entry.serverSpkiSha256,
+          'DATABASE_PEER_BINDING_INVALID_OBSERVED_SPKI',
+        ),
+        databaseOid: entry.databaseOid,
+        databaseName: entry.databaseName,
+      };
+    })
+    .sort((left, right) => byteCompare(left.role, right.role));
   return { format: 'database_peer_binding_v1', roles };
 }
 
 function dnsSanCovers(host: string, san: string): boolean {
   if (!san.startsWith('*.')) return host === san;
   const suffix = san.slice(1);
-  return host.endsWith(suffix) && host.slice(0, -suffix.length).length > 0
-    && !host.slice(0, -suffix.length).includes('.');
+  return (
+    host.endsWith(suffix) &&
+    host.slice(0, -suffix.length).length > 0 &&
+    !host.slice(0, -suffix.length).includes('.')
+  );
 }
 
 export function verifyDatabasePeerBinding(
@@ -314,17 +352,22 @@ export function verifyDatabasePeerBinding(
   const declared = createDatabasePeerBindingInput(declaredValue);
   const observed = createDatabasePeerBinding(observedValue);
   const databaseIdentities = new Set(
-    observed.roles.map(({ databaseOid, databaseName, serverSpkiSha256 }) =>
-      `${databaseOid}\0${databaseName}\0${serverSpkiSha256}`),
+    observed.roles.map(
+      ({ databaseOid, databaseName, serverSpkiSha256 }) =>
+        `${databaseOid}\0${databaseName}\0${serverSpkiSha256}`,
+    ),
   );
-  if (databaseIdentities.size !== 1) throw new Error('DATABASE_PEER_BINDING_INVALID_COMMON_IDENTITY');
+  if (databaseIdentities.size !== 1)
+    throw new Error('DATABASE_PEER_BINDING_INVALID_COMMON_IDENTITY');
   for (const entry of observed.roles) {
     const expected = declared.roles.find(({ role }) => role === entry.role)!;
     const covered = isIP(entry.host)
       ? entry.tlsServerSans.ip.includes(entry.host)
       : entry.tlsServerSans.dns.some((san) => dnsSanCovers(entry.host, san));
     if (
-      expected.host !== entry.host || expected.port !== entry.port || !covered ||
+      expected.host !== entry.host ||
+      expected.port !== entry.port ||
+      !covered ||
       entry.serverSpkiSha256 !== declared.expectedServerSpkiSha256
     ) {
       throw new Error('DATABASE_PEER_BINDING_INVALID');
@@ -335,9 +378,18 @@ export function verifyDatabasePeerBinding(
 
 function verifyBootstrapIdentity(value: unknown): BootstrapIdentityV1 {
   const identity = record(value, 'PREBOOTSTRAP_BOOTSTRAP_IDENTITY_INVALID');
-  exactKeys(identity, ['oid', 'name', 'superuser', 'commanderNamed'], 'PREBOOTSTRAP_BOOTSTRAP_IDENTITY_INVALID');
-  if (!POSITIVE_DECIMAL.test(String(identity.oid)) || typeof identity.name !== 'string' || !identity.name
-      || typeof identity.superuser !== 'boolean' || typeof identity.commanderNamed !== 'boolean') {
+  exactKeys(
+    identity,
+    ['oid', 'name', 'superuser', 'commanderNamed'],
+    'PREBOOTSTRAP_BOOTSTRAP_IDENTITY_INVALID',
+  );
+  if (
+    !POSITIVE_DECIMAL.test(String(identity.oid)) ||
+    typeof identity.name !== 'string' ||
+    !identity.name ||
+    typeof identity.superuser !== 'boolean' ||
+    typeof identity.commanderNamed !== 'boolean'
+  ) {
     throw new Error('PREBOOTSTRAP_BOOTSTRAP_IDENTITY_INVALID');
   }
   return identity as unknown as BootstrapIdentityV1;
@@ -346,9 +398,15 @@ function verifyBootstrapIdentity(value: unknown): BootstrapIdentityV1 {
 function verifyBootstrapIdentities(value: unknown): BootstrapIdentitiesV1 | null {
   if (value === null) return null;
   const identities = record(value, 'PREBOOTSTRAP_BOOTSTRAP_IDENTITIES_INVALID');
-  exactKeys(identities, ['format', 'envelope', 'authority', 'bootstrapSuperuser'], 'PREBOOTSTRAP_BOOTSTRAP_IDENTITIES_INVALID');
-  if (identities.format !== 'bootstrap_identities/v1'
-      || (identities.envelope !== 'E1' && identities.envelope !== 'E2')) {
+  exactKeys(
+    identities,
+    ['format', 'envelope', 'authority', 'bootstrapSuperuser'],
+    'PREBOOTSTRAP_BOOTSTRAP_IDENTITIES_INVALID',
+  );
+  if (
+    identities.format !== 'bootstrap_identities/v1' ||
+    (identities.envelope !== 'E1' && identities.envelope !== 'E2')
+  ) {
     throw new Error('PREBOOTSTRAP_BOOTSTRAP_IDENTITIES_INVALID');
   }
   return {
@@ -362,11 +420,24 @@ function verifyBootstrapIdentities(value: unknown): BootstrapIdentitiesV1 | null
 function verifyInventory(value: unknown): PrebootstrapInventoryV1 {
   const inventory = record(value, 'PREBOOTSTRAP_INVENTORY_INVALID');
   exactKeys(inventory, PREBOOTSTRAP_KEYS, 'PREBOOTSTRAP_INVENTORY_INVALID');
-  if (inventory.format !== 'prebootstrap_inventory/v1' || !Array.isArray(inventory.productHasRows)) {
+  if (
+    inventory.format !== 'prebootstrap_inventory/v1' ||
+    !Array.isArray(inventory.productHasRows)
+  ) {
     throw new Error('PREBOOTSTRAP_INVENTORY_INVALID');
   }
   for (const key of PREBOOTSTRAP_KEYS) {
-    if (['format', 'postgresVersion', 'catalogVersion', 'databaseIdentity', 'ledger', 'bootstrapIdentities'].includes(key)) continue;
+    if (
+      [
+        'format',
+        'postgresVersion',
+        'catalogVersion',
+        'databaseIdentity',
+        'ledger',
+        'bootstrapIdentities',
+      ].includes(key)
+    )
+      continue;
     if (!Array.isArray(inventory[key])) throw new Error('PREBOOTSTRAP_INVENTORY_INVALID');
   }
   const productHasRows = inventory.productHasRows.map((item) => {
@@ -388,15 +459,20 @@ function withoutProductRows(inventory: PrebootstrapInventoryV1): Record<string, 
   return stable;
 }
 
-export function createPrebootstrapSnapshots(s0Value: unknown, s1Value: unknown): PrebootstrapSnapshotsV1 {
+export function createPrebootstrapSnapshots(
+  s0Value: unknown,
+  s1Value: unknown,
+): PrebootstrapSnapshotsV1 {
   const s0 = verifyInventory(s0Value);
   const s1 = verifyInventory(s1Value);
   const byteEqual = canonicalBootstrapJson(s0) === canonicalBootstrapJson(s1);
-  const fresh = byteEqual
-    && s0.bootstrapIdentities !== null
-    && s0.productHasRows.every(({ hasRows }) => !hasRows);
-  const legacyEqual = canonicalBootstrapJson(withoutProductRows(s0))
-    === canonicalBootstrapJson(withoutProductRows(s1));
+  const fresh =
+    byteEqual &&
+    s0.bootstrapIdentities !== null &&
+    s0.productHasRows.every(({ hasRows }) => !hasRows);
+  const legacyEqual =
+    canonicalBootstrapJson(withoutProductRows(s0)) ===
+    canonicalBootstrapJson(withoutProductRows(s1));
   const legacy = legacyEqual && s0.bootstrapIdentities === null && s1.bootstrapIdentities === null;
   if (!fresh && !legacy) throw new Error('PREBOOTSTRAP_INVENTORY_CHANGED');
   return {
@@ -410,12 +486,16 @@ export function createPrebootstrapSnapshots(s0Value: unknown, s1Value: unknown):
 }
 
 export function createOriginBinding(snapshots: PrebootstrapSnapshotsV1): OriginBindingV1 {
-  if (snapshots.s0Sha256 !== canonicalBootstrapSha256(snapshots.s0)
-      || snapshots.s1Sha256 !== canonicalBootstrapSha256(snapshots.s1)) {
+  if (
+    snapshots.s0Sha256 !== canonicalBootstrapSha256(snapshots.s0) ||
+    snapshots.s1Sha256 !== canonicalBootstrapSha256(snapshots.s1)
+  ) {
     throw new Error('ORIGIN_BINDING_INVALID_SNAPSHOT_DIGEST');
   }
   const identities = snapshots.s0.bootstrapIdentities;
-  if (canonicalBootstrapJson(identities) !== canonicalBootstrapJson(snapshots.s1.bootstrapIdentities)) {
+  if (
+    canonicalBootstrapJson(identities) !== canonicalBootstrapJson(snapshots.s1.bootstrapIdentities)
+  ) {
     throw new Error('ORIGIN_BINDING_INVALID_BOOTSTRAP_IDENTITIES');
   }
   return {
@@ -436,9 +516,11 @@ export function verifyPersistedOriginBinding(
     ['format', 's0', 's0Sha256', 's1', 's1Sha256', 'comparisonKind'],
     'ORIGIN_BINDING_INVALID_SNAPSHOTS',
   );
-  if (snapshots.format !== 'prebootstrap_snapshots/v1'
-      || (snapshots.comparisonKind !== 'fresh-byte-equal'
-        && snapshots.comparisonKind !== 'legacy-except-product-has-rows')) {
+  if (
+    snapshots.format !== 'prebootstrap_snapshots/v1' ||
+    (snapshots.comparisonKind !== 'fresh-byte-equal' &&
+      snapshots.comparisonKind !== 'legacy-except-product-has-rows')
+  ) {
     throw new Error('ORIGIN_BINDING_INVALID_SNAPSHOTS');
   }
   const s0 = verifyInventory(snapshots.s0);
@@ -452,27 +534,41 @@ export function verifyPersistedOriginBinding(
     s1Sha256: String(snapshots.s1Sha256),
     comparisonKind,
   };
-  if (persisted.s0Sha256 !== canonicalBootstrapSha256(s0)
-      || persisted.s1Sha256 !== canonicalBootstrapSha256(s1)) {
+  if (
+    persisted.s0Sha256 !== canonicalBootstrapSha256(s0) ||
+    persisted.s1Sha256 !== canonicalBootstrapSha256(s1)
+  ) {
     throw new Error('ORIGIN_BINDING_INVALID_SNAPSHOT_DIGEST');
   }
-  const freshMatches = canonicalBootstrapJson(s0) === canonicalBootstrapJson(s1)
-    && s0.bootstrapIdentities !== null
-    && s0.productHasRows.every(({ hasRows }) => !hasRows);
-  const legacyMatches = canonicalBootstrapJson(withoutProductRows(s0))
-      === canonicalBootstrapJson(withoutProductRows(s1))
-    && s0.bootstrapIdentities === null
-    && s1.bootstrapIdentities === null;
-  if ((comparisonKind === 'fresh-byte-equal' && !freshMatches)
-      || (comparisonKind === 'legacy-except-product-has-rows' && !legacyMatches)) {
+  const freshMatches =
+    canonicalBootstrapJson(s0) === canonicalBootstrapJson(s1) &&
+    s0.bootstrapIdentities !== null &&
+    s0.productHasRows.every(({ hasRows }) => !hasRows);
+  const legacyMatches =
+    canonicalBootstrapJson(withoutProductRows(s0)) ===
+      canonicalBootstrapJson(withoutProductRows(s1)) &&
+    s0.bootstrapIdentities === null &&
+    s1.bootstrapIdentities === null;
+  if (
+    (comparisonKind === 'fresh-byte-equal' && !freshMatches) ||
+    (comparisonKind === 'legacy-except-product-has-rows' && !legacyMatches)
+  ) {
     throw new Error('ORIGIN_BINDING_INVALID_SNAPSHOT_COMPARISON');
   }
   const origin = record(originValue, 'ORIGIN_BINDING_INVALID');
-  exactKeys(origin, ['format', 'prebootstrapSnapshotsSha256', 'bootstrapIdentities'], 'ORIGIN_BINDING_INVALID');
-  if (origin.format !== 'origin_binding/v1'
-      || String(origin.prebootstrapSnapshotsSha256) !== canonicalBootstrapSha256(persisted)
-      || canonicalBootstrapJson(origin.bootstrapIdentities) !== canonicalBootstrapJson(s0.bootstrapIdentities)
-      || canonicalBootstrapJson(s0.bootstrapIdentities) !== canonicalBootstrapJson(s1.bootstrapIdentities)) {
+  exactKeys(
+    origin,
+    ['format', 'prebootstrapSnapshotsSha256', 'bootstrapIdentities'],
+    'ORIGIN_BINDING_INVALID',
+  );
+  if (
+    origin.format !== 'origin_binding/v1' ||
+    String(origin.prebootstrapSnapshotsSha256) !== canonicalBootstrapSha256(persisted) ||
+    canonicalBootstrapJson(origin.bootstrapIdentities) !==
+      canonicalBootstrapJson(s0.bootstrapIdentities) ||
+    canonicalBootstrapJson(s0.bootstrapIdentities) !==
+      canonicalBootstrapJson(s1.bootstrapIdentities)
+  ) {
     throw new Error('ORIGIN_BINDING_INVALID');
   }
   return {

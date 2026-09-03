@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { describe, it } from 'node:test';
+import { loadTask1PrerequisiteCommandContext } from './task1-helm-prerequisite-command.js';
 import {
   TASK1_SELECTOR_CAN_MATCH_H_CEL,
   canTask1SelectorMatchHook,
@@ -55,9 +56,6 @@ function memoryPorts(seed: Task1KubernetesObject[] = []): Task1PrerequisiteComma
       objects.set(key(object), structuredClone(object));
       created.push(structuredClone(object));
       return structuredClone(object);
-    },
-    async tokenReview() {
-      return subject;
     },
     async canI() {
       return false;
@@ -125,7 +123,9 @@ function readyDeployment(
                   value: loaded.configurationSha256,
                 },
               ],
-              readinessProbe: { httpGet: { path: '/ready/tenant-authority/v1' } },
+              readinessProbe: {
+                exec: { command: ['node', '-e', "https.get('/ready/tenant-authority/v1')"] },
+              },
             },
           ],
         },
@@ -136,7 +136,38 @@ function readyDeployment(
 }
 
 describe('Task 1 prerequisite command contract', () => {
+  it('reads prerequisite values before validating their chart binding', async () => {
+    await assert.rejects(
+      () =>
+        loadTask1PrerequisiteCommandContext(
+          [
+            '--namespace',
+            'commander',
+            '--release',
+            'release-a',
+            '--values',
+            fixturePath,
+            '--stage',
+            'network',
+            '--migration-operator-subject',
+            subject,
+          ],
+          process.cwd(),
+        ),
+      /TENANT_POLICY_CHART_DIGEST_MISMATCH/,
+    );
+  });
+
   it('keeps the tracked CEL selector predicate and exact local truth table in lockstep', async () => {
+    assert.equal(
+      [...TASK1_SELECTOR_CAN_MATCH_H_CEL].reduce(
+        (depth, character) =>
+          character === '(' ? depth + 1 : character === ')' ? depth - 1 : depth,
+        0,
+      ),
+      0,
+      'tracked CEL predicate must have balanced parentheses',
+    );
     assert.equal(
       await readFile(
         resolve('scripts/fixtures/task1-prerequisites/selector-can-match-hook.cel'),
@@ -330,6 +361,72 @@ describe('Task 1 prerequisite command contract', () => {
       forbidden.get('Service', 'release-a-api-proof', 'commander'),
       /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
     );
+
+    const invalidGet = createTask1KubectlPorts(async () => 'not-json');
+    await assert.rejects(
+      invalidGet.get('Service', 'release-a-api-proof', 'commander'),
+      /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
+    );
+
+    const invalidCreate = createTask1KubectlPorts(async (args) =>
+      args[0] === 'get' ? '' : 'not-json',
+    );
+    await assert.rejects(
+      runTask1AdmissionAdministrator(await context(), invalidCreate),
+      /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
+    );
+  });
+
+  it('uses a self-subject access review for a named grouped resource', async () => {
+    let command: readonly string[] = [];
+    let request = '';
+    const ports = createTask1KubectlPorts(async (args, stdin) => {
+      command = args;
+      request = stdin ?? '';
+      return JSON.stringify({ status: { allowed: false } });
+    });
+
+    assert.equal(
+      await ports.canI(
+        'get',
+        'validatingadmissionpolicies.admissionregistration.k8s.io',
+        'tenant-policy-guard',
+      ),
+      false,
+    );
+    assert.deepEqual(command, ['create', '--filename', '-', '--output', 'json']);
+    assert.deepEqual(JSON.parse(request), {
+      apiVersion: 'authorization.k8s.io/v1',
+      kind: 'SelfSubjectAccessReview',
+      spec: {
+        resourceAttributes: {
+          verb: 'get',
+          group: 'admissionregistration.k8s.io',
+          resource: 'validatingadmissionpolicies',
+          name: 'tenant-policy-guard',
+        },
+      },
+    });
+  });
+
+  it('fails closed when a self-subject access review lacks an explicit decision', async () => {
+    const ports = createTask1KubectlPorts(async () => JSON.stringify({ status: {} }));
+
+    await assert.rejects(
+      ports.canI('create', 'validatingadmissionpolicies.admissionregistration.k8s.io'),
+      /TENANT_POLICY_KUBERNETES_COMMAND_FAILED/,
+    );
+  });
+
+  it('preserves an operator self-subject access review rejection for bounded readiness handling', async () => {
+    const ports = createTask1KubectlPorts(async () => {
+      throw new Error('TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN');
+    });
+
+    await assert.rejects(
+      ports.canI('get', 'validatingadmissionpolicies.admissionregistration.k8s.io'),
+      /TENANT_CUTOVER_KUBECTL_CREATE_SELF_SUBJECT_ACCESS_REVIEW_FORBIDDEN/,
+    );
   });
 
   it('uses the canonical projection and renders the exact stable policy set', async () => {
@@ -368,6 +465,42 @@ describe('Task 1 prerequisite command contract', () => {
     assert.equal(network.policy.spec.failurePolicy, 'Fail');
     assert.deepEqual(network.binding.spec.validationActions, ['Deny']);
     assert.match(JSON.stringify(network.policy.spec.validations), /migration-operator/);
+    for (const policySpec of [
+      network.policy.spec,
+      loaded.projection.value.admissionGuards.find((guard) => guard.stage === 'network')!
+        .policySpec,
+    ]) {
+      const variables = policySpec.variables as Array<{ name: string; expression: string }>;
+      assert.match(
+        variables.find((variable) => variable.name === 'selectorRequirements')!.expression,
+        /'key': dyn\(k\).*'operator': dyn\('In'\).*'values': dyn\(/,
+      );
+      const validations = policySpec.validations as Array<{ message: string; expression: string }>;
+      assert.match(
+        validations.find(
+          (validation) =>
+            validation.message ===
+            'migration operator may create only an exact rendered stable policy',
+        )!.expression,
+        /\[dyn\(\{"(?:annotations|labels)":dyn\(/,
+      );
+    }
+    for (const pair of [network, renderTask1AdmissionPair(loaded, 'workload')]) {
+      const constraints = pair.policy.spec.matchConstraints as {
+        namespaceSelector?: unknown;
+        objectSelector?: unknown;
+        resourceRules: Array<{ scope?: string }>;
+      };
+      assert.deepEqual(constraints.namespaceSelector, {});
+      assert.deepEqual(constraints.objectSelector, {});
+      assert.ok(constraints.resourceRules.every((rule) => rule.scope === '*'));
+      const matchResources = pair.binding.spec.matchResources as {
+        matchPolicy?: string;
+        objectSelector?: unknown;
+      };
+      assert.equal(matchResources.matchPolicy, 'Equivalent');
+      assert.deepEqual(matchResources.objectSelector, {});
+    }
 
     const workload = renderTask1AdmissionPair(loaded, 'workload');
     assert.match(workload.policy.metadata.name, /^commander-tenant-authority-guard-[0-9a-f]{16}$/);
@@ -394,6 +527,112 @@ describe('Task 1 prerequisite command contract', () => {
     assert.ok(sealed);
     assert.deepEqual(workload.policy.spec, sealed.policySpec);
     assert.deepEqual(workload.binding.spec, sealed.bindingSpec);
+  });
+
+  it('keeps NetworkPolicy-only CEL field access dynamic when the guard also matches Pods', async () => {
+    const network = renderTask1AdmissionPair(await context(), 'network');
+    const constraints = network.policy.spec.matchConstraints as {
+      resourceRules: Array<{ resources: string[] }>;
+    };
+    assert.deepEqual(
+      constraints.resourceRules.map((rule) => rule.resources),
+      [['networkpolicies'], ['pods']],
+    );
+    const egressGuard = (
+      network.policy.spec.validations as Array<{ message: string; expression: string }>
+    ).find(
+      (validation) =>
+        validation.message ===
+        'non-operator NetworkPolicy must not add egress to a protected hook selector',
+    );
+    assert.ok(egressGuard);
+    assert.match(egressGuard.expression, /dyn\(object\)\.spec\.egress/);
+
+    const ownerProofPodGuard = (
+      network.policy.spec.validations as Array<{ message: string; expression: string }>
+    ).find(
+      (validation) =>
+        validation.message === 'migration hook Pods may not carry the legacy component label',
+    );
+    assert.ok(ownerProofPodGuard);
+    assert.match(ownerProofPodGuard.expression, /tenant-cutover-owner-execution/);
+    assert.match(ownerProofPodGuard.expression, /tenant-authority-proof-reader/);
+  });
+
+  it('guards optional Pod-label CEL map reads with key-presence checks', async () => {
+    const network = renderTask1AdmissionPair(await context(), 'network');
+    const validations = network.policy.spec.validations as Array<{
+      message: string;
+      expression: string;
+    }>;
+    const createGuard = validations.find(
+      (validation) =>
+        validation.message === 'migration hook Pods may not carry the legacy component label',
+    );
+    const updateGuard = validations.find(
+      (validation) => validation.message === 'migration hook Pod labels are immutable',
+    );
+    assert.ok(createGuard);
+    assert.ok(updateGuard);
+
+    for (const guard of [createGuard, updateGuard]) {
+      for (const [key, value] of [
+        ['app.kubernetes.io/instance', 'release-a'],
+        ['app.kubernetes.io/name', 'release-a'],
+        ['commander.io/migration-client-v2', 'true'],
+        ['commander.io/migration-release', 'release-a'],
+        ['app.kubernetes.io/component', 'tenant-authority-proof-reader'],
+        ['commander.io/tenant-authority-proof-reader', 'true'],
+        ['commander.io/tenant-authority-proof-release', 'release-a'],
+      ]) {
+        assert.match(
+          guard.expression,
+          new RegExp(
+            `'${key}' in (?:oldObject|object)\\.metadata\\.labels && (?:oldObject|object)\\.metadata\\.labels\\['${key}'\\] == '${value}'`,
+          ),
+        );
+      }
+    }
+  });
+
+  it('keeps StatefulSet-only CEL field access dynamic when the guard also matches Deployments', async () => {
+    const workload = renderTask1AdmissionPair(await context(), 'workload');
+    const constraints = workload.policy.spec.matchConstraints as {
+      resourceRules: Array<{ resources: string[] }>;
+    };
+    assert.deepEqual(
+      constraints.resourceRules.map((rule) => rule.resources),
+      [['deployments', 'statefulsets']],
+    );
+    const postgresGuard = (
+      workload.policy.spec.validations as Array<{
+        message: string;
+        expression: string;
+      }>
+    ).find(
+      (validation) =>
+        validation.message ===
+        'bundled PostgreSQL must preserve exact TLS transport and data-volume identity',
+    );
+    assert.ok(postgresGuard);
+    assert.match(postgresGuard.expression, /dyn\(object\)\.spec\.serviceName/);
+    assert.match(postgresGuard.expression, /dyn\(object\)\.spec\.volumeClaimTemplates/);
+  });
+
+  it('matches the tenant readiness path inside the exec probe script', async () => {
+    const workload = renderTask1AdmissionPair(await context(), 'workload');
+    const guard = (
+      workload.policy.spec.validations as Array<{ message: string; expression: string }>
+    ).find(
+      (validation) =>
+        validation.message ===
+        'tenant-authority API workload must preserve exact context-aware metadata',
+    );
+    assert.ok(guard);
+    assert.match(
+      guard.expression,
+      /readinessProbe\.exec\.command\.exists\(a, a\.contains\('\/ready\/tenant-authority\/v1'\)\)/,
+    );
   });
 
   it('is create-only, idempotent for exact admission objects, and rejects collisions', async () => {
@@ -440,7 +679,7 @@ describe('Task 1 prerequisite command contract', () => {
     );
   });
 
-  it('operator verifies identity, admission/RBAC, live Services and creates only stable policies', async () => {
+  it('operator verifies admission/RBAC, live Services and creates only stable policies', async () => {
     const loaded = await context();
     const pair = renderTask1AdmissionPair(loaded, 'network');
     pair.policy.status = { observedGeneration: 1, typeChecking: { expressionWarnings: [] } };
@@ -478,6 +717,32 @@ describe('Task 1 prerequisite command contract', () => {
     assert.ok(ports.created.every((object) => object.kind === 'NetworkPolicy'));
   });
 
+  it('accepts an observed admission policy with no type-checking warnings field', async () => {
+    const bytes = (await readFile(fixturePath, 'utf8')).replace(
+      'name: postgres',
+      'name: release-a-postgres',
+    );
+    const loaded = loadTask1PrerequisiteContext(
+      {
+        namespace: 'commander',
+        release: 'release-a',
+        valuesPath: fixturePath,
+        stage: 'network',
+        migrationOperatorSubject: subject,
+      },
+      bytes,
+      chartDigest,
+    );
+    const pair = renderTask1AdmissionPair(loaded, 'network');
+    pair.policy.metadata.generation = 1;
+    pair.policy.status = { observedGeneration: 1, typeChecking: {} };
+    const ports = memoryPorts([pair.policy, pair.binding]);
+
+    await runTask1PrerequisiteOperator(loaded, ports);
+
+    assert.equal(ports.created.length, 3);
+  });
+
   it('allows only deterministic future release Services to be absent on a fresh install', async () => {
     const bytes = (await readFile(fixturePath, 'utf8')).replace(
       'name: postgres',
@@ -502,23 +767,16 @@ describe('Task 1 prerequisite command contract', () => {
     assert.equal(ports.created.length, 3);
   });
 
-  it('operator fails closed on subject mismatch, admission write permission, or Service drift', async () => {
+  it('operator fails closed on admission write permission or Service drift', async () => {
     const loaded = await context();
     const pair = renderTask1AdmissionPair(loaded, 'network');
     pair.policy.metadata.generation = 1;
     pair.policy.status = { observedGeneration: 1, typeChecking: { expressionWarnings: [] } };
-    const wrongSubject = memoryPorts([pair.policy, pair.binding]);
-    wrongSubject.tokenReview = async () => 'system:serviceaccount:commander-ops:other';
-    await assert.rejects(
-      runTask1PrerequisiteOperator(loaded, wrongSubject),
-      /TENANT_POLICY_SUBJECT_MISMATCH/,
-    );
-
     const broadRbac = memoryPorts([pair.policy, pair.binding]);
     broadRbac.canI = async () => true;
     await assert.rejects(
       runTask1PrerequisiteOperator(loaded, broadRbac),
-      /TENANT_POLICY_ADMISSION_RBAC_TOO_BROAD/,
+      /TENANT_POLICY_ADMISSION_RBAC_POLICY_CREATE_ALLOWED/,
     );
 
     const drift = memoryPorts([

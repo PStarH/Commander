@@ -58,7 +58,9 @@ import {
   initRateLimitStore,
   closeRateLimitStore,
 } from './securityMiddleware';
+import { bootstrapDefaultAdminAccount } from './userStore';
 import { authMiddleware } from './authMiddleware';
+import { initAuthFailureStore } from './authFailureStore';
 import { tenantContextMiddleware } from './tenantContextMiddleware';
 import { loadTenantProvider } from './tenantProviderLoader';
 import { jwtMiddleware } from './jwtMiddleware';
@@ -166,6 +168,7 @@ function validateEnvironment(): void {
 
   if (missingCritical.length > 0) {
     getGlobalLogger().error('Startup', `Aborting startup: missing ${missingCritical.join(', ')}`);
+    process.stderr.write('COMMANDER_API_STARTUP_FAILED: missing required environment variables\n');
     process.exit(1);
   }
 
@@ -325,7 +328,7 @@ app.use('/api/runs', (req, res, next) => {
   });
 });
 
-// 7. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
+// 7. Authentication (skipped only by the explicit non-production anonymous mode)
 // JWT was already parsed in step 4 for rate-limit identity. API-key auth runs
 // here and skips requests already authenticated via JWT (req.user set).
 app.use(authMiddleware);
@@ -899,11 +902,9 @@ app.get('/api/openapi.json', (_req, res) => {
 // ── Startup + Graceful Shutdown ──────────────────────────────────────────────
 const port = Number(process.env.PORT || 4000);
 
-// initRateLimitStore() opens the persistent SQLite store and hydrates the
-// in-memory Map BEFORE listen() so the first request after boot doesn't see
-// an empty rate-limit cache (which would defeat the auth-reset bypass
-// mitigation this persistence layer was added for). Server reference is
-// captured so gracefulShutdown can drain it.
+// Auth authorities are initialized before listen. They require PostgreSQL and
+// fail closed instead of allowing a process-local fallback. Server reference
+// is captured so gracefulShutdown can drain it.
 let httpServer: { close: (cb?: () => void) => void } | null = null;
 let task1ReadinessService: Task1ReadinessService | undefined;
 
@@ -950,6 +951,8 @@ async function startServer(): Promise<void> {
   }
 
   await initRateLimitStore();
+  initAuthFailureStore();
+  await bootstrapDefaultAdminAccount();
 
   // Memory backend selection:
   // - Non-production: Local-First via resolveMemoryStoreType (in-memory without DSN).
@@ -980,6 +983,8 @@ async function startServer(): Promise<void> {
   try {
     const canonicalStore = await createMemoryStore(memoryType, {
       connectionString: process.env.COMMANDER_POSTGRES_URL ?? process.env.DATABASE_URL,
+      manageSchema:
+        memoryType === 'postgres' && process.env.NODE_ENV === 'production' ? false : undefined,
     });
     canonicalMemoryStore = canonicalStore;
     projectMemoryAdapter = new ProjectMemoryStoreAdapter(canonicalStore);
@@ -1085,7 +1090,7 @@ async function startServer(): Promise<void> {
 }
 
 startServer().catch(async (err: Error) => {
-  process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+  process.stderr.write('COMMANDER_API_STARTUP_FAILED: ' + err.message + '\n');
   try {
     await closeTask1ReadinessService();
   } catch (closeErr) {

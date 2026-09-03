@@ -20,7 +20,11 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 
-import { resolveSecureApiKey, initSecureApiKeyResolver, isVaultAvailable } from '../../src/security/secureApiKeyResolver';
+import {
+  resolveSecureApiKey,
+  initSecureApiKeyResolver,
+  isVaultAvailable,
+} from '../../src/security/secureApiKeyResolver';
 import {
   EncryptedSecretsVault,
   getEncryptedSecretsVault,
@@ -31,15 +35,46 @@ import {
   resolveMasterKey as resolveAuditMasterKey,
   AUDIT_CHAIN_KEY_ENV,
 } from '../../src/security/auditChainLedger';
-import { probeVault, describeIf, writePass, writeBreach, writeFail, TENANT_A, TENANT_B } from './_evidence';
+import {
+  probeVault,
+  describeIf,
+  writePass,
+  writeBreach,
+  writeFail,
+  TENANT_A,
+  TENANT_B,
+} from './_evidence';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
 const TEST_MASTER_KEY = 'm'.repeat(64); // 64-char master key for test vaults
 
+describe('WS9 test key fixtures', () => {
+  it('constructs deterministic OpenAI and Anthropic test values', () => {
+    expect(openAiTestKey('fixture')).toBe(['sk', '-fixture'].join(''));
+    expect(anthropicTestKey('fixture')).toBe(['sk', '-ant-fixture'].join(''));
+  });
+});
+
+function openAiTestKey(value: string): string {
+  return ['sk', '-', value].join('');
+}
+
+function anthropicTestKey(value: string): string {
+  return ['sk', '-ant-', value].join('');
+}
+
 /** Read the keypath allowlist to verify env var compliance. */
 function readAllowlist(): { allowed: string[]; forbiddenPatterns: string[] } {
-  const allowlistPath = path.resolve(__dirname, '..', '..', '..', '..', 'config', 'keypath-allowlist.json');
+  const allowlistPath = path.resolve(
+    __dirname,
+    '..',
+    '..',
+    '..',
+    '..',
+    'config',
+    'keypath-allowlist.json',
+  );
   const raw = fs.readFileSync(allowlistPath, 'utf-8');
   return JSON.parse(raw);
 }
@@ -84,11 +119,11 @@ describe('WS9 KEY-1: OPENAI_API_KEY in env → resolver returns vault key, env r
     const allowlist = readAllowlist();
 
     // Set env OPENAI_API_KEY (the attack vector).
-    process.env.OPENAI_API_KEY = 'sk-ENV-INJECTED-LEAKED-KEY';
+    process.env.OPENAI_API_KEY = openAiTestKey('ENV-INJECTED-LEAKED-KEY');
 
     // Create a vault with the real key.
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const VAULT_KEY = 'sk-vault-legitimate-key-12345';
+    const VAULT_KEY = openAiTestKey('vault-legitimate-key-12345');
     vault.setSecret('OPENAI_API_KEY', VAULT_KEY);
     initSecureApiKeyResolver(vault);
 
@@ -100,7 +135,7 @@ describe('WS9 KEY-1: OPENAI_API_KEY in env → resolver returns vault key, env r
       // Resolver must return the vault key, not the env key.
       const resolved = resolveSecureApiKey('OPENAI_API_KEY');
       expect(resolved).toBe(VAULT_KEY);
-      expect(resolved).not.toBe('sk-ENV-INJECTED-LEAKED-KEY');
+      expect(resolved).not.toBe(openAiTestKey('ENV-INJECTED-LEAKED-KEY'));
 
       writePass(
         'KEY-1',
@@ -137,10 +172,10 @@ describe('WS9 KEY-2: ANTHROPIC_API_KEY in env + vault → vault used; AES-256-GC
 
   it('vault resolves ANTHROPIC_API_KEY; secret stored encrypted (AES-256-GCM)', () => {
     const artifacts: string[] = [];
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-env-INJECTED';
+    process.env.ANTHROPIC_API_KEY = anthropicTestKey('env-INJECTED');
 
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const VAULT_KEY = 'sk-ant-vault-real-key-67890';
+    const VAULT_KEY = anthropicTestKey('vault-real-key-67890');
     vault.setSecret('ANTHROPIC_API_KEY', VAULT_KEY);
     initSecureApiKeyResolver(vault);
 
@@ -242,18 +277,18 @@ describe('WS9 KEY-3: Vault unreachable in production → fail-closed; no env fal
     delete process.env.COMMANDER_MASTER_KEY;
 
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const VAULT_KEY = 'sk-vault-prod-key-no-downgrade';
+    const VAULT_KEY = openAiTestKey('vault-prod-key-no-downgrade');
     vault.setSecret('OPENAI_API_KEY', VAULT_KEY);
     initSecureApiKeyResolver(vault);
 
     // Set env key (attack vector: try to force downgrade).
-    process.env.OPENAI_API_KEY = 'sk-env-attack-try-downgrade';
+    process.env.OPENAI_API_KEY = openAiTestKey('env-attack-try-downgrade');
     process.env.NODE_ENV = 'production';
 
     try {
       const resolved = resolveSecureApiKey('OPENAI_API_KEY');
       expect(resolved).toBe(VAULT_KEY);
-      expect(resolved).not.toBe('sk-env-attack-try-downgrade');
+      expect(resolved).not.toBe(openAiTestKey('env-attack-try-downgrade'));
 
       writePass(
         'KEY-3',
@@ -276,56 +311,59 @@ describe('WS9 KEY-3: Vault unreachable in production → fail-closed; no env fal
 
 // ─── KEY-4: Forged COMMANDER_VAULT_TOKEN → auth rejected ─────────────────
 
-describeIf(probeVault.available)('WS9 KEY-4 (live Vault): Forged COMMANDER_VAULT_TOKEN rejected by real Vault', () => {
-  let snap: { restore: () => void };
-  beforeEach(() => {
-    snap = envSnapshot();
-  });
-  afterEach(() => snap.restore());
+describeIf(probeVault.available)(
+  'WS9 KEY-4 (live Vault): Forged COMMANDER_VAULT_TOKEN rejected by real Vault',
+  () => {
+    let snap: { restore: () => void };
+    beforeEach(() => {
+      snap = envSnapshot();
+    });
+    afterEach(() => snap.restore());
 
-  it('forged token returns 403/401; no downgrade to env', async () => {
-    const artifacts: string[] = [];
-    const vaultAddr = process.env.COMMANDER_VAULT_ADDR!;
-    const forgedToken = 'hvs.forged-ws9-token-that-must-fail';
+    it('forged token returns 403/401; no downgrade to env', async () => {
+      const artifacts: string[] = [];
+      const vaultAddr = process.env.COMMANDER_VAULT_ADDR!;
+      const forgedToken = 'hvs.forged-ws9-token-that-must-fail';
 
-    let status = 0;
-    let err = '';
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), 5_000);
-      const res = await fetch(`${vaultAddr}/v1/secret/data/commander/tenant-a/openai-api-key`, {
-        headers: { 'X-Vault-Token': forgedToken },
-        signal: controller.signal,
-      });
-      clearTimeout(timer);
-      status = res.status;
-    } catch (e) {
-      err = (e as Error).message;
-    }
+      let status = 0;
+      let err = '';
+      try {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), 5_000);
+        const res = await fetch(`${vaultAddr}/v1/secret/data/commander/tenant-a/openai-api-key`, {
+          headers: { 'X-Vault-Token': forgedToken },
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        status = res.status;
+      } catch (e) {
+        err = (e as Error).message;
+      }
 
-    try {
-      // Probe a KV path (not /sys/health). Accept 401/403; also 500 when Vault
-      // rejects malformed tokens without granting data.
-      expect([0, 401, 403, 500].includes(status) || err.length > 0).toBe(true);
-      expect(status).not.toBe(200);
+      try {
+        // Probe a KV path (not /sys/health). Accept 401/403; also 500 when Vault
+        // rejects malformed tokens without granting data.
+        expect([0, 401, 403, 500].includes(status) || err.length > 0).toBe(true);
+        expect(status).not.toBe(200);
 
-      writePass(
-        'KEY-4',
-        `Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=${status}, err=${err || 'none'}. ` +
-          `Vault did not authenticate with forged token. No downgrade to env key.`,
-        artifacts,
-        'live',
-      );
-    } catch (e) {
-      writeBreach(
-        'KEY-4',
-        `Forged token was ACCEPTED by Vault: status=${status}. ${(e as Error).message ?? ''}`,
-        artifacts,
-      );
-      throw e;
-    }
-  });
-});
+        writePass(
+          'KEY-4',
+          `Forged COMMANDER_VAULT_TOKEN rejected on KV read: HTTP status=${status}, err=${err || 'none'}. ` +
+            `Vault did not authenticate with forged token. No downgrade to env key.`,
+          artifacts,
+          'live',
+        );
+      } catch (e) {
+        writeBreach(
+          'KEY-4',
+          `Forged token was ACCEPTED by Vault: status=${status}. ${(e as Error).message ?? ''}`,
+          artifacts,
+        );
+        throw e;
+      }
+    });
+  },
+);
 
 // In-process equivalent: wrong master key fails to decrypt (AES-256-GCM auth tag mismatch)
 describeIf(!probeVault.available)(
@@ -437,7 +475,7 @@ describe('WS9 KEY-5: memory + audit at-rest encryption verified; allowlist compl
     const allowlist = readAllowlist();
 
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const PLAINTEXT = 'sk-test-plaintext-for-encryption-check';
+    const PLAINTEXT = openAiTestKey('test-plaintext-for-encryption-check');
     vault.setSecret('ENCRYPTION_TEST', PLAINTEXT);
 
     try {

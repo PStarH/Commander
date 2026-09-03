@@ -5,6 +5,6 @@
   "breach": false,
   "details": "FailClosedPersistor blocks effect on both paths: async threw=true, sync threw=true. Both throw AUDIT_PERSIST_FAILED. Effect cannot proceed when audit write fails (KC-5d closed).",
   "artifacts": [],
-  "gitSha": "258767cd75d990ce64ff861484187b5d6b7ce828",
-  "ranAt": "2026-07-30T08:48:35.165Z"
+  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
+  "ranAt": "2026-08-10T02:34:48.757Z"
 }

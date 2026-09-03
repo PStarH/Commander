@@ -97,10 +97,14 @@ describe('technical product-proof derivation', () => {
       ['REAL_EXTERNAL_SYSTEM_REQUIRED', (value) => (value.topology.externalSystem.mode = 'mocked')],
       [
         'DISTINCT_PROCESS_IDENTITIES_REQUIRED',
-        (value) => (value.topology.processIdentities.worker = value.topology.processIdentities.gateway),
+        (value) =>
+          (value.topology.processIdentities.worker = value.topology.processIdentities.gateway),
       ],
       ['DATABASE_ROLE_ATTESTATION_INCOMPLETE', (value) => value.topology.databaseRoles.pop()],
-      ['EXTERNAL_FAULT_DRIVER_REQUIRED', (value) => (value.campaign.driverBoundary = 'same-process')],
+      [
+        'EXTERNAL_FAULT_DRIVER_REQUIRED',
+        (value) => (value.campaign.driverBoundary = 'same-process'),
+      ],
       ['FAULT_MATRIX_INCOMPLETE', (value) => (value.campaign.matrixComplete = false)],
       ['DISASTER_RECOVERY_GATE_REQUIRED', (value) => (value.gates.disasterRecovery.passed = false)],
       [
@@ -146,7 +150,11 @@ describe('customer acceptance verification', () => {
       criticalBypasses: 0,
       acceptedAt: '2026-07-29T00:00:00.000Z',
     };
-    const signature = sign(null, Buffer.from(customerAcceptanceSigningPayload(unsigned)), privateKey);
+    const signature = sign(
+      null,
+      Buffer.from(customerAcceptanceSigningPayload(unsigned)),
+      privateKey,
+    );
     const acceptance: CustomerAcceptance = {
       ...unsigned,
       signature: {
@@ -191,7 +199,11 @@ describe('customer acceptance verification', () => {
     const signature = sign(null, Buffer.from(customerAcceptanceSigningPayload(base)), privateKey);
     const signed: CustomerAcceptance = {
       ...base,
-      signature: { algorithm: 'ed25519', keyId: 'partner-key', value: signature.toString('base64') },
+      signature: {
+        algorithm: 'ed25519',
+        keyId: 'partner-key',
+        value: signature.toString('base64'),
+      },
     };
     const publicKeyPem = publicKey.export({ type: 'spki', format: 'pem' }).toString();
 

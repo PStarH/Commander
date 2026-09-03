@@ -45,9 +45,7 @@ describe('WS6 memory audit query', () => {
     const page = await service.queryAudit!({ scope, namespace: 'alpha', limit: 20 });
     assert.ok(page.entries.some((e) => e.action === 'forget'));
     assert.ok(
-      page.entries.some(
-        (e) => e.action === 'forget' && e.tags?.includes('namespace:alpha'),
-      ),
+      page.entries.some((e) => e.action === 'forget' && e.tags?.includes('namespace:alpha')),
     );
   });
 

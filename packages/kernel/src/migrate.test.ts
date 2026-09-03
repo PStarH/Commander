@@ -1,19 +1,496 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import * as migrationEntrypoint from './migrate.js';
 import {
   isTask1OwnerCommandMode,
+  migrationPoolConfig,
+  ownerMigrationPoolConfig,
   parseTask1ClosureMigrationPhase,
   resolveMigrationDatabaseUrl,
   runTask1OwnerMode,
+  runTask1OwnerAppendBootstrap,
   currentTask1Operation,
   createTask1ProofRuntime,
   readTask1OwnerInput,
+  seedTask1ReadinessTenant,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
+import {
+  KERNEL_MIGRATIONS,
+  KERNEL_TASK1_BASELINE_MIGRATIONS,
+  KERNEL_TASK1_CLOSURE_MIGRATIONS,
+} from './migrations.js';
+import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 import type { Task1RolloutProofReceipt } from './task1RolloutProof.js';
+
+function sqlResult<T>(rows: T[]): SqlQueryResult<T> {
+  return { rows, rowCount: rows.length };
+}
+
+class OwnerBootstrapLedgerClient implements SqlClient {
+  readonly appliedMigrationIds: string[] = [];
+
+  constructor(private readonly ledger = new Map<string, string>()) {}
+
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    values: readonly unknown[] = [],
+  ): Promise<SqlQueryResult<T>> {
+    const normalized = sql.replace(/\s+/g, ' ').trim();
+    if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') {
+      return sqlResult<T>([]);
+    }
+    if (normalized.includes('pg_advisory_xact_lock')) return sqlResult<T>([]);
+    if (normalized === 'SELECT current_user, session_user') {
+      return sqlResult([{ current_user: 'commander_owner', session_user: 'commander_owner' } as T]);
+    }
+    if (normalized.includes("tablename = 'commander_runs'") && normalized.includes('tableowner')) {
+      return sqlResult([{ owns: true } as T]);
+    }
+    if (
+      normalized.includes("tablename='public'") ||
+      normalized.includes("tablename='commander_runs'") ||
+      normalized.includes("tablename = 'commander_runs'")
+    ) {
+      return sqlResult([{ exists: true } as T]);
+    }
+    if (normalized.startsWith('CREATE TABLE IF NOT EXISTS commander_kernel_migrations')) {
+      return sqlResult<T>([]);
+    }
+    if (normalized === 'SELECT checksum FROM commander_kernel_migrations WHERE id=$1') {
+      const checksum = this.ledger.get(String(values[0]));
+      return sqlResult(checksum ? [{ checksum } as T] : []);
+    }
+    if (normalized.startsWith('INSERT INTO commander_kernel_migrations')) {
+      const id = String(values[0]);
+      this.ledger.set(id, String(values[1]));
+      this.appliedMigrationIds.push(id);
+      return sqlResult<T>([]);
+    }
+    if (normalized === 'SELECT rolbypassrls, rolname FROM pg_roles WHERE rolname = current_user') {
+      return sqlResult([{ rolbypassrls: true, rolname: 'commander_owner' } as T]);
+    }
+    return sqlResult<T>([]);
+  }
+
+  release(): void {}
+}
+
+class OwnerBootstrapLedgerPool implements SqlPool {
+  readonly client = new OwnerBootstrapLedgerClient();
+
+  async connect(): Promise<SqlClient> {
+    return this.client;
+  }
+}
+
+class FailingOwnerBootstrapLedgerClient extends OwnerBootstrapLedgerClient {
+  override async query<T = Record<string, unknown>>(
+    sql: string,
+    values: readonly unknown[] = [],
+  ): Promise<SqlQueryResult<T>> {
+    if (sql === KERNEL_TASK1_BASELINE_MIGRATIONS[0]?.sql) {
+      throw Object.assign(
+        new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+        {
+          code: '42P01',
+        },
+      );
+    }
+    return super.query(sql, values);
+  }
+}
+
+class FailingOwnerBootstrapLedgerPool implements SqlPool {
+  readonly client = new FailingOwnerBootstrapLedgerClient();
+
+  async connect(): Promise<SqlClient> {
+    return this.client;
+  }
+}
 
 describe('kernel owner migration entrypoint', () => {
   const digest = (value: string): string => value.repeat(64).slice(0, 64);
+
+  it('seeds the fixed readiness tenant through the owner authority allowlist', async () => {
+    const calls: Array<{ sql: string; values: readonly unknown[] | undefined }> = [];
+    await seedTask1ReadinessTenant({
+      async query(sql, values) {
+        calls.push({ sql, values });
+        return sqlResult([]);
+      },
+    });
+
+    assert.equal(calls.length, 1);
+    assert.match(calls[0]!.sql, /INSERT INTO commander_tenant_authority_allowed_tenants/i);
+    assert.deepEqual(calls[0]!.values, ['commander/readiness/v1']);
+  });
+
+  it('formats only a sanitized PostgreSQL migration failure diagnostic', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const failure = Object.assign(
+      new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+      {
+        migrationId: '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
+        phase: 'enforce',
+        sqlstate: '42P01',
+        ownerStage: 'bootstrap_kernel',
+      },
+    );
+    const result = formatter!(failure);
+
+    assert.equal(
+      result,
+      'COMMANDER_MIGRATION_FAILED;owner_stage=bootstrap_kernel;migration=2026-07-27.3.task1_authenticated_tenant_authority_enforce;phase=enforce;sqlstate=42P01',
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+  });
+
+  it('retains only the allowlisted Kubernetes proof invariant diagnostic', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
+        ownerStage: 'rollout_proof',
+        code: 'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+        diagnostic: 'task1KubernetesProofObserver.ts:1012:7',
+      }),
+    );
+    assert.equal(
+      result,
+      'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof;proof_code=TENANT_CUTOVER_KUBERNETES_PROOF_INVALID;proof_invariant=task1KubernetesProofObserver.ts:1012:7',
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+
+    assert.equal(
+      formatter!(
+        Object.assign(new Error('private'), {
+          ownerStage: 'rollout_proof',
+          code: 'PRIVATE_FAILURE',
+          diagnostic: 'postgres://owner:secret@postgres/commander',
+        }),
+      ),
+      'COMMANDER_MIGRATION_FAILED;owner_stage=rollout_proof',
+    );
+  });
+
+  it('formats every allowlisted owner boundary without reflecting failure details', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const stages = [
+      'input',
+      'proof_runtime',
+      'bootstrap_kernel',
+      'bootstrap_closure',
+      'owner_pool_configuration',
+      'owner_pool_connect',
+      'bootstrap_context',
+      'bootstrap_context_authority_url',
+      'bootstrap_context_pool_configuration',
+      'bootstrap_context_pool_connect',
+      'bootstrap_context_catalog_query',
+      'bootstrap_context_pool_close',
+      'lifecycle_initialize',
+      'lifecycle_pinned_manifest_validation',
+      'lifecycle_prepared_request_validation',
+      'lifecycle_table_discovery',
+      'lifecycle_candidate_peer_observation',
+      'lifecycle_candidate_peer_validation',
+      'lifecycle_prebootstrap_snapshot',
+      'lifecycle_prebootstrap_snapshot_comparison',
+      'lifecycle_initialization_planning',
+      'lifecycle_descriptor_transaction',
+      'lifecycle_peer_reobservation',
+      'lifecycle_peer_reobservation_input_consistency',
+      'lifecycle_peer_reobservation_candidate_binding_validation',
+      'lifecycle_peer_reobservation_observed_binding_validation',
+      'lifecycle_peer_reobservation_binding_consistency',
+      'lifecycle_transaction',
+      'current_read',
+      'rollout_proof',
+    ] as const;
+
+    for (const ownerStage of stages) {
+      const result = formatter!(
+        Object.assign(new Error('owner-stage-opaque-marker'), {
+          ownerStage,
+        }),
+      );
+      assert.equal(result, 'COMMANDER_MIGRATION_FAILED;owner_stage=' + ownerStage);
+      assert.doesNotMatch(result, /owner-stage-opaque-marker/i);
+    }
+  });
+
+  it('formats only the fixed prebootstrap snapshot and catalog step', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('postgres://owner:secret@postgres/commander SELECT private_value'), {
+        ownerStage: 'lifecycle_prebootstrap_snapshot',
+        snapshot: 's0',
+        catalogStep: 'functions',
+      }),
+    );
+
+    assert.equal(
+      result,
+      'COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;catalog_step=functions',
+    );
+    assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+  });
+
+  for (const snapshotTransaction of ['begin', 'commit'] as const) {
+    it(`formats only the fixed ${snapshotTransaction} snapshot transaction boundary`, () => {
+      const formatter = (
+        migrationEntrypoint as typeof migrationEntrypoint & {
+          migrationFailureDiagnostic?: (error: unknown) => string;
+        }
+      ).migrationFailureDiagnostic;
+      assert.equal(typeof formatter, 'function');
+
+      const result = formatter!(
+        Object.assign(
+          new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+          {
+            ownerStage: 'lifecycle_prebootstrap_snapshot',
+            snapshot: 's0',
+            snapshotTransaction,
+          },
+        ),
+      );
+
+      assert.equal(
+        result,
+        'COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_transaction=' +
+          snapshotTransaction,
+      );
+      assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+    });
+  }
+
+  for (const snapshotValidation of [
+    'bootstrap_validation',
+    'identity_validation',
+    'product_source_validation',
+    'catalog_version_validation',
+    'origin_classification',
+  ] as const) {
+    it(`formats only the fixed ${snapshotValidation} snapshot validation`, () => {
+      const formatter = (
+        migrationEntrypoint as typeof migrationEntrypoint & {
+          migrationFailureDiagnostic?: (error: unknown) => string;
+        }
+      ).migrationFailureDiagnostic;
+      assert.equal(typeof formatter, 'function');
+
+      const result = formatter!(
+        Object.assign(
+          new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+          {
+            ownerStage: 'lifecycle_prebootstrap_snapshot',
+            snapshot: 's0',
+            snapshotValidation,
+          },
+        ),
+      );
+
+      assert.equal(
+        result,
+        'COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=' +
+          snapshotValidation,
+      );
+      assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+    });
+  }
+
+  for (const originClassificationStep of [
+    'fresh_catalog_shape',
+    'role_envelope',
+    'role_attributes',
+    'memberships',
+    'public_acl',
+  ] as const) {
+    it(`formats only the fixed ${originClassificationStep} origin classification step`, () => {
+      const formatter = (
+        migrationEntrypoint as typeof migrationEntrypoint & {
+          migrationFailureDiagnostic?: (error: unknown) => string;
+        }
+      ).migrationFailureDiagnostic;
+      assert.equal(typeof formatter, 'function');
+
+      const result = formatter!(
+        Object.assign(
+          new Error('postgres://owner:secret@postgres/commander SELECT private_value'),
+          {
+            ownerStage: 'lifecycle_prebootstrap_snapshot',
+            snapshot: 's0',
+            snapshotValidation: 'origin_classification',
+            originClassificationStep,
+          },
+        ),
+      );
+
+      assert.equal(
+        result,
+        'COMMANDER_MIGRATION_FAILED;owner_stage=lifecycle_prebootstrap_snapshot;snapshot=s0;snapshot_validation=origin_classification;origin_classification_step=' +
+          originClassificationStep,
+      );
+      assert.doesNotMatch(result, /postgres:|secret|SELECT|private_value/i);
+    });
+  }
+
+  it('fails closed when an owner stage is not allowlisted', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('untrusted-owner-stage-marker'), {
+        ownerStage: 'untrusted_stage',
+        migrationId: '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
+        phase: 'enforce',
+        sqlstate: '42P01',
+      }),
+    );
+
+    assert.equal(result, 'COMMANDER_MIGRATION_FAILED');
+  });
+
+  it('fails closed when migration failure fields are malformed', () => {
+    const formatter = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        migrationFailureDiagnostic?: (error: unknown) => string;
+      }
+    ).migrationFailureDiagnostic;
+    assert.equal(typeof formatter, 'function');
+
+    const result = formatter!(
+      Object.assign(new Error('postgres://owner:secret@postgres/commander'), {
+        migrationId: 'not a migration id',
+        phase: 'unbounded',
+        sqlstate: 'not-a-sqlstate',
+      }),
+    );
+
+    assert.equal(result, 'COMMANDER_MIGRATION_FAILED');
+  });
+
+  it('attaches only migration identity, phase, and PostgreSQL SQLSTATE to a failed query', async () => {
+    const pool = new FailingOwnerBootstrapLedgerPool();
+
+    await assert.rejects(
+      () => migrationEntrypoint.bootstrapTask1OwnerAppendMigrations(pool, 'enforce'),
+      (error: unknown) => {
+        const failure = error as Error & {
+          migrationId?: string;
+          phase?: string;
+          sqlstate?: string;
+        };
+        assert.equal(failure.migrationId, KERNEL_TASK1_BASELINE_MIGRATIONS[0]?.id);
+        assert.equal(failure.phase, 'baseline');
+        assert.equal(failure.sqlstate, '42P01');
+        assert.equal(failure.ownerStage, 'bootstrap_kernel');
+        assert.doesNotMatch(failure.message, /postgres:|secret|SELECT|private_value/i);
+        return true;
+      },
+    );
+  });
+
+  it('bootstraps enforce lifecycle descriptors before a fresh owner append initializes state', async () => {
+    const bootstrap = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        bootstrapTask1OwnerAppendMigrations?: (pool: SqlPool, command: 'enforce') => Promise<void>;
+      }
+    ).bootstrapTask1OwnerAppendMigrations;
+    assert.equal(typeof bootstrap, 'function');
+
+    const pool = new OwnerBootstrapLedgerPool();
+    await bootstrap!(pool, 'enforce');
+
+    // After the enforce closure lands, the forward list gains post-closure
+    // descriptors (auth-persistence schema included) and is re-applied so a
+    // single bootstrap leaves the database complete for the API.
+    assert.deepEqual(pool.client.appliedMigrationIds, [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id }) => id),
+      ...KERNEL_TASK1_CLOSURE_MIGRATIONS.map(({ id }) => id),
+      ...KERNEL_MIGRATIONS.filter(
+        (migration) =>
+          // The historical task2 schema is superseded once the canonical
+          // enforce closure is recorded, and runKernelMigrations skips it.
+          migration.id !== '2026-07-26.2.task2_reconciliation_schema' &&
+          !KERNEL_TASK1_BASELINE_MIGRATIONS.some(({ id }) => id === migration.id) &&
+          !KERNEL_TASK1_CLOSURE_MIGRATIONS.some(({ id }) => id === migration.id),
+      ).map(({ id }) => id),
+    ]);
+  });
+
+  it('initializes the lifecycle catalog before applying the requested closure', async () => {
+    const events: string[] = [];
+    const client = new OwnerBootstrapLedgerClient();
+    const pool = {
+      client,
+      async connect() {
+        return client;
+      },
+    } as unknown as SqlPool;
+    const prepared = { command: 'install_enforce' } as Parameters<
+      typeof runTask1OwnerAppendBootstrap
+    >[1];
+
+    await runTask1OwnerAppendBootstrap(pool, prepared, {
+      initialize: async () => {
+        events.push('lifecycle_initialize');
+      },
+      applyClosure: async () => {
+        events.push('bootstrap_closure');
+      },
+    });
+
+    assert.deepEqual(events, ['lifecycle_initialize', 'bootstrap_closure']);
+  });
+
+  it('classifies a rejected owner pool connection before lifecycle initialization', async () => {
+    const pool = {
+      async connect() {
+        throw new Error('postgres://owner:secret@db/commander connect refused');
+      },
+    } as unknown as SqlPool;
+    const prepared = { command: 'install_enforce' } as Parameters<
+      typeof runTask1OwnerAppendBootstrap
+    >[1];
+
+    await assert.rejects(
+      () => runTask1OwnerAppendBootstrap(pool, prepared),
+      (error: unknown) => {
+        assert.equal((error as { ownerStage?: unknown }).ownerStage, 'owner_pool_connect');
+        return true;
+      },
+    );
+  });
 
   it('uses the dedicated owner DSN before legacy migration variables', () => {
     assert.equal(
@@ -24,6 +501,42 @@ describe('kernel owner migration entrypoint', () => {
       }),
       'postgres://owner',
     );
+  });
+
+  it('bounds owner database waits before a lifecycle Job can exhaust its deadline', () => {
+    assert.deepEqual(
+      ownerMigrationPoolConfig('postgres://owner:secret@db.internal/commander?sslmode=verify-full'),
+      {
+        connectionString: 'postgres://owner:secret@db.internal/commander?sslmode=verify-full',
+        connectionTimeoutMillis: 5_000,
+        query_timeout: 30_000,
+        lock_timeout: 30_000,
+      },
+    );
+  });
+
+  it('formats owner progress with a fixed non-sensitive stage record', () => {
+    const progressRecord = (
+      migrationEntrypoint as typeof migrationEntrypoint & {
+        ownerMigrationProgressRecord?: (stage: string) => string;
+      }
+    ).ownerMigrationProgressRecord;
+
+    assert.equal(typeof progressRecord, 'function');
+    assert.equal(
+      progressRecord!('lifecycle_transaction'),
+      'COMMANDER_MIGRATION_PROGRESS;owner_stage=lifecycle_transaction',
+    );
+  });
+
+  it('bounds the chart migration Hook database waits before its Job deadline', () => {
+    const connectionString = 'postgres://owner:secret@db.internal/commander?sslmode=verify-full';
+
+    assert.deepEqual(
+      migrationPoolConfig('tenant-cutover-migrate', connectionString),
+      ownerMigrationPoolConfig(connectionString),
+    );
+    assert.deepEqual(migrationPoolConfig('migration', connectionString), { connectionString });
   });
 
   it('runs closure descriptors only for the explicit phase-bound action', () => {

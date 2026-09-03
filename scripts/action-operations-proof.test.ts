@@ -70,6 +70,21 @@ describe('action-operations proof preflight', () => {
     );
   });
 
+  it("accepts pnpm's argument separator before the proof flags", () => {
+    assert.deepEqual(
+      parseActionOperationsProofArgs([
+        '--',
+        '--provider',
+        'github',
+        '--fault-campaign',
+        'full',
+        '--output',
+        'artifacts/proof',
+      ]),
+      { provider: 'github', faultCampaign: 'full', output: 'artifacts/proof' },
+    );
+  });
+
   it('rejects missing credentials, fake destinations, non-Postgres storage, and shared processes', () => {
     const cases: Array<[string, (environment: ActionOperationsProofEnvironment) => void]> = [
       [
