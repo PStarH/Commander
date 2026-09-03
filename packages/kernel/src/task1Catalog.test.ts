@@ -602,11 +602,7 @@ describe('Task 1 PostgreSQL catalog collector', () => {
   });
 
   for (const [snapshotValidation, client, context] of [
-    [
-      'bootstrap_validation',
-      new CatalogClient(),
-      { ...bootstrap, sessionUser: 'commander_owner' },
-    ],
+    ['bootstrap_validation', new CatalogClient(), { ...bootstrap, sessionUser: 'commander_owner' }],
     ['identity_validation', new CatalogClient({ identity: [] }), bootstrap],
     [
       'product_source_validation',
@@ -616,7 +612,11 @@ describe('Task 1 PostgreSQL catalog collector', () => {
       }),
       bootstrap,
     ],
-    ['catalog_version_validation', new CatalogClient(), { ...bootstrap, catalogVersion: 'invalid' }],
+    [
+      'catalog_version_validation',
+      new CatalogClient(),
+      { ...bootstrap, catalogVersion: 'invalid' },
+    ],
     [
       'origin_classification',
       new CatalogClient({
