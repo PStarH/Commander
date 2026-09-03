@@ -6,7 +6,7 @@ import base64
 import hashlib
 import json
 import os
-from typing import Any, Self
+from typing import Any
 from urllib.parse import quote
 
 import httpx
@@ -223,7 +223,7 @@ class CommanderGatewayClient:
             headers=self._build_headers(),
         )
 
-    async def __aenter__(self) -> Self:
+    async def __aenter__(self) -> CommanderGatewayClient:  # noqa: PYI034 - typing.Self needs Python 3.11
         return self
 
     async def __aexit__(self, *args: object) -> None:
