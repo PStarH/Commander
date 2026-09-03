@@ -393,7 +393,9 @@ const LIFECYCLE_INITIALIZER_FAILURE_STAGES = [
 type LifecycleInitializerFailureStage = (typeof LIFECYCLE_INITIALIZER_FAILURE_STAGES)[number];
 type SnapshotTransaction = 'begin' | 'commit';
 
-function isLifecycleInitializerFailureStage(value: unknown): value is LifecycleInitializerFailureStage {
+function isLifecycleInitializerFailureStage(
+  value: unknown,
+): value is LifecycleInitializerFailureStage {
   return (
     typeof value === 'string' &&
     (LIFECYCLE_INITIALIZER_FAILURE_STAGES as readonly string[]).includes(value)
@@ -936,7 +938,8 @@ export async function initializeTask1LifecycleBoundary(input: {
   });
   await atLifecycleInitializerFailureStage('lifecycle_prepared_request_validation', async () => {
     if (
-      canonicalBootstrapSha256(input.prepared.configuration) !== input.prepared.configurationSha256 ||
+      canonicalBootstrapSha256(input.prepared.configuration) !==
+        input.prepared.configurationSha256 ||
       canonicalBootstrapJson(input.prepared.configuration) !==
         canonicalBootstrapJson({
           ...input.prepared.businessConfiguration,
@@ -1207,8 +1210,8 @@ export async function initializeTask1LifecycleBoundary(input: {
     runTask1LifecycleDescriptorStateTransaction(
       input.client,
       async () => {
-      await input.client.query(
-        `INSERT INTO public.commander_tenant_cutover_state
+        await input.client.query(
+          `INSERT INTO public.commander_tenant_cutover_state
          (singleton, installation_uuid, state, state_version, platform_kind,
           platform_binding_sha256, prebootstrap_snapshots_jcs, prebootstrap_snapshots_sha256,
           bootstrap_identities_jcs, origin_binding_jcs, origin_binding_sha256,
@@ -1220,27 +1223,27 @@ export async function initializeTask1LifecycleBoundary(input: {
           recorded_expand_operation_version)
          VALUES
          (true,$1,$2,0,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,NULL,NULL,NULL)`,
-        [
-          createInstallationUuid(),
-          initialization.state,
-          input.prepared.platformBinding.kind,
-          canonicalBootstrapSha256(input.prepared.platformBinding),
-          prebootstrapSnapshotsJcs,
-          canonicalBootstrapSha256(snapshots),
-          identities === null ? null : canonicalBootstrapJson(identities),
-          originBindingJcs,
-          canonicalBootstrapSha256(origin),
-          peerBindingJcs,
-          canonicalBootstrapSha256(candidate.binding),
-          selectedProofKeySha256,
-          PINNED_TASK1_LIFECYCLE_MANIFESTS.historical.sourceSha256,
-          historicalManifestSha256,
-          PINNED_TASK1_LIFECYCLE_MANIFESTS.hardened.sourceSha256,
-          hardenedManifestSha256,
-          PINNED_TASK1_LIFECYCLE_MANIFESTS.lifecycle.sourceSha256,
-          input.prepared.configurationSha256,
-        ],
-      );
+          [
+            createInstallationUuid(),
+            initialization.state,
+            input.prepared.platformBinding.kind,
+            canonicalBootstrapSha256(input.prepared.platformBinding),
+            prebootstrapSnapshotsJcs,
+            canonicalBootstrapSha256(snapshots),
+            identities === null ? null : canonicalBootstrapJson(identities),
+            originBindingJcs,
+            canonicalBootstrapSha256(origin),
+            peerBindingJcs,
+            canonicalBootstrapSha256(candidate.binding),
+            selectedProofKeySha256,
+            PINNED_TASK1_LIFECYCLE_MANIFESTS.historical.sourceSha256,
+            historicalManifestSha256,
+            PINNED_TASK1_LIFECYCLE_MANIFESTS.hardened.sourceSha256,
+            hardenedManifestSha256,
+            PINNED_TASK1_LIFECYCLE_MANIFESTS.lifecycle.sourceSha256,
+            input.prepared.configurationSha256,
+          ],
+        );
       },
       fresh ? 'fresh' : 'legacy',
       () => applyRoleCredentials(input.client, env),
@@ -1254,18 +1257,20 @@ export async function initializeTask1LifecycleBoundary(input: {
     ),
   );
 
-  const observed = await atLifecycleInitializerFailureStage(
-    'lifecycle_peer_reobservation',
-    () => observePeers(env),
+  const observed = await atLifecycleInitializerFailureStage('lifecycle_peer_reobservation', () =>
+    observePeers(env),
   );
-  await atLifecycleInitializerFailureStage('lifecycle_peer_reobservation_input_consistency', async () => {
-    if (
-      candidate.input &&
-      observed.input &&
-      canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
-    )
-      throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
-  });
+  await atLifecycleInitializerFailureStage(
+    'lifecycle_peer_reobservation_input_consistency',
+    async () => {
+      if (
+        candidate.input &&
+        observed.input &&
+        canonicalBootstrapJson(candidate.input) !== canonicalBootstrapJson(observed.input)
+      )
+        throw new Error('TENANT_CUTOVER_DATABASE_PEER_TAMPERED');
+    },
+  );
   await atLifecycleInitializerFailureStage(
     'lifecycle_peer_reobservation_candidate_binding_validation',
     async () => verifyDatabasePeerBinding(candidate.input ?? observed.input!, candidate.binding),

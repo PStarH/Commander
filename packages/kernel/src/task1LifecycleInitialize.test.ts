@@ -354,10 +354,7 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
           },
         }),
       (error: unknown) => {
-        assert.equal(
-          (error as { ownerStage?: unknown }).ownerStage,
-          'bootstrap_context',
-        );
+        assert.equal((error as { ownerStage?: unknown }).ownerStage, 'bootstrap_context');
         return true;
       },
     );
@@ -388,10 +385,7 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
     await assert.rejects(
       () => initializeTask1LifecycleBoundary({ client, prepared }),
       (error: unknown) => {
-        assert.equal(
-          (error as { ownerStage?: unknown }).ownerStage,
-          'lifecycle_table_discovery',
-        );
+        assert.equal((error as { ownerStage?: unknown }).ownerStage, 'lifecycle_table_discovery');
         return true;
       },
     );
