@@ -21,13 +21,12 @@ class TestChat:
                 "timestamp": "2026-01-01T00:00:00Z",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.chat(
-                    "hi",
-                    agent_id="agent-commander",
-                    project_id="project-war-room",
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.chat(
+                "hi",
+                agent_id="agent-commander",
+                project_id="project-war-room",
+            )
         assert result.reply == "Hello!"
         assert result.agent_id == "agent-commander"
 
@@ -42,13 +41,12 @@ class TestChat:
             )
 
         mock_api.post("/api/chat").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                await client.chat(
-                    "hi",
-                    agent_id="agent-commander",
-                    project_id="project-war-room",
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            await client.chat(
+                "hi",
+                agent_id="agent-commander",
+                project_id="project-war-room",
+            )
 
     async def test_chat_history(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/api/chat/history").respond(
@@ -61,9 +59,8 @@ class TestChat:
                 }
             ],
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                history = await client.chat_history(project_id="project-war-room")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            history = await client.chat_history(project_id="project-war-room")
         assert len(history.messages) == 1
         assert history.messages[0].content == "hi"
 
@@ -82,10 +79,9 @@ class TestChatStream:
         mock_api.post("/api/chat?stream=true").respond(
             200, text=sse, headers={"Content-Type": "text/event-stream"}
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                stream = await client.chat_stream("hi")
-                events = [e async for e in stream]
+        async with CommanderClient(api_key="test") as client, mock_api:
+            stream = await client.chat_stream("hi")
+            events = [e async for e in stream]
 
         assert len(events) == 3
         assert events[0].event == "start"
