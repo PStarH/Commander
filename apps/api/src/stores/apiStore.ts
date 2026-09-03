@@ -643,7 +643,7 @@ function createSqliteApiStore(dbPath: string): SqliteApiStore {
   return store;
 }
 
-function createPostgresApiStore(connectionString: string): PostgresApiStore {
+function createPostgresApiStore(connectionString: string, manageSchema: boolean): PostgresApiStore {
   const pool = createVerifiedPostgresPool({ connectionString });
 
   const exec = async (sql: string, values?: unknown[]): Promise<void> => {
@@ -731,10 +731,12 @@ function createPostgresApiStore(connectionString: string): PostgresApiStore {
     `);
   };
 
-  const schemaPromise = initSchema().catch((err) => {
-    reportSilentFailure(err, 'apiStore:pg-schema');
-    throw err;
-  });
+  const schemaPromise = manageSchema
+    ? initSchema().catch((err) => {
+        reportSilentFailure(err, 'apiStore:pg-schema');
+        throw err;
+      })
+    : Promise.resolve();
 
   const rowToTask = (row: Record<string, unknown>): ApiTaskRow => ({
     id: String(row.id),
@@ -1131,6 +1133,7 @@ export function createApiStore(options?: {
   dbPath?: string;
   connectionString?: string;
   forceMemory?: boolean;
+  manageSchema?: boolean;
 }): ApiStore {
   const backend =
     options?.backend ??
@@ -1147,7 +1150,10 @@ export function createApiStore(options?: {
     if (!connectionString) {
       throw new Error('PostgreSQL backend requires DATABASE_URL or options.connectionString');
     }
-    return createPostgresApiStore(connectionString);
+    return createPostgresApiStore(
+      connectionString,
+      options?.manageSchema ?? process.env.NODE_ENV !== 'production',
+    );
   }
 
   try {

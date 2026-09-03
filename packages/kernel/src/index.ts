@@ -25,10 +25,12 @@ export {
   KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
   KERNEL_TASK2_FORWARD_MIGRATIONS,
   KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+  KERNEL_MEMORY_SCHEMA_MIGRATIONS,
   runKernelMigrations,
   runTask1ClosureMigrations,
 } from './migrations.js';
 export { KERNEL_SIGNED_EVIDENCE_SQL } from './evidenceSchema.js';
+export { KERNEL_MEMORY_SCHEMA_SQL } from './memorySchema.js';
 export { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
 export {
   TASK1_DATABASE_ROLES,

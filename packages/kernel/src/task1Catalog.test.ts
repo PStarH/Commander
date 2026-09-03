@@ -365,6 +365,46 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     assert.ok(client.queries.every(({ values }) => values.length === 0));
   });
 
+  it('classifies the fresh owner catalog with the required global app timeouts', async () => {
+    const client = new CatalogClient({
+      'role-settings': [
+        {
+          database: '*',
+          role: 'commander_app',
+          settings: [
+            { name: 'idle_in_transaction_session_timeout', value: '10s' },
+            { name: 'statement_timeout', value: '55s' },
+          ],
+        },
+      ],
+    });
+
+    const inventory = await collectTask1PrebootstrapInventory(client, bootstrap);
+
+    assert.equal(classifyTask1CatalogOrigin(inventory, bootstrap).kind, 'E2');
+  });
+
+  it('rejects a fresh owner catalog with an unrecognized role setting', async () => {
+    await assert.rejects(
+      () =>
+        collectTask1PrebootstrapInventory(
+          new CatalogClient({
+            'role-settings': [
+              {
+                database: '*',
+                role: 'commander_worker',
+                settings: [{ name: 'statement_timeout', value: '55s' }],
+              },
+            ],
+          }),
+          bootstrap,
+        ),
+      (error: unknown) =>
+        (error as { originClassificationStep?: unknown }).originClassificationStep ===
+        'fresh_catalog_shape',
+    );
+  });
+
   it('does not commit a read-only snapshot owned by the lifecycle initializer', async () => {
     const client = new CatalogClient();
     await collectTask1PrebootstrapInventory(client, bootstrap, { transaction: 'caller' });
@@ -411,6 +451,61 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     assert.match(TASK1_CATALOG_QUERIES.functions, /procedure\.proacl/i);
     assert.match(TASK1_CATALOG_QUERIES.types, /type\.typacl/i);
     assert.doesNotMatch(sql, /rolpassword/i);
+  });
+
+  it('does not execute the superuser-only control function from the owner inventory query', () => {
+    assert.doesNotMatch(TASK1_CATALOG_QUERIES.identity, /pg_control_system/);
+  });
+
+  it('projects a numeric catalog version for populated legacy inventory', async () => {
+    assert.match(
+      TASK1_CATALOG_QUERIES.identity,
+      /CASE current_setting\('server_version_num'\)::integer \/ 10000\s+WHEN 16 THEN '202307071'\s+ELSE NULL\s+END AS catalog_version/i,
+    );
+    const projectedCatalogVersion = TASK1_CATALOG_QUERIES.identity.includes(
+      "WHEN 16 THEN '202307071'",
+    )
+      ? '202307071'
+      : null;
+    const client = new CatalogClient({
+      identity: [
+        {
+          postgres_version: '16.14',
+          catalog_version: projectedCatalogVersion,
+          database_oid: '16384',
+          database_name: 'commander',
+          ledger_exists: true,
+        },
+      ],
+      ledger: [{ id: '2026-07-21.16.schema', checksum: 'a'.repeat(64) }],
+      relations: [{ schema: 'public', name: 'commander_runs', kind: 'r', columns: [] }],
+      roles: roleNames.map(role),
+      memberships: [],
+    });
+
+    const observed = await collectTask1PrebootstrapInventory(client, null);
+
+    assert.equal(observed.catalogVersion, '202307071');
+    assert.equal(classifyTask1CatalogOrigin(observed, null).kind, 'legacy');
+  });
+
+  it('uses the catalog version captured by the bootstrap connection for owner inventory', async () => {
+    const client = new CatalogClient({
+      identity: [
+        {
+          postgres_version: '16.14',
+          catalog_version: null,
+          database_oid: '16384',
+          database_name: 'commander',
+          ledger_exists: false,
+        },
+      ],
+    });
+    const observed = await collectTask1PrebootstrapInventory(client, {
+      ...bootstrap,
+      catalogVersion: '202307071',
+    });
+    assert.equal(observed.catalogVersion, '202307071');
   });
 
   it('fails closed on one role attribute or grant-provenance substitution', async () => {
@@ -490,6 +585,115 @@ describe('Task 1 PostgreSQL catalog collector', () => {
     );
     assert.equal(client.queries.at(-1)?.sql, 'ROLLBACK');
   });
+
+  it('retains only the fixed catalog step when a catalog query fails', async () => {
+    const client = new CatalogClient();
+    client.failMarker = 'functions';
+
+    await assert.rejects(
+      () => collectTask1PrebootstrapInventory(client, bootstrap),
+      (error: unknown) => {
+        assert.equal((error as Error).message, 'TASK1_CATALOG_COLLECTION_FAILED');
+        assert.equal((error as { catalogStep?: unknown }).catalogStep, 'functions');
+        assert.doesNotMatch((error as Error).message, /catalog failed/i);
+        return true;
+      },
+    );
+  });
+
+  for (const [snapshotValidation, client, context] of [
+    [
+      'bootstrap_validation',
+      new CatalogClient(),
+      { ...bootstrap, sessionUser: 'commander_owner' },
+    ],
+    ['identity_validation', new CatalogClient({ identity: [] }), bootstrap],
+    [
+      'product_source_validation',
+      new CatalogClient({
+        relations: [{ schema: 'public', name: 'commander_runs', kind: 'r' }],
+        'product-has-rows': [],
+      }),
+      bootstrap,
+    ],
+    ['catalog_version_validation', new CatalogClient(), { ...bootstrap, catalogVersion: 'invalid' }],
+    [
+      'origin_classification',
+      new CatalogClient({
+        roles: roleNames
+          .map(role)
+          .map((value) =>
+            value.name === 'commander_worker' ? { ...value, bypassRls: true } : value,
+          ),
+      }),
+      bootstrap,
+    ],
+  ] as const) {
+    it(`retains only the fixed ${snapshotValidation} collector validation`, async () => {
+      await assert.rejects(
+        () => collectTask1PrebootstrapInventory(client, context),
+        (error: unknown) => {
+          assert.equal((error as Error).message, 'TASK1_CATALOG_COLLECTION_FAILED');
+          assert.equal(
+            (error as { snapshotValidation?: unknown }).snapshotValidation,
+            snapshotValidation,
+          );
+          assert.doesNotMatch((error as Error).message, /postgres:|secret|SELECT|private_value/i);
+          return true;
+        },
+      );
+    });
+  }
+
+  for (const [originClassificationStep, overrides] of [
+    [
+      'fresh_catalog_shape',
+      { relations: [{ schema: 'public', name: 'commander_view', kind: 'v' }] },
+    ],
+    ['role_envelope', { roles: roleNames.slice(0, -1).map(role) }],
+    [
+      'role_attributes',
+      {
+        roles: roleNames
+          .map(role)
+          .map((value) =>
+            value.name === 'commander_worker' ? { ...value, bypassRls: true } : value,
+          ),
+      },
+    ],
+    [
+      'memberships',
+      {
+        memberships: roleNames
+          .filter((name) => name !== 'commander_owner')
+          .map((name) =>
+            name === 'commander_worker'
+              ? { ...membership(name), setOption: false }
+              : membership(name),
+          ),
+      },
+    ],
+    ['public_acl', { 'database-acl': [{ grantee: 'PUBLIC' }] }],
+  ] as const) {
+    it(`retains only the fixed ${originClassificationStep} origin classification step`, async () => {
+      await assert.rejects(
+        () => collectTask1PrebootstrapInventory(new CatalogClient(overrides), bootstrap),
+        (error: unknown) => {
+          assert.equal((error as Error).message, 'TASK1_CATALOG_COLLECTION_FAILED');
+          assert.equal(
+            (error as { snapshotValidation?: unknown }).snapshotValidation,
+            'origin_classification',
+          );
+          assert.equal(
+            (error as { originClassificationStep?: unknown }).originClassificationStep,
+            originClassificationStep,
+          );
+          assert.doesNotMatch((error as Error).message, /postgres:|secret|SELECT|private_value/i);
+          return true;
+        },
+      );
+    });
+  }
 
   it('executes the finite state-2 hardening delta on the caller transaction', async () => {
     const client = new CatalogClient();

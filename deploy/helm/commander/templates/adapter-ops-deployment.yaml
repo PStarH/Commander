@@ -67,6 +67,7 @@ spec:
                   key: {{ include "commander.databaseAdapterOpsSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             - name: COMMANDER_ADAPTER_OPS_INSTANCE_ID
               valueFrom:
@@ -161,10 +162,16 @@ spec:
               mountPath: {{ .Values.adapterOps.claimSecretDir | quote }}
             - name: tmp
               mountPath: /tmp
+            {{- if include "commander.postgresBackend" . }}
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: claim-secrets
           emptyDir: {}
         - name: tmp
           emptyDir: {}
+        {{- if include "commander.postgresBackend" . }}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
+        {{- end }}
 {{- end }}
 {{- end }}
