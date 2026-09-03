@@ -8,7 +8,13 @@ import { test, describe, afterEach } from 'node:test';
 import * as assert from 'node:assert/strict';
 
 const envSnap: Record<string, string | undefined> = {};
-for (const k of ['NODE_ENV', 'COMMANDER_ENV', 'COMMANDER_PROFILE', 'COMMANDER_CELL_TIER', 'COMMANDER_REQUIRE_WORKLOAD_BINDING']) {
+for (const k of [
+  'NODE_ENV',
+  'COMMANDER_ENV',
+  'COMMANDER_PROFILE',
+  'COMMANDER_CELL_TIER',
+  'COMMANDER_REQUIRE_WORKLOAD_BINDING',
+]) {
   envSnap[k] = process.env[k];
 }
 afterEach(() => {

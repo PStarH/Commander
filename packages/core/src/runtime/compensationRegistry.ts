@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { reportSilentFailure } from '../silentFailureReporter';
 export interface CompensableAction {
   /** Unique identifier for this specific action instance */
@@ -23,6 +24,8 @@ export type CompensationHandler = (
 ) => Promise<{ success: boolean; error?: string }>;
 
 import type { CompensationQueue } from '../atr/compensationQueue';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export class CompensationRegistry {
   private handlers = new Map<string, CompensationHandler>();
@@ -140,7 +143,7 @@ export class CompensationRegistry {
 
       for (const runId of runIds) {
         try {
-          const { getRunLedgerBundle } = require('../atr/runLedger');
+          const { getRunLedgerBundle } = nodeRequire('../atr/runLedger');
           const bundle = getRunLedgerBundle();
           if (bundle?.ledger) {
             // Delegate to RunLedger — SQLite-backed, crash-safe compensation

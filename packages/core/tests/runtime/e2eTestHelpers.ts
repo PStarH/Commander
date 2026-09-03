@@ -6,6 +6,7 @@
  * (CircuitBreaker, DeadLetterQueue, CostGuard, ToolOrchestrator) is all real
  * — only the LLM endpoint is mocked, which is necessary for CI.
  */
+import { afterEach } from 'vitest';
 import { AgentRuntime } from '../../src/runtime/agentRuntime';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
@@ -17,6 +18,23 @@ import { resetUnifiedCostAuthority } from '../../src/security/unifiedCostAuthori
 import { resetBillExplosionGuard } from '../../src/security/billExplosionGuard';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import type { AgentExecutionContext, Tool, LLMRequest, LLMResponse } from '../../src/runtime/types';
+
+const activeTestRuntimes = new Set<AgentRuntime>();
+
+function disposeTestRuntimes(): void {
+  for (const runtime of activeTestRuntimes) {
+    try {
+      runtime.dispose();
+    } catch (error) {
+      console.warn('[e2eTestHelpers] runtime cleanup failed', error);
+    }
+  }
+  activeTestRuntimes.clear();
+}
+
+afterEach(() => {
+  disposeTestRuntimes();
+});
 
 /**
  * A mock LLM provider that returns scripted tool calls in sequence.
@@ -182,6 +200,7 @@ export function makeContext(overrides?: Partial<AgentExecutionContext>): AgentEx
 
 /** Reset all global singletons that can leak state between tests. */
 export function resetGlobalState(): void {
+  disposeTestRuntimes();
   resetModelRouter();
   resetMessageBus();
   resetTraceRecorder();
@@ -210,5 +229,6 @@ export function createTestRuntime(config?: Record<string, unknown>): {
     },
     router,
   );
+  activeTestRuntimes.add(runtime);
   return { runtime, router };
 }

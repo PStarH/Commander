@@ -46,8 +46,31 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.api.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
-      {{- if include "commander.postgresBackend" . }}
       initContainers:
+        - name: api-runtime-state
+          image: {{ include "commander.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "-e"]
+          args:
+            - |
+              const fs = require('node:fs');
+              const directory = '/tmp/commander-api';
+              fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+              fs.chownSync(directory, {{ .Values.podSecurityContext.runAsUser }}, {{ .Values.podSecurityContext.runAsGroup }});
+              fs.chmodSync(directory, 0o700);
+          securityContext:
+            runAsNonRoot: false
+            runAsUser: 0
+            runAsGroup: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+              add: ["CHOWN", "DAC_OVERRIDE", "FOWNER"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      {{- if include "commander.postgresBackend" . }}
         - name: api-proof-tls-materialize
           image: {{ include "commander.image" . | quote }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
@@ -59,7 +82,8 @@ spec:
               for (const [name, mode] of files) {
                 const source = `/source/api-proof/${name}`;
                 const target = `/runtime/api-proof/${name}`;
-                fs.copyFileSync(source, target, fs.constants.COPYFILE_EXCL);
+                fs.rmSync(target, { force: true });
+                fs.copyFileSync(source, target);
                 fs.chownSync(target, {{ .Values.podSecurityContext.runAsUser }}, {{ .Values.podSecurityContext.runAsGroup }});
                 fs.chmodSync(target, mode);
                 const stat = fs.lstatSync(target);
@@ -90,7 +114,7 @@ spec:
             - name: http
               containerPort: {{ .Values.api.port }}
               protocol: TCP
-            - name: tenant-authority-proof
+            - name: tenant-proof
               containerPort: {{ .Values.tenantAuthority.apiProof.port }}
               protocol: TCP
           env:
@@ -121,8 +145,18 @@ spec:
               value: {{ .Values.config.corsOrigins | quote }}
             - name: API_STORE_BACKEND
               value: {{ include "commander.apiStoreBackend" . | quote }}
-            {{- if include "commander.postgresBackend" . }}
             # Legacy stores are non-authoritative; /v1 durability remains in the kernel.
+            - name: COMMANDER_WARROOM_FILE
+              value: /tmp/commander-api/war-room.json
+            - name: COMMANDER_AGENT_STATE_FILE
+              value: /tmp/commander-api/agent-state.json
+            - name: COMMANDER_ACTION_RATIONALE_FILE
+              value: /tmp/commander-api/action-rationales.json
+            - name: API_RATE_LIMIT_DB_PATH
+              value: /tmp/commander-api/rate-limit.sqlite
+            - name: COMMANDER_TRACE_DIR
+              value: /tmp/commander-api/traces
+            {{- if include "commander.postgresBackend" . }}
             - name: COMMANDER_MEMORY_STORE
               value: in-memory
             - name: COMMANDER_KERNEL_ENABLED
@@ -186,6 +220,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.apiSecretName" . | quote }}
                   key: integrity-key
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: admin-password
             {{- else }}
             {{- if .Values.api.secrets.masterKeySecret }}
             - name: COMMANDER_MASTER_KEY
@@ -272,6 +311,7 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.databaseUrlSecretName" . | quote }}
                   key: {{ include "commander.databaseTenantAuthoritySecretKey" . | quote }}
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             {{- if .Values.observability.otel.enabled }}
             - name: OTEL_EXPORTER_ENDPOINT
@@ -282,6 +322,12 @@ spec:
           resources: {{ toYaml .Values.api.resources | nindent 12 }}
           securityContext:
             {{- include "commander.cellSecurityContext" . | nindent 12 }}
+          startupProbe:
+            httpGet:
+              path: {{ .Values.api.health.livenessPath }}
+              port: http
+            failureThreshold: {{ .Values.api.health.startupFailureThreshold }}
+            periodSeconds: {{ .Values.api.health.startupPeriodSeconds }}
           livenessProbe:
             httpGet:
               path: {{ .Values.api.health.livenessPath }}
@@ -289,10 +335,15 @@ spec:
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
           readinessProbe:
-            httpGet:
-              path: /ready/tenant-authority/v1
-              port: tenant-authority-proof
-              scheme: HTTPS
+            exec:
+              command:
+                - node
+                - -e
+                - >-
+                  const https = require('node:https');
+                  const req = https.get({ hostname: '127.0.0.1', port: {{ .Values.tenantAuthority.apiProof.port }}, path: '/ready/tenant-authority/v1', rejectUnauthorized: false, headers: { 'X-Commander-Readiness-Challenge': 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc' } }, (res) => process.exit(res.statusCode === 200 ? 0 : 1));
+                  req.on('error', () => process.exit(1));
+                  req.setTimeout(1500, () => { req.destroy(); process.exit(1); });
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
           volumeMounts:
@@ -302,6 +353,7 @@ spec:
             - name: api-proof-tls-runtime
               mountPath: /run/commander/api-proof
               readOnly: true
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
             {{- end }}
             {{- if .Values.persistence.enabled }}
             - name: commander-state
@@ -329,6 +381,7 @@ spec:
                 mode: 256
         - name: api-proof-tls-runtime
           emptyDir: {}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
         {{- end }}
         {{- if .Values.persistence.enabled }}
         - name: commander-state

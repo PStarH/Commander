@@ -31,11 +31,7 @@ export const SERVICE_ROLE_MAP: Readonly<Record<string, string>> = {
 const OWNER_ROLE = 'commander_owner';
 const MIGRATION_SERVICES = new Set(['kernel-migrate', 'migrate']);
 const APP_ROLE_APIS = new Set(['api', 'api-1', 'api-2']);
-const ISOLATED_LEGACY_STORE_PROFILES = new Set<ComposeRoleProfile>([
-  'cell',
-  'v2',
-  'v2-bench',
-]);
+const ISOLATED_LEGACY_STORE_PROFILES = new Set<ComposeRoleProfile>(['cell', 'v2', 'v2-bench']);
 
 /** Default COMMANDER_WORKER_TENANTS expected per topology. */
 export const EXPECTED_WORKER_TENANTS: Readonly<Record<ComposeRoleProfile, string>> = {
@@ -70,16 +66,14 @@ function parseArgs(): {
     throw new Error(`Unknown --profile ${profileRaw}; expected one of ${allowed.join(', ')}`);
   }
   return {
-    file: fileIdx >= 0 ? args[fileIdx + 1] ?? null : null,
+    file: fileIdx >= 0 ? (args[fileIdx + 1] ?? null) : null,
     profile: profileRaw as ComposeRoleProfile,
     stdin: !process.stdin.isTTY && fileIdx < 0,
   };
 }
 
 /** Normalize compose environment (object or KEY=value array) to a string map. */
-export function normalizeEnvironment(
-  env: ComposeService['environment'],
-): Record<string, string> {
+export function normalizeEnvironment(env: ComposeService['environment']): Record<string, string> {
   const out: Record<string, string> = {};
   if (!env) return out;
   if (Array.isArray(env)) {
@@ -109,10 +103,7 @@ export function dsnRole(dsn: string | undefined): string | null {
 }
 
 /** Prefer the production role-specific DSN, then the legacy generic keys. */
-export function serviceDsn(
-  env: Record<string, string>,
-  serviceName?: string,
-): string | undefined {
+export function serviceDsn(env: Record<string, string>, serviceName?: string): string | undefined {
   const productionDsnKey: Record<string, string> = {
     'kernel-migrate': 'COMMANDER_OWNER_DATABASE_URL',
     api: 'COMMANDER_API_DATABASE_URL',
@@ -142,10 +133,7 @@ function tenantListsEqual(a: string, b: string): boolean {
   return left.every((t, i) => t === right[i]);
 }
 
-export function assertComposeRoles(
-  config: ComposeConfig,
-  profile: ComposeRoleProfile,
-): void {
+export function assertComposeRoles(config: ComposeConfig, profile: ComposeRoleProfile): void {
   const services = config.services ?? {};
   const present = Object.keys(services).filter((name) => name in SERVICE_ROLE_MAP);
 
@@ -220,11 +208,7 @@ export function assertComposeRoles(
 
     // Migration alone may use owner; every other mapped service must not.
     if (!MIGRATION_SERVICES.has(name)) {
-      assert.notEqual(
-        role,
-        OWNER_ROLE,
-        `${name}: must not authenticate as ${OWNER_ROLE}`,
-      );
+      assert.notEqual(role, OWNER_ROLE, `${name}: must not authenticate as ${OWNER_ROLE}`);
       assert.ok(
         !dsn.includes(`${OWNER_ROLE}:`) && !dsn.includes(`://${OWNER_ROLE}@`),
         `${name}: DSN must not embed ${OWNER_ROLE} credentials`,
@@ -251,11 +235,7 @@ export function assertComposeRoles(
         tenants !== undefined && tenants.trim() !== '',
         `${name}: COMMANDER_WORKER_TENANTS must be a non-empty explicit list`,
       );
-      assert.notEqual(
-        tenants.trim(),
-        '*',
-        `${name}: COMMANDER_WORKER_TENANTS=* is forbidden`,
-      );
+      assert.notEqual(tenants.trim(), '*', `${name}: COMMANDER_WORKER_TENANTS=* is forbidden`);
       assert.ok(
         !normalizeTenantList(tenants).includes('*'),
         `${name}: COMMANDER_WORKER_TENANTS must not contain *`,
@@ -270,7 +250,10 @@ export function assertComposeRoles(
         `${name}: expected COMMANDER_WORKER_TENANTS=${expectedTenants}, got ${tenants}`,
       );
       if (name === 'adapter-ops') {
-        assert.ok(env.COMMANDER_ADAPTER_OPS_INSTANCE_ID?.trim(), `${name}: instance id is required`);
+        assert.ok(
+          env.COMMANDER_ADAPTER_OPS_INSTANCE_ID?.trim(),
+          `${name}: instance id is required`,
+        );
         const claimSecretDir = env.COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR?.trim();
         assert.ok(claimSecretDir, `${name}: claim secret dir is required`);
         assert.ok(
@@ -291,11 +274,7 @@ export function assertComposeRoles(
     const env = normalizeEnvironment(service.environment);
     const tenants = env.COMMANDER_WORKER_TENANTS;
     if (tenants === undefined) continue;
-    assert.notEqual(
-      tenants.trim(),
-      '*',
-      `${name}: COMMANDER_WORKER_TENANTS=* is forbidden`,
-    );
+    assert.notEqual(tenants.trim(), '*', `${name}: COMMANDER_WORKER_TENANTS=* is forbidden`);
     assert.ok(
       !normalizeTenantList(tenants).includes('*'),
       `${name}: COMMANDER_WORKER_TENANTS must not contain *`,

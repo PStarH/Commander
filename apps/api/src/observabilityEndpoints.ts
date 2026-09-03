@@ -16,7 +16,15 @@ import {
 } from '@commander/core/observability';
 import { getTraceRecorder, PersistentTraceStore } from '@commander/core/runtime';
 
-const tracesDir = path.join(process.cwd(), '.commander_traces');
+export function resolveTraceDirectory(
+  env: { COMMANDER_TRACE_DIR?: string | undefined } = process.env,
+  cwd: string = process.cwd(),
+): string {
+  const configured = env.COMMANDER_TRACE_DIR?.trim();
+  return configured || path.join(cwd, '.commander_traces');
+}
+
+const tracesDir = resolveTraceDirectory();
 const traceStore = new PersistentTraceStore(tracesDir);
 const tenantTraceStores = new Map<string, PersistentTraceStore>();
 // In-memory recorder is empty in a pure observability process; the handler

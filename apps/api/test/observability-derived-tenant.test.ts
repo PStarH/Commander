@@ -13,6 +13,7 @@ describe('derived observability endpoint tenant isolation', () => {
   let tmpDir: string;
   let server: ReturnType<express.Express['listen']>;
   let baseUrl: string;
+  let resolveTraceDirectory: (env: { COMMANDER_TRACE_DIR?: string }, cwd: string) => string;
 
   before(async () => {
     tmpDir = fs.mkdtempSync(path.join(originalCwd, '.tmp-observability-tenant-'));
@@ -59,7 +60,9 @@ describe('derived observability endpoint tenant isolation', () => {
 
     const app = express();
     app.use(tenantContextMiddleware);
-    const { createObservabilityRouter } = await import('../src/observabilityEndpoints');
+    const observability = await import('../src/observabilityEndpoints');
+    resolveTraceDirectory = observability.resolveTraceDirectory;
+    const { createObservabilityRouter } = observability;
     app.use('/api/v1/observability', createObservabilityRouter());
     app.use(createLineageRouter());
     app.use(createHallucinationRouter());
@@ -87,6 +90,13 @@ describe('derived observability endpoint tenant isolation', () => {
     });
     assert.equal(foreign.status, 200);
     assert.equal((await foreign.json()).totalNodes, 0);
+  });
+
+  it('uses an explicit runtime directory instead of the immutable working directory', () => {
+    assert.equal(
+      resolveTraceDirectory({ COMMANDER_TRACE_DIR: '/tmp/commander-api/traces' }, '/app'),
+      '/tmp/commander-api/traces',
+    );
   });
 
   it('returns current tenant hallucination reports and hides a foreign run', async () => {

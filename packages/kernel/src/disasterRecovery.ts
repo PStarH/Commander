@@ -13,10 +13,14 @@ export interface DrilledRun {
   tenantId: string;
 }
 
+export function buildDrillVerificationRepositoryOptions(): { schedulerMode: true } {
+  return { schedulerMode: true };
+}
+
 export async function verifyRunExists(databaseUrl: string, run: DrilledRun): Promise<boolean> {
   const pool = createVerifiedPostgresPool({ connectionString: databaseUrl });
   try {
-    const repo = new PostgresKernelRepository(pool);
+    const repo = new PostgresKernelRepository(pool, buildDrillVerificationRepositoryOptions());
     const found = await repo.getRun(run.id, run.tenantId);
     return found !== null;
   } finally {

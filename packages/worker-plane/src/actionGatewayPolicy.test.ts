@@ -7,7 +7,7 @@ import {
   type ActionAdapter,
 } from '@commander/action-adapters';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import { createWorkerPolicyEvaluator } from './bootstrap.js';
+import { createWorkerPolicyEvaluator, evaluateActionGatewayMvpV1 } from './bootstrap.js';
 
 const canonical = (value: unknown): string => {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
@@ -64,10 +64,10 @@ async function createActionRun(
     (options.envelope
       ? baseEnvelope.destination
       : effect === 'require_approval'
-      ? 'demo://tickets/approval'
-      : effect === 'deny'
-        ? 'demo://tickets/denied'
-        : baseEnvelope.destination);
+        ? 'demo://tickets/approval'
+        : effect === 'deny'
+          ? 'demo://tickets/denied'
+          : baseEnvelope.destination);
   const actionEnvelope = {
     ...baseEnvelope,
     tenantId,
@@ -268,6 +268,40 @@ describe('L4-01 Action Gateway worker policy', () => {
       assert.equal(decision.effect, 'deny', runId);
       assert.equal(decision.reason, 'ACTION_GATEWAY_DECISION_REVALIDATION_FAILED', runId);
     }
+  });
+
+  it('revalidates a registered Kubernetes compensation as approval-required', () => {
+    const adapter: ActionAdapter = {
+      descriptor: KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+      async execute() {
+        return {};
+      },
+      async queryOutcome() {
+        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+      },
+      async compensate() {
+        return {};
+      },
+      async queryCompensationOutcome() {
+        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+      },
+    };
+    const decision = evaluateActionGatewayMvpV1(
+      {
+        ...envelope,
+        tool: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api',
+        effectType: 'compensate.kubernetes.deployment.rollback',
+        args: { targetRevision: '2', reason: 'compensation proof' },
+      },
+      new ActionAdapterRegistry([adapter]),
+    );
+    assert.deepEqual(decision, {
+      effect: 'require_approval',
+      decisionId: 'action-gateway-manifest-require_approval',
+      reason: "Registered adapter policy requires 'require_approval' for this exact action.",
+      policySnapshotId: 'action-gateway-mvp-v1',
+    });
   });
 
   it('allows only a trusted persisted Action Gateway envelope', async () => {

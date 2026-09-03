@@ -2328,6 +2328,7 @@ BEGIN
         AND s.state IN ('PENDING', 'RETRY_WAIT')
         AND s.scheduled_at <= v_now
         AND r.state IN ('PENDING', 'RUNNING')
+        AND r.metadata->>'compensationRequestId' IS NULL
         AND c.paused = false
         AND s.kind = ANY (v_caps)
         AND u.running_steps < COALESCE(l.max_concurrent_steps, 2147483647)

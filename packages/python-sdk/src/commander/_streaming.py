@@ -40,7 +40,7 @@ class CommanderSSEStream:
         current_event: str | None = None
         async with self._client.stream("GET", self._url) as response:
             async for line in response.aiter_lines():
-                if line.startswith(":") or line.startswith("id:"):
+                if line.startswith((":", "id:")):
                     continue
                 if line.startswith("event:"):
                     current_event = line[len("event:") :].strip()
@@ -73,7 +73,7 @@ class CommanderSSEStream:
         """
         current_event: str | None = None
         async for line in response.aiter_lines():
-            if line.startswith(":") or line.startswith("id:"):
+            if line.startswith((":", "id:")):
                 continue
             if line.startswith("event:"):
                 current_event = line[len("event:") :].strip()

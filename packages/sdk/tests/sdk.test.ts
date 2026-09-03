@@ -417,10 +417,13 @@ void describe('@commander/sdk — Gateway V1 client', () => {
 
     assert.equal(requested.state, 'AWAITING_APPROVAL');
     assert.equal(approved.accepted, true);
-    assert.deepEqual(calls.map(({ url }) => url), [
-      'https://commander.example/v1/actions/run-action-1/compensations',
-      'https://commander.example/v1/actions/run-action-1/compensations/authorization-1/approve',
-    ]);
+    assert.deepEqual(
+      calls.map(({ url }) => url),
+      [
+        'https://commander.example/v1/actions/run-action-1/compensations',
+        'https://commander.example/v1/actions/run-action-1/compensations/authorization-1/approve',
+      ],
+    );
     assert.deepEqual(
       calls.map(({ init }) => new Headers(init?.headers).get('idempotency-key')),
       ['compensation-request-1', 'compensation-approve-1'],

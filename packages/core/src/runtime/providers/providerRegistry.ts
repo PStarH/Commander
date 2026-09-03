@@ -326,7 +326,7 @@ registerProvider({
   envBaseUrlKey: 'AGNES_BASE_URL',
   envModelKey: 'AGNES_MODEL',
   defaultUrl: 'https://apihub.agnes-ai.com/v1',
-  defaultModel: 'agnes-2.0-flash',
+  defaultModel: 'agnes-2.5-flash',
   displayName: 'Agnes AI',
   apiType: 'openai',
   factory: () => new AgnesProvider({ apiKey: resolveSecureApiKey('AGNES_API_KEY') }),

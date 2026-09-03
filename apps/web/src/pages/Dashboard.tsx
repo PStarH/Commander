@@ -84,6 +84,10 @@ export function Dashboard({
 
   return (
     <div className="dashboard-grid">
+      <div className="banner" role="note" style={{ gridColumn: '1 / -1' }}>
+        Alpha preview: a new War Room can be populated with seeded demo data. Confirm the source and
+        run history before treating dashboard values as real operational evidence.
+      </div>
       <BattleReport report={snapshot.battleReport} />
 
       <TokenTrendChart

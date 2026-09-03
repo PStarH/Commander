@@ -5,6 +5,12 @@ starts only the **api** and **web** services with an in-memory EventBus and no
 external dependencies. Distributed execution, observability, and tracing stacks
 are opt-in via Docker Compose **profiles**.
 
+> **Alpha / non-production-ready:** this guide documents a self-hosted development
+> and evaluation path. The checklist below does not establish production readiness,
+> tenant isolation, an SLA, or a data-processing agreement. Review
+> [`PRIVACY.md`](../PRIVACY.md) and [`ENTERPRISE_READINESS.md`](../ENTERPRISE_READINESS.md)
+> before a pilot.
+
 ## Quick start (single-box)
 
 ```bash
@@ -80,7 +86,7 @@ See `.env.example` for the full list. Highlights:
 - `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` — point the OTLP exporter at the Jaeger collector (requires `tracing` profile).
 - `GRAFANA_ADMIN_PASSWORD` — change from the default `admin` in production.
 
-## Production checklist
+## Production hardening checklist (not a readiness sign-off)
 
 1. **Set `COMMANDER_API_KEY`** to a strong random secret (≥32 chars). Required.
 2. **Set `HOST=127.0.0.1`** when behind a reverse proxy / TLS terminator.

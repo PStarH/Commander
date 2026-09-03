@@ -17,7 +17,8 @@ describe('l4-b-image-boot-smoke', () => {
   };
 
   it('parses probe stdout JSON line', () => {
-    const stdout = 'noise\n{"snapshotSchemaCount":3,"resourcesCount":2,"schemasDirEntryCount":1,"distIndexExists":true}\n';
+    const stdout =
+      'noise\n{"snapshotSchemaCount":3,"resourcesCount":2,"schemasDirEntryCount":1,"distIndexExists":true}\n';
     const payload = parseInImageProbeStdout(stdout);
     assert.equal(payload.snapshotSchemaCount, 3);
   });

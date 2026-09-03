@@ -7,10 +7,12 @@ import {
   type LegacyClaimedCompensationWork,
 } from './compensationConsumer.js';
 import {
+  canonicalCompensationHash,
   sealGovernedCompensationAuthorization,
   type GovernedCompensationAuthorization,
   type GovernedCompensationAuthorizationInput,
 } from './compensationAuthority.js';
+import type { ClaimedCompensationRequest, CompensationAuthorizationRecord } from '../types.js';
 
 const WORKER = {
   workerId: 'compensation:pod-a',
@@ -113,6 +115,118 @@ const registry = {
 };
 
 describe('governed compensation consumer', () => {
+  it('accepts a durable action digest that binds the claimed destination', async () => {
+    const forwardResponse = { originalRevision: '7' };
+    const compensationPatch = { targetRevision: '7', reason: 'rollback' };
+    const destination = 'k8s://cluster-a/default/deployments/api';
+    const authorization: CompensationAuthorizationRecord = {
+      id: 'authorization-durable-destination',
+      tenantId: 'tenant-a',
+      originalRunId: 'run-original',
+      originalEffectId: 'effect-original',
+      compensationEffectType: 'compensate.kubernetes.deployment.rollback',
+      adapterVersion: '1.0.0',
+      compensationPatch,
+      forwardReceiptHash: canonicalCompensationHash(forwardResponse),
+      policyDecisionId: 'decision-durable',
+      policySnapshotId: 'policy-durable',
+      decision: 'allow',
+      actionDigest: canonicalCompensationHash({
+        type: 'compensate.kubernetes.deployment.rollback',
+        originalEffectId: 'effect-original',
+        adapterVersion: '1.0.0',
+        destination,
+        forwardResponse,
+        compensationPatch,
+      }),
+      expiresAt: '2099-07-29T11:00:00.000Z',
+    };
+    const request: ClaimedCompensationRequest['request'] = {
+      id: 'request-durable-destination',
+      tenantId: 'tenant-a',
+      originalRunId: 'run-original',
+      originalEffectId: 'effect-original',
+      compensationRunId: 'run-compensation',
+      compensationStepId: 'step-compensation',
+      adapterVersion: '1.0.0',
+      compensationEffectType: authorization.compensationEffectType,
+      destination,
+      compensationPatch,
+      forwardReceiptHash: authorization.forwardReceiptHash,
+      authorizationId: authorization.id,
+      reconcilePolicy: {
+        maxAttempts: 3,
+        initialDelayMs: 1_000,
+        maxDelayMs: 5_000,
+        deadlineAt: '2099-07-30T11:00:00.000Z',
+      },
+      state: 'CLAIMED',
+      claimToken: 'request-claim-token',
+      compensationEffectId: 'effect-compensation',
+    };
+    const work: ClaimedCompensationRequest = {
+      request,
+      forwardResponse,
+      authorization,
+      outboxMessageId: 'outbox-durable-destination',
+      outboxClaimToken: 'outbox-claim-token',
+      lease: {
+        workerId: WORKER.workerId,
+        workerGeneration: WORKER.workerGeneration,
+        token: 'step-lease-token',
+        fencingEpoch: 12,
+        expiresAt: '2099-07-29T11:00:00.000Z',
+      },
+    };
+    const port: CompensationOutboxPort = {
+      async claimCompensationWork() {
+        return [work];
+      },
+      async completeCompensationWork() {
+        throw new Error('durable path must finalize through finalizeCompensation');
+      },
+      async handoffCompensationUnknown() {
+        throw new Error('unexpected uncertainty handoff');
+      },
+      async escalateCompensationWork() {
+        throw new Error('durable path must finalize through finalizeCompensation');
+      },
+      async parkCompensationUnknown() {
+        throw new Error('unexpected uncertainty park');
+      },
+      async finalizeCompensation(input) {
+        return { applied: true, disposition: input.disposition, replayed: false };
+      },
+    };
+    let admittedRequest: Record<string, unknown> | undefined;
+    const result = await consumeCompensationBatch(
+      port,
+      {
+        async admit(input) {
+          admittedRequest = input.request;
+          return { admitted: true, effectId: request.compensationEffectId!, replayed: false };
+        },
+        async executeAdmitted() {
+          return {
+            effectId: request.compensationEffectId!,
+            replayed: false,
+            response: { ok: true },
+          };
+        },
+      },
+      async () => 'durable-token',
+      { ...WORKER, registry },
+    );
+
+    assert.equal(result.succeeded, 1);
+    assert.deepEqual(admittedRequest, {
+      originalEffectId: request.originalEffectId,
+      destination,
+      forwardResponse,
+      compensationPatch,
+    });
+  });
+
   it('uses persisted authorization, effect identity, and a real claimed step lease', async () => {
     const work = claimed();
     const { port, calls } = makePort([work]);

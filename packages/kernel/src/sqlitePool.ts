@@ -68,6 +68,7 @@ export function adaptPostgresSqlToSqlite(
     (_, num) => `datetime($${num}, '-60 seconds')`,
   );
   out = out.replace(/\bGREATEST\b/g, 'MAX');
+  out = out.replace(/\bLEAST\b/g, 'MIN');
   out = out.replace(
     /\bnow\(\)\s*\+\s*\(POWER\(2,\s*attempts\)\s*\*\s*INTERVAL\s+'1 second'\)/g,
     "strftime('%Y-%m-%dT%H:%M:%fZ', datetime('now', printf('+%d seconds', CAST((POWER(2, attempts)) AS INTEGER))))",

@@ -225,7 +225,10 @@ async function runCycle(
     model: process.env.STEPFUN_MODEL ?? 'step-3.7-flash',
     baseUrl: opts.baseUrl,
     v2Reachable: v2Ok,
-    env: collectBenchmarkEnv({ evidence: 'live', topology: { model: 'v2', gateways: 1, workers: 1, operations: 1 } }),
+    env: collectBenchmarkEnv({
+      evidence: 'live',
+      topology: { model: 'v2', gateways: 1, workers: 1, operations: 1 },
+    }),
     results,
     passed: results.filter((r) => r.ok).length,
     failed: results.filter((r) => !r.ok && !r.skipped).length,

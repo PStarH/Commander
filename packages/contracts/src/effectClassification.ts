@@ -18,7 +18,8 @@ export function isClassAEffectType(type: string): boolean {
     normalized.startsWith('retrieve.') ||
     normalized.startsWith('read.') ||
     normalized.startsWith('budget.')
-  ) return false;
+  )
+    return false;
   if (normalized.startsWith('local.') || normalized.startsWith('compute.')) return false;
   return true;
 }

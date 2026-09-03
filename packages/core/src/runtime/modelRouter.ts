@@ -205,6 +205,27 @@ const DEFAULT_MODELS: ModelConfig[] = [
     supportsJSONMode: false,
     supportsStructuredOutput: false,
   },
+  {
+    id: 'agnes-2.5-flash',
+    provider: 'agnes',
+    tier: 'eco',
+    costPer1MInput: 0,
+    costPer1MOutput: 0,
+    capabilities: [
+      'code',
+      'reasoning',
+      'analysis',
+      'fast',
+      'low_cost',
+      'streaming',
+      'function_calling',
+    ],
+    contextWindow: 524_288,
+    priority: 9,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+    maxOutputTokens: 65_536,
+  },
 
   // ===== Standard tier — balanced quality/cost =====
   {
@@ -917,6 +938,7 @@ export class ModelRouter {
     const estimatedOutputTokens = Math.min(
       ctx.tokenBudget,
       model.contextWindow - estimatedInputTokens,
+      model.maxOutputTokens ?? Number.POSITIVE_INFINITY,
     );
     const estimatedCost =
       (estimatedInputTokens / 1_000_000) * model.costPer1MInput +
@@ -1118,6 +1140,7 @@ export class ModelRouter {
     const estimatedOutputTokens = Math.min(
       ctx.tokenBudget,
       cheapest.contextWindow - estimatedInputTokens,
+      cheapest.maxOutputTokens ?? Number.POSITIVE_INFINITY,
     );
 
     const initial: RoutingDecision = {

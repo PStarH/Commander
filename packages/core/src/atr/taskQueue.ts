@@ -20,6 +20,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { AgentRuntime } from '../runtime/agentRuntime';
 import { getGlobalLogger } from '../logging';
@@ -28,6 +29,8 @@ import { getWebhookDispatcher } from '../runtime/webhookDispatcher';
 import { getCurrentTenantId } from '../runtime/tenantContext';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import type { LLMProvider } from '../runtime/types';
+
+const nodeRequire = createRequire(import.meta.url);
 
 const log = getGlobalLogger();
 
@@ -116,7 +119,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (err) {
   reportSilentFailure(err, 'taskQueue:120');
   /* not available — will throw on construction */
@@ -480,13 +483,13 @@ export class TaskQueue {
       // `await import()` and make this method async.
       const normalized = (provider ?? '').toLowerCase();
       if (normalized === 'anthropic') {
-        const { AnthropicProvider } = require('../runtime/providers/anthropicProvider');
+        const { AnthropicProvider } = nodeRequire('../runtime/providers/anthropicProvider');
         return new AnthropicProvider({
           apiKey: process.env.ANTHROPIC_API_KEY ?? '',
         }) as LLMProvider;
       }
       // Default: OpenAI (also covers OpenAI-compatible providers).
-      const { OpenAIProvider } = require('../runtime/providers/openaiProvider');
+      const { OpenAIProvider } = nodeRequire('../runtime/providers/openaiProvider');
       return new OpenAIProvider({
         apiKey: process.env.OPENAI_API_KEY ?? '',
       }) as LLMProvider;

@@ -7,7 +7,6 @@
 #
 # Install:   bash scripts/install-hooks.sh
 # Uninstall: rm .git/hooks/pre-commit
-# Bypass:    COMMANDER_SKIP_PRECOMMIT=1 git commit ...   (logged warning)
 
 set -euo pipefail
 
@@ -24,12 +23,6 @@ cd "$REPO_ROOT"
 # resolution order; PATH prepended so installer-installed PATH doesn't
 # shadow the workspace binary.
 export PATH="$REPO_ROOT/node_modules/.bin:$REPO_ROOT/packages/core/node_modules/.bin:$PATH"
-
-# Emergency bypass — log loudly so the bypass shows in CI audit.
-if [ "${COMMANDER_SKIP_PRECOMMIT:-0}" = "1" ]; then
-  echo "⚠️  COMMANDER_SKIP_PRECOMMIT=1 — D3 hook skipped (audit log will record this)" >&2
-  exit 0
-fi
 
 # In CI we set CORE_PRECOMMIT_HOOK=1 externally; for git-side invocation
 # set it here so the tsx script can detect the same intent.

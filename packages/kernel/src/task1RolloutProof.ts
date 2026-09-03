@@ -12,11 +12,26 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const CHALLENGE = /^[A-Za-z0-9_-]{43}$/;
 const READINESS_PATH = '/ready/tenant-authority/v1';
 const PROOF_KEYS = [
-  'format', 'installationId', 'operationVersion', 'proofSequence', 'proofAttemptId',
-  'lifecycleCommand', 'topology', 'configurationSha256', 'platformBindingSha256',
-  'requestedImageDigest', 'proofKeySha256', 'challengedResponse',
-  'challengedResponseSha256', 'platformArtifact', 'platformArtifactSha256', 'workload',
-  'startedAt', 'provenAt', 'pinned', 'metadata',
+  'format',
+  'installationId',
+  'operationVersion',
+  'proofSequence',
+  'proofAttemptId',
+  'lifecycleCommand',
+  'topology',
+  'configurationSha256',
+  'platformBindingSha256',
+  'requestedImageDigest',
+  'proofKeySha256',
+  'challengedResponse',
+  'challengedResponseSha256',
+  'platformArtifact',
+  'platformArtifactSha256',
+  'workload',
+  'startedAt',
+  'provenAt',
+  'pinned',
+  'metadata',
 ] as const;
 
 export interface Task1AuthoritativePlatformFacts {
@@ -107,8 +122,8 @@ function binding(operation: Task1LifecycleOperation): JsonRecord {
   }
   const value = record(parsed, 'TENANT_CUTOVER_PROOF_CURRENT_INVALID');
   if (
-    canonicalBootstrapJson(value) !== operation.requestedBindingJcs
-    || canonicalBootstrapSha256(value) !== operation.requestedBindingSha256
+    canonicalBootstrapJson(value) !== operation.requestedBindingJcs ||
+    canonicalBootstrapSha256(value) !== operation.requestedBindingSha256
   ) {
     fail('TENANT_CUTOVER_PROOF_CURRENT_INVALID');
   }
@@ -116,17 +131,15 @@ function binding(operation: Task1LifecycleOperation): JsonRecord {
 }
 
 function requestedImageDigest(operation: Task1LifecycleOperation, value: JsonRecord): string {
-  const composeMatch = typeof value.apiImageDigest === 'string'
-    ? COMPOSE_IMAGE.exec(value.apiImageDigest)
-    : null;
-  const imageDigest = operation.platformKind === 'compose'
-    ? composeMatch?.[1]
-    : value.apiImageDigest;
+  const composeMatch =
+    typeof value.apiImageDigest === 'string' ? COMPOSE_IMAGE.exec(value.apiImageDigest) : null;
+  const imageDigest =
+    operation.platformKind === 'compose' ? composeMatch?.[1] : value.apiImageDigest;
   if (
-    typeof imageDigest !== 'string'
-    || !IMAGE_DIGEST.test(imageDigest)
-    || value.kind !== operation.platformKind
-    || value.phase !== operation.runtimePhase
+    typeof imageDigest !== 'string' ||
+    !IMAGE_DIGEST.test(imageDigest) ||
+    value.kind !== operation.platformKind ||
+    value.phase !== operation.runtimePhase
   ) {
     fail('TENANT_CUTOVER_PROOF_CURRENT_INVALID');
   }
@@ -134,27 +147,29 @@ function requestedImageDigest(operation: Task1LifecycleOperation, value: JsonRec
 }
 
 function sameCurrent(expected: Task1LifecycleOperation, current: Task1LifecycleOperation): boolean {
-  return expected.installationUuid === current.installationUuid
-    && expected.operationVersion === current.operationVersion
-    && expected.requestedBindingJcs === current.requestedBindingJcs
-    && expected.requestedBindingSha256 === current.requestedBindingSha256
-    && expected.requestedConfigurationJcs === current.requestedConfigurationJcs
-    && expected.requestedConfigurationSha256 === current.requestedConfigurationSha256
-    && expected.databasePeerBindingSha256 === current.databasePeerBindingSha256
-    && expected.proofKeySha256 === current.proofKeySha256
-    && expected.operationKind === current.operationKind
-    && expected.runtimePhase === current.runtimePhase
-    && expected.platformKind === current.platformKind;
+  return (
+    expected.installationUuid === current.installationUuid &&
+    expected.operationVersion === current.operationVersion &&
+    expected.requestedBindingJcs === current.requestedBindingJcs &&
+    expected.requestedBindingSha256 === current.requestedBindingSha256 &&
+    expected.requestedConfigurationJcs === current.requestedConfigurationJcs &&
+    expected.requestedConfigurationSha256 === current.requestedConfigurationSha256 &&
+    expected.databasePeerBindingSha256 === current.databasePeerBindingSha256 &&
+    expected.proofKeySha256 === current.proofKeySha256 &&
+    expected.operationKind === current.operationKind &&
+    expected.runtimePhase === current.runtimePhase &&
+    expected.platformKind === current.platformKind
+  );
 }
 
 function validateCurrent(operation: Task1LifecycleOperation): void {
   if (
-    !UUID.test(operation.installationUuid)
-    || !POSITIVE_DECIMAL.test(operation.operationVersion)
-    || !SHA256.test(operation.requestedBindingSha256)
-    || !SHA256.test(operation.requestedConfigurationSha256)
-    || !SHA256.test(operation.databasePeerBindingSha256)
-    || !SHA256.test(operation.proofKeySha256)
+    !UUID.test(operation.installationUuid) ||
+    !POSITIVE_DECIMAL.test(operation.operationVersion) ||
+    !SHA256.test(operation.requestedBindingSha256) ||
+    !SHA256.test(operation.requestedConfigurationSha256) ||
+    !SHA256.test(operation.databasePeerBindingSha256) ||
+    !SHA256.test(operation.proofKeySha256)
   ) {
     fail('TENANT_CUTOVER_PROOF_CURRENT_INVALID');
   }
@@ -172,27 +187,27 @@ function validatePlatformFacts(
     return fail('TENANT_CUTOVER_PROOF_PLATFORM_MISMATCH');
   }
   if (
-    facts.topology !== operation.platformKind
-    || url.protocol !== 'https:'
-    || url.username !== ''
-    || url.password !== ''
-    || url.search !== ''
-    || url.hash !== ''
-    || url.pathname !== READINESS_PATH
-    || (operation.platformKind === 'compose' && facts.apiProofUrl !== currentBinding.apiProofUrl)
-    || !SHA256.test(facts.platformArtifactSha256)
-    || canonicalBootstrapSha256(facts.platformArtifact) !== facts.platformArtifactSha256
-    || typeof facts.workload.uid !== 'string'
-    || facts.workload.uid.length === 0
-    || !POSITIVE_DECIMAL.test(facts.workload.generation)
-    || facts.workload.observedGeneration !== facts.workload.generation
-    || !SHA256.test(facts.workload.templateSha256)
-    || facts.workload.ready.length === 0
-    || new Set(facts.workload.ready).size !== facts.workload.ready.length
-    || facts.metadata.specRevision !== 27
-    || facts.metadata.evidenceLevel !== 'live'
-    || facts.metadata.writeOwner !== 'commander_owner'
-    || facts.metadata.publicationPoint !== 'commander_tenant_cutover_rollout_proofs'
+    facts.topology !== operation.platformKind ||
+    url.protocol !== 'https:' ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.search !== '' ||
+    url.hash !== '' ||
+    url.pathname !== READINESS_PATH ||
+    (operation.platformKind === 'compose' && facts.apiProofUrl !== currentBinding.apiProofUrl) ||
+    !SHA256.test(facts.platformArtifactSha256) ||
+    canonicalBootstrapSha256(facts.platformArtifact) !== facts.platformArtifactSha256 ||
+    typeof facts.workload.uid !== 'string' ||
+    facts.workload.uid.length === 0 ||
+    !POSITIVE_DECIMAL.test(facts.workload.generation) ||
+    facts.workload.observedGeneration !== facts.workload.generation ||
+    !SHA256.test(facts.workload.templateSha256) ||
+    facts.workload.ready.length === 0 ||
+    new Set(facts.workload.ready).size !== facts.workload.ready.length ||
+    facts.metadata.specRevision !== 27 ||
+    facts.metadata.evidenceLevel !== 'live' ||
+    facts.metadata.writeOwner !== 'commander_owner' ||
+    facts.metadata.publicationPoint !== 'commander_tenant_cutover_rollout_proofs'
   ) {
     fail('TENANT_CUTOVER_PROOF_PLATFORM_MISMATCH');
   }
@@ -205,18 +220,27 @@ function challengedResponse(
   imageDigest: string,
 ): JsonRecord {
   const response = record(value, 'TENANT_CUTOVER_PROOF_RESPONSE_MISMATCH');
-  exactKeys(response, [
-    'challenge', 'operationVersion', 'phase', 'installationId',
-    'databasePeerBindingSha256', 'imageDigest', 'configurationSha256',
-  ], 'TENANT_CUTOVER_PROOF_RESPONSE_MISMATCH');
+  exactKeys(
+    response,
+    [
+      'challenge',
+      'operationVersion',
+      'phase',
+      'installationId',
+      'databasePeerBindingSha256',
+      'imageDigest',
+      'configurationSha256',
+    ],
+    'TENANT_CUTOVER_PROOF_RESPONSE_MISMATCH',
+  );
   if (
-    response.challenge !== challenge
-    || response.operationVersion !== operation.operationVersion
-    || response.phase !== operation.runtimePhase
-    || response.installationId !== operation.installationUuid
-    || response.databasePeerBindingSha256 !== operation.databasePeerBindingSha256
-    || response.imageDigest !== imageDigest
-    || response.configurationSha256 !== operation.requestedConfigurationSha256
+    response.challenge !== challenge ||
+    response.operationVersion !== operation.operationVersion ||
+    response.phase !== operation.runtimePhase ||
+    response.installationId !== operation.installationUuid ||
+    response.databasePeerBindingSha256 !== operation.databasePeerBindingSha256 ||
+    response.imageDigest !== imageDigest ||
+    response.configurationSha256 !== operation.requestedConfigurationSha256
   ) {
     fail('TENANT_CUTOVER_PROOF_RESPONSE_MISMATCH');
   }
@@ -225,11 +249,16 @@ function challengedResponse(
 
 function lifecycleCommand(operation: Task1LifecycleOperation): string {
   switch (operation.operationKind) {
-    case 'legacy_expand': return 'expand';
-    case 'fresh_enforce': return 'install_enforce';
-    case 'enforce': return 'enforce';
-    case 'recover_runtime_after_enforce_failure': return operation.operationKind;
-    case 'rollback_to_recorded_expand': return operation.operationKind;
+    case 'legacy_expand':
+      return 'expand';
+    case 'fresh_enforce':
+      return 'install_enforce';
+    case 'enforce':
+      return 'enforce';
+    case 'recover_runtime_after_enforce_failure':
+      return operation.operationKind;
+    case 'rollback_to_recorded_expand':
+      return operation.operationKind;
   }
 }
 
@@ -244,41 +273,45 @@ export function isTask1RolloutProofForOperation(
     const parsed = JSON.parse(proofJcs) as unknown;
     const proof = record(parsed, 'TENANT_CUTOVER_PROOF_RETAINED_INVALID');
     if (
-      canonicalBootstrapJson(proof) !== proofJcs
-      || canonicalBootstrapSha256(proof) !== proofSha256
-    ) return false;
+      canonicalBootstrapJson(proof) !== proofJcs ||
+      canonicalBootstrapSha256(proof) !== proofSha256
+    )
+      return false;
     exactKeys(proof, PROOF_KEYS, 'TENANT_CUTOVER_PROOF_RETAINED_INVALID');
     const currentBinding = binding(operation);
     const imageDigest = requestedImageDigest(operation, currentBinding);
     if (
-      proof.format !== 'rollout-proof/v1'
-      || proof.installationId !== operation.installationUuid
-      || proof.operationVersion !== operation.operationVersion
-      || typeof proof.proofSequence !== 'string'
-      || !POSITIVE_DECIMAL.test(proof.proofSequence)
-      || typeof proof.proofAttemptId !== 'string'
-      || !UUID.test(proof.proofAttemptId)
-      || proof.lifecycleCommand !== lifecycleCommand(operation)
-      || proof.topology !== operation.platformKind
-      || proof.configurationSha256 !== operation.requestedConfigurationSha256
-      || proof.platformBindingSha256 !== operation.requestedBindingSha256
-      || proof.requestedImageDigest !== imageDigest
-      || proof.proofKeySha256 !== operation.proofKeySha256
-    ) return false;
+      proof.format !== 'rollout-proof/v1' ||
+      proof.installationId !== operation.installationUuid ||
+      proof.operationVersion !== operation.operationVersion ||
+      typeof proof.proofSequence !== 'string' ||
+      !POSITIVE_DECIMAL.test(proof.proofSequence) ||
+      typeof proof.proofAttemptId !== 'string' ||
+      !UUID.test(proof.proofAttemptId) ||
+      proof.lifecycleCommand !== lifecycleCommand(operation) ||
+      proof.topology !== operation.platformKind ||
+      proof.configurationSha256 !== operation.requestedConfigurationSha256 ||
+      proof.platformBindingSha256 !== operation.requestedBindingSha256 ||
+      proof.requestedImageDigest !== imageDigest ||
+      proof.proofKeySha256 !== operation.proofKeySha256
+    )
+      return false;
 
     const response = record(proof.challengedResponse, 'TENANT_CUTOVER_PROOF_RETAINED_INVALID');
     if (
-      typeof response.challenge !== 'string'
-      || !CHALLENGE.test(response.challenge)
-      || challengedResponse(response, operation, response.challenge, imageDigest) !== response
-      || proof.challengedResponseSha256 !== canonicalBootstrapSha256(response)
-    ) return false;
+      typeof response.challenge !== 'string' ||
+      !CHALLENGE.test(response.challenge) ||
+      challengedResponse(response, operation, response.challenge, imageDigest) !== response ||
+      proof.challengedResponseSha256 !== canonicalBootstrapSha256(response)
+    )
+      return false;
 
     const artifact = record(proof.platformArtifact, 'TENANT_CUTOVER_PROOF_RETAINED_INVALID');
     if (
-      typeof proof.platformArtifactSha256 !== 'string'
-      || canonicalBootstrapSha256(artifact) !== proof.platformArtifactSha256
-    ) return false;
+      typeof proof.platformArtifactSha256 !== 'string' ||
+      canonicalBootstrapSha256(artifact) !== proof.platformArtifactSha256
+    )
+      return false;
     const workload = record(proof.workload, 'TENANT_CUTOVER_PROOF_RETAINED_INVALID');
     exactKeys(
       workload,
@@ -286,18 +319,19 @@ export function isTask1RolloutProofForOperation(
       'TENANT_CUTOVER_PROOF_RETAINED_INVALID',
     );
     if (
-      typeof workload.uid !== 'string'
-      || workload.uid.length === 0
-      || typeof workload.generation !== 'string'
-      || !POSITIVE_DECIMAL.test(workload.generation)
-      || workload.observedGeneration !== workload.generation
-      || typeof workload.templateSha256 !== 'string'
-      || !SHA256.test(workload.templateSha256)
-      || !Array.isArray(workload.ready)
-      || workload.ready.length === 0
-      || !workload.ready.every((value) => typeof value === 'string' && value.length > 0)
-      || new Set(workload.ready).size !== workload.ready.length
-    ) return false;
+      typeof workload.uid !== 'string' ||
+      workload.uid.length === 0 ||
+      typeof workload.generation !== 'string' ||
+      !POSITIVE_DECIMAL.test(workload.generation) ||
+      workload.observedGeneration !== workload.generation ||
+      typeof workload.templateSha256 !== 'string' ||
+      !SHA256.test(workload.templateSha256) ||
+      !Array.isArray(workload.ready) ||
+      workload.ready.length === 0 ||
+      !workload.ready.every((value) => typeof value === 'string' && value.length > 0) ||
+      new Set(workload.ready).size !== workload.ready.length
+    )
+      return false;
 
     record(proof.pinned, 'TENANT_CUTOVER_PROOF_RETAINED_INVALID');
     const metadata = record(proof.metadata, 'TENANT_CUTOVER_PROOF_RETAINED_INVALID');
@@ -307,20 +341,23 @@ export function isTask1RolloutProofForOperation(
       'TENANT_CUTOVER_PROOF_RETAINED_INVALID',
     );
     if (
-      metadata.specRevision !== 27
-      || metadata.evidenceLevel !== 'live'
-      || metadata.writeOwner !== 'commander_owner'
-      || metadata.publicationPoint !== 'commander_tenant_cutover_rollout_proofs'
-      || typeof proof.startedAt !== 'string'
-      || typeof proof.provenAt !== 'string'
-    ) return false;
+      metadata.specRevision !== 27 ||
+      metadata.evidenceLevel !== 'live' ||
+      metadata.writeOwner !== 'commander_owner' ||
+      metadata.publicationPoint !== 'commander_tenant_cutover_rollout_proofs' ||
+      typeof proof.startedAt !== 'string' ||
+      typeof proof.provenAt !== 'string'
+    )
+      return false;
     const startedAt = new Date(proof.startedAt);
     const provenAt = new Date(proof.provenAt);
-    return Number.isFinite(startedAt.getTime())
-      && Number.isFinite(provenAt.getTime())
-      && startedAt.toISOString() === proof.startedAt
-      && provenAt.toISOString() === proof.provenAt
-      && provenAt.getTime() >= startedAt.getTime();
+    return (
+      Number.isFinite(startedAt.getTime()) &&
+      Number.isFinite(provenAt.getTime()) &&
+      startedAt.toISOString() === proof.startedAt &&
+      provenAt.toISOString() === proof.provenAt &&
+      provenAt.getTime() >= startedAt.getTime()
+    );
   } catch {
     return false;
   }
@@ -359,6 +396,13 @@ export class Task1RolloutProofRuntime {
   }
 
   async challengeRecoveryPredecessor(
+    expected: Task1LifecycleOperation,
+  ): Promise<Task1RecoveryPredecessorChallenge> {
+    const { response } = await this.challengeOperation(expected);
+    return { status: 'proven', proof: response };
+  }
+
+  async challengeCurrent(
     expected: Task1LifecycleOperation,
   ): Promise<Task1RecoveryPredecessorChallenge> {
     const { response } = await this.challengeOperation(expected);

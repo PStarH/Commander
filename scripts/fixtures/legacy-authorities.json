@@ -133,8 +133,8 @@
     },
     {
       "path": "packages/core/src/atr/runLedger.ts",
-      "sourceSha256": "d23ce57414bc32c18bad0bffd42d3f3af513a4ef9ce8cd98645c5aee075c4161",
-      "callersSha256": "3efb8f6b5e0c111e0f144ef34eb5bead2da866c2931dea94bee2c348002409e5",
+      "sourceSha256": "7d3e3d6834af36f28242754b642ffcea2be931ceacb7fc5b4a0301e75fcaabf3",
+      "callersSha256": "d65b6c9de798361a8541feb03fa94331b3aef3a5e6e95922908b78483d8cbbf9",
       "owner": "@commander/core",
       "reason": "Legacy local run ledger pending kernel repository migration",
       "expiresAt": "2026-10-31",
@@ -143,7 +143,7 @@
     },
     {
       "path": "packages/core/src/atr/taskQueue.ts",
-      "sourceSha256": "7ca9cb7558e38907ececc786cf14591cf03766166e725e8d70809e341e998bdf",
+      "sourceSha256": "ff44ee8af06ccc0bc97f852260cd092cd6fa087f9766b3db139e05e793f22495",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "@commander/core",
       "reason": "Legacy local task queue pending worker-plane migration",
@@ -224,7 +224,7 @@
     {
       "path": "packages/core/src/runtime/finallyCleanupHandler.ts",
       "sourceSha256": "ce568dc4cee9bb6a5bb06d9b7b200b9d741bd02ea5bb6c749063332037bf9bd3",
-      "callersSha256": "748e2913a89ec5c60ef54664bc980235b239f77bc65ae2c24328dd337ee6ee5b",
+      "callersSha256": "dc91bf7f3d3fc4190cb0f6c2fec421b6b5bc60a10258fc5da314a00eeaf3f9c7",
       "owner": "@commander/core",
       "reason": "Legacy runtime cleanup mutation pending kernel lifecycle migration",
       "expiresAt": "2026-10-31",
@@ -233,7 +233,7 @@
     },
     {
       "path": "packages/core/src/runtime/httpServer.ts",
-      "sourceSha256": "bfa26bfdd34de62c730e4697c1c1c440524f90cf95adbebb59ba089c4c14001e",
+      "sourceSha256": "83f24d727c89c674bdef967cf4b5ccb5360db8e1e1a3ba236e04f50118866306",
       "callersSha256": "993a5c0932f0a9347c4044a38d2c7fe943bc3e4c9f082cf39e69a427829fe4c0",
       "owner": "@commander/core",
       "reason": "Legacy local runtime HTTP server retained for compatibility",
@@ -254,7 +254,7 @@
     {
       "path": "packages/core/src/runtime/sideEffectGate.ts",
       "sourceSha256": "7442c3607e118daf0bf044e864c69fd0195bfbb43365363af64f60f2d54e0a60",
-      "callersSha256": "faf8d6a6e172d798836fe276c24f346474b39e87230029cb9bf37923ba5292fa",
+      "callersSha256": "66b5c35d8c014417a12ee187a346a19dd02b144b3152c71cf59141981ea30dde",
       "owner": "@commander/core",
       "reason": "Legacy side-effect approval mutation pending effect broker migration",
       "expiresAt": "2026-10-31",
@@ -393,7 +393,7 @@
     },
     {
       "path": "scripts/l4-a-golden-demo.ts",
-      "sourceSha256": "07ff2f5af6c0afba50f4103121b28966029d4fa877bf71980fe442f5e1420073",
+      "sourceSha256": "5905d692b201fd227fd904b777ae19697794a50e7b3ce031de57abdf336a23fd",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-demos",
       "reason": "Live L4-A demo intentionally seeds canonical kernel work",
@@ -410,6 +410,16 @@
       "expiresAt": "2026-10-31",
       "canonicalReplacement": "kernel compensation fixture API",
       "disposition": "migrate-and-delete"
+    },
+    {
+      "path": "scripts/openai-agents-mcp-acceptance.ts",
+      "sourceSha256": "e4d33479fad36e3c19363cd65c184b867480e6548e6fc551207e0d54c6cab983",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-acceptance",
+      "reason": "OpenAI Agents MCP acceptance fixture seeds isolated proof rows during external verification",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "Action Gateway external acceptance harness",
+      "disposition": "remove"
     }
   ]
 }

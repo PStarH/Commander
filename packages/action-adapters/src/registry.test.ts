@@ -11,13 +11,25 @@ function stubAdapter(effectType: string): ActionAdapter {
       return {};
     },
     async queryOutcome() {
-      return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     },
     async compensate() {
       return {};
     },
     async queryCompensationOutcome() {
-      return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     },
   };
 }
@@ -66,7 +78,13 @@ describe('ActionAdapterRegistry', () => {
     const adapter = stubAdapter('connector.github.pull-request.create');
     adapter.queryOutcome = async (input) => {
       assert.equal(input.signal, controller.signal);
-      return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     };
     const registry = new ActionAdapterRegistry([adapter]);
     const querier = registry.outcomeQuerierFor('connector.github.pull-request.create');
@@ -87,7 +105,13 @@ describe('ActionAdapterRegistry', () => {
     let compensationQueries = 0;
     adapter.queryOutcome = async () => {
       forwardQueries += 1;
-      return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     };
     adapter.queryCompensationOutcome = async () => {
       compensationQueries += 1;

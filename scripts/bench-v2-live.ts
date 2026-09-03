@@ -245,11 +245,7 @@ async function collectAnomaliesSimulated(baseUrl: string): Promise<AnomalyCounts
   };
 }
 
-async function seedRunsSimulated(
-  baseUrl: string,
-  runs: number,
-  tenants: number,
-): Promise<boolean> {
+async function seedRunsSimulated(baseUrl: string, runs: number, tenants: number): Promise<boolean> {
   const batchSize = 500;
   for (let i = 0; i < runs; i += batchSize) {
     const batch = [];
@@ -526,9 +522,7 @@ export async function run(
 
   if (opts.mode === 'simulated') {
     if (topologyReachable) {
-      console.log(
-        `[bench:v2:live] simulated mode against ${opts.baseUrl} using /v2 memory ledger`,
-      );
+      console.log(`[bench:v2:live] simulated mode against ${opts.baseUrl} using /v2 memory ledger`);
       const seedStart = Date.now();
       seeded = await seedRunsSimulated(opts.baseUrl, opts.runs, opts.tenants);
       seedLatencyMs = Date.now() - seedStart;
@@ -566,20 +560,12 @@ export async function run(
         failures.push(`seed failed: created ${handles.length}/${opts.runs} runs`);
       } else {
         const drainStart = Date.now();
-        const drainResult = await waitForLiveDrain(
-          opts.baseUrl,
-          handles,
-          opts.timeoutSeconds,
-        );
+        const drainResult = await waitForLiveDrain(opts.baseUrl, handles, opts.timeoutSeconds);
         drainLatencyMs = Date.now() - drainStart;
         drained = drainResult.drained;
         if (!drained) failures.push('drain timeout');
         const anomalyStart = Date.now();
-        anomalies = await collectLiveAnomalies(
-          opts.baseUrl,
-          handles,
-          drainResult.statuses,
-        );
+        anomalies = await collectLiveAnomalies(opts.baseUrl, handles, drainResult.statuses);
         anomalyLatencyMs = Date.now() - anomalyStart;
         if (!anomalies) failures.push('anomaly audit unavailable');
       }
@@ -612,9 +598,10 @@ export async function run(
 
   // Simulated mode is allowed to pass without a live topology. Live mode must
   // have a reachable kernel, successful seed/drain, and clean anomaly audit.
-  const passed = opts.mode === 'simulated'
-    ? anomalyOk
-    : topologyReachable && seeded && drained && anomalies !== null && anomalyOk;
+  const passed =
+    opts.mode === 'simulated'
+      ? anomalyOk
+      : topologyReachable && seeded && drained && anomalies !== null && anomalyOk;
   const anomalyErrors =
     counts.duplicateClaims +
     counts.tenantLeaks +

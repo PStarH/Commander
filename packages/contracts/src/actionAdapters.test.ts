@@ -41,6 +41,17 @@ describe('actionAdapters contracts', () => {
     );
   });
 
+  it('findAdapterManifest matches the controlled Kubernetes compensation destination', () => {
+    assert.equal(
+      findAdapterManifest({
+        effectType: 'compensate.kubernetes.deployment.rollback',
+        toolName: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api',
+      }),
+      KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+    );
+  });
+
   it('findAdapterManifest matches registered GitHub destination', () => {
     const manifest = findAdapterManifest({
       effectType: 'connector.github.pull-request.create',

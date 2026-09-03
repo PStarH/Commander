@@ -32,8 +32,8 @@ metadata:
     app.kubernetes.io/managed-by: commander-operator
     commander.io/purpose: tenant-authority-prerequisite
 rules:
-  - apiGroups: ["authentication.k8s.io"]
-    resources: ["tokenreviews"]
+  - apiGroups: ["authorization.k8s.io"]
+    resources: ["selfsubjectaccessreviews"]
     verbs: ["create"]
   - apiGroups: ["admissionregistration.k8s.io"]
     resources: ["validatingadmissionpolicies", "validatingadmissionpolicybindings"]

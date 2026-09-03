@@ -27,8 +27,7 @@ describe('costPredictor', () => {
   beforeEach(() => {
     tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cost-predictor-'));
     vi.spyOn(modelRouter, 'getModelRouter').mockReturnValue({
-      getModel: (id: string) =>
-        id === 'gpt-4o' || id === 'gpt-4o-mini' ? { id } : undefined,
+      getModel: (id: string) => (id === 'gpt-4o' || id === 'gpt-4o-mini' ? { id } : undefined),
       getCostModel: () => ({ input: 0.00001, output: 0.00003, currency: 'USD' }),
       getProvider: () => 'openai',
     } as unknown as ReturnType<typeof modelRouter.getModelRouter>);

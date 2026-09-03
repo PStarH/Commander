@@ -78,12 +78,14 @@ function resources(): Record<string, any> {
       { name: 'COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256', value: digest('c') },
       { name: 'COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE', value: 'enforce' },
     ],
-    ports: [{ name: 'tenant-authority-proof', containerPort: 9443, protocol: 'TCP' }],
+    ports: [{ name: 'tenant-proof', containerPort: 9443, protocol: 'TCP' }],
     readinessProbe: {
-      httpGet: {
-        scheme: 'HTTPS',
-        path: '/ready/tenant-authority/v1',
-        port: 'tenant-authority-proof',
+      exec: {
+        command: [
+          'node',
+          '-e',
+          "const https = require('node:https'); const req = https.get({ hostname: '127.0.0.1', port: 9443, path: '/ready/tenant-authority/v1', rejectUnauthorized: false, headers: { 'X-Commander-Readiness-Challenge': 'BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc' } }, (res) => process.exit(res.statusCode === 200 ? 0 : 1)); req.on('error', () => process.exit(1)); req.setTimeout(1500, () => { req.destroy(); process.exit(1); });",
+        ],
       },
     },
   };
@@ -97,7 +99,7 @@ function resources(): Record<string, any> {
       },
       spec: {
         selector,
-        ports: [{ name: 'tenant-authority-proof', protocol: 'TCP', port: 9443, targetPort: 9443 }],
+        ports: [{ name: 'tenant-proof', protocol: 'TCP', port: 9443, targetPort: 9443 }],
       },
     },
     deployment: {
@@ -187,7 +189,7 @@ function resources(): Record<string, any> {
               name: 'api',
               ready: true,
               restartCount: 0,
-              image: apiContainer.image,
+              image: 'docker.io/library/commander:kind',
               imageID: `containerd://sha256:${digest('b')}`,
             },
           ],
@@ -287,7 +289,14 @@ function resources(): Record<string, any> {
                 projected: {
                   defaultMode: 256,
                   sources: [
-                    { serviceAccountToken: { audience, expirationSeconds: 300, path: 'token' } },
+                    {
+                      serviceAccountToken: {
+                        audience,
+                        expirationSeconds: 600,
+                        path: 'identity-token',
+                      },
+                    },
+                    { serviceAccountToken: { expirationSeconds: 600, path: 'api-token' } },
                     {
                       configMap: {
                         name: 'kube-root-ca.crt',
@@ -333,7 +342,7 @@ function resources(): Record<string, any> {
                 name: 'tenant-cutover-prove',
                 ready: true,
                 restartCount: 0,
-                image: `registry.example/commander@sha256:${digest('b')}`,
+                image: 'docker.io/library/commander:kind',
                 imageID: `containerd://sha256:${digest('b')}`,
               },
             ],
@@ -344,10 +353,130 @@ function resources(): Record<string, any> {
   };
 }
 
+function ownerCurrentProofResources(mode: 'plan' | 'append' = 'append'): Record<string, any> {
+  const values = resources();
+  const proofPod = values.proofPods.items[0];
+  proofPod.metadata.labels = {
+    ...proofSelector,
+    'app.kubernetes.io/name': 'release-a',
+    'app.kubernetes.io/instance': 'release-a',
+    'commander.io/migration-client-v2': 'true',
+    'commander.io/migration-release': 'release-a',
+    'commander.io/tenant-cutover-owner-execution': 'abcdef1234567890abcdef1234567890',
+  };
+  proofPod.metadata.ownerReferences = [
+    {
+      apiVersion: 'batch/v1',
+      kind: 'Job',
+      name: `release-a-owner-${mode}-abcdef123456`,
+      uid: 'job-uid',
+      controller: true,
+    },
+  ];
+  proofPod.spec.terminationGracePeriodSeconds = undefined;
+  proofPod.spec.containers = [
+    {
+      name: 'owner-command',
+      image: `registry.example/commander@sha256:${digest('b')}`,
+      imagePullPolicy: 'IfNotPresent',
+      command: ['node', 'packages/kernel/dist/migrate.js', `tenant-cutover-${mode}`],
+      env: [
+        { name: 'NODE_ENV', value: 'production' },
+        {
+          name: 'COMMANDER_TENANT_CUTOVER_INPUT_FILE',
+          value: '/run/commander/tenant-cutover/request.json',
+        },
+        {
+          name: 'DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'owner-url' } },
+        },
+        {
+          name: 'COMMANDER_KERNEL_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'owner-url' } },
+        },
+        {
+          name: 'COMMANDER_OWNER_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'owner-url' } },
+        },
+        {
+          name: 'COMMANDER_APP_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'app-url' } },
+        },
+        {
+          name: 'COMMANDER_TENANT_AUTHORITY_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'tenant-authority-url' } },
+        },
+        {
+          name: 'COMMANDER_SCHEDULER_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'scheduler-url' } },
+        },
+        {
+          name: 'COMMANDER_WORKER_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'worker-url' } },
+        },
+        {
+          name: 'COMMANDER_ADAPTER_OPS_DATABASE_URL',
+          valueFrom: { secretKeyRef: { name: 'release-a-database', key: 'adapter-ops-url' } },
+        },
+        { name: 'COMMANDER_DATABASE_TLS_CA_FILE', value: '/run/commander/database-tls/ca.crt' },
+        {
+          name: 'COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY',
+          value: 'secret/database-ca:database-ca.pem',
+        },
+        { name: 'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256', value: digest('3') },
+        {
+          name: 'COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE',
+          value: '/run/commander/api-proof-public/tls.crt',
+        },
+        { name: 'COMMANDER_KUBERNETES_PROOF_RUNTIME', value: '1' },
+      ],
+      securityContext: {
+        allowPrivilegeEscalation: false,
+        readOnlyRootFilesystem: true,
+        capabilities: { drop: ['ALL'] },
+      },
+      volumeMounts: [
+        { name: 'request', mountPath: '/run/commander/tenant-cutover', readOnly: true },
+        { name: 'database-public-ca', mountPath: '/run/commander/database-tls', readOnly: true },
+        { name: 'api-proof-public', mountPath: '/run/commander/api-proof-public', readOnly: true },
+        {
+          name: 'proof-api-token',
+          mountPath: '/var/run/secrets/commander.io/proof-api',
+          readOnly: true,
+        },
+        {
+          name: 'release-projection',
+          mountPath: '/run/commander/release-projection',
+          readOnly: true,
+        },
+        { name: 'tmp', mountPath: '/tmp' },
+      ],
+    },
+  ];
+  proofPod.spec.volumes = [
+    { name: 'request', configMap: { name: 'release-a-request-abcdef123456', defaultMode: 292 } },
+    ...proofPod.spec.volumes,
+  ];
+  proofPod.spec.volumes.find(
+    (volume: { name: string }) => volume.name === 'release-projection',
+  )!.configMap.name = 'release-a-owner-proof-current-r6';
+  proofPod.status.containerStatuses = [
+    {
+      name: 'owner-command',
+      ready: true,
+      restartCount: 0,
+      image: 'docker.io/library/commander:kind',
+      imageID: `containerd://sha256:${digest('b')}`,
+    },
+  ];
+  return values;
+}
+
 function token(): Task1ProjectedTokenIdentity {
   return {
     audience,
-    expiresAt: '2026-07-28T10:03:00.000Z',
+    issuedAt: '2026-07-28T10:00:00.000Z',
+    expiresAt: '2027-07-28T10:00:00.000Z',
     namespace: 'commander',
     serviceAccountName: 'commander-proof-reader-cd49c9ab10cdd15c',
     podName: 'proof-pod',
@@ -431,6 +560,108 @@ class FixtureApi implements Task1KubernetesProofApi {
 }
 
 describe('Task 1 Kubernetes proof observer', () => {
+  it('waits for kubelet to publish readiness for its own running proof Pod', async () => {
+    const values = resources();
+    const staleProofPods = structuredClone(values.proofPods);
+    staleProofPods.items[0].status.conditions[0].status = 'False';
+    staleProofPods.items[0].status.containerStatuses[0].ready = false;
+    const api = new FixtureApi(values);
+    let proofPodReads = 0;
+    const observer = createTask1KubernetesProofObserver({
+      api: {
+        async read(request) {
+          if (
+            request.resource === 'pods' &&
+            request.selector?.['commander.io/tenant-authority-proof-reader'] === 'true'
+          ) {
+            proofPodReads += 1;
+            return proofPodReads === 1 ? staleProofPods : values.proofPods;
+          }
+          return api.read(request);
+        },
+      },
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+      waitForProofStatus: async () => {},
+    });
+
+    await assert.doesNotReject(() => observer(operation()));
+    assert.equal(proofPodReads, 2);
+  });
+
+  it('retains only the machine code and observer location on invariant failures', async () => {
+    const values = resources();
+    values.service.metadata.name = 'wrong-service';
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await assert.rejects(
+      () => observer(operation()),
+      (error: unknown) => {
+        assert(error instanceof Error);
+        assert.equal(
+          (error as Error & { code?: unknown }).code,
+          'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+        );
+        assert.match(
+          String((error as Error & { diagnostic?: unknown }).diagnostic),
+          /^task1KubernetesProofObserver\.(?:ts|js):\d+:\d+$/,
+        );
+        return true;
+      },
+    );
+  });
+
+  it('reports Kubernetes label failures at the checked resource boundary', async () => {
+    const locations = new Set<string>();
+    const cases: Array<(values: Record<string, any>) => void> = [
+      (values) => delete values.service.metadata.labels['app.kubernetes.io/component'],
+      (values) => delete values.deployment.metadata.labels['app.kubernetes.io/component'],
+      (values) =>
+        delete values.deployment.spec.template.metadata.labels['app.kubernetes.io/component'],
+      (values) =>
+        delete values.replicaSets.items[0].spec.template.metadata.labels['pod-template-hash'],
+      (values) => delete values.apiPods.items[0].metadata.labels['pod-template-hash'],
+      (values) =>
+        delete values.proofPods.items[0].metadata.labels[
+          'commander.io/tenant-authority-proof-reader'
+        ],
+    ];
+
+    for (const mutate of cases) {
+      const values = JSON.parse(JSON.stringify(resources())) as Record<string, any>;
+      mutate(values);
+      const observer = createTask1KubernetesProofObserver({
+        api: new FixtureApi(values),
+        readProjectedTokenIdentity: async () => token(),
+        readReleaseProjection: async () => releaseProjection(),
+        now: () => now,
+      });
+
+      await assert.rejects(
+        () => observer(operation()),
+        (error: unknown) => {
+          assert(error instanceof Error);
+          assert.equal(
+            (error as Error & { code?: unknown }).code,
+            'TENANT_CUTOVER_KUBERNETES_PROOF_INVALID',
+          );
+          const diagnostic = String((error as Error & { diagnostic?: unknown }).diagnostic);
+          assert.match(diagnostic, /^task1KubernetesProofObserver\.(?:ts|js):\d+:\d+$/);
+          locations.add(diagnostic);
+          return true;
+        },
+      );
+    }
+
+    assert.equal(locations.size, cases.length);
+  });
+
   it('uses only the frozen proof-reader permissions and binds its own projected-token Pod', async () => {
     const api = new FixtureApi();
     const observer = createTask1KubernetesProofObserver({
@@ -470,6 +701,73 @@ describe('Task 1 Kubernetes proof observer', () => {
       api: new FixtureApi(),
       readProjectedTokenIdentity: async () => token(),
       readReleaseProjection: async () => ({ ...releaseProjection(), revision: '5' }),
+      now: () => now,
+    });
+
+    await assert.rejects(() => observer(operation()), /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/);
+  });
+
+  it('accepts the strictly bound owner append Pod as the current-proof observer', async () => {
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(ownerCurrentProofResources()),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await observer(operation());
+  });
+
+  it('accepts the strictly bound owner plan Pod as the current-proof observer', async () => {
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(ownerCurrentProofResources('plan')),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await observer(operation());
+  });
+
+  it('rejects an owner current-proof Pod without a writable tmp volume', async () => {
+    const values = ownerCurrentProofResources();
+    values.proofPods.items[0].spec.containers[0].volumeMounts =
+      values.proofPods.items[0].spec.containers[0].volumeMounts.filter(
+        (mount: { name: string }) => mount.name !== 'tmp',
+      );
+    values.proofPods.items[0].spec.volumes = values.proofPods.items[0].spec.volumes.filter(
+      (volume: { name: string }) => volume.name !== 'tmp',
+    );
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await assert.rejects(() => observer(operation()), /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/);
+  });
+
+  it('accepts the Kubernetes-defaulted owner current-proof termination grace period', async () => {
+    const values = ownerCurrentProofResources();
+    values.proofPods.items[0].spec.terminationGracePeriodSeconds = 30;
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await observer(operation());
+  });
+
+  it('rejects an owner current-proof Pod whose image pull policy drifts', async () => {
+    const values = ownerCurrentProofResources();
+    values.proofPods.items[0].spec.containers[0].imagePullPolicy = 'Always';
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
       now: () => now,
     });
 
@@ -629,9 +927,10 @@ describe('Task 1 Kubernetes proof observer', () => {
         },
       ],
       [
-        'readiness port drift',
+        'readiness probe drift',
         (values) => {
-          values.deployment.spec.template.spec.containers[0].readinessProbe.httpGet.port = 9443;
+          values.deployment.spec.template.spec.containers[0].readinessProbe.exec.command[2] =
+            "require('node:https').get('https://127.0.0.1:9443/ready/tenant-authority/v1')";
         },
       ],
       [
@@ -679,6 +978,13 @@ describe('Task 1 Kubernetes proof observer', () => {
         },
       ],
       [
+        'Kubernetes API token audience drift',
+        (values) => {
+          values.proofPods.items[0].spec.volumes[0].projected.sources[1].serviceAccountToken.audience =
+            audience;
+        },
+      ],
+      [
         'proof token mode drift',
         (values) => {
           values.proofPods.items[0].spec.volumes[0].projected.defaultMode = 420;
@@ -691,10 +997,10 @@ describe('Task 1 Kubernetes proof observer', () => {
         },
       ],
       [
-        'second projected token',
+        'extra projected token',
         (values) => {
           values.proofPods.items[0].spec.volumes[0].projected.sources.push({
-            serviceAccountToken: { audience, expirationSeconds: 300, path: 'other-token' },
+            serviceAccountToken: { audience, expirationSeconds: 600, path: 'other-token' },
           });
         },
       ],
@@ -914,6 +1220,7 @@ describe('Task 1 Kubernetes proof observer', () => {
         readProjectedTokenIdentity: async () => identity,
         readReleaseProjection: async () => releaseProjection(),
         now: () => now,
+        waitForProofStatus: async () => {},
       });
       await assert.rejects(
         () => observer(operation()),
@@ -921,5 +1228,44 @@ describe('Task 1 Kubernetes proof observer', () => {
         name,
       );
     }
+  });
+
+  it('rejects projected tokens whose issuance is stale or in the future', async () => {
+    for (const issuedAt of ['2026-07-28T09:49:59.000Z', '2026-07-28T10:00:01.000Z']) {
+      const values = resources();
+      const identity = token();
+      identity.issuedAt = issuedAt;
+      const observer = createTask1KubernetesProofObserver({
+        api: new FixtureApi(values),
+        readProjectedTokenIdentity: async () => identity,
+        readReleaseProjection: async () => releaseProjection(),
+        now: () => now,
+        waitForProofStatus: async () => {},
+      });
+      await assert.rejects(
+        () => observer(operation()),
+        /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/,
+        issuedAt,
+      );
+    }
+  });
+
+  it('rejects the superseded Service-routed readiness probe contract', async () => {
+    const values = resources();
+    values.deployment.spec.template.spec.containers[0].readinessProbe = {
+      httpGet: {
+        scheme: 'HTTPS',
+        path: '/ready/tenant-authority/v1',
+        port: 'tenant-proof',
+      },
+    };
+    const observer = createTask1KubernetesProofObserver({
+      api: new FixtureApi(values),
+      readProjectedTokenIdentity: async () => token(),
+      readReleaseProjection: async () => releaseProjection(),
+      now: () => now,
+    });
+
+    await assert.rejects(() => observer(operation()), /TENANT_CUTOVER_KUBERNETES_PROOF_INVALID/);
   });
 });

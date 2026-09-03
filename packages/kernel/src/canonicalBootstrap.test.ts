@@ -63,14 +63,7 @@ describe('canonical bootstrap JCS', () => {
 });
 
 describe('canonical Task 1 owner-derived records', () => {
-  const roles = [
-    'owner',
-    'app',
-    'tenant-authority',
-    'scheduler',
-    'worker',
-    'adapter-ops',
-  ] as const;
+  const roles = ['owner', 'app', 'tenant-authority', 'scheduler', 'worker', 'adapter-ops'] as const;
 
   it('pins the closed pre-render peer input and separately observed peer record', () => {
     const input = createDatabasePeerBindingInput({
@@ -83,7 +76,10 @@ describe('canonical Task 1 owner-derived records', () => {
       },
     });
     assert.equal(input.format, 'database_peer_binding_input/v1');
-    assert.deepEqual(input.roles.map(({ role }) => role), [...roles].sort());
+    assert.deepEqual(
+      input.roles.map(({ role }) => role),
+      [...roles].sort(),
+    );
     assert.ok(input.roles.every(({ host }) => host.endsWith('.db.example')));
     assert.equal(Object.hasOwn(input.roles[0]!, 'databaseOid'), false);
 
@@ -108,7 +104,13 @@ describe('canonical Task 1 owner-derived records', () => {
     });
     assert.deepEqual(Object.keys(observed).sort(), ['format', 'roles']);
     assert.deepEqual(Object.keys(observed.roles[0]!).sort(), [
-      'databaseName', 'databaseOid', 'host', 'port', 'role', 'serverSpkiSha256', 'tlsServerSans',
+      'databaseName',
+      'databaseOid',
+      'host',
+      'port',
+      'role',
+      'serverSpkiSha256',
+      'tlsServerSans',
     ]);
     assert.equal(
       canonicalBootstrapSha256(observed),
@@ -139,15 +141,28 @@ describe('canonical Task 1 owner-derived records', () => {
       })),
     });
     for (const mutate of [
-      (value: typeof base) => { value.roles[0]!.tlsServerSans.dns[0] = 'other.example'; },
-      (value: typeof base) => { value.roles[0]!.serverSpkiSha256 = 'c'.repeat(64); },
-      (value: typeof base) => { value.roles[0]!.databaseOid = '16385'; },
-      (value: typeof base) => { value.roles[0]!.databaseName = 'other'; },
-      (value: typeof base) => { value.roles[0]!.port = 6432; },
+      (value: typeof base) => {
+        value.roles[0]!.tlsServerSans.dns[0] = 'other.example';
+      },
+      (value: typeof base) => {
+        value.roles[0]!.serverSpkiSha256 = 'c'.repeat(64);
+      },
+      (value: typeof base) => {
+        value.roles[0]!.databaseOid = '16385';
+      },
+      (value: typeof base) => {
+        value.roles[0]!.databaseName = 'other';
+      },
+      (value: typeof base) => {
+        value.roles[0]!.port = 6432;
+      },
     ]) {
       const changed = structuredClone(base);
       mutate(changed);
-      assert.throws(() => verifyDatabasePeerBinding(input, changed), /DATABASE_PEER_BINDING_INVALID/);
+      assert.throws(
+        () => verifyDatabasePeerBinding(input, changed),
+        /DATABASE_PEER_BINDING_INVALID/,
+      );
     }
   });
 
@@ -164,9 +179,22 @@ describe('canonical Task 1 owner-derived records', () => {
       catalogVersion: '202307071',
       databaseIdentity: { oid: '16384', name: 'commander' },
       ledger: null,
-      namespaces: [], relations: [], functions: [], types: [], extensions: [], policies: [],
-      triggers: [], productSources: [], productHasRows: [], roles: [], memberships: [],
-      roleSettings: [], databaseAcl: [], schemaAcls: [], defaultAcls: [], bootstrapIdentities,
+      namespaces: [],
+      relations: [],
+      functions: [],
+      types: [],
+      extensions: [],
+      policies: [],
+      triggers: [],
+      productSources: [],
+      productHasRows: [],
+      roles: [],
+      memberships: [],
+      roleSettings: [],
+      databaseAcl: [],
+      schemaAcls: [],
+      defaultAcls: [],
+      bootstrapIdentities,
     };
     const snapshots = createPrebootstrapSnapshots(inventory, structuredClone(inventory));
     assert.equal(snapshots.comparisonKind, 'fresh-byte-equal');

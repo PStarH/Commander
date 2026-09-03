@@ -3,7 +3,7 @@
  *
  * Provides:
  * - Request ID tracking (X-Request-ID)
- * - Rate limiting (per-tenant / per-user / per-IP)
+ * - Rate limiting (per-tenant / per-user / per-IP) — PostgreSQL authoritative
  * - Security headers (X-Content-Type-Options, X-Frame-Options, etc.)
  * - Error sanitization (don't leak internal details)
  * - Request body validation
@@ -11,20 +11,124 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { PersistentRateLimitStore } from './persistentRateLimitStore';
+import type { SqlPool } from '@commander/kernel';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import { createAuthPool, type VerifiedPoolFactory } from './authDb';
 
-// ── Persistent source of truth (audit MED item 3, follow-up) ────────────────
+// ============================================================================
+// PostgreSQL-authoritative rate limiting
 //
-// Without persistence, a process restart wipes all rate-limit counters and
-// an attacker who hit 429 just before the restart can immediately resume
-// brute-forcing — an auth-reset bypass vector. The persistent store mirrors
-// every Map mutation (write-through) and the boot path hydrates the Map from
-// SQL on init. The store is optional so dev/CI runs don't have to ship
-// better-sqlite3 cold; turn off with API_RATE_LIMIT_PERSISTENT=off.
-let persistentRateLimitStore: PersistentRateLimitStore | null = null;
+// Per-identity counters live in `commander_auth_rate_limits` and are consumed
+// with a single atomic upsert per request, so a process restart can never reset
+// an attacker's counters and concurrent replicas share the same window. No
+// SQLite / Map fallback exists.
+// ============================================================================
 
-function isRateLimitPersistenceEnabled(): boolean {
-  return (process.env.API_RATE_LIMIT_PERSISTENT ?? 'on').toLowerCase() !== 'off';
+export interface RateLimitEntry {
+  count: number;
+  resetAt: number;
+}
+
+export interface RateLimitBucket {
+  key: string;
+  windowMs: number;
+}
+
+export interface RateLimitStore {
+  consume(buckets: readonly RateLimitBucket[]): Promise<RateLimitEntry[]>;
+  cleanup(now: number): Promise<number>;
+}
+
+const CONSUME_RATE_LIMIT_SQL = [
+  'INSERT INTO commander_auth_rate_limits (bucket_key, count, reset_at)',
+  "VALUES ($1, 1, clock_timestamp() + ($2 * interval '1 millisecond'))",
+  'ON CONFLICT (bucket_key) DO UPDATE SET',
+  'count = CASE WHEN commander_auth_rate_limits.reset_at <= clock_timestamp() THEN 1 ELSE commander_auth_rate_limits.count + 1 END,',
+  "reset_at = CASE WHEN commander_auth_rate_limits.reset_at <= clock_timestamp() THEN clock_timestamp() + ($2 * interval '1 millisecond') ELSE commander_auth_rate_limits.reset_at END",
+  'RETURNING count, EXTRACT(EPOCH FROM reset_at) * 1000 AS "resetAt"',
+].join('\n');
+
+export class PostgresRateLimitStore implements RateLimitStore {
+  constructor(private readonly pool: SqlPool) {}
+
+  async consume(buckets: readonly RateLimitBucket[]): Promise<RateLimitEntry[]> {
+    if (buckets.length === 0) return [];
+    const client = await this.pool.connect();
+    let transactionStarted = false;
+    let releaseError: Error | boolean | undefined;
+    try {
+      await client.query('BEGIN');
+      transactionStarted = true;
+      const entries: RateLimitEntry[] = [];
+      for (const bucket of buckets) {
+        const result = await client.query<RateLimitEntry>(CONSUME_RATE_LIMIT_SQL, [
+          bucket.key,
+          bucket.windowMs,
+        ]);
+        const row = result.rows[0];
+        if (!row) throw new Error('RATE_LIMIT_RECORD_MISSING');
+        entries.push({ count: Number(row.count), resetAt: Number(row.resetAt) });
+      }
+      await client.query('COMMIT');
+      transactionStarted = false;
+      return entries;
+    } catch (error) {
+      releaseError = error instanceof Error ? error : true;
+      if (transactionStarted) {
+        try {
+          await client.query('ROLLBACK');
+        } catch (rollbackError) {
+          releaseError = rollbackError instanceof Error ? rollbackError : true;
+        }
+      }
+      throw error;
+    } finally {
+      await client.release(releaseError);
+    }
+  }
+
+  async cleanup(now: number): Promise<number> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ count: string }>(
+        'DELETE FROM commander_auth_rate_limits WHERE reset_at <= to_timestamp($1 / 1000.0) RETURNING bucket_key',
+        [now],
+      );
+      return result.rowCount ?? 0;
+    } finally {
+      await client.release();
+    }
+  }
+}
+
+export function createRateLimitStoreFromEnvironment(
+  environment: NodeJS.ProcessEnv = process.env,
+  createPool: VerifiedPoolFactory = createVerifiedPostgresPool,
+): RateLimitStore {
+  return new PostgresRateLimitStore(createAuthPool(environment, createPool));
+}
+
+let sharedRateLimitStore: RateLimitStore | undefined;
+
+function getRateLimitStore(): RateLimitStore {
+  sharedRateLimitStore ??= createRateLimitStoreFromEnvironment();
+  return sharedRateLimitStore;
+}
+
+export function setRateLimitStoreForTesting(store: RateLimitStore): void {
+  sharedRateLimitStore = store;
+}
+
+export async function initRateLimitStore(): Promise<void> {
+  getRateLimitStore();
+}
+
+export function closeRateLimitStore(): void {
+  sharedRateLimitStore = undefined;
+}
+
+export function _resetRateLimitStoreForTesting(): void {
+  sharedRateLimitStore = undefined;
 }
 
 // ============================================================================
@@ -58,13 +162,10 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
   res.setHeader('X-XSS-Protection', '0');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  // Security: Content-Security-Policy — defense-in-depth against XSS.
-  // Per OWASP CSP Cheat Sheet: restrict script sources to same-origin.
   res.setHeader(
     'Content-Security-Policy',
     "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
   );
-  // HSTS — only in production with HTTPS
   if (process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
@@ -72,13 +173,8 @@ export function securityHeaders(_req: Request, res: Response, next: NextFunction
 }
 
 // ============================================================================
-// Rate Limiting (per-identity: tenant → user → IP)
+// Rate Limiting (per-identity: tenant → user → IP, PostgreSQL authority)
 // ============================================================================
-
-interface RateLimitEntry {
-  count: number;
-  resetAt: number;
-}
 
 interface RateLimitIdentity {
   ip: string;
@@ -87,23 +183,8 @@ interface RateLimitIdentity {
 }
 
 // Mirrors the tenant-id validation in core/runtime/tenantContext.ts.
-// Inlined so the API server does not need a pre-built @commander/core dist
-// just to validate an optional HTTP header.
 const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 
-/**
- * Rate-limit tier classification (audit MED item 3 — security theater fix).
- *
- * Production deployments need layered rate limits so a flood against one
- * route class doesn't blackhole monitoring or silently allow IP rotation
- * sweeps. Three tiers evaluated in order on every request:
- *   1. GLOBAL token bucket — caps aggregate req/sec across ALL IPs.
- *      Without it, attackers rotate IPs and bypass per-IP limits.
- *   2. Per-tier per-IP — each route class has a multiplier so /health
- *      isn't knocked off during a /execute spike.
- *   3. Per-tier headers — X-RateLimit-Tier lets well-behaved SDKs back off
- *      before 429.
- */
 type RateLimitTier = 'health' | 'read' | 'write';
 
 const TIER_MULTIPLIER: Record<RateLimitTier, number> = {
@@ -114,15 +195,10 @@ const TIER_MULTIPLIER: Record<RateLimitTier, number> = {
 
 function classifyTier(url: string, method: string = 'GET'): RateLimitTier {
   if (/\/(health|metrics|ready|system\/status)/.test(url)) return 'health';
-  // Audit MED item 3 polish: classify writes by HTTP method, not path alone.
-  // Without this, GET /api/v1/memory?action=stats would share the 0.25x
-  // write tier with POST /api/v1/memory?action=write, over-throttling cheap
-  // reads. The 'read' tier is the default for all non-write paths.
   if (method === 'POST' && /\/api\/v1\/(execute|plan|memory)/.test(url)) return 'write';
   return 'read';
 }
 
-const rateLimitStore = new Map<string, RateLimitEntry>();
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
 const RATE_LIMIT_MAX = parseInt(process.env.API_RATE_LIMIT ?? '120', 10);
 const RATE_LIMIT_USER_MAX = parseInt(process.env.API_RATE_LIMIT_USER ?? String(RATE_LIMIT_MAX), 10);
@@ -130,176 +206,18 @@ const RATE_LIMIT_TENANT_MAX = parseInt(
   process.env.API_RATE_LIMIT_TENANT ?? String(RATE_LIMIT_MAX),
   10,
 );
-// Cap rateLimitStore size (audit MED item 3 — RAM-DoS amplifier mitigation).
-// Without a max-entries bound, an attacker rotating source IPs (e.g. spoofed
-// X-Forwarded-For in permissive CORS, IPv6 prefix brute), grows the Map
-// unboundedly until the periodic 5-minute cleanup runs — at which point the
-// process is already under memory pressure. The MAX_ENTRIES boundary evicts
-// the oldest entry (Map preserves insertion order so the first iterator
-// entry is FIFO) when capacity is exceeded, plus opportunistically drops
-// any expired entries on the same pass to amortize cleanup cost.
-const RATE_LIMIT_MAX_ENTRIES = parseInt(process.env.API_RATE_LIMIT_MAX_ENTRIES ?? '50000', 10);
 
-// GLOBAL token bucket — burst capacity and refill rate are env-overridable
-// so production deployments behind a CDN / sharded multi-tenant can re-tune.
-// Defaults: capacity = max(1000, 2x RATE_LIMIT_MAX), refill = 1000 req/sec.
-const GLOBAL_BUCKET_CAPACITY = Math.max(
-  1000,
-  parseInt(process.env.API_GLOBAL_RATE_LIMIT ?? String(RATE_LIMIT_MAX * 2), 10),
-);
-const GLOBAL_BUCKET_REFILL_PER_SEC = parseInt(
-  process.env.API_GLOBAL_RATE_REFILL_PER_SEC ?? '1000',
-  10,
-);
-const globalBucket = { tokens: GLOBAL_BUCKET_CAPACITY, lastRefill: Date.now() };
-
-function consumeGlobalToken(now: number): boolean {
-  const elapsedSec = Math.max(0, (now - globalBucket.lastRefill) / 1000);
-  globalBucket.tokens = Math.min(
-    GLOBAL_BUCKET_CAPACITY,
-    globalBucket.tokens + elapsedSec * GLOBAL_BUCKET_REFILL_PER_SEC,
-  );
-  globalBucket.lastRefill = now;
-  if (globalBucket.tokens < 1) return false;
-  globalBucket.tokens -= 1;
-  return true;
-}
-
-// ── Write-through helpers (audit MED item 3 follow-up) ────────────────────
-//
-// Wrap Map mutations with a SQLite op so the persistent store stays in
-// lockstep with the in-memory cache. SQLite failures are logged but never
-// thrown — a wedged DB cannot deny service to well-behaved clients. Sync
-// (better-sqlite3) keeps the request path on the microsecond scale; we
-// only do ~1 extra SQL op per allowed request, well within p99 budget.
-
-/**
- * writeThroughSet — upsert (key, count, resetAt) into SQL after the in-memory
- * Map write. Called on every counted request so the persistent counter
- * never lags the Map counter (defeats the auth-reset bypass). Failures log.
- */
-function writeThroughSet(key: string, entry: RateLimitEntry): void {
-  rateLimitStore.set(key, entry);
-  if (persistentRateLimitStore) {
-    try {
-      persistentRateLimitStore.set(key, entry.count, entry.resetAt);
-    } catch (e) {
-      process.stderr.write(
-        `[RateLimit] Persistent set failed for key=${key}: ${(e as Error).message}\n`,
-      );
-    }
-  }
-}
-
-/**
- * writeThroughDelete — Map.delete + SQL delete. Only called from the
- * periodic 5-minute cleanup pass so SQLite writes stay amortized.
- * Per-request memory-pressure evictions are Map-only (handled inline) so
- * the SQL op doesn't fire on every flood.
- */
-function writeThroughDelete(key: string): void {
-  rateLimitStore.delete(key);
-  if (persistentRateLimitStore) {
-    try {
-      persistentRateLimitStore.delete(key);
-    } catch (e) {
-      process.stderr.write(
-        `[RateLimit] Persistent delete failed for key=${key}: ${(e as Error).message}\n`,
-      );
-    }
-  }
-}
-
-// Cleanup old entries every 5 minutes — Map cleanup preserves existing
-// behavior; persistent.cleanup() runs on the same cadence via
-// writeThroughDelete so the SQLite table doesn't grow unboundedly with
-// rows that the Map has already evicted.
+// Expired rows are swept periodically; PostgreSQL owns storage so the Map
+// eviction machinery from the legacy in-memory implementation is gone.
 setInterval(() => {
   const now = Date.now();
-  for (const [key, entry] of rateLimitStore) {
-    if (entry.resetAt < now) {
-      writeThroughDelete(key);
-    }
-  }
-  // Belt-and-braces: even if rateLimitStore was empty, sweep any orphaned
-  // rows (e.g. left behind by an abnormal shutdown that didn't run write-
-  // through) directly from SQL.
-  if (persistentRateLimitStore) {
-    try {
-      persistentRateLimitStore.cleanup(now);
-    } catch (e) {
-      process.stderr.write(`[RateLimit] Persistent cleanup failed: ${(e as Error).message}\n`);
-    }
+  try {
+    const store = sharedRateLimitStore;
+    if (store) void store.cleanup(now).catch(() => undefined);
+  } catch (e) {
+    process.stderr.write(`[RateLimit] Cleanup failed: ${(e as Error).message}\n`);
   }
 }, 300_000).unref();
-
-/**
- * initRateLimitStore — open the persistent store (if enabled) and hydrate
- * the in-memory Map from SQL on boot. Returns a Promise so callers
- * (apps/api/src/index.ts) can await before app.listen() and avoid the
- * race where the first request after boot reads an empty Map.
- *
- * Hydration is best-effort: SQL failures log and fall through to an empty
- * Map (graceful degradation, never a startup crash). Repeated calls are
- * idempotent — second call is a no-op so test runs that import the module
- * multiple times don't double-open the SQLite handle.
- */
-let initialized = false;
-export async function initRateLimitStore(now: number = Date.now()): Promise<void> {
-  if (initialized) return;
-  if (!isRateLimitPersistenceEnabled()) {
-    initialized = true;
-    process.stdout.write('[RateLimit] Persistent store disabled (API_RATE_LIMIT_PERSISTENT=off)\n');
-    return;
-  }
-  try {
-    persistentRateLimitStore = new PersistentRateLimitStore(process.env.API_RATE_LIMIT_DB_PATH);
-    const activeRows = persistentRateLimitStore.listActive(now);
-    for (const row of activeRows) {
-      rateLimitStore.set(row.key, { count: row.count, resetAt: row.resetAt });
-    }
-    initialized = true;
-    process.stdout.write(
-      `[RateLimit] Hydrated ${activeRows.length} active entries from persistent store\n`,
-    );
-  } catch (e) {
-    // Graceful fallback — server still serves traffic; rate limits are
-    // process-local. Re-allow init() retry on the next boot.
-    persistentRateLimitStore = null;
-    initialized = false;
-    process.stderr.write(
-      `[RateLimit] Persistent store init failed, falling back to in-memory only: ${(e as Error).message}\n`,
-    );
-  }
-}
-
-/**
- * closeRateLimitStore — close the persistent store on graceful shutdown.
- * Idempotent and safe to call even if init failed (null check).
- */
-export function closeRateLimitStore(): void {
-  if (!persistentRateLimitStore) return;
-  try {
-    persistentRateLimitStore.close();
-    process.stdout.write('[RateLimit] Persistent store closed\n');
-  } catch (e) {
-    process.stderr.write(`[RateLimit] Persistent store close failed: ${(e as Error).message}\n`);
-  } finally {
-    persistentRateLimitStore = null;
-    initialized = false;
-  }
-}
-
-/**
- * _resetRateLimitStoreForTesting — test-only escape hatch to clear the
- * `initialized` latch so a test can re-run initRateLimitStore against a
- * fresh DB path. NOT exported via index.ts.
- */
-export function _resetRateLimitStoreForTesting(): void {
-  persistentRateLimitStore = null;
-  initialized = false;
-  rateLimitStore.clear();
-}
 
 function getClientIp(req: Request): string {
   return req.ip ?? req.socket.remoteAddress ?? 'unknown';
@@ -312,8 +230,7 @@ function extractTenantId(req: Request): string | undefined {
   // cross-tenant) caller could otherwise exhaust another tenant's quota by
   // spoofing the header. `req.tenantId` is set by authMiddleware (API-key
   // binding); `req.user.tenantId` is the verified JWT claim parsed earlier.
-  const resolved =
-    (req as Request & { tenantId?: string }).tenantId ?? req.user?.tenantId;
+  const resolved = (req as Request & { tenantId?: string }).tenantId ?? req.user?.tenantId;
   if (typeof resolved !== 'string') return undefined;
   if (!TENANT_ID_RE.test(resolved)) return undefined;
   return resolved;
@@ -335,8 +252,6 @@ interface RateLimitScope {
 
 function buildScopes(identity: RateLimitIdentity, tier: RateLimitTier): RateLimitScope[] {
   const scopes: RateLimitScope[] = [];
-  // Tenant is the broadest identity-aware bucket: it caps aggregate usage
-  // across all users belonging to the same tenant.
   if (identity.tenantId) {
     scopes.push({
       key: `tenant:${identity.tenantId}`,
@@ -344,8 +259,6 @@ function buildScopes(identity: RateLimitIdentity, tier: RateLimitTier): RateLimi
       max: Math.max(1, Math.floor(RATE_LIMIT_TENANT_MAX * TIER_MULTIPLIER[tier])),
     });
   }
-  // User bucket isolates individual accounts, so one compromised user cannot
-  // exhaust the tenant-wide budget.
   if (identity.userId) {
     scopes.push({
       key: `user:${identity.userId}`,
@@ -353,9 +266,6 @@ function buildScopes(identity: RateLimitIdentity, tier: RateLimitTier): RateLimi
       max: Math.max(1, Math.floor(RATE_LIMIT_USER_MAX * TIER_MULTIPLIER[tier])),
     });
   }
-  // IP bucket is the fallback for anonymous / unauthenticated traffic only.
-  // For authenticated requests we enforce the more specific tenant/user
-  // buckets so that a shared corporate NAT does not artificially cap users.
   if (scopes.length === 0) {
     scopes.push({
       key: `ip:${identity.ip}`,
@@ -366,93 +276,67 @@ function buildScopes(identity: RateLimitIdentity, tier: RateLimitTier): RateLimi
   return scopes;
 }
 
-export function rateLimitMiddleware(req: Request, res: Response, next: NextFunction): void {
+export async function rateLimitMiddleware(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
   const identity = buildRateLimitIdentity(req);
   const now = Date.now();
 
-  // Layer 1: GLOBAL token bucket — takes precedence over per-identity limits
-  // so an attacker spraying IPs/users cannot bypass by spreading load.
-  if (!consumeGlobalToken(now)) {
-    res.setHeader('X-RateLimit-Reason', 'global-token-bucket');
-    res.setHeader('Retry-After', '1');
-    res.status(429).json({
-      error: 'Server overloaded. Retry after rate-limit reset.',
-      retryAfter: 1,
-    });
-    return;
-  }
-
-  // Layer 2: per-tier per-identity. Tier ceilings are scaled independently
-  // so /health-monitoring isn't knocked off by a /execute spike, and a
-  // privileged user or noisy tenant can be capped on its own limit.
+  // Per-tier per-identity, atomically consumed in PostgreSQL.
   const tier = classifyTier(req.url ?? '/', req.method ?? 'GET');
   const scopes = buildScopes(identity, tier);
 
-  // Memory-pressure guard: when the rateLimitStore exceeds the cap, evict
-  // one expired entry opportunistically and (if none are expired) the FIFO
-  // oldest. Capped to at most 256 evictions per request to bound tail
-  // latency under adversarial floods. Per-request eviction only touches
-  // Map — the periodic 5-minute interval is the authoritative cleanup
-  // channel for persistent (alignment keeps SQL writes amortized).
-  if (rateLimitStore.size >= RATE_LIMIT_MAX_ENTRIES) {
-    let evicted = 0;
-    for (const [key, exp] of rateLimitStore) {
-      if (exp.resetAt < now) {
-        rateLimitStore.delete(key);
-        evicted++;
-        if (evicted >= 256) break;
-      }
-    }
-    if (evicted === 0) {
-      // FIFO eviction — Map insertion order throws away the cold tail first.
-      const oldest = rateLimitStore.keys().next().value;
-      if (oldest !== undefined) rateLimitStore.delete(oldest);
-    }
+  let entries: RateLimitEntry[];
+  try {
+    entries = await getRateLimitStore().consume(
+      scopes.map((scope) => ({ key: scope.key, windowMs: RATE_LIMIT_WINDOW_MS })),
+    );
+  } catch (error) {
+    // Fail closed: an unavailable rate-limit authority must not silently allow
+    // unlimited traffic. Reject the request rather than degrade to local state.
+    process.stderr.write(
+      `[RateLimit] PostgreSQL authority unavailable: ${(error as Error).message}\n`,
+    );
+    res.setHeader('Retry-After', '60');
+    res.status(503).json({
+      error: 'Rate limit authority unavailable. Retry later.',
+      retryAfter: 60,
+    });
+    return;
   }
 
   let blockingScope:
     { prefix: 'tenant' | 'user' | 'ip'; entry: RateLimitEntry; max: number } | undefined;
   let primaryScope: RateLimitScope | undefined;
+  let primaryEntry: RateLimitEntry | undefined;
 
-  for (const scope of scopes) {
-    let entry = rateLimitStore.get(scope.key);
-    if (!entry || entry.resetAt < now) {
-      entry = { count: 0, resetAt: now + RATE_LIMIT_WINDOW_MS };
-    }
-    entry.count++;
-    // writeThroughSet AFTER increment so the persistent counter matches the
-    // in-memory one — defeats the auth-reset bypass where a restart between
-    // the Map write and the SQL upsert would cause counter drift.
-    writeThroughSet(scope.key, entry);
-
+  scopes.forEach((scope, index) => {
+    const entry = entries[index]!;
     if (!blockingScope && entry.count > scope.max) {
       blockingScope = { prefix: scope.prefix, entry, max: scope.max };
     }
-
-    // The "primary" scope drives the response headers: prefer the most
-    // specific identity we have (user > tenant > ip) so SDKs see a limit
-    // that matches the dimension actually being enforced.
     if (
       !primaryScope ||
       (scope.prefix === 'user' && primaryScope.prefix !== 'user') ||
       (scope.prefix === 'tenant' && primaryScope.prefix === 'ip')
     ) {
       primaryScope = scope;
+      primaryEntry = entry;
     }
-  }
+  });
 
-  const primaryEntry = rateLimitStore.get(primaryScope!.key)!;
+  const finalScope = primaryScope!;
+  const finalEntry = primaryEntry!;
 
-  res.setHeader('X-RateLimit-Limit', primaryScope!.max);
+  res.setHeader('X-RateLimit-Limit', finalScope.max);
   res.setHeader('X-RateLimit-Tier', tier);
-  res.setHeader('X-RateLimit-Remaining', Math.max(0, primaryScope!.max - primaryEntry.count));
-  res.setHeader('X-RateLimit-Reset', Math.ceil(primaryEntry.resetAt / 1000));
+  res.setHeader('X-RateLimit-Remaining', Math.max(0, finalScope.max - finalEntry.count));
+  res.setHeader('X-RateLimit-Reset', Math.ceil(finalEntry.resetAt / 1000));
 
   if (blockingScope) {
     res.setHeader('X-RateLimit-Reason', `per-${blockingScope.prefix}-tier-${tier}`);
-    // Best-effort structured stderr audit so SIEM tier (Phase 2) can pick
-    // this up via /api/v1/security/owasp-ingest without proxying through the
-    // full audit bus.
     process.stderr.write(
       `[RateLimit] prefix=${blockingScope.prefix} identity=${
         blockingScope.prefix === 'ip'
@@ -485,7 +369,6 @@ interface SanitizedError {
 }
 
 export function sanitizeError(err: Error, requestId?: string): SanitizedError {
-  // Known error types — return safe messages
   if (err.name === 'ValifyError') {
     return { status: 400, message: 'Validation error', requestId };
   }
@@ -498,8 +381,6 @@ export function sanitizeError(err: Error, requestId?: string): SanitizedError {
   ) {
     return { status: 413, message: 'Request body too large', requestId };
   }
-
-  // Unknown errors — don't leak internal details
   return {
     status: 500,
     message: 'Internal server error',
@@ -509,10 +390,7 @@ export function sanitizeError(err: Error, requestId?: string): SanitizedError {
 
 export function errorHandler(err: Error, req: Request, res: Response, _next: NextFunction): void {
   const sanitized = sanitizeError(err, req.requestId);
-
-  // Log the full error internally
   process.stderr.write(`[API Error] ${req.method} ${req.path} — ${err.message}\n${err.stack}\n`);
-
   res.status(sanitized.status).json({
     error: sanitized.message,
     requestId: sanitized.requestId,
@@ -528,9 +406,7 @@ export function errorHandler(err: Error, req: Request, res: Response, _next: Nex
  */
 export function sanitizeString(input: unknown, maxLength = 10000): string {
   if (typeof input !== 'string') return '';
-  return input
-    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '') // Control chars (keep \t, \n, \r)
-    .slice(0, maxLength);
+  return input.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, maxLength);
 }
 
 /**

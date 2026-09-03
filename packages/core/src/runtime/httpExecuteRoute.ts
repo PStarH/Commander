@@ -3,7 +3,7 @@ import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { runWithTenant } from './tenantContext';
 import { validateOrThrow, Schemas } from './apiValidation';
 import { parseBody, sendJson } from './httpUtils';
-import { assertBodyTenant } from './httpTenantGate';
+import { assertBodyTenant, assertTenantAccess } from './httpTenantGate';
 import { acquireRuntimeAdmission, releaseRuntimeAdmission } from './runtimeAdmission';
 import { requireMinRole, resolveHttpAuthContext, type HttpAuthContext } from './httpRbacGate';
 
@@ -28,6 +28,7 @@ const DEFAULT_EXECUTE_TOOLS = [
 export interface RuntimeSessionEntry {
   runtime: AgentRuntimeInterface;
   lastAccessedAt: number;
+  tenantId?: string;
 }
 
 export interface HttpExecuteRouteDeps {
@@ -96,8 +97,13 @@ export async function handleExecuteRoute(
       return true;
     }
     const runtime = deps.createRuntime(body.provider ?? 'openai');
-    entry = { runtime, lastAccessedAt: Date.now() };
+    entry = { runtime, lastAccessedAt: Date.now(), tenantId };
     deps.runtimes.set(sessionId, entry);
+  } else if (
+    !assertTenantAccess(res, tenantId, entry.tenantId, req.url ?? '', deps.tenantApiKeyHashes)
+  ) {
+    releaseRuntimeAdmission();
+    return true;
   }
   entry.lastAccessedAt = Date.now();
 

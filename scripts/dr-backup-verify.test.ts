@@ -25,6 +25,9 @@ import {
   assertEmptyRestoreTarget,
   verifyDrDatabaseTlsConnection,
   buildPostgresControlDatabaseUrl,
+  buildPgRestoreArgs,
+  isIgnorablePgRestoreCompatibilityFailure,
+  DRILL_KILL_SWITCH_RELATION,
   preflightRestoreServerBeforeCreate,
   validateRetainedJwks,
   verifyRestoredReceipts,
@@ -41,6 +44,30 @@ import {
 } from '../packages/effect-broker/src/index.js';
 
 describe('dr-backup-verify honesty', () => {
+  it('validates the kernel action kill-switch relation name', () => {
+    assert.equal(DRILL_KILL_SWITCH_RELATION, 'commander_action_kill_switches');
+  });
+
+  it('passes the restore database through pg_restore without putting credentials in argv', () => {
+    assert.deepEqual(buildPgRestoreArgs('fixture_dr', '/tmp/drill.dump'), [
+      '--no-owner',
+      '--no-acl',
+      '--dbname=fixture_dr',
+      '/tmp/drill.dump',
+    ]);
+  });
+
+  it('only tolerates the known transaction_timeout client/server compatibility warning', () => {
+    const warning = `pg_restore: error: could not execute query: ERROR:  unrecognized configuration parameter "transaction_timeout"
+Command was: SET transaction_timeout = 0;
+pg_restore: warning: errors ignored on restore: 1`;
+    assert.equal(isIgnorablePgRestoreCompatibilityFailure(warning), true);
+    assert.equal(
+      isIgnorablePgRestoreCompatibilityFailure(`${warning}\npg_restore: error: permission denied`),
+      false,
+    );
+  });
+
   it('parseDatabaseUrl extracts host/port/database', () => {
     const dsn = parseDatabaseUrl('postgres://user:pass@src.example.com:5432/commander');
     assert.equal(dsn.host, 'src.example.com');

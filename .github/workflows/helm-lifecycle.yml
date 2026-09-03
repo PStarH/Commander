@@ -2,17 +2,6 @@ name: Helm Lifecycle
 
 on:
   pull_request:
-    paths:
-      - 'apps/api/**'
-      - 'deploy/helm/commander/**'
-      - 'packages/**'
-      - 'scripts/**'
-      - '.dockerignore'
-      - 'package.json'
-      - 'pnpm-lock.yaml'
-      - 'pnpm-workspace.yaml'
-      - 'tsconfig*.json'
-      - '.github/workflows/helm-lifecycle.yml'
   push:
     branches: [main, master]
     paths:
@@ -41,7 +30,8 @@ jobs:
         with:
           version: v3.17.3
       - run: pnpm install --frozen-lockfile
-      - run: pnpm exec node --import tsx --test scripts/chart-content-digest.test.ts scripts/helm-cell-assert.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts
+      - run: pnpm --filter @commander/postgres-runtime build
+      - run: pnpm exec node --import tsx --test packages/kernel/src/migrationGate.test.ts scripts/chart-content-digest.test.ts scripts/helm-cell-assert.test.ts scripts/helm-post-render-projection.test.ts scripts/helm-release-projection-claim-directory.test.ts scripts/helm-lifecycle-static.test.ts scripts/helm-lifecycle-kind.test.ts
       - run: pnpm exec tsx scripts/chart-content-digest.ts verify deploy/helm/commander
       - run: helm lint deploy/helm/commander -f deploy/helm/commander/values-demo.yaml
       - run: pnpm exec tsx scripts/helm-lifecycle-static.ts
@@ -59,12 +49,31 @@ jobs:
       - uses: azure/setup-helm@v4
         with:
           version: v3.17.3
-      - uses: helm/kind-action@v1
+      - run: pnpm install --frozen-lockfile
+      - name: Build Kind lifecycle runtime packages
+        run: |
+          pnpm --filter @commander/postgres-runtime build
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/action-adapters build
+          pnpm --filter @commander/core build
+          pnpm --filter @commander/worker-plane build
+      - name: Seed Kind bootstrap evidence
+        run: pnpm exec tsx scripts/helm-lifecycle-kind.ts bootstrap-evidence
+      - id: provision-kind
+        uses: helm/kind-action@v1
         with:
           cluster_name: commander-helm-lifecycle
           node_image: kindest/node:v1.33.2@sha256:18e6c8f260d51cda4bc32d9f1a4852f9e693c7b667aa14321996ed7c411fc121
           config: scripts/fixtures/helm-lifecycle/kind-config.yaml
-      - run: pnpm install --frozen-lockfile
+      - name: Record Kind provisioning failure
+        if: ${{ always() && steps.provision-kind.outcome == 'failure' }}
+        run: pnpm exec tsx scripts/helm-lifecycle-kind.ts bootstrap-evidence kind-provisioning
+      - name: Seed Kind harness evidence
+        if: ${{ success() && steps.provision-kind.outcome == 'success' }}
+        run: pnpm exec tsx scripts/helm-lifecycle-kind.ts bootstrap-evidence harness-bootstrap
       - name: Run Kind lifecycle harness
         run: pnpm exec tsx scripts/helm-lifecycle-kind.ts run
       - name: Upload sanitized evidence

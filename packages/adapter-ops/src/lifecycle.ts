@@ -38,7 +38,10 @@ async function closeRuntimeResources(
     errors.push(error);
   }
   if (errors.length > 0) {
-    throw new AggregateError(errors, errors[0] instanceof Error ? errors[0].message : 'adapter-ops shutdown failed');
+    throw new AggregateError(
+      errors,
+      errors[0] instanceof Error ? errors[0].message : 'adapter-ops shutdown failed',
+    );
   }
 }
 

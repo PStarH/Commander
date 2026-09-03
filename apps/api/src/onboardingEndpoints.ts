@@ -38,6 +38,7 @@ const COMMANDER_DIR = path.join(process.cwd(), '.commander');
 const TRACES_DIR = path.join(process.cwd(), '.commander_traces');
 const KNOWLEDGE_BASE_DIR = path.join(COMMANDER_DIR, 'knowledge-base');
 const ONBOARDING_COMPLETE_FILE = path.join(COMMANDER_DIR, 'onboarding-complete.json');
+const ONBOARDING_FIRST_TASK_FILE = path.join(COMMANDER_DIR, 'onboarding-first-task.json');
 
 /** provider 连通性测试的硬超时（ms）。 */
 const PROVIDER_TEST_TIMEOUT_MS = 10_000;
@@ -400,6 +401,8 @@ interface SampleTask {
   prompt: string;
 }
 
+type OnboardingTaskSource = 'real' | 'simulated';
+
 const SAMPLE_TASKS: SampleTask[] = [
   {
     id: 'research-and-summarize',
@@ -475,48 +478,47 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   const persistConfig = deps.writeConfig ?? writeCommanderConfig;
 
   // ── GET /api/onboarding/status ──────────────────────────────────────────
-  // AUDIT-API15: status discloses provider config, whether API_KEYS is set,
-  // and directory contents — operator-scoped information.
-  router.get('/api/onboarding/status', requireOnboardingConfigAdmin, async (_req: Request, res: Response) => {
-    try {
-      const resolved = await resolveProvider();
-      const hasRunTask = await dirHasContent(TRACES_DIR);
-      const hasKnowledge = await dirHasContent(KNOWLEDGE_BASE_DIR);
-      const completion = await readCompletedSteps();
+  // AUDIT-API15: status discloses provider configuration and directory
+  // contents — operator-scoped information.
+  router.get(
+    '/api/onboarding/status',
+    requireOnboardingConfigAdmin,
+    async (_req: Request, res: Response) => {
+      try {
+        const resolved = await resolveProvider();
+        const hasRunTask =
+          (await dirHasContent(TRACES_DIR)) || fsSync.existsSync(ONBOARDING_FIRST_TASK_FILE);
+        const hasKnowledge = await dirHasContent(KNOWLEDGE_BASE_DIR);
+        const completion = await readCompletedSteps();
 
-      const hasProvider = resolved !== null;
-      // hasApiKey: 环境变量 API_KEYS 配置了 Commander 自身鉴权 key，
-      // 或 provider 解析出了 key（含本地 ollama 视为已具备）。
-      const hasCommanderApiKey = Boolean(
-        process.env.API_KEYS && process.env.API_KEYS.trim() !== '',
-      );
-      const hasApiKey =
-        hasCommanderApiKey ||
-        (resolved !== null && resolved.apiKey !== '') ||
-        (resolved?.id === 'ollama' && resolved.baseUrl !== '');
+        const hasProvider = resolved !== null;
+        const hasApiKey =
+          (resolved !== null && resolved.apiKey !== '') ||
+          (resolved?.id === 'ollama' && resolved.baseUrl !== '');
 
-      const completedSteps = completion.steps.slice();
-      // 根据 detected 状态自动推断已完成的步骤（即使未显式标记 complete）
-      if (hasProvider && !completedSteps.includes('provider')) completedSteps.push('provider');
-      if (hasRunTask && !completedSteps.includes('first-task')) completedSteps.push('first-task');
+        const completedSteps = completion.steps.slice();
+        // 根据 detected 状态自动推断已完成的步骤（即使未显式标记 complete）
+        if (hasProvider && !completedSteps.includes('provider')) completedSteps.push('provider');
+        if (hasRunTask && !completedSteps.includes('first-task')) completedSteps.push('first-task');
 
-      const isComplete = completion.isComplete;
+        const isComplete = completion.isComplete;
 
-      res.json({
-        hasProvider,
-        hasApiKey,
-        provider: resolved?.id ?? null,
-        providerLabel: resolved?.label ?? null,
-        model: resolved?.model ?? null,
-        hasRunTask,
-        hasKnowledge,
-        completedSteps,
-        isComplete,
-      });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+        res.json({
+          hasProvider,
+          hasApiKey,
+          provider: resolved?.id ?? null,
+          providerLabel: resolved?.label ?? null,
+          model: resolved?.model ?? null,
+          hasRunTask,
+          hasKnowledge,
+          completedSteps,
+          isComplete,
+        });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   // ── GET /api/onboarding/sample-tasks ───────────────────────────────────
   // 返回示例任务列表，供前端向导展示给新用户选择。
@@ -713,8 +715,10 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
                     ? (choices[0].message.content as string)
                     : '';
               }
+              await markRealFirstTaskCompleted(resolved.id, resolved.model);
               return res.json({
                 success: true,
+                source: 'real' satisfies OnboardingTaskSource,
                 result: text || '(empty response)',
                 provider: resolved.id,
                 model: resolved.model,
@@ -725,6 +729,7 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
             const errText = await response.text().catch(() => '');
             return res.json({
               success: false,
+              source: 'simulated' satisfies OnboardingTaskSource,
               error: `Provider responded HTTP ${response.status}${
                 errText ? `: ${errText.slice(0, 200)}` : ''
               }`,
@@ -736,6 +741,7 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
             const isAbort = err instanceof Error && err.name === 'AbortError';
             return res.json({
               success: false,
+              source: 'simulated' satisfies OnboardingTaskSource,
               error: isAbort
                 ? `Request timed out after ${PROVIDER_TEST_TIMEOUT_MS / 1000}s`
                 : err instanceof Error
@@ -757,7 +763,8 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
 
         // 无可用 provider —— 返回示例结果，提示用户仍可完成 onboarding
         return res.json({
-          success: true,
+          success: false,
+          source: 'simulated' satisfies OnboardingTaskSource,
           result: simulateResult(task, null, null, 'no-provider'),
         });
       } catch (error) {
@@ -775,10 +782,15 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
       try {
         const body = req.body as z.infer<typeof completeBody>;
         const userId = body.userId ?? 'anonymous';
+        const realFirstTaskCompleted =
+          (await dirHasContent(TRACES_DIR)) || fsSync.existsSync(ONBOARDING_FIRST_TASK_FILE);
+        const steps = (Array.isArray(body.steps) ? body.steps : []).filter(
+          (step) => step !== 'first-task' || realFirstTaskCompleted,
+        );
         const payload = {
           completedAt: new Date().toISOString(),
           userId,
-          steps: Array.isArray(body.steps) ? body.steps : [],
+          steps,
         };
         if (!fsSync.existsSync(COMMANDER_DIR)) {
           await fsp.mkdir(COMMANDER_DIR, { recursive: true });
@@ -829,4 +841,14 @@ function simulateResult(
     'In production, Commander would route this task through the multi-agent runtime,',
     'apply governance checkpoints, and stream step-by-step progress to the War Room.',
   ].join('\n');
+}
+
+async function markRealFirstTaskCompleted(provider: string, model: string): Promise<void> {
+  if (!fsSync.existsSync(COMMANDER_DIR)) {
+    await fsp.mkdir(COMMANDER_DIR, { recursive: true });
+  }
+  atomicWriteFileSync(
+    ONBOARDING_FIRST_TASK_FILE,
+    JSON.stringify({ completedAt: new Date().toISOString(), provider, model }, null, 2),
+  );
 }

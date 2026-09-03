@@ -99,11 +99,12 @@ function pgAsTenant(
   );
   const rawOut = (result.stdout ?? '').trim();
   // Drop the boolean line from set_config prefix when present.
-  const outLines = rawOut.split('\n').map((l) => l.trim()).filter(Boolean);
+  const outLines = rawOut
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
   const out =
-    tenantId === null
-      ? rawOut
-      : outLines.filter((l) => l !== 't' && l !== 'f').join('\n');
+    tenantId === null ? rawOut : outLines.filter((l) => l !== 't' && l !== 'f').join('\n');
   return {
     ok: result.status === 0,
     out,
@@ -114,7 +115,7 @@ function pgAsTenant(
 
 // ─── DATA-1: A queries B's tables → RLS rejects (needs real PG) ─────────
 
-describeIf(probePostgres)('WS9 DATA-1 (live PG): A queries B\'s tables → RLS rejects', () => {
+describeIf(probePostgres)("WS9 DATA-1 (live PG): A queries B's tables → RLS rejects", () => {
   it('commander_app as tenant-a cannot see tenant-b runs', () => {
     const artifacts: string[] = [];
     const asA = pgAsTenant(TENANT_A, "SELECT id FROM runs WHERE id = 'run-b-1';");
@@ -232,40 +233,43 @@ describeIf(!probeV1Gateway.available)('WS9 DATA-2 (skipped: /v1 unavailable)', (
 
 // ─── DATA-3: WITH CHECK rejects cross-tenant INSERT ────────────────────
 
-describeIf(probePostgres)('WS9 DATA-3 (live PG): A INSERT with tenant_id=tenant-b → WITH CHECK rejects', () => {
-  it('RLS WITH CHECK prevents A from writing B\'s tenant_id', () => {
-    const artifacts: string[] = [];
-    const insertId = `run-x-${Date.now()}`;
-    const cross = pgAsTenant(
-      TENANT_A,
-      `INSERT INTO runs (id, tenant_id, status) VALUES ('${insertId}', '${TENANT_B}', 'pending');`,
-    );
-    const verify = pgAsTenant(TENANT_B, `SELECT id FROM runs WHERE id = '${insertId}';`);
-
-    try {
-      expect(cross.ok).toBe(false);
-      expect(cross.err + cross.out).toMatch(/row-level security|policy|violat/i);
-      expect(verify.out).toBe('');
-
-      writePass(
-        'DATA-3',
-        `WITH CHECK rejected cross-tenant INSERT (tenant_id=${TENANT_B} from ${TENANT_A} session). ` +
-          `psql status=${cross.status}; err=${cross.err.slice(0, 160)}`,
-        artifacts,
-        'live',
+describeIf(probePostgres)(
+  'WS9 DATA-3 (live PG): A INSERT with tenant_id=tenant-b → WITH CHECK rejects',
+  () => {
+    it("RLS WITH CHECK prevents A from writing B's tenant_id", () => {
+      const artifacts: string[] = [];
+      const insertId = `run-x-${Date.now()}`;
+      const cross = pgAsTenant(
+        TENANT_A,
+        `INSERT INTO runs (id, tenant_id, status) VALUES ('${insertId}', '${TENANT_B}', 'pending');`,
       );
-    } catch (err) {
-      writeBreach(
-        'DATA-3',
-        `WITH CHECK did not reject cross-tenant INSERT: ok=${cross.ok} err=${cross.err}. ` +
-          `${(err as Error).message}`,
-        artifacts,
-        'live',
-      );
-      throw err;
-    }
-  });
-});
+      const verify = pgAsTenant(TENANT_B, `SELECT id FROM runs WHERE id = '${insertId}';`);
+
+      try {
+        expect(cross.ok).toBe(false);
+        expect(cross.err + cross.out).toMatch(/row-level security|policy|violat/i);
+        expect(verify.out).toBe('');
+
+        writePass(
+          'DATA-3',
+          `WITH CHECK rejected cross-tenant INSERT (tenant_id=${TENANT_B} from ${TENANT_A} session). ` +
+            `psql status=${cross.status}; err=${cross.err.slice(0, 160)}`,
+          artifacts,
+          'live',
+        );
+      } catch (err) {
+        writeBreach(
+          'DATA-3',
+          `WITH CHECK did not reject cross-tenant INSERT: ok=${cross.ok} err=${cross.err}. ` +
+            `${(err as Error).message}`,
+          artifacts,
+          'live',
+        );
+        throw err;
+      }
+    });
+  },
+);
 
 describeIf(!probePostgres.available)('WS9 DATA-3 (skipped: PG unavailable)', () => {
   it('skipped — Postgres not available', () => {});
@@ -273,7 +277,7 @@ describeIf(!probePostgres.available)('WS9 DATA-3 (skipped: PG unavailable)', () 
 
 // ─── DATA-4: in-process tenant scope (simulated) ───────────────────────
 
-describe('WS9 DATA-4: tenant_scope=\'*\' path blocked; must use caller tenant', () => {
+describe("WS9 DATA-4: tenant_scope='*' path blocked; must use caller tenant", () => {
   it('assertSameTenant rejects cross-tenant access from * scope', () => {
     const artifacts: string[] = [];
     try {
@@ -329,81 +333,84 @@ describe('WS9 DATA-4: tenant_scope=\'*\' path blocked; must use caller tenant', 
 
 // ─── DATA-5: GDPR Art 17 — A cannot erase B ────────────────────────────
 
-describeIf(probeV1Gateway)('WS9 DATA-5 (live /v1): A calls GDPR Art 17 delete for B → rejected', () => {
-  it('tenant-a erasure of tenant-b is 403; own erasure allowed; B PG row intact', async () => {
-    const apiKey = process.env.COMMANDER_WS9_API_KEY_A;
-    if (!apiKey) {
-      return; // no evidence until fixture present
-    }
-    const host = process.env.COMMANDER_API_HOST!;
-    const port = process.env.COMMANDER_API_PORT!;
-    const base = `http://${host}:${port}`;
-    const artifacts: string[] = [];
+describeIf(probeV1Gateway)(
+  'WS9 DATA-5 (live /v1): A calls GDPR Art 17 delete for B → rejected',
+  () => {
+    it('tenant-a erasure of tenant-b is 403; own erasure allowed; B PG row intact', async () => {
+      const apiKey = process.env.COMMANDER_WS9_API_KEY_A;
+      if (!apiKey) {
+        return; // no evidence until fixture present
+      }
+      const host = process.env.COMMANDER_API_HOST!;
+      const port = process.env.COMMANDER_API_PORT!;
+      const base = `http://${host}:${port}`;
+      const artifacts: string[] = [];
 
-    const cross = await fetch(`${base}/v1/privacy/erasure`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
-        'X-Tenant-ID': TENANT_A,
-      },
-      body: JSON.stringify({ subjectUserId: 'user-b', tenantId: TENANT_B }),
+      const cross = await fetch(`${base}/v1/privacy/erasure`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+          'X-Tenant-ID': TENANT_A,
+        },
+        body: JSON.stringify({ subjectUserId: 'user-b', tenantId: TENANT_B }),
+      });
+      const crossBody = await cross.text();
+
+      const prefixed = await fetch(`${base}/v1/privacy/erasure`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({ subjectUserId: `${TENANT_B}:user-b` }),
+      });
+      const prefixedBody = await prefixed.text();
+
+      const own = await fetch(`${base}/v1/privacy/erasure`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({ subjectUserId: 'user-a' }),
+      });
+      const ownBody = await own.text();
+
+      const bStill = probePostgres.available
+        ? pgAsTenant(TENANT_B, "SELECT id FROM memory_items WHERE id = 'mem-b-1';")
+        : { ok: true, out: 'mem-b-1', err: '', status: 0 };
+
+      try {
+        expect(cross.status).toBe(403);
+        expect(crossBody).toMatch(/TENANT_ISOLATION|tenant/i);
+        expect(prefixed.status).toBe(403);
+        expect(prefixedBody).toMatch(/TENANT_ISOLATION|tenant/i);
+        expect(own.status).toBe(200);
+        expect(ownBody).toMatch(/auditEventId|erased/i);
+        expect(bStill.ok).toBe(true);
+        expect(bStill.out).toBe('mem-b-1');
+
+        writePass(
+          'DATA-5',
+          `Live /v1/privacy/erasure: A→B body tenant 403; A→B subject prefix 403; ` +
+            `A own erase ${own.status}; tenant-b memory mem-b-1 intact.`,
+          artifacts,
+          'live',
+        );
+      } catch (err) {
+        writeBreach(
+          'DATA-5',
+          `GDPR cross-tenant erase not rejected: cross=${cross.status} prefixed=${prefixed.status} ` +
+            `own=${own.status} bStill=${JSON.stringify(bStill)}. ${(err as Error).message}`,
+          artifacts,
+          'live',
+        );
+        throw err;
+      }
     });
-    const crossBody = await cross.text();
-
-    const prefixed = await fetch(`${base}/v1/privacy/erasure`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
-      },
-      body: JSON.stringify({ subjectUserId: `${TENANT_B}:user-b` }),
-    });
-    const prefixedBody = await prefixed.text();
-
-    const own = await fetch(`${base}/v1/privacy/erasure`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-API-Key': apiKey,
-      },
-      body: JSON.stringify({ subjectUserId: 'user-a' }),
-    });
-    const ownBody = await own.text();
-
-    const bStill = probePostgres.available
-      ? pgAsTenant(TENANT_B, "SELECT id FROM memory_items WHERE id = 'mem-b-1';")
-      : { ok: true, out: 'mem-b-1', err: '', status: 0 };
-
-    try {
-      expect(cross.status).toBe(403);
-      expect(crossBody).toMatch(/TENANT_ISOLATION|tenant/i);
-      expect(prefixed.status).toBe(403);
-      expect(prefixedBody).toMatch(/TENANT_ISOLATION|tenant/i);
-      expect(own.status).toBe(200);
-      expect(ownBody).toMatch(/auditEventId|erased/i);
-      expect(bStill.ok).toBe(true);
-      expect(bStill.out).toBe('mem-b-1');
-
-      writePass(
-        'DATA-5',
-        `Live /v1/privacy/erasure: A→B body tenant 403; A→B subject prefix 403; ` +
-          `A own erase ${own.status}; tenant-b memory mem-b-1 intact.`,
-        artifacts,
-        'live',
-      );
-    } catch (err) {
-      writeBreach(
-        'DATA-5',
-        `GDPR cross-tenant erase not rejected: cross=${cross.status} prefixed=${prefixed.status} ` +
-          `own=${own.status} bStill=${JSON.stringify(bStill)}. ${(err as Error).message}`,
-        artifacts,
-        'live',
-      );
-      throw err;
-    }
-  });
-});
+  },
+);
 
 describeIf(!probeV1Gateway.available)('WS9 DATA-5 (skipped: /v1 unavailable)', () => {
   it('skipped — /v1 gateway not available', () => {});
@@ -418,7 +425,7 @@ describe('WS9 DATA-6: Cross-store isolation — A cannot read/write B', () => {
   });
   afterEach(() => env.cleanup());
 
-  it('audit chain: A\'s entries isolated from B; file store keyed by tenant', () => {
+  it("audit chain: A's entries isolated from B; file store keyed by tenant", () => {
     const artifacts: string[] = [];
     const ledger = new AuditChainLedger({
       persistDir: env.dir,

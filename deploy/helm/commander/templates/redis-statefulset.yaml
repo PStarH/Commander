@@ -43,10 +43,8 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
           readinessProbe:
-            exec:
-              command:
-                - redis-cli
-                - ping
+            tcpSocket:
+              port: redis
             initialDelaySeconds: 5
             periodSeconds: 10
           {{- if .Values.redis.persistence.enabled }}

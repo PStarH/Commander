@@ -24,8 +24,20 @@ function authorityFixture(): DockerTopologyAuthority {
     async listContainers() {
       return [
         { Id: 'e'.repeat(64), Image: 'unrelated:latest' },
-        { Id: 'b'.repeat(64), Labels: { 'com.docker.compose.project': 'commander-prod', 'com.docker.compose.service': 'worker' } },
-        { Id: 'a'.repeat(64), Labels: { 'com.docker.compose.project': 'commander-prod', 'com.docker.compose.service': 'api' } },
+        {
+          Id: 'b'.repeat(64),
+          Labels: {
+            'com.docker.compose.project': 'commander-prod',
+            'com.docker.compose.service': 'worker',
+          },
+        },
+        {
+          Id: 'a'.repeat(64),
+          Labels: {
+            'com.docker.compose.project': 'commander-prod',
+            'com.docker.compose.service': 'api',
+          },
+        },
       ];
     },
     async inspectContainer(id) {
@@ -82,7 +94,10 @@ describe('Compose proof observer', () => {
         dockerApiVersion: '1.47',
       });
       const containers = await observer.containers();
-      assert.deepEqual(containers.map((container) => container.serviceLabel), ['api', 'worker']);
+      assert.deepEqual(
+        containers.map((container) => container.serviceLabel),
+        ['api', 'worker'],
+      );
       assert.deepEqual(containers[0], {
         containerId: 'a'.repeat(64),
         projectLabel: 'commander-prod',
@@ -99,7 +114,10 @@ describe('Compose proof observer', () => {
         containerName: '/commander-prod-api-1',
         imageId: `sha256:${'c'.repeat(64)}`,
       });
-      assert.doesNotMatch(JSON.stringify({ containers, detail: await observer.container('a'.repeat(64)) }), /must-not-cross|DATABASE_URL|HostConfig|Mounts|Aliases|IPAddress|private\.label/);
+      assert.doesNotMatch(
+        JSON.stringify({ containers, detail: await observer.container('a'.repeat(64)) }),
+        /must-not-cross|DATABASE_URL|HostConfig|Mounts|Aliases|IPAddress|private\.label/,
+      );
     } finally {
       await relay.close();
     }
@@ -117,20 +135,28 @@ describe('Compose proof observer', () => {
       authority: authorityFixture(),
     });
     try {
-      await assert.rejects(() => rawRequest(relay.descriptor.socketPath, '/containers/json', {}), /403/);
+      await assert.rejects(
+        () => rawRequest(relay.descriptor.socketPath, '/containers/json', {}),
+        /403/,
+      );
       await assert.rejects(
         () => rawRequest(relay.descriptor.socketPath, '/containers/json?all=1', relay.descriptor),
         /403/,
       );
       await assert.rejects(
-        () => rawRequest(relay.descriptor.socketPath, '/containers/' + 'f'.repeat(64) + '/json', relay.descriptor),
+        () =>
+          rawRequest(
+            relay.descriptor.socketPath,
+            '/containers/' + 'f'.repeat(64) + '/json',
+            relay.descriptor,
+          ),
         /403/,
       );
     } finally {
       await relay.close();
     }
-    await assert.rejects(
-      () => rawRequest(relay.descriptor.socketPath, '/version', relay.descriptor),
+    await assert.rejects(() =>
+      rawRequest(relay.descriptor.socketPath, '/version', relay.descriptor),
     );
   });
 
@@ -189,25 +215,32 @@ function rawRequest(
   descriptor: Partial<{ attemptId: string; token: string }>,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
-    const req = request({
-      socketPath,
-      path,
-      method: 'GET',
-      headers: {
-        ...(descriptor.attemptId === undefined ? {} : { 'x-commander-relay-attempt': descriptor.attemptId }),
-        ...(descriptor.token === undefined ? {} : { 'x-commander-relay-token': descriptor.token }),
+    const req = request(
+      {
+        socketPath,
+        path,
+        method: 'GET',
+        headers: {
+          ...(descriptor.attemptId === undefined
+            ? {}
+            : { 'x-commander-relay-attempt': descriptor.attemptId }),
+          ...(descriptor.token === undefined
+            ? {}
+            : { 'x-commander-relay-token': descriptor.token }),
+        },
       },
-    }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on('data', (chunk: Buffer) => chunks.push(chunk));
-      response.on('end', () => {
-        if ((response.statusCode ?? 500) !== 200) {
-          reject(new Error(String(response.statusCode)));
-          return;
-        }
-        resolve(Buffer.concat(chunks).toString('utf8'));
-      });
-    });
+      (response) => {
+        const chunks: Buffer[] = [];
+        response.on('data', (chunk: Buffer) => chunks.push(chunk));
+        response.on('end', () => {
+          if ((response.statusCode ?? 500) !== 200) {
+            reject(new Error(String(response.statusCode)));
+            return;
+          }
+          resolve(Buffer.concat(chunks).toString('utf8'));
+        });
+      },
+    );
     req.once('error', reject);
     req.end();
   });

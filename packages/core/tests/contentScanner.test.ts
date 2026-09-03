@@ -39,6 +39,13 @@ describe('ContentScanner', () => {
       assert.equal(result.isSafe, true);
       assert.equal(result.threats.length, 0);
     });
+
+    it('should allow ordinary multiline and tabular text', async () => {
+      const scanner = new DefaultContentScanner();
+      const result = await scanner.scan('{\n\t"status": "healthy"\n}\r\n');
+      assert.equal(result.isSafe, true);
+      assert.equal(result.threats.length, 0);
+    });
   });
 
   describe('Hidden HTML detection', () => {

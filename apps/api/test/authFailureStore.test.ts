@@ -11,14 +11,14 @@ describe('AuthFailureStore authority selection (PostgreSQL policy)', () => {
   it('fails production startup when no PostgreSQL DSN is configured', async () => {
     assert.throws(
       () => createAuthFailureStore({ environment: { NODE_ENV: 'production' } }),
-      /COMMANDER_AUTH_FAILURE_DATABASE_URL.*required in production/s,
+      /AUTH_DATABASE_URL_REQUIRED/,
     );
   });
 
   it('fails startup for COMMANDER_ENV=production without a DSN (multi-signal)', async () => {
     assert.throws(
       () => createAuthFailureStore({ environment: { COMMANDER_ENV: 'production' } }),
-      /required in production/,
+      /AUTH_DATABASE_URL_REQUIRED/,
     );
   });
 
@@ -28,14 +28,14 @@ describe('AuthFailureStore authority selection (PostgreSQL policy)', () => {
         createAuthFailureStore({
           environment: { NODE_ENV: 'production', AUTH_FAILURE_REDIS_URL: 'redis://legacy' },
         }),
-      /required in production/,
+      /AUTH_DATABASE_URL_REQUIRED/,
     );
   });
 
-  it('uses the in-memory store only outside production without a DSN', async () => {
-    const store = createAuthFailureStore({ environment: { NODE_ENV: 'test' } });
-    await store.set('127.0.0.1', { count: 1, firstFailureAt: 1, lastFailureAt: 1, lockedUntil: 0 });
-    const entry = await store.get('127.0.0.1');
-    assert.equal(entry?.count, 1);
+  it('fails closed outside production without a DSN', async () => {
+    assert.throws(
+      () => createAuthFailureStore({ environment: { NODE_ENV: 'test' } }),
+      /AUTH_DATABASE_URL_REQUIRED/,
+    );
   });
 });

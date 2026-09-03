@@ -473,6 +473,14 @@ export interface CompensationAuthorizationRecord {
   actionDigest: string;
   expiresAt: string;
   approvalInteractionId?: string;
+  /** Exact approval binding returned with a claimed, already-approved request. */
+  approvalBinding?: {
+    approvalId: string;
+    approverPrincipalId: string;
+    actionDigest: string;
+    policySnapshotId: string;
+    expiresAt: string;
+  } | null;
 }
 
 export interface RequestCompensationInput {
@@ -490,6 +498,8 @@ export interface KernelCompensationRequest {
   compensationStepId: string;
   adapterVersion: string;
   compensationEffectType: string;
+  /** Original external destination, carried through the durable compensation claim. */
+  destination: string;
   compensationPatch: Record<string, unknown>;
   forwardReceiptHash: string;
   authorizationId: string;
@@ -607,7 +617,11 @@ export class KernelInvariantError extends Error {
       | 'INTERACTION_NOT_FOUND'
       | 'INTERACTION_ALREADY_ANSWERED'
       | 'STEP_NOT_FOUND'
-      | 'KILL_SWITCH_LOOKUP_FAILED',
+      | 'KILL_SWITCH_LOOKUP_FAILED'
+      | 'COMPENSATION_RECONCILIATION_REQUEST_MISSING'
+      | 'COMPENSATION_RECONCILIATION_REQUEST_TERMINAL_RACE'
+      | 'COMPENSATION_RECONCILIATION_RUN_MISSING'
+      | 'COMPENSATION_RECONCILIATION_TERMINAL_TRANSITION_REJECTED',
     message: string,
   ) {
     super(message);

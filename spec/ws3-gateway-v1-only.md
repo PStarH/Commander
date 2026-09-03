@@ -272,7 +272,7 @@ WarRoom（`apps/api/src/projectEndpoints.ts` + `apps/api/src/store.ts` 的 `crea
 - [x] §4.2 `/v1/openapi.json` 与实际路由一致（自动化对比测试通过）。 ✅ openApiGenerator.test.ts (13 cases, authenticity invariant)
 - [x] §5 WarRoom 写入端点（missions/approve/logs/agent-state）在企业 profile 下 410；GET 迁移至 `/v1`。 ✅ warRoomDemotion.test.ts + ws3Acceptance.test.ts
 - [x] §5 WarRoom 处理器不触发 Agent 执行或 kernel 状态变更。 ✅ createProjectRouter readOnly 选项 + v1 处理器无 AgentRuntime
-- [x] §6.1 `/ready` 真实探测 database/kernel/effectBroker；未探测项标 `unknown`，不伪装 ok。 ✅ healthHonesty.test.ts (15 cases) + ws3Acceptance.test.ts
+- [x] §6.1 `/ready` 真实探测 database/kernel/effectBroker；未探测项标 `unknown`，不伪装 ok。 ✅ healthHonesty.test.ts (18 cases) + ws3Acceptance.test.ts
 - [x] §6.1 kernel 未初始化时 `/ready` 必 503。 ✅ healthProbes.ts HARD_GATES + healthHonesty.test.ts
 - [ ] §7 `/v2` 仅 experimental 标志下可达；企业 profile 默认不挂载 `/v2`。（v2-bench 已挂载于 /v2，企业 profile 下被 enterpriseRouteFreeze 410；experimental 标志未实现，留待后续 WS）
 - [x] §8 旧路由响应头带 `x-legacy: true`；OpenAPI 标 `deprecated` + sunset 时间线。 ✅ legacyHeader + openApiGenerator x-legacy 自动标记

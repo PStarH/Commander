@@ -30,6 +30,7 @@ import {
   revoke as revokeRefreshJti,
   revokeAllForUser,
 } from './refreshTokenStore';
+import { getAuthFailureStore } from './authFailureStore';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -38,6 +39,9 @@ import {
  * matches the real comparison; it is never a valid credential.
  */
 const DUMMY_PASSWORD_HASH = hashSync(`invalid:${process.pid}:no-such-user`, 10);
+const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
+const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10);
+const AUTH_FAILURE_WINDOW_MS = 60_000;
 
 // ── Validation schemas ──────────────────────────────────────────────────────
 
@@ -139,9 +143,9 @@ interface AuthResponseBody {
   user: SafeUser;
 }
 
-function buildAuthResponse(user: AuthUser): AuthResponseBody {
+async function buildAuthResponse(user: AuthUser): Promise<AuthResponseBody> {
   // Look up the fresh user record so lastLoginAt / createdAt are current.
-  const full = findUserById(user.id);
+  const full = await findUserById(user.id);
   const safeUser: SafeUser = full
     ? toSafeUserPublic(full)
     : {
@@ -154,9 +158,48 @@ function buildAuthResponse(user: AuthUser): AuthResponseBody {
       };
   return {
     token: signAccessToken(user),
-    refreshToken: signRefreshToken(user),
+    refreshToken: await signRefreshToken(user),
     user: safeUser,
   };
+}
+
+function loginClientIp(req: Request): string {
+  return req.ip ?? req.socket.remoteAddress ?? 'unknown';
+}
+
+async function rejectLockedLogin(req: Request, res: Response): Promise<boolean> {
+  try {
+    const entry = await getAuthFailureStore().get(loginClientIp(req));
+    if (!entry || entry.lockedUntil <= Date.now()) return false;
+    const retryAfter = Math.max(1, Math.ceil((entry.lockedUntil - Date.now()) / 1000));
+    res.setHeader('Retry-After', String(retryAfter));
+    res.status(429).json({
+      error: 'Too many authentication failures. Try again later.',
+      retryAfter,
+    });
+    return true;
+  } catch (error) {
+    process.stderr.write(`[Auth] Login lockout authority unavailable: ${String(error)}\n`);
+    res.status(503).json({ error: 'Authentication authority unavailable. Retry later.' });
+    return true;
+  }
+}
+
+async function recordLoginFailure(req: Request, res: Response): Promise<boolean> {
+  try {
+    await getAuthFailureStore().recordFailure(
+      loginClientIp(req),
+      Date.now(),
+      MAX_AUTH_FAILURES,
+      AUTH_FAILURE_WINDOW_MS,
+      LOCKOUT_DURATION_MS,
+    );
+    return true;
+  } catch (error) {
+    process.stderr.write(`[Auth] Login failure authority unavailable: ${String(error)}\n`);
+    res.status(503).json({ error: 'Authentication authority unavailable. Retry later.' });
+    return false;
+  }
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
@@ -165,7 +208,7 @@ export function createUserAuthRouter(): Router {
   const router = Router();
 
   // ── POST /api/auth/register ──────────────────────────────────────────────
-  router.post('/api/auth/register', (req: Request, res: Response) => {
+  router.post('/api/auth/register', async (req: Request, res: Response) => {
     const parsed = registerSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -179,7 +222,7 @@ export function createUserAuthRouter(): Router {
     }
 
     const { username, email, password } = parsed.data;
-    const result = createUser({ username, email, password, role: 'viewer' });
+    const result = await createUser({ username, email, password, role: 'viewer' });
     if ('error' in result) {
       res.status(409).json({ error: result.error });
       return;
@@ -191,12 +234,12 @@ export function createUserAuthRouter(): Router {
       role: result.user.role,
       tenantId: resolveAccessTenantId(),
     };
-    updateLastLogin(result.user.id);
-    res.status(201).json(buildAuthResponse(authUser));
+    await updateLastLogin(result.user.id);
+    res.status(201).json(await buildAuthResponse(authUser));
   });
 
   // ── POST /api/auth/login ─────────────────────────────────────────────────
-  router.post('/api/auth/login', (req: Request, res: Response) => {
+  router.post('/api/auth/login', async (req: Request, res: Response) => {
     const parsed = loginSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -210,13 +253,15 @@ export function createUserAuthRouter(): Router {
     }
 
     const { username, password } = parsed.data;
-    const user = findUserByUsername(username);
+    if (await rejectLockedLogin(req, res)) return;
+    const user = await findUserByUsername(username);
     // AUTH-6: always perform a bcrypt comparison, even when the user does not
     // exist, so the response time does not reveal whether a username is
     // registered (timing-based user enumeration). The dummy hash is a real
     // bcrypt hash so the work factor matches the real path.
     const passwordOk = compareSync(password, user?.passwordHash ?? DUMMY_PASSWORD_HASH);
     if (!user || !passwordOk) {
+      if (!(await recordLoginFailure(req, res))) return;
       // Use the same message for both cases to avoid user enumeration.
       res.status(401).json({ error: 'Invalid username or password' });
       return;
@@ -228,13 +273,13 @@ export function createUserAuthRouter(): Router {
       role: user.role,
       tenantId: resolveAccessTenantId(),
     };
-    updateLastLogin(user.id);
-    res.json(buildAuthResponse(authUser));
+    await updateLastLogin(user.id);
+    res.json(await buildAuthResponse(authUser));
   });
 
   // ── GET /api/auth/me ─────────────────────────────────────────────────────
-  router.get('/api/auth/me', requireAuth, (req: Request, res: Response) => {
-    const user = findUserById(req.user!.id);
+  router.get('/api/auth/me', requireAuth, async (req: Request, res: Response) => {
+    const user = await findUserById(req.user!.id);
     if (!user) {
       res.status(404).json({ error: 'User not found' });
       return;
@@ -244,7 +289,7 @@ export function createUserAuthRouter(): Router {
 
   // ── POST /api/auth/refresh ───────────────────────────────────────────────
   // Rotates refresh tokens: validate jti → revoke old → mint new pair.
-  router.post('/api/auth/refresh', (req: Request, res: Response) => {
+  router.post('/api/auth/refresh', async (req: Request, res: Response) => {
     const parsed = refreshSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -264,13 +309,13 @@ export function createUserAuthRouter(): Router {
     }
 
     // Atomic consume: first concurrent refresh wins; replay / race → 401.
-    if (!consumeRefreshJti(decoded.jti)) {
+    if (!(await consumeRefreshJti(decoded.jti))) {
       res.status(401).json({ error: 'Refresh token revoked or unknown' });
       return;
     }
 
     // Ensure the user still exists (account may have been removed).
-    const user = findUserById(decoded.id);
+    const user = await findUserById(decoded.id);
     if (!user) {
       res.status(401).json({ error: 'User no longer exists' });
       return;
@@ -282,12 +327,12 @@ export function createUserAuthRouter(): Router {
       role: user.role,
       tenantId: decoded.tenant_id ?? resolveAccessTenantId(),
     };
-    res.json(buildAuthResponse(authUser));
+    res.json(await buildAuthResponse(authUser));
   });
 
   // ── POST /api/auth/logout ────────────────────────────────────────────────
   // Revokes the presented refresh jti (access token TTL still applies).
-  router.post('/api/auth/logout', (req: Request, res: Response) => {
+  router.post('/api/auth/logout', async (req: Request, res: Response) => {
     const parsed = refreshSchema.safeParse(req.body);
     if (!parsed.success) {
       res.status(400).json({
@@ -302,22 +347,27 @@ export function createUserAuthRouter(): Router {
 
     const decoded = verifyToken(parsed.data.refreshToken);
     if (decoded?.type === 'refresh' && decoded.jti) {
-      revokeRefreshJti(decoded.jti);
+      await revokeRefreshJti(decoded.jti);
     }
     res.json({ success: true });
   });
 
   // ── GET /api/auth/users  (admin only) ────────────────────────────────────
-  router.get('/api/auth/users', requireAuth, requireRole(), (_req: Request, res: Response) => {
-    res.json({ users: listUsers() });
-  });
+  router.get(
+    '/api/auth/users',
+    requireAuth,
+    requireRole(),
+    async (_req: Request, res: Response) => {
+      res.json({ users: await listUsers() });
+    },
+  );
 
   // ── PUT /api/auth/users/:id/role  (admin only) ───────────────────────────
   router.put(
     '/api/auth/users/:id/role',
     requireAuth,
     requireRole(),
-    (req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       const parsed = roleUpdateSchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -331,7 +381,7 @@ export function createUserAuthRouter(): Router {
       }
 
       const id = String(req.params.id);
-      const targetUser = findUserById(id);
+      const targetUser = await findUserById(id);
       if (!targetUser) {
         res.status(404).json({ error: 'User not found' });
         return;
@@ -356,7 +406,7 @@ export function createUserAuthRouter(): Router {
         return;
       }
 
-      const updated = updateUserRole(id, parsed.data.role as UserRole);
+      const updated = await updateUserRole(id, parsed.data.role as UserRole);
       if (!updated) {
         res.status(404).json({ error: 'User not found' });
         return;
@@ -366,98 +416,116 @@ export function createUserAuthRouter(): Router {
   );
 
   // ── POST /api/auth/users  (admin only) ───────────────────────────────────
-  router.post('/api/auth/users', requireAuth, requireRole(), (req: Request, res: Response) => {
-    const parsed = adminCreateUserSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: 'Validation error',
-        details: parsed.error.issues.map((i) => ({
-          path: i.path.join('.'),
-          message: i.message,
-        })),
-      });
-      return;
-    }
+  router.post(
+    '/api/auth/users',
+    requireAuth,
+    requireRole(),
+    async (req: Request, res: Response) => {
+      const parsed = adminCreateUserSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: 'Validation error',
+          details: parsed.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          })),
+        });
+        return;
+      }
 
-    // AUTH-5: an actor may only create a user with a role at or below their own level.
-    if (parsed.data.role !== undefined && !hasRole(req.user!.role, parsed.data.role as UserRole)) {
-      res.status(403).json({ error: 'You cannot create a user with a role above your own level' });
-      return;
-    }
+      // AUTH-5: an actor may only create a user with a role at or below their own level.
+      if (
+        parsed.data.role !== undefined &&
+        !hasRole(req.user!.role, parsed.data.role as UserRole)
+      ) {
+        res
+          .status(403)
+          .json({ error: 'You cannot create a user with a role above your own level' });
+        return;
+      }
 
-    const result = createUser(parsed.data);
-    if ('error' in result) {
-      res.status(409).json({ error: result.error });
-      return;
-    }
-    res.status(201).json({ user: result.user });
-  });
+      const result = await createUser(parsed.data);
+      if ('error' in result) {
+        res.status(409).json({ error: result.error });
+        return;
+      }
+      res.status(201).json({ user: result.user });
+    },
+  );
 
   // ── PATCH /api/auth/users/:id  (admin only) ───────────────────────────────
-  router.patch('/api/auth/users/:id', requireAuth, requireRole(), (req: Request, res: Response) => {
-    const parsed = adminUpdateUserSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: 'Validation error',
-        details: parsed.error.issues.map((i) => ({
-          path: i.path.join('.'),
-          message: i.message,
-        })),
-      });
-      return;
-    }
+  router.patch(
+    '/api/auth/users/:id',
+    requireAuth,
+    requireRole(),
+    async (req: Request, res: Response) => {
+      const parsed = adminUpdateUserSchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: 'Validation error',
+          details: parsed.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            message: i.message,
+          })),
+        });
+        return;
+      }
 
-    const id = String(req.params.id);
-    const targetUser = findUserById(id);
-    if (!targetUser) {
-      res.status(404).json({ error: 'User not found' });
-      return;
-    }
+      const id = String(req.params.id);
+      const targetUser = await findUserById(id);
+      if (!targetUser) {
+        res.status(404).json({ error: 'User not found' });
+        return;
+      }
 
-    // AUDIT-A: may only update a user at or below your own level.
-    if (!canActOnTarget(req.user!.role, targetUser)) {
-      res.status(403).json({ error: 'You cannot modify a user above your own level' });
-      return;
-    }
+      // AUDIT-A: may only update a user at or below your own level.
+      if (!canActOnTarget(req.user!.role, targetUser)) {
+        res.status(403).json({ error: 'You cannot modify a user above your own level' });
+        return;
+      }
 
-    // Prevent removing admin role from the last admin.
-    if (
-      parsed.data.role !== undefined &&
-      !hasRole(parsed.data.role, 'admin') &&
-      targetUser.role === 'admin' &&
-      countAdmins() <= 1
-    ) {
-      res.status(400).json({ error: 'Cannot demote the last admin account' });
-      return;
-    }
+      // Prevent removing admin role from the last admin.
+      if (
+        parsed.data.role !== undefined &&
+        !hasRole(parsed.data.role, 'admin') &&
+        targetUser.role === 'admin' &&
+        (await countAdmins()) <= 1
+      ) {
+        res.status(400).json({ error: 'Cannot demote the last admin account' });
+        return;
+      }
 
-    // AUTH-5: an actor may only assign a role at or below their own level.
-    if (parsed.data.role !== undefined && !hasRole(req.user!.role, parsed.data.role as UserRole)) {
-      res.status(403).json({ error: 'You cannot assign a role above your own level' });
-      return;
-    }
+      // AUTH-5: an actor may only assign a role at or below their own level.
+      if (
+        parsed.data.role !== undefined &&
+        !hasRole(req.user!.role, parsed.data.role as UserRole)
+      ) {
+        res.status(403).json({ error: 'You cannot assign a role above your own level' });
+        return;
+      }
 
-    const updated = updateUser(id, parsed.data);
-    if ('error' in updated) {
-      res.status(409).json({ error: updated.error });
-      return;
-    }
-    res.json({ user: updated });
-  });
+      const updated = await updateUser(id, parsed.data);
+      if ('error' in updated) {
+        res.status(409).json({ error: updated.error });
+        return;
+      }
+      res.json({ user: updated });
+    },
+  );
 
   // ── DELETE /api/auth/users/:id  (admin only) ──────────────────────────────
   router.delete(
     '/api/auth/users/:id',
     requireAuth,
     requireRole(),
-    (req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       const id = String(req.params.id);
       if (req.user!.id === id) {
         res.status(400).json({ error: 'You cannot delete your own account' });
         return;
       }
 
-      const targetUser = findUserById(id);
+      const targetUser = await findUserById(id);
       if (!targetUser) {
         res.status(404).json({ error: 'User not found' });
         return;
@@ -468,7 +536,7 @@ export function createUserAuthRouter(): Router {
         return;
       }
 
-      const result = deleteUser(id);
+      const result = await deleteUser(id);
       if (!result.success) {
         res.status(result.error === 'User not found' ? 404 : 400).json({ error: result.error });
         return;
@@ -482,7 +550,7 @@ export function createUserAuthRouter(): Router {
     '/api/auth/users/:id/reset-password',
     requireAuth,
     requireRole(),
-    (req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       const parsed = resetPasswordSchema.safeParse(req.body);
       if (!parsed.success) {
         res.status(400).json({
@@ -496,26 +564,21 @@ export function createUserAuthRouter(): Router {
       }
 
       const id = String(req.params.id);
-      const targetUser = findUserById(id);
+      const targetUser = await findUserById(id);
       if (!targetUser) {
         res.status(404).json({ error: 'User not found' });
         return;
       }
-      // AUDIT-A: password reset is account takeover — a lower-privileged admin
-      // must never be able to reset a higher-privileged user's credential.
       if (!canActOnTarget(req.user!.role, targetUser)) {
-        res.status(403).json({ error: 'You cannot reset the password of a user above your own level' });
+        res.status(403).json({ error: 'You cannot modify a user above your own level' });
         return;
       }
-
-      const updated = resetUserPassword(id, parsed.data.newPassword);
+      const updated = await resetUserPassword(id, parsed.data.newPassword);
       if (!updated) {
         res.status(404).json({ error: 'User not found' });
         return;
       }
-      // AUDIT-D: a credential change invalidates every outstanding session —
-      // pre-reset refresh tokens must not keep rotating for the token lifetime.
-      revokeAllForUser(id);
+      await revokeAllForUser(id);
       res.json({ user: updated });
     },
   );
