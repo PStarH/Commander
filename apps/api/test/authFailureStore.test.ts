@@ -36,7 +36,10 @@ describe('AuthFailureStore PostgreSQL authority', () => {
     await store.set('127.0.0.1', entry);
     await store.delete('127.0.0.1');
     await store.cleanup(Date.now(), 60_000);
-    assert.equal(queries.some(({ sql }) => sql.includes('commander_auth_failures')), true);
+    assert.equal(
+      queries.some(({ sql }) => sql.includes('commander_auth_failures')),
+      true,
+    );
     assert.equal(
       queries.some(({ sql }) => sql.includes('INSERT INTO commander_auth_failures')),
       true,
@@ -65,10 +68,7 @@ describe('AuthFailureStore PostgreSQL authority', () => {
           sql.startsWith('SELECT') ? { rows: [{ entry: { count: 'bad' } }] } : { rows: [] },
       }),
     });
-    await assert.rejects(
-      () => store.get('127.0.0.1'),
-      /Postgres auth failure entry is malformed/,
-    );
+    await assert.rejects(() => store.get('127.0.0.1'), /Postgres auth failure entry is malformed/);
   });
 
   it('uses process-local state only outside production without a DSN', async () => {
