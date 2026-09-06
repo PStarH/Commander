@@ -232,6 +232,7 @@ export function createUserAuthRouter(): Router {
       id: result.user.id,
       username: result.user.username,
       role: result.user.role,
+      authVersion: (await findUserById(result.user.id))!.authVersion,
       tenantId: resolveAccessTenantId(),
     };
     await updateLastLogin(result.user.id);
@@ -271,6 +272,7 @@ export function createUserAuthRouter(): Router {
       id: user.id,
       username: user.username,
       role: user.role,
+      authVersion: user.authVersion,
       tenantId: resolveAccessTenantId(),
     };
     await updateLastLogin(user.id);
@@ -325,6 +327,7 @@ export function createUserAuthRouter(): Router {
       id: user.id,
       username: user.username,
       role: user.role,
+      authVersion: user.authVersion,
       tenantId: decoded.tenant_id ?? resolveAccessTenantId(),
     };
     res.json(await buildAuthResponse(authUser));

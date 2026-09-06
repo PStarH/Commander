@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createHash } from 'node:crypto';
-import { KERNEL_AUTH_PERSISTENCE_SQL } from './authPersistenceSchema.js';
+import {
+  KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+  KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL,
+  KERNEL_AUTH_PERSISTENCE_SQL,
+} from './authPersistenceSchema.js';
 import {
   KERNEL_AUTH_PERSISTENCE_CHECKSUM,
   KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
@@ -11,9 +15,20 @@ import {
 const checksum = (sql: string): string => createHash('sha256').update(sql).digest('hex');
 
 test('auth persistence migration checksum is pinned (source changes need a new descriptor)', () => {
-  // This pins the shipped SQL to the registered descriptor. Any edit to
-  // KERNEL_AUTH_PERSISTENCE_SQL without bumping the descriptor fails here.
-  assert.equal(checksum(KERNEL_AUTH_PERSISTENCE_SQL), KERNEL_AUTH_PERSISTENCE_CHECKSUM);
+  const historicalChecksum = '50940ca741be4505f6c741b80a1aebaa04e6d1082db0bc215884f64680401abc';
+  assert.equal(checksum(KERNEL_AUTH_PERSISTENCE_SQL), historicalChecksum);
+  assert.equal(KERNEL_AUTH_PERSISTENCE_CHECKSUM, historicalChecksum);
+});
+
+test('auth persistence upgrade wraps the historical schema migration', () => {
+  const ids = KERNEL_MIGRATIONS.map((migration) => migration.id);
+  const preflight = ids.indexOf('2026-09-06.1.auth_persistence_legacy_preflight');
+  const historical = ids.indexOf('2026-08-25.1.auth_persistence_schema');
+  const upgrade = ids.indexOf('2026-09-06.2.auth_access_token_authority');
+
+  assert.ok(preflight >= 0);
+  assert.ok(historical > preflight);
+  assert.ok(upgrade > historical);
 });
 
 test('auth persistence migration is registered exactly once in KERNEL_MIGRATIONS', () => {
@@ -75,4 +90,33 @@ test('auth persistence schema keeps the migration owner as table owner', () => {
       KERNEL_AUTH_PERSISTENCE_SQL.includes(`ALTER TABLE ${table} OWNER TO commander_owner;`),
     );
   }
+});
+
+test('auth persistence schema forward-migrates active legacy lockouts', () => {
+  assert.match(
+    KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL,
+    /ALTER TABLE commander_auth_failures RENAME TO commander_auth_failures_legacy/,
+  );
+  assert.match(
+    KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+    /INSERT INTO commander_auth_failures \(failure_key, count, first_failure_at, last_failure_at, locked_until\)/,
+  );
+  for (const field of ['count', 'firstFailureAt', 'lastFailureAt', 'lockedUntil']) {
+    assert.ok(
+      KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL.includes(`entry->>'${field}'`),
+      `legacy migration must preserve ${field}`,
+    );
+  }
+  assert.match(
+    KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+    /FROM commander_auth_failures_legacy[\s\S]*WHERE expires_at > clock_timestamp\(\)/,
+  );
+  assert.match(KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL, /DROP TABLE commander_auth_failures_legacy/);
+});
+
+test('auth users carry a monotonic access-token authority version', () => {
+  assert.match(
+    KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+    /ADD COLUMN auth_version BIGINT NOT NULL DEFAULT 1 CHECK \(auth_version > 0\)/,
+  );
 });

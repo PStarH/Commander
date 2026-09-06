@@ -133,3 +133,36 @@ export const KERNEL_AUTH_PERSISTENCE_SQL = [
   "    OR tenant_id = ANY(string_to_array(current_setting('app.tenant_scope', true), ','))",
   '  );',
 ].join('\n');
+
+/** Prepare pre-descriptor lockout tables without mutating the historical schema SQL. */
+export const KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL = [
+  'DO $$',
+  'BEGIN',
+  "  IF to_regclass('public.commander_auth_failures') IS NOT NULL",
+  "     AND EXISTS (SELECT 1 FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'commander_auth_failures' AND column_name = 'ip') THEN",
+  '    ALTER TABLE commander_auth_failures RENAME TO commander_auth_failures_legacy;',
+  '  END IF;',
+  'END $$;',
+].join('\n');
+
+/** Add access-token revocation authority and import active legacy lockouts. */
+export const KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL = [
+  'ALTER TABLE commander_auth_users',
+  '  ADD COLUMN auth_version BIGINT NOT NULL DEFAULT 1 CHECK (auth_version > 0);',
+  '',
+  'DO $$',
+  'BEGIN',
+  "  IF to_regclass('public.commander_auth_failures_legacy') IS NOT NULL THEN",
+  '    INSERT INTO commander_auth_failures (failure_key, count, first_failure_at, last_failure_at, locked_until)',
+  "    SELECT ip, GREATEST((entry->>'count')::integer, 1),",
+  "      to_timestamp((entry->>'firstFailureAt')::double precision / 1000.0),",
+  "      to_timestamp((entry->>'lastFailureAt')::double precision / 1000.0),",
+  "      CASE WHEN (entry->>'lockedUntil')::double precision > 0",
+  "        THEN to_timestamp((entry->>'lockedUntil')::double precision / 1000.0) ELSE NULL END",
+  '    FROM commander_auth_failures_legacy',
+  '    WHERE expires_at > clock_timestamp()',
+  '    ON CONFLICT (failure_key) DO NOTHING;',
+  '    DROP TABLE commander_auth_failures_legacy;',
+  '  END IF;',
+  'END $$;',
+].join('\n');

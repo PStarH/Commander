@@ -91,7 +91,21 @@ const unlockedFailures: AuthFailureStore = {
 
 const originalJwtSecret = process.env.JWT_SECRET;
 process.env.JWT_SECRET = 'audit-rl-secret';
-const { jwtMiddleware, signAccessToken } = await import('../src/jwtMiddleware');
+const { createJwtMiddleware, signAccessToken } = await import('../src/jwtMiddleware');
+const jwtMiddleware = createJwtMiddleware(async (id) =>
+  id === 'user-victim'
+    ? {
+        id,
+        username: 'victim',
+        email: 'victim@example.test',
+        passwordHash: 'unused',
+        role: 'viewer',
+        authVersion: 1,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        lastLoginAt: null,
+      }
+    : undefined,
+);
 
 let server: ReturnType<express.Express['listen']>;
 let port: number;
@@ -144,6 +158,7 @@ describe('AUDIT-B: spoofed X-Tenant-ID cannot consume the victim quota', () => {
       id: 'user-victim',
       username: 'victim',
       role: 'viewer',
+      authVersion: 1,
       tenantId: 'tenant-victim',
     });
     const response = await request('/probe', {

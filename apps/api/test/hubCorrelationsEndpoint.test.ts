@@ -24,11 +24,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
-import {
-  getMessageBus,
-  resetMessageBus,
-  type MessageBus,
-} from '@commander/core/runtime';
+import { getMessageBus, resetMessageBus, type MessageBus } from '@commander/core/runtime';
 import {
   createHubCorrelationsRouter,
   _resetHubCorrelationsForTests,
@@ -74,7 +70,10 @@ function publishCorrelation(
   bus.publish(topic, 'hub-glue', payload);
 }
 
-function makeCycle(runId: string, toolName = 'shell_execute'): {
+function makeCycle(
+  runId: string,
+  toolName = 'shell_execute',
+): {
   runId: string;
   toolName: string;
   description: string;
@@ -150,7 +149,7 @@ test('admin gate: without admin scope the GET summary returns 403', async () => 
       const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub`);
       assert.equal(res.status, 403);
       const body = (await res.json()) as { error?: string };
-      assert.match(body.error ?? '', /Admin scope required/);
+      assert.match(body.error ?? '', /Admin authority required/);
     } finally {
       server.close();
     }
@@ -230,9 +229,7 @@ test('GET summary filters by topic', async () => {
     publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('r-1'));
     publishCorrelation(bus, CORRELATION_TOPIC.circuit, makeCircuit('r-1'));
 
-    const res = await fetch(
-      `http://127.0.0.1:${port}/api/v1/hub?topic=runtime.circuit_correlated`,
-    );
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub?topic=runtime.circuit_correlated`);
     const body = (await res.json()) as {
       count: number;
       items: Array<{ topic: string }>;
@@ -289,9 +286,7 @@ test('GET summary rejects invalid cursor with 400', async () => {
     const bus = getMessageBus();
     publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('r-x'));
 
-    const res = await fetch(
-      `http://127.0.0.1:${port}/api/v1/hub?cursor=does-not-exist`,
-    );
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub?cursor=does-not-exist`);
     assert.equal(res.status, 400);
   } finally {
     server.close();

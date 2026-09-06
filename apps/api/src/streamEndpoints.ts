@@ -19,7 +19,7 @@ import { reportSilentFailure } from '@commander/core';
 import { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';
-import { verifyToken } from './jwtMiddleware';
+import { authenticateAccessToken } from './jwtMiddleware';
 import { hasRole } from './userStore';
 
 const DEFAULT_TOPICS: MessageBusTopic[] = [
@@ -86,7 +86,7 @@ function canAccessTenantWideStream(req: Request): boolean {
 export function createStreamRouter(options: CreateStreamRouterOptions = {}): Router {
   const router = Router();
 
-  const handleStream = (req: Request, res: Response): void => {
+  const handleStream = async (req: Request, res: Response): Promise<void> => {
     // EventSource cannot set Authorization headers. Prefer a cookie
     // (`commander_access_token`); fall back to ?access_token=. Always strip
     // access_token from req.url so access/proxy logs do not retain the secret.
@@ -134,15 +134,11 @@ export function createStreamRouter(options: CreateStreamRouterOptions = {}): Rou
       redactAccessTokenFromUrl();
 
       if (typeof token === 'string' && token.length > 0) {
-        const decoded = verifyToken(token);
-        if (decoded && decoded.type !== 'refresh') {
-          req.user = {
-            id: decoded.id,
-            username: decoded.username,
-            role: decoded.role,
-            tenantId: decoded.tenant_id,
-            scopes: decoded.scopes,
-          };
+        try {
+          req.user = await authenticateAccessToken(token);
+        } catch {
+          res.status(503).json({ error: { code: 'AUTHORITY_UNAVAILABLE' } });
+          return;
         }
       }
     } else {

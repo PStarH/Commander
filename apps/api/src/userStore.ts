@@ -43,6 +43,7 @@ export interface User {
   /** Durable external identity binding for OIDC-provisioned users. */
   oidcIssuer?: string;
   oidcSubject?: string;
+  authVersion: number;
   createdAt: string;
   lastLoginAt: string | null;
 }
@@ -50,13 +51,14 @@ export interface User {
 /**
  * The user object returned to clients — never includes the password hash.
  */
-export type SafeUser = Omit<User, 'passwordHash' | 'oidcIssuer' | 'oidcSubject'>;
+export type SafeUser = Omit<User, 'passwordHash' | 'oidcIssuer' | 'oidcSubject' | 'authVersion'>;
 
 function toSafeUser(user: User): SafeUser {
   const {
     passwordHash: _passwordHash,
     oidcIssuer: _oidcIssuer,
     oidcSubject: _oidcSubject,
+    authVersion: _authVersion,
     ...safe
   } = user;
   return safe;
@@ -76,12 +78,13 @@ type UserRow = {
   role: UserRole;
   oidc_issuer: string | null;
   oidc_subject: string | null;
+  auth_version: string | number;
   created_at: Date | string;
   last_login_at: Date | string | null;
 };
 
 const USER_COLUMNS =
-  'id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at';
+  'id, username, email, password_hash, role, oidc_issuer, oidc_subject, auth_version, created_at, last_login_at';
 
 function timestamp(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
@@ -96,6 +99,7 @@ function fromRow(row: UserRow): User {
     role: row.role,
     oidcIssuer: row.oidc_issuer ?? undefined,
     oidcSubject: row.oidc_subject ?? undefined,
+    authVersion: Number(row.auth_version),
     createdAt: timestamp(row.created_at),
     lastLoginAt: row.last_login_at === null ? null : timestamp(row.last_login_at),
   };
@@ -210,8 +214,8 @@ export class PostgresUserRepository implements UserRepository {
     try {
       const result = await withClient(this.pool, async (client) => {
         return client.query<UserRow>(
-          `INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, clock_timestamp(), NULL)
+          `INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, auth_version, created_at, last_login_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 1, clock_timestamp(), NULL)
            RETURNING ${USER_COLUMNS}`,
           [
             randomUUID(),
@@ -272,7 +276,9 @@ export class PostgresUserRepository implements UserRepository {
   async updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null> {
     const result = await withClient(this.pool, async (client) => {
       return client.query<UserRow>(
-        `UPDATE commander_auth_users SET role = $2 WHERE id = $1 RETURNING ${USER_COLUMNS}`,
+        `UPDATE commander_auth_users
+         SET role = $2, auth_version = auth_version + 1
+         WHERE id = $1 RETURNING ${USER_COLUMNS}`,
         [userId, role],
       );
     });
@@ -287,7 +293,10 @@ export class PostgresUserRepository implements UserRepository {
       const result = await withClient(this.pool, async (client) => {
         return client.query<UserRow>(
           `UPDATE commander_auth_users
-           SET email = COALESCE($2, email), role = COALESCE($3, role), username = COALESCE($4, username)
+           SET email = COALESCE($2, email),
+               auth_version = CASE WHEN $3 IS NOT NULL AND role IS DISTINCT FROM $3 THEN auth_version + 1 ELSE auth_version END,
+               role = COALESCE($3, role),
+               username = COALESCE($4, username)
            WHERE id = $1
            RETURNING ${USER_COLUMNS}`,
           [userId, updates.email ?? null, updates.role ?? null, updates.username ?? null],
@@ -305,7 +314,9 @@ export class PostgresUserRepository implements UserRepository {
   async resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null> {
     const result = await withClient(this.pool, async (client) => {
       return client.query<UserRow>(
-        `UPDATE commander_auth_users SET password_hash = $2 WHERE id = $1 RETURNING ${USER_COLUMNS}`,
+        `UPDATE commander_auth_users
+         SET password_hash = $2, auth_version = auth_version + 1
+         WHERE id = $1 RETURNING ${USER_COLUMNS}`,
         [userId, hashSync(newPassword, 10)],
       );
     });
@@ -361,8 +372,8 @@ export class PostgresUserRepository implements UserRepository {
       );
       if (existing.rows[0]) return;
       await client.query(
-        `INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, created_at, last_login_at)
-         VALUES ($1, $2, $3, $4, $5, NULL, NULL, clock_timestamp(), NULL)`,
+        `INSERT INTO commander_auth_users (id, username, email, password_hash, role, oidc_issuer, oidc_subject, auth_version, created_at, last_login_at)
+         VALUES ($1, $2, $3, $4, $5, NULL, NULL, 1, clock_timestamp(), NULL)`,
         [randomUUID(), 'admin', 'admin@commander.local', hashSync(password, 10), 'admin'],
       );
     });

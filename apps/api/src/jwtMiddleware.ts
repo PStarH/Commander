@@ -1,7 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import jwt, { type JwtPayload } from 'jsonwebtoken';
-import type { UserRole } from './userStore';
+import { findUserById, type User, type UserRole } from './userStore';
 import { isProductionEnv } from './envSignal';
 import { persist as persistRefreshJti } from './refreshTokenStore';
 import { isEnterpriseProfile } from './profileSignal';
@@ -26,6 +26,7 @@ export interface AuthUser {
   id: string;
   username: string;
   role: UserRole;
+  authVersion: number;
   /**
    * Tenant binding carried by the JWT (WS3 §3.1). Present on enterprise access
    * tokens; absent on legacy/dev tokens. The /v1 tenant guard treats this as
@@ -41,6 +42,7 @@ export interface CommanderJwtPayload extends JwtPayload {
   id: string;
   username: string;
   role: UserRole;
+  auth_version?: number;
   type?: 'access' | 'refresh';
   /** Unique id for refresh tokens — used for rotation / revocation. */
   jti?: string;
@@ -104,6 +106,7 @@ export function signAccessToken(user: AuthUser): string {
     id: user.id,
     username: user.username,
     role: user.role,
+    auth_version: user.authVersion,
     type: 'access',
   };
   if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
@@ -164,6 +167,35 @@ export function verifyToken(token: string): CommanderJwtPayload | null {
   } catch {
     return null;
   }
+}
+
+export type AccessTokenUserLookup = (id: string) => Promise<User | undefined>;
+
+/** Verify signature and bind mutable authorization claims to PostgreSQL authority. */
+export async function authenticateAccessToken(
+  token: string,
+  lookupUser: AccessTokenUserLookup = findUserById,
+): Promise<AuthUser | null> {
+  const decoded = verifyToken(token);
+  if (!decoded || decoded.type === 'refresh' || !Number.isSafeInteger(decoded.auth_version)) {
+    return null;
+  }
+  const currentUser = await lookupUser(decoded.id);
+  if (
+    !currentUser ||
+    currentUser.authVersion !== decoded.auth_version ||
+    currentUser.role !== decoded.role
+  ) {
+    return null;
+  }
+  return {
+    id: decoded.id,
+    username: decoded.username,
+    role: decoded.role,
+    authVersion: decoded.auth_version,
+    tenantId: decoded.tenant_id,
+    scopes: decoded.scopes,
+  };
 }
 
 // ── Paths exempt from JWT parsing ───────────────────────────────────────────
@@ -230,55 +262,60 @@ function isV1ProductPath(reqPath: string): boolean {
  *    used instead), `req.user` stays null and the existing API-key
  *    authMiddleware handles authentication.
  */
-export function jwtMiddleware(req: Request, res: Response, next: NextFunction): void {
-  // Default: no authenticated user.
-  req.user = null;
+export function createJwtMiddleware(
+  lookupUser: AccessTokenUserLookup = findUserById,
+): (req: Request, res: Response, next: NextFunction) => Promise<void> {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    // Default: no authenticated user.
+    req.user = null;
 
-  if (isJwtPublicPath(req.path)) {
-    next();
-    return;
-  }
+    if (isJwtPublicPath(req.path)) {
+      next();
+      return;
+    }
 
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    // No Bearer token — fall through to the existing API-key authMiddleware.
-    next();
-    return;
-  }
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // No Bearer token — fall through to the existing API-key authMiddleware.
+      next();
+      return;
+    }
 
-  const token = authHeader.slice('Bearer '.length).trim();
-  if (!token) {
-    next();
-    return;
-  }
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (!token) {
+      next();
+      return;
+    }
 
-  const decoded = verifyToken(token);
-  if (decoded && decoded.type !== 'refresh') {
-    // Valid access token — inject the user identity + enterprise claims.
-    req.user = {
-      id: decoded.id,
-      username: decoded.username,
-      role: decoded.role,
-      tenantId: decoded.tenant_id,
-      scopes: decoded.scopes,
-    };
+    let authenticated: AuthUser | null;
+    try {
+      authenticated = await authenticateAccessToken(token, lookupUser);
+    } catch {
+      res.status(503).json({ error: { code: 'AUTHORITY_UNAVAILABLE' } });
+      return;
+    }
+    if (authenticated) {
+      req.user = authenticated;
+      next();
+      return;
+    }
+    // Verification failed, or a refresh token was presented where an access
+    // token is required. In the enterprise profile on /v1 product paths this
+    // is fail-closed: reject immediately so the downstream /v1 tenant guard
+    // never observes an unauthenticated Bearer. Elsewhere we preserve the
+    // legacy fail-open behaviour (authMiddleware may still accept the token as
+    // an API key, or reject per its own default-deny rules).
+    if (isEnterpriseProfile() && isV1ProductPath(req.path)) {
+      res.status(401).json({
+        error: {
+          code: 'INVALID_TOKEN',
+          message: 'Bearer token is invalid, expired, or not an access token.',
+        },
+      });
+      return;
+    }
     next();
-    return;
-  }
-  // Verification failed, or a refresh token was presented where an access
-  // token is required. In the enterprise profile on /v1 product paths this
-  // is fail-closed: reject immediately so the downstream /v1 tenant guard
-  // never observes an unauthenticated Bearer. Elsewhere we preserve the
-  // legacy fail-open behaviour (authMiddleware may still accept the token as
-  // an API key, or reject per its own default-deny rules).
-  if (isEnterpriseProfile() && isV1ProductPath(req.path)) {
-    res.status(401).json({
-      error: {
-        code: 'INVALID_TOKEN',
-        message: 'Bearer token is invalid, expired, or not an access token.',
-      },
-    });
-    return;
-  }
-  next();
+  };
 }
+
+export const jwtMiddleware = createJwtMiddleware();
