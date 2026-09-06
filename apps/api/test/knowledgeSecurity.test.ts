@@ -33,6 +33,7 @@ async function startServer(principal: Principal = {}): Promise<TestServer> {
         id: 'test-user',
         username: 'test-user',
         role: principal.role,
+        authVersion: 1,
         tenantId,
       };
     }
@@ -78,7 +79,7 @@ describe('knowledge security boundaries', () => {
   });
 
   it('isolates upload, list, search, read, and delete by authenticated tenant', async () => {
-    const server = await startServer({ role: 'viewer' });
+    const server = await startServer({ role: 'developer' });
     try {
       const upload = await fetch(`${server.baseUrl}/api/knowledge/documents`, {
         method: 'POST',
@@ -149,7 +150,7 @@ describe('knowledge security boundaries', () => {
   });
 
   it('isolates the core-backed status, upload, list, search, and delete routes', async () => {
-    const server = await startServer({ role: 'viewer' });
+    const server = await startServer({ role: 'developer' });
     try {
       const upload = await fetch(`${server.baseUrl}/api/knowledge-base/upload`, {
         method: 'POST',

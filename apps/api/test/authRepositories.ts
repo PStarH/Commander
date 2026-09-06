@@ -1,21 +1,17 @@
 import { randomUUID } from 'node:crypto';
 import { hashSync } from 'bcryptjs';
-import type {
-  CreateUserArgs,
-  SafeUser,
-  User,
-  UserRepository,
-  UserRole,
-} from '../src/userStore.js';
-import type {
-  RefreshTokenRecord,
-  RefreshTokenRepository,
-} from '../src/refreshTokenStore.js';
+import type { CreateUserArgs, SafeUser, User, UserRepository, UserRole } from '../src/userStore.js';
+import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore.js';
 import type { AuthFailureEntry, AuthFailureStore } from '../src/authFailureStore.js';
 
 function toSafeUser(user: User): SafeUser {
-  const { passwordHash: _passwordHash, oidcIssuer: _oidcIssuer, oidcSubject: _oidcSubject, ...safe } =
-    user;
+  const {
+    passwordHash: _passwordHash,
+    oidcIssuer: _oidcIssuer,
+    oidcSubject: _oidcSubject,
+    authVersion: _authVersion,
+    ...safe
+  } = user;
   return safe;
 }
 
@@ -68,6 +64,7 @@ export class TestUserRepository implements UserRepository {
       role: args.role ?? 'viewer',
       oidcIssuer: args.oidcIssuer,
       oidcSubject: args.oidcSubject,
+      authVersion: 1,
       createdAt: new Date().toISOString(),
       lastLoginAt: null,
     };
@@ -101,6 +98,7 @@ export class TestUserRepository implements UserRepository {
     const user = this.users.get(userId);
     if (!user) return null;
     user.role = role;
+    user.authVersion += 1;
     return toSafeUser(user);
   }
 
@@ -116,6 +114,7 @@ export class TestUserRepository implements UserRepository {
     if (updates.email && (await this.findUserByEmail(updates.email))?.id !== userId) {
       return { error: 'Email already registered' };
     }
+    if (updates.role !== undefined && updates.role !== user.role) user.authVersion += 1;
     Object.assign(user, updates);
     return toSafeUser(user);
   }
@@ -124,6 +123,7 @@ export class TestUserRepository implements UserRepository {
     const user = this.users.get(userId);
     if (!user) return null;
     user.passwordHash = hashSync(newPassword, 10);
+    user.authVersion += 1;
     return toSafeUser(user);
   }
 
@@ -206,7 +206,7 @@ export class TestAuthFailureStore implements AuthFailureStore {
       count,
       firstFailureAt: expired ? now : previous.firstFailureAt,
       lastFailureAt: now,
-      lockedUntil: count >= maxFailures ? now + lockoutMs : previous?.lockedUntil ?? 0,
+      lockedUntil: count >= maxFailures ? now + lockoutMs : (previous?.lockedUntil ?? 0),
     };
     this.entries.set(failureKey, entry);
     return entry;

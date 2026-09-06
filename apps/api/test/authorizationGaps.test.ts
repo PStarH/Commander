@@ -18,7 +18,7 @@ process.env.JWT_SECRET = process.env.JWT_SECRET ?? 'audit-r3-secret';
 const { createUser, _resetUserStoreForTests } = await import('../src/userStore');
 const { _resetRefreshTokenStoreForTests } = await import('../src/refreshTokenStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
-const { jwtMiddleware } = await import('../src/jwtMiddleware');
+const { createJwtMiddleware } = await import('../src/jwtMiddleware');
 const { authMiddleware } = await import('../src/authMiddleware');
 const { tenantContextMiddleware } = await import('../src/tenantContextMiddleware');
 const { createConfidenceRouter } = await import('../src/confidenceEndpoints');
@@ -33,9 +33,25 @@ function bearerToken(role: 'viewer' | 'admin', tenantId = 'tenant-a'): string {
     id: `user-${role}`,
     username: role,
     role,
+    authVersion: 1,
     tenantId,
   });
 }
+
+const jwtMiddleware = createJwtMiddleware(async (id) => {
+  const role = id === 'user-admin' ? 'admin' : id === 'user-viewer' ? 'viewer' : undefined;
+  if (!role) return undefined;
+  return {
+    id,
+    username: role,
+    email: `${role}@example.test`,
+    passwordHash: 'unused',
+    role,
+    authVersion: 1,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    lastLoginAt: null,
+  };
+});
 
 before(async () => {
   _resetUserStoreForTests();
@@ -64,12 +80,7 @@ before(async () => {
   app.use(jwtMiddleware);
   app.use(authMiddleware);
   app.use(tenantContextMiddleware);
-  app.use(
-    createConfidenceRouter(
-      warRoomStore as never,
-      confidenceReporter as never,
-    ),
-  );
+  app.use(createConfidenceRouter(warRoomStore as never, confidenceReporter as never));
 
   await new Promise<void>((resolve) => {
     server = app.listen(0, '127.0.0.1', () => {
@@ -91,19 +102,17 @@ after(async () => {
 
 describe('AUDIT-API2: confidence reports enforce project access', () => {
   test('tenant-b viewer cannot read tenant-a project confidence (was: IDOR)', async () => {
-    const res = await fetch(
-      `http://127.0.0.1:${port}/projects/proj-a/missions/m1/confidence`,
-      { headers: { authorization: `Bearer ${bearerToken('admin', 'tenant-b')}` } },
-    );
+    const res = await fetch(`http://127.0.0.1:${port}/projects/proj-a/missions/m1/confidence`, {
+      headers: { authorization: `Bearer ${bearerToken('admin', 'tenant-b')}` },
+    });
     // FAILING before the fix: 200 with the cross-tenant report.
     assert.equal(res.status, 404, 'cross-tenant confidence read must be denied');
   });
 
   test('same-tenant owner path still works for admins of the project tenant', async () => {
-    const res = await fetch(
-      `http://127.0.0.1:${port}/projects/proj-a/missions/m1/confidence`,
-      { headers: { authorization: `Bearer ${bearerToken('admin', 'tenant-a')}` } },
-    );
+    const res = await fetch(`http://127.0.0.1:${port}/projects/proj-a/missions/m1/confidence`, {
+      headers: { authorization: `Bearer ${bearerToken('admin', 'tenant-a')}` },
+    });
     assert.equal(res.status, 200);
   });
 });
@@ -117,17 +126,11 @@ describe('AUDIT-API1: onboarding run-first-task requires admin (LLM spend guard)
     app2.use(authMiddleware);
     app2.use(tenantContextMiddleware);
     let providerCalled = false;
-    app2.use(
-      (
-        _req: express.Request,
-        res: express.Response,
-        next: express.NextFunction,
-      ) => {
-        // Instrument: if the handler reached resolveProvider it would fetch();
-        // the guard must reject before that. We detect via status alone.
-        next();
-      },
-    );
+    app2.use((_req: express.Request, res: express.Response, next: express.NextFunction) => {
+      // Instrument: if the handler reached resolveProvider it would fetch();
+      // the guard must reject before that. We detect via status alone.
+      next();
+    });
     app2.use(createOnboardingRouter({}));
     const server2 = app2.listen(0, '127.0.0.1');
     await new Promise<void>((r) => server2.once('listening', r));
@@ -135,7 +138,10 @@ describe('AUDIT-API1: onboarding run-first-task requires admin (LLM spend guard)
     try {
       const res = await fetch(`http://127.0.0.1:${port2}/api/onboarding/run-first-task`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', authorization: `Bearer ${bearerToken('viewer')}` },
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${bearerToken('viewer')}`,
+        },
         body: JSON.stringify({ task: 'say hi' }),
       });
       // FAILING before the fix: 200 — the viewer spent the operator's key.

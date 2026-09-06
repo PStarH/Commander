@@ -24,13 +24,25 @@ test.before(async () => {
       id: 'run-context-admin',
       username: 'run-context-admin',
       role: 'admin',
+      auth_version: 1,
       type: 'access',
       tenant_id: 'test-tenant',
     },
     TEST_JWT_SECRET,
     { algorithm: 'HS256', expiresIn: '5m' },
   );
-  serverContext = await startServer(path.resolve(__dirname, '..'));
+  serverContext = await startServer(path.resolve(__dirname, '..'), {
+    authUser: {
+      id: 'run-context-admin',
+      username: 'run-context-admin',
+      email: 'run-context-admin@example.test',
+      passwordHash: '',
+      role: 'admin',
+      authVersion: 1,
+      createdAt: new Date(0).toISOString(),
+      lastLoginAt: null,
+    },
+  });
   baseUrl = serverContext.baseUrl;
 });
 

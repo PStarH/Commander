@@ -371,6 +371,7 @@ export function createOIDCAuthRouter(options: OIDCAuthRouterOptions = {}): Route
       id: localUser.id,
       username: localUser.username,
       role: localUser.role as AuthRole,
+      authVersion: localUser.authVersion,
       tenantId,
     };
 

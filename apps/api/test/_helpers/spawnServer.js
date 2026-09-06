@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const net = require('node:net');
 const crypto = require('node:crypto');
+const { pathToFileURL } = require('node:url');
 
 /**
  * Pre-allocate a free TCP port on 127.0.0.1 via node:net.
@@ -77,7 +78,7 @@ const STDERR_USE_FULL_THRESHOLD_CHARS = STDERR_HEAD_CHARS + STDERR_TAIL_CHARS;
  * overrides via a new env var (e.g. `COMMANDER_WARROOM_FILE`), or the two
  * will corrupt each other's state. The current 50-test suite is unaffected.
  */
-async function startServer(apiDir) {
+async function startServer(apiDir, options = {}) {
   let lastError;
   for (let attempt = 1; attempt <= SPAWN_RETRY_ATTEMPTS; attempt++) {
     const tmpDir = path.join(
@@ -92,21 +93,28 @@ async function startServer(apiDir) {
 
     let serverProcess;
     try {
-      serverProcess = spawn(process.execPath, [path.join(apiDir, 'dist', 'index.js')], {
-        cwd: tmpDir,
-        // Keep in sync with spawnServer.ts: the security round requires
-        // AUTH_DISABLED to be paired with an explicit COMMANDER_ALLOW_ANON.
-        env: {
-          ...process.env,
-          PORT: String(port),
-          AUTH_DISABLED: 'true',
-          COMMANDER_ALLOW_ANON: '1',
-          // Keep in sync with spawnServer.ts — anon bypass needs a tenant ALS id.
-          COMMANDER_DEFAULT_TENANT_ID:
-            process.env.COMMANDER_DEFAULT_TENANT_ID || 'test-tenant',
+      const authFixture = pathToFileURL(
+        path.join(apiDir, 'test', '_helpers', 'spawnedServerAuthFixture.mjs'),
+      ).href;
+      serverProcess = spawn(
+        process.execPath,
+        ['--import', authFixture, path.join(apiDir, 'dist', 'index.js')],
+        {
+          cwd: tmpDir,
+          // Keep in sync with spawnServer.ts: the security round requires
+          // AUTH_DISABLED to be paired with an explicit COMMANDER_ALLOW_ANON.
+          env: {
+            ...process.env,
+            PORT: String(port),
+            AUTH_DISABLED: 'true',
+            COMMANDER_ALLOW_ANON: '1',
+            // Keep in sync with spawnServer.ts — anon bypass needs a tenant ALS id.
+            COMMANDER_DEFAULT_TENANT_ID: process.env.COMMANDER_DEFAULT_TENANT_ID || 'test-tenant',
+            COMMANDER_TEST_AUTH_USER: options.authUser ? JSON.stringify(options.authUser) : '',
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
         },
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
+      );
     } catch (syncErr) {
       // Synchronous spawn failure. ENOENT/EACCES on the binary cannot recover
       // by retrying — surface the real cause immediately to the test runner
@@ -168,14 +176,7 @@ async function startServer(apiDir) {
     const stderrSnippet = formatStderrSnippet(stderrBuf);
     lastError = stderrSnippet ? `${reason}\n-- child stderr --\n${stderrSnippet}` : reason;
 
-    if (!serverProcess.killed) {
-      try {
-        serverProcess.kill('SIGKILL');
-      } catch {
-        /* best-effort */
-      }
-    }
-    await new Promise((resolve) => serverProcess.once('close', resolve));
+    await killAndWaitForClose(serverProcess);
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -183,6 +184,18 @@ async function startServer(apiDir) {
     }
   }
   throw new Error(`API server did not start after ${SPAWN_RETRY_ATTEMPTS} attempts: ${lastError}`);
+}
+
+async function killAndWaitForClose(child) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  await new Promise((resolve) => {
+    child.once('close', resolve);
+    try {
+      child.kill('SIGKILL');
+    } catch {
+      resolve();
+    }
+  });
 }
 
 /**
