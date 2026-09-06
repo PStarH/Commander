@@ -472,6 +472,36 @@ describe('first-user CLI readiness', () => {
     ).rejects.toThrow('provider response did not complete successfully');
   });
 
+  it.each([undefined, null])(
+    'fails when Anthropic omits successful completion evidence (%s)',
+    async (stopReason) => {
+      vi.stubEnv('ANTHROPIC_API_KEY', 'anthropic-test-key-not-a-credential');
+      vi.stubEnv('ANTHROPIC_BASE_URL', 'https://anthropic.invalid/v1');
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(
+          async () =>
+            new Response(
+              JSON.stringify({
+                content: [{ type: 'text', text: '[]' }],
+                stop_reason: stopReason,
+              }),
+              { status: 200, headers: { 'content-type': 'application/json' } },
+            ),
+        ),
+      );
+
+      await expect(
+        executeReview({
+          scope: 'commit',
+          commitSha: 'a17575240',
+          requireProvider: true,
+          provider: 'anthropic',
+        }),
+      ).rejects.toThrow('provider response did not complete successfully');
+    },
+  );
+
   it('fails the review gate when the provider returns a P1 finding', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key-not-a-credential');
     vi.stubEnv('OPENAI_BASE_URL', 'https://provider.invalid/v1');
