@@ -106,6 +106,9 @@ async function startServer(apiDir, options = {}) {
           env: {
             ...process.env,
             PORT: String(port),
+            JWT_SECRET:
+              process.env.JWT_SECRET || 'spawned-api-test-jwt-secret-at-least-32-characters',
+            ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'spawned-api-test-admin-password',
             AUTH_DISABLED: 'true',
             COMMANDER_ALLOW_ANON: '1',
             // Keep in sync with spawnServer.ts — anon bypass needs a tenant ALS id.

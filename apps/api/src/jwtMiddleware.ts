@@ -2,7 +2,6 @@ import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import jwt, { type JwtPayload } from 'jsonwebtoken';
 import { findUserById, type User, type UserRole } from './userStore';
-import { isProductionEnv } from './envSignal';
 import { persist as persistRefreshJti } from './refreshTokenStore';
 import { isEnterpriseProfile } from './profileSignal';
 
@@ -54,32 +53,15 @@ export interface CommanderJwtPayload extends JwtPayload {
 
 // ── JWT configuration ───────────────────────────────────────────────────────
 
-const DEV_SECRET = 'commander-dev-secret-change-in-production';
-
 /**
  * The HMAC secret used to sign/verify JWTs.
  *
- * In production this MUST be set via the JWT_SECRET environment variable.
- * The dev fallback is only acceptable for local development — a warning is
- * emitted at module load when it is in use.
+ * Startup validates that this is an explicit, non-public secret before the API
+ * accepts requests. Keep the empty value here so importing middleware in unit
+ * tests does not manufacture an authentication authority.
  */
-export const JWT_SECRET: string = process.env.JWT_SECRET ?? DEV_SECRET;
-
-if (!process.env.JWT_SECRET) {
-  if (isProductionEnv()) {
-    // Fail closed. With no secret, JWTs are signed/verified with a public source
-    // constant, so anyone can forge a signed { role: 'super_admin' } access token
-    // and, combined with header-based tenant selection, act as super_admin in any
-    // tenant (KC-1). Mirror capabilityToken's boot refusal.
-    throw new Error(
-      '[jwtMiddleware] JWT_SECRET must be set in production. Refusing to start with the ' +
-        'insecure dev default (an unset secret permits forged super_admin tokens).',
-    );
-  }
-  process.stderr.write(
-    '[jwtMiddleware] WARNING: JWT_SECRET is not set — using insecure dev default. ' +
-      'Set JWT_SECRET before deploying to production.\n',
-  );
+function jwtSecret(): string {
+  return process.env.JWT_SECRET?.trim() ?? '';
 }
 
 const ACCESS_TOKEN_EXPIRES_IN = '24h';
@@ -115,7 +97,7 @@ export function signAccessToken(user: AuthUser): string {
   if (Array.isArray(user.scopes) && user.scopes.length > 0) {
     payload.scopes = user.scopes;
   }
-  return jwt.sign(payload, JWT_SECRET, {
+  return jwt.sign(payload, jwtSecret(), {
     expiresIn: ACCESS_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
@@ -140,7 +122,7 @@ export async function signRefreshToken(user: AuthUser): Promise<string> {
   if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
     payload.tenant_id = user.tenantId;
   }
-  const token = jwt.sign(payload, JWT_SECRET, {
+  const token = jwt.sign(payload, jwtSecret(), {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
@@ -157,7 +139,7 @@ export async function signRefreshToken(user: AuthUser): Promise<string> {
  */
 export function verifyToken(token: string): CommanderJwtPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, jwtSecret(), {
       algorithms: ['HS256'],
     });
     if (typeof decoded === 'string') {

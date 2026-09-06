@@ -248,7 +248,7 @@ export async function cmdReview(args: string[]) {
   }
   if (requireProvider) {
     bullet(`Real provider: ${provider}`);
-    bullet('Sends at most 15,000 diff characters; max 4,000 tokens; 8 MiB post-parse cap');
+    bullet('Sends at most 15,000 diff characters; max 4,000 tokens; 8 MiB response cap');
     bullet('Caller-side timeout: 120 seconds; provider/model execution tools: none');
     bullet('The provider may retain the submitted diff under its own terms');
   }

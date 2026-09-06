@@ -3,6 +3,7 @@ import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 import { executeViaBatchAPI, supportsNativeBatchAPI, type BatchAPIConfig } from '../batchApiClient';
 import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
+import { MAX_LLM_RESPONSE_BYTES } from '../runtimeConstants';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -91,6 +92,7 @@ export class OpenAIProvider implements LLMProvider {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ ...body, stream: useStreaming }),
+      signal: request.signal,
     });
 
     if (!response.ok) {
@@ -101,13 +103,42 @@ export class OpenAIProvider implements LLMProvider {
       return this.handleStreamingResponse(response, model, request.responseFormat);
     }
 
-    let data: OpenAICompletionResponse;
+    const data = await this.readResponse(response);
+    return this.parseResponse(data, model, request.responseFormat);
+  }
+
+  private async readResponse(response: Response): Promise<OpenAICompletionResponse> {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error(`OpenAI API returned invalid JSON (${response.status})`);
+
+    const chunks: Uint8Array[] = [];
+    let bytesRead = 0;
     try {
-      data = (await response.json()) as OpenAICompletionResponse;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        bytesRead += value.byteLength;
+        if (bytesRead > MAX_LLM_RESPONSE_BYTES) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error(
+            `PAYLOAD_TOO_LARGE: response ${bytesRead} > ${MAX_LLM_RESPONSE_BYTES} bytes`,
+          );
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('PAYLOAD_TOO_LARGE:')) throw error;
+      throw new Error(`OpenAI API returned invalid JSON (${response.status})`);
+    }
+
+    try {
+      return JSON.parse(
+        new TextDecoder().decode(Buffer.concat(chunks)),
+      ) as OpenAICompletionResponse;
     } catch {
       throw new Error(`OpenAI API returned invalid JSON (${response.status})`);
     }
-    return this.parseResponse(data, model, request.responseFormat);
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
@@ -178,12 +209,20 @@ export class OpenAIProvider implements LLMProvider {
     let usage: OpenAICompletionUsage | null = null;
     let finishReason: string | null = null;
     let buffer = '';
+    let bytesRead = 0;
 
     const decoder = new TextDecoder();
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      bytesRead += value.byteLength;
+      if (bytesRead > MAX_LLM_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(
+          `PAYLOAD_TOO_LARGE: response ${bytesRead} > ${MAX_LLM_RESPONSE_BYTES} bytes`,
+        );
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');

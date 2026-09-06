@@ -48,7 +48,8 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
   COMMANDER_API_KEY: 'ci-cell-smoke-api-key',
   COMMANDER_MASTER_KEY: 'ci-cell-smoke-master-key-32chars!!',
-  JWT_SECRET: 'ci-cell-smoke-jwt-secret',
+  JWT_SECRET: 'ci-cell-smoke-jwt-secret-at-least-32-characters',
+  ADMIN_PASSWORD: 'ci-cell-smoke-admin-password',
   // API legacy HMAC only — not worker/adapter authority.
   COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
   COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',

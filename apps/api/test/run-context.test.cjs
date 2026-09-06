@@ -4,7 +4,7 @@ const path = require('node:path');
 const jwt = require('jsonwebtoken');
 const { startServer, stopServer } = require('./_helpers/spawnServer');
 
-const TEST_JWT_SECRET = 'run-context-test-secret';
+const TEST_JWT_SECRET = 'run-context-test-secret-at-least-32-characters';
 const originalJwtSecret = process.env.JWT_SECRET;
 
 let serverContext;

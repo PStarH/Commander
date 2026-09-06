@@ -411,6 +411,7 @@ export interface GovernanceOptions {
   timeoutMs?: number;
   maxPayloadBytes?: number;
   maxCostTokens?: number;
+  onTimeout?: () => void;
 }
 
 export interface GovernanceResult<T> {
@@ -430,11 +431,18 @@ export class ResourceGovernor {
   /**
    * Execute a function with timeout protection.
    */
-  static async withTimeout<T>(fn: () => Promise<T>, timeoutMs: number): Promise<T> {
+  static async withTimeout<T>(
+    fn: () => Promise<T>,
+    timeoutMs: number,
+    onTimeout?: () => void,
+  ): Promise<T> {
     if (timeoutMs <= 0) return fn();
 
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const timer = setTimeout(() => {
+      controller.abort();
+      onTimeout?.();
+    }, timeoutMs);
 
     try {
       // Race between the function and the timeout
@@ -500,9 +508,12 @@ export class ResourceGovernor {
 
       if (options.timeoutMs && options.maxPayloadBytes) {
         // Both timeout and size cap
-        result = await this.withSizeCap(() => this.withTimeout(fn, timeoutMs), maxPayloadBytes);
+        result = await this.withSizeCap(
+          () => this.withTimeout(fn, timeoutMs, options.onTimeout),
+          maxPayloadBytes,
+        );
       } else if (options.timeoutMs) {
-        result = await this.withTimeout(fn, timeoutMs);
+        result = await this.withTimeout(fn, timeoutMs, options.onTimeout);
       } else if (options.maxPayloadBytes) {
         result = await this.withSizeCap(fn, maxPayloadBytes);
       } else {

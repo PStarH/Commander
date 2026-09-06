@@ -73,6 +73,6 @@ describe('onboarding provider configuration authorization', () => {
     scopes = ['admin'];
     assert.equal((await saveConfig()).status, 200);
     assert.equal(writes.length, 2);
-    assert.deepEqual(writes[0], { provider: 'openai', model: 'gpt-4o', apiKey: 'secret' });
+    assert.deepEqual(writes[0], { provider: 'openai', model: 'gpt-4o' });
   });
 });

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { hashSync } from 'bcryptjs';
+import { resolveBootstrapAdminPassword } from './startupConfig';
 import type { SqlPool } from '@commander/kernel';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import {
@@ -478,8 +479,7 @@ export function isInitialized(): boolean {
 }
 
 /**
- * Seed the default admin account on first boot (AUTH-4: production refuses to
- * use the well-known dev password). Call once during server startup.
+ * Seed the default admin account on first boot. Call once during server startup.
  */
 export async function bootstrapDefaultAdminAccount(
   env: NodeJS.ProcessEnv = process.env,
@@ -487,17 +487,7 @@ export async function bootstrapDefaultAdminAccount(
   const repository = getUserRepository();
   const existing = await repository.countAdmins();
   if (existing > 0) return;
-  const configuredPassword = env.ADMIN_PASSWORD;
-  if (!configuredPassword && env.NODE_ENV === 'production') {
-    throw new Error(
-      '[userStore] ADMIN_PASSWORD must be set in production before the default admin account ' +
-        'can be created. Refusing to seed the well-known admin/commander-admin credential.',
-    );
-  }
-  const adminPassword = configuredPassword ?? 'commander-admin';
+  const adminPassword = resolveBootstrapAdminPassword(env);
   await repository.bootstrapDefaultAdmin(adminPassword);
-  process.stdout.write(
-    `[userStore] Created default admin user (username=admin). ` +
-      `Change the password immediately in production.\n`,
-  );
+  process.stdout.write('[userStore] Created initial admin user (username=admin).\n');
 }
