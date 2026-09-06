@@ -11,6 +11,31 @@ import {
   parseFindings,
 } from '../src/reviewAgent';
 import type { ReviewReport, ReviewFinding, ReviewConfig } from '../src/reviewAgent';
+import { ENV_MAP } from '../src/config/commanderConfig';
+
+const providerEnvNames = new Set([
+  ...Object.values(ENV_MAP).flatMap(({ key, url, model }) => [key, url, model]),
+  'COHERE_API_KEY',
+  'REPLICATE_API_KEY',
+  'PPLX_API_KEY',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_PROFILE',
+]);
+const originalProviderEnv = new Map<string, string | undefined>();
+
+before(() => {
+  for (const name of providerEnvNames) {
+    originalProviderEnv.set(name, process.env[name]);
+    delete process.env[name];
+  }
+});
+
+after(() => {
+  for (const [name, value] of originalProviderEnv) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 // ============================================================================
 // Factories
@@ -36,7 +61,16 @@ function makeReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
     linesRemoved: 12,
     scope: 'uncommitted',
     guidelinesUsed: [],
+    guidelinesTruncated: false,
     durationMs: 1234,
+    source: 'heuristic',
+    inputBytes: 0,
+    totalFilesInScope: 3,
+    totalLinesAdded: 45,
+    totalLinesRemoved: 12,
+    totalDiffChars: 100,
+    submittedDiffChars: 100,
+    truncated: false,
     ...overrides,
   };
 }

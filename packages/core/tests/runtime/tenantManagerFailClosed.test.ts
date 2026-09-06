@@ -2,7 +2,7 @@
  * AUDIT-CORE4/CORE5: unknown tenants fail closed in multi-tenant mode, and
  * threeLayerMemory cross-tenant guards use the effective tenant context.
  */
-import { test, describe, before, after } from 'vitest';
+import { test, describe, beforeEach, afterEach } from 'vitest';
 import * as assert from 'node:assert/strict';
 import { setMultiTenantEnabled, runWithTenant } from '../../src/runtime/tenantContext.js';
 import { TenantManager } from '../../src/runtime/tenantManager.js';
@@ -17,8 +17,8 @@ const emptyStores = {
 } as never;
 
 describe('TenantManager.resolveTenantContext (AUDIT-CORE4)', () => {
-  before(() => setMultiTenantEnabled(true));
-  after(() => setMultiTenantEnabled(false));
+  beforeEach(() => setMultiTenantEnabled(true));
+  afterEach(() => setMultiTenantEnabled(false));
 
   test('unknown tenant is denied in multi-tenant mode (baseline: allowed → no limits)', () => {
     const mgr = new TenantManager();
@@ -45,7 +45,8 @@ describe('TenantManager.resolveTenantContext (AUDIT-CORE4)', () => {
 });
 
 describe('ThreeLayerMemory cross-tenant guards (AUDIT-CORE5)', () => {
-  after(() => setMultiTenantEnabled(false));
+  beforeEach(() => setMultiTenantEnabled(true));
+  afterEach(() => setMultiTenantEnabled(false));
 
   test('ambient tenant cannot promote another tenant entry (baseline: guard inert)', () => {
     const mem = new ThreeLayerMemory();

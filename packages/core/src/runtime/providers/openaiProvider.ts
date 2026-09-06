@@ -2,12 +2,25 @@ import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types'
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 import { executeViaBatchAPI, supportsNativeBatchAPI, type BatchAPIConfig } from '../batchApiClient';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   prompt_tokens_details?: { cached_tokens?: number };
+}
+
+interface OpenAICompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+      tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+      reasoning_content?: string;
+    };
+    finish_reason?: string;
+  }>;
+  usage?: Partial<OpenAICompletionUsage>;
 }
 
 interface OpenAIStreamChunk {
@@ -37,6 +50,7 @@ export class OpenAIProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
     this.defaultModel = config.defaultModel ?? 'gpt-4o';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
@@ -80,15 +94,19 @@ export class OpenAIProvider implements LLMProvider {
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenAI API error ${response.status}: ${err}`);
+      throw new Error(`OpenAI API error ${response.status}`);
     }
 
     if (useStreaming) {
       return this.handleStreamingResponse(response, model, request.responseFormat);
     }
 
-    const data = await response.json();
+    let data: OpenAICompletionResponse;
+    try {
+      data = (await response.json()) as OpenAICompletionResponse;
+    } catch {
+      throw new Error(`OpenAI API returned invalid JSON (${response.status})`);
+    }
     return this.parseResponse(data, model, request.responseFormat);
   }
 
@@ -243,22 +261,7 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   private parseResponse(
-    data: {
-      choices?: Array<{
-        message?: {
-          content?: string;
-          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-          reasoning_content?: string;
-        };
-        finish_reason?: string;
-      }>;
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-        prompt_tokens_details?: { cached_tokens?: number };
-      };
-    },
+    data: OpenAICompletionResponse,
     model: string,
     responseFormat?: LLMRequest['responseFormat'],
   ): LLMResponse {
