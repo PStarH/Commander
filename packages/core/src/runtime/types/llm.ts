@@ -44,6 +44,8 @@ export interface LLMRequest {
   messages: LLMMessage[];
   temperature?: number;
   maxTokens?: number;
+  /** Cancels provider transport work when the enclosing operation is aborted. */
+  signal?: AbortSignal;
   stop?: string[];
   tools?: ToolDefinition[];
   cacheConfig?: CacheConfig;

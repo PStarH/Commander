@@ -98,4 +98,53 @@ describe('Provider error redaction', () => {
       }
     });
   }
+
+  for (const testCase of cases) {
+    it(`${testCase.name} rejects and cancels an oversized successful response before parsing it`, async () => {
+      const originalFetch = global.fetch;
+      const encoder = new TextEncoder();
+      let cancelled = false;
+      const oversizedBody = JSON.stringify({
+        choices: [
+          {
+            message: { content: 'x'.repeat(8 * 1024 * 1024) },
+            finish_reason: 'stop',
+          },
+        ],
+      });
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode(oversizedBody));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      });
+      global.fetch = (async () =>
+        new Response(body, {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        })) as typeof fetch;
+
+      try {
+        let timeout: NodeJS.Timeout | undefined;
+        try {
+          await Promise.race([
+            assert.rejects(() => testCase.provider.call(request), /PAYLOAD_TOO_LARGE:.*8388608/),
+            new Promise<void>((_resolve, reject) => {
+              timeout = setTimeout(
+                () => reject(new Error('oversized response was not stopped')),
+                50,
+              );
+            }),
+          ]);
+        } finally {
+          if (timeout) clearTimeout(timeout);
+        }
+        assert.strictEqual(cancelled, true);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+  }
 });
