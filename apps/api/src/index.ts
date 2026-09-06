@@ -117,6 +117,7 @@ import {
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
 import { isProductionEnv } from './envSignal';
+import { resolveApiStartupConfig } from './startupConfig';
 import { resolveTrustProxySetting, TrustProxyConfigError } from './trustProxyConfig';
 import { assertDurableStoreConfigured } from './storeBackendGate';
 import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
@@ -143,7 +144,7 @@ try {
  * In development/test mode, warnings are emitted and sensible defaults are used.
  */
 function validateEnvironment(): void {
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = isProductionEnv();
 
   const criticalSecrets = [
     { name: 'COMMANDER_MASTER_KEY', purpose: 'encryption of sensitive tenant data' },
@@ -172,6 +173,15 @@ function validateEnvironment(): void {
     process.exit(1);
   }
 
+  try {
+    resolveApiStartupConfig(process.env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    getGlobalLogger().error('Startup', `Aborting startup: ${message}`);
+    process.stderr.write(`COMMANDER_API_STARTUP_FAILED: ${message}\n`);
+    process.exit(1);
+  }
+
   if (!process.env.CORS_ORIGINS) {
     getGlobalLogger().warn(
       'Startup',
@@ -193,6 +203,7 @@ function validateEnvironment(): void {
 }
 
 validateEnvironment();
+const apiStartupConfig = resolveApiStartupConfig(process.env);
 
 // ── Shared state ────────────────────────────────────────────────────────────
 // Missions/UI store — not the /v1 run authority (kernel owns durable runs).
@@ -1080,8 +1091,8 @@ async function startServer(): Promise<void> {
     }
   }
 
-  httpServer = app.listen(port, () => {
-    process.stdout.write(`API listening on http://localhost:${port}\n`);
+  httpServer = app.listen(port, apiStartupConfig.host, () => {
+    process.stdout.write(`API listening on http://${apiStartupConfig.host}:${port}\n`);
     process.stdout.write(
       `[Architecture V2] apps/api is the sole Gateway — do not expose core CommanderHttpServer in production\n`,
     );
