@@ -84,12 +84,31 @@ export interface ShadowObservationV1 {
 }
 
 const MANIFEST_KEYS = [
-  'schema', 'campaignId', 'tenantId', 'producerId', 'policyId', 'policyDigest',
-  'batchId', 'closesAt', 'records', 'keyId', 'signature',
+  'schema',
+  'campaignId',
+  'tenantId',
+  'producerId',
+  'policyId',
+  'policyDigest',
+  'batchId',
+  'closesAt',
+  'records',
+  'keyId',
+  'signature',
 ] as const;
 const OBSERVATION_REQUIRED_KEYS = [
-  'schema', 'campaignId', 'tenantId', 'producerId', 'batchId', 'index',
-  'observationId', 'occurredAt', 'workflow', 'effectType', 'tool', 'destination',
+  'schema',
+  'campaignId',
+  'tenantId',
+  'producerId',
+  'batchId',
+  'index',
+  'observationId',
+  'occurredAt',
+  'workflow',
+  'effectType',
+  'tool',
+  'destination',
   'productionDecision',
 ] as const;
 const OBSERVATION_KEYS = [...OBSERVATION_REQUIRED_KEYS, 'productionReasonCode'] as const;
@@ -125,7 +144,10 @@ function exactKeys(
 
 function identifier(value: unknown, field: string): string {
   if (typeof value !== 'string' || !IDENTIFIER.test(value)) {
-    throw new ShadowContractError('SHADOW_INVALID_IDENTIFIER', `field '${field}' must be 1-128 printable ASCII characters`);
+    throw new ShadowContractError(
+      'SHADOW_INVALID_IDENTIFIER',
+      `field '${field}' must be 1-128 printable ASCII characters`,
+    );
   }
   return value;
 }
@@ -136,25 +158,37 @@ function nullableIdentifier(value: unknown, field: string): string | null {
 
 function indexValue(value: unknown, field: string): number {
   if (!Number.isSafeInteger(value) || (value as number) < 0) {
-    throw new ShadowContractError('SHADOW_INVALID_VALUE', `field '${field}' must be a non-negative integer`);
+    throw new ShadowContractError(
+      'SHADOW_INVALID_VALUE',
+      `field '${field}' must be a non-negative integer`,
+    );
   }
   return value as number;
 }
 
 function timestamp(value: unknown, field: string): string {
   if (typeof value !== 'string') {
-    throw new ShadowContractError('SHADOW_INVALID_TIMESTAMP', `field '${field}' must be an RFC 3339 UTC timestamp`);
+    throw new ShadowContractError(
+      'SHADOW_INVALID_TIMESTAMP',
+      `field '${field}' must be an RFC 3339 UTC timestamp`,
+    );
   }
   const time = Date.parse(value);
   if (!Number.isFinite(time) || new Date(time).toISOString() !== value) {
-    throw new ShadowContractError('SHADOW_INVALID_TIMESTAMP', `field '${field}' must be a canonical RFC 3339 UTC timestamp`);
+    throw new ShadowContractError(
+      'SHADOW_INVALID_TIMESTAMP',
+      `field '${field}' must be a canonical RFC 3339 UTC timestamp`,
+    );
   }
   return value;
 }
 
 function digestValue(value: unknown, field: string): string {
   if (typeof value !== 'string' || !DIGEST.test(value)) {
-    throw new ShadowContractError('SHADOW_INVALID_DIGEST', `field '${field}' must be lowercase SHA-256 hex`);
+    throw new ShadowContractError(
+      'SHADOW_INVALID_DIGEST',
+      `field '${field}' must be lowercase SHA-256 hex`,
+    );
   }
   return value;
 }
@@ -176,7 +210,10 @@ export function parseShadowManifest(value: unknown): ShadowManifestV1 {
   const input = objectValue(value);
   exactKeys(input, MANIFEST_KEYS);
   if (input.schema !== SHADOW_MANIFEST_SCHEMA) {
-    throw new ShadowContractError('SHADOW_INVALID_SCHEMA', `schema must be '${SHADOW_MANIFEST_SCHEMA}'`);
+    throw new ShadowContractError(
+      'SHADOW_INVALID_SCHEMA',
+      `schema must be '${SHADOW_MANIFEST_SCHEMA}'`,
+    );
   }
   if (!Array.isArray(input.records) || input.records.length < 1 || input.records.length > 10_000) {
     throw new ShadowContractError('SHADOW_RECORD_LIMIT', 'manifest must declare 1-10000 records');
@@ -187,11 +224,17 @@ export function parseShadowManifest(value: unknown): ShadowManifestV1 {
     exactKeys(record, RECORD_KEYS);
     const index = indexValue(record.index, 'records.index');
     if (index !== position) {
-      throw new ShadowContractError('SHADOW_INDEX_SEQUENCE', 'record indexes must be unique and contiguous from zero');
+      throw new ShadowContractError(
+        'SHADOW_INDEX_SEQUENCE',
+        'record indexes must be unique and contiguous from zero',
+      );
     }
     const observationId = identifier(record.observationId, 'records.observationId');
     if (seen.has(observationId)) {
-      throw new ShadowContractError('SHADOW_DUPLICATE_OBSERVATION', `duplicate observation '${observationId}'`);
+      throw new ShadowContractError(
+        'SHADOW_DUPLICATE_OBSERVATION',
+        `duplicate observation '${observationId}'`,
+      );
     }
     seen.add(observationId);
     return { index, observationId, digest: digestValue(record.digest, 'records.digest') };
@@ -202,7 +245,10 @@ export function parseShadowManifest(value: unknown): ShadowManifestV1 {
     Buffer.from(input.signature, 'base64url').length !== 64 ||
     Buffer.from(input.signature, 'base64url').toString('base64url') !== input.signature
   ) {
-    throw new ShadowContractError('SHADOW_INVALID_SIGNATURE', 'signature must be unpadded base64url');
+    throw new ShadowContractError(
+      'SHADOW_INVALID_SIGNATURE',
+      'signature must be unpadded base64url',
+    );
   }
   return {
     schema: SHADOW_MANIFEST_SCHEMA,
@@ -224,17 +270,29 @@ export function parseShadowObservation(value: unknown): ShadowObservationV1 {
   const input = objectValue(value);
   exactKeys(input, OBSERVATION_KEYS, OBSERVATION_REQUIRED_KEYS);
   if (input.schema !== SHADOW_OBSERVATION_SCHEMA) {
-    throw new ShadowContractError('SHADOW_INVALID_SCHEMA', `schema must be '${SHADOW_OBSERVATION_SCHEMA}'`);
+    throw new ShadowContractError(
+      'SHADOW_INVALID_SCHEMA',
+      `schema must be '${SHADOW_OBSERVATION_SCHEMA}'`,
+    );
   }
   if (input.workflow !== SHADOW_WORKFLOW) {
-    throw new ShadowContractError('SHADOW_UNSUPPORTED_WORKFLOW', `workflow must be '${SHADOW_WORKFLOW}'`);
+    throw new ShadowContractError(
+      'SHADOW_UNSUPPORTED_WORKFLOW',
+      `workflow must be '${SHADOW_WORKFLOW}'`,
+    );
   }
   if (!SHADOW_PRODUCTION_DECISIONS.includes(input.productionDecision as ShadowProductionDecision)) {
     throw new ShadowContractError('SHADOW_INVALID_DECISION', 'productionDecision is not supported');
   }
   const reason = input.productionReasonCode;
-  if (reason !== undefined && !SHADOW_PRODUCTION_REASON_CODES.includes(reason as ShadowProductionReasonCode)) {
-    throw new ShadowContractError('SHADOW_INVALID_REASON_CODE', 'productionReasonCode is not supported');
+  if (
+    reason !== undefined &&
+    !SHADOW_PRODUCTION_REASON_CODES.includes(reason as ShadowProductionReasonCode)
+  ) {
+    throw new ShadowContractError(
+      'SHADOW_INVALID_REASON_CODE',
+      'productionReasonCode is not supported',
+    );
   }
   return {
     schema: SHADOW_OBSERVATION_SCHEMA,

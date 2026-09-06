@@ -7,7 +7,10 @@ describe('shadow decision comparison', () => {
     const comparable = ['allow', 'deny', 'require_approval'] as const;
     for (const production of comparable) {
       for (const hypothetical of comparable) {
-        assert.equal(compareShadowDecision(production, hypothetical), production === hypothetical ? 'match' : 'mismatch');
+        assert.equal(
+          compareShadowDecision(production, hypothetical),
+          production === hypothetical ? 'match' : 'mismatch',
+        );
       }
       assert.equal(compareShadowDecision(production, 'insufficient_evidence'), 'uncomparable');
     }
