@@ -14,9 +14,22 @@ describe('GrantV1', () => {
     const envelope = JSON.parse(raw);
     assert.equal(envelope.schemaVersion, GRANT_CONTRACT_VERSION);
     const required = [
-      'schemaVersion', 'jti', 'tenantId', 'runId', 'stepId', 'effectTypes',
-      'expiresAt', 'issuer', 'audience', 'issuedAt', 'notBefore', 'keyId',
-      'requestHash', 'workloadId', 'policySnapshotId', 'nonce',
+      'schemaVersion',
+      'jti',
+      'tenantId',
+      'runId',
+      'stepId',
+      'effectTypes',
+      'expiresAt',
+      'issuer',
+      'audience',
+      'issuedAt',
+      'notBefore',
+      'keyId',
+      'requestHash',
+      'workloadId',
+      'policySnapshotId',
+      'nonce',
     ];
     for (const field of required) {
       assert.ok(field in envelope.payload, `missing ${field}`);

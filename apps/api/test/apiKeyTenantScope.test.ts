@@ -4,13 +4,15 @@
  */
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import * as fs from 'node:fs';
-import * as os from 'node:os';
-import * as path from 'node:path';
-import * as crypto from 'node:crypto';
 import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { createApiKeyRouter } from '../src/apiKeyEndpoints';
-import { resetApiKeyStore, getApiKeyStore } from '../src/apiKeyStore';
+import {
+  resetApiKeyStore,
+  setApiKeyStore,
+  type ApiKeyCreationResult,
+  type ApiKeyRecord,
+  type ApiKeyStore,
+} from '../src/apiKeyStore';
 
 type FakeUser = {
   id: string;
@@ -18,6 +20,66 @@ type FakeUser = {
   role: 'super_admin' | 'admin' | 'developer' | 'operator' | 'auditor' | 'viewer';
   tenantId?: string;
 };
+
+class TestApiKeyStore implements ApiKeyStore {
+  readonly records: ApiKeyRecord[] = [];
+
+  async list(): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return this.records.map(({ hash: _hash, ...record }) => record);
+  }
+
+  async listByTenant(tenantId: string): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return this.records
+      .filter((record) => record.tenantId === tenantId)
+      .map(({ hash: _hash, ...record }) => record);
+  }
+
+  async findByHash(hash: string): Promise<ApiKeyRecord | undefined> {
+    return this.records.find((record) => record.hash === hash && record.enabled);
+  }
+
+  async create(
+    name: string,
+    scopes: string[] = ['read', 'write'],
+    tenantId?: string,
+  ): Promise<ApiKeyCreationResult> {
+    const record: ApiKeyRecord = {
+      id: `ak_${this.records.length + 1}`,
+      name,
+      prefix: 'cmdr_tes',
+      hash: `hash_${this.records.length + 1}`,
+      scopes,
+      tenantId,
+      enabled: true,
+      createdAt: '2026-08-27T00:00:00.000Z',
+    };
+    this.records.push(record);
+    return { record, key: `cmdr_test_${record.id}` };
+  }
+
+  async revoke(id: string, tenantScope?: string): Promise<ApiKeyRecord | undefined> {
+    const record = this.records.find(
+      (candidate) =>
+        candidate.id === id &&
+        candidate.enabled &&
+        (tenantScope === undefined || candidate.tenantId === tenantScope),
+    );
+    if (!record) return undefined;
+    record.enabled = false;
+    record.revokedAt = '2026-08-27T00:00:00.000Z';
+    return record;
+  }
+
+  async delete(id: string, tenantScope?: string): Promise<boolean> {
+    const index = this.records.findIndex(
+      (candidate) =>
+        candidate.id === id && (tenantScope === undefined || candidate.tenantId === tenantScope),
+    );
+    if (index < 0) return false;
+    this.records.splice(index, 1);
+    return true;
+  }
+}
 
 function mockRes(): Response & {
   statusCode: number;
@@ -48,14 +110,15 @@ async function invoke(
   req: Request,
   res: Response,
 ): Promise<void> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const stack = (router as any).stack as Array<{
-    route?: {
-      path: string;
-      methods: Record<string, boolean>;
-      stack: Array<{ handle: RequestHandler }>;
-    };
-  }>;
+  const stack = (router as unknown as {
+    stack: Array<{
+      route?: {
+        path: string;
+        methods: Record<string, boolean>;
+        stack: Array<{ handle: RequestHandler }>;
+      };
+    }>;
+  }).stack;
   for (const layer of stack) {
     if (!layer.route) continue;
     if (layer.route.path === routePath && layer.route.methods[method]) {
@@ -115,30 +178,17 @@ function makeReq(
 }
 
 describe('API key tenant scope (AUTH-02)', () => {
-  let tmpDir: string;
-  let originalCwd: string;
   let router: ReturnType<typeof createApiKeyRouter>;
+  let store: TestApiKeyStore;
 
   beforeEach(() => {
-    originalCwd = process.cwd();
-    tmpDir = path.join(
-      os.tmpdir(),
-      `commander-apikey-scope-${crypto.randomBytes(6).toString('hex')}`,
-    );
-    fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
-    process.chdir(tmpDir);
-    resetApiKeyStore();
+    store = new TestApiKeyStore();
+    setApiKeyStore(store);
     router = createApiKeyRouter();
   });
 
   afterEach(() => {
     resetApiKeyStore();
-    process.chdir(originalCwd);
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      /* best-effort */
-    }
   });
 
   it('admin cannot mint a key for another tenant', async () => {
@@ -178,11 +228,10 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin list only shows own tenant keys', async () => {
-    // Unique tenants so a shared KEYS_FILE (module-load cwd) cannot pollute the filter check.
-    const tenantA = `tenant-a-${crypto.randomBytes(4).toString('hex')}`;
-    const tenantB = `tenant-b-${crypto.randomBytes(4).toString('hex')}`;
-    getApiKeyStore().create('a-key', ['read'], tenantA);
-    getApiKeyStore().create('b-key', ['read'], tenantB);
+    const tenantA = 'tenant-a';
+    const tenantB = 'tenant-b';
+    await store.create('a-key', ['read'], tenantA);
+    await store.create('b-key', ['read'], tenantB);
 
     const res = mockRes();
     await invoke(
@@ -224,9 +273,7 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin without JWT tenant claim cannot mint even with ambient X-Tenant-ID (403)', async () => {
-    const before = getApiKeyStore()
-      .list()
-      .map((k) => k.id);
+    const before = store.records.map((record) => record.id);
     const res = mockRes();
     await invoke(
       router,
@@ -241,7 +288,7 @@ describe('API key tenant scope (AUTH-02)', () => {
     );
     assert.equal(res.statusCode, 403);
     assert.match(String((res.body as { error: string }).error), /tenant-bound identity/i);
-    const after = getApiKeyStore().list();
+    const after = store.records;
     assert.ok(
       !after.some((k) => k.name === 'forged-ambient-mint' && !before.includes(k.id)),
       'ambient header must not mint a key',
@@ -249,7 +296,7 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin without JWT tenant claim cannot list even with ambient tenant (403)', async () => {
-    getApiKeyStore().create('a-key', ['read'], 'victim-tenant');
+    await store.create('a-key', ['read'], 'victim-tenant');
     const res = mockRes();
     await invoke(
       router,
@@ -263,7 +310,7 @@ describe('API key tenant scope (AUTH-02)', () => {
   });
 
   it('admin without JWT tenant claim cannot revoke via ambient tenant (404)', async () => {
-    const { record } = getApiKeyStore().create('victim-key', ['read'], 'victim-tenant');
+    const { record } = await store.create('victim-key', ['read'], 'victim-tenant');
     const res = mockRes();
     await invoke(
       router,
@@ -275,12 +322,7 @@ describe('API key tenant scope (AUTH-02)', () => {
       res,
     );
     assert.equal(res.statusCode, 404);
-    assert.equal(
-      getApiKeyStore()
-        .list()
-        .find((k) => k.id === record.id)?.enabled,
-      true,
-    );
+    assert.equal(store.records.find((key) => key.id === record.id)?.enabled, true);
   });
 
   it('super_admin may mint unscoped key when tenantId omitted (intentional residual)', async () => {
@@ -327,16 +369,11 @@ describe('API key tenant scope (AUTH-02)', () => {
       revRes,
     );
     assert.equal(revRes.statusCode, 404);
-    assert.equal(
-      getApiKeyStore()
-        .list()
-        .find((k) => k.id === body.record.id)?.enabled,
-      true,
-    );
+    assert.equal(store.records.find((key) => key.id === body.record.id)?.enabled, true);
   });
 
   it('admin cannot revoke another tenant key (404)', async () => {
-    const { record } = getApiKeyStore().create('b-key', ['read'], 'tenant-b');
+    const { record } = await store.create('b-key', ['read'], 'tenant-b');
     const res = mockRes();
     await invoke(
       router,
@@ -351,9 +388,7 @@ describe('API key tenant scope (AUTH-02)', () => {
       res,
     );
     assert.equal(res.statusCode, 404);
-    const listed = getApiKeyStore()
-      .list()
-      .find((k) => k.id === record.id);
+    const listed = store.records.find((key) => key.id === record.id);
     assert.equal(listed?.enabled, true);
   });
 });

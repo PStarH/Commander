@@ -367,6 +367,7 @@ jobs:
           name: red-team-report-${{ github.run_id }}
           path: /tmp/red-team-report.json
           retention-days: 30
+          if-no-files-found: error
 
       - name: Upload compliance audit report (markdown)
         if: always()
@@ -375,6 +376,7 @@ jobs:
           name: compliance-audit-report-${{ github.run_id }}.md
           path: /tmp/compliance-audit-report.md
           retention-days: 90
+          if-no-files-found: error
 
       - name: Upload compliance audit report (JSON)
         if: always()
@@ -383,3 +385,4 @@ jobs:
           name: compliance-audit-report-${{ github.run_id }}.json
           path: /tmp/compliance-audit-report.json
           retention-days: 365
+          if-no-files-found: error

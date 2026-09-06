@@ -1,19 +1,15 @@
-import { reportSilentFailure } from '@commander/core';
-import * as crypto from 'node:crypto';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
-
 /**
- * Persistent API key store for the HTTP API layer.
+ * PostgreSQL-authoritative API key store.
  *
- * DESIGN:
- * - Keys are generated as `cmdr_` prefixed random tokens.
- * - Only a SHA-256 hash of the key is persisted; the plaintext is returned
- *   exactly once at creation time and is never recoverable.
- * - Storage is a JSON file in `.commander/api_keys.json` so the API server
- *   can run without better-sqlite3 if needed.
+ * Keys are generated as `cmdr_` prefixed random tokens. Only the SHA-256 hash
+ * is persisted; the plaintext is returned exactly once at creation time and is
+ * never recoverable. Unique `key_hash` constraint makes collision impossible
+ * across replicas.
  */
+import * as crypto from 'node:crypto';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import type { SqlClient, SqlPool } from '@commander/kernel';
+import { createAuthPool, withTenantScopedClient, type VerifiedPoolFactory } from './authDb';
 
 export interface ApiKeyRecord {
   id: string;
@@ -36,9 +32,22 @@ export interface ApiKeyCreationResult {
   key: string;
 }
 
-const KEYS_FILE = path.join(process.cwd(), '.commander', 'api_keys.json');
+type ApiKeyRow = {
+  id: string;
+  name: string;
+  prefix: string;
+  key_hash: string;
+  scopes: string[];
+  tenant_id: string | null;
+  enabled: boolean;
+  created_at: Date | string;
+  revoked_at: Date | string | null;
+};
+
 const KEY_PREFIX = 'cmdr_';
 const KEY_BYTES = 32;
+const API_KEY_COLUMNS =
+  'id, name, prefix, key_hash, scopes, tenant_id, enabled, created_at, revoked_at';
 
 function sha256(input: string): string {
   return crypto.createHash('sha256').update(input).digest('hex');
@@ -49,117 +58,145 @@ function generateKey(): string {
 }
 
 function generateId(): string {
-  return `ak_${Date.now()}_${crypto.randomBytes(4).toString('hex')}`;
+  return `ak_${crypto.randomUUID()}`;
 }
 
-function ensureDir(): void {
-  const dir = path.dirname(KEYS_FILE);
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, { recursive: true });
-  }
+function timestamp(value: Date | string): string {
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function readRecords(): ApiKeyRecord[] {
-  // REL-4: 损坏或错形（如 {"keys":[...]}）均隔离，禁止 silent [] → create() 原地抹钥。
-  const parsed = readJsonFileSafe<unknown>(KEYS_FILE, null, Array.isArray);
-  return parsed === null ? [] : (parsed as ApiKeyRecord[]);
+function fromRow(row: ApiKeyRow): ApiKeyRecord {
+  return {
+    id: row.id,
+    name: row.name,
+    prefix: row.prefix,
+    hash: row.key_hash,
+    scopes: row.scopes,
+    tenantId: row.tenant_id ?? undefined,
+    enabled: row.enabled,
+    createdAt: timestamp(row.created_at),
+    revokedAt: row.revoked_at === null ? undefined : timestamp(row.revoked_at),
+  };
 }
 
-function writeRecords(records: ApiKeyRecord[]): void {
-  try {
-    // REL-3: fsync-then-rename so API key material is never half-written.
-    atomicWriteFileSync(KEYS_FILE, JSON.stringify(records, null, 2));
-  } catch (err) {
-    reportSilentFailure(err, 'apiKeyStore:writeRecords');
-  }
+export interface ApiKeyStore {
+  list(): Promise<Omit<ApiKeyRecord, 'hash'>[]>;
+  listByTenant(tenantId: string): Promise<Omit<ApiKeyRecord, 'hash'>[]>;
+  findByHash(hash: string): Promise<ApiKeyRecord | undefined>;
+  create(name: string, scopes?: string[], tenantId?: string): Promise<ApiKeyCreationResult>;
+  revoke(id: string, tenantScope?: string): Promise<ApiKeyRecord | undefined>;
+  delete(id: string, tenantScope?: string): Promise<boolean>;
 }
 
-export class ApiKeyStore {
-  private records: ApiKeyRecord[] = [];
-  /** O(1) index keyed by SHA-256 hash for authentication lookups. */
-  private hashIndex: Map<string, ApiKeyRecord> = new Map();
+export class PostgresApiKeyStore implements ApiKeyStore {
+  constructor(private readonly pool: SqlPool) {}
 
-  constructor() {
-    this.records = readRecords();
-    this.rebuildIndex();
+  async list(): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return withTenantScopedClient(this.pool, '', async (client) => {
+      const result = await client.query<ApiKeyRow>(
+        `SELECT ${API_KEY_COLUMNS} FROM commander_auth_api_keys ORDER BY created_at DESC`,
+      );
+      return result.rows.map(fromRow).map(({ hash: _hash, ...record }) => record);
+    });
   }
 
-  private rebuildIndex(): void {
-    this.hashIndex = new Map();
-    for (const record of this.records) {
-      if (record.enabled) {
-        this.hashIndex.set(record.hash, record);
-      }
-    }
+  async findByHash(hash: string): Promise<ApiKeyRecord | undefined> {
+    return withTenantScopedClient(this.pool, '', async (client) => {
+      const result = await client.query<ApiKeyRow>(
+        `SELECT ${API_KEY_COLUMNS} FROM commander_auth_api_keys WHERE key_hash = $1 AND enabled = true`,
+        [hash],
+      );
+      return result.rows[0] ? fromRow(result.rows[0]) : undefined;
+    });
   }
 
-  /** Reload from disk — useful after external rotation. */
-  reload(): void {
-    this.records = readRecords();
-    this.rebuildIndex();
-  }
-
-  list(): Omit<ApiKeyRecord, 'hash'>[] {
-    return this.records.map(({ hash: _hash, ...rest }) => rest);
-  }
-
-  findByHash(hash: string): ApiKeyRecord | undefined {
-    return this.hashIndex.get(hash);
-  }
-
-  create(
+  async create(
     name: string,
     scopes: string[] = ['read', 'write'],
     tenantId?: string,
-  ): ApiKeyCreationResult {
+  ): Promise<ApiKeyCreationResult> {
     const key = generateKey();
-    const record: ApiKeyRecord = {
-      id: generateId(),
-      name: name.trim() || 'API Key',
-      prefix: key.slice(0, 8),
-      hash: sha256(key),
-      scopes: scopes.length > 0 ? scopes : ['read', 'write'],
-      tenantId,
-      enabled: true,
-      createdAt: new Date().toISOString(),
-    };
-    this.records.push(record);
-    this.hashIndex.set(record.hash, record);
-    writeRecords(this.records);
-    return { record, key };
+    const result = await withTenantScopedClient(this.pool, tenantId ?? '', async (client) => {
+      return client.query<ApiKeyRow>(
+        `INSERT INTO commander_auth_api_keys (id, name, prefix, key_hash, scopes, tenant_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         RETURNING ${API_KEY_COLUMNS}`,
+        [
+          generateId(),
+          name.trim() || 'API Key',
+          key.slice(0, 8),
+          sha256(key),
+          scopes.length > 0 ? scopes : ['read', 'write'],
+          tenantId ?? null,
+        ],
+      );
+    });
+    return { record: fromRow(result.rows[0]!), key };
   }
 
-  revoke(id: string): ApiKeyRecord | undefined {
-    const record = this.records.find((r) => r.id === id);
-    if (!record || !record.enabled) return undefined;
-    record.enabled = false;
-    record.revokedAt = new Date().toISOString();
-    this.hashIndex.delete(record.hash);
-    writeRecords(this.records);
-    return record;
+  async revoke(id: string, tenantScope?: string): Promise<ApiKeyRecord | undefined> {
+    const result = await withTenantScopedClient(this.pool, tenantScope ?? '', async (client) => {
+      if (tenantScope === undefined) {
+        return client.query<ApiKeyRow>(
+          `UPDATE commander_auth_api_keys SET enabled = false, revoked_at = COALESCE(revoked_at, clock_timestamp())
+           WHERE id = $1 AND enabled = true
+           RETURNING ${API_KEY_COLUMNS}`,
+          [id],
+        );
+      }
+      return client.query<ApiKeyRow>(
+        `UPDATE commander_auth_api_keys SET enabled = false, revoked_at = COALESCE(revoked_at, clock_timestamp())
+         WHERE id = $1 AND tenant_id = $2 AND enabled = true
+         RETURNING ${API_KEY_COLUMNS}`,
+        [id, tenantScope],
+      );
+    });
+    return result.rows[0] ? fromRow(result.rows[0]) : undefined;
   }
 
-  delete(id: string): boolean {
-    const initial = this.records.length;
-    this.records = this.records.filter((r) => r.id !== id);
-    if (this.records.length !== initial) {
-      this.rebuildIndex();
-      writeRecords(this.records);
-      return true;
-    }
-    return false;
+  async delete(id: string, tenantScope?: string): Promise<boolean> {
+    const result = await withTenantScopedClient(this.pool, tenantScope ?? '', async (client) => {
+      if (tenantScope === undefined) {
+        return client.query('DELETE FROM commander_auth_api_keys WHERE id = $1', [id]);
+      }
+      return client.query('DELETE FROM commander_auth_api_keys WHERE id = $1 AND tenant_id = $2', [
+        id,
+        tenantScope,
+      ]);
+    });
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  /** Tenant-scoped listing used by multi-tenant admin surfaces. */
+  async listByTenant(tenantId: string): Promise<Omit<ApiKeyRecord, 'hash'>[]> {
+    return withTenantScopedClient(this.pool, tenantId, async (client) => {
+      const result = await client.query<ApiKeyRow>(
+        `SELECT ${API_KEY_COLUMNS} FROM commander_auth_api_keys WHERE tenant_id = $1 ORDER BY created_at DESC`,
+        [tenantId],
+      );
+      return result.rows.map(fromRow).map(({ hash: _hash, ...record }) => record);
+    });
   }
 }
 
-let storeSingleton: ApiKeyStore | null = null;
+let storeSingleton: ApiKeyStore | undefined;
+
+export function createApiKeyStore(
+  env: NodeJS.ProcessEnv = process.env,
+  createPool: VerifiedPoolFactory = createVerifiedPostgresPool,
+): ApiKeyStore {
+  return new PostgresApiKeyStore(createAuthPool(env, createPool));
+}
 
 export function getApiKeyStore(): ApiKeyStore {
-  if (!storeSingleton) {
-    storeSingleton = new ApiKeyStore();
-  }
+  storeSingleton ??= createApiKeyStore();
   return storeSingleton;
 }
 
+export function setApiKeyStore(store: ApiKeyStore): void {
+  storeSingleton = store;
+}
+
 export function resetApiKeyStore(): void {
-  storeSingleton = null;
+  storeSingleton = undefined;
 }

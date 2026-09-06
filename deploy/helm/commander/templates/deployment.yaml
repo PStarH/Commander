@@ -220,6 +220,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.apiSecretName" . | quote }}
                   key: integrity-key
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: admin-password
             {{- else }}
             {{- if .Values.api.secrets.masterKeySecret }}
             - name: COMMANDER_MASTER_KEY

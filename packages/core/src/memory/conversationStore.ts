@@ -22,7 +22,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { createRequire } from 'node:module';
 import { walCheckpoint } from '../storage/walCheckpoint';
-import { getCurrentTenantId } from '../runtime/tenantContext';
+import { getCurrentTenantId, tenantBucketOrThrow } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -293,7 +293,7 @@ export class ConversationStore {
   }
 
   private getTenantId(): string {
-    return getCurrentTenantId() ?? '__default__';
+    return tenantBucketOrThrow();
   }
 
   private prepareStatements(): void {

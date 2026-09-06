@@ -81,5 +81,5 @@ jobs:
         with:
           name: module-a-evidence-${{ github.run_id }}
           path: .internal/evidence/ci/module-a/
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 14

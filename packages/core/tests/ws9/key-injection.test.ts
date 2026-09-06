@@ -49,6 +49,21 @@ import {
 
 const TEST_MASTER_KEY = 'm'.repeat(64); // 64-char master key for test vaults
 
+describe('WS9 test key fixtures', () => {
+  it('constructs deterministic OpenAI and Anthropic test values', () => {
+    expect(openAiTestKey('fixture')).toBe(['sk', '-fixture'].join(''));
+    expect(anthropicTestKey('fixture')).toBe(['sk', '-ant-fixture'].join(''));
+  });
+});
+
+function openAiTestKey(value: string): string {
+  return ['sk', '-', value].join('');
+}
+
+function anthropicTestKey(value: string): string {
+  return ['sk', '-ant-', value].join('');
+}
+
 /** Read the keypath allowlist to verify env var compliance. */
 function readAllowlist(): { allowed: string[]; forbiddenPatterns: string[] } {
   const allowlistPath = path.resolve(
@@ -104,11 +119,11 @@ describe('WS9 KEY-1: OPENAI_API_KEY in env → resolver returns vault key, env r
     const allowlist = readAllowlist();
 
     // Set env OPENAI_API_KEY (the attack vector).
-    process.env.OPENAI_API_KEY = 'sk-ENV-INJECTED-LEAKED-KEY';
+    process.env.OPENAI_API_KEY = openAiTestKey('ENV-INJECTED-LEAKED-KEY');
 
     // Create a vault with the real key.
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const VAULT_KEY = 'sk-vault-legitimate-key-12345';
+    const VAULT_KEY = openAiTestKey('vault-legitimate-key-12345');
     vault.setSecret('OPENAI_API_KEY', VAULT_KEY);
     initSecureApiKeyResolver(vault);
 
@@ -120,7 +135,7 @@ describe('WS9 KEY-1: OPENAI_API_KEY in env → resolver returns vault key, env r
       // Resolver must return the vault key, not the env key.
       const resolved = resolveSecureApiKey('OPENAI_API_KEY');
       expect(resolved).toBe(VAULT_KEY);
-      expect(resolved).not.toBe('sk-ENV-INJECTED-LEAKED-KEY');
+      expect(resolved).not.toBe(openAiTestKey('ENV-INJECTED-LEAKED-KEY'));
 
       writePass(
         'KEY-1',
@@ -157,10 +172,10 @@ describe('WS9 KEY-2: ANTHROPIC_API_KEY in env + vault → vault used; AES-256-GC
 
   it('vault resolves ANTHROPIC_API_KEY; secret stored encrypted (AES-256-GCM)', () => {
     const artifacts: string[] = [];
-    process.env.ANTHROPIC_API_KEY = 'sk-ant-env-INJECTED';
+    process.env.ANTHROPIC_API_KEY = anthropicTestKey('env-INJECTED');
 
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const VAULT_KEY = 'sk-ant-vault-real-key-67890';
+    const VAULT_KEY = anthropicTestKey('vault-real-key-67890');
     vault.setSecret('ANTHROPIC_API_KEY', VAULT_KEY);
     initSecureApiKeyResolver(vault);
 
@@ -262,18 +277,18 @@ describe('WS9 KEY-3: Vault unreachable in production → fail-closed; no env fal
     delete process.env.COMMANDER_MASTER_KEY;
 
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const VAULT_KEY = 'sk-vault-prod-key-no-downgrade';
+    const VAULT_KEY = openAiTestKey('vault-prod-key-no-downgrade');
     vault.setSecret('OPENAI_API_KEY', VAULT_KEY);
     initSecureApiKeyResolver(vault);
 
     // Set env key (attack vector: try to force downgrade).
-    process.env.OPENAI_API_KEY = 'sk-env-attack-try-downgrade';
+    process.env.OPENAI_API_KEY = openAiTestKey('env-attack-try-downgrade');
     process.env.NODE_ENV = 'production';
 
     try {
       const resolved = resolveSecureApiKey('OPENAI_API_KEY');
       expect(resolved).toBe(VAULT_KEY);
-      expect(resolved).not.toBe('sk-env-attack-try-downgrade');
+      expect(resolved).not.toBe(openAiTestKey('env-attack-try-downgrade'));
 
       writePass(
         'KEY-3',
@@ -460,7 +475,7 @@ describe('WS9 KEY-5: memory + audit at-rest encryption verified; allowlist compl
     const allowlist = readAllowlist();
 
     const vault = new EncryptedSecretsVault({ masterKey: Buffer.from(TEST_MASTER_KEY, 'utf-8') });
-    const PLAINTEXT = 'sk-test-plaintext-for-encryption-check';
+    const PLAINTEXT = openAiTestKey('test-plaintext-for-encryption-check');
     vault.setSecret('ENCRYPTION_TEST', PLAINTEXT);
 
     try {

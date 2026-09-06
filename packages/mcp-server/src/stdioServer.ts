@@ -399,13 +399,7 @@ function registerActionGatewayTools(
         simulationId: { type: 'string' },
         policySnapshotId: { type: 'string' },
       },
-      required: [
-        'runId',
-        'idempotencyKey',
-        'actionDigest',
-        'simulationId',
-        'policySnapshotId',
-      ],
+      required: ['runId', 'idempotencyKey', 'actionDigest', 'simulationId', 'policySnapshotId'],
     },
     (args) => {
       const { runId, actionDigest, simulationId, policySnapshotId } = args;

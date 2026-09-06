@@ -50,6 +50,18 @@ export function assertEgressAllowlistBeforeDaemonStart(
       'ADAPTER_OPS_EGRESS_ALLOWLIST_REQUIRED: set COMMANDER_ADAPTER_EGRESS_ALLOWLIST before starting outbound daemons on non-demo cells',
     );
   }
+  // AUDIT-F1: CIDR-only allowlists silently disabled the application-layer
+  // hostname gate (assertEgressUrlAllowed cannot adjudicate IPs without DNS
+  // resolution). That made an operator-looking config equivalent to
+  // allow-any-host, leaving NetworkPolicy as the only control. Fail closed:
+  // at least one hostname entry is required; CIDR entries remain additive.
+  const hostEntries = allowlist.filter((e) => !looksLikeCidr(e));
+  if (tier !== 'demo' && allowlist.length > 0 && hostEntries.length === 0) {
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED: COMMANDER_ADAPTER_EGRESS_ALLOWLIST contains only CIDR entries; ' +
+        'the application-layer hostname gate cannot adjudicate them. Add at least one hostname (or *.suffix) entry.',
+    );
+  }
 }
 
 /**

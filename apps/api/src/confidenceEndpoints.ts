@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import type { IWarRoomStore } from './store';
+import { canAccessProject } from './projectEndpoints';
 import type { ConfidenceReporter, ConfidenceReport, ConfidenceAlert } from './confidenceReporter';
 import { DEFAULT_THRESHOLDS } from './confidenceReporter';
 
@@ -11,7 +12,9 @@ export function createConfidenceRouter(
 
   router.get('/projects/:projectId/missions/:missionId/confidence', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
-    if (!snapshot) {
+    // AUDIT-API2: cross-tenant IDOR — sibling routers gate the process-global
+    // WarRoom store with canAccessProject; these routes must not skip it.
+    if (!snapshot || !canAccessProject(req, (snapshot as { project?: unknown }).project)) {
       return res.status(404).json({ error: 'Project not found' });
     }
     const mission = snapshot.missions.find((m) => m.id === req.params.missionId);
@@ -24,7 +27,9 @@ export function createConfidenceRouter(
 
   router.get('/projects/:projectId/agents/:agentId/confidence', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
-    if (!snapshot) {
+    // AUDIT-API2: cross-tenant IDOR — sibling routers gate the process-global
+    // WarRoom store with canAccessProject; these routes must not skip it.
+    if (!snapshot || !canAccessProject(req, (snapshot as { project?: unknown }).project)) {
       return res.status(404).json({ error: 'Project not found' });
     }
     const agent = snapshot.agents.find((a) => a.agentId === req.params.agentId);
@@ -42,7 +47,9 @@ export function createConfidenceRouter(
 
   router.get('/projects/:projectId/missions/:missionId/confidence/alerts', (req, res) => {
     const snapshot = store.getProjectSnapshot(req.params.projectId);
-    if (!snapshot) {
+    // AUDIT-API2: cross-tenant IDOR — sibling routers gate the process-global
+    // WarRoom store with canAccessProject; these routes must not skip it.
+    if (!snapshot || !canAccessProject(req, (snapshot as { project?: unknown }).project)) {
       return res.status(404).json({ error: 'Project not found' });
     }
     const mission = snapshot.missions.find((m) => m.id === req.params.missionId);

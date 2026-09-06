@@ -15,7 +15,11 @@ import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
 import { pathExists } from './_utils/pathExists';
 import { getGlobalTenantProvider } from '../runtime/tenantProvider';
-import { getCurrentTenantId } from '../runtime/tenantContext';
+import {
+  getCurrentTenantId,
+  isMultiTenantEnabled,
+  TenantIsolationError,
+} from '../runtime/tenantContext';
 
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
 export function getSafeRoot(): string {
@@ -30,6 +34,21 @@ export function getSafeRoot(): string {
     if (tenantCfg?.workspacePath) {
       return path.resolve(tenantCfg.workspacePath);
     }
+    // AUDIT-CORE2: a tenant without a configured workspace must never fall
+    // through to the shared global root — that hole let tenant A read and
+    // write tenant B's files whenever per-tenant config was incomplete.
+    // Fail closed (mirrors persistenceTool.resolveTenantMemoryRoot).
+    if (isMultiTenantEnabled()) {
+      throw new TenantIsolationError(
+        `No workspacePath configured for tenant ${tenantId} in multi-tenant mode; ` +
+          'refusing to fall back to the shared workspace root.',
+      );
+    }
+  } else if (isMultiTenantEnabled()) {
+    // Contextless file access in multi-tenant mode has no safe root either.
+    throw new TenantIsolationError(
+      'File tools require a tenant context in multi-tenant mode; no tenant bound to this request.',
+    );
   }
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }

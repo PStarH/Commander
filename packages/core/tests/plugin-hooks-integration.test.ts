@@ -23,6 +23,7 @@ import type {
 } from '../src/pluginManager';
 import type { ExecutionBackend } from '../src/sandbox/types';
 import { ExecutionRouter } from '../src/sandbox/executionRouter';
+import type { ExecutionBackend } from '../src/sandbox/types';
 
 function freshHookManager(): HookManager {
   resetHookManager();

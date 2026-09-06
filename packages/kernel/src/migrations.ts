@@ -46,18 +46,12 @@ import {
 } from './compensationSchema.js';
 import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import {
+  KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+  KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL,
+  KERNEL_AUTH_PERSISTENCE_SQL,
+} from './authPersistenceSchema.js';
 import { KERNEL_MEMORY_SCHEMA_SQL } from './memorySchema.js';
-
-export const KERNEL_AUTH_FAILURE_AUTHORITY_SQL = `
-CREATE TABLE IF NOT EXISTS commander_auth_failures (
-  ip TEXT PRIMARY KEY,
-  entry JSONB NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL
-);
-CREATE INDEX IF NOT EXISTS commander_auth_failures_expires_idx
-  ON commander_auth_failures (expires_at);
-GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app;
-`;
 
 export interface KernelMigration {
   id: string;
@@ -384,11 +378,35 @@ export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigr
   },
 ];
 
-export const KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS: readonly KernelMigration[] = [
+/**
+ * PostgreSQL-authoritative auth persistence (users, API keys, refresh tokens,
+ * auth failures, rate limits). The checksum is computed at load so the
+ * descriptor always matches the shipped SQL; `authPersistenceSchema.test.ts`
+ * pins it so any source change without a new descriptor fails loudly.
+ */
+export const KERNEL_AUTH_PERSISTENCE_CHECKSUM = checksum(KERNEL_AUTH_PERSISTENCE_SQL);
+
+export const KERNEL_AUTH_PERSISTENCE_MIGRATIONS: readonly KernelMigration[] = [
   {
-    id: '2026-08-22.1.auth_failure_authority',
-    sql: KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
-    checksum: checksum(KERNEL_AUTH_FAILURE_AUTHORITY_SQL),
+    id: '2026-08-25.1.auth_persistence_schema',
+    sql: KERNEL_AUTH_PERSISTENCE_SQL,
+    checksum: KERNEL_AUTH_PERSISTENCE_CHECKSUM,
+  },
+];
+
+export const KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-06.1.auth_persistence_legacy_preflight',
+    sql: KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL,
+    checksum: checksum(KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL),
+  },
+];
+
+export const KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-06.2.auth_access_token_authority',
+    sql: KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+    checksum: checksum(KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL),
   },
 ];
 
@@ -481,7 +499,9 @@ export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
-  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS,
   ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
 ];
 
@@ -521,7 +541,9 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
-  ...KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS,
   ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
 ];
 

@@ -88,10 +88,7 @@ export interface LlmEffectAuth {
    * Mint a short-lived grant bound to the exact broker request body.
    * Must use the same canonicalRequestHash the broker will verify.
    */
-  mintCapabilityToken: (input: {
-    effectType: string;
-    request: Record<string, unknown>;
-  }) => string;
+  mintCapabilityToken: (input: { effectType: string; request: Record<string, unknown> }) => string;
 }
 
 const llmAuthStorage = new AsyncLocalStorage<LlmEffectAuth>();
@@ -133,9 +130,7 @@ export function createLlmEffectAuth(input: {
   const ttlMs = input.ttlMs ?? 5 * 60_000;
   // Prod / active step ALS: tenant comes from verified ControlPlane identity only.
   const live =
-    getStepWorkloadBinding() || isProductionProfile()
-      ? requireStepWorkloadBinding()
-      : undefined;
+    getStepWorkloadBinding() || isProductionProfile() ? requireStepWorkloadBinding() : undefined;
   const tenantId = live?.tenantId ?? input.tenantId;
   const runId = live?.runId ?? input.runId;
   const stepId = live?.stepId ?? input.stepId;

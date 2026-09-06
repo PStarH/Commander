@@ -1,6 +1,31 @@
 import { Router } from 'express';
+import type { Request, Response, NextFunction } from 'express';
 import { TenantIsolationError } from '@commander/core/runtime/tenantContext';
 import { AgentCardRegistry } from './agentCard';
+import { hasRole } from './userStore';
+
+/**
+ * AUDIT-API3: the registry is served to other agents for discovery — a
+ * viewer/read-only principal must not be able to register or overwrite
+ * agent cards (discovery poisoning with attacker-controlled capability
+ * descriptions and endpoint URLs).
+ */
+function requireCardRegistrar(req: Request, res: Response, next: NextFunction): void {
+  if (req.user) {
+    if (!hasRole(req.user.role, 'developer')) {
+      res.status(403).json({ error: 'Agent-card registration requires developer role' });
+      return;
+    }
+    next();
+    return;
+  }
+  const scopes = req.apiScopes ?? [];
+  if (!scopes.some((s) => ['write', 'agents:write', 'admin', '*'].includes(s))) {
+    res.status(403).json({ error: 'Agent-card registration authority required' });
+    return;
+  }
+  next();
+}
 
 export function createAgentCardRouter(registry?: AgentCardRegistry): Router {
   const router = Router();
@@ -16,7 +41,7 @@ export function createAgentCardRouter(registry?: AgentCardRegistry): Router {
     res.json(card);
   });
 
-  router.post('/agent-cards', (req, res) => {
+  router.post('/agent-cards', requireCardRegistrar, (req, res) => {
     const card = req.body;
     if (!card?.id || !card?.name) {
       return res.status(400).json({ error: 'id and name are required' });
