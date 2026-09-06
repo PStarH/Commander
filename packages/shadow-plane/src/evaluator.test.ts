@@ -10,12 +10,21 @@ const snapshot = actionGatewayPolicySnapshot();
 
 function observation(overrides: Record<string, unknown> = {}) {
   return parseShadowObservation({
-    schema: 'commander.shadow-observation/v1', campaignId: 'campaign-1', tenantId: 'tenant-1',
-    producerId: 'producer-1', batchId: 'batch-1', index: 0, observationId: 'observation-1',
-    occurredAt: '2026-09-01T00:00:00.000Z', workflow: 'kubernetes.deployment.rollback',
-    effectType: 'connector.kubernetes.deployment.rollback', tool: 'kubernetes.deployment.rollback',
-    destination: 'k8s://cluster-1/namespace-1/deployments/api', productionDecision: 'require_approval',
-    productionReasonCode: 'REGISTERED_ADAPTER_POLICY', ...overrides,
+    schema: 'commander.shadow-observation/v1',
+    campaignId: 'campaign-1',
+    tenantId: 'tenant-1',
+    producerId: 'producer-1',
+    batchId: 'batch-1',
+    index: 0,
+    observationId: 'observation-1',
+    occurredAt: '2026-09-01T00:00:00.000Z',
+    workflow: 'kubernetes.deployment.rollback',
+    effectType: 'connector.kubernetes.deployment.rollback',
+    tool: 'kubernetes.deployment.rollback',
+    destination: 'k8s://cluster-1/namespace-1/deployments/api',
+    productionDecision: 'require_approval',
+    productionReasonCode: 'REGISTERED_ADAPTER_POLICY',
+    ...overrides,
   });
 }
 
@@ -40,10 +49,17 @@ describe('canonical crypto and historical evaluation', () => {
   it('signs a manifest without its detached signature field', () => {
     const pair = generateKeyPairSync('ed25519');
     const unsigned = {
-      schema: 'commander.shadow-manifest/v1', campaignId: 'campaign-1', tenantId: 'tenant-1',
-      producerId: 'producer-1', policyId: snapshot.policyId, policyDigest: snapshot.descriptorDigest,
-      batchId: 'batch-1', closesAt: '2026-09-02T00:00:00.000Z',
-      records: [{ index: 0, observationId: 'observation-1', digest: observationDigest(observation()) }],
+      schema: 'commander.shadow-manifest/v1',
+      campaignId: 'campaign-1',
+      tenantId: 'tenant-1',
+      producerId: 'producer-1',
+      policyId: snapshot.policyId,
+      policyDigest: snapshot.descriptorDigest,
+      batchId: 'batch-1',
+      closesAt: '2026-09-02T00:00:00.000Z',
+      records: [
+        { index: 0, observationId: 'observation-1', digest: observationDigest(observation()) },
+      ],
       keyId: 'manifest-key-1',
     };
     const signature = sign(null, canonicalBytes(unsigned), pair.privateKey).toString('base64url');
@@ -54,32 +70,68 @@ describe('canonical crypto and historical evaluation', () => {
 
   it('requires the pinned policy and matching record digest', () => {
     const input = observation();
-    assert.deepEqual(evaluateShadowObservation(input, {
-      policyId: snapshot.policyId,
-      policyDigest: snapshot.descriptorDigest,
-      expectedDigest: observationDigest(input),
-    }), {
-      decision: 'require_approval',
-      decisionId: 'action-gateway-manifest-require_approval',
-      reasonCode: 'REGISTERED_ADAPTER_POLICY',
-      policyId: snapshot.policyId,
-      policyDigest: snapshot.descriptorDigest,
-    });
-    assert.throws(() => evaluateShadowObservation(input, { policyId: 'other', policyDigest: snapshot.descriptorDigest }), /SHADOW_POLICY_MISMATCH/);
-    assert.throws(() => evaluateShadowObservation(input, { policyId: snapshot.policyId, policyDigest: 'b'.repeat(64), expectedDigest: 'c'.repeat(64) }), /SHADOW_POLICY_MISMATCH/);
-    assert.throws(() => evaluateShadowObservation(input, { policyId: snapshot.policyId, policyDigest: snapshot.descriptorDigest, expectedDigest: 'c'.repeat(64) }), /SHADOW_DIGEST_MISMATCH/);
+    assert.deepEqual(
+      evaluateShadowObservation(input, {
+        policyId: snapshot.policyId,
+        policyDigest: snapshot.descriptorDigest,
+        expectedDigest: observationDigest(input),
+      }),
+      {
+        decision: 'require_approval',
+        decisionId: 'action-gateway-manifest-require_approval',
+        reasonCode: 'REGISTERED_ADAPTER_POLICY',
+        policyId: snapshot.policyId,
+        policyDigest: snapshot.descriptorDigest,
+      },
+    );
+    assert.throws(
+      () =>
+        evaluateShadowObservation(input, {
+          policyId: 'other',
+          policyDigest: snapshot.descriptorDigest,
+        }),
+      /SHADOW_POLICY_MISMATCH/,
+    );
+    assert.throws(
+      () =>
+        evaluateShadowObservation(input, {
+          policyId: snapshot.policyId,
+          policyDigest: 'b'.repeat(64),
+          expectedDigest: 'c'.repeat(64),
+        }),
+      /SHADOW_POLICY_MISMATCH/,
+    );
+    assert.throws(
+      () =>
+        evaluateShadowObservation(input, {
+          policyId: snapshot.policyId,
+          policyDigest: snapshot.descriptorDigest,
+          expectedDigest: 'c'.repeat(64),
+        }),
+      /SHADOW_DIGEST_MISMATCH/,
+    );
   });
 
   it('denies malformed destinations and maps missing facts to insufficient evidence', () => {
-    assert.equal(evaluateShadowObservation(observation({ destination: 'k8s://bad' }), {
-      policyId: snapshot.policyId, policyDigest: snapshot.descriptorDigest,
-    }).decision, 'deny');
-    assert.deepEqual(evaluateShadowObservation(observation({ destination: null }), {
-      policyId: snapshot.policyId, policyDigest: snapshot.descriptorDigest,
-    }), {
-      decision: 'insufficient_evidence', decisionId: 'shadow-insufficient-evidence',
-      reasonCode: 'MISSING_POLICY_FACTS', policyId: snapshot.policyId,
-      policyDigest: snapshot.descriptorDigest,
-    });
+    assert.equal(
+      evaluateShadowObservation(observation({ destination: 'k8s://bad' }), {
+        policyId: snapshot.policyId,
+        policyDigest: snapshot.descriptorDigest,
+      }).decision,
+      'deny',
+    );
+    assert.deepEqual(
+      evaluateShadowObservation(observation({ destination: null }), {
+        policyId: snapshot.policyId,
+        policyDigest: snapshot.descriptorDigest,
+      }),
+      {
+        decision: 'insufficient_evidence',
+        decisionId: 'shadow-insufficient-evidence',
+        reasonCode: 'MISSING_POLICY_FACTS',
+        policyId: snapshot.policyId,
+        policyDigest: snapshot.descriptorDigest,
+      },
+    );
   });
 });

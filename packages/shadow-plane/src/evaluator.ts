@@ -6,7 +6,8 @@ import {
 import { canonicalBytes, sha256Hex } from './canonical.js';
 import type { ShadowObservationV1 } from './contracts.js';
 
-export type ShadowHypotheticalDecision = 'allow' | 'deny' | 'require_approval' | 'insufficient_evidence';
+export type ShadowHypotheticalDecision =
+  'allow' | 'deny' | 'require_approval' | 'insufficient_evidence';
 
 export interface ShadowEvaluation {
   decision: ShadowHypotheticalDecision;
@@ -37,7 +38,11 @@ export function evaluateShadowObservation(
   if (pin.expectedDigest !== undefined && observationDigest(observation) !== pin.expectedDigest) {
     throw new Error('SHADOW_DIGEST_MISMATCH');
   }
-  if (observation.effectType === null || observation.tool === null || observation.destination === null) {
+  if (
+    observation.effectType === null ||
+    observation.tool === null ||
+    observation.destination === null
+  ) {
     return {
       decision: 'insufficient_evidence',
       decisionId: 'shadow-insufficient-evidence',

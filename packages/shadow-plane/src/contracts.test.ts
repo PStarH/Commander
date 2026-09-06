@@ -1,10 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  ShadowContractError,
-  parseShadowManifest,
-  parseShadowObservation,
-} from './contracts.js';
+import { ShadowContractError, parseShadowManifest, parseShadowObservation } from './contracts.js';
 
 const digest = 'a'.repeat(64);
 const signature = Buffer.alloc(64, 1).toString('base64url');
@@ -47,7 +43,10 @@ function manifest(overrides: Record<string, unknown> = {}): Record<string, unkno
 }
 
 function expectCode(run: () => unknown, code: string): void {
-  assert.throws(run, (error: unknown) => error instanceof ShadowContractError && error.code === code);
+  assert.throws(
+    run,
+    (error: unknown) => error instanceof ShadowContractError && error.code === code,
+  );
 }
 
 describe('strict shadow contracts', () => {
@@ -64,7 +63,10 @@ describe('strict shadow contracts', () => {
   });
 
   it('rejects unknown, missing, and prohibited free-form fields', () => {
-    expectCode(() => parseShadowObservation(observation({ prompt: 'secret' })), 'SHADOW_UNKNOWN_FIELD');
+    expectCode(
+      () => parseShadowObservation(observation({ prompt: 'secret' })),
+      'SHADOW_UNKNOWN_FIELD',
+    );
     const missing = observation();
     delete missing.workflow;
     expectCode(() => parseShadowObservation(missing), 'SHADOW_MISSING_FIELD');
@@ -72,18 +74,44 @@ describe('strict shadow contracts', () => {
   });
 
   it('enforces identifiers, enums, timestamps, digests, and supported workflow', () => {
-    expectCode(() => parseShadowObservation(observation({ tenantId: 'x'.repeat(129) })), 'SHADOW_INVALID_IDENTIFIER');
-    expectCode(() => parseShadowObservation(observation({ tenantId: '企业' })), 'SHADOW_INVALID_IDENTIFIER');
-    expectCode(() => parseShadowObservation(observation({ workflow: 'github.pull-request.create' })), 'SHADOW_UNSUPPORTED_WORKFLOW');
-    expectCode(() => parseShadowObservation(observation({ productionDecision: 'approved' })), 'SHADOW_INVALID_DECISION');
-    expectCode(() => parseShadowObservation(observation({ productionReasonCode: 'free form' })), 'SHADOW_INVALID_REASON_CODE');
-    expectCode(() => parseShadowObservation(observation({ occurredAt: '2026-09-01' })), 'SHADOW_INVALID_TIMESTAMP');
-    expectCode(() => parseShadowManifest(manifest({ policyDigest: digest.toUpperCase() })), 'SHADOW_INVALID_DIGEST');
-    expectCode(() => parseShadowManifest(manifest({ signature: 'AQID' })), 'SHADOW_INVALID_SIGNATURE');
+    expectCode(
+      () => parseShadowObservation(observation({ tenantId: 'x'.repeat(129) })),
+      'SHADOW_INVALID_IDENTIFIER',
+    );
+    expectCode(
+      () => parseShadowObservation(observation({ tenantId: '企业' })),
+      'SHADOW_INVALID_IDENTIFIER',
+    );
+    expectCode(
+      () => parseShadowObservation(observation({ workflow: 'github.pull-request.create' })),
+      'SHADOW_UNSUPPORTED_WORKFLOW',
+    );
+    expectCode(
+      () => parseShadowObservation(observation({ productionDecision: 'approved' })),
+      'SHADOW_INVALID_DECISION',
+    );
+    expectCode(
+      () => parseShadowObservation(observation({ productionReasonCode: 'free form' })),
+      'SHADOW_INVALID_REASON_CODE',
+    );
+    expectCode(
+      () => parseShadowObservation(observation({ occurredAt: '2026-09-01' })),
+      'SHADOW_INVALID_TIMESTAMP',
+    );
+    expectCode(
+      () => parseShadowManifest(manifest({ policyDigest: digest.toUpperCase() })),
+      'SHADOW_INVALID_DIGEST',
+    );
+    expectCode(
+      () => parseShadowManifest(manifest({ signature: 'AQID' })),
+      'SHADOW_INVALID_SIGNATURE',
+    );
   });
 
   it('uses explicit null only for missing evaluator facts', () => {
-    const parsed = parseShadowObservation(observation({ effectType: null, tool: null, destination: null }));
+    const parsed = parseShadowObservation(
+      observation({ effectType: null, tool: null, destination: null }),
+    );
     assert.equal(parsed.effectType, null);
     assert.equal(parsed.tool, null);
     assert.equal(parsed.destination, null);
@@ -92,17 +120,27 @@ describe('strict shadow contracts', () => {
   it('requires unique contiguous indexes and observation identities', () => {
     expectCode(() => parseShadowManifest(manifest({ records: [] })), 'SHADOW_RECORD_LIMIT');
     expectCode(
-      () => parseShadowManifest(manifest({ records: [{ index: 1, observationId: 'o-1', digest }] })),
+      () =>
+        parseShadowManifest(manifest({ records: [{ index: 1, observationId: 'o-1', digest }] })),
       'SHADOW_INDEX_SEQUENCE',
     );
     expectCode(
-      () => parseShadowManifest(manifest({ records: [
-        { index: 0, observationId: 'same', digest },
-        { index: 1, observationId: 'same', digest },
-      ] })),
+      () =>
+        parseShadowManifest(
+          manifest({
+            records: [
+              { index: 0, observationId: 'same', digest },
+              { index: 1, observationId: 'same', digest },
+            ],
+          }),
+        ),
       'SHADOW_DUPLICATE_OBSERVATION',
     );
-    const records = Array.from({ length: 10_001 }, (_, index) => ({ index, observationId: `o-${index}`, digest }));
+    const records = Array.from({ length: 10_001 }, (_, index) => ({
+      index,
+      observationId: `o-${index}`,
+      digest,
+    }));
     expectCode(() => parseShadowManifest(manifest({ records })), 'SHADOW_RECORD_LIMIT');
   });
 
