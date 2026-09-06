@@ -6,10 +6,10 @@
  * 端此前完全缺失引导。本路由为新用户首次登录后的多步骤向导提供后端能力。
  *
  * 端点：
- *   GET  /api/onboarding/status        — 当前配置状态（provider/apiKey/任务/知识库）
+ *   GET  /api/onboarding/status        — 当前配置状态（provider/任务/知识库）
  *   GET  /api/onboarding/sample-tasks  — 返回示例任务列表（供向导展示）
  *   POST /api/onboarding/test-provider — 测试 LLM provider 连通性（10s 超时）
- *   POST /api/onboarding/save-config   — 保存 provider/model/apiKey 到 .commander.json
+ *   POST /api/onboarding/save-config   — 保存 provider/model 到 .commander.json
  *   POST /api/onboarding/run-first-task — 运行首个测试任务
  *   POST /api/onboarding/complete      — 标记 onboarding 完成
  *
@@ -19,7 +19,7 @@
  *   - 不安装新的 npm 依赖
  *   - provider 连通性测试设置 10s 超时（AbortController）
  *   - .commander.json 读写均处理文件不存在的情况
- *   - apiKey 只写入 .commander.json，不设置进程环境变量（安全考虑）
+ *   - API key 仅从环境变量或部署平台的密钥管理器读取
  */
 import { reportSilentFailure } from '@commander/core';
 import { Router, type NextFunction, type Request, type Response } from 'express';
@@ -47,7 +47,7 @@ const PROVIDER_TEST_TIMEOUT_MS = 10_000;
 //
 // 此处复刻 packages/core/src/config/commanderConfig.ts 中的关键逻辑，但保持
 // 自包含——因为 detectProvider 未从 @commander/core 顶层导出，且本路由需要
-// 额外的灵活性（例如从 .commander.json 读取用户保存的 apiKey）。
+// 额外的灵活性（例如使用 Web 端保存的 provider / model 偏好）。
 
 type ProviderId = 'openai' | 'anthropic' | 'google' | 'deepseek' | 'ollama' | 'openrouter';
 
@@ -154,22 +154,23 @@ async function readCommanderConfig(): Promise<Record<string, unknown>> {
   return parsed ?? {};
 }
 
-/** 合并写入 .commander.json（保留既有字段）。 */
+/** 合并写入 .commander.json（保留既有非密钥字段）。 */
 async function writeCommanderConfig(updates: Record<string, unknown>): Promise<void> {
   const existing = await readCommanderConfig();
-  const merged: Record<string, unknown> = { ...existing, ...updates };
+  const { apiKey: _legacyApiKey, ...nonSecretExisting } = existing;
+  const merged: Record<string, unknown> = { ...nonSecretExisting, ...updates };
   // 确保父目录存在（process.cwd() 一定存在，但保持防御性）。
   const dir = path.dirname(COMMANDER_CONFIG_FILE);
   if (!fsSync.existsSync(dir)) {
     await fsp.mkdir(dir, { recursive: true });
   }
-  atomicWriteFileSync(COMMANDER_CONFIG_FILE, JSON.stringify(merged, null, 2));
+  atomicWriteFileSync(COMMANDER_CONFIG_FILE, JSON.stringify(merged, null, 2), 0o600);
 }
 
 /**
  * 解析当前生效的 provider。优先级：
  *   1. 环境变量中配置了 key 的 provider（按 PROVIDERS 顺序）
- *   2. .commander.json 中保存的 provider（含 apiKey）
+ *   2. .commander.json 中保存的 provider / model 偏好与环境变量中的 key
  *   3. Ollama 等本地 provider（无需 key，仅需 base URL / model 环境变量）
  */
 async function resolveProvider(): Promise<ResolvedProvider | null> {
@@ -192,17 +193,17 @@ async function resolveProvider(): Promise<ResolvedProvider | null> {
   // 2) .commander.json
   const cfg = await readCommanderConfig();
   const cfgProvider = typeof cfg.provider === 'string' ? cfg.provider : null;
-  const cfgApiKey = typeof cfg.apiKey === 'string' ? cfg.apiKey : null;
   const cfgModel = typeof cfg.model === 'string' ? cfg.model : null;
   if (cfgProvider) {
     const desc = PROVIDERS.find((p) => p.id === cfgProvider);
     if (desc) {
-      // 有 apiKey 或本地 provider（ollama）均可
-      if (cfgApiKey || desc.id === 'ollama') {
+      // 非本地 provider 必须由环境变量提供 key。
+      const envKey = process.env[desc.keyEnv] || '';
+      if (envKey || desc.id === 'ollama') {
         return {
           id: desc.id,
           label: desc.label,
-          apiKey: cfgApiKey ?? '',
+          apiKey: envKey,
           baseUrl:
             (typeof cfg.baseUrl === 'string' ? cfg.baseUrl : undefined) || desc.defaultBaseUrl,
           model: cfgModel || desc.defaultModel,
@@ -316,10 +317,10 @@ async function probeProvider(resolved: ResolvedProvider): Promise<ProviderTestRe
     } else if (resolved.apiType === 'google') {
       url = `${resolved.baseUrl.replace(/\/+$/, '')}/models/${encodeURIComponent(
         resolved.model,
-      )}:generateContent?key=${encodeURIComponent(resolved.apiKey)}`;
+      )}:generateContent`;
       init = {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': resolved.apiKey },
         body: JSON.stringify({
           contents: [{ parts: [{ text: 'Hello' }] }],
           generationConfig: { maxOutputTokens: 8 },
@@ -352,23 +353,12 @@ async function probeProvider(resolved: ResolvedProvider): Promise<ProviderTestRe
       return { success: true, latency, provider: resolved.id, model: resolved.model };
     }
 
-    // 非 2xx —— 提取错误信息（限制长度，避免泄露过多内部细节）
-    let detail = `HTTP ${response.status}`;
-    try {
-      const body = await response.text();
-      if (body) {
-        // 只取前 200 字符，且去除换行
-        detail += `: ${body.slice(0, 200).replace(/\s+/g, ' ').trim()}`;
-      }
-    } catch {
-      /* ignore body read error */
-    }
     return {
       success: false,
       latency,
       provider: resolved.id,
       model: resolved.model,
-      error: detail,
+      error: `Provider request failed (HTTP ${response.status})`,
     };
   } catch (err) {
     const latency = Date.now() - start;
@@ -380,9 +370,7 @@ async function probeProvider(resolved: ResolvedProvider): Promise<ProviderTestRe
       model: resolved.model,
       error: isAbort
         ? `Request timed out after ${PROVIDER_TEST_TIMEOUT_MS / 1000}s`
-        : err instanceof Error
-          ? err.message
-          : 'Network error',
+        : 'Unable to reach provider',
     };
   } finally {
     clearTimeout(timer);
@@ -400,8 +388,6 @@ interface SampleTask {
   description: string;
   prompt: string;
 }
-
-type OnboardingTaskSource = 'real' | 'simulated';
 
 const SAMPLE_TASKS: SampleTask[] = [
   {
@@ -431,13 +417,11 @@ const testProviderBody = z.object({
     .enum(['openai', 'anthropic', 'google', 'deepseek', 'ollama', 'openrouter'])
     .optional(),
   model: z.string().max(128).optional(),
-  apiKey: z.string().max(512).optional(),
 });
 
 const saveConfigBody = z.object({
   provider: z.enum(['openai', 'anthropic', 'google', 'deepseek', 'ollama', 'openrouter']),
   model: z.string().min(1).max(128),
-  apiKey: z.string().max(512).optional(),
 });
 
 const runFirstTaskBody = z.object({
@@ -529,6 +513,7 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   // ── POST /api/onboarding/test-provider ──────────────────────────────────
   router.post(
     '/api/onboarding/test-provider',
+    requireOnboardingConfigAdmin,
     validateBody(testProviderBody),
     async (req: Request, res: Response) => {
       try {
@@ -545,13 +530,7 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
               .json({ success: false, error: `Unknown provider: ${body.provider}` });
           }
           const envKey = process.env[desc.keyEnv] || '';
-          const cfg = await readCommanderConfig();
-          const cfgApiKey =
-            typeof cfg.apiKey === 'string' &&
-            (typeof cfg.provider === 'string' ? cfg.provider === desc.id : true)
-              ? cfg.apiKey
-              : '';
-          const apiKey = body.apiKey || envKey || cfgApiKey;
+          const apiKey = envKey;
           // ollama 不强制要求 apiKey
           if (!apiKey && desc.id !== 'ollama') {
             return res.json({
@@ -608,10 +587,6 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
           provider: body.provider,
           model: body.model,
         };
-        // apiKey 仅写入 .commander.json，不设置环境变量（安全考虑）
-        if (body.apiKey) {
-          updates.apiKey = body.apiKey;
-        }
         await persistConfig(updates);
         res.json({ success: true });
       } catch (error) {
@@ -660,10 +635,10 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
             } else if (resolved.apiType === 'google') {
               url = `${resolved.baseUrl.replace(/\/+$/, '')}/models/${encodeURIComponent(
                 resolved.model,
-              )}:generateContent?key=${encodeURIComponent(resolved.apiKey)}`;
+              )}:generateContent`;
               init = {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'x-goog-api-key': resolved.apiKey },
                 body: JSON.stringify({
                   contents: [{ parts: [{ text: task }] }],
                   generationConfig: { maxOutputTokens: 256 },
@@ -718,54 +693,33 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
               await markRealFirstTaskCompleted(resolved.id, resolved.model);
               return res.json({
                 success: true,
-                source: 'real' satisfies OnboardingTaskSource,
+                source: 'real',
                 result: text || '(empty response)',
                 provider: resolved.id,
                 model: resolved.model,
               });
             }
 
-            // 真实调用失败 —— 回退到示例结果，避免阻塞 onboarding 流程
-            const errText = await response.text().catch(() => '');
-            return res.json({
+            return res.status(502).json({
               success: false,
-              source: 'simulated' satisfies OnboardingTaskSource,
-              error: `Provider responded HTTP ${response.status}${
-                errText ? `: ${errText.slice(0, 200)}` : ''
-              }`,
-              result: simulateResult(task, resolved.id, resolved.model, 'provider-error'),
-              provider: resolved.id,
-              model: resolved.model,
+              error: `Provider request failed (HTTP ${response.status})`,
             });
           } catch (err) {
             const isAbort = err instanceof Error && err.name === 'AbortError';
-            return res.json({
+            return res.status(502).json({
               success: false,
-              source: 'simulated' satisfies OnboardingTaskSource,
               error: isAbort
                 ? `Request timed out after ${PROVIDER_TEST_TIMEOUT_MS / 1000}s`
-                : err instanceof Error
-                  ? err.message
-                  : 'Network error',
-              result: simulateResult(
-                task,
-                resolved.id,
-                resolved.model,
-                isAbort ? 'timeout' : 'network-error',
-              ),
-              provider: resolved.id,
-              model: resolved.model,
+                : 'Unable to reach provider',
             });
           } finally {
             clearTimeout(timer);
           }
         }
 
-        // 无可用 provider —— 返回示例结果，提示用户仍可完成 onboarding
-        return res.json({
+        return res.status(409).json({
           success: false,
-          source: 'simulated' satisfies OnboardingTaskSource,
-          result: simulateResult(task, null, null, 'no-provider'),
+          error: 'No provider API key configured',
         });
       } catch (error) {
         res.status(500).json({ error: toErrorMessage(error) });
@@ -807,41 +761,6 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
-
-/**
- * 当真实 provider 调用不可用时，生成一个示例结果，让用户仍能体验 onboarding
- * 的完整流程（"运行首个任务"步骤不至于完全卡住）。
- */
-function simulateResult(
-  task: string,
-  provider: string | null,
-  model: string | null,
-  reason: 'no-provider' | 'provider-error' | 'timeout' | 'network-error',
-): string {
-  const reasonHint: Record<typeof reason, string> = {
-    'no-provider':
-      'No LLM provider is configured yet — showing a simulated response. Configure a provider to run real tasks.',
-    'provider-error':
-      'The provider returned an error — showing a simulated response. Check your API key and model name.',
-    timeout:
-      'The provider request timed out — showing a simulated response. The provider may be slow or unreachable.',
-    'network-error':
-      'A network error occurred contacting the provider — showing a simulated response.',
-  };
-  const providerLine = provider
-    ? `provider=${provider}, model=${model ?? 'n/a'}`
-    : 'provider=none configured';
-  return [
-    '[Simulated response]',
-    reasonHint[reason],
-    '',
-    `Task received: "${task.slice(0, 160)}${task.length > 160 ? '…' : ''}"`,
-    `Resolved config: ${providerLine}`,
-    '',
-    'In production, Commander would route this task through the multi-agent runtime,',
-    'apply governance checkpoints, and stream step-by-step progress to the War Room.',
-  ].join('\n');
-}
 
 async function markRealFirstTaskCompleted(provider: string, model: string): Promise<void> {
   if (!fsSync.existsSync(COMMANDER_DIR)) {

@@ -20,11 +20,11 @@ import * as path from 'node:path';
  * rename), then fsync the directory so the rename itself survives power loss.
  * A crash can never observe a half-written or truncated target.
  */
-export function atomicWriteFileSync(filePath: string, data: string | Buffer): void {
+export function atomicWriteFileSync(filePath: string, data: string | Buffer, mode?: number): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(dir, `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}`);
-  const fd = fs.openSync(tmp, 'w');
+  const fd = fs.openSync(tmp, 'w', mode);
   try {
     fs.writeFileSync(fd, data);
     fs.fsyncSync(fd);

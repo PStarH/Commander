@@ -1381,17 +1381,20 @@ export interface OnboardingProviderTestResult {
 export interface OnboardingSaveConfigPayload {
   provider: OnboardingProvider;
   model: string;
-  apiKey?: string;
 }
 
-export interface OnboardingFirstTaskResult {
-  success: boolean;
-  source: 'real' | 'simulated';
-  result?: string;
-  error?: string;
-  provider?: string;
-  model?: string;
-}
+export type OnboardingFirstTaskResult =
+  | {
+      success: true;
+      source: 'real';
+      result?: string;
+      provider?: string;
+      model?: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
 
 export interface OnboardingCompleteResult {
   success: boolean;
@@ -1405,12 +1408,10 @@ export async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
 export async function testProvider(
   provider?: OnboardingProvider,
   model?: string,
-  apiKey?: string,
 ): Promise<OnboardingProviderTestResult> {
   const body: Record<string, unknown> = {};
   if (provider) body.provider = provider;
   if (model) body.model = model;
-  if (apiKey) body.apiKey = apiKey;
   return apiFetch<OnboardingProviderTestResult>(`/api/onboarding/test-provider`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
