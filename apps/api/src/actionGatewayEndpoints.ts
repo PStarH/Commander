@@ -1,7 +1,7 @@
 import express, { type Request, type Response, type Router } from 'express';
 import {
-  evaluateManifestGatewayEffect,
-  findAdapterManifest,
+  ACTION_GATEWAY_POLICY_ID,
+  evaluateActionGatewayPolicy,
   isClassAEffectType,
   type ActionStateV1,
 } from '@commander/contracts';
@@ -24,7 +24,7 @@ import {
 import type { KillSwitchMatchDims } from './v1GatewayKernel';
 
 const ACTION_GATEWAY_AUTHORITY = 'commander.action-gateway/v1';
-const ACTION_POLICY_SNAPSHOT = 'action-gateway-mvp-v1';
+const ACTION_POLICY_SNAPSHOT = ACTION_GATEWAY_POLICY_ID;
 
 function configuredEvidenceJwks(): EvidenceJwks | null {
   const raw = process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim();
@@ -346,55 +346,8 @@ function deterministicId(prefix: string, value: string): string {
 }
 
 function evaluateAction(envelope: ActionEnvelope): ActionDecision {
-  const manifest = findAdapterManifest({
-    effectType: envelope.effectType,
-    toolName: envelope.tool,
-    destination: envelope.destination,
-  });
-  if (manifest) {
-    const effect = evaluateManifestGatewayEffect(manifest, envelope.destination);
-    return {
-      effect,
-      decisionId: `action-gateway-manifest-${effect}`,
-      reason: `Registered adapter policy requires '${effect}' for this exact action.`,
-      policySnapshotId: ACTION_POLICY_SNAPSHOT,
-    };
-  }
-  const isCreate =
-    envelope.effectType === 'demo.ticket.create' && envelope.tool === 'ticket.create';
-  const isCompensation =
-    envelope.effectType === 'compensate.demo.ticket.create' &&
-    envelope.tool === 'ticket.compensate';
-  if (!isCreate && !isCompensation) {
-    return {
-      effect: 'deny',
-      decisionId: 'action-gateway-deny',
-      reason: `Effect type '${envelope.effectType}' is not registered by the Action Gateway.`,
-      policySnapshotId: ACTION_POLICY_SNAPSHOT,
-    };
-  }
-  if (envelope.destination === 'demo://tickets') {
-    return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
-      policySnapshotId: ACTION_POLICY_SNAPSHOT,
-    };
-  }
-  if (envelope.destination === 'demo://tickets/approval') {
-    return {
-      effect: 'require_approval',
-      decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
-      policySnapshotId: ACTION_POLICY_SNAPSHOT,
-    };
-  }
-  return {
-    effect: 'deny',
-    decisionId: 'action-gateway-deny',
-    reason: `Destination '${envelope.destination}' is not registered by the Action Gateway.`,
-    policySnapshotId: ACTION_POLICY_SNAPSHOT,
-  };
+  const { effect, decisionId, reason, policySnapshotId } = evaluateActionGatewayPolicy(envelope);
+  return { effect, decisionId, reason, policySnapshotId };
 }
 
 function buildSimulation(envelope: ActionEnvelope): ActionSimulation {
