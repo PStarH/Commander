@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import {
-  ApiStartupConfigurationError,
-  resolveApiStartupConfig,
-} from '../src/startupConfig.js';
+import { ApiStartupConfigurationError, resolveApiStartupConfig } from '../src/startupConfig.js';
 
 const secureJwt = 'local-jwt-secret-that-is-at-least-thirty-two-characters';
 const securePassword = 'local-admin-password-at-least-sixteen-characters';
@@ -25,7 +22,8 @@ describe('resolveApiStartupConfig', () => {
     assert.throws(
       () => resolveApiStartupConfig({}),
       (error: unknown) =>
-        error instanceof ApiStartupConfigurationError && /JWT_SECRET must be set/.test(error.message),
+        error instanceof ApiStartupConfigurationError &&
+        /JWT_SECRET must be set/.test(error.message),
     );
   });
 
@@ -35,7 +33,33 @@ describe('resolveApiStartupConfig', () => {
     assert.throws(
       () => resolveApiStartupConfig({ JWT_SECRET: publicSecret }),
       (error: unknown) =>
-        error instanceof ApiStartupConfigurationError && /JWT_SECRET must not use a public default/.test(error.message),
+        error instanceof ApiStartupConfigurationError &&
+        /JWT_SECRET must not use a public default/.test(error.message),
+    );
+  });
+
+  it('rejects short JWT signing secrets', () => {
+    assert.throws(
+      () => resolveApiStartupConfig({ JWT_SECRET: 'too-short' }),
+      /JWT_SECRET must be at least 32 characters long/,
+    );
+  });
+
+  it('rejects public and short administrator passwords', () => {
+    assert.throws(
+      () => resolveApiStartupConfig({ JWT_SECRET: secureJwt, ADMIN_PASSWORD: 'commander-admin' }),
+      /ADMIN_PASSWORD must not use a public default/,
+    );
+    assert.throws(
+      () => resolveApiStartupConfig({ JWT_SECRET: secureJwt, ADMIN_PASSWORD: 'too-short' }),
+      /ADMIN_PASSWORD must be at least 16 characters long/,
+    );
+  });
+
+  it('rejects invalid replica counts', () => {
+    assert.throws(
+      () => resolveApiStartupConfig({ JWT_SECRET: secureJwt, COMMANDER_API_REPLICAS: '0' }),
+      /COMMANDER_API_REPLICAS must be a positive integer/,
     );
   });
 
@@ -43,7 +67,8 @@ describe('resolveApiStartupConfig', () => {
     assert.throws(
       () => resolveApiStartupConfig({ NODE_ENV: 'production', JWT_SECRET: secureJwt }),
       (error: unknown) =>
-        error instanceof ApiStartupConfigurationError && /ADMIN_PASSWORD must be set/.test(error.message),
+        error instanceof ApiStartupConfigurationError &&
+        /ADMIN_PASSWORD must be set/.test(error.message),
     );
   });
 
@@ -55,7 +80,8 @@ describe('resolveApiStartupConfig', () => {
           COMMANDER_API_REPLICAS: '2',
         }),
       (error: unknown) =>
-        error instanceof ApiStartupConfigurationError && /ADMIN_PASSWORD must be set/.test(error.message),
+        error instanceof ApiStartupConfigurationError &&
+        /ADMIN_PASSWORD must be set/.test(error.message),
     );
   });
 

@@ -60,7 +60,9 @@ export interface CommanderJwtPayload extends JwtPayload {
  * accepts requests. Keep the empty value here so importing middleware in unit
  * tests does not manufacture an authentication authority.
  */
-export const JWT_SECRET: string = process.env.JWT_SECRET?.trim() ?? '';
+function jwtSecret(): string {
+  return process.env.JWT_SECRET?.trim() ?? '';
+}
 
 const ACCESS_TOKEN_EXPIRES_IN = '24h';
 const REFRESH_TOKEN_EXPIRES_IN = '7d';
@@ -95,7 +97,7 @@ export function signAccessToken(user: AuthUser): string {
   if (Array.isArray(user.scopes) && user.scopes.length > 0) {
     payload.scopes = user.scopes;
   }
-  return jwt.sign(payload, JWT_SECRET, {
+  return jwt.sign(payload, jwtSecret(), {
     expiresIn: ACCESS_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
@@ -120,7 +122,7 @@ export async function signRefreshToken(user: AuthUser): Promise<string> {
   if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
     payload.tenant_id = user.tenantId;
   }
-  const token = jwt.sign(payload, JWT_SECRET, {
+  const token = jwt.sign(payload, jwtSecret(), {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
@@ -137,7 +139,7 @@ export async function signRefreshToken(user: AuthUser): Promise<string> {
  */
 export function verifyToken(token: string): CommanderJwtPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, jwtSecret(), {
       algorithms: ['HS256'],
     });
     if (typeof decoded === 'string') {

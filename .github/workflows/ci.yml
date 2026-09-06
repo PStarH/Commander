@@ -879,6 +879,7 @@ jobs:
           echo "COMMANDER_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_MASTER_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
