@@ -29,13 +29,13 @@ commander-mcp-server
 
 Options:
 
-| Flag                      | Description                                             |
-| ------------------------- | ------------------------------------------------------- |
-| `--name <name>`           | Server name advertised during MCP initialization        |
-| `--version <version>`     | Server version advertised during MCP initialization     |
-| `--model-router-only`     | Only register the lightweight model-router tools        |
-| `--allow-dangerous-tools` | Expose dangerous built-in tools such as `shell_execute` |
-| `--help`                  | Show help                                               |
+| Flag                      | Description                                            |
+| ------------------------- | ------------------------------------------------------ |
+| `--name <name>`           | Server name advertised during MCP initialization       |
+| `--version <version>`     | Server version advertised during MCP initialization    |
+| `--model-router-only`     | In local-runtime mode, expose only model-router tools  |
+| `--allow-dangerous-tools` | In local-runtime mode, expose reviewed dangerous tools |
+| `--help`                  | Show help                                              |
 
 ### Programmatic
 
@@ -56,7 +56,11 @@ const { stop } = startStdioServer({ modelRouterOnly: false });
   "mcpServers": {
     "commander": {
       "command": "commander-mcp-server",
-      "args": []
+      "args": [],
+      "env": {
+        "COMMANDER_ACTION_GATEWAY_URL": "https://commander.example",
+        "COMMANDER_API_KEY": "replace-with-a-scoped-key"
+      }
     }
   }
 }
