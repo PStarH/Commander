@@ -246,7 +246,7 @@ export class OpenAIProvider implements LLMProvider {
             ? 'tool_calls'
             : finishReason === 'length'
               ? 'length'
-              : 'stop',
+              : 'error',
       toolCalls:
         toolCalls.length > 0
           ? toolCalls.map((tc) => ({
@@ -296,7 +296,7 @@ export class OpenAIProvider implements LLMProvider {
             ? 'tool_calls'
             : choice?.finish_reason === 'length'
               ? 'length'
-              : 'stop',
+              : 'error',
       toolCalls,
       parsed,
       // Capture reasoning_content for MiMo reasoning models

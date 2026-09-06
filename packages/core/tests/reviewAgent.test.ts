@@ -61,6 +61,7 @@ function makeReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
     linesRemoved: 12,
     scope: 'uncommitted',
     guidelinesUsed: [],
+    guidelineSources: [],
     guidelinesTruncated: false,
     durationMs: 1234,
     source: 'heuristic',
@@ -182,16 +183,17 @@ describe('ReviewAgent', () => {
 
     it('returns empty array when no guideline files exist', () => {
       // Should not crash when files don't exist
-      const guidelines = loadReviewGuidelines();
-      assert.ok(Array.isArray(guidelines));
+      const loaded = loadReviewGuidelines();
+      assert.ok(Array.isArray(loaded.guidelines));
+      assert.ok(Array.isArray(loaded.sources));
     });
 
     it('loads bullet points from AGENTS.md', () => {
       const agentsPath = path.join(testDir, 'AGENTS.md');
       if (fs.existsSync(agentsPath)) {
-        const guidelines = loadReviewGuidelines();
+        const loaded = loadReviewGuidelines();
         // AGENTS.md likely has bullet points
-        assert.ok(guidelines.length >= 0);
+        assert.strictEqual(loaded.guidelines.length, loaded.sources.length);
       }
     });
   });

@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -198,6 +198,58 @@ describe('first-user CLI readiness', () => {
     }
   });
 
+  it('does not execute configured external diff helpers while collecting review input', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'commander-safe-diff-'));
+    const marker = join(workspace, 'external-diff-ran');
+    const helper = join(workspace, 'external-diff-helper.sh');
+
+    try {
+      expect(spawnSync('git', ['init'], { cwd: workspace }).status).toBe(0);
+      await writeFile(join(workspace, 'review.txt'), 'before\n');
+      expect(spawnSync('git', ['add', '.'], { cwd: workspace }).status).toBe(0);
+      expect(
+        spawnSync(
+          'git',
+          ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base'],
+          { cwd: workspace },
+        ).status,
+      ).toBe(0);
+      await writeFile(helper, `#!/bin/sh\nprintf ran > ${JSON.stringify(marker)}\n`);
+      await chmod(helper, 0o755);
+      expect(spawnSync('git', ['config', 'diff.external', helper], { cwd: workspace }).status).toBe(
+        0,
+      );
+      await writeFile(join(workspace, 'review.txt'), 'after\n');
+
+      const script = `(async () => {
+        process.env.OPENAI_API_KEY = 'test-key-not-a-credential';
+        process.env.OPENAI_BASE_URL = 'https://provider.invalid/v1';
+        globalThis.fetch = async () => new Response(
+          JSON.stringify({
+            choices: [{ message: { content: '[]' }, finish_reason: 'stop' }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+        const { executeReview } = await import(${JSON.stringify(reviewAgentUrl)});
+        const report = await executeReview({
+          scope: 'uncommitted', requireProvider: true, provider: 'openai'
+        });
+        console.log('REPORT:' + JSON.stringify(report));
+      })().catch((error) => { console.error(error); process.exit(1); });`;
+      const result = spawnSync(process.execPath, [tsxCliPath, '-e', script], {
+        cwd: workspace,
+        env: withoutProviderCredentials(),
+        encoding: 'utf8',
+      });
+
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain('"source":"real"');
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   it('fails closed when a requested real provider review cannot reach the provider', () => {
     const env = withoutProviderCredentials();
     env.OPENAI_API_KEY = 'test-key-not-a-credential';
@@ -270,6 +322,38 @@ describe('first-user CLI readiness', () => {
     expect(requestBody.messages[1].content.length).toBeLessThan(20_000);
   });
 
+  it('reports the sources of guidelines submitted to the provider', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key-not-a-credential');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://provider.invalid/v1');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: '[]' }, finish_reason: 'stop' }],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+    const config = {
+      scope: 'commit' as const,
+      commitSha: 'HEAD',
+      requireProvider: true,
+      provider: 'openai' as const,
+      guidelines: ['Repository rule', 'CLI rule'],
+      guidelineSources: ['AGENTS.md', '--guidelines'],
+    };
+
+    const report = await executeReview(config);
+
+    expect((report as unknown as { guidelineSources: string[] }).guidelineSources).toEqual([
+      'AGENTS.md',
+      '--guidelines',
+    ]);
+  });
+
   it('runs an Anthropic review without exposing execution tools', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', 'anthropic-test-key-not-a-credential');
     vi.stubEnv('ANTHROPIC_BASE_URL', 'https://anthropic.invalid/v1');
@@ -335,6 +419,59 @@ describe('first-user CLI readiness', () => {
     ).rejects.toThrow('provider response was truncated');
   });
 
+  it('fails when OpenAI does not report a successful completion', async () => {
+    vi.stubEnv('OPENAI_API_KEY', 'test-key-not-a-credential');
+    vi.stubEnv('OPENAI_BASE_URL', 'https://provider.invalid/v1');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: '[]' }, finish_reason: 'content_filter' }],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+
+    await expect(
+      executeReview({
+        scope: 'commit',
+        commitSha: 'HEAD',
+        requireProvider: true,
+        provider: 'openai',
+      }),
+    ).rejects.toThrow('provider response did not complete successfully');
+  });
+
+  it('fails when Anthropic reports a refusal or incomplete completion', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'anthropic-test-key-not-a-credential');
+    vi.stubEnv('ANTHROPIC_BASE_URL', 'https://anthropic.invalid/v1');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              content: [{ type: 'text', text: '[]' }],
+              stop_reason: 'refusal',
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } },
+          ),
+      ),
+    );
+
+    await expect(
+      executeReview({
+        scope: 'commit',
+        commitSha: 'HEAD',
+        requireProvider: true,
+        provider: 'anthropic',
+      }),
+    ).rejects.toThrow('provider response did not complete successfully');
+  });
+
   it('fails the review gate when the provider returns a P1 finding', async () => {
     vi.stubEnv('OPENAI_API_KEY', 'test-key-not-a-credential');
     vi.stubEnv('OPENAI_BASE_URL', 'https://provider.invalid/v1');
@@ -385,7 +522,12 @@ describe('first-user CLI readiness', () => {
         async () =>
           new Response(
             JSON.stringify({
-              choices: [{ message: { content: 'This is not structured review JSON.' } }],
+              choices: [
+                {
+                  message: { content: 'This is not structured review JSON.' },
+                  finish_reason: 'stop',
+                },
+              ],
             }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
@@ -409,10 +551,15 @@ describe('first-user CLI readiness', () => {
       'fetch',
       vi.fn(
         async () =>
-          new Response(JSON.stringify({ choices: [{ message: { content: '[{}]' } }] }), {
-            status: 200,
-            headers: { 'content-type': 'application/json' },
-          }),
+          new Response(
+            JSON.stringify({
+              choices: [{ message: { content: '[{}]' }, finish_reason: 'stop' }],
+            }),
+            {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            },
+          ),
       ),
     );
 
@@ -455,7 +602,14 @@ describe('first-user CLI readiness', () => {
       vi.fn(
         async () =>
           new Response(
-            JSON.stringify({ choices: [{ message: { content: 'x'.repeat(8 * 1024 * 1024) } }] }),
+            JSON.stringify({
+              choices: [
+                {
+                  message: { content: 'x'.repeat(8 * 1024 * 1024) },
+                  finish_reason: 'stop',
+                },
+              ],
+            }),
             { status: 200, headers: { 'content-type': 'application/json' } },
           ),
       ),
@@ -519,7 +673,9 @@ describe('first-user CLI readiness', () => {
         process.env.OPENAI_API_KEY = 'test-key-not-a-credential';
         process.env.OPENAI_BASE_URL = 'https://provider.invalid/v1';
         globalThis.fetch = async () => new Response(
-          JSON.stringify({ choices: [{ message: { content: '[]' } }] }),
+          JSON.stringify({
+            choices: [{ message: { content: '[]' }, finish_reason: 'stop' }],
+          }),
           { status: 200, headers: { 'content-type': 'application/json' } },
         );
         const { executeReview, formatReviewOutput } = await import(${JSON.stringify(reviewAgentUrl)});
@@ -551,6 +707,60 @@ describe('first-user CLI readiness', () => {
       expect(output).toContain(
         `${report.filesReviewed}/${report.totalFilesInScope} file(s) represented`,
       );
+    } finally {
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
+  it('reports stable hunk coverage when git color is forced on', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'commander-colored-review-'));
+
+    try {
+      expect(spawnSync('git', ['init'], { cwd: workspace }).status).toBe(0);
+      await writeFile(join(workspace, 'counter.txt'), '--counter\n');
+      expect(spawnSync('git', ['add', '.'], { cwd: workspace }).status).toBe(0);
+      expect(
+        spawnSync(
+          'git',
+          ['-c', 'user.name=Test', '-c', 'user.email=test@example.com', 'commit', '-m', 'base'],
+          { cwd: workspace },
+        ).status,
+      ).toBe(0);
+      expect(spawnSync('git', ['config', 'color.ui', 'always'], { cwd: workspace }).status).toBe(0);
+      await writeFile(join(workspace, 'counter.txt'), '++counter\n');
+
+      const script = `(async () => {
+        process.env.OPENAI_API_KEY = 'test-key-not-a-credential';
+        process.env.OPENAI_BASE_URL = 'https://provider.invalid/v1';
+        globalThis.fetch = async () => new Response(
+          JSON.stringify({ choices: [{ message: { content: '[]' }, finish_reason: 'stop' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+        const { executeReview } = await import(${JSON.stringify(reviewAgentUrl)});
+        const report = await executeReview({
+          scope: 'uncommitted', requireProvider: true, provider: 'openai'
+        });
+        console.log('REPORT:' + JSON.stringify(report));
+      })().catch((error) => { console.error(error); process.exit(1); });`;
+      const result = spawnSync(process.execPath, [tsxCliPath, '-e', script], {
+        cwd: workspace,
+        env: withoutProviderCredentials(),
+        encoding: 'utf8',
+      });
+      expect(result.status, result.stderr).toBe(0);
+      const resultLine = result.stdout.split('\n').find((line) => line.startsWith('REPORT:'));
+      expect(resultLine).toBeDefined();
+      const report = JSON.parse(resultLine!.slice('REPORT:'.length)) as {
+        passed: boolean;
+        filesReviewed: number;
+        linesAdded: number;
+        linesRemoved: number;
+      };
+
+      expect(report.passed).toBe(true);
+      expect(report.filesReviewed).toBe(1);
+      expect(report.linesAdded).toBe(1);
+      expect(report.linesRemoved).toBe(1);
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
