@@ -80,10 +80,16 @@ export function createCostRouter(): Router {
   router.get('/api/cost/records', (req, res) => {
     const tenantId = getCurrentTenantId();
     const uca = getUnifiedCostAuthority();
-    const limit = Math.min(parseInt(req.query.limit as string) || 50, 500);
-    const rawRunId = req.query.runId as string | undefined;
+    const requestedLimit = req.query.limit;
+    const limit =
+      typeof requestedLimit === 'string' && /^[1-9][0-9]*$/.test(requestedLimit)
+        ? Math.min(Number(requestedLimit), 500)
+        : 50;
+    const rawRunId = req.query.runId;
     const runId =
-      rawRunId && /^[a-zA-Z0-9_-]+$/.test(rawRunId) && rawRunId.length < 128 ? rawRunId : undefined;
+      typeof rawRunId === 'string' && /^[a-zA-Z0-9_-]+$/.test(rawRunId) && rawRunId.length < 128
+        ? rawRunId
+        : undefined;
 
     let entries = uca.readLedger().filter((e) => entryMatchesTenant(e, tenantId));
     if (runId) {

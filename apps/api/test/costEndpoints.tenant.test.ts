@@ -38,12 +38,9 @@ describe('cost endpoints tenant isolation', () => {
     resetUnifiedCostAuthority();
   });
 
-  function recordForTenant(tenantId: string, costUsd: number) {
+  function recordForTenant(tenantId: string, costUsd: number, runId = 'run-shared') {
     runWithTenant(tenantId, () => {
-      getUnifiedCostAuthority().postCall(
-        { runId: 'run-shared', tenantId, model: 'gpt-4o' },
-        { costUsd },
-      );
+      getUnifiedCostAuthority().postCall({ runId, tenantId, model: 'gpt-4o' }, { costUsd });
     });
   }
 
@@ -102,6 +99,19 @@ describe('cost endpoints tenant isolation', () => {
     const bodyB = (await resB.json()) as { records: Array<{ costUsd: number }>; total: number };
     assert.equal(bodyB.total, 1);
     assert.equal(bodyB.records[0].costUsd, 7.0);
+  });
+
+  it('does not coerce repeated query parameters into a run id', async () => {
+    recordForTenant('tenant-a', 5.0, 'run-a');
+    recordForTenant('tenant-a', 7.0, 'run-b');
+
+    const response = await fetch(`${baseUrl}/api/cost/records?runId=run-a&runId=run-b`, {
+      headers: { 'X-Tenant-ID': 'tenant-a' },
+    });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { records: Array<{ runId: string }>; total: number };
+    assert.equal(body.total, 2);
+    assert.deepEqual(body.records.map((record) => record.runId).sort(), ['run-a', 'run-b']);
   });
 
   it('returns per-tenant budget snapshot', async () => {

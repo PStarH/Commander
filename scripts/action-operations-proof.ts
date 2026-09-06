@@ -1,9 +1,9 @@
 #!/usr/bin/env tsx
 
 import { createHash } from 'node:crypto';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { readFileSync } from 'node:fs';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,6 +46,9 @@ export interface ActionOperationsProofEnvironment extends NodeJS.ProcessEnv {
   COMMANDER_ACTION_PROOF_POLICY_VERSION?: string;
   COMMANDER_ACTION_PROOF_ADAPTER_VERSION?: string;
   COMMANDER_SIGNED_EVIDENCE?: string;
+  COMMANDER_ACTION_OPERATIONS_DRIVER?: string;
+  COMMANDER_ACTION_OPERATIONS_DRIVER_ARGS?: string;
+  COMMANDER_ACTION_OPERATIONS_DRIVER_TIMEOUT_MS?: string;
 }
 
 export interface ActionOperationsSource {
@@ -156,6 +159,12 @@ export interface ActionOperationsProofPorts {
     preflight: ActionOperationsPreflight,
   ) => Promise<ActionOperationsCampaignObservation>;
   now?: () => string;
+}
+
+interface ExternalCampaignDriver {
+  command: string;
+  args: string[];
+  timeoutMs: number;
 }
 
 function sha256(value: string | Buffer): string {
@@ -368,6 +377,131 @@ function validateObservation(observation: ActionOperationsCampaignObservation): 
   }
 }
 
+function driverConfig(environment: ActionOperationsProofEnvironment): ExternalCampaignDriver {
+  const command = required(environment, 'COMMANDER_ACTION_OPERATIONS_DRIVER');
+  if (/\s/.test(command)) {
+    throw new Error('COMMANDER_ACTION_OPERATIONS_DRIVER must be an executable path or command');
+  }
+  const rawArgs = environment.COMMANDER_ACTION_OPERATIONS_DRIVER_ARGS?.trim();
+  let args: string[] = [];
+  if (rawArgs) {
+    try {
+      const parsed: unknown = JSON.parse(rawArgs);
+      if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== 'string' || !value)) {
+        throw new Error();
+      }
+      args = parsed;
+    } catch {
+      throw new Error('COMMANDER_ACTION_OPERATIONS_DRIVER_ARGS_INVALID');
+    }
+  }
+  const rawTimeout = environment.COMMANDER_ACTION_OPERATIONS_DRIVER_TIMEOUT_MS?.trim();
+  const timeoutMs = rawTimeout === undefined || rawTimeout === '' ? 300_000 : Number(rawTimeout);
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 900_000) {
+    throw new Error('COMMANDER_ACTION_OPERATIONS_DRIVER_TIMEOUT_MS_INVALID');
+  }
+  return { command, args, timeoutMs };
+}
+
+function assertSanitizedArtifact(name: string, value: unknown): void {
+  const sensitiveKey =
+    /(authorization|token|secret|password|private|credential|dsn|database[_-]?url)/i;
+  const sensitiveValue =
+    /(bearer\s+[a-z0-9._-]+|gh[opsu]_[a-z0-9]+|postgres(?:ql)?:\/\/[^\s]+@|-----begin [a-z ]*private key-----)/i;
+  const visit = (candidate: unknown): void => {
+    if (typeof candidate === 'string') {
+      if (sensitiveValue.test(candidate)) throw new Error(`${name} contains a secret`);
+      return;
+    }
+    if (Array.isArray(candidate)) {
+      candidate.forEach(visit);
+      return;
+    }
+    if (!candidate || typeof candidate !== 'object') return;
+    for (const [key, child] of Object.entries(candidate as Record<string, unknown>)) {
+      if (sensitiveKey.test(key)) throw new Error(`${name} contains a sensitive field`);
+      visit(child);
+    }
+  };
+  visit(value);
+}
+
+async function readDriverJson(outputDirectory: string, name: string): Promise<unknown> {
+  const body = await readFile(resolve(outputDirectory, name), 'utf8').catch(() => {
+    throw new Error(`ACTION_OPERATIONS_DRIVER_ARTIFACT_MISSING:${name}`);
+  });
+  if (body.length > 1_000_000)
+    throw new Error(`ACTION_OPERATIONS_DRIVER_ARTIFACT_TOO_LARGE:${name}`);
+  let value: unknown;
+  try {
+    value = JSON.parse(body);
+  } catch {
+    throw new Error(`ACTION_OPERATIONS_DRIVER_ARTIFACT_INVALID:${name}`);
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`ACTION_OPERATIONS_DRIVER_ARTIFACT_INVALID:${name}`);
+  }
+  assertSanitizedArtifact(name, value);
+  return value;
+}
+
+async function runDriverProcess(
+  driver: ExternalCampaignDriver,
+  preflight: ActionOperationsPreflight,
+  outputDirectory: string,
+  environment: ActionOperationsProofEnvironment,
+): Promise<void> {
+  await new Promise<void>((resolvePromise, reject) => {
+    const child = spawn(
+      driver.command,
+      [...driver.args, '--provider', preflight.provider, '--output', outputDirectory],
+      { cwd: process.cwd(), env: environment, stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let stderr = '';
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr = `${stderr}${chunk.toString('utf8')}`.slice(-4_096);
+    });
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('ACTION_OPERATIONS_DRIVER_TIMEOUT'));
+    }, driver.timeoutMs);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(new Error(`ACTION_OPERATIONS_DRIVER_START_FAILED:${error.message}`));
+    });
+    child.once('close', (code, signal) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolvePromise();
+        return;
+      }
+      const detail = stderr.trim() ? `:${stderr.trim().replace(/\s+/g, ' ').slice(0, 512)}` : '';
+      reject(new Error(`ACTION_OPERATIONS_DRIVER_FAILED:${code ?? signal ?? 'unknown'}${detail}`));
+    });
+  });
+}
+
+export async function runExternalActionOperationsCampaign(
+  preflight: ActionOperationsPreflight,
+  outputDirectory: string,
+  environment: ActionOperationsProofEnvironment = process.env,
+): Promise<ActionOperationsCampaignObservation> {
+  const driver = driverConfig(environment);
+  await mkdir(outputDirectory, { recursive: true });
+  if ((await readdir(outputDirectory)).length !== 0) {
+    throw new Error('ACTION_OPERATIONS_DRIVER_OUTPUT_MUST_BE_EMPTY');
+  }
+  await runDriverProcess(driver, preflight, outputDirectory, environment);
+  const observation = await readDriverJson(outputDirectory, 'observation.json');
+  const log = await readDriverJson(outputDirectory, 'log.json');
+  const evidence = await readDriverJson(outputDirectory, 'evidence.json');
+  return {
+    ...(observation as Omit<ActionOperationsCampaignObservation, 'log' | 'evidence'>),
+    log,
+    evidence,
+  };
+}
+
 function artifact(path: string, value: unknown): RetainedArtifact {
   const body = `${canonical(value)}\n`;
   return { path, body, sha256: sha256(body) };
@@ -534,14 +668,12 @@ async function writeProofArtifacts(
 
 async function main(): Promise<void> {
   const args = parseActionOperationsProofArgs(process.argv.slice(2));
+  const driverOutput = resolve(args.output, 'driver');
   const result = await runActionOperationsProof(args, {
     environment: process.env,
     source: async () => captureSource(),
-    runCampaign: async () => {
-      throw new Error(
-        'ACTION_OPERATIONS_CAMPAIGN_DRIVER_UNAVAILABLE: no production fault-injection driver is wired',
-      );
-    },
+    runCampaign: async (preflight) =>
+      runExternalActionOperationsCampaign(preflight, driverOutput, process.env),
   });
   const failures = verifyActionOperationsArtifactHashes(result);
   if (failures.length > 0) throw new Error(failures.join('; '));
