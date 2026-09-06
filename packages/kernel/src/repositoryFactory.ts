@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import type { KernelRepository } from './repository.js';
+import { isProductionEnvironment } from './productionSignal.js';
 import { PostgresKernelRepository } from './postgres.js';
 import { PostgresTenantContextAuthority } from './postgres.js';
 import { SqliteKernelRepository } from './sqlite.js';
@@ -50,7 +51,9 @@ export function resolveKernelBackend(env: NodeJS.ProcessEnv = process.env): Kern
 }
 
 function refusesSqlite(env: NodeJS.ProcessEnv): boolean {
-  return env.NODE_ENV === 'production' || env.COMMANDER_PROFILE === 'enterprise';
+  // AUDIT-K1: multi-signal production detection — NODE_ENV alone must not be
+  // the single point of failure for the "no sqlite kernel in production" gate.
+  return isProductionEnvironment(env);
 }
 
 export async function createKernelRepository(

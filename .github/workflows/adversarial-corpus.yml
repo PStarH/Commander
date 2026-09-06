@@ -203,6 +203,7 @@ jobs:
           name: adversarial-corpus-${{ github.run_id }}
           path: /tmp/adversarial-corpus.json
           retention-days: 90
+          if-no-files-found: error
 
       - name: Upload results artifact
         if: always()
@@ -211,6 +212,7 @@ jobs:
           name: adversarial-results-${{ github.run_id }}
           path: /tmp/adversarial-results.json
           retention-days: 90
+          if-no-files-found: error
 
       - name: Generate step summary
         if: always()

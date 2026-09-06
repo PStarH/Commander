@@ -50,7 +50,14 @@ const baseGrant: CapabilityGrant = {
 function makeBroker(tokens: CapabilityTokenVerifier) {
   return new EffectBroker(
     tokens,
-    { evaluate: async () => ({ effect: 'allow' as const, decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }) },
+    {
+      evaluate: async () => ({
+        effect: 'allow' as const,
+        decisionId: 'd1',
+        reason: 'ok',
+        policySnapshotId: 'p1',
+      }),
+    },
     {
       admitEffect: async () => ({ admitted: true, effect: { id: 'e1', state: 'ADMITTED' } }),
       completeEffect: async () => ({}),

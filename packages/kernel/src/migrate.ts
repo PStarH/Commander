@@ -56,6 +56,7 @@ import {
 } from './task1KubernetesProofRuntime.js';
 import { readFile } from 'node:fs/promises';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
+import { buildAdapterOpsLoginSql } from './sqlSafety.js';
 
 /** Parse comma-separated tenant list; reject empty and '*'. */
 export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
@@ -75,19 +76,9 @@ export async function seedTask1ReadinessTenant(client: ClaimSecretSeedClient): P
 
 /** Populated-volume upgrade gate: role init scripts only run on first database creation. */
 export async function ensureAdapterOpsLogin(pool: Pool, password: string): Promise<void> {
-  if (!password) throw new Error('COMMANDER_ADAPTER_OPS_PASSWORD must be non-empty');
-  const passwordLiteral = `'${password.replace(/'/g, "''")}'`;
-  await pool.query(`
-    DO $role$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='commander_adapter_ops') THEN
-        CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD ${passwordLiteral} NOBYPASSRLS NOCREATEROLE;
-      ELSE
-        ALTER ROLE commander_adapter_ops WITH LOGIN PASSWORD ${passwordLiteral} NOBYPASSRLS NOCREATEROLE;
-      END IF;
-    END
-    $role$;
-  `);
+  // AUDIT-K6: SQL body built by the shared helper — a password containing the
+  // dollar-quote tag would otherwise terminate the DO block and inject SQL.
+  await pool.query(buildAdapterOpsLoginSql(password));
 }
 
 /** Resolve the adapter-ops LOGIN password without requiring a sixth raw-password Secret key. */
@@ -148,6 +139,7 @@ export const OWNER_MIGRATION_FAILURE_STAGES = [
   'proof_runtime',
   'bootstrap_kernel',
   'bootstrap_closure',
+  'bootstrap_kernel_post_closure',
   'owner_pool_configuration',
   'owner_pool_connect',
   'bootstrap_context',
@@ -360,6 +352,12 @@ export async function bootstrapTask1OwnerAppendMigrations(
   );
   await atOwnerMigrationFailureStage('bootstrap_closure', () =>
     runTask1ClosureMigrations(pool, command === 'expand' ? 'expand' : 'enforce'),
+  );
+  // Mirror the CLI: once the enforce closure exists, the forward list gains
+  // post-closure descriptors (auth-persistence schema included). Re-run so a
+  // single bootstrap leaves the database complete for the API.
+  await atOwnerMigrationFailureStage('bootstrap_kernel_post_closure', () =>
+    runKernelMigrations(pool, { requiredRole: 'owner' }),
   );
 }
 
@@ -904,6 +902,12 @@ async function main() {
     await runKernelMigrations(activePool, { requiredRole: 'owner' });
     if (closurePhase) {
       await runTask1ClosureMigrations(activePool, closurePhase);
+      // The forward-migration list is gated on the canonical enforce closure
+      // (a fresh install has not recorded it until the line above). Re-run the
+      // pass so post-closure descriptors — notably the auth-persistence schema
+      // the API requires at first boot — apply in the same job instead of
+      // waiting for a second migration run.
+      await runKernelMigrations(activePool, { requiredRole: 'owner' });
       await seedTask1ReadinessTenant(activePool);
     }
     // Seed cell tenants so register_worker can admit worker LOGIN registrations.

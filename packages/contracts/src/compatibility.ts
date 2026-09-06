@@ -132,7 +132,10 @@ export function validateResource(
   const errors: string[] = [];
 
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return { ok: false, errors: [`Expected object, got ${Array.isArray(value) ? 'array' : typeof value}`] };
+    return {
+      ok: false,
+      errors: [`Expected object, got ${Array.isArray(value) ? 'array' : typeof value}`],
+    };
   }
 
   const schema = CONTRACT_SCHEMAS[schemaName];
@@ -142,7 +145,8 @@ export function validateResource(
 
   const obj = value as Record<string, unknown>;
   const required = (schema as { required?: string[] }).required ?? [];
-  const properties = (schema as { properties?: Record<string, Record<string, unknown>> }).properties ?? {};
+  const properties =
+    (schema as { properties?: Record<string, Record<string, unknown>> }).properties ?? {};
 
   // Check required fields
   for (const field of required) {
@@ -163,7 +167,9 @@ export function validateResource(
     const enumValues = fieldSchema.enum as string[] | undefined;
     if (enumValues) {
       if (typeof fieldValue === 'string' && !enumValues.includes(fieldValue)) {
-        errors.push(`Field '${field}' value '${fieldValue}' not in enum [${enumValues.join(', ')}]`);
+        errors.push(
+          `Field '${field}' value '${fieldValue}' not in enum [${enumValues.join(', ')}]`,
+        );
       }
       continue;
     }
@@ -172,9 +178,16 @@ export function validateResource(
     const actualType = Array.isArray(fieldValue) ? 'array' : typeof fieldValue;
     if (expectedType === 'array' && !Array.isArray(fieldValue)) {
       errors.push(`Field '${field}' expected array, got ${actualType}`);
-    } else if (expectedType === 'integer' && (typeof fieldValue !== 'number' || !Number.isInteger(fieldValue))) {
+    } else if (
+      expectedType === 'integer' &&
+      (typeof fieldValue !== 'number' || !Number.isInteger(fieldValue))
+    ) {
       errors.push(`Field '${field}' expected integer, got ${actualType}`);
-    } else if (expectedType !== 'array' && expectedType !== 'integer' && actualType !== expectedType) {
+    } else if (
+      expectedType !== 'array' &&
+      expectedType !== 'integer' &&
+      actualType !== expectedType
+    ) {
       errors.push(`Field '${field}' expected ${expectedType}, got ${actualType}`);
     }
   }

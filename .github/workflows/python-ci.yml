@@ -38,7 +38,10 @@ jobs:
         run: ruff check src/ tests/
 
       - name: Type check with pyright
-        run: pyright src/ tests/
+        # Use the project's [tool.pyright] config (include = ["src"]); passing
+        # explicit paths on the CLI overrides it and scans tests too, which the
+        # project has never scoped.
+        run: pyright -p .
 
       - name: Test with pytest
         run: python -m pytest tests/ -v --tb=short -q

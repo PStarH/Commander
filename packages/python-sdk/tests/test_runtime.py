@@ -23,16 +23,15 @@ class TestRuntimeExecute:
                 "run_id": "run_001",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.runtime_execute(
-                    agent_id="agent-1",
-                    goal="test goal",
-                    project_id="proj-1",
-                    mission_id="mission-1",
-                    available_tools=["tool1"],
-                    token_budget=4000,
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.runtime_execute(
+                agent_id="agent-1",
+                goal="test goal",
+                project_id="proj-1",
+                mission_id="mission-1",
+                available_tools=["tool1"],
+                token_budget=4000,
+            )
         assert result.status == "SUCCESS"
         assert result.run_id == "run_001"
 
@@ -50,16 +49,15 @@ class TestRuntimeExecute:
             return httpx.Response(200, json={"status": "SUCCESS", "summary": ""})
 
         mock_api.post("/api/runtime/execute").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                await client.runtime_execute(
-                    agent_id="agent-1",
-                    goal="goal",
-                    project_id="proj-1",
-                    mission_id="mission-1",
-                    available_tools=["tool1"],
-                    token_budget=4000,
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            await client.runtime_execute(
+                agent_id="agent-1",
+                goal="goal",
+                project_id="proj-1",
+                mission_id="mission-1",
+                available_tools=["tool1"],
+                token_budget=4000,
+            )
 
 
 class TestRuntimeRoute:
@@ -67,9 +65,8 @@ class TestRuntimeRoute:
         mock_api.post("/api/runtime/route").respond(
             200, json={"provider": "openai", "model": "gpt-4"}
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                decision = await client.runtime_route("goal")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            decision = await client.runtime_route("goal")
         assert decision["provider"] == "openai"
 
 
@@ -89,9 +86,8 @@ class TestTraces:
                 "count": 1,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.list_traces(agent_id="agent-1", limit=10)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.list_traces(agent_id="agent-1", limit=10)
         assert result.count == 1
         assert result.traces[0].run_id == "run_1"
 
@@ -99,18 +95,16 @@ class TestTraces:
         mock_api.get("/api/runtime/traces/run_1").respond(
             200, json={"run_id": "run_1", "status": "SUCCESS"}
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                trace = await client.get_trace("run_1")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            trace = await client.get_trace("run_1")
         assert trace["run_id"] == "run_1"
 
     async def test_trace_summary(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/api/runtime/traces/summary").respond(
             200, json={"total": 5, "success": 4}
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                summary = await client.trace_summary()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            summary = await client.trace_summary()
         assert summary["total"] == 5
 
 
@@ -123,9 +117,8 @@ class TestBusAndLearner:
                 "subscriber_counts": {"agent.started": 2},
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.bus_topics()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.bus_topics()
         assert "agent.started" in result.topics
         assert result.subscriber_counts["agent.started"] == 2
 
@@ -133,9 +126,8 @@ class TestBusAndLearner:
         mock_api.get("/api/runtime/learner/stats").respond(
             200, json={"stats": {}, "suggestions": []}
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                stats = await client.learner_stats()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            stats = await client.learner_stats()
         assert "stats" in stats
 
 
@@ -144,9 +136,8 @@ class TestRuntimeControl:
         mock_api.post("/api/runtime/pause").respond(
             200, json={"status": "pause_signaled", "message": "paused"}
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.pause_run("run_1")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.pause_run("run_1")
         assert result["status"] == "pause_signaled"
 
     async def test_resume_run(self, mock_api: respx.MockRouter) -> None:
@@ -160,9 +151,8 @@ class TestRuntimeControl:
                 "injected_instructions": True,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.resume_run("run_1", user_instructions="continue")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.resume_run("run_1", user_instructions="continue")
         assert result.status == "resumed"
         assert result.step_number == 3
         assert result.injected_instructions is True
@@ -178,9 +168,8 @@ class TestRuntimeControl:
                 "injected_instructions": False,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.rollback_run("run_1", 2)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.rollback_run("run_1", 2)
         assert result.status == "rollback_initiated"
         assert result.to_step == 2
 
@@ -199,8 +188,7 @@ class TestRuntimeControl:
                 "total": 1,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.active_runs()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.active_runs()
         assert result.total == 1
         assert result.runs[0].run_id == "run_1"

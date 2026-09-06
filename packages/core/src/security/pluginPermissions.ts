@@ -287,8 +287,28 @@ export class PluginPermissionEnforcer {
    */
   private matchPath(filePath: string, pattern: string): boolean {
     // Normalize separators
-    const normalizedPath = filePath.replace(/\\/g, '/');
+    let normalizedPath = filePath.replace(/\\/g, '/');
     const normalizedPattern = pattern.replace(/\\/g, '/');
+
+    // AUDIT-R5F1: canonicalize before any prefix/wildcard match and reject
+    // traversal outright — `/workspace/../../etc/passwd` used to pass a
+    // `/workspace/**` grant because startsWith never resolved the `..`.
+    if (normalizedPath.includes('..')) {
+      const segments: string[] = [];
+      for (const seg of normalizedPath.split('/')) {
+        if (seg === '..') {
+          if (segments.length === 0 || segments[0] === '') {
+            // '..' above an absolute root — escapes the filesystem root.
+            return false;
+          }
+          segments.pop();
+        } else if (seg !== '.') {
+          segments.push(seg);
+        }
+      }
+      normalizedPath = segments.join('/') || '/';
+      if (normalizedPath.includes('..')) return false; // defensive
+    }
 
     // Exact match
     if (normalizedPath === normalizedPattern) return true;

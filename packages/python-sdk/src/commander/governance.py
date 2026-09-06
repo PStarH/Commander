@@ -9,7 +9,8 @@ recover instead of performing an irreversible or dangerous action.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 from .security import ReversibilityGate
 

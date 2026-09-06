@@ -478,47 +478,47 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   const persistConfig = deps.writeConfig ?? writeCommanderConfig;
 
   // ── GET /api/onboarding/status ──────────────────────────────────────────
-  router.get('/api/onboarding/status', async (_req: Request, res: Response) => {
-    try {
-      const resolved = await resolveProvider();
-      const hasRunTask =
-        (await dirHasContent(TRACES_DIR)) || fsSync.existsSync(ONBOARDING_FIRST_TASK_FILE);
-      const hasKnowledge = await dirHasContent(KNOWLEDGE_BASE_DIR);
-      const completion = await readCompletedSteps();
+  // AUDIT-API15: status discloses provider configuration and directory
+  // contents — operator-scoped information.
+  router.get(
+    '/api/onboarding/status',
+    requireOnboardingConfigAdmin,
+    async (_req: Request, res: Response) => {
+      try {
+        const resolved = await resolveProvider();
+        const hasRunTask =
+          (await dirHasContent(TRACES_DIR)) || fsSync.existsSync(ONBOARDING_FIRST_TASK_FILE);
+        const hasKnowledge = await dirHasContent(KNOWLEDGE_BASE_DIR);
+        const completion = await readCompletedSteps();
 
-      const hasProvider = resolved !== null;
-      // hasApiKey: 环境变量 API_KEYS 配置了 Commander 自身鉴权 key，
-      // 或 provider 解析出了 key（含本地 ollama 视为已具备）。
-      const hasCommanderApiKey = Boolean(
-        process.env.API_KEYS && process.env.API_KEYS.trim() !== '',
-      );
-      const hasApiKey =
-        hasCommanderApiKey ||
-        (resolved !== null && resolved.apiKey !== '') ||
-        (resolved?.id === 'ollama' && resolved.baseUrl !== '');
+        const hasProvider = resolved !== null;
+        const hasApiKey =
+          (resolved !== null && resolved.apiKey !== '') ||
+          (resolved?.id === 'ollama' && resolved.baseUrl !== '');
 
-      const completedSteps = completion.steps.slice();
-      // 根据 detected 状态自动推断已完成的步骤（即使未显式标记 complete）
-      if (hasProvider && !completedSteps.includes('provider')) completedSteps.push('provider');
-      if (hasRunTask && !completedSteps.includes('first-task')) completedSteps.push('first-task');
+        const completedSteps = completion.steps.slice();
+        // 根据 detected 状态自动推断已完成的步骤（即使未显式标记 complete）
+        if (hasProvider && !completedSteps.includes('provider')) completedSteps.push('provider');
+        if (hasRunTask && !completedSteps.includes('first-task')) completedSteps.push('first-task');
 
-      const isComplete = completion.isComplete;
+        const isComplete = completion.isComplete;
 
-      res.json({
-        hasProvider,
-        hasApiKey,
-        provider: resolved?.id ?? null,
-        providerLabel: resolved?.label ?? null,
-        model: resolved?.model ?? null,
-        hasRunTask,
-        hasKnowledge,
-        completedSteps,
-        isComplete,
-      });
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+        res.json({
+          hasProvider,
+          hasApiKey,
+          provider: resolved?.id ?? null,
+          providerLabel: resolved?.label ?? null,
+          model: resolved?.model ?? null,
+          hasRunTask,
+          hasKnowledge,
+          completedSteps,
+          isComplete,
+        });
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   // ── GET /api/onboarding/sample-tasks ───────────────────────────────────
   // 返回示例任务列表，供前端向导展示给新用户选择。
@@ -623,6 +623,9 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   // ── POST /api/onboarding/run-first-task ─────────────────────────────────
   router.post(
     '/api/onboarding/run-first-task',
+    // AUDIT-API1: this endpoint spends the operator's stored provider key on
+    // a real LLM call — it needs the same admin guard as save-config.
+    requireOnboardingConfigAdmin,
     validateBody(runFirstTaskBody),
     async (req: Request, res: Response) => {
       try {
@@ -773,6 +776,7 @@ export function createOnboardingRouter(deps: OnboardingRouterDeps = {}): Router 
   // ── POST /api/onboarding/complete ───────────────────────────────────────
   router.post(
     '/api/onboarding/complete',
+    requireOnboardingConfigAdmin,
     validateBody(completeBody),
     async (req: Request, res: Response) => {
       try {

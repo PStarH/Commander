@@ -64,10 +64,10 @@ async function createActionRun(
     (options.envelope
       ? baseEnvelope.destination
       : effect === 'require_approval'
-      ? 'demo://tickets/approval'
-      : effect === 'deny'
-        ? 'demo://tickets/denied'
-        : baseEnvelope.destination);
+        ? 'demo://tickets/approval'
+        : effect === 'deny'
+          ? 'demo://tickets/denied'
+          : baseEnvelope.destination);
   const actionEnvelope = {
     ...baseEnvelope,
     tenantId,

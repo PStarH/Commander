@@ -34,7 +34,8 @@ export function createServiceNowIncidentCreateAdapter(
   options: ServiceNowIncidentCreateAdapterOptions,
 ): ActionAdapter {
   const rawFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) => adapterFetch(rawFetch, url, init);
+  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) =>
+    adapterFetch(rawFetch, url, init);
 
   function baseUrl(instance: string): string {
     return `https://${instance}.service-now.com`;
@@ -53,19 +54,22 @@ export function createServiceNowIncidentCreateAdapter(
       input.tenantId,
       input.destination,
     );
-    const response = await fetchImpl(
-      `${baseUrl(instance)}/api/now/table/incident/${sysId}`,
-      {
-        headers: {
-          Authorization: authHeader(creds.username, creds.password),
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        signal: input.signal,
+    const response = await fetchImpl(`${baseUrl(instance)}/api/now/table/incident/${sysId}`, {
+      headers: {
+        Authorization: authHeader(creds.username, creds.password),
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
       },
-    );
+      signal: input.signal,
+    });
     if (response.status === 404) {
-      return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     }
     await assertOkResponse(response, 'ServiceNow get incident');
     const payload = await readJsonResponse<{ result: ServiceNowIncident }>(response);
@@ -93,27 +97,39 @@ export function createServiceNowIncidentCreateAdapter(
       sysparm_query: `correlation_id=${correlationId}`,
       sysparm_limit: '10',
     });
-    const response = await fetchImpl(
-      `${baseUrl(instance)}/api/now/table/incident?${params}`,
-      {
-        headers: {
-          Authorization: authHeader(creds.username, creds.password),
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        signal: input.signal,
+    const response = await fetchImpl(`${baseUrl(instance)}/api/now/table/incident?${params}`, {
+      headers: {
+        Authorization: authHeader(creds.username, creds.password),
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
       },
-    );
+      signal: input.signal,
+    });
     await assertOkResponse(response, 'ServiceNow query incident');
     const payload = await readJsonResponse<ServiceNowListResponse>(response);
     const incidents = payload.result ?? [];
     if (incidents.length === 0) {
-      return { incidents, outcome: { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } } };
+      return {
+        incidents,
+        outcome: {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        },
+      };
     }
     if (incidents.length > 1) {
       return {
         incidents,
-        outcome: { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } },
+        outcome: {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        },
       };
     }
     const incident = incidents[0]!;
@@ -188,7 +204,15 @@ export function createServiceNowIncidentCreateAdapter(
     async queryOutcome(input: AdapterQueryInput): Promise<EffectRemoteOutcome> {
       const correlationId = servicenowCorrelationId(input.tenantId, input.idempotencyKey);
       const result = await queryByCorrelation(input, correlationId);
-      return result.outcome ?? { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+      return (
+        result.outcome ?? {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        }
+      );
     },
 
     async compensate(input: AdapterCompensateInput): Promise<Record<string, unknown>> {
@@ -245,7 +269,13 @@ export function createServiceNowIncidentCreateAdapter(
           '',
       );
       if (!sysId) {
-        return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+        return {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        };
       }
       const outcome = await queryBySysId(input, sysId);
       if (outcome.status !== 'APPLIED') {
@@ -258,7 +288,13 @@ export function createServiceNowIncidentCreateAdapter(
           response: { sysId: outcome.response.sysId, state: outcome.response.state },
         };
       }
-      return { status: 'UNKNOWN', error: { code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE', message: 'Remote outcome is not yet provable' } };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     },
   };
 }

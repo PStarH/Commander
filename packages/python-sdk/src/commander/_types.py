@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Generator
+from collections.abc import Iterator
 from enum import Enum
 from typing import Any, Literal
 
@@ -1241,7 +1241,7 @@ class ProposeActionResult(CommanderModel):
     idempotent_replay: bool = Field(alias="idempotentReplay")
     accepted: bool
 
-    def __iter__(self) -> Generator[Any, None, None]:
+    def __iter__(self) -> Iterator[Any]:  # pyright: ignore[reportIncompatibleMethodOverride] - tuple-like unpacking of the model fields
         yield self.action
         yield self.idempotent_replay
         yield self.accepted

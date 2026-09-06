@@ -3,6 +3,13 @@ import { createServer } from 'node:http';
 import { afterEach, describe, it } from 'node:test';
 import express from 'express';
 import {
+  resetApiKeyStore,
+  setApiKeyStore,
+  type ApiKeyCreationResult,
+  type ApiKeyRecord,
+  type ApiKeyStore,
+} from '../src/apiKeyStore.js';
+import {
   resetAuthFailureStoreForTesting,
   setAuthFailureStore,
   type AuthFailureStore,
@@ -10,7 +17,19 @@ import {
 
 afterEach(() => {
   resetAuthFailureStoreForTesting();
+  resetApiKeyStore();
 });
+
+const noApiKeys: ApiKeyStore = {
+  list: async (): Promise<Omit<ApiKeyRecord, 'hash'>[]> => [],
+  listByTenant: async (): Promise<Omit<ApiKeyRecord, 'hash'>[]> => [],
+  findByHash: async (): Promise<ApiKeyRecord | undefined> => undefined,
+  create: async (): Promise<ApiKeyCreationResult> => {
+    throw new Error('test API-key store does not mint keys');
+  },
+  revoke: async (): Promise<ApiKeyRecord | undefined> => undefined,
+  delete: async (): Promise<boolean> => false,
+};
 
 describe('auth middleware failure-authority boundary', () => {
   it('returns 500 when lockout authority cannot be read', async () => {
@@ -18,8 +37,9 @@ describe('auth middleware failure-authority boundary', () => {
       get: async () => {
         throw new Error('lockout authority unavailable');
       },
-      set: async () => undefined,
-      delete: async () => undefined,
+      recordFailure: async () => {
+        throw new Error('lockout authority unavailable');
+      },
       cleanup: async () => undefined,
     };
     setAuthFailureStore(unavailableStore);
@@ -45,17 +65,17 @@ describe('auth middleware failure-authority boundary', () => {
   });
 
   it('returns 500 when an invalid credential failure cannot be recorded', async () => {
-    let setCalls = 0;
+    let recordCalls = 0;
     const unavailableStore: AuthFailureStore = {
       get: async () => undefined,
-      set: async () => {
-        setCalls += 1;
+      recordFailure: async () => {
+        recordCalls += 1;
         throw new Error('lockout authority write unavailable');
       },
-      delete: async () => undefined,
       cleanup: async () => undefined,
     };
     setAuthFailureStore(unavailableStore);
+    setApiKeyStore(noApiKeys);
     const { authMiddleware } = await import('../src/authMiddleware.js');
 
     const app = express();
@@ -71,7 +91,7 @@ describe('auth middleware failure-authority boundary', () => {
         headers: { 'x-api-key': 'invalid-key' },
       });
       assert.equal(response.status, 500);
-      assert.equal(setCalls, 1);
+      assert.equal(recordCalls, 1);
       assert.deepEqual(await response.json(), { error: 'Internal server error' });
     } finally {
       await new Promise<void>((resolve, reject) => {

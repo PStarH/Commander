@@ -27,8 +27,8 @@ import {
   KERNEL_TASK2_FORWARD_MIGRATIONS,
   KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS,
   KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
-  KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS,
-  KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+  KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  KERNEL_AUTH_PERSISTENCE_CHECKSUM,
   KERNEL_MEMORY_SCHEMA_MIGRATIONS,
   KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
   KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
@@ -120,17 +120,19 @@ class MigrationLedgerPool implements SqlPool {
 }
 
 describe('Task 1 authoritative Class A admission', () => {
-  it('installs the PostgreSQL authentication-failure authority migration', () => {
-    const id = '2026-08-22.1.auth_failure_authority';
-    assert.equal(KERNEL_AUTH_FAILURE_AUTHORITY_MIGRATIONS[0]?.id, id);
+  it('installs the PostgreSQL auth-persistence authority migration', () => {
+    const id = '2026-08-25.1.auth_persistence_schema';
+    assert.equal(KERNEL_AUTH_PERSISTENCE_MIGRATIONS[0]?.id, id);
     assert.equal(
-      KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.sql,
-      KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
+      KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.checksum,
+      KERNEL_AUTH_PERSISTENCE_CHECKSUM,
     );
+    const sql = KERNEL_MIGRATIONS.find((migration) => migration.id === id)?.sql ?? '';
     assert.match(
-      KERNEL_AUTH_FAILURE_AUTHORITY_SQL,
-      /GRANT SELECT, INSERT, UPDATE, DELETE ON commander_auth_failures TO commander_app/,
+      sql,
+      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE[\s\S]*commander_auth_failures[\s\S]*TO commander_app/,
     );
+    assert.match(sql, /CREATE TABLE commander_auth_failures \(/);
   });
 
   it('installs the owner-managed durable memory schema before runtime startup', () => {

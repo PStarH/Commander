@@ -30,7 +30,7 @@ export function scanSkillContent(
   const searchSpace = `${name} ${content} ${tools.join(' ')}`;
 
   // Shell injection patterns
-  checkPatterns(searchSpace, SHELL_INJECTION_PATTERNS, warnings);
+  checkPatterns(searchSpace, shellInjectionPatternsFor(name), warnings);
 
   // Path traversal
   checkPatterns(searchSpace, PATH_TRAVERSAL_PATTERNS, warnings);
@@ -77,6 +77,15 @@ function checkPatterns(
 // Pattern definitions
 // ============================================================================
 
+const JAVASCRIPT_SOURCE_FILE = /\.(?:[cm]?js|tsx?)$/i;
+
+const BACKTICK_EXECUTION_PATTERN = {
+  regex: /`[^`]+`/g,
+  category: 'shell_injection',
+  severity: 'high' as const,
+  message: 'Backtick command execution detected',
+};
+
 const SHELL_INJECTION_PATTERNS = [
   {
     regex: /\$\(.+?\)/g,
@@ -84,12 +93,7 @@ const SHELL_INJECTION_PATTERNS = [
     severity: 'high' as const,
     message: 'Command substitution via $() detected — may allow arbitrary shell execution',
   },
-  {
-    regex: /`[^`]+`/g,
-    category: 'shell_injection',
-    severity: 'high' as const,
-    message: 'Backtick command execution detected',
-  },
+  BACKTICK_EXECUTION_PATTERN,
   {
     regex: /\|\s*(bash|sh|zsh|cmd|powershell)\b/gi,
     category: 'shell_injection',
@@ -109,6 +113,11 @@ const SHELL_INJECTION_PATTERNS = [
     message: 'spawn() call detected — potential arbitrary process creation',
   },
 ];
+
+function shellInjectionPatternsFor(name: string) {
+  if (!JAVASCRIPT_SOURCE_FILE.test(name)) return SHELL_INJECTION_PATTERNS;
+  return SHELL_INJECTION_PATTERNS.filter((pattern) => pattern !== BACKTICK_EXECUTION_PATTERN);
+}
 
 const PATH_TRAVERSAL_PATTERNS = [
   {

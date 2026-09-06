@@ -41,6 +41,7 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import * as crypto from 'node:crypto';
+import { isProductionCryptoEnv } from './productionEnv.js';
 
 // ============================================================================
 // 常量
@@ -181,7 +182,7 @@ export function resolveMasterKey(env: NodeJS.ProcessEnv = process.env): Buffer {
     return Buffer.from(v, 'utf-8');
   }
 
-  if (env.NODE_ENV === 'production') {
+  if (isProductionCryptoEnv(env)) {
     throw new Error(
       `[EncryptedSecretsVault] ${MASTER_KEY_ENV} 必须在生产环境中设置（>= 32 字符）。` +
         '拒绝以弱密钥启动加密密钥保险库——存储的密钥将不具备密码学安全性。',

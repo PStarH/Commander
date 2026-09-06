@@ -18,6 +18,7 @@
 
 import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '../logging';
+import { isProductionCryptoEnv } from './productionEnv.js';
 
 // ══════════════════════════════════════════════════════════════════════════
 // 1. UniversalSanitizer
@@ -609,10 +610,7 @@ export class IntegrityLayer {
   private readonly key: Buffer;
 
   constructor(secret?: string) {
-    const isProduction =
-      process.env.NODE_ENV === 'production' ||
-      process.env.COMMANDER_ENV === 'production' ||
-      process.env.COMMANDER_ENV === 'prod';
+    const isProduction = isProductionCryptoEnv(process.env);
     const fromEnv = process.env.COMMANDER_INTEGRITY_KEY;
     const raw = secret ?? fromEnv;
     if (!raw) {

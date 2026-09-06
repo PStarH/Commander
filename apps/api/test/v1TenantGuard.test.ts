@@ -11,7 +11,13 @@ import {
   type TenantProvider,
   type TenantConfig,
 } from '@commander/core/runtime';
-import { signAccessToken, type AuthUser } from '../src/jwtMiddleware.js';
+import { createJwtMiddleware, signAccessToken, type AuthUser } from '../src/jwtMiddleware.js';
+import type { User } from '../src/userStore.js';
+import {
+  _resetRefreshTokenStoreForTests,
+  setRefreshTokenRepository,
+} from '../src/refreshTokenStore.js';
+import { TestRefreshTokenRepository } from './authRepositories.js';
 import { v1TenantGuard } from '../src/v1TenantGuard.js';
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
@@ -35,9 +41,21 @@ function makeUser(overrides: Partial<AuthUser> = {}): AuthUser {
     id: 'user-1',
     username: 'alice',
     role: 'admin',
+    authVersion: 1,
     ...overrides,
   };
 }
+
+const authoritativeUser: User = {
+  id: 'user-1',
+  username: 'alice',
+  email: 'alice@example.test',
+  passwordHash: 'unused',
+  role: 'admin',
+  authVersion: 1,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  lastLoginAt: null,
+};
 
 function bearer(token: string): Record<string, string> {
   return { authorization: `Bearer ${token}` };
@@ -56,10 +74,13 @@ async function withGuard(
   } = {},
   action: (base: string) => Promise<void>,
 ): Promise<void> {
-  const { jwtMiddleware } = await import('../src/jwtMiddleware.js');
   const app = express();
   app.use(express.json());
-  app.use(jwtMiddleware);
+  app.use(
+    createJwtMiddleware(async (id) =>
+      id === authoritativeUser.id ? authoritativeUser : undefined,
+    ),
+  );
   if (opts.simulateApiKey) {
     const { apiKeyId, tenantId } = opts.simulateApiKey;
     app.use((req, _res, next) => {
@@ -91,7 +112,10 @@ async function withGuard(
   }
 }
 
-async function getRun(base: string, headers: Record<string, string> = {}): Promise<{ status: number; body: any }> {
+async function getRun(
+  base: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: any }> {
   const res = await fetch(`${base}/v1/runs/run-xyz`, { headers });
   const body = (await res.json()) as any;
   return { status: res.status, body };
@@ -117,6 +141,7 @@ describe('v1TenantGuard — spec §3.2 fail-closed table (enterprise profile)', 
     setGlobalTenantProvider(
       new SimpleTenantProvider([tenantConfig(KNOWN_TENANT), tenantConfig(OTHER_TENANT)]),
     );
+    setRefreshTokenRepository(new TestRefreshTokenRepository());
   });
 
   afterEach(() => {
@@ -124,6 +149,7 @@ describe('v1TenantGuard — spec §3.2 fail-closed table (enterprise profile)', 
   });
 
   after(() => {
+    _resetRefreshTokenStoreForTests();
     for (const [key, value] of Object.entries(envSnap)) {
       if (value === undefined) delete process.env[key];
       else process.env[key] = value;
@@ -164,7 +190,7 @@ describe('v1TenantGuard — spec §3.2 fail-closed table (enterprise profile)', 
   it('row 2: refresh token used in place of access token → 401 INVALID_TOKEN', async () => {
     // Sign a refresh token (type: 'refresh') — guard must reject as non-access.
     const { signRefreshToken } = await import('../src/jwtMiddleware.js');
-    const refresh = (signRefreshToken as (u: AuthUser) => string)(makeUser({ tenantId: KNOWN_TENANT }));
+    const refresh = await signRefreshToken(makeUser({ tenantId: KNOWN_TENANT }));
     await withGuard({}, async (base) => {
       const { status, body } = await getRun(base, bearer(refresh));
       assert.equal(status, 401);
@@ -254,7 +280,9 @@ describe('v1TenantGuard — spec §3.2 fail-closed table (enterprise profile)', 
     await withGuard(
       { simulateApiKey: { apiKeyId: 'key-1', tenantId: KNOWN_TENANT } },
       async (base) => {
-        const { status, body } = await getRun(base, { 'x-api-key': 'irrelevant-stub-pre-sets-state' });
+        const { status, body } = await getRun(base, {
+          'x-api-key': 'irrelevant-stub-pre-sets-state',
+        });
         assert.equal(status, 200);
         assert.equal(body.tenantId, KNOWN_TENANT);
       },
@@ -265,7 +293,9 @@ describe('v1TenantGuard — spec §3.2 fail-closed table (enterprise profile)', 
     await withGuard(
       { simulateApiKey: { apiKeyId: 'key-1', tenantId: UNKNOWN_TENANT } },
       async (base) => {
-        const { status, body } = await getRun(base, { 'x-api-key': 'irrelevant-stub-pre-sets-state' });
+        const { status, body } = await getRun(base, {
+          'x-api-key': 'irrelevant-stub-pre-sets-state',
+        });
         assert.equal(status, 403);
         assert.equal(body.error.code, 'TENANT_NOT_FOUND');
       },

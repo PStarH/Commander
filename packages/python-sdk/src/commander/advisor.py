@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -53,7 +53,7 @@ class TrajectoryAdvisor:
         )
         return (name, json.dumps(args, sort_keys=True, default=str))
 
-    def check(self, tool_call_history: list[dict[str, Any]]) -> Optional[AdvisorHint]:
+    def check(self, tool_call_history: list[dict[str, Any]]) -> AdvisorHint | None:
         """Return a hint if a loop is detected, else None."""
         if len(tool_call_history) < self.repeat_threshold:
             return None

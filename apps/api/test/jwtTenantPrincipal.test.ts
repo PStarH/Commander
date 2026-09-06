@@ -29,7 +29,6 @@ describe('JWT tenant_id principal binding (AUTH-2)', () => {
   const envSnap = {
     AUTH_DISABLED: process.env.AUTH_DISABLED,
     COMMANDER_ALLOW_ANON: process.env.COMMANDER_ALLOW_ANON,
-    API_KEYS: process.env.API_KEYS,
     NODE_ENV: process.env.NODE_ENV,
   };
 
@@ -41,7 +40,6 @@ describe('JWT tenant_id principal binding (AUTH-2)', () => {
   });
 
   it('overwrites a stale req.tenantId with JWT tenant_id before tenantContext binds ALS', async () => {
-    delete process.env.API_KEYS;
     delete process.env.AUTH_DISABLED;
     delete process.env.COMMANDER_ALLOW_ANON;
     process.env.NODE_ENV = 'test';
@@ -79,7 +77,6 @@ describe('JWT tenant_id principal binding (AUTH-2)', () => {
   });
 
   it('AUTH_DISABLED still honors JWT tenant_id over anon default', async () => {
-    delete process.env.API_KEYS;
     process.env.AUTH_DISABLED = 'true';
     process.env.COMMANDER_ALLOW_ANON = '1';
     process.env.NODE_ENV = 'test';

@@ -24,9 +24,8 @@ class TestRun:
                 "session_id": "session_001",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.run("hello")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.run("hello")
         assert isinstance(result, ExecutionResult)
         assert result.status == "SUCCESS"
         assert result.summary == "Done"
@@ -45,14 +44,13 @@ class TestRun:
         import httpx
 
         mock_api.post("/api/v1/execute").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                await client.run(
-                    "test",
-                    provider="anthropic",
-                    model="claude-3",
-                    session_id="sess_001",
-                )
+        async with CommanderClient(api_key="test") as client, mock_api:
+            await client.run(
+                "test",
+                provider="anthropic",
+                model="claude-3",
+                session_id="sess_001",
+            )
 
     async def test_run_with_output_schema(self, mock_api: respx.MockRouter) -> None:
         def check_body(request):
@@ -63,9 +61,8 @@ class TestRun:
         import httpx
 
         mock_api.post("/api/v1/execute").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                await client.run("test", output_schema={"type": "object"})
+        async with CommanderClient(api_key="test") as client, mock_api:
+            await client.run("test", output_schema={"type": "object"})
 
     async def test_run_failure(self, mock_api: respx.MockRouter) -> None:
         mock_api.post("/api/v1/execute").respond(
@@ -79,9 +76,8 @@ class TestRun:
                 "error": "Agent execution timed out",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.run("fail")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.run("fail")
         assert result.status == "FAILED"
         assert result.error == "Agent execution timed out"
 
@@ -105,9 +101,8 @@ class TestPlan:
                 "note": "deliberation-only response",
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                plan = await client.plan("audit this repo")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            plan = await client.plan("audit this repo")
         assert isinstance(plan, PlanResult)
         assert plan.topology == "PARALLEL"
         assert plan.estimated_cost_band == "high"
@@ -137,20 +132,18 @@ class TestPlan:
         import httpx
 
         mock_api.post("/api/v1/plan").mock(side_effect=check_body)
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                await client.plan("test", provider="openai")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            await client.plan("test", provider="openai")
 
     async def test_plan_empty_task(self, mock_api: respx.MockRouter) -> None:
         mock_api.post("/api/v1/plan").respond(
             400, text="plan requires a non-empty task string."
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                from commander._exceptions import ValidationError
+        async with CommanderClient(api_key="test") as client, mock_api:
+            from commander._exceptions import ValidationError
 
-                with pytest.raises(ValidationError):
-                    await client.plan("")
+            with pytest.raises(ValidationError):
+                await client.plan("")
 
 
 class TestStream:
@@ -175,12 +168,11 @@ class TestStream:
             headers={"Content-Type": "text/event-stream"},
         )
 
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                events = []
-                stream = await client.stream("test_session")
-                async for event in stream:
-                    events.append(event)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            events = []
+            stream = await client.stream("test_session")
+            async for event in stream:
+                events.append(event)
 
         assert len(events) == 3
         assert events[0].event == "output.delta"
@@ -201,12 +193,11 @@ class TestStream:
             text="data: [DONE]\n\n",
             headers={"Content-Type": "text/event-stream"},
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                events = []
-                stream = await client.stream("test_session")
-                async for event in stream:
-                    events.append(event)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            events = []
+            stream = await client.stream("test_session")
+            async for event in stream:
+                events.append(event)
         assert events == []
 
     async def test_stream_heartbeat_ignored(self, mock_api: respx.MockRouter) -> None:
@@ -217,10 +208,9 @@ class TestStream:
             text=sse_lines,
             headers={"Content-Type": "text/event-stream"},
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                events = []
-                stream = await client.stream("test_session")
-                async for event in stream:
-                    events.append(event)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            events = []
+            stream = await client.stream("test_session")
+            async for event in stream:
+                events.append(event)
         assert events == []

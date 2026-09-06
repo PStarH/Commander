@@ -157,7 +157,7 @@ def verify_action_evidence(
             raise ValueError("empty compact JWS segment")
         header = json.loads(_decode_base64url(encoded_header))
         if not isinstance(header, dict):
-            raise ValueError("JWS header must be an object")
+            raise ValueError("JWS header must be an object")  # noqa: TRY004 - ValueError is the documented failure surface here
         if header.get("alg") != "EdDSA" or not isinstance(header.get("kid"), str):
             return _invalid_evidence(
                 "EVIDENCE_RECEIPT_INVALID",
@@ -223,7 +223,7 @@ class CommanderGatewayClient:
             headers=self._build_headers(),
         )
 
-    async def __aenter__(self) -> CommanderGatewayClient:
+    async def __aenter__(self) -> CommanderGatewayClient:  # noqa: PYI034 - typing.Self needs Python 3.11
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -398,9 +398,9 @@ class CommanderGatewayClient:
         except ValueError:
             pass
         error = map_status_to_error(response.status_code, message)
-        setattr(error, "status", response.status_code)
-        setattr(error, "status_code", response.status_code)
-        setattr(error, "code", code)
-        setattr(error, "details", details)
-        setattr(error, "body", response.text)
+        error.status = response.status_code
+        error.status_code = response.status_code
+        error.code = code
+        error.details = details
+        error.body = response.text
         raise error

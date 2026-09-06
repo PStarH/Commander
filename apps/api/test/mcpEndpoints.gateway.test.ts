@@ -11,6 +11,15 @@ async function withMcpRouter(
 ): Promise<void> {
   const app = express();
   app.use(express.json());
+  app.use((req, _res, next) => {
+    req.user = {
+      id: 'gateway-admin',
+      username: 'gateway-admin',
+      role: 'admin',
+      authVersion: 1,
+    };
+    next();
+  });
   app.use('/mcp', createMCPRouter(options));
   const server = createServer(app);
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));

@@ -371,8 +371,12 @@ describe('startStdioServer', () => {
 describe('cli', () => {
   it('detects direct ESM entrypoint invocation without require.main', () => {
     const moduleUrl = pathToFileURL('/workspace/packages/mcp-server/dist/cli.js').href;
-    expect(isDirectCliInvocation(moduleUrl, '/workspace/packages/mcp-server/dist/cli.js')).toBe(true);
-    expect(isDirectCliInvocation(moduleUrl, '/workspace/packages/mcp-server/dist/index.js')).toBe(false);
+    expect(isDirectCliInvocation(moduleUrl, '/workspace/packages/mcp-server/dist/cli.js')).toBe(
+      true,
+    );
+    expect(isDirectCliInvocation(moduleUrl, '/workspace/packages/mcp-server/dist/index.js')).toBe(
+      false,
+    );
     expect(isDirectCliInvocation(moduleUrl, undefined)).toBe(false);
   });
 

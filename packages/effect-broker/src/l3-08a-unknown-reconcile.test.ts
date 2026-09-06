@@ -103,21 +103,24 @@ describe('snapshot-only UNKNOWN reconciliation', () => {
   it('rejects a bare UNKNOWN and a non-unknown snapshot', async () => {
     const harness = broker();
     await assert.rejects(
-      () => harness.broker.reconcileUnknown({
-        effect: EFFECT,
-        querier: {
-          queryOutcome: async () => ({ status: 'UNKNOWN' }) as EffectRemoteOutcome,
-        },
-      }),
-      (error: unknown) => error instanceof EffectBrokerError && error.code === 'ADAPTER_OUTCOME_INVALID',
+      () =>
+        harness.broker.reconcileUnknown({
+          effect: EFFECT,
+          querier: {
+            queryOutcome: async () => ({ status: 'UNKNOWN' }) as EffectRemoteOutcome,
+          },
+        }),
+      (error: unknown) =>
+        error instanceof EffectBrokerError && error.code === 'ADAPTER_OUTCOME_INVALID',
     );
     await assert.rejects(
-      () => harness.broker.reconcileUnknown({
-        effect: { ...EFFECT, state: 'COMPLETED' },
-        querier: {
-          queryOutcome: async () => ({ status: 'APPLIED', response: {} }),
-        },
-      }),
+      () =>
+        harness.broker.reconcileUnknown({
+          effect: { ...EFFECT, state: 'COMPLETED' },
+          querier: {
+            queryOutcome: async () => ({ status: 'APPLIED', response: {} }),
+          },
+        }),
       (error: unknown) => error instanceof EffectBrokerError && error.code === 'EFFECT_NOT_UNKNOWN',
     );
   });

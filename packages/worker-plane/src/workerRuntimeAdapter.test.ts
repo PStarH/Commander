@@ -15,8 +15,12 @@ describe('workerRuntimeAdapter', () => {
 
   it('requires EffectBroker in production and issuer whenever broker is set (WS2 §1)', () => {
     const prev = process.env.NODE_ENV;
-    const broker = { execute: async () => ({ effectId: 'e', replayed: false }) } as unknown as EffectBroker;
-    const issuer = { issue: () => 'tok' } as unknown as import('@commander/effect-broker').CapabilityTokenIssuer;
+    const broker = {
+      execute: async () => ({ effectId: 'e', replayed: false }),
+    } as unknown as EffectBroker;
+    const issuer = {
+      issue: () => 'tok',
+    } as unknown as import('@commander/effect-broker').CapabilityTokenIssuer;
 
     process.env.NODE_ENV = 'production';
     try {
@@ -54,7 +58,10 @@ describe('workerRuntimeAdapter', () => {
     });
 
     assert.doesNotThrow(() => manifest.validate(['agent']));
-    assert.throws(() => manifest.validate(['agent', 'connector']), /missing required capabilities: connector/);
+    assert.throws(
+      () => manifest.validate(['agent', 'connector']),
+      /missing required capabilities: connector/,
+    );
   });
 
   it('accepts wildcard capabilities as all manifest entries', () => {

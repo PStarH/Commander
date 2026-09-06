@@ -24,7 +24,7 @@ import { isEnterpriseProfile } from '../src/profileSignal.js';
 import { isLegacyExecutionAllowed } from '../src/legacyExecutionGuard.js';
 import { authMiddleware } from '../src/authMiddleware.js';
 import { tenantContextMiddleware } from '../src/tenantContextMiddleware.js';
-import { signAccessToken } from '../src/jwtMiddleware.js';
+import { createJwtMiddleware, signAccessToken } from '../src/jwtMiddleware.js';
 
 function request(base: string, path: string, init: RequestInit = {}) {
   return fetch(`${base}${path}`, { ...init, redirect: 'manual' });
@@ -59,8 +59,7 @@ function mountApiOpenApiAlias(app: express.Express): void {
       res.status(410).json({
         error: {
           code: 'GONE',
-          message:
-            'This route is frozen in the enterprise profile. Use GET /v1/openapi.json.',
+          message: 'This route is frozen in the enterprise profile. Use GET /v1/openapi.json.',
         },
       });
       return;
@@ -129,7 +128,12 @@ describe('L3-06 residual gateway enforcement', () => {
   });
 
   describe('/api/runs pre-freeze Gone middleware', () => {
-    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_V2_MODE', 'COMMANDER_LEGACY_EXECUTION'] as const;
+    const envKeys = [
+      'COMMANDER_PROFILE',
+      'NODE_ENV',
+      'COMMANDER_V2_MODE',
+      'COMMANDER_LEGACY_EXECUTION',
+    ] as const;
     const snap: Record<string, string | undefined> = {};
 
     function saveEnv(): void {
@@ -171,7 +175,12 @@ describe('L3-06 residual gateway enforcement', () => {
   });
 
   describe('legacy execution routers under enterprise + COMMANDER_LEGACY_EXECUTION=1', () => {
-    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_V2_MODE', 'COMMANDER_LEGACY_EXECUTION'] as const;
+    const envKeys = [
+      'COMMANDER_PROFILE',
+      'NODE_ENV',
+      'COMMANDER_V2_MODE',
+      'COMMANDER_LEGACY_EXECUTION',
+    ] as const;
     const snap: Record<string, string | undefined> = {};
 
     function saveEnv(): void {
@@ -288,13 +297,27 @@ describe('L3-06 residual gateway enforcement', () => {
       process.env.NODE_ENV = 'development';
       delete process.env.COMMANDER_ENV;
       try {
-        const { jwtMiddleware } = await import('../src/jwtMiddleware.js');
         const token = signAccessToken({
           id: 'u1',
           username: 'alice',
           role: 'admin',
+          authVersion: 1,
           tenantId: 'tenant-jwt',
         });
+        const jwtMiddleware = createJwtMiddleware(async (id) =>
+          id === 'u1'
+            ? {
+                id,
+                username: 'alice',
+                email: 'alice@example.test',
+                passwordHash: 'unused',
+                role: 'admin',
+                authVersion: 1,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                lastLoginAt: null,
+              }
+            : undefined,
+        );
         await withApp(
           (app) => {
             app.use(jwtMiddleware);
@@ -334,13 +357,27 @@ describe('L3-06 residual gateway enforcement', () => {
       process.env.NODE_ENV = 'development';
       delete process.env.COMMANDER_ENV;
       try {
-        const { jwtMiddleware } = await import('../src/jwtMiddleware.js');
         const token = signAccessToken({
           id: 'u1',
           username: 'alice',
           role: 'admin',
+          authVersion: 1,
           tenantId: 'tenant-jwt',
         });
+        const jwtMiddleware = createJwtMiddleware(async (id) =>
+          id === 'u1'
+            ? {
+                id,
+                username: 'alice',
+                email: 'alice@example.test',
+                passwordHash: 'unused',
+                role: 'admin',
+                authVersion: 1,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                lastLoginAt: null,
+              }
+            : undefined,
+        );
         await withApp(
           (app) => {
             app.use(jwtMiddleware);

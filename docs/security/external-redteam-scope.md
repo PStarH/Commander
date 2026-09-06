@@ -103,7 +103,5 @@ A finding is considered **triaged** when step 2-3 are complete and
 ## See Also
 
 - `SECURITY.md` — coordinated disclosure process and PGP key
-- `docs/superpowers/specs/2026-06-30-red-team-evaluation-design.md` —
-  design rationale
 - `docs/runbooks/chaos.md` — internal chaos test suite
 - `docs/runbooks/shadow.md` — shadow traffic capture

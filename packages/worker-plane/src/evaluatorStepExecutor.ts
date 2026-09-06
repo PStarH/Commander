@@ -75,10 +75,10 @@ export class EvaluatorStepExecutor implements StepExecutor {
     const input = step.input as unknown as EvaluatorStepInput;
 
     if (!input.criteria) {
-      throw new WorkerExecutionError(
-        `Step ${step.id} missing required field: criteria`,
-        { code: 'INVALID_INPUT', retryable: false },
-      );
+      throw new WorkerExecutionError(`Step ${step.id} missing required field: criteria`, {
+        code: 'INVALID_INPUT',
+        retryable: false,
+      });
     }
 
     const method = input.method ?? 'rules';
@@ -89,12 +89,22 @@ export class EvaluatorStepExecutor implements StepExecutor {
 
     switch (method) {
       case 'rules':
-        result = this.evaluateWithRules(input.subject, input.criteria.rules ?? [], minScore, started);
+        result = this.evaluateWithRules(
+          input.subject,
+          input.criteria.rules ?? [],
+          minScore,
+          started,
+        );
         break;
       case 'llm':
         // LLM-based evaluation requires an AgentRuntime — for now, fall back to rules
         // In production, this would call AgentRuntime with a specialized evaluation prompt
-        result = this.evaluateWithRules(input.subject, input.criteria.rules ?? [], minScore, started);
+        result = this.evaluateWithRules(
+          input.subject,
+          input.criteria.rules ?? [],
+          minScore,
+          started,
+        );
         break;
       case 'custom':
         // Custom evaluators would be registered and looked up by name
@@ -106,10 +116,10 @@ export class EvaluatorStepExecutor implements StepExecutor {
         };
         break;
       default:
-        throw new WorkerExecutionError(
-          `Unknown evaluation method: ${method}`,
-          { code: 'INVALID_INPUT', retryable: false },
-        );
+        throw new WorkerExecutionError(`Unknown evaluation method: ${method}`, {
+          code: 'INVALID_INPUT',
+          retryable: false,
+        });
     }
 
     return result as unknown as Record<string, unknown>;
@@ -148,10 +158,16 @@ export class EvaluatorStepExecutor implements StepExecutor {
           passed = value === rule.expected;
           break;
         case 'contains':
-          passed = typeof value === 'string' && typeof rule.expected === 'string' && value.includes(rule.expected);
+          passed =
+            typeof value === 'string' &&
+            typeof rule.expected === 'string' &&
+            value.includes(rule.expected);
           break;
         case 'regex':
-          passed = typeof value === 'string' && typeof rule.expected === 'string' && new RegExp(rule.expected).test(value);
+          passed =
+            typeof value === 'string' &&
+            typeof rule.expected === 'string' &&
+            new RegExp(rule.expected).test(value);
           break;
         case 'minLength':
           passed = typeof value === 'string' && value.length >= Number(rule.expected);

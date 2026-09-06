@@ -35,7 +35,9 @@ async function listen(server: ReturnType<typeof createServer>): Promise<number> 
   return address.port;
 }
 
-async function readProcess(child: ReturnType<typeof spawn>): Promise<{ code: number; stdout: string; stderr: string }> {
+async function readProcess(
+  child: ReturnType<typeof spawn>,
+): Promise<{ code: number; stdout: string; stderr: string }> {
   let stdout = '';
   let stderr = '';
   child.stdout?.setEncoding('utf8');

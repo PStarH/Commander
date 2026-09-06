@@ -138,10 +138,15 @@ export function createPluginSandboxContext(
       const check = enforcer.checkNetwork(domain, port);
       if (!check.allowed) return null;
 
+      // AUDIT-R5F2: never follow redirects automatically — an allowlisted
+      // domain could 302 to a private-range/metadata endpoint and the
+      // allowlist would never see the hop. Redirects surface as the 3xx
+      // response so the plugin (and the operator) see them explicitly.
       try {
         const response = await fetch(url, {
           method: options?.method ?? 'GET',
           headers: options?.headers,
+          redirect: 'manual',
         });
         const body = await response.text();
         return { status: response.status, body };

@@ -388,8 +388,9 @@ export class CommanderClient {
       });
 
       let results = entries
-        .filter((e: { layer: string }) =>
-          e.layer === 'working' || e.layer === 'episodic' || e.layer === 'longterm',
+        .filter(
+          (e: { layer: string }) =>
+            e.layer === 'working' || e.layer === 'episodic' || e.layer === 'longterm',
         )
         .map((e: Record<string, unknown>) => ({
           id: e.id as string,

@@ -35,11 +35,21 @@ import { readFileSync } from 'node:fs';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
-// Git keeps linked-worktree metadata outside the worktree, so GIT_DIR is
-// not a valid basis for resolving source paths. Git itself owns this mapping.
-const REPO_ROOT = execFileSync('git', ['rev-parse', '--show-toplevel'], {
-  encoding: 'utf8',
-}).trim();
+// `GIT_DIR` points into the common repository when this runs from a linked
+// worktree, so deriving a parent path from it resolves to `.git`, not the
+// checked-out source tree. Ask Git for the worktree root directly.
+// `git rev-parse` handles that correctly in every context, including linked
+// worktrees, so derive the worktree root through Git and fall back to cwd if
+// Git is unavailable (e.g. CI argv replay with no git context).
+function resolveRepoRoot(): string {
+  try {
+    return execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' }).trim();
+  } catch {
+    return process.cwd();
+  }
+}
+
+const REPO_ROOT = resolveRepoRoot();
 
 const PRETTIER_FILE = /\.(?:ts|tsx)$/;
 const NULL_OBJECT_ID = /^0+$/;
