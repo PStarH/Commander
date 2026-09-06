@@ -16,8 +16,8 @@
 > it for unattended production workloads or sensitive data without your own review.
 
 <p align="center">
-  <code>pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo" --stream</code><br>
-  <sub>Agent events and tool calls stream to your terminal. Configured verification checks run on outputs. 25 providers. One command.</sub>
+  <code>pnpm demo:l4-a</code><br>
+  <sub>After the source setup below: a credential-free simulated run with no provider calls or target-system writes.</sub>
 </p>
 
 <p align="center">
@@ -61,25 +61,51 @@ that is still **alpha** for enterprise use.
 | **Durable kernel** | No | Yes (auto-on in production / when a Postgres DSN is set) |
 | **Status** | Alpha local evaluation tool — not production-ready | Alpha — not yet live-fire-proven on real backends |
 
-The quick start below defaults to the **Local CLI**. To run the Enterprise
-Gateway instead, see [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) and the
-Docker block at the end of Quick Start.
-
-For the bounded design-partner path, start with the [enterprise pilot
-quickstart](docs/enterprise/quickstart.md), then use the [Kubernetes rollback
-workflow template](docs/enterprise/workflow-template-kubernetes-rollback.md).
+The first-user path below is a source-based **E0 simulated demo**. It needs no
+credentials, makes no provider or target-system writes, and is separate from
+provider-backed Local CLI use and the E1 Enterprise Gateway pilot path. Clone,
+install, and build still write the checkout, dependency cache, and build output
+on your machine.
 
 ---
 
 ## Quick Start
 
-### Local CLI (default)
+### E0 simulated demo (recommended first run)
+
+Use Node.js 22.x and pnpm 9 (Corepack selects the repository's pinned pnpm
+version). This lifecycle runs entirely from a source checkout:
+
+The clone and a cold install need ordinary access to GitHub and the package
+registry. The `--offline` flag means no provider request, not a network-free
+installation.
 
 ```bash
-# Clone and install
-git clone https://github.com/PStarH/Commander.git
-cd Commander && pnpm install
+git clone --branch codex/release-20260810 --single-branch \
+  https://github.com/PStarH/Commander.git
+cd Commander
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
 
+pnpm exec tsx packages/core/src/cliEntry.ts --help
+pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
+pnpm demo:l4-a
+```
+
+`doctor --offline` checks local prerequisites without contacting an LLM
+provider. `demo:l4-a` uses simulated/in-memory dependencies and loopback
+servers; it does not invoke a real provider or perform an external write. The
+demo owns and automatically stops its loopback servers, so there is no external
+resource teardown command. Successful command exit completes E0 teardown.
+
+Passing this path is development/demo evidence only. It is not a published
+package install, an E1 governed-write proof, or evidence that Commander is
+production-ready.
+
+### Provider-backed Local CLI (alpha)
+
+```bash
 # Set any API key — Commander auto-detects the provider
 export OPENAI_API_KEY=sk-...
 # or: ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / GROQ_API_KEY / ...
@@ -94,20 +120,19 @@ pnpm exec tsx packages/core/src/cliEntry.ts run "explain the architecture" --str
 ```
 
 > CLI commands run the **Local CLI** (embedded runtime). Enterprise routing is
-> via the `/v1` gateway — see the block below.
+> via the `/v1` gateway. Provider-backed prompts leave your machine for the
+> selected provider; review [PRIVACY.md](PRIVACY.md) first.
 
 ### Enterprise Gateway (alpha)
 
-```bash
-export COMMANDER_API_KEY="your-secret-key"
-export COMMANDER_KERNEL_DATABASE_URL="postgres://user:pass@host:5432/commander"
-export OPENAI_API_KEY="sk-..."
-docker compose up -d
-```
-
-API on `:4000`, Web on `:3000`. Requires a Postgres DSN; the durable kernel
-auto-enables in production. Multi-tenant isolation is **alpha** — review
-[ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) before any pilot.
+This first-user guide intentionally does not provide a runnable Gateway command:
+the path requires additional secrets, PostgreSQL, and operational controls. Use
+the [enterprise quickstart](docs/enterprise/quickstart.md) together with
+[ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md). The bounded E1
+design-partner workflow remains gated by the
+[launch-readiness runbook](docs/runbooks/design-partner-launch-readiness.md).
+Starting a development Gateway is not authorization or proof for external
+writes, and shared multi-tenant use remains alpha.
 
 ---
 

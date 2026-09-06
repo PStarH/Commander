@@ -1,20 +1,23 @@
 # Commander 快速开始
 
-5 分钟内在本地跑起来，并通过 CLI 或 Web Console 运行第一个多代理任务。
+先用不需要凭据的 E0 模拟路径验证安装，再按需运行 provider-backed CLI 或 Web
+Console。
 
 > **Alpha / 非生产就绪：** 本文是开发与评估路径。provider-backed 任务会把 prompt
 > 发送给你选择的提供商；模拟结果会明确标识，不能当作真实执行或生产证据。详见
 > [`PRIVACY.md`](../PRIVACY.md)。
 
-下文默认是 **Local CLI / 本地单机** 路径。Enterprise Gateway（`/v1` + Postgres）见英文 `README.md` SKU 表与 `ENTERPRISE_READINESS.md`，状态为 **alpha**。
+下文首先给出 **E0 模拟演示**，它不调用真实 provider、不写入外部目标系统。随后
+的 provider-backed Local CLI 与 Enterprise Gateway（`/v1` + Postgres）均为
+**alpha**；后者见英文 `README.md` SKU 表与 `ENTERPRISE_READINESS.md`。
 
 ---
 
 ## 前置要求
 
-- **Node.js** >= 18（推荐 22，与 `.node-version` 一致）
-- **pnpm** >= 9（必须，项目使用 pnpm workspaces）
-- 任一 LLM 提供商的 API key：OpenAI、Anthropic、DeepSeek、Groq 等
+- **Node.js** 22.x（与 `.node-version` 和 CI 一致）
+- **pnpm** 9（Corepack 会选择仓库固定的版本；项目使用 pnpm workspaces）
+- E0 模拟演示不需要 API key；只有 provider-backed 路径才需要
 
 > 为什么用 pnpm？Monorepo 通过 workspaces 管理 10+ 个包，`npm install` 会产生 `UNMET DEPENDENCY` 警告。
 
@@ -23,20 +26,44 @@
 ## 1. 克隆与安装
 
 ```bash
-git clone https://github.com/PStarH/Commander.git
+git clone --branch codex/release-20260810 --single-branch \
+  https://github.com/PStarH/Commander.git
 cd Commander
-pnpm install
+corepack enable
+pnpm install --frozen-lockfile
 ```
 
 安装完成后，建议先构建一次所有包：
 
 ```bash
-pnpm -r build
+pnpm build
 ```
+
+首次克隆和冷安装仍需要正常访问 GitHub 与包仓库。下文的 `--offline` 只表示不向
+LLM provider 发请求，并不表示安装过程完全断网。
 
 ---
 
-## 2. 配置 API Key
+## 2. 运行 E0 模拟演示（推荐首次运行）
+
+```bash
+pnpm exec tsx packages/core/src/cliEntry.ts --help
+pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
+pnpm demo:l4-a
+```
+
+`doctor --offline` 只检查本地前置条件，不访问 LLM provider。`demo:l4-a` 使用
+模拟/内存依赖和本机回环服务器，不调用真实 provider，也不写入外部目标系统。
+克隆、安装和构建仍会写入本机 checkout、依赖缓存和构建产物。命令退出时会自动
+关闭它启动的回环服务器，因此没有外部资源需要 teardown；命令退出即完成 E0
+清理。
+
+这条路径只提供开发/演示证据，不代表已通过 npm 发布安装、E1 受治理写入证明或
+生产就绪验证。
+
+---
+
+## 3. 配置 API Key（仅 provider-backed 路径）
 
 Commander 会自动识别你设置的是哪家提供商：
 
@@ -52,7 +79,10 @@ export DEEPSEEK_API_KEY=sk-...
 
 ---
 
-## 3. 运行第一个任务
+## 4. 运行 provider-backed 任务（alpha）
+
+以下命令会把 prompt 发送给你选择的 provider。运行前请先阅读
+[`PRIVACY.md`](../PRIVACY.md)。
 
 ### 方式 A：Web Console（推荐，一键启动）
 
@@ -72,22 +102,23 @@ pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vu
 
 ---
 
-## 4. Docker 一键启动
+## 5. Enterprise Gateway（alpha）
 
-如果你不想在本地装 Node：
+这是需要凭据和外部服务的 Enterprise Gateway alpha 开发路径，不是 E0 演示的
+替代安装方式，也不代表 E1 已就绪：
 
-```bash
-export COMMANDER_API_KEY="your-secret-key"
-export OPENAI_API_KEY="sk-..."
-docker compose up -d
-```
+首次用户文档不提供可直接运行的 Gateway 命令；该路径还需要额外密钥、PostgreSQL
+和运维控制。请同时按照
+[`enterprise/quickstart.md`](enterprise/quickstart.md) 与
+[`ENTERPRISE_READINESS.md`](../ENTERPRISE_READINESS.md) 操作。
 
-- API: http://localhost:4000
-- Web: http://localhost:3000
+在任何 bounded write pilot 前，必须满足
+[`design-partner-launch-readiness.md`](runbooks/design-partner-launch-readiness.md)
+中的 E1 门槛；本节不能作为外部写入授权或证明。
 
 ---
 
-## 5. 验证安装
+## 6. 额外验证
 
 ```bash
 pnpm --filter @commander/core test:quick
@@ -97,7 +128,7 @@ pnpm --filter @commander/core test:quick
 
 ---
 
-## 6. 下一步
+## 7. 下一步
 
 - 查看架构概览：`docs/architecture/`
 - 查看 CLI 全部命令：`pnpm exec tsx packages/core/src/cliEntry.ts --help`
