@@ -15,7 +15,7 @@ are opt-in via Docker Compose **profiles**.
 
 ```bash
 cp .env.example .env
-# Edit .env: set COMMANDER_API_KEY (required) and at least one LLM provider key
+# Edit .env: set all required API startup credentials and at least one LLM provider key
 docker compose up
 ```
 
@@ -81,6 +81,9 @@ Enterprise Gateway needs a Postgres DSN + `/v1` kernel and remains **alpha**
 See `.env.example` for the full list. Highlights:
 
 - `COMMANDER_API_KEY` — required, fail-fast if unset. Generate with `openssl rand -hex 32`.
+- `COMMANDER_MASTER_KEY`, `JWT_SECRET`, `COMMANDER_CAPABILITY_TOKEN_KEY`, and `COMMANDER_INTEGRITY_KEY` — required API secrets. Generate each with `openssl rand -hex 32`.
+- `ADMIN_PASSWORD` — required for the initial admin account; use at least 16 random characters.
+- `API_HOST` — listener interface. The API defaults to `127.0.0.1`; Docker and Helm set `0.0.0.0` explicitly.
 - `COMMANDER_EVENT_BUS_BACKEND=redis` — switch from in-memory to Redis-backed EventBus (requires `distributed` profile).
 - `COMMANDER_EVENT_BUS_REDIS_URL` — Redis connection URL (defaults to `redis://redis:6379`, the compose service name).
 - `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` — point the OTLP exporter at the Jaeger collector (requires `tracing` profile).
@@ -88,8 +91,8 @@ See `.env.example` for the full list. Highlights:
 
 ## Production hardening checklist (not a readiness sign-off)
 
-1. **Set `COMMANDER_API_KEY`** to a strong random secret (≥32 chars). Required.
-2. **Set `HOST=127.0.0.1`** when behind a reverse proxy / TLS terminator.
+1. **Set all API startup credentials**: `COMMANDER_API_KEY`, `COMMANDER_MASTER_KEY`, `JWT_SECRET`, `COMMANDER_CAPABILITY_TOKEN_KEY`, `COMMANDER_INTEGRITY_KEY`, and `ADMIN_PASSWORD`.
+2. **Set `API_HOST=127.0.0.1`** when running the API directly behind a reverse proxy / TLS terminator.
 3. **Set `CORS_ORIGINS`** explicitly — never use `*` in production.
 4. **Enable `distributed` profile** when running >1 api replica (Redis is required for cross-node EventBus consistency).
 5. **Change `GRAFANA_ADMIN_PASSWORD`** from the default `admin`.

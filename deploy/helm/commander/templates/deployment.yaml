@@ -123,6 +123,10 @@ spec:
             {{- include "commander.profileTierEnv" . | nindent 12 }}
             - name: PORT
               value: {{ .Values.api.port | quote }}
+            - name: API_HOST
+              value: "0.0.0.0"
+            - name: COMMANDER_API_REPLICAS
+              value: {{ .Values.api.replicas | quote }}
             - name: COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST
               value: {{ .Values.image.digest | quote }}
             - name: COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256
@@ -194,6 +198,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.api.secrets.existingSecret | quote }}
                   key: integrity-key
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.existingSecret | quote }}
+                  key: admin-password
             {{- else if and .Values.api.secrets.create (not .Values.api.secrets.existingSecret) (eq .Values.tier "demo") }}
             - name: COMMANDER_MASTER_KEY
               valueFrom:
@@ -260,6 +269,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.api.secrets.integrityKeySecret | quote }}
                   key: integrity-key
+            {{- end }}
+            {{- if .Values.api.secrets.adminPasswordSecret }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.adminPasswordSecret | quote }}
+                  key: admin-password
             {{- end }}
             {{- end }}
             {{- if .Values.llm.openaiApiKeySecret }}
