@@ -574,6 +574,41 @@ jobs:
           P0_TIMEOUT_MS: '120000'
           AUTH_FAILURE_REDIS_URL: redis://localhost:6379
 
+  shadow-phase-a-postgres:
+    name: Shadow Phase A PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commander
+          POSTGRES_PASSWORD: commander
+          POSTGRES_DB: commander
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      COMMANDER_SHADOW_PG_ADMIN_URL: postgres://commander:commander@localhost:5432/commander
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Build Shadow dependencies
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/postgres-runtime build
+      - name: Shadow PostgreSQL authority suite
+        run: pnpm --filter @commander/shadow-plane test:postgres-live
+
   l4-b-deploy-gates:
     name: L4-B Deploy Gates
     runs-on: ubuntu-latest
