@@ -354,7 +354,7 @@ export class AnthropicProvider implements LLMProvider {
         arguments: (b.input ?? {}) as Record<string, unknown>,
       }));
 
-    const stopReason = data.stop_reason ?? 'end_turn';
+    const stopReason = data.stop_reason;
     return {
       content: textBlocks.map((b) => b.text).join(''),
       model,
