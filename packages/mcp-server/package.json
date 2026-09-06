@@ -2,6 +2,7 @@
   "name": "@commander/mcp-server",
   "version": "0.2.0",
   "description": "Publishable MCP server for Commander — exposes Commander tools via stdin/stdout JSON-RPC.",
+  "type": "module",
   "license": "MIT",
   "author": "PStarH <sampan090611@gmail.com>",
   "repository": {
@@ -16,7 +17,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "bin": {
     "commander-mcp-server": "./dist/cli.js"
@@ -41,7 +42,7 @@
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "test": "vitest run --no-cache",
     "test:watch": "vitest",
-    "prepublishOnly": "tsc -p tsconfig.json"
+    "prepublishOnly": "pnpm run build"
   },
   "dependencies": {
     "@commander/core": "workspace:*"
