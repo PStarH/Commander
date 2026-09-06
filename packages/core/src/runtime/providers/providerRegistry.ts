@@ -374,7 +374,7 @@ registerProvider({
   envBaseUrlKey: 'ANTHROPIC_BASE_URL',
   envModelKey: 'ANTHROPIC_MODEL',
   defaultUrl: 'https://api.anthropic.com/v1',
-  defaultModel: 'claude-3-5-sonnet-20241022',
+  defaultModel: 'claude-sonnet-4-6',
   displayName: 'Anthropic',
   apiType: 'anthropic',
   factory: () => new AnthropicProvider({ apiKey: resolveSecureApiKey('ANTHROPIC_API_KEY') }),

@@ -43,7 +43,7 @@ export class AnthropicProvider implements LLMProvider {
   constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.anthropic.com/v1';
-    this.defaultModel = config.defaultModel ?? 'claude-3-5-sonnet-20241022';
+    this.defaultModel = config.defaultModel ?? 'claude-sonnet-4-6';
     // MCP-11: fail closed on a plaintext/off-allowlist base URL before any
     // request carrying the API key and prompt is sent.
     assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });

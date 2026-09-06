@@ -670,6 +670,7 @@ describe('Provider registration consistency', () => {
   it('all providers are in DEFAULT_MODELS', async () => {
     const { DEFAULT_MODELS } = await import('../src/config/commanderConfig');
     assert.strictEqual(Object.keys(DEFAULT_MODELS).length, 25);
+    assert.strictEqual(DEFAULT_MODELS.anthropic, 'claude-sonnet-4-6');
   });
 
   it('all providers are in DEFAULT_URLS', async () => {
