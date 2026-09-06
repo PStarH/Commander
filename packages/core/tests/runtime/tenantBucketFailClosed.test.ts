@@ -2,14 +2,14 @@
  * AUDIT-CORE3: store bucketing must fail closed in multi-tenant mode.
  * Contextless callers previously landed in the shared `__default__` bucket.
  */
-import { test, describe, before, after } from 'vitest';
+import { test, describe, beforeEach, afterEach } from 'vitest';
 import * as assert from 'node:assert/strict';
 import { setMultiTenantEnabled, runWithTenant } from '../../src/runtime/tenantContext.js';
 import { tenantBucketOrThrow } from '../../src/runtime/tenantContext.js';
 
 describe('tenantBucketOrThrow (AUDIT-CORE3)', () => {
-  before(() => setMultiTenantEnabled(true));
-  after(() => setMultiTenantEnabled(false));
+  beforeEach(() => setMultiTenantEnabled(true));
+  afterEach(() => setMultiTenantEnabled(false));
 
   test('multi-tenant mode without context refuses the shared bucket', () => {
     // FAILING before the fix: returned '__default__' — contextless traffic

@@ -8,6 +8,7 @@ import {
   loadReviewGuidelines,
 } from '../../reviewAgent';
 import { $, section, kv, bullet, startSpinner } from './_shared';
+import { PROVIDER_ORDER, type ProviderType } from '../../config/commanderConfig';
 
 export async function cmdGui() {
   section('GUI DASHBOARD');
@@ -206,9 +207,29 @@ export async function cmdReview(args: string[]) {
   const baseRef = baseIdx >= 0 && baseIdx + 1 < args.length ? args[baseIdx + 1] : undefined;
 
   const commitIdx = args.indexOf('--commit');
-  const commitSha = commitIdx >= 0 && commitIdx + 1 < args.length ? args[commitIdx + 1] : undefined;
+  const commitCandidate = commitIdx >= 0 ? args[commitIdx + 1] : undefined;
+  const commitSha =
+    commitCandidate && !commitCandidate.startsWith('--') ? commitCandidate : undefined;
 
   const useJson = args.includes('--json');
+  const requireProvider = args.includes('--real');
+  const providerEquals = args.find((arg) => arg.startsWith('--provider='));
+  const providerIdx = args.indexOf('--provider');
+  const providerRaw = providerEquals
+    ? providerEquals.slice('--provider='.length)
+    : providerIdx >= 0
+      ? args[providerIdx + 1]
+      : undefined;
+
+  if (requireProvider && !providerRaw) {
+    console.error(`\n  ${$.red}Review failed: --real requires --provider=<name>${$.reset}\n`);
+    process.exit(1);
+  }
+  if (providerRaw && !PROVIDER_ORDER.includes(providerRaw as ProviderType)) {
+    console.error(`\n  ${$.red}Review failed: unknown provider ${providerRaw}${$.reset}\n`);
+    process.exit(1);
+  }
+  const provider = providerRaw as ProviderType | undefined;
 
   const guidelines = loadReviewGuidelines();
 
@@ -225,6 +246,12 @@ export async function cmdReview(args: string[]) {
   if (guidelines.length > 0 || customGuidelines.length > 0) {
     bullet(`Guidelines: ${[...guidelines, ...customGuidelines].length} rule(s)`);
   }
+  if (requireProvider) {
+    bullet(`Real provider: ${provider}`);
+    bullet('Sends at most 15,000 diff characters; max 4,000 tokens; 8 MiB post-parse cap');
+    bullet('Caller-side timeout: 120 seconds; provider/model execution tools: none');
+    bullet('The provider may retain the submitted diff under its own terms');
+  }
   console.log();
 
   const done = startSpinner('Reviewing changes...');
@@ -235,6 +262,8 @@ export async function cmdReview(args: string[]) {
       commitSha,
       guidelines: [...guidelines, ...customGuidelines],
       outputFormat: useJson ? 'json' : 'text',
+      requireProvider,
+      provider,
     });
     done();
 

@@ -52,14 +52,14 @@ Commander ships as two distinct SKUs. The **Local CLI** is what you run on your
 own machine; the **Enterprise Gateway** is a durable, multi-tenant server path
 that is still **alpha** for enterprise use.
 
-| | Local CLI | Enterprise Gateway |
-| --- | --- | --- |
-| **Entry** | `commander run` / `pnpm gui` | `POST /v1/runs` via `apps/api` |
-| **State** | Local SQLite / JSON (`.commander_state/`) | Postgres kernel (`runs`/`steps`/`events`/outbox/leases) |
-| **Auth** | None (single user) | `COMMANDER_API_KEY` + JWT tenant claims |
-| **Tenancy** | None (implicit `__default__`) | Alpha — kernel RLS + tenant-aware singletons; storage isolation opt-in |
-| **Durable kernel** | No | Yes (auto-on in production / when a Postgres DSN is set) |
-| **Status** | Alpha local evaluation tool — not production-ready | Alpha — not yet live-fire-proven on real backends |
+|                    | Local CLI                                                                     | Enterprise Gateway                                                     |
+| ------------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Entry**          | `commander review --real` (first provider trial); other commands remain alpha | `POST /v1/runs` via `apps/api`                                         |
+| **State**          | Local SQLite / JSON (`.commander_state/`)                                     | Postgres kernel (`runs`/`steps`/`events`/outbox/leases)                |
+| **Auth**           | None (single user)                                                            | `COMMANDER_API_KEY` + JWT tenant claims                                |
+| **Tenancy**        | None (implicit `__default__`)                                                 | Alpha — kernel RLS + tenant-aware singletons; storage isolation opt-in |
+| **Durable kernel** | No                                                                            | Yes (auto-on in production / when a Postgres DSN is set)               |
+| **Status**         | Alpha local evaluation tool — not production-ready                            | Alpha — not yet live-fire-proven on real backends                      |
 
 The first-user path below is a source-based **E0 simulated demo**. It needs no
 credentials, makes no provider or target-system writes, and is separate from
@@ -103,25 +103,40 @@ Passing this path is development/demo evidence only. It is not a published
 package install, an E1 governed-write proof, or evidence that Commander is
 production-ready.
 
-### Provider-backed Local CLI (alpha)
+### Provider-backed read-only review (first real-provider trial)
 
 ```bash
-# Set any API key — Commander auto-detects the provider
+# Choose one provider explicitly.
 export OPENAI_API_KEY=sk-...
-# or: ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / GROQ_API_KEY / ...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=openai
 
-# One-click Web Console (API + Web + auto-open browser)
-pnpm gui
-
-# Or run from the terminal
-pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vulnerabilities"
-pnpm exec tsx packages/core/src/cliEntry.ts run "refactor the auth module" --dry-run
-pnpm exec tsx packages/core/src/cliEntry.ts run "explain the architecture" --stream
+# Or use Anthropic.
+export ANTHROPIC_API_KEY=sk-ant-...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=anthropic
 ```
 
-> CLI commands run the **Local CLI** (embedded runtime). Enterprise routing is
-> via the `/v1` gateway. Provider-backed prompts leave your machine for the
-> selected provider; review [PRIVACY.md](PRIVACY.md) first.
+This command reads the selected Git diff and local review guidelines, sends at
+most 15,000 diff characters to the explicitly selected provider, and caps the
+provider response at 4,000 tokens. After provider parsing, Commander rejects a
+completed response object over 8 MiB. Its 120-second caller-side timeout is not
+a transport-level cancellation guarantee. The provider/model receives no
+execution tools, so it cannot initiate commands, file edits, web browsing, or
+target-system writes. The CLI itself runs fixed, read-only `git diff` commands
+and updates cross-process rate-limit state in the system temporary directory.
+Output identifies `source=real`, provider, model, endpoint host, prompt byte
+count, the actual represented portion of a truncated diff, and the
+completed-response cap. Missing credentials, empty diffs, provider errors,
+timeouts, oversized responses, and
+invalid structured output fail with a nonzero exit status instead of falling
+back to a simulated review.
+
+The diff and guidelines leave your machine, may contain repository-sensitive
+material, and are subject to provider retention. Read [PRIVACY.md](PRIVACY.md)
+first. Ordinary `commander run`, `pnpm gui`, MCP, SDK, and Enterprise Gateway
+flows are not part of this first-user path and must not be presented as
+read-only or production-ready.
 
 ### Enterprise Gateway (alpha)
 
@@ -288,13 +303,13 @@ Open `http://localhost:5173`. The console provides:
 > All benchmarks below run in **simulated/scripted harnesses** or as **CI
 > baselines**. They measure the harness, not a production SLA or SOC evidence.
 
-| Suite             | Coverage                           | Result                                       |
-| ----------------- | ---------------------------------- | -------------------------------------------- |
-| Chaos Engineering | 200 synthetic + 55 mutation (=255)   | Harness entry; see the retained baseline matrix |
-| Red Team          | 47 scenarios, 8 attack categories  | all listed cases blocked (simulated harness) |
-| AgentDojo         | 12 security test cases             | all listed cases blocked (simulated harness) |
-| GAIA Spine        | Core capability benchmark          | Scheduled quick/offline run; full fixture pending |
-| SLO               | 99.95% API availability, <5s p95 schedule | CI baseline, not production SLA              |
+| Suite             | Coverage                                  | Result                                            |
+| ----------------- | ----------------------------------------- | ------------------------------------------------- |
+| Chaos Engineering | 200 synthetic + 55 mutation (=255)        | Harness entry; see the retained baseline matrix   |
+| Red Team          | 47 scenarios, 8 attack categories         | all listed cases blocked (simulated harness)      |
+| AgentDojo         | 12 security test cases                    | all listed cases blocked (simulated harness)      |
+| GAIA Spine        | Core capability benchmark                 | Scheduled quick/offline run; full fixture pending |
+| SLO               | 99.95% API availability, <5s p95 schedule | CI baseline, not production SLA                   |
 
 Full matrix: [BENCHMARK.md](BENCHMARK.md)
 

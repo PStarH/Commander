@@ -27,6 +27,12 @@ interface AnthropicUsage {
   cache_read_input_tokens?: number;
 }
 
+interface AnthropicResponse {
+  content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
+  stop_reason?: string | null;
+  usage?: Partial<AnthropicUsage>;
+}
+
 export class AnthropicProvider implements LLMProvider {
   readonly name = 'anthropic';
   private apiKey: string;
@@ -141,15 +147,19 @@ export class AnthropicProvider implements LLMProvider {
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`Anthropic API error ${response.status}: ${err}`);
+      throw new Error(`Anthropic API error ${response.status}`);
     }
 
     if (useStreaming) {
       return this.handleStreamingResponse(response, model);
     }
 
-    const data = await response.json();
+    let data: AnthropicResponse;
+    try {
+      data = (await response.json()) as AnthropicResponse;
+    } catch {
+      throw new Error(`Anthropic API returned invalid JSON (${response.status})`);
+    }
     return this.parseResponse(data, model);
   }
 
@@ -316,19 +326,7 @@ export class AnthropicProvider implements LLMProvider {
     };
   }
 
-  private parseResponse(
-    data: {
-      content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: unknown }>;
-      stop_reason?: string | null;
-      usage?: {
-        input_tokens?: number;
-        output_tokens?: number;
-        cache_creation_input_tokens?: number;
-        cache_read_input_tokens?: number;
-      };
-    },
-    model: string,
-  ): LLMResponse {
+  private parseResponse(data: AnthropicResponse, model: string): LLMResponse {
     const content = data.content ?? [];
     const textBlocks = content.filter((c): c is typeof c & { text: string } => c.type === 'text');
     const toolBlocks = content.filter(

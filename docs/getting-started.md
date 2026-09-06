@@ -79,26 +79,37 @@ export DEEPSEEK_API_KEY=sk-...
 
 ---
 
-## 4. 运行 provider-backed 任务（alpha）
+## 4. 运行真实 provider 的只读代码审查
 
-以下命令会把 prompt 发送给你选择的 provider。运行前请先阅读
+以下命令是首用户唯一推荐的真实 provider 路径。运行前请先阅读
 [`PRIVACY.md`](../PRIVACY.md)。
 
-### 方式 A：Web Console（推荐，一键启动）
-
 ```bash
-pnpm gui
+export OPENAI_API_KEY=sk-...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=openai
 ```
 
-这会同时启动 API server（`:4000`）和 Web 界面（`:5173`），并尝试自动打开浏览器。
-
-### 方式 B：终端 CLI
-
 ```bash
-pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vulnerabilities" --stream
+export ANTHROPIC_API_KEY=sk-ant-...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=anthropic
 ```
 
-`--stream` 会实时输出代理事件、工具调用和已发出的质量门决策。
+该命令只读取指定 Git diff 和本地 review guidelines，最多发送 15,000 个 diff
+字符，并将 provider 输出限制为 4,000 tokens；provider 完成解析后，Commander 会拒绝
+超过 8 MiB 的响应对象。120 秒是调用方时限，不保证在传输层取消底层请求。
+provider/model 不会收到任何执行工具，因此不能主动执行命令、修改文件、
+访问 Web 或写入目标系统。CLI 本身会运行固定的只读 `git diff` 子进程，并在系统临时
+目录更新跨进程限流状态。结果会标明 `source=real`、provider、model、endpoint
+host、prompt 字节数、截断后实际覆盖范围和完成响应上限；凭据缺失、空 diff、provider
+错误、超时、超限响应或无效结构化输出都会返回非零退出码，不会静默回退到模拟结果。
+
+diff 和 guidelines 会离开本机，可能包含仓库敏感信息，并受 provider 的保留政策
+约束。guidelines 会从 `AGENTS.md`、`.review.md`、`REVIEW.md`、
+`.github/review.md` 和 `.commander/review.md` 的 Markdown 列表项自动收集，并限制为
+合并后的前 1,000 字符。普通 `commander run`、`pnpm gui`、MCP、SDK 和 Enterprise
+Gateway 不属于该首用户路径，目前不能宣称只读或生产就绪。
 
 ---
 
