@@ -53,6 +53,7 @@ export interface ReviewReport {
   scope: ReviewScope;
   baseRef?: string;
   guidelinesUsed: string[];
+  guidelineSources: string[];
   guidelinesTruncated: boolean;
   durationMs: number;
   source: 'real' | 'heuristic' | 'not-run';
@@ -73,6 +74,7 @@ export interface ReviewConfig {
   baseRef?: string;
   commitSha?: string;
   guidelines?: string[];
+  guidelineSources?: string[];
   outputFormat?: 'text' | 'json';
   scope: ReviewScope;
   requireProvider?: boolean;
@@ -113,29 +115,53 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
 
   switch (scope) {
     case 'uncommitted':
-      diffArgs = ['diff', 'HEAD', '--unified=5'];
-      nameArgs = ['diff', 'HEAD', '--name-only'];
-      statArgs = ['diff', 'HEAD', '--shortstat'];
+      diffArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', 'HEAD', '--unified=5'];
+      nameArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', 'HEAD', '--name-only'];
+      statArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', 'HEAD', '--shortstat'];
       break;
     case 'branch': {
       const ref = baseRef ?? 'main';
       const range = `origin/${ref}...HEAD`;
-      diffArgs = ['diff', range, '--unified=5'];
-      nameArgs = ['diff', range, '--name-only'];
-      statArgs = ['diff', range, '--shortstat'];
+      diffArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', range, '--unified=5'];
+      nameArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', range, '--name-only'];
+      statArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', range, '--shortstat'];
       break;
     }
     case 'commit': {
       const sha = commitSha ?? 'HEAD';
-      diffArgs = ['show', '--format=', '--unified=5', sha];
-      nameArgs = ['show', '--format=', '--name-only', sha];
-      statArgs = ['show', '--format=', '--shortstat', sha];
+      diffArgs = [
+        'show',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--no-color',
+        '--format=',
+        '--unified=5',
+        sha,
+      ];
+      nameArgs = [
+        'show',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--no-color',
+        '--format=',
+        '--name-only',
+        sha,
+      ];
+      statArgs = [
+        'show',
+        '--no-ext-diff',
+        '--no-textconv',
+        '--no-color',
+        '--format=',
+        '--shortstat',
+        sha,
+      ];
       break;
     }
     default:
-      diffArgs = ['diff', 'HEAD', '--unified=5'];
-      nameArgs = ['diff', 'HEAD', '--name-only'];
-      statArgs = ['diff', 'HEAD', '--shortstat'];
+      diffArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', 'HEAD', '--unified=5'];
+      nameArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', 'HEAD', '--name-only'];
+      statArgs = ['diff', '--no-ext-diff', '--no-textconv', '--no-color', 'HEAD', '--shortstat'];
   }
 
   const patch = execFileSync('git', diffArgs, {
@@ -335,14 +361,28 @@ Return your findings as a JSON array. Example:
 If no issues found, return an empty array []. Do NOT include any other text outside the JSON array.`;
 }
 
-function getSubmittedGuidelines(guidelines: string[]): {
+function getSubmittedGuidelines(
+  guidelines: string[],
+  sources: string[],
+): {
   guidelines: string[];
+  sources: string[];
   truncated: boolean;
 } {
   const fullText = guidelines.join('\n');
   const submittedText = fullText.slice(0, MAX_REVIEW_GUIDELINE_CHARS);
+  const contributingSources: string[] = [];
+  let offset = 0;
+  for (let index = 0; index < guidelines.length; index += 1) {
+    const start = offset + (index > 0 ? 1 : 0);
+    if (start >= submittedText.length) break;
+    const source = sources[index] ?? 'configuration';
+    if (!contributingSources.includes(source)) contributingSources.push(source);
+    offset = start + guidelines[index].length;
+  }
   return {
     guidelines: submittedText.length > 0 ? submittedText.split('\n') : [],
+    sources: contributingSources,
     truncated: submittedText.length < fullText.length,
   };
 }
@@ -359,11 +399,27 @@ interface ReviewCoverage {
 function getReviewCoverage(diff: GitDiff): ReviewCoverage {
   const patch = diff.patch.slice(0, MAX_REVIEW_DIFF_CHARS);
   const lines = patch.split('\n');
+  let filesRepresented = 0;
+  let linesAdded = 0;
+  let linesRemoved = 0;
+  let inHunk = false;
+  for (const line of lines) {
+    if (line.startsWith('diff --git ')) {
+      filesRepresented += 1;
+      inHunk = false;
+    } else if (line.startsWith('@@')) {
+      inHunk = true;
+    } else if (inHunk && line.startsWith('+')) {
+      linesAdded += 1;
+    } else if (inHunk && line.startsWith('-')) {
+      linesRemoved += 1;
+    }
+  }
   return {
     patch,
-    filesRepresented: lines.filter((line) => line.startsWith('diff --git ')).length,
-    linesAdded: lines.filter((line) => line.startsWith('+') && !line.startsWith('+++')).length,
-    linesRemoved: lines.filter((line) => line.startsWith('-') && !line.startsWith('---')).length,
+    filesRepresented,
+    linesAdded,
+    linesRemoved,
     submittedDiffChars: patch.length,
     truncated: patch.length < diff.patch.length,
   };
@@ -432,6 +488,7 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
       scope: config.scope,
       baseRef: config.baseRef,
       guidelinesUsed: [],
+      guidelineSources: [],
       guidelinesTruncated: false,
       durationMs: Date.now() - startTime,
       source: 'not-run',
@@ -448,7 +505,10 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
   const coverage = getReviewCoverage(diff);
 
   // 2. Build review prompt
-  const submittedGuidelines = getSubmittedGuidelines(config.guidelines ?? []);
+  const submittedGuidelines = getSubmittedGuidelines(
+    config.guidelines ?? [],
+    config.guidelineSources ?? [],
+  );
   const prompt = buildReviewPrompt(diff, submittedGuidelines.guidelines);
 
   // 3. Call LLM for review
@@ -466,8 +526,9 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
 
   // 5. Compute result
   const result = computeReviewResult(findings);
-  const passed = result.passed && !coverage.truncated;
-  const summary = coverage.truncated
+  const coverageComplete = !coverage.truncated && coverage.filesRepresented === diff.files.length;
+  const passed = result.passed && coverageComplete;
+  const summary = !coverageComplete
     ? `Review incomplete: only ${coverage.filesRepresented} of ${diff.files.length} files were represented within the ${MAX_REVIEW_DIFF_CHARS.toLocaleString()}-character input limit.`
     : result.summary;
 
@@ -483,6 +544,7 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
     scope: config.scope,
     baseRef: config.baseRef,
     guidelinesUsed: submittedGuidelines.guidelines,
+    guidelineSources: submittedGuidelines.sources,
     guidelinesTruncated: submittedGuidelines.truncated,
     durationMs: Date.now() - startTime,
     source: llmResult.source,
@@ -629,6 +691,11 @@ async function invokeReviewProvider(prompt: string, providerInfo: ProviderInfo):
   if (governed.error) throw new Error(governed.error);
   if (governed.result?.finishReason === 'length') {
     throw new Error('provider response was truncated by its output limit');
+  }
+  if (governed.result?.finishReason !== 'stop') {
+    throw new Error(
+      `provider response did not complete successfully (finish reason: ${governed.result?.finishReason ?? 'missing'})`,
+    );
   }
   return governed.result?.content ?? '[]';
 }
@@ -813,6 +880,9 @@ export function formatReviewOutput(report: ReviewReport): string {
     for (const g of report.guidelinesUsed) {
       lines.push(`    • ${g}`);
     }
+    if (report.guidelineSources.length > 0) {
+      lines.push(`  ${'\x1b[90m'}Sources: ${report.guidelineSources.join(', ')}${'\x1b[0m'}`);
+    }
     lines.push('');
   }
 
@@ -829,8 +899,9 @@ export function reviewReportToJson(report: ReviewReport): string {
 /**
  * Load review guidelines from AGENTS.md or .review.md files.
  */
-export function loadReviewGuidelines(): string[] {
+export function loadReviewGuidelines(): { guidelines: string[]; sources: string[] } {
   const guidelines: string[] = [];
+  const sources: string[] = [];
   const candidates = [
     'AGENTS.md',
     '.review.md',
@@ -848,7 +919,11 @@ export function loadReviewGuidelines(): string[] {
         const bullets = content.match(/^\s*[-*]\s+(.+)$/gm);
         if (bullets) {
           for (const b of bullets) {
-            guidelines.push(b.replace(/^\s*[-*]\s+/, '').trim());
+            const guideline = b.replace(/^\s*[-*]\s+/, '').trim();
+            if (!guidelines.includes(guideline)) {
+              guidelines.push(guideline);
+              sources.push(file);
+            }
           }
         }
         // Also look for ## Review Guidelines section
@@ -857,7 +932,11 @@ export function loadReviewGuidelines(): string[] {
           const sectionBullets = sectionMatch[1].match(/^\s*[-*]\s+(.+)$/gm);
           if (sectionBullets) {
             for (const b of sectionBullets) {
-              guidelines.push(b.replace(/^\s*[-*]\s+/, '').trim());
+              const guideline = b.replace(/^\s*[-*]\s+/, '').trim();
+              if (!guidelines.includes(guideline)) {
+                guidelines.push(guideline);
+                sources.push(file);
+              }
             }
           }
         }
@@ -868,5 +947,5 @@ export function loadReviewGuidelines(): string[] {
     }
   }
 
-  return [...new Set(guidelines)]; // deduplicate
+  return { guidelines, sources };
 }

@@ -320,7 +320,7 @@ export class AnthropicProvider implements LLMProvider {
             ? 'length'
             : stopReason === 'tool_use'
               ? 'tool_calls'
-              : 'stop',
+              : 'error',
       toolCalls: normalToolCalls.length > 0 ? normalToolCalls : undefined,
       parsed,
     };
@@ -366,7 +366,7 @@ export class AnthropicProvider implements LLMProvider {
             ? 'length'
             : stopReason === 'tool_use'
               ? 'tool_calls'
-              : 'stop',
+              : 'error',
       toolCalls: normalToolCalls.length > 0 ? normalToolCalls : undefined,
       parsed,
     };

@@ -231,7 +231,7 @@ export async function cmdReview(args: string[]) {
   }
   const provider = providerRaw as ProviderType | undefined;
 
-  const guidelines = loadReviewGuidelines();
+  const loadedGuidelines = loadReviewGuidelines();
 
   const customGuidelineIdx = args.indexOf('--guidelines');
   const customGuidelines =
@@ -243,8 +243,8 @@ export async function cmdReview(args: string[]) {
   bullet(
     `Scope: ${scope}${baseRef ? ` (base: ${baseRef})` : ''}${commitSha ? ` (commit: ${commitSha})` : ''}`,
   );
-  if (guidelines.length > 0 || customGuidelines.length > 0) {
-    bullet(`Guidelines: ${[...guidelines, ...customGuidelines].length} rule(s)`);
+  if (loadedGuidelines.guidelines.length > 0 || customGuidelines.length > 0) {
+    bullet(`Guidelines: ${[...loadedGuidelines.guidelines, ...customGuidelines].length} rule(s)`);
   }
   if (requireProvider) {
     bullet(`Real provider: ${provider}`);
@@ -260,7 +260,11 @@ export async function cmdReview(args: string[]) {
       scope,
       baseRef,
       commitSha,
-      guidelines: [...guidelines, ...customGuidelines],
+      guidelines: [...loadedGuidelines.guidelines, ...customGuidelines],
+      guidelineSources: [
+        ...loadedGuidelines.sources,
+        ...customGuidelines.map(() => '--guidelines'),
+      ],
       outputFormat: useJson ? 'json' : 'text',
       requireProvider,
       provider,
