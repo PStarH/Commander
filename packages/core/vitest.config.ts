@@ -24,6 +24,8 @@ export default defineConfig({
     include: [
       'tests/cli/envLoader.test.ts',
       'tests/cli/action.test.ts',
+      'tests/cli/firstUserReadiness.test.ts',
+      'tests/cli/nodeSupport.test.ts',
       'tests/planner/workGraphPlanner.test.ts',
       // --- atr ---
       'tests/atr/recoveryBootstrapper.test.ts',
