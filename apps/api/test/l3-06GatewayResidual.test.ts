@@ -250,7 +250,7 @@ describe('L3-06 residual gateway enforcement', () => {
   });
 
   describe('JWT tenant binding / ambient X-Tenant-ID (AUTH-2)', () => {
-    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_ENV'] as const;
+    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_ENV', 'JWT_SECRET'] as const;
     const snap: Record<string, string | undefined> = {};
 
     function saveEnv(): void {
@@ -268,6 +268,7 @@ describe('L3-06 residual gateway enforcement', () => {
       saveEnv();
       process.env.COMMANDER_PROFILE = 'enterprise';
       process.env.NODE_ENV = 'development';
+      process.env.JWT_SECRET = 'l3-residual-test-jwt-secret-at-least-32-characters';
       delete process.env.COMMANDER_ENV;
       try {
         await withApp(
@@ -295,6 +296,7 @@ describe('L3-06 residual gateway enforcement', () => {
       saveEnv();
       process.env.COMMANDER_PROFILE = 'enterprise';
       process.env.NODE_ENV = 'development';
+      process.env.JWT_SECRET = 'l3-residual-test-jwt-secret-at-least-32-characters';
       delete process.env.COMMANDER_ENV;
       try {
         const token = signAccessToken({
@@ -355,6 +357,7 @@ describe('L3-06 residual gateway enforcement', () => {
       saveEnv();
       process.env.COMMANDER_PROFILE = 'enterprise';
       process.env.NODE_ENV = 'development';
+      process.env.JWT_SECRET = 'l3-residual-test-jwt-secret-at-least-32-characters';
       delete process.env.COMMANDER_ENV;
       try {
         const token = signAccessToken({

@@ -3,6 +3,7 @@ import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 import { executeViaBatchAPI, supportsNativeBatchAPI, type BatchAPIConfig } from '../batchApiClient';
 import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
+import { MAX_LLM_RESPONSE_BYTES } from '../runtimeConstants';
 
 interface AnthropicContent {
   type: string;
@@ -42,7 +43,7 @@ export class AnthropicProvider implements LLMProvider {
   constructor(config: { apiKey: string; baseUrl?: string; defaultModel?: string }) {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.anthropic.com/v1';
-    this.defaultModel = config.defaultModel ?? 'claude-3-5-sonnet-20241022';
+    this.defaultModel = config.defaultModel ?? 'claude-sonnet-4-6';
     // MCP-11: fail closed on a plaintext/off-allowlist base URL before any
     // request carrying the API key and prompt is sent.
     assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
@@ -144,6 +145,7 @@ export class AnthropicProvider implements LLMProvider {
       method: 'POST',
       headers,
       body: JSON.stringify(useStreaming ? { ...body, stream: true } : body),
+      signal: request.signal,
     });
 
     if (!response.ok) {
@@ -154,13 +156,40 @@ export class AnthropicProvider implements LLMProvider {
       return this.handleStreamingResponse(response, model);
     }
 
-    let data: AnthropicResponse;
+    const data = await this.readResponse(response);
+    return this.parseResponse(data, model);
+  }
+
+  private async readResponse(response: Response): Promise<AnthropicResponse> {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error(`Anthropic API returned invalid JSON (${response.status})`);
+
+    const chunks: Uint8Array[] = [];
+    let bytesRead = 0;
     try {
-      data = (await response.json()) as AnthropicResponse;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        bytesRead += value.byteLength;
+        if (bytesRead > MAX_LLM_RESPONSE_BYTES) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error(
+            `PAYLOAD_TOO_LARGE: response ${bytesRead} > ${MAX_LLM_RESPONSE_BYTES} bytes`,
+          );
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('PAYLOAD_TOO_LARGE:')) throw error;
+      throw new Error(`Anthropic API returned invalid JSON (${response.status})`);
+    }
+
+    try {
+      return JSON.parse(new TextDecoder().decode(Buffer.concat(chunks))) as AnthropicResponse;
     } catch {
       throw new Error(`Anthropic API returned invalid JSON (${response.status})`);
     }
-    return this.parseResponse(data, model);
   }
 
   private buildMessages(request: LLMRequest): AnthropicMessage[] {
@@ -231,12 +260,20 @@ export class AnthropicProvider implements LLMProvider {
     let usage: AnthropicUsage | null = null;
     let stopReason: string | null = null;
     let buffer = '';
+    let bytesRead = 0;
 
     const decoder = new TextDecoder();
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      bytesRead += value.byteLength;
+      if (bytesRead > MAX_LLM_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(
+          `PAYLOAD_TOO_LARGE: response ${bytesRead} > ${MAX_LLM_RESPONSE_BYTES} bytes`,
+        );
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');

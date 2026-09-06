@@ -97,7 +97,7 @@
   },
   "homepage": "https://github.com/PStarH/Commander#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=20.0.0"
   },
   "publishConfig": {
     "access": "public"
@@ -122,8 +122,8 @@
     "benchmark:verify": "node scripts/verify-benchmark-results.mjs || echo 'BFCL results not available — skipping'",
     "test:vitest": "vitest run --no-cache",
     "test:vitest:watch": "vitest",
-    "prepublishOnly": "tsc -p tsconfig.json",
-    "prepack": "tsc -p tsconfig.json",
+    "prepublishOnly": "pnpm run build",
+    "prepack": "pnpm run build",
     "test:node:pathsec": "pnpm exec tsx --test --test-concurrency=1 tests/tools/pathSecurity.test.ts",
     "test:security": "npx tsx --test tests/tools-security.test.ts tests/httpServer.test.ts tests/observabilityP1.test.ts tests/observabilityP2P3.test.ts",
     "docs": "typedoc",

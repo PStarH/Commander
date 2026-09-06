@@ -187,7 +187,7 @@ commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
 {{- define "commander.requireEnterpriseSecrets" -}}
 {{- if eq .Values.tier "enterprise" -}}
 {{- if not .Values.database.postgres.existingSecret -}}{{- fail "enterprise tier requires database.postgres.existingSecret" -}}{{- end -}}
-{{- if and (not .Values.api.secrets.existingSecret) (or (not .Values.api.secrets.masterKeySecret) (not .Values.api.secrets.jwtSecretSecret) (not .Values.api.secrets.apiKeySecret)) -}}{{- fail "enterprise tier requires api.secrets.existingSecret or all API secret refs" -}}{{- end -}}
+{{- if and (not .Values.api.secrets.existingSecret) (or (not .Values.api.secrets.masterKeySecret) (not .Values.api.secrets.jwtSecretSecret) (not .Values.api.secrets.apiKeySecret) (not .Values.api.secrets.capabilityTokenKeySecret) (not .Values.api.secrets.integrityKeySecret) (not .Values.api.secrets.adminPasswordSecret)) -}}{{- fail "enterprise tier requires api.secrets.existingSecret or all API secret refs, including adminPasswordSecret" -}}{{- end -}}
 {{- if not .Values.worker.authTokenSecret -}}{{- fail "enterprise tier requires worker.authTokenSecret" -}}{{- end -}}
 {{- if not .Values.adapterOps.secrets.existingSecret -}}{{- fail "enterprise tier requires adapterOps.secrets.existingSecret" -}}{{- end -}}
 {{- if not .Values.capability.existingSecret -}}{{- fail "enterprise tier requires capability.existingSecret" -}}{{- end -}}

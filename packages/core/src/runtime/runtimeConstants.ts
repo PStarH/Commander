@@ -98,6 +98,9 @@ export const MAX_OUTPUT_TOKENS_ESTIMATE = 200_000;
 /** Default LLM call timeout in milliseconds. */
 export const DEFAULT_LLM_TIMEOUT_MS = 120_000;
 
+/** Maximum number of bytes accepted from a single LLM provider response. */
+export const MAX_LLM_RESPONSE_BYTES = 8 * 1024 * 1024;
+
 // ── Circuit breaker ───────────────────────────────────────────────────────────
 
 /** Number of consecutive failures before circuit opens. */

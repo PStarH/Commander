@@ -98,7 +98,7 @@ pnpm exec tsx packages/core/src/cliEntry.ts review \
 
 该命令只读取指定 Git diff 和本地 review guidelines，最多发送 15,000 个 diff
 字符，并将 provider 输出限制为 4,000 tokens；provider 完成解析后，Commander 会拒绝
-超过 8 MiB 的响应对象。120 秒是调用方时限，不保证在传输层取消底层请求。
+超过 8 MiB 的响应正文会在 JSON 解析前被拒绝，120 秒后会中止 provider 传输。
 provider/model 不会收到任何执行工具，因此不能主动执行命令、修改文件、
 访问 Web 或写入目标系统。CLI 本身会运行固定的只读 `git diff` 子进程，并在系统临时
 目录更新跨进程限流状态。结果会标明 `source=real`、provider、model、endpoint
