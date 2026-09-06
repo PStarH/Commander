@@ -53,10 +53,7 @@ import {
 } from '@commander/effect-broker';
 import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
 import { createCapabilityAuthority, type CapabilityAuthority } from '@commander/kernel';
-import {
-  ActionAdapterRegistry,
-  parseKubernetesDeploymentDestination,
-} from '@commander/action-adapters';
+import { ACTION_GATEWAY_POLICY_ID, evaluateActionGatewayPolicy } from '@commander/contracts';
 import {
   createActionAdapterEffectExecutor,
   createProductionAdapterRegistry,
@@ -400,18 +397,14 @@ function denyActionGateway(reason: string) {
     effect: 'deny' as const,
     decisionId: 'action-gateway-deny-default',
     reason,
-    policySnapshotId: 'action-gateway-mvp-v1',
+    policySnapshotId: ACTION_GATEWAY_POLICY_ID,
   };
 }
 
 /**
- * Mirrors apps/api `evaluateAction` for policySnapshotId `action-gateway-mvp-v1`.
- * Worker re-runs this so a sealed metadata.decision alone cannot authorize effects.
+ * Worker re-runs the shared policy so a sealed metadata.decision alone cannot authorize effects.
  */
-export function evaluateActionGatewayMvpV1(
-  envelope: Record<string, unknown>,
-  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
-): {
+export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
   effect: 'allow' | 'deny' | 'require_approval';
   decisionId: string;
   reason: string;
@@ -420,66 +413,28 @@ export function evaluateActionGatewayMvpV1(
   const effectType = envelope.effectType;
   const tool = envelope.tool;
   const destination = envelope.destination;
-  const adapter = typeof effectType === 'string' ? actionAdapters.resolve(effectType) : null;
   if (
-    adapter &&
-    (effectType === adapter.descriptor.effectType ||
-      effectType === adapter.descriptor.compensationEffectType) &&
-    tool === adapter.descriptor.toolName &&
-    adapter.descriptor.adapterId === 'kubernetes.deployment.rollback' &&
-    typeof destination === 'string'
+    typeof effectType !== 'string' ||
+    typeof tool !== 'string' ||
+    typeof destination !== 'string'
   ) {
-    try {
-      parseKubernetesDeploymentDestination(destination);
-      const effect = adapter.descriptor.defaultGatewayEffect;
-      return {
-        effect,
-        decisionId: `action-gateway-manifest-${effect}`,
-        reason: `Registered adapter policy requires '${effect}' for this exact action.`,
-        policySnapshotId: 'action-gateway-mvp-v1',
-      };
-    } catch {
-      // Malformed destinations remain deny-by-default below.
-    }
-  }
-  const isCreate = effectType === 'demo.ticket.create' && tool === 'ticket.create';
-  const isCompensation =
-    effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate';
-  if (!isCreate && !isCompensation) {
     return {
       effect: 'deny',
       decisionId: 'action-gateway-deny',
       reason: `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
-      policySnapshotId: 'action-gateway-mvp-v1',
+      policySnapshotId: ACTION_GATEWAY_POLICY_ID,
     };
   }
-  if (destination === 'demo://tickets') {
-    return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
-      policySnapshotId: 'action-gateway-mvp-v1',
-    };
-  }
-  if (destination === 'demo://tickets/approval') {
-    return {
-      effect: 'require_approval',
-      decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
-      policySnapshotId: 'action-gateway-mvp-v1',
-    };
-  }
-  return {
-    effect: 'deny',
-    decisionId: 'action-gateway-deny',
-    reason: `Destination '${String(destination)}' is not registered by the Action Gateway.`,
-    policySnapshotId: 'action-gateway-mvp-v1',
-  };
+  const { effect, decisionId, reason, policySnapshotId } = evaluateActionGatewayPolicy({
+    effectType,
+    tool,
+    destination,
+  });
+  return { effect, decisionId, reason, policySnapshotId };
 }
 
 export function createWorkerPolicyEvaluator(
   kernelOrEnv: ActionGatewayPolicyKernel | NodeJS.ProcessEnv = process.env,
-  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
 ): PolicyEvaluator {
   const kernel = isActionGatewayPolicyKernel(kernelOrEnv) ? kernelOrEnv : null;
   return {
@@ -608,8 +563,8 @@ export function createWorkerPolicyEvaluator(
         // Defense in depth: re-evaluate mvp-v1 against the bound envelope so a
         // forged or post-create-mutated metadata.decision cannot authorize work.
         let revalidatedDecisionId: string | null = null;
-        if (metadata.policySnapshotId === 'action-gateway-mvp-v1') {
-          const fresh = evaluateActionGatewayMvpV1(actionEnvelope, actionAdapters);
+        if (metadata.policySnapshotId === ACTION_GATEWAY_POLICY_ID) {
+          const fresh = evaluateActionGatewayMvpV1(actionEnvelope);
           if (
             fresh.effect !== actionDecision.effect ||
             fresh.decisionId !== actionDecision.decisionId
@@ -808,7 +763,7 @@ export function createEffectBroker(
   assertDurableCapabilityStores(capability, kernel);
 
   const actionAdapters = createProductionAdapterRegistry(undefined, env);
-  const policy = createWorkerPolicyEvaluator(kernel, actionAdapters);
+  const policy = createWorkerPolicyEvaluator(kernel);
   const effectKernel = withDefaultLlmAllowlist(kernel);
   const executor = createWorkerEffectExecutor(
     undefined,

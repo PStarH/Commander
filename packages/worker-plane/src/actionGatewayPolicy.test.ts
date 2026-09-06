@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
-import {
-  ActionAdapterRegistry,
-  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
-  type ActionAdapter,
-} from '@commander/action-adapters';
+import { evaluateActionGatewayPolicy } from '@commander/contracts';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import { createWorkerPolicyEvaluator, evaluateActionGatewayMvpV1 } from './bootstrap.js';
 
@@ -150,11 +146,10 @@ function evaluate(
     runId: string;
     stepId: string;
     request?: Record<string, unknown>;
-    registry?: ActionAdapterRegistry;
   },
 ) {
   const request = input.request ?? envelope;
-  return createWorkerPolicyEvaluator(repository, input.registry).evaluate({
+  return createWorkerPolicyEvaluator(repository).evaluate({
     tenantId: input.tenantId,
     runId: input.runId,
     stepId: input.stepId,
@@ -166,22 +161,6 @@ function evaluate(
 
 describe('L4-01 Action Gateway worker policy', () => {
   it('allows a registered Kubernetes manifest action only after exact bound approval', async () => {
-    const adapter: ActionAdapter = {
-      descriptor: KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
-      async execute() {
-        return {};
-      },
-      async queryOutcome() {
-        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
-      },
-      async compensate() {
-        return {};
-      },
-      async queryCompensationOutcome() {
-        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
-      },
-    };
-    const registry = new ActionAdapterRegistry([adapter]);
     const kubernetesEnvelope = {
       ...envelope,
       tool: 'kubernetes.deployment.rollback',
@@ -204,7 +183,6 @@ describe('L4-01 Action Gateway worker policy', () => {
           runId: action.runId,
           stepId: action.stepId,
           request: action.actionEnvelope,
-          registry,
         })
       ).effect,
       'deny',
@@ -230,7 +208,6 @@ describe('L4-01 Action Gateway worker policy', () => {
       runId: action.runId,
       stepId: action.stepId,
       request: action.actionEnvelope,
-      registry,
     });
     assert.equal(approved.effect, 'allow');
     assert.equal(approved.decisionId, 'action-gateway-allow-after-approval');
@@ -243,7 +220,6 @@ describe('L4-01 Action Gateway worker policy', () => {
         ...action.actionEnvelope,
         destination: 'k8s://kind/commander/deployments/other',
       },
-      registry,
     });
     assert.equal(crossDestination.effect, 'deny');
     assert.equal(crossDestination.reason, 'ACTION_DIGEST_MISMATCH');
@@ -263,7 +239,6 @@ describe('L4-01 Action Gateway worker policy', () => {
         runId: rejected.runId,
         stepId: rejected.stepId,
         request: rejected.actionEnvelope,
-        registry,
       });
       assert.equal(decision.effect, 'deny', runId);
       assert.equal(decision.reason, 'ACTION_GATEWAY_DECISION_REVALIDATION_FAILED', runId);
@@ -271,36 +246,26 @@ describe('L4-01 Action Gateway worker policy', () => {
   });
 
   it('revalidates a registered Kubernetes compensation as approval-required', () => {
-    const adapter: ActionAdapter = {
-      descriptor: KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
-      async execute() {
-        return {};
-      },
-      async queryOutcome() {
-        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
-      },
-      async compensate() {
-        return {};
-      },
-      async queryCompensationOutcome() {
-        return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
-      },
+    const policyInput = {
+      ...envelope,
+      tool: 'kubernetes.deployment.rollback',
+      destination: 'k8s://kind/commander/deployments/api',
+      effectType: 'compensate.kubernetes.deployment.rollback',
+      args: { targetRevision: '2', reason: 'compensation proof' },
     };
-    const decision = evaluateActionGatewayMvpV1(
-      {
-        ...envelope,
-        tool: 'kubernetes.deployment.rollback',
-        destination: 'k8s://kind/commander/deployments/api',
-        effectType: 'compensate.kubernetes.deployment.rollback',
-        args: { targetRevision: '2', reason: 'compensation proof' },
-      },
-      new ActionAdapterRegistry([adapter]),
-    );
+    const decision = evaluateActionGatewayMvpV1(policyInput);
+    const shared = evaluateActionGatewayPolicy(policyInput);
     assert.deepEqual(decision, {
       effect: 'require_approval',
       decisionId: 'action-gateway-manifest-require_approval',
       reason: "Registered adapter policy requires 'require_approval' for this exact action.",
       policySnapshotId: 'action-gateway-mvp-v1',
+    });
+    assert.deepEqual(decision, {
+      effect: shared.effect,
+      decisionId: shared.decisionId,
+      reason: shared.reason,
+      policySnapshotId: shared.policySnapshotId,
     });
   });
 
