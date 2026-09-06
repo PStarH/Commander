@@ -1,7 +1,7 @@
 # Enterprise Shadow Pilot Design
 
-**Status:** Approved for implementation
-**Date:** 2026-09-06
+**Status:** Revised direction; phase acceptance required before activation
+**Date:** 2026-09-07
 **Owner:** Commander engineering
 **Target:** One dedicated, customer-cloud E0-SHADOW deployment
 
@@ -23,11 +23,15 @@ customer retains control of data, network policy, PostgreSQL, encryption, and
 deployment credentials. Commander engineering assists with installation and
 operation.
 
-The engagement has two activation stages:
+The engagement has two independently deliverable phases:
 
-1. **Offline replay:** the customer exports approved observation records, runs
-   local validation, and submits only records that satisfy the pilot schema.
-2. **Live observation:** after the customer accepts the offline evidence, an
+1. **Phase A, historical evaluation:** the customer registers a reviewed manifest
+   and imports approved observations with a dedicated CLI inside its environment.
+   Deliver import/export/verify/delete commands and an example report. PostgreSQL
+   and a report signing key are required; HTTP, Helm, service certificates, and
+   production integration are not. Offline means no live-source/provider access,
+   not no database connection. This phase is accepted and delivered independently.
+2. **Phase B, live observation:** after the customer accepts the offline evidence, an
    approved producer asynchronously submits a small sample of the same records
    to the dedicated Shadow service.
 
@@ -44,8 +48,10 @@ execute or enqueue the proposed action.
 - Do not load EffectBroker, worker execution, action adapters, tool execution,
   Kubernetes clients, or LLM providers in the Shadow process.
 - Do not mount Kubernetes credentials or provider credentials.
-- Use PostgreSQL as the only evidence store. No memory, JSON, SQLite, Redis, or
-  local-file fallback is permitted.
+- Use PostgreSQL as the only authoritative evidence store. In-memory computation
+  is allowed; JSON, SQLite, Redis, and local persistence fallbacks are not.
+  Permitted writes are limited to the dedicated Shadow schema and explicit
+  owner-only exports. Target-system writes remain forbidden.
 - Bind every record to one dedicated tenant and reject cross-tenant reads or
   writes.
 - Default to loopback binding outside containers; the Helm deployment must
@@ -71,14 +77,30 @@ proxy.
 
 A small dedicated service exposes only health/readiness and versioned Shadow
 endpoints. It authenticates the producer, enforces body and concurrency limits,
-validates the strict schema, rejects replays, and passes the canonical envelope
+validates the strict schema, rejects conflicting replays, and passes the canonical envelope
 to the evaluator. Arbitrary method/path forwarding is impossible by design.
 
 **Read-only evaluator**
 
-The evaluator applies the fixed rollback admission policy and returns one of:
-`would_allow`, `would_deny`, or `insufficient_evidence`. It emits stable reason
+The evaluator applies a pinned rollback policy and returns `allow`, `deny`,
+`require_approval`, or `insufficient_evidence`. Results are hypothetical;
+`allow` is not execution authorization. It emits stable reason
 codes and cannot construct, authorize, enqueue, or dispatch an external effect.
+
+The existing sources are `apps/api/src/actionGatewayEndpoints.ts:evaluateAction`
+and `packages/worker-plane/src/bootstrap.ts:evaluateActionGatewayMvpV1` for
+`action-gateway-mvp-v1`. Extract their deterministic logic and non-executable
+rollback descriptor into a dependency-free shared module. Keep API and worker
+decisions unchanged, proven by characterization tests. Do not copy policy rules
+into a separate Shadow engine or import the executable adapter registry.
+If extraction requires changing execution behavior, report the scope conflict.
+
+Each campaign pins policy ID, module version, descriptor, destination rules, and
+digest. Reject unknown versions. Before implementation, enumerate the exact
+facts required by the shared evaluator and their schema. Missing facts or
+pseudonymization that destroys a predicate yield `insufficient_evidence`.
+Producer assertions cannot prove identity, approval authenticity, lease validity,
+rollback success, or recovery. E1, G4, G5, and rollback execution remain frozen.
 
 **Evidence store**
 
@@ -114,7 +136,7 @@ The v1 envelope contains only these semantic fields:
 - pseudonymous actor ID and source-system ID;
 - target cluster, namespace, deployment, and requested revision identifiers as
   customer-approved opaque values;
-- production decision: `allowed`, `denied`, or `unknown`;
+- production policy decision: `allow`, `deny`, `require_approval`, or `unknown`;
 - approved policy facts expressed as bounded enums and booleans;
 - producer-generated content digest.
 
@@ -122,26 +144,43 @@ It must not contain free-form prompts, request/response bodies, headers, tokens,
 cookies, source code, ticket text, logs, email addresses, or credentials.
 Unknown fields, oversize strings, invalid timestamps, mismatched tenant IDs,
 duplicate IDs with different content, and unsupported workflow identifiers are
-hard failures. A batch index may appear only once, every record in a batch must
-declare the same bounded batch size, and an expired incomplete batch contributes
-its absent indexes to the `missing` count. Regex DLP runs after schema validation
-as an additional rejection layer, never as the primary data boundary.
+hard failures. Bound records to 16 KiB, identifiers to 128 ASCII characters, and
+batches to 1-10,000 observations. Document transformations in the customer field
+worksheet; opaque values must preserve predicates or be marked insufficient.
+Regex DLP is a secondary known-pattern check, not a guarantee that every opaque
+value is non-sensitive.
+
+Register an immutable signed manifest before ingestion, with campaign, tenant,
+producer, policy digest, batch ID, closing time, and expected digest per index.
+A trusted operator registers historical manifests; Phase B permits an explicitly
+authorized producer to seal bounded batches. Use RFC 8785 canonical JSON and
+SHA-256 with signatures/digests outside the object covered. Check existing
+dependencies before selecting a maintained canonicalizer.
 
 ## 6. Authentication And Replay Protection
 
-The live endpoint requires a dedicated producer identity. The deployment uses
-customer-managed mTLS at the service boundary and a tenant-scoped application
-signature inside the request. The signature covers method, fixed path,
-timestamp, observation ID, tenant ID, and body digest. Timestamps have a bounded
-acceptance window, and observation IDs are inserted atomically so a replay is
-idempotent only when its digest is identical.
+Phase B terminates mTLS inside the service using Node TLS. Map verified client
+certificates to configured tenant/producer identities; never trust proxy identity
+headers or expose an unauthenticated alternate listener. An Ed25519 application
+signature covers canonical method, fixed route, request ID, sent-at time, tenant,
+producer, and body digest. Require certificate and signature identity agreement
+and sent-at within 300 seconds. Historical occurrence time is a separate field.
+Pin key IDs; rotation uses explicit overlap and revoked keys fail immediately.
+Operator credentials are distinct from producer credentials.
+
+Database uniqueness binds tenant/campaign/batch/index and observation identity.
+Identical retries return the existing result without increasing counts; changed
+content conflicts. Require matching registered digests. After response loss,
+retries use a fresh signed request with the same observation identity. Limit
+manifest bodies to 2 MiB, observations to 16 KiB, concurrent requests to 16,
+and request duration to 10 seconds. Producers require bounded queues and retries.
 
 Offline replay uses the same envelope validation and digest rules without a
 network listener. It never bypasses tenant or retention validation.
 
 ## 7. Deployment Security
 
-The Helm profile creates a dedicated Shadow Deployment, Service, Secret
+The Phase B Helm profile creates a dedicated Shadow Deployment, Service, Secret
 references, NetworkPolicy, and PostgreSQL role.
 
 - `automountServiceAccountToken: false` and no RBAC grants.
@@ -159,24 +198,63 @@ references, NetworkPolicy, and PostgreSQL role.
 The profile remains dedicated single-customer. Shared multi-tenant Shadow is out
 of scope.
 
+Both phases reuse verified PostgreSQL TLS connections and a dedicated schema.
+Separate installation/DDL authority from non-owner ingestion, report-reader, and
+retention/withdrawal roles. Runtime roles cannot access other schemas, manage
+roles, or execute DDL. Verify denials in real database tests. No runtime migration
+endpoint is exposed. Verify CNI enforcement; valid NetworkPolicy YAML alone is
+not isolation proof.
+
 ## 8. Evidence, Drift, And Retention
 
-Each declared batch index is counted in exactly one terminal state: `missing`,
-`rejected`, `compared`, or `failed`. `received` and `evaluated` are intermediate
-states only. Reports expose the declared batch size and exact terminal counts so
-missing and rejected samples cannot disappear from the denominator.
+At manifest closure, each expected index has one terminal status: `missing`,
+`rejected`, `compared`, `uncomparable`, or `failed`. Their sum equals manifest size.
+`received` and `evaluated` are intermediate. Late arrivals require a new manifest
+and cannot modify a closed report. Only authenticated, digest-bound invalid
+records count as rejected; unbound attempts contribute separate ingress counters.
+Database outages leave accounting incomplete until reconciliation. Registered
+batches that never arrive are missing; unregistered batches and unsampled traffic
+are unobservable. Claim declared-sample coverage, never total production coverage.
 
-Drift compares the customer's production decision with Commander's hypothetical
-decision and includes stable reason-code differences and evaluation latency.
+Drift compares recorded and hypothetical policy decisions, preserving approval
+as a distinct result. `unknown` and `insufficient_evidence` are uncomparable.
+Customer reason codes use an approved enum; evaluator latency measures only local
+computation. Differences need customer adjudication before being called errors.
 HTTP status alone is not a decision comparison. Cost remains absent unless a
 measured cost source is later approved; it must never be emitted as a hardcoded
 zero implying measurement.
 
-Retention is mandatory and bounded in days. Expiry deletes canonical records and
+Example report: 100 expected records, 5 missing, 3 rejected, 2 failed, 10
+uncomparable, 80 compared. Show 20 differences out of 80 compared alongside
+coverage 80/100 and a three-decision matrix. Individual differences include
+pseudonymous observation ID, both decisions, reason codes, and policy digest.
+
+Retention is explicitly configured between 1 and 30 days. Cleanup runs at least
+hourly; overdue cleanup fails readiness and appears in status. Expiry deletes canonical records and
 associated evidence in PostgreSQL and writes a minimal deletion audit record
 that contains no customer payload. Tenant withdrawal blocks new ingestion first,
 then deletes retained pilot data. Exported reports are sanitized and written
 atomically with owner-only permissions.
+
+Admission and withdrawal lock the same campaign row transactionally. Withdrawal
+closes ingestion before deletion; concurrent requests cannot insert afterward.
+Retain a minimal non-payload tombstone to reject old producer credentials, with
+customer-agreed retention. Backup expiry and exported copies have separate
+documented deletion responsibilities; primary-store deletion does not erase them.
+
+### Evidence Verification
+
+Export a versioned bundle with signed input manifest, policy snapshot, sanitized
+decision-relevant facts, terminal statuses, decisions/reasons, counts, evaluator
+version, source revision, and file hashes. Rejected raw records are never exported.
+Use atomic 0600 exports and an operator-managed Ed25519 signing key. The verifier
+requires a public key obtained through a separately trusted customer channel,
+checks algorithm/key ID/revocation, hashes, signatures, and count reconciliation.
+A public key bundled with the report is not independently trusted.
+
+Signature verification proves integrity and signer attribution. Re-evaluation
+with pinned policy and sanitized facts separately proves deterministic results
+for complete records. Neither proves producer facts true or an action executed.
 
 ## 9. Failure Behavior
 
@@ -195,12 +273,13 @@ atomically with owner-only permissions.
 
 ## 10. Customer Delivery Pack
 
-The repository will include:
+Phase A delivers the following historical-evaluation materials; Phase B adds
+live producer, TLS/key operation, sampling, network validation, and Helm guides:
 
 - a two-page pilot overview and customer invitation text;
 - a data-boundary worksheet naming every accepted field;
 - security and architecture notes for customer review;
-- offline replay and dedicated Helm deployment instructions;
+- historical import instructions in Phase A and dedicated Helm instructions in Phase B;
 - retention, deletion, withdrawal, export, and teardown procedures;
 - a pilot charter template with one workflow, one namespace, named approvers,
   escalation owner, observation period, success metrics, and kill criteria;
@@ -213,7 +292,9 @@ repository.
 
 ## 11. Acceptance Evidence
 
-Implementation is accepted only when fresh tests prove:
+Each phase is accepted when its applicable checks pass: ingress, certificates,
+ServiceAccount, and Helm checks apply to Phase B; policy, data, database, CLI,
+retention, and evidence checks apply to both. Fresh tests must prove:
 
 - original POST/PUT/PATCH/DELETE requests cannot be replayed;
 - the only ingestion route accepts the canonical envelope and rejects all extra
@@ -224,14 +305,28 @@ Implementation is accepted only when fresh tests prove:
   closed;
 - DLP rejects secrets and free-form customer content after allowlist validation;
 - PostgreSQL is authoritative across restart, with no fallback;
-- drift denominators include rejected, missing, failed, and compared records;
+- drift denominators include rejected, missing, failed, uncomparable, and compared
+  records, including wholly absent registered batches and late/conflicting retries;
 - retention and withdrawal deletion remove tenant data without cross-tenant
   effects;
 - evidence exports verify independently and contain no prohibited data;
-- Helm static checks pass and the natural CI Kind lifecycle passes in the
-  supported environment;
+- Phase B Helm static and scoped Shadow runtime checks pass in natural CI;
+  generic lifecycle success alone is not evidence of Shadow isolation;
 - a clean-room operator completes offline replay, report export, deletion, and
   teardown using only the customer documentation.
+
+Implement and accept in order: shared policy parity; strict manifests and
+comparison; PostgreSQL roles/transactions/withdrawal; Phase A CLI, evidence and
+customer report; then Phase B transport and deployment. Phase A has no Helm or
+network-listener acceptance dependency. Test database and network boundaries in
+approved CI; do not start local Docker, Kind, or PostgreSQL. Do not manually
+rerun CI or inspect raw CI logs. No external customer communication is authorized
+by this implementation specification.
+
+The charter sets a declared-sample coverage target and usefulness criteria before
+sampling. Any unexpected target-system write or prohibited data field stops
+ingestion. Customer acceptance is a separate recorded decision, not inferred
+from CI or from a mismatch percentage.
 
 No real customer traffic is used during repository verification. A customer
 pilot begins only after its data boundary, consent, retention, withdrawal, and
