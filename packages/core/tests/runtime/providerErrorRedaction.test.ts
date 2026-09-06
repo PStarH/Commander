@@ -14,6 +14,27 @@ const request: LLMRequest = {
 };
 
 describe('Provider error redaction', () => {
+  it('Anthropic uses the current Sonnet model when none is requested', async () => {
+    const originalFetch = globalThis.fetch;
+    let requestBody: unknown;
+    globalThis.fetch = async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return new Response(
+        JSON.stringify({ content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn' }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    };
+
+    const provider = new AnthropicProvider({ apiKey: 'anthropic-test-api-key' });
+    try {
+      await provider.call({ messages: [{ role: 'user', content: 'review' }] });
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+
+    assert.equal((requestBody as { model?: unknown }).model, 'claude-sonnet-4-6');
+  });
+
   const cases: Array<{
     name: string;
     provider: LLMProvider;
