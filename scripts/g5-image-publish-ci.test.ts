@@ -67,12 +67,17 @@ describe('G5 GHCR image publisher', () => {
       steps.find((step) => step.uses === 'docker/login-action@v3')?.with?.registry,
       'ghcr.io',
     );
+    assert.ok(
+      steps.some((step) => step.uses === 'docker/setup-qemu-action@v3'),
+      'workflow must enable arm64 emulation before cross-platform builds',
+    );
 
     const gateway = steps.find((step) => step.name === 'Build and push Gateway image');
     assert.equal(gateway?.uses, 'docker/build-push-action@v6');
     assert.equal(gateway?.with?.file, 'apps/api/Dockerfile');
     assert.equal(gateway?.with?.context, '.');
     assert.equal(gateway?.with?.push, true);
+    assert.equal(gateway?.with?.platforms, 'linux/arm64');
     assert.match(String(gateway?.with?.tags), /\$\{\{ env\.GATEWAY_IMAGE \}\}/);
     assert.equal(gateway?.with?.provenance, 'mode=max');
 
@@ -81,6 +86,7 @@ describe('G5 GHCR image publisher', () => {
     assert.equal(worker?.with?.file, 'packages/worker-plane/Dockerfile');
     assert.equal(worker?.with?.context, '.');
     assert.equal(worker?.with?.push, true);
+    assert.equal(worker?.with?.platforms, 'linux/arm64');
     assert.match(String(worker?.with?.tags), /\$\{\{ env\.WORKER_IMAGE \}\}/);
     assert.equal(worker?.with?.provenance, 'mode=max');
 
