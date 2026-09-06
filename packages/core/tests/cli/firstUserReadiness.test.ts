@@ -494,7 +494,7 @@ describe('first-user CLI readiness', () => {
       await expect(
         executeReview({
           scope: 'commit',
-          commitSha: 'a17575240',
+          commitSha: 'HEAD',
           requireProvider: true,
           provider: 'anthropic',
         }),
