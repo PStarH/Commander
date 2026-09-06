@@ -607,9 +607,17 @@ describe('first-user CLI readiness', () => {
     vi.useFakeTimers();
     vi.stubEnv('OPENAI_API_KEY', 'test-key-not-a-credential');
     vi.stubEnv('OPENAI_BASE_URL', 'https://provider.invalid/v1');
+    let fetchSignal: AbortSignal | undefined;
     vi.stubGlobal(
       'fetch',
-      vi.fn(() => new Promise<Response>(() => undefined)),
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        fetchSignal = init?.signal ?? undefined;
+        return new Promise<Response>((_resolve, reject) => {
+          fetchSignal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted', 'AbortError'));
+          });
+        });
+      }),
     );
 
     const assertion = expect(
@@ -622,6 +630,7 @@ describe('first-user CLI readiness', () => {
     ).rejects.toThrow('TIMEOUT after 120000ms');
     await vi.advanceTimersByTimeAsync(120_000);
     await assertion;
+    expect(fetchSignal?.aborted).toBe(true);
   });
 
   it('rejects an oversized provider response', async () => {
