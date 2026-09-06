@@ -16,8 +16,8 @@
 > it for unattended production workloads or sensitive data without your own review.
 
 <p align="center">
-  <code>pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo" --stream</code><br>
-  <sub>Agent events and tool calls stream to your terminal. Configured verification checks run on outputs. 25 providers. One command.</sub>
+  <code>pnpm demo:l4-a</code><br>
+  <sub>After the source setup below: a credential-free simulated run with no provider calls or target-system writes.</sub>
 </p>
 
 <p align="center">
@@ -52,62 +52,102 @@ Commander ships as two distinct SKUs. The **Local CLI** is what you run on your
 own machine; the **Enterprise Gateway** is a durable, multi-tenant server path
 that is still **alpha** for enterprise use.
 
-| | Local CLI | Enterprise Gateway |
-| --- | --- | --- |
-| **Entry** | `commander run` / `pnpm gui` | `POST /v1/runs` via `apps/api` |
-| **State** | Local SQLite / JSON (`.commander_state/`) | Postgres kernel (`runs`/`steps`/`events`/outbox/leases) |
-| **Auth** | None (single user) | `COMMANDER_API_KEY` + JWT tenant claims |
-| **Tenancy** | None (implicit `__default__`) | Alpha — kernel RLS + tenant-aware singletons; storage isolation opt-in |
-| **Durable kernel** | No | Yes (auto-on in production / when a Postgres DSN is set) |
-| **Status** | Alpha local evaluation tool — not production-ready | Alpha — not yet live-fire-proven on real backends |
+|                    | Local CLI                                                                     | Enterprise Gateway                                                     |
+| ------------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| **Entry**          | `commander review --real` (first provider trial); other commands remain alpha | `POST /v1/runs` via `apps/api`                                         |
+| **State**          | Local SQLite / JSON (`.commander_state/`)                                     | Postgres kernel (`runs`/`steps`/`events`/outbox/leases)                |
+| **Auth**           | None (single user)                                                            | `COMMANDER_API_KEY` + JWT tenant claims                                |
+| **Tenancy**        | None (implicit `__default__`)                                                 | Alpha — kernel RLS + tenant-aware singletons; storage isolation opt-in |
+| **Durable kernel** | No                                                                            | Yes (auto-on in production / when a Postgres DSN is set)               |
+| **Status**         | Alpha local evaluation tool — not production-ready                            | Alpha — not yet live-fire-proven on real backends                      |
 
-The quick start below defaults to the **Local CLI**. To run the Enterprise
-Gateway instead, see [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) and the
-Docker block at the end of Quick Start.
-
-For the bounded design-partner path, start with the [enterprise pilot
-quickstart](docs/enterprise/quickstart.md), then use the [Kubernetes rollback
-workflow template](docs/enterprise/workflow-template-kubernetes-rollback.md).
+The first-user path below is a source-based **E0 simulated demo**. It needs no
+credentials, makes no provider or target-system writes, and is separate from
+provider-backed Local CLI use and the E1 Enterprise Gateway pilot path. Clone,
+install, and build still write the checkout, dependency cache, and build output
+on your machine.
 
 ---
 
 ## Quick Start
 
-### Local CLI (default)
+### E0 simulated demo (recommended first run)
+
+Use Node.js 22.x and pnpm 9 (Corepack selects the repository's pinned pnpm
+version). This lifecycle runs entirely from a source checkout:
+
+The clone and a cold install need ordinary access to GitHub and the package
+registry. The `--offline` flag means no provider request, not a network-free
+installation.
 
 ```bash
-# Clone and install
-git clone https://github.com/PStarH/Commander.git
-cd Commander && pnpm install
+git clone --branch codex/release-20260810 --single-branch \
+  https://github.com/PStarH/Commander.git
+cd Commander
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
 
-# Set any API key — Commander auto-detects the provider
-export OPENAI_API_KEY=sk-...
-# or: ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / GROQ_API_KEY / ...
-
-# One-click Web Console (API + Web + auto-open browser)
-pnpm gui
-
-# Or run from the terminal
-pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vulnerabilities"
-pnpm exec tsx packages/core/src/cliEntry.ts run "refactor the auth module" --dry-run
-pnpm exec tsx packages/core/src/cliEntry.ts run "explain the architecture" --stream
+pnpm exec tsx packages/core/src/cliEntry.ts --help
+pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
+pnpm demo:l4-a
 ```
 
-> CLI commands run the **Local CLI** (embedded runtime). Enterprise routing is
-> via the `/v1` gateway — see the block below.
+`doctor --offline` checks local prerequisites without contacting an LLM
+provider. `demo:l4-a` uses simulated/in-memory dependencies and loopback
+servers; it does not invoke a real provider or perform an external write. The
+demo owns and automatically stops its loopback servers, so there is no external
+resource teardown command. Successful command exit completes E0 teardown.
+
+Passing this path is development/demo evidence only. It is not a published
+package install, an E1 governed-write proof, or evidence that Commander is
+production-ready.
+
+### Provider-backed read-only review (first real-provider trial)
+
+```bash
+# Choose one provider explicitly.
+export OPENAI_API_KEY=sk-...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=openai
+
+# Or use Anthropic.
+export ANTHROPIC_API_KEY=sk-ant-...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=anthropic
+```
+
+This command reads the selected Git diff and local review guidelines, sends at
+most 15,000 diff characters to the explicitly selected provider, and caps the
+provider response at 4,000 tokens. After provider parsing, Commander rejects a
+completed response object over 8 MiB. Its 120-second caller-side timeout is not
+a transport-level cancellation guarantee. The provider/model receives no
+execution tools, so it cannot initiate commands, file edits, web browsing, or
+target-system writes. The CLI itself runs fixed, read-only `git diff` commands
+and updates cross-process rate-limit state in the system temporary directory.
+Output identifies `source=real`, provider, model, endpoint host, prompt byte
+count, the actual represented portion of a truncated diff, and the
+completed-response cap. Missing credentials, empty diffs, provider errors,
+timeouts, oversized responses, and
+invalid structured output fail with a nonzero exit status instead of falling
+back to a simulated review.
+
+The diff and guidelines leave your machine, may contain repository-sensitive
+material, and are subject to provider retention. Read [PRIVACY.md](PRIVACY.md)
+first. Ordinary `commander run`, `pnpm gui`, MCP, SDK, and Enterprise Gateway
+flows are not part of this first-user path and must not be presented as
+read-only or production-ready.
 
 ### Enterprise Gateway (alpha)
 
-```bash
-export COMMANDER_API_KEY="your-secret-key"
-export COMMANDER_KERNEL_DATABASE_URL="postgres://user:pass@host:5432/commander"
-export OPENAI_API_KEY="sk-..."
-docker compose up -d
-```
-
-API on `:4000`, Web on `:3000`. Requires a Postgres DSN; the durable kernel
-auto-enables in production. Multi-tenant isolation is **alpha** — review
-[ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) before any pilot.
+This first-user guide intentionally does not provide a runnable Gateway command:
+the path requires additional secrets, PostgreSQL, and operational controls. Use
+the [enterprise quickstart](docs/enterprise/quickstart.md) together with
+[ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md). The bounded E1
+design-partner workflow remains gated by the
+[launch-readiness runbook](docs/runbooks/design-partner-launch-readiness.md).
+Starting a development Gateway is not authorization or proof for external
+writes, and shared multi-tenant use remains alpha.
 
 ---
 
@@ -263,13 +303,13 @@ Open `http://localhost:5173`. The console provides:
 > All benchmarks below run in **simulated/scripted harnesses** or as **CI
 > baselines**. They measure the harness, not a production SLA or SOC evidence.
 
-| Suite             | Coverage                           | Result                                       |
-| ----------------- | ---------------------------------- | -------------------------------------------- |
-| Chaos Engineering | 200 synthetic + 55 mutation (=255)   | Harness entry; see the retained baseline matrix |
-| Red Team          | 47 scenarios, 8 attack categories  | all listed cases blocked (simulated harness) |
-| AgentDojo         | 12 security test cases             | all listed cases blocked (simulated harness) |
-| GAIA Spine        | Core capability benchmark          | Scheduled quick/offline run; full fixture pending |
-| SLO               | 99.95% API availability, <5s p95 schedule | CI baseline, not production SLA              |
+| Suite             | Coverage                                  | Result                                            |
+| ----------------- | ----------------------------------------- | ------------------------------------------------- |
+| Chaos Engineering | 200 synthetic + 55 mutation (=255)        | Harness entry; see the retained baseline matrix   |
+| Red Team          | 47 scenarios, 8 attack categories         | all listed cases blocked (simulated harness)      |
+| AgentDojo         | 12 security test cases                    | all listed cases blocked (simulated harness)      |
+| GAIA Spine        | Core capability benchmark                 | Scheduled quick/offline run; full fixture pending |
+| SLO               | 99.95% API availability, <5s p95 schedule | CI baseline, not production SLA                   |
 
 Full matrix: [BENCHMARK.md](BENCHMARK.md)
 

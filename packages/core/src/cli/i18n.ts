@@ -117,7 +117,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickcheck.label.git': 'Git',
     'quickcheck.label.workspace': 'Workspace',
     'quickcheck.label.tools': 'Tools',
-    'quickcheck.fix.node': 'Install Node.js v20+ from https://nodejs.org',
+    'quickcheck.fix.node': 'Install Node.js 22.x from https://nodejs.org',
     'quickcheck.fix.provider':
       'export OPENAI_API_KEY=sk-... (or ANTHROPIC_API_KEY, GOOGLE_API_KEY, etc.)',
     'quickcheck.fix.git': 'Install git: https://git-scm.com',
@@ -128,6 +128,8 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickcheck.tools_configured': '{n} tools configured',
     'quickcheck.provider_run_hint': '{type} · {model}',
     'quickcheck.provider_missing': 'No API key found',
+    'quickcheck.provider_optional':
+      'Optional for simulated demo; required for provider-backed runs',
 
     // ── Doctor ──────────────────────────────────────────────────────
     'doctor.title': 'DOCTOR',
@@ -137,7 +139,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.connectivity': 'CONNECTIVITY',
     'doctor.all.passed': 'All checks passed ✓',
     'doctor.needs.attention': 'Some checks need attention',
-    'doctor.check.node': 'Node.js v20+',
+    'doctor.check.node': 'Node.js 22.x',
     'doctor.check.node_current': 'Current: {version}. Install from https://nodejs.org',
     'doctor.check.git': 'Git',
     'doctor.check.git_version': '{version}',
@@ -1462,7 +1464,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickcheck.label.git': 'Git',
     'quickcheck.label.workspace': '工作区',
     'quickcheck.label.tools': '工具',
-    'quickcheck.fix.node': '安装 Node.js v20+: https://nodejs.org',
+    'quickcheck.fix.node': '安装 Node.js 22.x: https://nodejs.org',
     'quickcheck.fix.provider':
       'export OPENAI_API_KEY=sk-...（或 ANTHROPIC_API_KEY、GOOGLE_API_KEY 等）',
     'quickcheck.fix.git': '安装 git: https://git-scm.com',
@@ -1472,6 +1474,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'quickcheck.tools_configured': '已配置 {n} 个工具',
     'quickcheck.provider_run_hint': '{type} · {model}',
     'quickcheck.provider_missing': '未找到 API key',
+    'quickcheck.provider_optional': '模拟演示可选；provider-backed 运行时必需',
 
     // ── Doctor ──────────────────────────────────────────────────────
     'doctor.title': '诊断',
@@ -1481,7 +1484,7 @@ const translations: Record<Locale, Record<string, string>> = {
     'doctor.connectivity': '连接测试',
     'doctor.all.passed': '所有检查通过 ✓',
     'doctor.needs.attention': '部分检查需要关注',
-    'doctor.check.node': 'Node.js v20+',
+    'doctor.check.node': 'Node.js 22.x',
     'doctor.check.node_current': '当前：{version}。请从 https://nodejs.org 安装',
     'doctor.check.git': 'Git',
     'doctor.check.git_version': '{version}',

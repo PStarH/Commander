@@ -196,6 +196,35 @@ describe('Provider Performance Optimizations', () => {
     });
   });
 
+  describe('Gemini — authentication', () => {
+    it('sends the API key in a header without including it in the request URL', async () => {
+      const apiKey = 'test-gemini-api-key';
+      const provider = new GoogleProvider({ apiKey });
+      const originalFetch = global.fetch;
+      let capturedUrl = '';
+      let capturedHeaders = new Headers();
+      global.fetch = (async (input, init) => {
+        capturedUrl = input instanceof Request ? input.url : input.toString();
+        capturedHeaders = new Headers(init?.headers);
+        return new Response(
+          JSON.stringify({
+            candidates: [{ content: { parts: [{ text: 'Hello' }] }, finishReason: 'STOP' }],
+            usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1, totalTokenCount: 2 },
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        );
+      }) as typeof fetch;
+
+      try {
+        await provider.call(makeRequest({ model: 'gemini-2.0-flash' }));
+        assert.ok(!capturedUrl.includes(apiKey));
+        assert.strictEqual(capturedHeaders.get('x-goog-api-key'), apiKey);
+      } finally {
+        global.fetch = originalFetch;
+      }
+    });
+  });
+
   describe('BaseOpenAICompatible — prompt_cache_key propagation', () => {
     it('includes prompt_cache_key in body when cacheConfig.promptCacheKey is set', () => {
       const req = makeRequest({

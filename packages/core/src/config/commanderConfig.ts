@@ -113,8 +113,9 @@ export function resolveApiKey(type: ProviderType, primaryKey: string): string {
   );
 }
 
-export function detectProvider(): ProviderInfo | null {
-  for (const type of PROVIDER_ORDER) {
+export function detectProvider(preferredType?: ProviderType): ProviderInfo | null {
+  const candidates = preferredType ? [preferredType] : PROVIDER_ORDER;
+  for (const type of candidates) {
     const env = ENV_MAP[type];
     const apiKey = resolveApiKey(type, env.key);
 

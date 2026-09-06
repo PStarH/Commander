@@ -4,7 +4,7 @@
  * caller) must never land on the shared global workspace root, where tenant
  * A can read and write tenant B's files.
  */
-import { test, describe, before, after } from 'vitest';
+import { test, describe, beforeEach, afterEach } from 'vitest';
 import * as assert from 'node:assert/strict';
 import { runWithTenant, setMultiTenantEnabled } from '../../src/runtime/tenantContext.js';
 import {
@@ -23,7 +23,7 @@ class FakeProvider implements TenantProvider {
 }
 
 describe('getSafeRoot multi-tenant fail-closed (AUDIT-CORE2)', () => {
-  before(() => {
+  beforeEach(() => {
     setMultiTenantEnabled(true);
     setGlobalTenantProvider(
       new FakeProvider(
@@ -37,7 +37,7 @@ describe('getSafeRoot multi-tenant fail-closed (AUDIT-CORE2)', () => {
       ),
     );
   });
-  after(() => {
+  afterEach(() => {
     resetGlobalTenantProvider();
     setMultiTenantEnabled(false);
   });

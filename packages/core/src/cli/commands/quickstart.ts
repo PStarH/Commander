@@ -6,11 +6,13 @@
  *   commander quickstart --check  Check prerequisites only
  */
 import { reportSilentFailure } from '../../silentFailureReporter';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { detectProvider, getEffectiveModel } from '../../config/commanderConfig';
 import { $, section, kv, bullet } from './_shared';
 import { t } from '../i18n';
+import { isSupportedNodeVersion } from '../nodeSupport';
 
 // ============================================================================
 // Checks
@@ -24,12 +26,12 @@ interface CheckResult {
 }
 
 function checkNode(): CheckResult {
-  const major = parseInt(process.version.slice(1), 10);
+  const supported = isSupportedNodeVersion(process.version);
   return {
     label: t('quickcheck.label.node'),
-    pass: major >= 20,
+    pass: supported,
     detail: process.version,
-    fix: major < 20 ? t('quickcheck.fix.node') : undefined,
+    fix: supported ? undefined : t('quickcheck.fix.node'),
   };
 }
 
@@ -47,16 +49,14 @@ function checkProvider(): CheckResult {
   }
   return {
     label: t('quickcheck.label.provider'),
-    pass: false,
-    detail: t('quickcheck.provider_missing'),
-    fix: t('quickcheck.fix.provider'),
+    pass: true,
+    detail: t('quickcheck.provider_optional'),
   };
 }
 
 function checkGit(): CheckResult {
   try {
-    const { execSync } = require('child_process');
-    execSync('git --version', { stdio: 'pipe' });
+    execFileSync('git', ['--version'], { stdio: 'pipe' });
     return { label: t('quickcheck.label.git'), pass: true, detail: 'available' };
   } catch (err) {
     reportSilentFailure(err, 'quickstart:61');
@@ -240,6 +240,7 @@ export async function cmdQuickstart(args: string[]) {
   }
 
   if (checkOnly) {
+    process.exitCode = failures.length === 0 ? 0 : 1;
     console.log();
     if (failures.length === 0) {
       console.log(

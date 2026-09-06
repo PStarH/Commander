@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -14,6 +15,7 @@ import { getApprovalSystem } from '../../sandbox';
 import type { ApprovalMode } from '../../sandbox';
 import { getGlobalLogger } from '../../logging';
 import { createRuntime, $, section, kv, setTheme, listThemes } from './_shared';
+import { isSupportedNodeVersion } from '../nodeSupport';
 
 export async function cmdStatus() {
   const provider = detectProvider();
@@ -209,27 +211,28 @@ export async function cmdConfig(args: string[]) {
   );
 }
 
-export async function cmdDoctor() {
+export async function cmdDoctor(args: string[] = []) {
   section('DOCTOR');
+  const offline = args.includes('--offline') || args.includes('--no-network');
   const provider = detectProvider();
-  const major = parseInt(process.version.slice(1), 10);
 
   // Core checks
   const checks: Array<{ label: string; pass: boolean; msg: string; section?: string }> = [];
 
   // Environment
   checks.push({
-    label: 'Node.js v20+',
-    pass: major >= 20,
-    msg: major < 20 ? `Current: ${process.version}. Install from https://nodejs.org` : '',
+    label: 'Node.js 22.x',
+    pass: isSupportedNodeVersion(process.version),
+    msg: isSupportedNodeVersion(process.version)
+      ? ''
+      : `Current: ${process.version}. Install Node.js 22 from https://nodejs.org`,
     section: 'ENVIRONMENT',
   });
 
   // Git
   let gitVersion = '';
   try {
-    const { execSync } = require('child_process');
-    gitVersion = execSync('git --version', { stdio: 'pipe', encoding: 'utf-8' }).trim();
+    gitVersion = execFileSync('git', ['--version'], { stdio: 'pipe', encoding: 'utf-8' }).trim();
     checks.push({ label: 'Git', pass: true, msg: gitVersion });
   } catch (err) {
     reportSilentFailure(err, 'manage:246');
@@ -250,10 +253,14 @@ export async function cmdDoctor() {
   // Provider
   checks.push({
     label: 'API key',
-    pass: !!provider,
-    msg: provider
-      ? `${provider.type} · ${getEffectiveModel()}`
-      : 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.',
+    pass: offline || !!provider,
+    msg: offline
+      ? provider
+        ? `${provider.type} configured (connectivity skipped)`
+        : 'Optional in offline mode'
+      : provider
+        ? `${provider.type} · ${getEffectiveModel()}`
+        : 'Set OPENAI_API_KEY, ANTHROPIC_API_KEY, etc.',
     section: 'PROVIDER',
   });
 
@@ -286,8 +293,7 @@ export async function cmdDoctor() {
 
   // Disk space
   try {
-    const { execSync } = require('child_process');
-    const df = execSync('df -h . | tail -1', { encoding: 'utf-8' }).trim();
+    const df = execFileSync('df', ['-h', '.'], { encoding: 'utf-8' }).trim().split('\n').at(-1)!;
     const parts = df.split(/\s+/);
     const avail = parts[3] || 'unknown';
     const usePercent = parseInt(parts[4] || '0', 10);
@@ -316,7 +322,10 @@ export async function cmdDoctor() {
   }
 
   // Connectivity test
-  if (provider) {
+  if (offline) {
+    console.log(`\n  ${$.dim}CONNECTIVITY${$.reset}`);
+    console.log(`  ${$.dim}Skipped (offline mode)${$.reset}`);
+  } else if (provider) {
     console.log(`\n  ${$.dim}CONNECTIVITY${$.reset}`);
     console.log(`  ${$.dim}Testing ${provider.type} at ${provider.baseUrl}...${$.reset}`);
     try {
@@ -337,6 +346,7 @@ export async function cmdDoctor() {
           /* ignore */
         }
       } else {
+        allOk = false;
         console.log(`  ${$.red}✗${$.reset} API returned HTTP ${res.status}`);
         if (res.status === 401)
           console.log(`    ${$.yellow}→ Invalid API key. Check your credentials.${$.reset}`);
@@ -344,6 +354,7 @@ export async function cmdDoctor() {
           console.log(`    ${$.yellow}→ Rate limited. Try again later.${$.reset}`);
       }
     } catch (err) {
+      allOk = false;
       console.log(`  ${$.red}✗${$.reset} API unreachable`);
       const msg = err instanceof Error ? err.message : String(err);
       if (msg.includes('ENOTFOUND'))
@@ -371,6 +382,7 @@ export async function cmdDoctor() {
       `  ${$.dim}Run ${$.cyan}commander quickstart${$.reset}${$.dim} for setup guidance.${$.reset}`,
     );
   }
+  process.exitCode = allOk ? 0 : 1;
   console.log();
 }
 

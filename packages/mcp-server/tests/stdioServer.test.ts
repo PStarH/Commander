@@ -1,5 +1,8 @@
 import { beforeEach, describe, it, expect } from 'vitest';
-import { pathToFileURL } from 'node:url';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import {
   MCPServer,
   createFetchActionGatewayExecutor,
@@ -365,6 +368,85 @@ describe('startStdioServer', () => {
     expect(typeof stop).toBe('function');
     expect(server.listTools().length).toBe(3);
     stop();
+  });
+
+  it('completes the stdio handshake without responding to notifications', async () => {
+    const child = spawn(
+      process.execPath,
+      [fileURLToPath(new URL('../dist/cli.js', import.meta.url)), '--model-router-only'],
+      {
+        env: {
+          ...process.env,
+          NODE_ENV: 'test',
+          COMMANDER_PROFILE: '',
+          COMMANDER_MCP_LOCAL_RUNTIME: '1',
+        },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    );
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding('utf8');
+    child.stderr.on('data', (chunk: string) => {
+      stderr += chunk;
+    });
+
+    try {
+      child.stdin.write(
+        [
+          {
+            jsonrpc: '2.0',
+            id: 1,
+            method: 'initialize',
+            params: {
+              protocolVersion: MCP_PROTOCOL_VERSION,
+              capabilities: {},
+              clientInfo: { name: 'subprocess-test', version: '1.0.0' },
+            },
+          },
+          { jsonrpc: '2.0', method: 'notifications/initialized' },
+          {
+            jsonrpc: '2.0',
+            method: 'notifications/progress',
+            params: { progressToken: 'test', progress: 1 },
+          },
+          { jsonrpc: '2.0', id: 2, method: 'tools/list' },
+        ]
+          .map((message) => JSON.stringify(message))
+          .join('\n') + '\n',
+      );
+
+      await Promise.race([
+        new Promise<void>((resolve) => {
+          const poll = () => {
+            if (stdout.includes('"id":2')) resolve();
+            else setTimeout(poll, 10);
+          };
+          poll();
+        }),
+        delay(5_000).then(() => {
+          throw new Error(`Timed out waiting for MCP handshake response. stderr: ${stderr}`);
+        }),
+      ]);
+      await delay(100);
+
+      const responses = stdout
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { id?: string | number });
+      expect(responses).toHaveLength(2);
+      expect(responses.map((response) => response.id).sort()).toEqual([1, 2]);
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill();
+        await once(child, 'exit');
+      }
+    }
   });
 });
 

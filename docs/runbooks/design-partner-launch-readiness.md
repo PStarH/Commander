@@ -104,6 +104,34 @@ or a reduced threshold.
 
 All gates are fail-closed. "Mostly green" is not a pass.
 
+### E0 source-demo lane (available before E1)
+
+The first-user E0 lifecycle is deliberately narrower than these launch gates.
+From a clean `codex/release-20260810` source checkout, using Node 22.x and pnpm
+9, run:
+
+```bash
+corepack enable
+pnpm install --frozen-lockfile
+pnpm build
+pnpm exec tsx packages/core/src/cliEntry.ts --help
+pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
+pnpm demo:l4-a
+```
+
+This path requires no provider credential. `doctor --offline` must not contact a
+provider. `demo:l4-a` is simulated/in-memory, performs no provider or
+target-system write, and automatically stops the loopback servers it starts.
+Clone, install, and build still write the local checkout, dependency cache, and
+build output. No external infrastructure teardown is required; successful
+command exit is the teardown boundary.
+
+E0 completion is development/demo evidence only. It does not satisfy G2's
+published-artifact install requirement, any E1 governed-write gate, or a
+`PROVEN` or production-readiness claim. Provider-backed Local CLI use and the E1
+dedicated-pilot path require their own consent, credentials, controls, and
+evidence.
+
 ### G0 - Scope and claim integrity
 
 Deliverables:
@@ -563,9 +591,11 @@ Use a planned aggregate command once the underlying gates exist:
 pnpm launch:verify -- --release <tag> --evidence <bundle-directory>
 ```
 
-`launch:verify` does not exist yet. It should validate artifact schemas, hashes,
-thresholds, source cleanliness, required CI links, maturity labels, and claim
-registry coverage. It must not re-implement the underlying tests.
+`launch:verify` exists and validates the source attestation, image and lockfile
+identifiers, gate verdict schemas, artifact hashes, and retained-evidence secret
+scan. It does not re-implement the underlying tests, and its successful exit is
+only one input to the ship decision; every applicable gate and independent
+review must also pass.
 
 The release is promotion-ready only when every answer is yes:
 
