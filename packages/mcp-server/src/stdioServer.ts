@@ -172,6 +172,17 @@ async function handleLine(server: MCPServer, line: string): Promise<void> {
     return;
   }
 
+  if (
+    typeof request === 'object' &&
+    request !== null &&
+    !Array.isArray(request) &&
+    (request as Record<string, unknown>).jsonrpc === '2.0' &&
+    typeof (request as Record<string, unknown>).method === 'string' &&
+    !Object.prototype.hasOwnProperty.call(request, 'id')
+  ) {
+    return;
+  }
+
   const response = await server.handleRequest(
     request as Parameters<typeof server.handleRequest>[0],
   );
