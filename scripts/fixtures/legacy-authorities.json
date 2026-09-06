@@ -164,7 +164,7 @@
     {
       "path": "packages/core/src/cli/commands/_shared.ts",
       "sourceSha256": "122d18a2c35284d7a973a9c49412146cc45e1e1e9f83b223a38b8ffb90145554",
-      "callersSha256": "b89d7ca13edbb273493c9400eabeeba35f7cdec42b3963c69f640a52e6757359",
+      "callersSha256": "3b9d3b44a80927dff37efc97df58a8ed58312d4e57f2b8a98fffe3496250a322",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime factory pending gateway client migration",
       "expiresAt": "2026-10-31",

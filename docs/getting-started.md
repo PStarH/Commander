@@ -1,20 +1,23 @@
 # Commander 快速开始
 
-5 分钟内在本地跑起来，并通过 CLI 或 Web Console 运行第一个多代理任务。
+先用不需要凭据的 E0 模拟路径验证安装，再按需运行 provider-backed CLI 或 Web
+Console。
 
 > **Alpha / 非生产就绪：** 本文是开发与评估路径。provider-backed 任务会把 prompt
 > 发送给你选择的提供商；模拟结果会明确标识，不能当作真实执行或生产证据。详见
 > [`PRIVACY.md`](../PRIVACY.md)。
 
-下文默认是 **Local CLI / 本地单机** 路径。Enterprise Gateway（`/v1` + Postgres）见英文 `README.md` SKU 表与 `ENTERPRISE_READINESS.md`，状态为 **alpha**。
+下文首先给出 **E0 模拟演示**，它不调用真实 provider、不写入外部目标系统。随后
+的 provider-backed Local CLI 与 Enterprise Gateway（`/v1` + Postgres）均为
+**alpha**；后者见英文 `README.md` SKU 表与 `ENTERPRISE_READINESS.md`。
 
 ---
 
 ## 前置要求
 
-- **Node.js** >= 18（推荐 22，与 `.node-version` 一致）
-- **pnpm** >= 9（必须，项目使用 pnpm workspaces）
-- 任一 LLM 提供商的 API key：OpenAI、Anthropic、DeepSeek、Groq 等
+- **Node.js** 22.x（与 `.node-version` 和 CI 一致）
+- **pnpm** 9（Corepack 会选择仓库固定的版本；项目使用 pnpm workspaces）
+- E0 模拟演示不需要 API key；只有 provider-backed 路径才需要
 
 > 为什么用 pnpm？Monorepo 通过 workspaces 管理 10+ 个包，`npm install` 会产生 `UNMET DEPENDENCY` 警告。
 
@@ -23,20 +26,44 @@
 ## 1. 克隆与安装
 
 ```bash
-git clone https://github.com/PStarH/Commander.git
+git clone --branch codex/release-20260810 --single-branch \
+  https://github.com/PStarH/Commander.git
 cd Commander
-pnpm install
+corepack enable
+pnpm install --frozen-lockfile
 ```
 
 安装完成后，建议先构建一次所有包：
 
 ```bash
-pnpm -r build
+pnpm build
 ```
+
+首次克隆和冷安装仍需要正常访问 GitHub 与包仓库。下文的 `--offline` 只表示不向
+LLM provider 发请求，并不表示安装过程完全断网。
 
 ---
 
-## 2. 配置 API Key
+## 2. 运行 E0 模拟演示（推荐首次运行）
+
+```bash
+pnpm exec tsx packages/core/src/cliEntry.ts --help
+pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
+pnpm demo:l4-a
+```
+
+`doctor --offline` 只检查本地前置条件，不访问 LLM provider。`demo:l4-a` 使用
+模拟/内存依赖和本机回环服务器，不调用真实 provider，也不写入外部目标系统。
+克隆、安装和构建仍会写入本机 checkout、依赖缓存和构建产物。命令退出时会自动
+关闭它启动的回环服务器，因此没有外部资源需要 teardown；命令退出即完成 E0
+清理。
+
+这条路径只提供开发/演示证据，不代表已通过 npm 发布安装、E1 受治理写入证明或
+生产就绪验证。
+
+---
+
+## 3. 配置 API Key（仅 provider-backed 路径）
 
 Commander 会自动识别你设置的是哪家提供商：
 
@@ -52,42 +79,57 @@ export DEEPSEEK_API_KEY=sk-...
 
 ---
 
-## 3. 运行第一个任务
+## 4. 运行真实 provider 的只读代码审查
 
-### 方式 A：Web Console（推荐，一键启动）
-
-```bash
-pnpm gui
-```
-
-这会同时启动 API server（`:4000`）和 Web 界面（`:5173`），并尝试自动打开浏览器。
-
-### 方式 B：终端 CLI
+以下命令是首用户唯一推荐的真实 provider 路径。运行前请先阅读
+[`PRIVACY.md`](../PRIVACY.md)。
 
 ```bash
-pnpm exec tsx packages/core/src/cliEntry.ts run "audit this repo for security vulnerabilities" --stream
+export OPENAI_API_KEY=sk-...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=openai
 ```
 
-`--stream` 会实时输出代理事件、工具调用和已发出的质量门决策。
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+pnpm exec tsx packages/core/src/cliEntry.ts review \
+  --commit HEAD --real --provider=anthropic
+```
+
+该命令只读取指定 Git diff 和本地 review guidelines，最多发送 15,000 个 diff
+字符，并将 provider 输出限制为 4,000 tokens；provider 完成解析后，Commander 会拒绝
+超过 8 MiB 的响应对象。120 秒是调用方时限，不保证在传输层取消底层请求。
+provider/model 不会收到任何执行工具，因此不能主动执行命令、修改文件、
+访问 Web 或写入目标系统。CLI 本身会运行固定的只读 `git diff` 子进程，并在系统临时
+目录更新跨进程限流状态。结果会标明 `source=real`、provider、model、endpoint
+host、prompt 字节数、截断后实际覆盖范围和完成响应上限；凭据缺失、空 diff、provider
+错误、超时、超限响应或无效结构化输出都会返回非零退出码，不会静默回退到模拟结果。
+
+diff 和 guidelines 会离开本机，可能包含仓库敏感信息，并受 provider 的保留政策
+约束。guidelines 会从 `AGENTS.md`、`.review.md`、`REVIEW.md`、
+`.github/review.md` 和 `.commander/review.md` 的 Markdown 列表项自动收集，并限制为
+合并后的前 1,000 字符。普通 `commander run`、`pnpm gui`、MCP、SDK 和 Enterprise
+Gateway 不属于该首用户路径，目前不能宣称只读或生产就绪。
 
 ---
 
-## 4. Docker 一键启动
+## 5. Enterprise Gateway（alpha）
 
-如果你不想在本地装 Node：
+这是需要凭据和外部服务的 Enterprise Gateway alpha 开发路径，不是 E0 演示的
+替代安装方式，也不代表 E1 已就绪：
 
-```bash
-export COMMANDER_API_KEY="your-secret-key"
-export OPENAI_API_KEY="sk-..."
-docker compose up -d
-```
+首次用户文档不提供可直接运行的 Gateway 命令；该路径还需要额外密钥、PostgreSQL
+和运维控制。请同时按照
+[`enterprise/quickstart.md`](enterprise/quickstart.md) 与
+[`ENTERPRISE_READINESS.md`](../ENTERPRISE_READINESS.md) 操作。
 
-- API: http://localhost:4000
-- Web: http://localhost:3000
+在任何 bounded write pilot 前，必须满足
+[`design-partner-launch-readiness.md`](runbooks/design-partner-launch-readiness.md)
+中的 E1 门槛；本节不能作为外部写入授权或证明。
 
 ---
 
-## 5. 验证安装
+## 6. 额外验证
 
 ```bash
 pnpm --filter @commander/core test:quick
@@ -97,7 +139,7 @@ pnpm --filter @commander/core test:quick
 
 ---
 
-## 6. 下一步
+## 7. 下一步
 
 - 查看架构概览：`docs/architecture/`
 - 查看 CLI 全部命令：`pnpm exec tsx packages/core/src/cliEntry.ts --help`

@@ -10,6 +10,16 @@ security-sensitive data.
 - A task prompt and the selected model/provider configuration can be sent to the
   LLM provider you configure. Provider retention, logging, and processing are
   controlled by that provider's terms, not by Commander.
+- `commander review --real` sends a review prompt containing local review
+  guidelines and up to 15,000 characters from the selected Git diff. Diff
+  content can include source code, configuration, identifiers, comments, and
+  other repository-sensitive material. Inspect the diff before running it. The
+  command runs fixed, read-only `git diff` subprocesses and stores cross-process
+  CLI rate-limit state in the system temporary directory; it does not register
+  execution tools for the provider/model. Guidelines are collected from
+  Markdown list items in `AGENTS.md`, `.review.md`, `REVIEW.md`,
+  `.github/review.md`, and `.commander/review.md`; at most the first 1,000
+  combined characters are submitted.
 - If you enable the tracing or observability profiles, traces and metrics can be
   exported to the endpoints configured by the operator (for example, Jaeger via
   OTLP). Review those destinations before enabling them.

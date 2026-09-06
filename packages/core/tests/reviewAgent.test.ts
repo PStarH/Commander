@@ -11,6 +11,31 @@ import {
   parseFindings,
 } from '../src/reviewAgent';
 import type { ReviewReport, ReviewFinding, ReviewConfig } from '../src/reviewAgent';
+import { ENV_MAP } from '../src/config/commanderConfig';
+
+const providerEnvNames = new Set([
+  ...Object.values(ENV_MAP).flatMap(({ key, url, model }) => [key, url, model]),
+  'COHERE_API_KEY',
+  'REPLICATE_API_KEY',
+  'PPLX_API_KEY',
+  'AWS_ACCESS_KEY_ID',
+  'AWS_PROFILE',
+]);
+const originalProviderEnv = new Map<string, string | undefined>();
+
+before(() => {
+  for (const name of providerEnvNames) {
+    originalProviderEnv.set(name, process.env[name]);
+    delete process.env[name];
+  }
+});
+
+after(() => {
+  for (const [name, value] of originalProviderEnv) {
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+});
 
 // ============================================================================
 // Factories
@@ -36,7 +61,17 @@ function makeReport(overrides: Partial<ReviewReport> = {}): ReviewReport {
     linesRemoved: 12,
     scope: 'uncommitted',
     guidelinesUsed: [],
+    guidelineSources: [],
+    guidelinesTruncated: false,
     durationMs: 1234,
+    source: 'heuristic',
+    inputBytes: 0,
+    totalFilesInScope: 3,
+    totalLinesAdded: 45,
+    totalLinesRemoved: 12,
+    totalDiffChars: 100,
+    submittedDiffChars: 100,
+    truncated: false,
     ...overrides,
   };
 }
@@ -148,16 +183,17 @@ describe('ReviewAgent', () => {
 
     it('returns empty array when no guideline files exist', () => {
       // Should not crash when files don't exist
-      const guidelines = loadReviewGuidelines();
-      assert.ok(Array.isArray(guidelines));
+      const loaded = loadReviewGuidelines();
+      assert.ok(Array.isArray(loaded.guidelines));
+      assert.ok(Array.isArray(loaded.sources));
     });
 
     it('loads bullet points from AGENTS.md', () => {
       const agentsPath = path.join(testDir, 'AGENTS.md');
       if (fs.existsSync(agentsPath)) {
-        const guidelines = loadReviewGuidelines();
+        const loaded = loadReviewGuidelines();
         // AGENTS.md likely has bullet points
-        assert.ok(guidelines.length >= 0);
+        assert.strictEqual(loaded.guidelines.length, loaded.sources.length);
       }
     });
   });
