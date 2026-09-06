@@ -119,9 +119,9 @@ pnpm exec tsx packages/core/src/cliEntry.ts review \
 
 This command reads the selected Git diff and local review guidelines, sends at
 most 15,000 diff characters to the explicitly selected provider, and caps the
-provider response at 4,000 tokens. After provider parsing, Commander rejects a
-completed response object over 8 MiB. Its 120-second caller-side timeout is not
-a transport-level cancellation guarantee. The provider/model receives no
+provider response at 4,000 tokens. Commander aborts provider transport after
+120 seconds and rejects a response body over 8 MiB before JSON parsing. The
+provider/model receives no
 execution tools, so it cannot initiate commands, file edits, web browsing, or
 target-system writes. The CLI itself runs fixed, read-only `git diff` commands
 and updates cross-process rate-limit state in the system temporary directory.
@@ -271,7 +271,8 @@ A meta-learner using Thompson Sampling and Reflexion tunes agent configurations 
 Commander includes a web-based control console for visual monitoring, chat-based agent interaction, and governance:
 
 ```bash
-# One-click start (API on :4000 + Web on :5173 + auto-open browser)
+# Requires PostgreSQL plus explicit JWT_SECRET and ADMIN_PASSWORD; see docs/deploy.md.
+# Starts API on :4000 and Web on :5173, then opens the browser.
 pnpm gui
 ```
 
