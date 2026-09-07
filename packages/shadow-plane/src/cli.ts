@@ -389,6 +389,9 @@ async function productionDependencies(): Promise<{
     dependencies: {
       repository: new ShadowRepository(asShadowSqlPool(pool), {
         retentionDays: config.retentionDays,
+        ...(config.ingestionAttestationKey
+          ? { ingestionAttestationKey: config.ingestionAttestationKey }
+          : {}),
         trustedManifestPublicKeys: config.trustedManifestPublicKeys,
       }),
       tenantId: config.tenantId,

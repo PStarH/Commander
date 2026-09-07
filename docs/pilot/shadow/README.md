@@ -15,7 +15,7 @@ export, usefulness review, mismatch adjudication, and stop conditions.
 ## Clean-room prerequisites
 
 Use Node.js 22, pnpm 9, the three release tarballs listed below, a customer
-PostgreSQL database, and `psql`. The release owner supplies the tarballs from
+PostgreSQL 16 database with the trusted `pgcrypto` extension available, and `psql`. The release owner supplies the tarballs from
 the same revision, plus its full Git SHA. Place them in an empty directory and
 install with local overrides so workspace packages do not require a registry:
 
@@ -50,6 +50,10 @@ GRANT CREATE ON DATABASE shadow_database TO commander_shadow_installer;
 
 Export the shipped schema without modifying it, then apply it once with the
 installer DSN. `SHADOW_SCHEMA_SQL` is the package's supported schema artifact.
+Schema version 2 requires a fresh dedicated database where `pgcrypto` is not
+already installed. The installer creates it in the locked `commander_shadow`
+schema; installation fails rather than reusing an extension from another schema.
+There is no migration or unauthenticated legacy write API.
 
 ```sh
 node --input-type=module <<'JS'
@@ -71,6 +75,40 @@ The binding table is installer-owned. Forced row-level security requires both
 the login-role binding and the transaction-local tenant selected by the CLI;
 missing or mismatched bindings fail closed. Runtime roles have no direct access
 to the binding table.
+
+Provision a separate random 32-byte HMAC key for each ingestion login through
+the customer's secret manager, independently of its database password and the
+manifest/report signing keys. Deliver the lowercase 64-character hex value only
+to the ingestion CLI as `COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX` and to
+the installer for the following parameterized provisioning command. Do not
+grant runtime roles access to the key table or installer credentials.
+
+```sh
+node --input-type=module <<'JS'
+import { Pool } from 'pg';
+import { buildVerifiedPostgresPoolConfig } from '@commander/postgres-runtime';
+const hex = process.env.COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX;
+if (!/^[0-9a-f]{64}$/.test(hex ?? '')) throw new Error('Invalid ingestion key');
+const pool = new Pool(buildVerifiedPostgresPoolConfig({ connectionString: process.env.SHADOW_INSTALLER_URL }));
+try {
+  await pool.query(
+    'INSERT INTO commander_shadow.ingestion_attestation_keys (role_name, key_bytes) VALUES ($1, $2)',
+    ['commander_shadow_tenant_1_ingestion', Buffer.from(hex, 'hex')],
+  );
+} finally {
+  await pool.end();
+}
+JS
+```
+
+Use the verified installer TLS configuration described below for this command.
+Protect the key from SQL statement/parameter logging and process-environment
+collection. Reader and retention processes do not need this key. An ingestion
+database password alone cannot attest manifests, evaluations, or rejected/failed
+attempts. Proofs bind the exact login, tenant, operation, and all effective write
+parameters. Rotate the database key and application secret together while
+ingestion is stopped; this invalidates old proofs. Database administrators and
+holders of both secrets remain trusted authorities.
 
 ## TLS and configuration
 

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, sign } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { actionGatewayPolicySnapshot } from '@commander/contracts';
 import { canonicalBytes } from './canonical.js';
@@ -16,6 +16,8 @@ class RecordingClient implements ShadowSqlClient {
   constructor(private readonly respond: (sql: string) => Response = () => ({})) {}
   async query(sql: string, values: unknown[] = []) {
     this.calls.push({ sql, values });
+    if (sql === 'SELECT session_user AS ingestion_role')
+      return { rows: [{ ingestion_role: 'test_ingestion' }], rowCount: 1 };
     const response = this.respond(sql);
     return { rows: response.rows ?? [], rowCount: response.rowCount ?? 0 };
   }
@@ -36,6 +38,19 @@ class RecordingPool implements ShadowSqlPool {
 
 const snapshot = actionGatewayPolicySnapshot();
 const keyPair = generateKeyPairSync('ed25519');
+const attestationKey = Buffer.alloc(32, 17);
+
+function expectedAttestation(operation: string, values: unknown[]): string {
+  const hmac = createHmac('sha256', attestationKey);
+  for (const value of ['commander.shadow-ingestion/v1', operation, 'test_ingestion', ...values]) {
+    const bytes = value === null ? null : Buffer.from(String(value), 'utf8');
+    const length = Buffer.alloc(4);
+    length.writeInt32BE(bytes?.length ?? -1);
+    hmac.update(length);
+    if (bytes) hmac.update(bytes);
+  }
+  return hmac.digest('hex');
+}
 
 function observation() {
   return parseShadowObservation({
@@ -80,6 +95,7 @@ function manifest() {
 function repository(client: RecordingClient): ShadowRepository {
   return new ShadowRepository(new RecordingPool(client), {
     retentionDays: 14,
+    ingestionAttestationKey: attestationKey,
     trustedManifestPublicKeys: new Map([
       [
         'manifest-key-1',
@@ -136,12 +152,33 @@ describe('shadow PostgreSQL repository contract', () => {
     assert.equal(client.released, true);
     const registration = client.calls.find((call) => /register_manifest/.test(call.sql));
     assert.ok(registration);
+    assert.equal(registration.values.length, 11, 'manifest writes require application attestation');
+    assert.equal(
+      registration.values.at(-1),
+      expectedAttestation('register_manifest', registration.values.slice(0, -1)),
+    );
     assert.equal(registration.values.includes('tenant-1'), true);
     assert.equal(registration.values.includes('campaign-1'), true);
     assert.equal(registration.values.includes('batch-1'), true);
     assert.equal(
       client.calls.some((call) => /\b(?:INSERT|UPDATE|DELETE)\b/.test(call.sql)),
       false,
+    );
+  });
+
+  it('requires authenticated database mutation entrypoints without a public signing oracle', () => {
+    for (const name of ['register_manifest', 'record_attempt', 'record_observation']) {
+      const body = SHADOW_SCHEMA_SQL.split(`CREATE FUNCTION commander_shadow.${name}(`)[1]!.split(
+        'CREATE FUNCTION',
+      )[0]!;
+      assert.match(body, /p_attestation text/);
+      assert.match(body, /PERFORM commander_shadow.verify_ingestion_attestation/);
+    }
+    assert.match(SHADOW_SCHEMA_SQL, /CREATE TABLE commander_shadow.ingestion_attestation_keys/);
+    assert.doesNotMatch(SHADOW_SCHEMA_SQL, /GRANT[^;]*ingestion_attestation_keys/);
+    assert.doesNotMatch(
+      SHADOW_SCHEMA_SQL,
+      /GRANT EXECUTE ON FUNCTION commander_shadow.verify_ingestion_attestation/,
     );
   });
 
@@ -171,6 +208,12 @@ describe('shadow PostgreSQL repository contract', () => {
     await repo.importObservation('tenant-1', observation());
     const lock = client.calls.findIndex((call) => /pg_advisory_xact_lock/.test(call.sql));
     const insert = client.calls.findIndex((call) => /record_observation/i.test(call.sql));
+    const write = client.calls[insert]!;
+    assert.equal(write.values.length, 14);
+    assert.equal(
+      write.values.at(-1),
+      expectedAttestation('record_observation', write.values.slice(0, -1)),
+    );
     assert.ok(lock > 0 && insert > lock);
     assert.equal(
       client.calls.some((call) => /FOR UPDATE/i.test(call.sql)),
@@ -393,7 +436,7 @@ describe('shadow PostgreSQL repository contract', () => {
     }
     assert.match(
       SHADOW_SCHEMA_SQL,
-      /REVOKE ALL ON ALL FUNCTIONS IN SCHEMA commander_shadow FROM PUBLIC/,
+      /REVOKE ALL ON FUNCTION commander_shadow\.tenant_access_allowed[\s\S]*commander_shadow\.verify_ingestion_attestation[\s\S]*commander_shadow\.close_batch\(text, text, text\) FROM PUBLIC/,
     );
   });
 
@@ -588,6 +631,11 @@ describe('shadow PostgreSQL repository contract', () => {
     assert.ok(rejected);
     assert.ok(rejected.values.includes('rejected'));
     assert.ok(rejected.values.includes('SHADOW_UNKNOWN_FIELD'));
+    assert.equal(rejected.values.length, 8);
+    assert.equal(
+      rejected.values.at(-1),
+      expectedAttestation('record_attempt', rejected.values.slice(0, -1)),
+    );
     assert.equal(JSON.stringify(client.calls).includes('must-not-store'), false);
   });
 

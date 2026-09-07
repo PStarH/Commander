@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { actionGatewayPolicySnapshot } from '@commander/contracts';
 import { canonicalBytes, sha256Hex, verifyEd25519 } from './canonical.js';
 import {
@@ -59,6 +59,7 @@ export function asShadowSqlPool(pool: Pool): ShadowSqlPool {
 
 export interface ShadowRepositoryOptions {
   retentionDays: number;
+  ingestionAttestationKey?: Buffer;
   trustedManifestPublicKeys: ReadonlyMap<string, ShadowManifestTrust>;
 }
 
@@ -91,7 +92,7 @@ function operationPrivilegeSql(operation: ShadowDatabaseOperation): { role: stri
         sql: `has_table_privilege(current_user, 'commander_shadow.campaigns', 'SELECT')
           AND has_table_privilege(current_user, 'commander_shadow.batches', 'SELECT')
           AND has_function_privilege(current_user,
-            'commander_shadow.register_manifest(text,text,text,text,text,text,jsonb,text,timestamp with time zone,timestamp with time zone)',
+            'commander_shadow.register_manifest(text,text,text,text,text,text,text,text,timestamp with time zone,timestamp with time zone,text)',
             'EXECUTE')`,
       };
     case 'import':
@@ -102,9 +103,9 @@ function operationPrivilegeSql(operation: ShadowDatabaseOperation): { role: stri
           AND has_table_privilege(current_user, 'commander_shadow.expected_records', 'SELECT')
           AND has_table_privilege(current_user, 'commander_shadow.observations', 'SELECT')
           AND has_function_privilege(current_user,
-            'commander_shadow.record_attempt(text,text,text,integer,text,text,text)', 'EXECUTE')
+            'commander_shadow.record_attempt(text,text,text,integer,text,text,text,text)', 'EXECUTE')
           AND has_function_privilege(current_user,
-            'commander_shadow.record_observation(text,text,text,integer,text,text,text,text,text,text,text,text,text)',
+            'commander_shadow.record_observation(text,text,text,integer,text,text,text,text,text,text,text,text,text,text)',
             'EXECUTE')`,
       };
     case 'batch-close':
@@ -215,6 +216,28 @@ export class ShadowRepository {
     private readonly options: ShadowRepositoryOptions,
   ) {}
 
+  private async attest(
+    client: ShadowSqlClient,
+    operation: 'register_manifest' | 'record_attempt' | 'record_observation',
+    values: (string | number | null)[],
+  ): Promise<string> {
+    const key = this.options.ingestionAttestationKey;
+    if (!key || key.length !== 32) throw new Error('SHADOW_INGESTION_ATTESTATION_KEY_REQUIRED');
+    const result = await client.query('SELECT session_user AS ingestion_role');
+    const role = result.rows[0] && rowString(result.rows[0], 'ingestion_role');
+    if (!role) throw new Error('SHADOW_INGESTION_ROLE_REQUIRED');
+    const hmac = createHmac('sha256', key);
+    // Signed int32 byte lengths distinguish boundaries, UTF-8, empty strings and null.
+    for (const value of ['commander.shadow-ingestion/v1', operation, role, ...values]) {
+      const bytes = value === null ? null : Buffer.from(String(value), 'utf8');
+      const length = Buffer.alloc(4);
+      length.writeInt32BE(bytes?.length ?? -1);
+      hmac.update(length);
+      if (bytes) hmac.update(bytes);
+    }
+    return hmac.digest('hex');
+  }
+
   async registerManifest(
     tenantId: string,
     manifest: ShadowManifestV1,
@@ -249,22 +272,23 @@ export class ShadowRepository {
 
     return transaction(this.pool, tenantId, async (client) => {
       await lockCampaign(client, tenantId, manifest.campaignId);
+      const values = [
+        tenantId,
+        manifest.campaignId,
+        manifest.producerId,
+        manifest.policyId,
+        manifest.policyDigest,
+        manifest.batchId,
+        canonicalBytes(manifest).toString('utf8'),
+        manifestDigest,
+        manifest.closesAt,
+        retentionUntil,
+      ];
       const registered = await client.query(
         `SELECT commander_shadow.register_manifest(
-           $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10
+           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
          ) AS idempotent`,
-        [
-          tenantId,
-          manifest.campaignId,
-          manifest.producerId,
-          manifest.policyId,
-          manifest.policyDigest,
-          manifest.batchId,
-          JSON.stringify(manifest),
-          manifestDigest,
-          manifest.closesAt,
-          retentionUntil,
-        ],
+        [...values, await this.attest(client, 'register_manifest', values)],
       );
       return { idempotent: registered.rows[0]?.idempotent === true };
     });
@@ -332,7 +356,7 @@ export class ShadowRepository {
           };
         }
         const recordAttempt = async (status: 'rejected' | 'failed', code: string) => {
-          await client.query(`SELECT commander_shadow.record_attempt($1,$2,$3,$4,$5,$6,$7)`, [
+          const values = [
             tenantId,
             observation.campaignId,
             observation.batchId,
@@ -340,6 +364,10 @@ export class ShadowRepository {
             digest,
             code,
             status,
+          ];
+          await client.query(`SELECT commander_shadow.record_attempt($1,$2,$3,$4,$5,$6,$7,$8)`, [
+            ...values,
+            await this.attest(client, 'record_attempt', values),
           ]);
           return { error: code };
         };
@@ -360,25 +388,26 @@ export class ShadowRepository {
           return recordAttempt('failed', 'SHADOW_EVALUATION_FAILED');
         }
         const comparison = compareShadowDecision(parsed.productionDecision, evaluation.decision);
+        const values = [
+          tenantId,
+          observation.campaignId,
+          observation.batchId,
+          observation.index,
+          observation.observationId,
+          digest,
+          canonicalBytes(parsed).toString('utf8'),
+          evaluation.decision,
+          evaluation.decisionId,
+          evaluation.reasonCode,
+          parsed.productionDecision,
+          parsed.productionReasonCode ?? null,
+          comparison,
+        ];
         await client.query(
           `SELECT commander_shadow.record_observation(
-             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14
            )`,
-          [
-            tenantId,
-            observation.campaignId,
-            observation.batchId,
-            observation.index,
-            observation.observationId,
-            digest,
-            canonicalBytes(parsed).toString('utf8'),
-            evaluation.decision,
-            evaluation.decisionId,
-            evaluation.reasonCode,
-            parsed.productionDecision,
-            parsed.productionReasonCode ?? null,
-            comparison,
-          ],
+          [...values, await this.attest(client, 'record_observation', values)],
         );
         return { idempotent: false, evaluation, comparison };
       },

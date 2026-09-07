@@ -41,6 +41,24 @@ function validEnvironment(): NodeJS.ProcessEnv {
 }
 
 describe('shadow startup configuration', () => {
+  it('validates an independent 256-bit ingestion key without requiring it for readers', () => {
+    const env = validEnvironment();
+    assert.equal(loadShadowStartupConfig(env).ingestionAttestationKey, undefined);
+    for (const key of ['', 'replace-me', 'aa'.repeat(31), 'gg'.repeat(32)]) {
+      assert.throws(
+        () =>
+          loadShadowStartupConfig({ ...env, COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX: key }),
+        /COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX_INVALID/,
+      );
+    }
+    assert.deepEqual(
+      loadShadowStartupConfig({
+        ...env,
+        COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX: 'ab'.repeat(32),
+      }).ingestionAttestationKey,
+      Buffer.alloc(32, 0xab),
+    );
+  });
   it('requires every authoritative credential and policy setting', () => {
     const valid = validEnvironment();
     for (const name of [

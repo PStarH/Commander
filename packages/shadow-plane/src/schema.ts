@@ -1,8 +1,9 @@
-export const SHADOW_SCHEMA_VERSION = 1;
+export const SHADOW_SCHEMA_VERSION = 2;
 
 export const SHADOW_SCHEMA_SQL = `
 CREATE SCHEMA commander_shadow;
 REVOKE ALL ON SCHEMA commander_shadow FROM PUBLIC;
+CREATE EXTENSION pgcrypto WITH SCHEMA commander_shadow;
 
 CREATE TABLE commander_shadow.schema_version (
   version integer PRIMARY KEY CHECK (version = ${SHADOW_SCHEMA_VERSION}),
@@ -90,6 +91,47 @@ CREATE TABLE commander_shadow.tenant_role_bindings (
   tenant_id text NOT NULL
 );
 
+CREATE TABLE commander_shadow.ingestion_attestation_keys (
+  role_name name PRIMARY KEY REFERENCES commander_shadow.tenant_role_bindings(role_name),
+  key_bytes bytea NOT NULL CHECK (octet_length(key_bytes) = 32)
+);
+REVOKE ALL ON commander_shadow.ingestion_attestation_keys FROM PUBLIC;
+
+-- Only owner-executed mutation functions can read this key or invoke this verifier.
+CREATE FUNCTION commander_shadow.verify_ingestion_attestation(
+  p_operation text, p_fields text[], p_attestation text
+)
+RETURNS void
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+DECLARE
+  v_key bytea;
+  v_message bytea := ''::bytea;
+  v_field text;
+  v_bytes bytea;
+BEGIN
+  SELECT k.key_bytes INTO v_key
+    FROM commander_shadow.ingestion_attestation_keys k
+    JOIN commander_shadow.tenant_role_bindings b USING (role_name)
+   WHERE k.role_name = session_user AND b.tenant_id = p_fields[1];
+  IF v_key IS NULL OR p_attestation IS NULL OR p_attestation !~ '^[0-9a-f]{64}$' THEN
+    RAISE EXCEPTION 'SHADOW_INGESTION_ATTESTATION_INVALID' USING ERRCODE = '42501';
+  END IF;
+  FOREACH v_field IN ARRAY ARRAY['commander.shadow-ingestion/v1', p_operation, session_user::text] || p_fields LOOP
+    IF v_field IS NULL THEN
+      v_message := v_message || int4send(-1);
+    ELSE
+      v_bytes := convert_to(v_field, 'UTF8');
+      v_message := v_message || int4send(octet_length(v_bytes)) || v_bytes;
+    END IF;
+  END LOOP;
+  IF commander_shadow.hmac(v_message, v_key, 'sha256') <> decode(p_attestation, 'hex') THEN
+    RAISE EXCEPTION 'SHADOW_INGESTION_ATTESTATION_INVALID' USING ERRCODE = '42501';
+  END IF;
+END
+$$;
+
 CREATE FUNCTION commander_shadow.tenant_access_allowed(p_tenant_id text)
 RETURNS boolean
 LANGUAGE sql
@@ -151,10 +193,11 @@ CREATE FUNCTION commander_shadow.register_manifest(
   p_policy_id text,
   p_policy_digest text,
   p_batch_id text,
-  p_manifest jsonb,
+  p_manifest_text text,
   p_manifest_digest text,
   p_closes_at timestamptz,
-  p_retention_until timestamptz
+  p_retention_until timestamptz,
+  p_attestation text
 )
 RETURNS boolean
 LANGUAGE plpgsql
@@ -166,12 +209,23 @@ DECLARE
   v_batch_digest text;
   v_inserted integer;
   v_record jsonb;
+  p_manifest jsonb;
 BEGIN
+  PERFORM commander_shadow.verify_ingestion_attestation('register_manifest', ARRAY[
+    p_tenant_id, p_campaign_id, p_producer_id, p_policy_id, p_policy_digest,
+    p_batch_id, p_manifest_text, p_manifest_digest,
+    to_char(p_closes_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
+    to_char(p_retention_until AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')
+  ], p_attestation);
+  p_manifest := p_manifest_text::jsonb;
   IF (commander_shadow.tenant_access_allowed(p_tenant_id) IS NOT TRUE
      OR p_campaign_id = '' OR p_producer_id = '' OR p_policy_id = '' OR p_batch_id = ''
      OR p_policy_digest !~ '^[0-9a-f]{64}$'
      OR p_manifest_digest !~ '^[0-9a-f]{64}$'
+     OR p_manifest_digest <> encode(sha256(convert_to(p_manifest_text, 'UTF8')), 'hex')
      OR p_retention_until < p_closes_at
+     OR p_closes_at IS DISTINCT FROM date_trunc('milliseconds', p_closes_at)
+     OR p_retention_until IS DISTINCT FROM date_trunc('milliseconds', p_retention_until)
      OR COALESCE(p_manifest->>'schema', '') <> 'commander.shadow-manifest/v1'
      OR p_manifest->>'tenantId' <> p_tenant_id
      OR p_manifest->>'campaignId' <> p_campaign_id
@@ -252,7 +306,8 @@ CREATE FUNCTION commander_shadow.record_attempt(
   p_record_index integer,
   p_attempt_digest text,
   p_attempt_code text,
-  p_status text
+  p_status text,
+  p_attestation text
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -262,6 +317,10 @@ AS $$
 DECLARE
   v_updated integer;
 BEGIN
+  PERFORM commander_shadow.verify_ingestion_attestation('record_attempt', ARRAY[
+    p_tenant_id, p_campaign_id, p_batch_id, p_record_index::text,
+    p_attempt_digest, p_attempt_code, p_status
+  ], p_attestation);
   IF (commander_shadow.tenant_access_allowed(p_tenant_id) IS NOT TRUE
      OR p_record_index < 0
      OR p_attempt_digest !~ '^[0-9a-f]{64}$'
@@ -320,7 +379,8 @@ CREATE FUNCTION commander_shadow.record_observation(
   p_hypothetical_reason_code text,
   p_production_decision text,
   p_production_reason_code text,
-  p_comparison text
+  p_comparison text,
+  p_attestation text
 )
 RETURNS void
 LANGUAGE plpgsql
@@ -333,6 +393,12 @@ DECLARE
   v_expected_observation_id text;
   v_status text;
 BEGIN
+  PERFORM commander_shadow.verify_ingestion_attestation('record_observation', ARRAY[
+    p_tenant_id, p_campaign_id, p_batch_id, p_record_index::text, p_observation_id,
+    p_digest, p_canonical_observation, p_hypothetical_decision,
+    p_hypothetical_decision_id, p_hypothetical_reason_code,
+    p_production_decision, p_production_reason_code, p_comparison
+  ], p_attestation);
   v_observation := p_canonical_observation::jsonb;
   v_status := CASE WHEN p_comparison = 'uncomparable' THEN 'uncomparable' ELSE 'compared' END;
   IF (commander_shadow.tenant_access_allowed(p_tenant_id) IS NOT TRUE
@@ -439,14 +505,19 @@ GRANT DELETE ON commander_shadow.campaigns, commander_shadow.batches,
 GRANT INSERT ON commander_shadow.deletion_audit TO commander_shadow_retention;
 GRANT SELECT, INSERT ON commander_shadow.cleanup_state TO commander_shadow_retention;
 GRANT UPDATE (last_completed_at) ON commander_shadow.cleanup_state TO commander_shadow_retention;
-REVOKE ALL ON ALL FUNCTIONS IN SCHEMA commander_shadow FROM PUBLIC;
+REVOKE ALL ON FUNCTION commander_shadow.tenant_access_allowed(text),
+  commander_shadow.verify_ingestion_attestation(text, text[], text),
+  commander_shadow.register_manifest(text, text, text, text, text, text, text, text, timestamptz, timestamptz, text),
+  commander_shadow.record_attempt(text, text, text, integer, text, text, text, text),
+  commander_shadow.record_observation(text, text, text, integer, text, text, text, text, text, text, text, text, text, text),
+  commander_shadow.close_batch(text, text, text) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION commander_shadow.tenant_access_allowed(text)
   TO commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention;
-GRANT EXECUTE ON FUNCTION commander_shadow.register_manifest(text, text, text, text, text, text, jsonb, text, timestamptz, timestamptz)
+GRANT EXECUTE ON FUNCTION commander_shadow.register_manifest(text, text, text, text, text, text, text, text, timestamptz, timestamptz, text)
   TO commander_shadow_ingestion;
-GRANT EXECUTE ON FUNCTION commander_shadow.record_attempt(text, text, text, integer, text, text, text)
+GRANT EXECUTE ON FUNCTION commander_shadow.record_attempt(text, text, text, integer, text, text, text, text)
   TO commander_shadow_ingestion;
-GRANT EXECUTE ON FUNCTION commander_shadow.record_observation(text, text, text, integer, text, text, text, text, text, text, text, text, text)
+GRANT EXECUTE ON FUNCTION commander_shadow.record_observation(text, text, text, integer, text, text, text, text, text, text, text, text, text, text)
   TO commander_shadow_ingestion;
 GRANT EXECUTE ON FUNCTION commander_shadow.close_batch(text, text, text)
   TO commander_shadow_ingestion;
