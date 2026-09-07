@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 
 const MAX_CHILD_OUTPUT_BYTES = 16 * 1024;
-const TOTAL_SUITES = 11;
+const TOTAL_SUITES = 13;
 const PACKAGE_NAME = 'commander-shadow-plane';
 
 export const SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE = 'COMMANDER_SHADOW_PG_ADMIN_URL_REQUIRED';
@@ -17,6 +17,8 @@ export interface ShadowPhaseACommand {
     | 'architecture'
     | 'shadow-tests'
     | 'shadow-typecheck'
+    | 'contracts-build'
+    | 'postgres-runtime-build'
     | 'shadow-clean'
     | 'shadow-build'
     | 'shadow-package'
@@ -82,15 +84,26 @@ export function runBoundedShadowPhaseAChild(
   });
 }
 
+function isCommitRevision(value: string): boolean {
+  return /^[0-9a-f]{40}$/i.test(value);
+}
+
+export function sourceRevisionFromGithubSha(configured: string | undefined): string {
+  const revision = configured?.trim();
+  return revision && isCommitRevision(revision) ? revision : 'unavailable';
+}
+
 function currentRevision(): string {
-  const configured = process.env.GITHUB_SHA?.trim();
-  if (configured) return configured;
+  if (process.env.GITHUB_SHA !== undefined) {
+    return sourceRevisionFromGithubSha(process.env.GITHUB_SHA);
+  }
   try {
-    return execFileSync('git', ['rev-parse', 'HEAD'], {
+    const revision = execFileSync('git', ['rev-parse', 'HEAD'], {
       cwd: process.cwd(),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
+    return isCommitRevision(revision) ? revision : 'unavailable';
   } catch {
     return 'unavailable';
   }
@@ -109,24 +122,8 @@ async function packageVersion(): Promise<string> {
   return manifest.version;
 }
 
-async function installedProductionDependencyPaths(): Promise<[string, string, string, string]> {
-  const dependencyDirectory = resolve(process.cwd(), 'packages/shadow-plane/node_modules');
-  const paths = await Promise.all([
-    realpath(join(dependencyDirectory, 'json-canonicalize')),
-    realpath(join(dependencyDirectory, 'pg')),
-    realpath(join(dependencyDirectory, '@commander/contracts')),
-    realpath(join(dependencyDirectory, '@commander/postgres-runtime')),
-  ]);
-  return [paths[0]!, paths[1]!, paths[2]!, paths[3]!];
-}
-
-function baseCommands(
-  packageDirectory: string,
-  packageFile: string,
-  dependencies: [string, string, string, string],
-): ShadowPhaseACommand[] {
+function baseCommands(packageDirectory: string, packageFile: string): ShadowPhaseACommand[] {
   const extracted = join(packageDirectory, 'extracted');
-  const moduleUrl = pathToFileURL(join(extracted, 'package/dist/index.js')).href;
   return [
     { id: 'contracts', file: 'pnpm', args: ['--filter', '@commander/contracts', 'test'] },
     {
@@ -151,6 +148,12 @@ function baseCommands(
       file: 'pnpm',
       args: ['--filter', '@commander/shadow-plane', 'typecheck'],
     },
+    { id: 'contracts-build', file: 'pnpm', args: ['--filter', '@commander/contracts', 'build'] },
+    {
+      id: 'postgres-runtime-build',
+      file: 'pnpm',
+      args: ['--filter', '@commander/postgres-runtime', 'build'],
+    },
     {
       id: 'shadow-clean',
       file: 'node',
@@ -174,12 +177,10 @@ function baseCommands(
       file: 'sh',
       args: [
         '-ec',
-        'mkdir -p "$2/package/node_modules/@commander" && tar -xzf "$1" -C "$2" && ln -s "$4" "$2/package/node_modules/json-canonicalize" && ln -s "$5" "$2/package/node_modules/pg" && ln -s "$6" "$2/package/node_modules/@commander/contracts" && ln -s "$7" "$2/package/node_modules/@commander/postgres-runtime" && node --input-type=module --eval "import(process.argv[1])" "$3"',
+        `pnpm --offline --filter @commander/shadow-plane deploy --prod "$2/package" && tar -xzf "$1" -C "$2" && cd "$2/package" && node --input-type=module --eval 'import { readFile } from "node:fs/promises"; const manifest = JSON.parse(await readFile("package.json", "utf8")); const dependencies = manifest.dependencies; if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies) || Object.entries(dependencies).some(([name, version]) => !name || typeof version !== "string" || !version.trim())) process.exit(1);' && node --input-type=module --eval 'import { readFile } from "node:fs/promises"; const manifest = JSON.parse(await readFile("package.json", "utf8")); for (const dependency of Object.keys(manifest.dependencies)) await import(dependency); await import("./dist/index.js");'`,
         'shadow-phase-a-gate',
         packageFile,
         extracted,
-        moduleUrl,
-        ...dependencies,
       ],
     },
     {
@@ -197,7 +198,9 @@ function hasRequiredPackageContents(output: string): boolean {
 export async function runShadowPhaseAGate(
   options: ShadowPhaseAGateOptions = {},
 ): Promise<ShadowPhaseAGateResult> {
-  const sourceRevision = options.sourceRevision ?? currentRevision();
+  const sourceRevision = options.sourceRevision
+    ? sourceRevisionFromGithubSha(options.sourceRevision)
+    : currentRevision();
   const run = options.run ?? runBoundedShadowPhaseAChild;
   const packageDirectory = await mkdtemp(join(process.cwd(), '.commander-shadow-phase-a-'));
   let passed = 0;
@@ -205,8 +208,7 @@ export async function runShadowPhaseAGate(
   try {
     const version = await packageVersion();
     const packageFile = join(packageDirectory, `${PACKAGE_NAME}-${version}.tgz`);
-    const dependencies = await installedProductionDependencyPaths();
-    for (const command of baseCommands(packageDirectory, packageFile, dependencies)) {
+    for (const command of baseCommands(packageDirectory, packageFile)) {
       const result = await run(command);
       if (result.exitCode !== 0) {
         return {
@@ -229,7 +231,7 @@ export async function runShadowPhaseAGate(
       passed += 1;
     }
 
-    if (!options.databaseUrl) {
+    if (options.ci !== true || !options.databaseUrl) {
       return {
         exitCode: 1,
         code: SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE,

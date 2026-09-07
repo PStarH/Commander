@@ -602,10 +602,6 @@ jobs:
           node-version: '22'
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
-      - name: Build Shadow dependencies
-        run: |
-          pnpm --filter @commander/contracts build
-          pnpm --filter @commander/postgres-runtime build
       - name: Shadow Phase A gate contract
         run: pnpm exec node --import tsx --test scripts/shadow-phase-a-gate.test.ts
       - name: Shadow Phase A release gate
