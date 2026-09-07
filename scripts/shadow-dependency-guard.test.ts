@@ -55,5 +55,44 @@ describe('Shadow Phase A dependency guard', () => {
         }).some((issue) => issue.includes('pg -> axios')),
       );
     }
+
+    assert.ok(
+      validateShadowDependencyClosure({
+        '@commander/shadow-plane': { dependencies: { pg: '8' } },
+        pg: {
+          peerDependencies: { '@commander/worker-plane': '1' },
+          peerDependenciesMeta: { '@commander/worker-plane': { optional: true } },
+        },
+        '@commander/worker-plane': {},
+      }).some((issue) => issue.includes('pg -> @commander/worker-plane')),
+      'an installed optional peer is part of the inspected production closure',
+    );
+
+    assert.ok(
+      validateShadowDependencyClosure({
+        '@commander/shadow-plane': {
+          dependencies: {
+            '@commander/contracts': '1',
+            '@commander/postgres-runtime': '1',
+          },
+          resolvedDependencies: {
+            '@commander/contracts': 'contracts-node',
+            '@commander/postgres-runtime': 'postgres-node',
+          },
+        },
+        'contracts-node': {
+          dependencies: { pg: '8' },
+          resolvedDependencies: { pg: 'pg-v1' },
+        },
+        'postgres-node': {
+          dependencies: { pg: '8' },
+          resolvedDependencies: { pg: 'pg-v2' },
+        },
+        'pg-v1': {},
+        'pg-v2': { dependencies: { axios: '1' }, resolvedDependencies: { axios: 'axios-node' } },
+        'axios-node': {},
+      }).some((issue) => issue.includes('@commander/postgres-runtime -> pg -> axios')),
+      'distinct installed versions must retain distinct dependency closures',
+    );
   });
 });
