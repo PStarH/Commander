@@ -1,0 +1,42 @@
+name: Shadow Release
+
+on:
+  pull_request:
+    branches: [codex/release-20260810]
+
+permissions:
+  contents: read
+
+jobs:
+  shadow-phase-a-postgres:
+    name: Shadow Phase A PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commander
+          POSTGRES_PASSWORD: commander
+          POSTGRES_DB: commander
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      COMMANDER_SHADOW_PG_ADMIN_URL: postgres://commander:commander@localhost:5432/commander
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Shadow Phase A gate contract
+        run: pnpm exec node --import tsx --test scripts/shadow-phase-a-gate.test.ts
+      - name: Shadow Phase A release gate
+        run: pnpm shadow:phase-a:gate
