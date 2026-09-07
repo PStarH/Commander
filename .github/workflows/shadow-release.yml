@@ -40,6 +40,23 @@ jobs:
         run: pnpm exec node --import tsx --test scripts/shadow-phase-a-gate.test.ts
       - name: Shadow Phase A release gate
         run: pnpm shadow:phase-a:gate
+      - name: Package customer trial
+        run: |
+          mkdir shadow-customer-trial
+          pnpm --dir packages/contracts pack --pack-destination "$PWD/shadow-customer-trial"
+          pnpm --dir packages/postgres-runtime pack --pack-destination "$PWD/shadow-customer-trial"
+          pnpm --dir packages/shadow-plane pack --pack-destination "$PWD/shadow-customer-trial"
+          cp -R docs/pilot/shadow shadow-customer-trial/guide
+          git rev-parse HEAD > shadow-customer-trial/SOURCE_REVISION
+          cd shadow-customer-trial
+          sha256sum *.tgz > SHA256SUMS
+      - name: Customer trial artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-customer-trial
+          path: shadow-customer-trial
+          if-no-files-found: error
+          retention-days: 14
       - name: Sanitized Shadow evidence
         if: always()
         uses: actions/upload-artifact@v4
