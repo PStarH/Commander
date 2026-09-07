@@ -17,6 +17,7 @@ import {
 import type { ShadowCampaignReportData } from './repository.js';
 
 export const SHADOW_REPORT_SCHEMA = 'commander.shadow-report/v1' as const;
+export const SHADOW_REPORT_TRUST_SCHEMA = 'commander.shadow-report-trust/v1' as const;
 
 export type ShadowTerminalStatus = 'missing' | 'rejected' | 'failed' | 'uncomparable' | 'compared';
 
@@ -79,6 +80,13 @@ export interface ShadowReportSigningOptions {
   privateKey: KeyObject;
   generatedAt: string;
   sourceRevision: string;
+}
+
+export interface ShadowReportTrust {
+  algorithm: 'Ed25519';
+  keyId: string;
+  status: 'active' | 'revoked';
+  publicKey: KeyObject;
 }
 
 const TERMINAL = new Set<ShadowTerminalStatus>([
@@ -297,7 +305,7 @@ export function buildSignedShadowReport(
 
 export function verifyShadowReport(
   value: unknown,
-  trust: { publicKey: KeyObject; revokedKeyIds?: ReadonlySet<string> },
+  trust: ShadowReportTrust,
 ): { valid: boolean; code: string } {
   if (value === null || typeof value !== 'object' || Array.isArray(value))
     return { valid: false, code: 'SHADOW_REPORT_INVALID' };
@@ -309,8 +317,11 @@ export function verifyShadowReport(
   ) {
     return { valid: false, code: 'SHADOW_REPORT_INVALID' };
   }
-  if (trust.revokedKeyIds?.has(report.keyId))
-    return { valid: false, code: 'SHADOW_REPORT_KEY_REVOKED' };
+  if (trust.algorithm !== 'Ed25519' || trust.publicKey.asymmetricKeyType !== 'ed25519')
+    return { valid: false, code: 'SHADOW_REPORT_KEY_INVALID' };
+  if (trust.status === 'revoked') return { valid: false, code: 'SHADOW_REPORT_KEY_REVOKED' };
+  if (trust.status !== 'active') return { valid: false, code: 'SHADOW_REPORT_KEY_INVALID' };
+  if (report.keyId !== trust.keyId) return { valid: false, code: 'SHADOW_REPORT_KEY_ID_MISMATCH' };
   const { signature, ...signedBody } = report;
   if (!verifyEd25519(signedBody, signature, trust.publicKey))
     return { valid: false, code: 'SHADOW_REPORT_SIGNATURE_INVALID' };

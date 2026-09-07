@@ -141,31 +141,40 @@ describe('signed historical evaluation report', () => {
       generatedAt: '2026-09-03T00:00:00.000Z',
       sourceRevision: 'abc123',
     });
-    assert.deepEqual(verifyShadowReport(bundle, { publicKey: pair.publicKey }), {
+    const trust = {
+      algorithm: 'Ed25519' as const,
+      keyId: 'report-key-1',
+      status: 'active' as const,
+      publicKey: pair.publicKey,
+    };
+    assert.deepEqual(verifyShadowReport(bundle, trust), {
       valid: true,
       code: 'SHADOW_REPORT_VALID',
     });
-    assert.deepEqual(verifyShadowReport(bundle, { publicKey: wrong.publicKey }), {
+    assert.deepEqual(verifyShadowReport(bundle, { ...trust, publicKey: wrong.publicKey }), {
       valid: false,
       code: 'SHADOW_REPORT_SIGNATURE_INVALID',
     });
-    assert.deepEqual(
-      verifyShadowReport(bundle, {
-        publicKey: pair.publicKey,
-        revokedKeyIds: new Set(['report-key-1']),
-      }),
-      { valid: false, code: 'SHADOW_REPORT_KEY_REVOKED' },
-    );
+    assert.deepEqual(verifyShadowReport(bundle, { ...trust, status: 'revoked' }), {
+      valid: false,
+      code: 'SHADOW_REPORT_KEY_REVOKED',
+    });
+    assert.deepEqual(verifyShadowReport(bundle, { ...trust, keyId: 'replacement-key' }), {
+      valid: false,
+      code: 'SHADOW_REPORT_KEY_ID_MISMATCH',
+    });
     const tampered = structuredClone(bundle);
     tampered.records[0]!.hypotheticalDecision = 'deny';
-    assert.equal(verifyShadowReport(tampered, { publicKey: pair.publicKey }).valid, false);
+    assert.equal(verifyShadowReport(tampered, trust).valid, false);
 
     const inconsistent = structuredClone(bundle);
     inconsistent.records[20]!.observationId = 'other-observation';
     inconsistent.hashes.recordsSha256 = sha256Hex(canonicalBytes(inconsistent.records));
     const { signature: _signature, ...body } = inconsistent;
-    inconsistent.signature = sign(null, canonicalBytes(body), pair.privateKey).toString('base64url');
-    assert.deepEqual(verifyShadowReport(inconsistent, { publicKey: pair.publicKey }), {
+    inconsistent.signature = sign(null, canonicalBytes(body), pair.privateKey).toString(
+      'base64url',
+    );
+    assert.deepEqual(verifyShadowReport(inconsistent, trust), {
       valid: false,
       code: 'SHADOW_REPORT_MANIFEST_RECORD_MISMATCH',
     });

@@ -261,7 +261,30 @@ describe('shadow PostgreSQL repository contract', () => {
     );
     assert.match(
       SHADOW_SCHEMA_SQL,
-      /GRANT SELECT, INSERT, UPDATE ON commander_shadow.cleanup_state TO commander_shadow_retention/,
+      /GRANT SELECT, INSERT ON commander_shadow\.cleanup_state TO commander_shadow_retention;[\s\S]*GRANT UPDATE \(last_completed_at\) ON commander_shadow\.cleanup_state TO commander_shadow_retention/,
+    );
+  });
+
+  it('grants runtime roles only the column updates required by repository operations', () => {
+    assert.doesNotMatch(
+      SHADOW_SCHEMA_SQL,
+      /GRANT SELECT, INSERT, UPDATE ON commander_shadow\.(?:campaigns|batches|expected_records|observations)/,
+    );
+    assert.doesNotMatch(
+      SHADOW_SCHEMA_SQL,
+      /GRANT SELECT, UPDATE, DELETE ON commander_shadow\.(?:campaigns|batches|expected_records|observations)/,
+    );
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /GRANT UPDATE \(retention_until\) ON commander_shadow\.campaigns TO commander_shadow_ingestion/,
+    );
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /GRANT UPDATE \(status, attempt_digest, attempt_code, attempted_at\)[\s\S]*ON commander_shadow\.expected_records TO commander_shadow_ingestion/,
+    );
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /GRANT UPDATE \(state, withdrawn_at, producer_id, policy_id, policy_digest\)[\s\S]*ON commander_shadow\.campaigns TO commander_shadow_retention/,
     );
   });
 

@@ -87,14 +87,32 @@ CREATE TABLE commander_shadow.cleanup_state (
 
 GRANT USAGE ON SCHEMA commander_shadow TO commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention;
 GRANT SELECT ON commander_shadow.schema_version TO commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention;
-GRANT SELECT, INSERT, UPDATE ON commander_shadow.campaigns, commander_shadow.batches,
-  commander_shadow.expected_records, commander_shadow.observations
-  TO commander_shadow_ingestion;
+GRANT SELECT ON commander_shadow.campaigns, commander_shadow.batches,
+  commander_shadow.expected_records, commander_shadow.observations TO commander_shadow_ingestion;
+GRANT INSERT (tenant_id, campaign_id, producer_id, policy_id, policy_digest, state, retention_until)
+  ON commander_shadow.campaigns TO commander_shadow_ingestion;
+GRANT UPDATE (retention_until) ON commander_shadow.campaigns TO commander_shadow_ingestion;
+GRANT INSERT (tenant_id, campaign_id, batch_id, manifest, manifest_digest, closes_at, state)
+  ON commander_shadow.batches TO commander_shadow_ingestion;
+GRANT UPDATE (state, closed_at) ON commander_shadow.batches TO commander_shadow_ingestion;
+GRANT INSERT (tenant_id, campaign_id, batch_id, record_index, observation_id, digest, status)
+  ON commander_shadow.expected_records TO commander_shadow_ingestion;
+GRANT UPDATE (status, attempt_digest, attempt_code, attempted_at)
+  ON commander_shadow.expected_records TO commander_shadow_ingestion;
+GRANT INSERT (tenant_id, campaign_id, batch_id, record_index, observation_id, digest,
+  canonical_observation, hypothetical_decision, hypothetical_decision_id,
+  hypothetical_reason_code, production_decision, production_reason_code, comparison)
+  ON commander_shadow.observations TO commander_shadow_ingestion;
 GRANT SELECT ON commander_shadow.cleanup_state TO commander_shadow_ingestion;
 GRANT SELECT ON ALL TABLES IN SCHEMA commander_shadow TO commander_shadow_reader;
-GRANT SELECT, UPDATE, DELETE ON commander_shadow.campaigns, commander_shadow.batches,
+GRANT SELECT ON commander_shadow.campaigns, commander_shadow.batches,
   commander_shadow.expected_records, commander_shadow.observations TO commander_shadow_retention;
+GRANT UPDATE (state, withdrawn_at, producer_id, policy_id, policy_digest)
+  ON commander_shadow.campaigns TO commander_shadow_retention;
+GRANT DELETE ON commander_shadow.campaigns, commander_shadow.batches,
+  commander_shadow.observations TO commander_shadow_retention;
 GRANT SELECT, INSERT ON commander_shadow.deletion_audit TO commander_shadow_retention;
-GRANT SELECT, INSERT, UPDATE ON commander_shadow.cleanup_state TO commander_shadow_retention;
+GRANT SELECT, INSERT ON commander_shadow.cleanup_state TO commander_shadow_retention;
+GRANT UPDATE (last_completed_at) ON commander_shadow.cleanup_state TO commander_shadow_retention;
 REVOKE CREATE ON SCHEMA commander_shadow FROM commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention;
 `;

@@ -7,7 +7,12 @@ import { pathToFileURL } from 'node:url';
 import { Pool } from 'pg';
 import { atomicExport } from './atomicExport.js';
 import { parseShadowManifest, type ShadowManifestV1 } from './contracts.js';
-import { buildSignedShadowReport, verifyShadowReport } from './report.js';
+import {
+  buildSignedShadowReport,
+  SHADOW_REPORT_TRUST_SCHEMA,
+  verifyShadowReport,
+  type ShadowReportTrust,
+} from './report.js';
 import {
   asShadowSqlPool,
   ShadowRepository,
@@ -22,6 +27,7 @@ const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const MAX_REPORT_BYTES = 192 * 1024 * 1024;
 const MAX_PUBLIC_KEY_BYTES = 64 * 1024;
 const SOURCE_REVISION = /^[\x21-\x7e]{1,128}$/;
+const TRUST_RECORD_KEYS = ['algorithm', 'keyId', 'publicKeyPem', 'schema', 'status'] as const;
 
 export interface ShadowCliRepository {
   registerManifest(tenantId: string, manifest: ShadowManifestV1): Promise<{ idempotent: boolean }>;
@@ -191,9 +197,35 @@ async function* ndjsonLines(
 
 async function verifyReport(command: Extract<ParsedCommand, { name: 'report-verify' }>) {
   const bundle = await readJson(command.bundle, MAX_REPORT_BYTES);
-  const publicKey = createPublicKey(await readBoundedFile(command.publicKey, MAX_PUBLIC_KEY_BYTES));
-  if (publicKey.asymmetricKeyType !== 'ed25519') return failure('SHADOW_REPORT_KEY_INVALID');
-  const verification = verifyShadowReport(bundle, { publicKey });
+  const value = await readJson(command.publicKey, MAX_PUBLIC_KEY_BYTES);
+  if (value === null || typeof value !== 'object' || Array.isArray(value))
+    return failure('SHADOW_REPORT_KEY_INVALID');
+  const record = value as Record<string, unknown>;
+  if (
+    Object.keys(record).sort().join('\0') !== [...TRUST_RECORD_KEYS].sort().join('\0') ||
+    record.schema !== SHADOW_REPORT_TRUST_SCHEMA ||
+    record.algorithm !== 'Ed25519' ||
+    !SOURCE_REVISION.test(typeof record.keyId === 'string' ? record.keyId : '') ||
+    (record.status !== 'active' && record.status !== 'revoked') ||
+    typeof record.publicKeyPem !== 'string'
+  )
+    return failure('SHADOW_REPORT_KEY_INVALID');
+  const keyId = record.keyId as string;
+  const status = record.status as 'active' | 'revoked';
+  const publicKeyPem = record.publicKeyPem as string;
+  let publicKey: KeyObject;
+  try {
+    publicKey = createPublicKey(publicKeyPem);
+  } catch {
+    return failure('SHADOW_REPORT_KEY_INVALID');
+  }
+  const trust: ShadowReportTrust = {
+    algorithm: 'Ed25519',
+    keyId,
+    status,
+    publicKey,
+  };
+  const verification = verifyShadowReport(bundle, trust);
   return verification.valid ? ok(verification.code) : failure(verification.code);
 }
 

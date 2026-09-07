@@ -21,7 +21,7 @@ commander-shadow manifest register --file manifest.json
 commander-shadow import --file observations.ndjson
 commander-shadow batch close --campaign campaign-2026q4 --batch batch-001
 commander-shadow report export --campaign campaign-2026q4 --output report.json
-commander-shadow report verify --bundle report.json --public-key report-public.pem
+commander-shadow report verify --bundle report.json --public-key report-trust.json
 commander-shadow campaign withdraw --campaign campaign-2026q4 --confirm campaign-2026q4
 commander-shadow retention run
 commander-shadow status
@@ -38,9 +38,18 @@ The command forms are:
 - `retention run`
 - `status`
 
+Set `COMMANDER_SHADOW_DATABASE_URL` per invocation to the least-privileged role:
+use ingestion for manifest registration, import, batch close, and status; reader
+for report export; and retention for campaign withdrawal and retention cleanup.
+Do not use the installer or database administrator credential for routine CLI
+commands. `report verify` does not connect to PostgreSQL.
+
 `report verify` is an offline verification step: it reads the report bundle and
-the report public key, rather than contacting PostgreSQL. The report public key
-is distributed through the customer’s agreed key-management process.
+a strict public-key trust record, rather than contacting PostgreSQL. The JSON
+record binds the Ed25519 public key to its trusted `keyId` and its `active` or
+`revoked` status. It is distributed through the customer’s agreed key-management
+process separately from the report; a record supplied with the report is not
+independently trusted.
 
 Read these materials in order:
 

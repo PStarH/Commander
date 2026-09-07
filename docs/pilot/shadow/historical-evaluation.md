@@ -17,7 +17,10 @@ report independently.
 --batch`. Every manifest index becomes exactly one terminal state:
    `missing`, `rejected`, `failed`, `uncomparable`, or `compared`.
 5. The export owner runs `report export --campaign --output`, then the intended
-   reader uses `report verify --bundle --public-key` outside the database path.
+   reader uses `report verify --bundle --public-key` with the separately obtained
+   JSON public-key trust record outside the database path. The record must bind
+   the expected `keyId`, `Ed25519` algorithm, and current `active` or `revoked`
+   status to the public key.
 6. The mismatch-adjudication owner reviews differences. `allow`, `deny`, and
    `require_approval` remain distinct. `unknown` production decisions and
    `insufficient_evidence` hypothetical decisions are uncomparable.

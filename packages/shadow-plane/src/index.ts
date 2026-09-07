@@ -34,12 +34,18 @@ export type {
 export { loadShadowStartupConfig } from './startupConfig.js';
 export type { ShadowStartupConfig } from './startupConfig.js';
 export { atomicExport } from './atomicExport.js';
-export { buildSignedShadowReport, SHADOW_REPORT_SCHEMA, verifyShadowReport } from './report.js';
+export {
+  buildSignedShadowReport,
+  SHADOW_REPORT_SCHEMA,
+  SHADOW_REPORT_TRUST_SCHEMA,
+  verifyShadowReport,
+} from './report.js';
 export type {
   ShadowDecisionMatrix,
   ShadowReportBundle,
   ShadowReportCounts,
   ShadowReportRecord,
   ShadowReportSigningOptions,
+  ShadowReportTrust,
   ShadowTerminalStatus,
 } from './report.js';
