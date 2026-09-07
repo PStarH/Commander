@@ -79,3 +79,17 @@ Redact logs and configuration before filing a normal bug. Report suspected
 security vulnerabilities privately as described in [`SECURITY.md`](SECURITY.md).
 
 Questions about this boundary can be sent to `sampan090611@gmail.com`.
+
+## Shadow Pilot Phase A
+
+The optional Phase A Shadow Pilot is a dedicated customer-cloud historical
+evaluation of `kubernetes.deployment.rollback`. Its authoritative evidence store
+is customer-operated PostgreSQL; it does not use local, Redis, or SQLite
+persistence fallbacks. See the [customer data boundary](docs/pilot/shadow/data-boundary.md)
+before preparing a declared sample.
+
+The customer controls retention (1–30 days), export recipients, withdrawal, and
+backup handling. Campaign withdrawal deletes retained payload from the dedicated
+Shadow schema while leaving a minimal tombstone and hashed deletion audit; it
+cannot remove already exported reports or customer backups. Legal/DPA review is
+external and remains the customer’s responsibility.

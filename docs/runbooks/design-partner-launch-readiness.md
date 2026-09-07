@@ -650,3 +650,25 @@ For each partner:
 
 The next product direction is chosen from repeated partner blockers. Feature
 development does not resume merely because the launch gates passed.
+
+## 11. Shadow Pilot Phase A Readiness
+
+For a customer-cloud historical evaluation, use the materials in
+[`docs/pilot/shadow`](../pilot/shadow/README.md) before any sample is prepared.
+The engagement is limited to `kubernetes.deployment.rollback`, customer-operated
+PostgreSQL evidence, and a declared historical sample. It has no effect-producing
+runtime path.
+
+- [ ] The customer charter names platform, security, policy, sample, retention,
+      deletion, export, usefulness, mismatch-adjudication, and stop-condition
+      owners.
+- [ ] A fixed `policyId` and `policyDigest`, observation window, and 1–30 day
+      retention period are recorded.
+- [ ] The data-boundary review excludes prohibited free-form content and missing
+      facts are represented as `null`.
+- [ ] PostgreSQL TLS, schema version, tenant binding, key configuration, and
+      cleanup freshness pass readiness before manifest registration.
+- [ ] The customer accepts the report limitations: signatures bind the report
+      body, but do not establish sample completeness or rollback outcomes.
+- [ ] Legal/DPA review is owned as an external review, not inferred from a
+      command exit status.
