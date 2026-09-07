@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -13,6 +15,14 @@ import { runShadowCli, type ShadowCliRepository } from './cli.js';
 const manifestKeys = generateKeyPairSync('ed25519');
 const reportKeys = generateKeyPairSync('ed25519');
 const snapshot = actionGatewayPolicySnapshot();
+it('executes the installed CLI through a package-manager symlink', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'shadow-bin-'));
+  const executable = join(directory, 'commander-shadow.ts');
+  symlinkSync(fileURLToPath(new URL('./cli.ts', import.meta.url)), executable);
+  const result = spawnSync(process.execPath, ['--import', 'tsx', executable], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
+  assert.deepEqual(JSON.parse(result.stdout), { status: 'error', code: 'SHADOW_USAGE_INVALID' });
+});
 const trustedManifests = new Map([
   [
     'manifest-key-1',
