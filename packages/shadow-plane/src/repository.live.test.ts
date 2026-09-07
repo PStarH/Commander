@@ -10,7 +10,7 @@ import {
   type ShadowObservationV1,
 } from './contracts.js';
 import { observationDigest } from './evaluator.js';
-import { asShadowSqlPool, ShadowRepository } from './repository.js';
+import { asShadowSqlPool, ShadowRepository, type ShadowSqlPool } from './repository.js';
 import { SHADOW_SCHEMA_SQL } from './schema.js';
 
 const adminUrl = process.env.COMMANDER_SHADOW_PG_ADMIN_URL;
@@ -39,11 +39,10 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     return url.toString();
   }
 
-  function repo(pool: Pool, clock = () => new Date(now)): ShadowRepository {
+  function repo(pool: Pool): ShadowRepository {
     return new ShadowRepository(asShadowSqlPool(pool), {
       retentionDays: 1,
       trustedManifestPublicKeys: new Map([['manifest-key-1', keys.publicKey]]),
-      clock,
     });
   }
 
@@ -155,6 +154,18 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       retention.query('CREATE TABLE commander_shadow.forbidden_retention (id integer)'),
       /permission denied/i,
     );
+    await assert.rejects(
+      ingestion.query(
+        "INSERT INTO commander_shadow.cleanup_state VALUES ('tenant-live',clock_timestamp())",
+      ),
+      /permission denied/i,
+    );
+    await assert.rejects(
+      ingestion.query(
+        'UPDATE commander_shadow.cleanup_state SET last_completed_at=clock_timestamp()',
+      ),
+      /permission denied/i,
+    );
   });
 
   it('persists registration and import across a fresh pool, supports identical retry, and rejects conflict', async () => {
@@ -163,6 +174,10 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       'tenant-live',
       manifest('campaign-persist', 'batch-persist', [input], new Date(now + 60_000).toISOString()),
     );
+    assert.deepEqual(await repo(reader).readiness('tenant-live', 120), {
+      ready: false,
+      code: 'SHADOW_CLEANUP_OVERDUE',
+    });
     const first = await repo(ingestion).importObservation('tenant-live', input);
     assert.equal(first.idempotent, false);
     await ingestion.end();
@@ -189,11 +204,14 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       manifest('campaign-close', 'batch-partial', [first, second], closesAt),
     );
     await repo(ingestion).importObservation('tenant-live', first);
-    await repo(ingestion, () => new Date(now + 120_000)).closeDueBatch(
-      'tenant-live',
-      'campaign-close',
-      'batch-partial',
+    await assert.rejects(
+      repo(ingestion).closeDueBatch('tenant-live', 'campaign-close', 'batch-partial'),
+      /SHADOW_BATCH_NOT_DUE/,
     );
+    await admin.query(
+      "UPDATE commander_shadow.batches SET closes_at=clock_timestamp()-interval '1 second' WHERE campaign_id='campaign-close'",
+    );
+    await repo(ingestion).closeDueBatch('tenant-live', 'campaign-close', 'batch-partial');
     const partial = await repo(reader).readReport('tenant-live', 'campaign-close');
     assert.deepEqual(
       partial.records.map((row) => row.status),
@@ -206,13 +224,13 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     ];
     await repo(ingestion).registerManifest(
       'tenant-live',
-      manifest('campaign-missing', 'batch-missing', missing, closesAt),
+      manifest('campaign-missing', 'batch-missing', missing, new Date(now - 60_000).toISOString()),
     );
-    await repo(ingestion, () => new Date(now + 120_000)).closeDueBatch(
-      'tenant-live',
-      'campaign-missing',
-      'batch-missing',
+    await assert.rejects(
+      repo(ingestion).importObservation('tenant-live', missing[0]!),
+      /SHADOW_BATCH_CLOSED/,
     );
+    await repo(ingestion).closeDueBatch('tenant-live', 'campaign-missing', 'batch-missing');
     const absent = await repo(reader).readReport('tenant-live', 'campaign-missing');
     assert.deepEqual(
       absent.records.map((row) => row.status),
@@ -223,6 +241,125 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       repo(ingestion).importObservation('tenant-live', missing[0]!),
       /SHADOW_BATCH_CLOSED/,
     );
+  });
+
+  it('records rejected and failed arrivals, replaces attempts on retry, and preserves terminal counts at close', async () => {
+    const inputs = [0, 1, 2, 3].map((index) =>
+      observation('campaign-attempts', 'batch-attempts', index),
+    );
+    await repo(ingestion).registerManifest(
+      'tenant-live',
+      manifest('campaign-attempts', 'batch-attempts', inputs, new Date(now + 60_000).toISOString()),
+    );
+    await assert.rejects(
+      repo(ingestion).importObservation('tenant-live', {
+        ...inputs[0]!,
+        productionDecision: 'deny',
+      }),
+      /SHADOW_DIGEST_MISMATCH/,
+    );
+    await assert.rejects(
+      repo(ingestion).importObservation('tenant-live', {
+        ...inputs[1]!,
+        productionDecision: 'deny',
+      }),
+      /SHADOW_DIGEST_MISMATCH/,
+    );
+    await repo(ingestion).importObservation('tenant-live', inputs[1]!);
+    await admin.query(
+      "UPDATE commander_shadow.campaigns SET policy_digest='broken-test-pin' WHERE campaign_id='campaign-attempts'",
+    );
+    await assert.rejects(
+      repo(ingestion).importObservation('tenant-live', inputs[2]!),
+      /SHADOW_EVALUATION_FAILED/,
+    );
+    await admin.query(
+      "UPDATE commander_shadow.campaigns SET policy_digest=$1 WHERE campaign_id='campaign-attempts'",
+      [snapshot.descriptorDigest],
+    );
+    await admin.query(
+      "UPDATE commander_shadow.batches SET closes_at=clock_timestamp()-interval '1 second' WHERE campaign_id='campaign-attempts'",
+    );
+    await repo(ingestion).closeDueBatch('tenant-live', 'campaign-attempts', 'batch-attempts');
+    const report = await repo(reader).readReport('tenant-live', 'campaign-attempts');
+    assert.deepEqual(
+      report.records.map((record) => record.status),
+      ['rejected', 'compared', 'failed', 'missing'],
+    );
+    assert.equal(report.records[0]?.attempt_code, 'SHADOW_DIGEST_MISMATCH');
+    assert.equal(report.records[0]?.canonical_observation, null);
+    assert.equal(report.records[1]?.attempt_code, null);
+    assert.equal(report.records[2]?.attempt_code, 'SHADOW_EVALUATION_FAILED');
+  });
+
+  it('returns one complete report snapshot while a concurrent withdrawal waits', async () => {
+    const input = observation('campaign-report-race', 'batch-report-race', 0);
+    await repo(ingestion).registerManifest(
+      'tenant-live',
+      manifest(
+        'campaign-report-race',
+        'batch-report-race',
+        [input],
+        new Date(now + 60_000).toISOString(),
+      ),
+    );
+    await repo(ingestion).importObservation('tenant-live', input);
+    let releaseRead: () => void = () => {};
+    let reachedRead: () => void = () => {};
+    const readHeld = new Promise<void>((resolve) => {
+      reachedRead = resolve;
+    });
+    const resumeRead = new Promise<void>((resolve) => {
+      releaseRead = resolve;
+    });
+    const readerAdapter = asShadowSqlPool(reader);
+    const heldReader: ShadowSqlPool = {
+      query: (sql, values) => readerAdapter.query(sql, values),
+      async connect() {
+        const client = await readerAdapter.connect();
+        return {
+          release: () => client.release(),
+          async query(sql, values) {
+            const result = await client.query(sql, values);
+            if (/FROM commander_shadow.campaigns/.test(sql)) {
+              reachedRead();
+              await resumeRead;
+            }
+            return result;
+          },
+        };
+      },
+    };
+    const reportPromise = new ShadowRepository(heldReader, {
+      retentionDays: 1,
+      trustedManifestPublicKeys: new Map(),
+    }).readReport('tenant-live', 'campaign-report-race');
+    await readHeld;
+    const withdrawal = repo(retention).withdrawCampaign('tenant-live', 'campaign-report-race');
+    try {
+      let blocked = false;
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const result = await admin.query(
+          "SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename='commander_shadow_retention' AND wait_event='advisory' AND cardinality(pg_blocking_pids(pid))>0",
+        );
+        if (result.rows[0]?.count > 0) {
+          blocked = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(blocked, true, 'withdrawal must wait for the report transaction');
+    } finally {
+      releaseRead();
+    }
+    const report = await reportPromise;
+    await withdrawal;
+    assert.equal(report.campaign?.state, 'open');
+    assert.equal(report.batches.length, 1);
+    assert.equal(report.records.length, 1);
+    const after = await repo(reader).readReport('tenant-live', 'campaign-report-race');
+    assert.equal(after.campaign?.state, 'withdrawn');
+    assert.equal(after.records.length, 0);
   });
 
   it('serializes concurrent withdrawal and import so no observation survives withdrawal', async () => {

@@ -311,3 +311,21 @@ export function parseShadowObservation(value: unknown): ShadowObservationV1 {
     ...(reason === undefined ? {} : { productionReasonCode: reason as ShadowProductionReasonCode }),
   };
 }
+
+export function parseShadowObservationBinding(
+  value: unknown,
+): Pick<
+  ShadowObservationV1,
+  'tenantId' | 'campaignId' | 'producerId' | 'batchId' | 'index' | 'observationId'
+> {
+  assertSize(value, 16 * 1024);
+  const input = objectValue(value);
+  return {
+    tenantId: identifier(input.tenantId, 'tenantId'),
+    campaignId: identifier(input.campaignId, 'campaignId'),
+    producerId: identifier(input.producerId, 'producerId'),
+    batchId: identifier(input.batchId, 'batchId'),
+    index: indexValue(input.index, 'index'),
+    observationId: identifier(input.observationId, 'observationId'),
+  };
+}

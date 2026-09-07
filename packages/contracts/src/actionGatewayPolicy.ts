@@ -3,11 +3,41 @@ import {
   evaluateManifestGatewayEffect,
   findAdapterManifest,
   FIXED_ACTION_ADAPTER_MANIFESTS,
+  ACTION_ADAPTER_DESTINATION_MATCHING,
   type ActionAdapterDescriptorV1,
   type ActionGatewayEffect,
 } from './actionAdapters.js';
 
 export const ACTION_GATEWAY_POLICY_ID = 'action-gateway-mvp-v1';
+
+const authorizationSemantics = {
+  algorithm: 'first-matching-adapter-then-demo-v1',
+  adapterEffectMatching: 'exact-forward-or-compensation',
+  adapterToolMatching: 'case-sensitive-exact',
+  adapterDecision: 'descriptor-defaultGatewayEffect',
+  destinationMatching: ACTION_ADAPTER_DESTINATION_MATCHING,
+  demoActions: [
+    { effectType: 'demo.ticket.create', tool: 'ticket.create' },
+    { effectType: 'compensate.demo.ticket.create', tool: 'ticket.compensate' },
+  ],
+  demoDestinations: [
+    {
+      destination: 'demo://tickets',
+      effect: 'allow',
+      reasonCode: 'REGISTERED_DEMO_DESTINATION',
+      reason: 'The registered demo ticket destination is allowed.',
+    },
+    {
+      destination: 'demo://tickets/approval',
+      effect: 'require_approval',
+      reasonCode: 'DEMO_DESTINATION_REQUIRES_APPROVAL',
+      reason: 'The approval demo destination requires a human decision.',
+    },
+  ],
+  demoDestinationMatching: 'case-sensitive-exact',
+  unregisteredEffect: 'deny',
+  unregisteredDestination: 'deny',
+} as const;
 
 export interface ActionGatewayPolicyInput {
   effectType: string;
@@ -60,16 +90,19 @@ export function actionGatewayPolicySnapshot(): {
   version: 1;
   descriptorDigest: string;
   descriptors: ActionGatewayPolicyDescriptor[];
+  authorizationSemantics: typeof authorizationSemantics;
 } {
   const descriptors = FIXED_ACTION_ADAPTER_MANIFESTS.map(manifestProjection);
-  const descriptorDigest = createHash('sha256')
-    .update(JSON.stringify(descriptors), 'utf8')
-    .digest('hex');
-  return {
-    policyId: ACTION_GATEWAY_POLICY_ID,
-    version: 1,
-    descriptorDigest,
+  const body = {
+    policyId: ACTION_GATEWAY_POLICY_ID as typeof ACTION_GATEWAY_POLICY_ID,
+    version: 1 as const,
     descriptors,
+    authorizationSemantics: structuredClone(authorizationSemantics),
+  };
+  const descriptorDigest = createHash('sha256').update(JSON.stringify(body), 'utf8').digest('hex');
+  return {
+    ...body,
+    descriptorDigest,
   };
 }
 
@@ -92,38 +125,32 @@ export function evaluateActionGatewayPolicy(
     };
   }
 
-  const isDemoCreate = input.effectType === 'demo.ticket.create' && input.tool === 'ticket.create';
-  const isDemoCompensation =
-    input.effectType === 'compensate.demo.ticket.create' && input.tool === 'ticket.compensate';
-  if (!isDemoCreate && !isDemoCompensation) {
+  const isDemo = authorizationSemantics.demoActions.some(
+    (action) => action.effectType === input.effectType && action.tool === input.tool,
+  );
+  if (!isDemo) {
     return {
-      effect: 'deny',
+      effect: authorizationSemantics.unregisteredEffect,
       decisionId: 'action-gateway-deny',
       reasonCode: 'UNREGISTERED_EFFECT_TYPE',
       reason: `Effect type '${input.effectType}' is not registered by the Action Gateway.`,
       policySnapshotId: ACTION_GATEWAY_POLICY_ID,
     };
   }
-  if (input.destination === 'demo://tickets') {
+  const demoDestination = authorizationSemantics.demoDestinations.find(
+    (rule) => rule.destination === input.destination,
+  );
+  if (demoDestination) {
     return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reasonCode: 'REGISTERED_DEMO_DESTINATION',
-      reason: 'The registered demo ticket destination is allowed.',
-      policySnapshotId: ACTION_GATEWAY_POLICY_ID,
-    };
-  }
-  if (input.destination === 'demo://tickets/approval') {
-    return {
-      effect: 'require_approval',
-      decisionId: 'action-gateway-require_approval',
-      reasonCode: 'DEMO_DESTINATION_REQUIRES_APPROVAL',
-      reason: 'The approval demo destination requires a human decision.',
+      effect: demoDestination.effect,
+      decisionId: `action-gateway-${demoDestination.effect}`,
+      reasonCode: demoDestination.reasonCode,
+      reason: demoDestination.reason,
       policySnapshotId: ACTION_GATEWAY_POLICY_ID,
     };
   }
   return {
-    effect: 'deny',
+    effect: authorizationSemantics.unregisteredDestination,
     decisionId: 'action-gateway-deny',
     reasonCode: 'UNREGISTERED_DESTINATION',
     reason: `Destination '${input.destination}' is not registered by the Action Gateway.`,
