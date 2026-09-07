@@ -148,6 +148,12 @@ function baseCommands(packageDirectory: string, packageFile: string): ShadowPhas
   const extracted = join(packageDirectory, 'extracted');
   return [
     { id: 'contracts', file: 'pnpm', args: ['--filter', '@commander/contracts', 'test'] },
+    { id: 'contracts-build', file: 'pnpm', args: ['--filter', '@commander/contracts', 'build'] },
+    {
+      id: 'postgres-runtime-build',
+      file: 'pnpm',
+      args: ['--filter', '@commander/postgres-runtime', 'build'],
+    },
     {
       id: 'architecture',
       file: 'pnpm',
@@ -159,12 +165,6 @@ function baseCommands(packageDirectory: string, packageFile: string): ShadowPhas
         'run',
         'tests/architecture/shadow-replay-removal.test.ts',
       ],
-    },
-    { id: 'contracts-build', file: 'pnpm', args: ['--filter', '@commander/contracts', 'build'] },
-    {
-      id: 'postgres-runtime-build',
-      file: 'pnpm',
-      args: ['--filter', '@commander/postgres-runtime', 'build'],
     },
     {
       id: 'shadow-tests',
