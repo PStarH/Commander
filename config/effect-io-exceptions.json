@@ -1,5 +1,5 @@
 {
-  "baselineCount": 75,
+  "baselineCount": 73,
   "exceptions": [
     {
       "id": "api-onboarding-fetch",
@@ -719,29 +719,6 @@
       "expiresAt": "2026-12-31",
       "patterns": [
         "axios"
-      ]
-    },
-    {
-      "id": "core-shadow-proxy",
-      "path": "packages/core/src/shadow/proxy.ts",
-      "owner": "@commander/core",
-      "reason": "Shadow proxy HTTP — DLP redaction path",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch("
-      ]
-    },
-    {
-      "id": "core-shadow-runner",
-      "path": "packages/core/src/shadow/runner.ts",
-      "owner": "@commander/core",
-      "reason": "Shadow proxy HTTP — DLP redaction path",
-      "replacement": "packages/action-adapters/* (future)",
-      "expiresAt": "2026-12-31",
-      "patterns": [
-        "fetch(",
-        "node:http"
       ]
     },
     {

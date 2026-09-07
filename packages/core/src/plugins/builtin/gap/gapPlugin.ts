@@ -77,7 +77,6 @@ export function createGapPlugin(): CommanderPlugin {
               type: 'string',
               enum: [
                 'chaos',
-                'shadow-drift',
                 'redteam-missed',
                 'postmortem',
                 'cve-feed',

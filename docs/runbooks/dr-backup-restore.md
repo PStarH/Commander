@@ -102,7 +102,7 @@ The governing rule for V2:
 
 | Path (default) | Class | On disk loss | Backup needed? |
 |---|---|---|---|
-| `.commander/otel_queue/`, `.commander/repl_history`, `*cache*`, `.commander/shadow/` | **Ephemeral** | Regenerated / re-emitted | No |
+| `.commander/otel_queue/`, `.commander/repl_history`, `*cache*` | **Ephemeral** | Regenerated / re-emitted | No |
 | `.commander/settings.json`, `.commander/execpolicy.json`, `.commander/locales/`, `.commander/skills/`, `.commander/plugins/` | **Config** | Redeploy from git / IaC | No (in VCS) |
 | `.commander/api_keys.json`, `.commander/auth.json`, secrets vault | **Secrets** | Re-provision from secret manager | No — never back up plaintext |
 | `.commander/audit/user-actions.ndjson`, `.commander/security/*.ndjson`, `.commander/gdpr-erasures.ndjson` | **Audit (append-only)** | Gap in local audit trail | Yes — ship to central log/WORM continuously |

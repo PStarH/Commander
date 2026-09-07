@@ -104,4 +104,4 @@ A finding is considered **triaged** when step 2-3 are complete and
 
 - `SECURITY.md` — coordinated disclosure process and PGP key
 - `docs/runbooks/chaos.md` — internal chaos test suite
-- `docs/runbooks/shadow.md` — shadow traffic capture
+- `docs/pilot/shadow/` — historical policy-evaluation data boundary
