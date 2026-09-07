@@ -93,7 +93,11 @@ describe('Shadow Phase A release gate', () => {
       importCommand.args[1]!,
       /pnpm --offline --filter @commander\/shadow-plane deploy --prod/,
     );
-    assert.match(importCommand.args[1]!, /deploy --prod "\$2\/package" && tar -xzf "\$1" -C "\$2"/);
+    assert.match(importCommand.args[1]!, /deploy --prod "\$2\/deployed"/);
+    assert.match(
+      importCommand.args[1]!,
+      /mv "\$2\/deployed\/node_modules" "\$2\/package\/node_modules" && tar -xzf "\$1" -C "\$2"/,
+    );
     assert.doesNotMatch(
       importCommand.args[1]!,
       /ln -s|json-canonicalize|postgres-runtime|@commander\/contracts/,
