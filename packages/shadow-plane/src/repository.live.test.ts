@@ -166,6 +166,24 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       ),
       /permission denied/i,
     );
+    await assert.rejects(
+      ingestion.query(
+        "UPDATE commander_shadow.campaigns SET policy_digest='tampered' WHERE tenant_id='tenant-live'",
+      ),
+      /permission denied/i,
+    );
+    await assert.rejects(
+      ingestion.query(
+        "UPDATE commander_shadow.observations SET hypothetical_decision='allow' WHERE tenant_id='tenant-live'",
+      ),
+      /permission denied/i,
+    );
+    await assert.rejects(
+      retention.query(
+        "UPDATE commander_shadow.batches SET manifest='{}'::jsonb WHERE tenant_id='tenant-live'",
+      ),
+      /permission denied/i,
+    );
   });
 
   it('persists registration and import across a fresh pool, supports identical retry, and rejects conflict', async () => {

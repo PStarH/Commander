@@ -8,7 +8,8 @@ Expired campaign data is deleted from the authoritative PostgreSQL schema.
 
 The export owner may create the required historical record with `report export
 --campaign --output`. The recipient independently checks it with `report verify
---bundle --public-key` and retains it according to the customer’s records policy.
+--bundle --public-key` using the separately distributed JSON trust record and
+retains it according to the customer’s records policy.
 An export is a copy; the customer must decide how any backup or recipient copy is
 handled.
 

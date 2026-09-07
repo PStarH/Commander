@@ -124,10 +124,22 @@ describe('Shadow Pilot customer delivery pack', () => {
     for (const record of example.records as Array<Record<string, unknown>>) {
       if (record.facts !== undefined) parseShadowObservation(record.facts);
     }
-    const publicKey = createPublicKey(await text('example-report-public.pem'));
-    assert.deepEqual(verifyShadowReport(example, { publicKey }), {
-      valid: true,
-      code: 'SHADOW_REPORT_VALID',
-    });
+    const trustRecord = JSON.parse(await text('example-report-trust.json')) as Record<
+      string,
+      string
+    >;
+    const publicKey = createPublicKey(trustRecord.publicKeyPem!);
+    assert.deepEqual(
+      verifyShadowReport(example, {
+        algorithm: 'Ed25519',
+        keyId: trustRecord.keyId!,
+        status: trustRecord.status as 'active' | 'revoked',
+        publicKey,
+      }),
+      {
+        valid: true,
+        code: 'SHADOW_REPORT_VALID',
+      },
+    );
   });
 });

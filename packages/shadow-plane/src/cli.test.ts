@@ -146,10 +146,19 @@ describe('commander-shadow CLI', () => {
     const manifestFile = join(directory, 'manifest.json');
     const importFile = join(directory, 'observations.ndjson');
     const reportFile = join(directory, 'report.json');
-    const publicKeyFile = join(directory, 'report-public.pem');
+    const publicKeyFile = join(directory, 'report-public.json');
     writeFileSync(manifestFile, JSON.stringify(manifest()));
     writeFileSync(importFile, `${JSON.stringify(observation())}\n`);
-    writeFileSync(publicKeyFile, reportKeys.publicKey.export({ format: 'pem', type: 'spki' }));
+    writeFileSync(
+      publicKeyFile,
+      JSON.stringify({
+        schema: 'commander.shadow-report-trust/v1',
+        algorithm: 'Ed25519',
+        keyId: 'report-key-1',
+        status: 'active',
+        publicKeyPem: reportKeys.publicKey.export({ format: 'pem', type: 'spki' }),
+      }),
+    );
     const repository = new FakeRepository();
     const deps = dependencies(repository);
 
@@ -176,6 +185,31 @@ describe('commander-shadow CLI', () => {
       exitCode: 0,
       output: { status: 'ok', code: 'SHADOW_REPORT_VALID' },
     });
+
+    const revokedKeyFile = join(directory, 'report-revoked.json');
+    writeFileSync(
+      revokedKeyFile,
+      JSON.stringify({
+        schema: 'commander.shadow-report-trust/v1',
+        algorithm: 'Ed25519',
+        keyId: 'report-key-1',
+        status: 'revoked',
+        publicKeyPem: reportKeys.publicKey.export({ format: 'pem', type: 'spki' }),
+      }),
+    );
+    assert.equal(
+      (
+        await runShadowCli([
+          'report',
+          'verify',
+          '--bundle',
+          reportFile,
+          '--public-key',
+          revokedKeyFile,
+        ])
+      ).output.code,
+      'SHADOW_REPORT_KEY_REVOKED',
+    );
     assert.deepEqual(repository.calls, [
       'register',
       'import',
