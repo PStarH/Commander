@@ -180,6 +180,16 @@ export {
 } from './actionAdapters.js';
 export type { ActionAdapterDescriptorV1, ActionGatewayEffect } from './actionAdapters.js';
 
+export {
+  ACTION_GATEWAY_POLICY_ID,
+  actionGatewayPolicySnapshot,
+  evaluateActionGatewayPolicy,
+} from './actionGatewayPolicy.js';
+export type {
+  ActionGatewayPolicyDecision,
+  ActionGatewayPolicyInput,
+} from './actionGatewayPolicy.js';
+
 // --- Shared identity, policy, audit, and plugin contracts ---
 export { CONTROL_PLANE_API_VERSION, CONTROL_PLANE_RESOURCES } from './controlPlane.js';
 export type {

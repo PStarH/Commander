@@ -1,7 +1,6 @@
 // packages/core/src/plugins/builtin/gap/types.ts
 export type GapSource =
   | 'chaos'
-  | 'shadow-drift'
   | 'redteam-missed'
   | 'postmortem'
   | 'cve-feed'

@@ -53,6 +53,7 @@ import {
 } from '@commander/effect-broker';
 import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
 import { createCapabilityAuthority, type CapabilityAuthority } from '@commander/kernel';
+import { ACTION_GATEWAY_POLICY_ID, evaluateActionGatewayPolicy } from '@commander/contracts';
 import {
   ActionAdapterRegistry,
   parseKubernetesDeploymentDestination,
@@ -400,13 +401,12 @@ function denyActionGateway(reason: string) {
     effect: 'deny' as const,
     decisionId: 'action-gateway-deny-default',
     reason,
-    policySnapshotId: 'action-gateway-mvp-v1',
+    policySnapshotId: ACTION_GATEWAY_POLICY_ID,
   };
 }
 
 /**
- * Mirrors apps/api `evaluateAction` for policySnapshotId `action-gateway-mvp-v1`.
- * Worker re-runs this so a sealed metadata.decision alone cannot authorize effects.
+ * Worker re-runs the shared policy so a sealed metadata.decision alone cannot authorize effects.
  */
 export function evaluateActionGatewayMvpV1(
   envelope: Record<string, unknown>,
@@ -436,45 +436,31 @@ export function evaluateActionGatewayMvpV1(
         effect,
         decisionId: `action-gateway-manifest-${effect}`,
         reason: `Registered adapter policy requires '${effect}' for this exact action.`,
-        policySnapshotId: 'action-gateway-mvp-v1',
+        policySnapshotId: ACTION_GATEWAY_POLICY_ID,
       };
     } catch {
-      // Malformed destinations remain deny-by-default below.
+      // Invalid Kubernetes destinations remain deny-by-default.
     }
   }
-  const isCreate = effectType === 'demo.ticket.create' && tool === 'ticket.create';
-  const isCompensation =
-    effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate';
-  if (!isCreate && !isCompensation) {
+  const isDemo =
+    (effectType === 'demo.ticket.create' && tool === 'ticket.create') ||
+    (effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate');
+  if (!isDemo || typeof destination !== 'string') {
     return {
       effect: 'deny',
       decisionId: 'action-gateway-deny',
-      reason: `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
-      policySnapshotId: 'action-gateway-mvp-v1',
+      reason: isDemo
+        ? `Destination '${String(destination)}' is not registered by the Action Gateway.`
+        : `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
+      policySnapshotId: ACTION_GATEWAY_POLICY_ID,
     };
   }
-  if (destination === 'demo://tickets') {
-    return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
-      policySnapshotId: 'action-gateway-mvp-v1',
-    };
-  }
-  if (destination === 'demo://tickets/approval') {
-    return {
-      effect: 'require_approval',
-      decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
-      policySnapshotId: 'action-gateway-mvp-v1',
-    };
-  }
-  return {
-    effect: 'deny',
-    decisionId: 'action-gateway-deny',
-    reason: `Destination '${String(destination)}' is not registered by the Action Gateway.`,
-    policySnapshotId: 'action-gateway-mvp-v1',
-  };
+  const { effect, decisionId, reason, policySnapshotId } = evaluateActionGatewayPolicy({
+    effectType,
+    tool,
+    destination,
+  });
+  return { effect, decisionId, reason, policySnapshotId };
 }
 
 export function createWorkerPolicyEvaluator(
@@ -608,7 +594,7 @@ export function createWorkerPolicyEvaluator(
         // Defense in depth: re-evaluate mvp-v1 against the bound envelope so a
         // forged or post-create-mutated metadata.decision cannot authorize work.
         let revalidatedDecisionId: string | null = null;
-        if (metadata.policySnapshotId === 'action-gateway-mvp-v1') {
+        if (metadata.policySnapshotId === ACTION_GATEWAY_POLICY_ID) {
           const fresh = evaluateActionGatewayMvpV1(actionEnvelope, actionAdapters);
           if (
             fresh.effect !== actionDecision.effect ||

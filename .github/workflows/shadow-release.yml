@@ -1,0 +1,67 @@
+name: Shadow Release
+
+on:
+  pull_request:
+    branches: [codex/release-20260810]
+
+permissions:
+  contents: read
+
+jobs:
+  shadow-phase-a-postgres:
+    name: Shadow Phase A PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commander
+          POSTGRES_PASSWORD: commander
+          POSTGRES_DB: commander
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      COMMANDER_SHADOW_PG_ADMIN_URL: postgres://commander:commander@localhost:5432/commander
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Shadow Phase A gate contract
+        run: pnpm exec node --import tsx --test scripts/shadow-phase-a-gate.test.ts
+      - name: Shadow Phase A release gate
+        run: pnpm shadow:phase-a:gate
+      - name: Package customer trial
+        run: |
+          mkdir shadow-customer-trial
+          pnpm --dir packages/contracts pack --pack-destination "$PWD/shadow-customer-trial"
+          pnpm --dir packages/postgres-runtime pack --pack-destination "$PWD/shadow-customer-trial"
+          pnpm --dir packages/shadow-plane pack --pack-destination "$PWD/shadow-customer-trial"
+          cp -R docs/pilot/shadow shadow-customer-trial/guide
+          git rev-parse HEAD > shadow-customer-trial/SOURCE_REVISION
+          cd shadow-customer-trial
+          sha256sum *.tgz > SHA256SUMS
+      - name: Customer trial artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-customer-trial
+          path: shadow-customer-trial
+          if-no-files-found: error
+          retention-days: 14
+      - name: Sanitized Shadow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-phase-a-evidence
+          path: shadow-phase-a-evidence.json
+          if-no-files-found: error
+          retention-days: 7

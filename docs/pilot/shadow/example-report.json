@@ -1,0 +1,3460 @@
+{
+  "schema": "commander.shadow-report/v1",
+  "generatedAt": "2026-09-03T00:00:00.000Z",
+  "sourceRevision": "example-phase-a",
+  "evaluatorVersion": "shadow-evaluator-v1",
+  "campaignId": "example-campaign-100",
+  "policySnapshot": {
+    "policyId": "action-gateway-mvp-v1",
+    "version": 1,
+    "descriptors": [
+      {
+        "schema": "commander.action-adapter/v1",
+        "adapterId": "github.pull-request.create",
+        "adapterVersion": "1.0.0",
+        "effectType": "connector.github.pull-request.create",
+        "toolName": "github.pull-request.create",
+        "compensationEffectType": "compensate.github.pull-request.create",
+        "destinationPattern": "github://{owner}/{repo}/pulls",
+        "defaultGatewayEffect": "require_approval",
+        "reversible": true,
+        "evidenceResponseSummaryKeys": [
+          "prNumber",
+          "url",
+          "state",
+          "httpStatus",
+          "errorCode"
+        ],
+        "compensationPatchKeys": []
+      },
+      {
+        "schema": "commander.action-adapter/v1",
+        "adapterId": "servicenow.incident.create",
+        "adapterVersion": "1.0.0",
+        "effectType": "connector.servicenow.incident.create",
+        "toolName": "servicenow.incident.create",
+        "compensationEffectType": "compensate.servicenow.incident.create",
+        "destinationPattern": "servicenow://{instance}/incident",
+        "defaultGatewayEffect": "require_approval",
+        "reversible": true,
+        "evidenceResponseSummaryKeys": [
+          "sysId",
+          "number",
+          "state",
+          "httpStatus",
+          "errorCode"
+        ],
+        "compensationPatchKeys": [
+          "state",
+          "close_code",
+          "close_notes"
+        ]
+      },
+      {
+        "schema": "commander.action-adapter/v1",
+        "adapterId": "kubernetes.deployment.rollback",
+        "adapterVersion": "1.0.0",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "toolName": "kubernetes.deployment.rollback",
+        "compensationEffectType": "compensate.kubernetes.deployment.rollback",
+        "destinationPattern": "k8s://{cluster}/{namespace}/deployments/{name}",
+        "defaultGatewayEffect": "require_approval",
+        "reversible": true,
+        "evidenceResponseSummaryKeys": [
+          "deployment",
+          "namespace",
+          "revision",
+          "status",
+          "httpStatus",
+          "errorCode"
+        ],
+        "compensationPatchKeys": [
+          "targetRevision",
+          "reason"
+        ]
+      }
+    ],
+    "authorizationSemantics": {
+      "algorithm": "first-matching-adapter-then-demo-v1",
+      "adapterEffectMatching": "exact-forward-or-compensation",
+      "adapterToolMatching": "case-sensitive-exact",
+      "adapterDecision": "descriptor-defaultGatewayEffect",
+      "destinationMatching": {
+        "algorithm": "exact-segments-v1",
+        "separator": "/",
+        "placeholderStart": "{",
+        "placeholderEnd": "}",
+        "placeholderPattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+        "literalComparison": "case-sensitive-exact",
+        "decoding": "none"
+      },
+      "demoActions": [
+        {
+          "effectType": "demo.ticket.create",
+          "tool": "ticket.create"
+        },
+        {
+          "effectType": "compensate.demo.ticket.create",
+          "tool": "ticket.compensate"
+        }
+      ],
+      "demoDestinations": [
+        {
+          "destination": "demo://tickets",
+          "effect": "allow",
+          "reasonCode": "REGISTERED_DEMO_DESTINATION",
+          "reason": "The registered demo ticket destination is allowed."
+        },
+        {
+          "destination": "demo://tickets/approval",
+          "effect": "require_approval",
+          "reasonCode": "DEMO_DESTINATION_REQUIRES_APPROVAL",
+          "reason": "The approval demo destination requires a human decision."
+        }
+      ],
+      "demoDestinationMatching": "case-sensitive-exact",
+      "unregisteredEffect": "deny",
+      "unregisteredDestination": "deny"
+    },
+    "descriptorDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+  },
+  "manifests": [
+    {
+      "schema": "commander.shadow-manifest/v1",
+      "campaignId": "example-campaign-100",
+      "tenantId": "example-tenant",
+      "producerId": "example-producer",
+      "policyId": "action-gateway-mvp-v1",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c",
+      "batchId": "batch-100",
+      "closesAt": "2026-09-02T00:00:00.000Z",
+      "records": [
+        {
+          "index": 0,
+          "observationId": "example-observation-0",
+          "digest": "262adff790a86eee2dbfce12306f1dc7f8ce57f1c76ddaf4fdf6b57ab5ec5d1f"
+        },
+        {
+          "index": 1,
+          "observationId": "example-observation-1",
+          "digest": "6f35529c7907db263e3a42febfbde6f0580a417d42752cf0d6746d007e23577d"
+        },
+        {
+          "index": 2,
+          "observationId": "example-observation-2",
+          "digest": "6c00996453c2ecac12b83295fa0e12cf41f380008c80c94c30b57bd99dc50927"
+        },
+        {
+          "index": 3,
+          "observationId": "example-observation-3",
+          "digest": "b5bc0e4ed1f6154990fe77129e25565a413a00f30aeaeb9321c21e9e6cf8f0e9"
+        },
+        {
+          "index": 4,
+          "observationId": "example-observation-4",
+          "digest": "375045126146dc27ab10809ecbc21dab6a87f45f9a698ecc60855b37dcfcb066"
+        },
+        {
+          "index": 5,
+          "observationId": "example-observation-5",
+          "digest": "671a401954e0d09f9d0eba31a09bd4a11af3a14942aebcce53cef7ec5b7cd3e3"
+        },
+        {
+          "index": 6,
+          "observationId": "example-observation-6",
+          "digest": "aa279e4ddb8cf9158408fc7ae3efd226db235e2dae445e70cc7820ac7bf944f3"
+        },
+        {
+          "index": 7,
+          "observationId": "example-observation-7",
+          "digest": "5d807564a655e82fbf35bd80281ab709c73dcea3ccf6be0c483acabc6a4ce82e"
+        },
+        {
+          "index": 8,
+          "observationId": "example-observation-8",
+          "digest": "02ddac95b9d2d58dbaeba956d75b9dbfe0bb7e77922163a01e327bb294433180"
+        },
+        {
+          "index": 9,
+          "observationId": "example-observation-9",
+          "digest": "8613c3276907815cbf26e02d8746779e522f9af8946f205b3e1190093d1e7665"
+        },
+        {
+          "index": 10,
+          "observationId": "example-observation-10",
+          "digest": "84c4244f6f143ec5030a1c749f4e4bb604f9cd337531b83d46d639f29a788614"
+        },
+        {
+          "index": 11,
+          "observationId": "example-observation-11",
+          "digest": "56707092655893386afb7e98153af0490f10afd7ea852a31cf56c3c905494ebe"
+        },
+        {
+          "index": 12,
+          "observationId": "example-observation-12",
+          "digest": "9118805a717909e90f40038ce4fb7559b1e753d2b5a6f45dbd9252b4450d9089"
+        },
+        {
+          "index": 13,
+          "observationId": "example-observation-13",
+          "digest": "ae8dc7be0f8d3d07a781983e52905c05b3f59eb96cf462ad461aee3cfc55a94d"
+        },
+        {
+          "index": 14,
+          "observationId": "example-observation-14",
+          "digest": "7a7c8f6d603057a1c11cf07cf6e9b7ba5b4bbbc2a20797414848848a692e749a"
+        },
+        {
+          "index": 15,
+          "observationId": "example-observation-15",
+          "digest": "f09d1139f1569f5364a03ddef90d4a4afe9c7d636cbabe1ce70e44beeb5828e7"
+        },
+        {
+          "index": 16,
+          "observationId": "example-observation-16",
+          "digest": "9850ef3ed8c47bd09053badb9d870675c3f4c45025d8d45871fe5333403e64e6"
+        },
+        {
+          "index": 17,
+          "observationId": "example-observation-17",
+          "digest": "c92ac0c65f442b041e7ffa67ea3fcba1a1b3860e5a1c6be45644d8280c5e0aaa"
+        },
+        {
+          "index": 18,
+          "observationId": "example-observation-18",
+          "digest": "eb90046b52bb9207ac68cfc013c881120d0932aac43743cd4a2b7f692e95a18f"
+        },
+        {
+          "index": 19,
+          "observationId": "example-observation-19",
+          "digest": "0cc02298eb58dd7ce9fa414c343704a5deb4c04baaa5313c995b6aa7c261b4a8"
+        },
+        {
+          "index": 20,
+          "observationId": "example-observation-20",
+          "digest": "84e45f24f8ec9fba804b4a5b9a049bcff6ec17e68fcf0beca954e00f79edfc99"
+        },
+        {
+          "index": 21,
+          "observationId": "example-observation-21",
+          "digest": "3e42472bb8b6a52a8caef20a7ddec441a743bebad4ac65acf3f49c99a88115ec"
+        },
+        {
+          "index": 22,
+          "observationId": "example-observation-22",
+          "digest": "d9ae8c1a4739cb7a390952282cc9ae39cc09d43245430e2c854f11696b96a875"
+        },
+        {
+          "index": 23,
+          "observationId": "example-observation-23",
+          "digest": "0620c7c04597da1bbff190364058598eaad280e82309cbe435c375e6f0004d0e"
+        },
+        {
+          "index": 24,
+          "observationId": "example-observation-24",
+          "digest": "dfe099d6bb48a9b748df9283ac06ab5d94669b353e6952b41f032ce33418ccbb"
+        },
+        {
+          "index": 25,
+          "observationId": "example-observation-25",
+          "digest": "0aee283d79f7ef9ed3ec10970f93b1ec46bbf450f8e3d19e897018c4f9453304"
+        },
+        {
+          "index": 26,
+          "observationId": "example-observation-26",
+          "digest": "44769c40919b8281936539ea6a7c885005eaac0beba1516b1597814c49fd70ba"
+        },
+        {
+          "index": 27,
+          "observationId": "example-observation-27",
+          "digest": "6f5957ea2b8356711cf9293ad2e09edf2a648c5b4c24a151ea98cefb4a3f1f01"
+        },
+        {
+          "index": 28,
+          "observationId": "example-observation-28",
+          "digest": "e1608e0e30f6f4b4499c2556b1d90162b930fb98d28e82b0add4a03bcd44b984"
+        },
+        {
+          "index": 29,
+          "observationId": "example-observation-29",
+          "digest": "b8db86e41ac78189a938ce5969385e34f619eb3694727ae432b92354e3a2ba91"
+        },
+        {
+          "index": 30,
+          "observationId": "example-observation-30",
+          "digest": "475860cfe9f52d8040e0a98a76d7a3d290d270eecba8cfcd7c0050517ec5f7ae"
+        },
+        {
+          "index": 31,
+          "observationId": "example-observation-31",
+          "digest": "6a65cf20a9f383bf410fd82c310665aa15915eac073261f1f6f12107faa2fe8d"
+        },
+        {
+          "index": 32,
+          "observationId": "example-observation-32",
+          "digest": "af13edb8ba3fa3f92b415e0c54fa5e40c7b3ef76fec1bb4330653f2f6bf045c0"
+        },
+        {
+          "index": 33,
+          "observationId": "example-observation-33",
+          "digest": "f91a339ec2120d356086f98144ed05945e508ee8e3e1b37062ede9761279394c"
+        },
+        {
+          "index": 34,
+          "observationId": "example-observation-34",
+          "digest": "e78f761370d04f0b3fd78b01a46239a330d8c8918650913c136ee1d7b0266644"
+        },
+        {
+          "index": 35,
+          "observationId": "example-observation-35",
+          "digest": "2bde26164b8e63eaca9cf59dec2bbff27172fcc54f1bd3ef3d26a5283dce1e33"
+        },
+        {
+          "index": 36,
+          "observationId": "example-observation-36",
+          "digest": "54f171f9c14b251221c8b1dd21d96e44a3f090c1bda4bcf17dae5b197b205f5c"
+        },
+        {
+          "index": 37,
+          "observationId": "example-observation-37",
+          "digest": "689b4090c21228352fff79d95219967e263f72668f41b9c63435e7d4583626e5"
+        },
+        {
+          "index": 38,
+          "observationId": "example-observation-38",
+          "digest": "2e8ce10379db5be845c20de71e1f4e89c0a804fb768100a885a1eac6204db8df"
+        },
+        {
+          "index": 39,
+          "observationId": "example-observation-39",
+          "digest": "c54dae777dfd9784de4d91d00890077ab19ae6d7f729c2a316c064b7b692cd97"
+        },
+        {
+          "index": 40,
+          "observationId": "example-observation-40",
+          "digest": "1d83b285b7a849d0cfd0fca278fd69c17015ee8f24a52b5c0a37b06c5ea40be3"
+        },
+        {
+          "index": 41,
+          "observationId": "example-observation-41",
+          "digest": "ad9e2548ed88813bc322c004c338b6752f18102572974a3bd2e1a68635cafad6"
+        },
+        {
+          "index": 42,
+          "observationId": "example-observation-42",
+          "digest": "16c168c35542d4de39c183fee294eec9559e05e757e3ff04139e92c72d8ae8ae"
+        },
+        {
+          "index": 43,
+          "observationId": "example-observation-43",
+          "digest": "5a476df2f79d2960f88cacac3addc4de80bafe1468886684ec92714a16003bab"
+        },
+        {
+          "index": 44,
+          "observationId": "example-observation-44",
+          "digest": "a5a6f3587ad4a537793c23086aece4e0dd0988deec7b20b03bd4a1eb375b295a"
+        },
+        {
+          "index": 45,
+          "observationId": "example-observation-45",
+          "digest": "bdbcbc1051ab1be499d1cfbe479177bd875a5b55059a1eb12630335d77dde3f9"
+        },
+        {
+          "index": 46,
+          "observationId": "example-observation-46",
+          "digest": "2f08a03c97376251cab55dc4394520068abb4b42cbe1145dc93470c33d6e31d4"
+        },
+        {
+          "index": 47,
+          "observationId": "example-observation-47",
+          "digest": "6d490f471abd34076ddf6b2e4c06bd4be67b5cfb6d4aaf42b127720b05542402"
+        },
+        {
+          "index": 48,
+          "observationId": "example-observation-48",
+          "digest": "e419e60dfe84eeb9c863ec3ffb249bf93f99df4b9b7ec911a25439173b215226"
+        },
+        {
+          "index": 49,
+          "observationId": "example-observation-49",
+          "digest": "dfb41ea5489a9794c81b7d9dac0bfd6d82567b83e2a432c7b4d4340f8b251c0f"
+        },
+        {
+          "index": 50,
+          "observationId": "example-observation-50",
+          "digest": "cd3e6f753dc569a7e73819b70a9b1cdaa60b75e135957869d740ae6701566ec2"
+        },
+        {
+          "index": 51,
+          "observationId": "example-observation-51",
+          "digest": "237d433a876f208426ecd5fdb3255b1e762877b7966ed61d8ccde1b0b8d2dcc0"
+        },
+        {
+          "index": 52,
+          "observationId": "example-observation-52",
+          "digest": "e1f4192891d11b4ca8be2ed6e3cbb0507810f8e186476c80ddd1b0404e276503"
+        },
+        {
+          "index": 53,
+          "observationId": "example-observation-53",
+          "digest": "1e35f461186e479ddf053eb775fba2c88d92c54b5afa5c4a8215e07057f03ad4"
+        },
+        {
+          "index": 54,
+          "observationId": "example-observation-54",
+          "digest": "a1c8f9ce1570de8a7ba841b0f580198a6208deb0a0a411f08ccae86d595cd0cb"
+        },
+        {
+          "index": 55,
+          "observationId": "example-observation-55",
+          "digest": "6df587a1a42e6ddd630a462333d223d2c4b102c57d3a28c06692fbe8424d6949"
+        },
+        {
+          "index": 56,
+          "observationId": "example-observation-56",
+          "digest": "90735c77e8e9f8b59b0cef61123586228173073ec154a55270c53a328ed2d93e"
+        },
+        {
+          "index": 57,
+          "observationId": "example-observation-57",
+          "digest": "c502b116fffdbe8b970bf1363518fd8909f2be387e0cfd3e16382a075918e38c"
+        },
+        {
+          "index": 58,
+          "observationId": "example-observation-58",
+          "digest": "f1e8d3d81294e7eeffce52f97e56408ac75a64ea80eccab8a01cddcb20dc35a1"
+        },
+        {
+          "index": 59,
+          "observationId": "example-observation-59",
+          "digest": "490d20a13de9e3fd63c90a981778c35875a00dbdeefd399bd3e386579a97293a"
+        },
+        {
+          "index": 60,
+          "observationId": "example-observation-60",
+          "digest": "51e4b1835149216a0f1148f2e369f2afd44ba1dcc5ab109fc7760b21f6bbff33"
+        },
+        {
+          "index": 61,
+          "observationId": "example-observation-61",
+          "digest": "609ae7363dcb61c07ae5ac428958de43651ef3f94810bb706d6e200dcfbbc5fd"
+        },
+        {
+          "index": 62,
+          "observationId": "example-observation-62",
+          "digest": "955e6317030aeee81b486ee3af8f711c6d538cba37e405e314bace351acfe34f"
+        },
+        {
+          "index": 63,
+          "observationId": "example-observation-63",
+          "digest": "e3fd95ab1e98412caf864c13e045119ab288437879a99934f279a8ad105b7028"
+        },
+        {
+          "index": 64,
+          "observationId": "example-observation-64",
+          "digest": "2dc1c28711b6f934284efea2e658962e1a2a6134132af5f564a53fff6016c691"
+        },
+        {
+          "index": 65,
+          "observationId": "example-observation-65",
+          "digest": "b1d64021c43b8338efddab8faf89580a7ae93af584a440f27426d6f3df6aa137"
+        },
+        {
+          "index": 66,
+          "observationId": "example-observation-66",
+          "digest": "77b012020ae971ce068eba3b586117d592c84cbccfd1a035e8ecd5da4f0f1b0a"
+        },
+        {
+          "index": 67,
+          "observationId": "example-observation-67",
+          "digest": "718b4e306d81182c6103c03a220e5b317a50ab88f26d992f18c8ae8289bb4506"
+        },
+        {
+          "index": 68,
+          "observationId": "example-observation-68",
+          "digest": "50fc577168dd07d7fc8b8e82da44669ce4e79f4eb43275b160c61147c7469ef5"
+        },
+        {
+          "index": 69,
+          "observationId": "example-observation-69",
+          "digest": "5e04890771881badf28397ec3f930427286f5c803e80ceafd6f734637ac1c10b"
+        },
+        {
+          "index": 70,
+          "observationId": "example-observation-70",
+          "digest": "20e8e89d0528413214a9e2f9d3ca70949d4e386e3fdd3e72b666d424bcd39480"
+        },
+        {
+          "index": 71,
+          "observationId": "example-observation-71",
+          "digest": "aa609284bd1a8f571e0acdbd20665d1a0c95e55fbcdf039915df3ebcf611931a"
+        },
+        {
+          "index": 72,
+          "observationId": "example-observation-72",
+          "digest": "0ec20a09364cfd04506012794a4c21ee1430d7f3026faa730f1d4b61b7cf3e6f"
+        },
+        {
+          "index": 73,
+          "observationId": "example-observation-73",
+          "digest": "a7e68b3a8cde67c75afc36715ae9335dfaeb7ff34004a4e1afab1915c56e1f9d"
+        },
+        {
+          "index": 74,
+          "observationId": "example-observation-74",
+          "digest": "28070bacbcf313cbbafc2c266157d28bab4a184f69fbdea9ee81dfc31cc55c3a"
+        },
+        {
+          "index": 75,
+          "observationId": "example-observation-75",
+          "digest": "8ed5d16ad4f3881cdef038082450c5e75f3e0b5cccca2ca45eeafc6030e5cf6f"
+        },
+        {
+          "index": 76,
+          "observationId": "example-observation-76",
+          "digest": "721106c982e0a11cf9894556a0c24dc462e0fdf8d3acf3822a25eabecddb8b9e"
+        },
+        {
+          "index": 77,
+          "observationId": "example-observation-77",
+          "digest": "23dd87c3b12ae65fdb910ff6a50f74bc0b567476f3d8448bdff59d8c94bb8488"
+        },
+        {
+          "index": 78,
+          "observationId": "example-observation-78",
+          "digest": "1acadcfcb117095283a34aa7519f8fadcd3400e10c6d5c8f0cba6c79f01dd3fe"
+        },
+        {
+          "index": 79,
+          "observationId": "example-observation-79",
+          "digest": "1fa301dd114f36125d9ef508c9a231e201affbf00d1965ca1313f8eae199d69d"
+        },
+        {
+          "index": 80,
+          "observationId": "example-observation-80",
+          "digest": "55e3aa4f2366959de0eba1a1c5de474fd67bcf3be23c382afbf00707ff7a6f46"
+        },
+        {
+          "index": 81,
+          "observationId": "example-observation-81",
+          "digest": "10d96be0da6e8fbcde757227689de308317c93ee45d97cebcb00c53521429942"
+        },
+        {
+          "index": 82,
+          "observationId": "example-observation-82",
+          "digest": "f1a452134691a1a170de06511507567a71b545924a0a2b0d0becc91b74f45858"
+        },
+        {
+          "index": 83,
+          "observationId": "example-observation-83",
+          "digest": "4a79cebc440c0e80d86a11abe0f29533aee526d6816a4614cf0936ce9f1b265d"
+        },
+        {
+          "index": 84,
+          "observationId": "example-observation-84",
+          "digest": "795a17b30e913f88f906d8420d7b2b1f779b8c73e46ea4efca616539d2322236"
+        },
+        {
+          "index": 85,
+          "observationId": "example-observation-85",
+          "digest": "33c4cdf4e4f36ccfa77e179dad0060ef6fb6e0ebb7051ff4834fa09d63fe1946"
+        },
+        {
+          "index": 86,
+          "observationId": "example-observation-86",
+          "digest": "42c95d1dd1c1e9dfb6fb9fade7799f0b5b8741ad7b7438851a753be368c699d9"
+        },
+        {
+          "index": 87,
+          "observationId": "example-observation-87",
+          "digest": "e76077b8a12a91a09976b533e39aa35fe79daa68677900bbbb9c7b302eca82ef"
+        },
+        {
+          "index": 88,
+          "observationId": "example-observation-88",
+          "digest": "9e1879ca8e192959e6886bb5a9dc6d3e7bb79e68583906ab298f654fc4b92f7a"
+        },
+        {
+          "index": 89,
+          "observationId": "example-observation-89",
+          "digest": "1ff3f61e45f8d3c26e50d5a53dfb7a761cff2b9733e8c9247c19175ed3cb26a7"
+        },
+        {
+          "index": 90,
+          "observationId": "example-observation-90",
+          "digest": "0466d44d54edf043b2d36eea69ce12d4fe73442ee24e6fc4ee793049d6c04ed7"
+        },
+        {
+          "index": 91,
+          "observationId": "example-observation-91",
+          "digest": "43dd277b16203a97c23ba6e59a1d36683c1f449e5540a67c1c8fea5f0bef5317"
+        },
+        {
+          "index": 92,
+          "observationId": "example-observation-92",
+          "digest": "a68cbe76586abf5d881ca0e8a48c7abdd34c8404e770f0fe1885f9b2a9cf7ee4"
+        },
+        {
+          "index": 93,
+          "observationId": "example-observation-93",
+          "digest": "e87bca2acd00fa1a925f08c73e01cee2a008e43c36e463de06892fdd506e6f24"
+        },
+        {
+          "index": 94,
+          "observationId": "example-observation-94",
+          "digest": "28d26bf957a7f69ff26b31bd1a18b56d4054427c7a164be201466fac0e657bfd"
+        },
+        {
+          "index": 95,
+          "observationId": "example-observation-95",
+          "digest": "d13ab016bf4447b9e64752eac5fe1a45603bea0b15fb1b5a304db87ca512eab5"
+        },
+        {
+          "index": 96,
+          "observationId": "example-observation-96",
+          "digest": "8906e47a251c3469ff48e2e2e5abe335446b32828131144e5250156f083df561"
+        },
+        {
+          "index": 97,
+          "observationId": "example-observation-97",
+          "digest": "ccff3c01318039bbf919eacdaf3b6f681325b11d6f7ad94133b964e9e04da70e"
+        },
+        {
+          "index": 98,
+          "observationId": "example-observation-98",
+          "digest": "b18a11e4a690ee35ab745e6ae8540521d68e4cf2f6c4dd88c20512c80d05d18e"
+        },
+        {
+          "index": 99,
+          "observationId": "example-observation-99",
+          "digest": "a022c8c619d5a85385a3b1ca4b57aaa2c7381647d1848050cc6214b27d73c991"
+        }
+      ],
+      "keyId": "example-manifest-key-2026",
+      "signature": "YKbQgq70QZCYeQBnIkdhrMkMzCmtemsiUpiHnyTdQuQlH32rM6J6gKVfOWR0QqHRE6_X6RNptU_uQX_bcXHTCw"
+    }
+  ],
+  "records": [
+    {
+      "batchId": "batch-100",
+      "index": 0,
+      "observationId": "example-observation-0",
+      "digest": "262adff790a86eee2dbfce12306f1dc7f8ce57f1c76ddaf4fdf6b57ab5ec5d1f",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 0,
+        "observationId": "example-observation-0",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 1,
+      "observationId": "example-observation-1",
+      "digest": "6f35529c7907db263e3a42febfbde6f0580a417d42752cf0d6746d007e23577d",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 1,
+        "observationId": "example-observation-1",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 2,
+      "observationId": "example-observation-2",
+      "digest": "6c00996453c2ecac12b83295fa0e12cf41f380008c80c94c30b57bd99dc50927",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 2,
+        "observationId": "example-observation-2",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 3,
+      "observationId": "example-observation-3",
+      "digest": "b5bc0e4ed1f6154990fe77129e25565a413a00f30aeaeb9321c21e9e6cf8f0e9",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 3,
+        "observationId": "example-observation-3",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 4,
+      "observationId": "example-observation-4",
+      "digest": "375045126146dc27ab10809ecbc21dab6a87f45f9a698ecc60855b37dcfcb066",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 4,
+        "observationId": "example-observation-4",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 5,
+      "observationId": "example-observation-5",
+      "digest": "671a401954e0d09f9d0eba31a09bd4a11af3a14942aebcce53cef7ec5b7cd3e3",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 5,
+        "observationId": "example-observation-5",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 6,
+      "observationId": "example-observation-6",
+      "digest": "aa279e4ddb8cf9158408fc7ae3efd226db235e2dae445e70cc7820ac7bf944f3",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 6,
+        "observationId": "example-observation-6",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 7,
+      "observationId": "example-observation-7",
+      "digest": "5d807564a655e82fbf35bd80281ab709c73dcea3ccf6be0c483acabc6a4ce82e",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 7,
+        "observationId": "example-observation-7",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 8,
+      "observationId": "example-observation-8",
+      "digest": "02ddac95b9d2d58dbaeba956d75b9dbfe0bb7e77922163a01e327bb294433180",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 8,
+        "observationId": "example-observation-8",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 9,
+      "observationId": "example-observation-9",
+      "digest": "8613c3276907815cbf26e02d8746779e522f9af8946f205b3e1190093d1e7665",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 9,
+        "observationId": "example-observation-9",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 10,
+      "observationId": "example-observation-10",
+      "digest": "84c4244f6f143ec5030a1c749f4e4bb604f9cd337531b83d46d639f29a788614",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 10,
+        "observationId": "example-observation-10",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 11,
+      "observationId": "example-observation-11",
+      "digest": "56707092655893386afb7e98153af0490f10afd7ea852a31cf56c3c905494ebe",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 11,
+        "observationId": "example-observation-11",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 12,
+      "observationId": "example-observation-12",
+      "digest": "9118805a717909e90f40038ce4fb7559b1e753d2b5a6f45dbd9252b4450d9089",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 12,
+        "observationId": "example-observation-12",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 13,
+      "observationId": "example-observation-13",
+      "digest": "ae8dc7be0f8d3d07a781983e52905c05b3f59eb96cf462ad461aee3cfc55a94d",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 13,
+        "observationId": "example-observation-13",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 14,
+      "observationId": "example-observation-14",
+      "digest": "7a7c8f6d603057a1c11cf07cf6e9b7ba5b4bbbc2a20797414848848a692e749a",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 14,
+        "observationId": "example-observation-14",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 15,
+      "observationId": "example-observation-15",
+      "digest": "f09d1139f1569f5364a03ddef90d4a4afe9c7d636cbabe1ce70e44beeb5828e7",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 15,
+        "observationId": "example-observation-15",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 16,
+      "observationId": "example-observation-16",
+      "digest": "9850ef3ed8c47bd09053badb9d870675c3f4c45025d8d45871fe5333403e64e6",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 16,
+        "observationId": "example-observation-16",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 17,
+      "observationId": "example-observation-17",
+      "digest": "c92ac0c65f442b041e7ffa67ea3fcba1a1b3860e5a1c6be45644d8280c5e0aaa",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 17,
+        "observationId": "example-observation-17",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 18,
+      "observationId": "example-observation-18",
+      "digest": "eb90046b52bb9207ac68cfc013c881120d0932aac43743cd4a2b7f692e95a18f",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 18,
+        "observationId": "example-observation-18",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 19,
+      "observationId": "example-observation-19",
+      "digest": "0cc02298eb58dd7ce9fa414c343704a5deb4c04baaa5313c995b6aa7c261b4a8",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 19,
+        "observationId": "example-observation-19",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "allow"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "allow",
+      "comparison": "mismatch"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 20,
+      "observationId": "example-observation-20",
+      "digest": "84e45f24f8ec9fba804b4a5b9a049bcff6ec17e68fcf0beca954e00f79edfc99",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 20,
+        "observationId": "example-observation-20",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 21,
+      "observationId": "example-observation-21",
+      "digest": "3e42472bb8b6a52a8caef20a7ddec441a743bebad4ac65acf3f49c99a88115ec",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 21,
+        "observationId": "example-observation-21",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 22,
+      "observationId": "example-observation-22",
+      "digest": "d9ae8c1a4739cb7a390952282cc9ae39cc09d43245430e2c854f11696b96a875",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 22,
+        "observationId": "example-observation-22",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 23,
+      "observationId": "example-observation-23",
+      "digest": "0620c7c04597da1bbff190364058598eaad280e82309cbe435c375e6f0004d0e",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 23,
+        "observationId": "example-observation-23",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 24,
+      "observationId": "example-observation-24",
+      "digest": "dfe099d6bb48a9b748df9283ac06ab5d94669b353e6952b41f032ce33418ccbb",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 24,
+        "observationId": "example-observation-24",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 25,
+      "observationId": "example-observation-25",
+      "digest": "0aee283d79f7ef9ed3ec10970f93b1ec46bbf450f8e3d19e897018c4f9453304",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 25,
+        "observationId": "example-observation-25",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 26,
+      "observationId": "example-observation-26",
+      "digest": "44769c40919b8281936539ea6a7c885005eaac0beba1516b1597814c49fd70ba",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 26,
+        "observationId": "example-observation-26",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 27,
+      "observationId": "example-observation-27",
+      "digest": "6f5957ea2b8356711cf9293ad2e09edf2a648c5b4c24a151ea98cefb4a3f1f01",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 27,
+        "observationId": "example-observation-27",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 28,
+      "observationId": "example-observation-28",
+      "digest": "e1608e0e30f6f4b4499c2556b1d90162b930fb98d28e82b0add4a03bcd44b984",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 28,
+        "observationId": "example-observation-28",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 29,
+      "observationId": "example-observation-29",
+      "digest": "b8db86e41ac78189a938ce5969385e34f619eb3694727ae432b92354e3a2ba91",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 29,
+        "observationId": "example-observation-29",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 30,
+      "observationId": "example-observation-30",
+      "digest": "475860cfe9f52d8040e0a98a76d7a3d290d270eecba8cfcd7c0050517ec5f7ae",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 30,
+        "observationId": "example-observation-30",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 31,
+      "observationId": "example-observation-31",
+      "digest": "6a65cf20a9f383bf410fd82c310665aa15915eac073261f1f6f12107faa2fe8d",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 31,
+        "observationId": "example-observation-31",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 32,
+      "observationId": "example-observation-32",
+      "digest": "af13edb8ba3fa3f92b415e0c54fa5e40c7b3ef76fec1bb4330653f2f6bf045c0",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 32,
+        "observationId": "example-observation-32",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 33,
+      "observationId": "example-observation-33",
+      "digest": "f91a339ec2120d356086f98144ed05945e508ee8e3e1b37062ede9761279394c",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 33,
+        "observationId": "example-observation-33",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 34,
+      "observationId": "example-observation-34",
+      "digest": "e78f761370d04f0b3fd78b01a46239a330d8c8918650913c136ee1d7b0266644",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 34,
+        "observationId": "example-observation-34",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 35,
+      "observationId": "example-observation-35",
+      "digest": "2bde26164b8e63eaca9cf59dec2bbff27172fcc54f1bd3ef3d26a5283dce1e33",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 35,
+        "observationId": "example-observation-35",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 36,
+      "observationId": "example-observation-36",
+      "digest": "54f171f9c14b251221c8b1dd21d96e44a3f090c1bda4bcf17dae5b197b205f5c",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 36,
+        "observationId": "example-observation-36",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 37,
+      "observationId": "example-observation-37",
+      "digest": "689b4090c21228352fff79d95219967e263f72668f41b9c63435e7d4583626e5",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 37,
+        "observationId": "example-observation-37",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 38,
+      "observationId": "example-observation-38",
+      "digest": "2e8ce10379db5be845c20de71e1f4e89c0a804fb768100a885a1eac6204db8df",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 38,
+        "observationId": "example-observation-38",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 39,
+      "observationId": "example-observation-39",
+      "digest": "c54dae777dfd9784de4d91d00890077ab19ae6d7f729c2a316c064b7b692cd97",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 39,
+        "observationId": "example-observation-39",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 40,
+      "observationId": "example-observation-40",
+      "digest": "1d83b285b7a849d0cfd0fca278fd69c17015ee8f24a52b5c0a37b06c5ea40be3",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 40,
+        "observationId": "example-observation-40",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 41,
+      "observationId": "example-observation-41",
+      "digest": "ad9e2548ed88813bc322c004c338b6752f18102572974a3bd2e1a68635cafad6",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 41,
+        "observationId": "example-observation-41",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 42,
+      "observationId": "example-observation-42",
+      "digest": "16c168c35542d4de39c183fee294eec9559e05e757e3ff04139e92c72d8ae8ae",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 42,
+        "observationId": "example-observation-42",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 43,
+      "observationId": "example-observation-43",
+      "digest": "5a476df2f79d2960f88cacac3addc4de80bafe1468886684ec92714a16003bab",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 43,
+        "observationId": "example-observation-43",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 44,
+      "observationId": "example-observation-44",
+      "digest": "a5a6f3587ad4a537793c23086aece4e0dd0988deec7b20b03bd4a1eb375b295a",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 44,
+        "observationId": "example-observation-44",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 45,
+      "observationId": "example-observation-45",
+      "digest": "bdbcbc1051ab1be499d1cfbe479177bd875a5b55059a1eb12630335d77dde3f9",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 45,
+        "observationId": "example-observation-45",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 46,
+      "observationId": "example-observation-46",
+      "digest": "2f08a03c97376251cab55dc4394520068abb4b42cbe1145dc93470c33d6e31d4",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 46,
+        "observationId": "example-observation-46",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 47,
+      "observationId": "example-observation-47",
+      "digest": "6d490f471abd34076ddf6b2e4c06bd4be67b5cfb6d4aaf42b127720b05542402",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 47,
+        "observationId": "example-observation-47",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 48,
+      "observationId": "example-observation-48",
+      "digest": "e419e60dfe84eeb9c863ec3ffb249bf93f99df4b9b7ec911a25439173b215226",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 48,
+        "observationId": "example-observation-48",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 49,
+      "observationId": "example-observation-49",
+      "digest": "dfb41ea5489a9794c81b7d9dac0bfd6d82567b83e2a432c7b4d4340f8b251c0f",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 49,
+        "observationId": "example-observation-49",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 50,
+      "observationId": "example-observation-50",
+      "digest": "cd3e6f753dc569a7e73819b70a9b1cdaa60b75e135957869d740ae6701566ec2",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 50,
+        "observationId": "example-observation-50",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 51,
+      "observationId": "example-observation-51",
+      "digest": "237d433a876f208426ecd5fdb3255b1e762877b7966ed61d8ccde1b0b8d2dcc0",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 51,
+        "observationId": "example-observation-51",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 52,
+      "observationId": "example-observation-52",
+      "digest": "e1f4192891d11b4ca8be2ed6e3cbb0507810f8e186476c80ddd1b0404e276503",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 52,
+        "observationId": "example-observation-52",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 53,
+      "observationId": "example-observation-53",
+      "digest": "1e35f461186e479ddf053eb775fba2c88d92c54b5afa5c4a8215e07057f03ad4",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 53,
+        "observationId": "example-observation-53",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 54,
+      "observationId": "example-observation-54",
+      "digest": "a1c8f9ce1570de8a7ba841b0f580198a6208deb0a0a411f08ccae86d595cd0cb",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 54,
+        "observationId": "example-observation-54",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 55,
+      "observationId": "example-observation-55",
+      "digest": "6df587a1a42e6ddd630a462333d223d2c4b102c57d3a28c06692fbe8424d6949",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 55,
+        "observationId": "example-observation-55",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 56,
+      "observationId": "example-observation-56",
+      "digest": "90735c77e8e9f8b59b0cef61123586228173073ec154a55270c53a328ed2d93e",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 56,
+        "observationId": "example-observation-56",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 57,
+      "observationId": "example-observation-57",
+      "digest": "c502b116fffdbe8b970bf1363518fd8909f2be387e0cfd3e16382a075918e38c",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 57,
+        "observationId": "example-observation-57",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 58,
+      "observationId": "example-observation-58",
+      "digest": "f1e8d3d81294e7eeffce52f97e56408ac75a64ea80eccab8a01cddcb20dc35a1",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 58,
+        "observationId": "example-observation-58",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 59,
+      "observationId": "example-observation-59",
+      "digest": "490d20a13de9e3fd63c90a981778c35875a00dbdeefd399bd3e386579a97293a",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 59,
+        "observationId": "example-observation-59",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 60,
+      "observationId": "example-observation-60",
+      "digest": "51e4b1835149216a0f1148f2e369f2afd44ba1dcc5ab109fc7760b21f6bbff33",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 60,
+        "observationId": "example-observation-60",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 61,
+      "observationId": "example-observation-61",
+      "digest": "609ae7363dcb61c07ae5ac428958de43651ef3f94810bb706d6e200dcfbbc5fd",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 61,
+        "observationId": "example-observation-61",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 62,
+      "observationId": "example-observation-62",
+      "digest": "955e6317030aeee81b486ee3af8f711c6d538cba37e405e314bace351acfe34f",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 62,
+        "observationId": "example-observation-62",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 63,
+      "observationId": "example-observation-63",
+      "digest": "e3fd95ab1e98412caf864c13e045119ab288437879a99934f279a8ad105b7028",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 63,
+        "observationId": "example-observation-63",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 64,
+      "observationId": "example-observation-64",
+      "digest": "2dc1c28711b6f934284efea2e658962e1a2a6134132af5f564a53fff6016c691",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 64,
+        "observationId": "example-observation-64",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 65,
+      "observationId": "example-observation-65",
+      "digest": "b1d64021c43b8338efddab8faf89580a7ae93af584a440f27426d6f3df6aa137",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 65,
+        "observationId": "example-observation-65",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 66,
+      "observationId": "example-observation-66",
+      "digest": "77b012020ae971ce068eba3b586117d592c84cbccfd1a035e8ecd5da4f0f1b0a",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 66,
+        "observationId": "example-observation-66",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 67,
+      "observationId": "example-observation-67",
+      "digest": "718b4e306d81182c6103c03a220e5b317a50ab88f26d992f18c8ae8289bb4506",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 67,
+        "observationId": "example-observation-67",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 68,
+      "observationId": "example-observation-68",
+      "digest": "50fc577168dd07d7fc8b8e82da44669ce4e79f4eb43275b160c61147c7469ef5",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 68,
+        "observationId": "example-observation-68",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 69,
+      "observationId": "example-observation-69",
+      "digest": "5e04890771881badf28397ec3f930427286f5c803e80ceafd6f734637ac1c10b",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 69,
+        "observationId": "example-observation-69",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 70,
+      "observationId": "example-observation-70",
+      "digest": "20e8e89d0528413214a9e2f9d3ca70949d4e386e3fdd3e72b666d424bcd39480",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 70,
+        "observationId": "example-observation-70",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 71,
+      "observationId": "example-observation-71",
+      "digest": "aa609284bd1a8f571e0acdbd20665d1a0c95e55fbcdf039915df3ebcf611931a",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 71,
+        "observationId": "example-observation-71",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 72,
+      "observationId": "example-observation-72",
+      "digest": "0ec20a09364cfd04506012794a4c21ee1430d7f3026faa730f1d4b61b7cf3e6f",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 72,
+        "observationId": "example-observation-72",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 73,
+      "observationId": "example-observation-73",
+      "digest": "a7e68b3a8cde67c75afc36715ae9335dfaeb7ff34004a4e1afab1915c56e1f9d",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 73,
+        "observationId": "example-observation-73",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 74,
+      "observationId": "example-observation-74",
+      "digest": "28070bacbcf313cbbafc2c266157d28bab4a184f69fbdea9ee81dfc31cc55c3a",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 74,
+        "observationId": "example-observation-74",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 75,
+      "observationId": "example-observation-75",
+      "digest": "8ed5d16ad4f3881cdef038082450c5e75f3e0b5cccca2ca45eeafc6030e5cf6f",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 75,
+        "observationId": "example-observation-75",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 76,
+      "observationId": "example-observation-76",
+      "digest": "721106c982e0a11cf9894556a0c24dc462e0fdf8d3acf3822a25eabecddb8b9e",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 76,
+        "observationId": "example-observation-76",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 77,
+      "observationId": "example-observation-77",
+      "digest": "23dd87c3b12ae65fdb910ff6a50f74bc0b567476f3d8448bdff59d8c94bb8488",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 77,
+        "observationId": "example-observation-77",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 78,
+      "observationId": "example-observation-78",
+      "digest": "1acadcfcb117095283a34aa7519f8fadcd3400e10c6d5c8f0cba6c79f01dd3fe",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 78,
+        "observationId": "example-observation-78",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 79,
+      "observationId": "example-observation-79",
+      "digest": "1fa301dd114f36125d9ef508c9a231e201affbf00d1965ca1313f8eae199d69d",
+      "status": "compared",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 79,
+        "observationId": "example-observation-79",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": "connector.kubernetes.deployment.rollback",
+        "tool": "kubernetes.deployment.rollback",
+        "destination": "k8s://cluster/namespace/deployments/api",
+        "productionDecision": "require_approval",
+        "productionReasonCode": "REGISTERED_ADAPTER_POLICY"
+      },
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalDecisionId": "action-gateway-manifest-require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "productionDecision": "require_approval",
+      "productionReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "comparison": "match"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 80,
+      "observationId": "example-observation-80",
+      "digest": "55e3aa4f2366959de0eba1a1c5de474fd67bcf3be23c382afbf00707ff7a6f46",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 80,
+        "observationId": "example-observation-80",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 81,
+      "observationId": "example-observation-81",
+      "digest": "10d96be0da6e8fbcde757227689de308317c93ee45d97cebcb00c53521429942",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 81,
+        "observationId": "example-observation-81",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 82,
+      "observationId": "example-observation-82",
+      "digest": "f1a452134691a1a170de06511507567a71b545924a0a2b0d0becc91b74f45858",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 82,
+        "observationId": "example-observation-82",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 83,
+      "observationId": "example-observation-83",
+      "digest": "4a79cebc440c0e80d86a11abe0f29533aee526d6816a4614cf0936ce9f1b265d",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 83,
+        "observationId": "example-observation-83",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 84,
+      "observationId": "example-observation-84",
+      "digest": "795a17b30e913f88f906d8420d7b2b1f779b8c73e46ea4efca616539d2322236",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 84,
+        "observationId": "example-observation-84",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 85,
+      "observationId": "example-observation-85",
+      "digest": "33c4cdf4e4f36ccfa77e179dad0060ef6fb6e0ebb7051ff4834fa09d63fe1946",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 85,
+        "observationId": "example-observation-85",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 86,
+      "observationId": "example-observation-86",
+      "digest": "42c95d1dd1c1e9dfb6fb9fade7799f0b5b8741ad7b7438851a753be368c699d9",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 86,
+        "observationId": "example-observation-86",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 87,
+      "observationId": "example-observation-87",
+      "digest": "e76077b8a12a91a09976b533e39aa35fe79daa68677900bbbb9c7b302eca82ef",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 87,
+        "observationId": "example-observation-87",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 88,
+      "observationId": "example-observation-88",
+      "digest": "9e1879ca8e192959e6886bb5a9dc6d3e7bb79e68583906ab298f654fc4b92f7a",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 88,
+        "observationId": "example-observation-88",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 89,
+      "observationId": "example-observation-89",
+      "digest": "1ff3f61e45f8d3c26e50d5a53dfb7a761cff2b9733e8c9247c19175ed3cb26a7",
+      "status": "uncomparable",
+      "facts": {
+        "schema": "commander.shadow-observation/v1",
+        "campaignId": "example-campaign-100",
+        "tenantId": "example-tenant",
+        "producerId": "example-producer",
+        "batchId": "batch-100",
+        "index": 89,
+        "observationId": "example-observation-89",
+        "occurredAt": "2026-09-01T00:00:00.000Z",
+        "workflow": "kubernetes.deployment.rollback",
+        "effectType": null,
+        "tool": null,
+        "destination": null,
+        "productionDecision": "unknown"
+      },
+      "hypotheticalDecision": "insufficient_evidence",
+      "hypotheticalDecisionId": "shadow-insufficient-evidence",
+      "hypotheticalReasonCode": "MISSING_POLICY_FACTS",
+      "productionDecision": "unknown",
+      "comparison": "uncomparable"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 90,
+      "observationId": "example-observation-90",
+      "digest": "0466d44d54edf043b2d36eea69ce12d4fe73442ee24e6fc4ee793049d6c04ed7",
+      "status": "missing"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 91,
+      "observationId": "example-observation-91",
+      "digest": "43dd277b16203a97c23ba6e59a1d36683c1f449e5540a67c1c8fea5f0bef5317",
+      "status": "missing"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 92,
+      "observationId": "example-observation-92",
+      "digest": "a68cbe76586abf5d881ca0e8a48c7abdd34c8404e770f0fe1885f9b2a9cf7ee4",
+      "status": "missing"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 93,
+      "observationId": "example-observation-93",
+      "digest": "e87bca2acd00fa1a925f08c73e01cee2a008e43c36e463de06892fdd506e6f24",
+      "status": "missing"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 94,
+      "observationId": "example-observation-94",
+      "digest": "28d26bf957a7f69ff26b31bd1a18b56d4054427c7a164be201466fac0e657bfd",
+      "status": "missing"
+    },
+    {
+      "batchId": "batch-100",
+      "index": 95,
+      "observationId": "example-observation-95",
+      "digest": "d13ab016bf4447b9e64752eac5fe1a45603bea0b15fb1b5a304db87ca512eab5",
+      "status": "rejected",
+      "attempt": {
+        "digest": "c0787fbb77c0ffa42f326f04d97fda5dbe2baf33f0da5cc8acff30490dbca355",
+        "code": "SHADOW_INVALID_VALUE",
+        "attemptedAt": "2026-09-03T00:00:00.000Z"
+      }
+    },
+    {
+      "batchId": "batch-100",
+      "index": 96,
+      "observationId": "example-observation-96",
+      "digest": "8906e47a251c3469ff48e2e2e5abe335446b32828131144e5250156f083df561",
+      "status": "rejected",
+      "attempt": {
+        "digest": "039a0d9f69929bd1a37ade277d6532518d79fffe91a3f2878a7bd53ff2b6f578",
+        "code": "SHADOW_INVALID_VALUE",
+        "attemptedAt": "2026-09-03T00:00:00.000Z"
+      }
+    },
+    {
+      "batchId": "batch-100",
+      "index": 97,
+      "observationId": "example-observation-97",
+      "digest": "ccff3c01318039bbf919eacdaf3b6f681325b11d6f7ad94133b964e9e04da70e",
+      "status": "rejected",
+      "attempt": {
+        "digest": "1af4e003d3403c7972423396ed53d861c19eb7e47a829786d0f76a4cf119029b",
+        "code": "SHADOW_INVALID_VALUE",
+        "attemptedAt": "2026-09-03T00:00:00.000Z"
+      }
+    },
+    {
+      "batchId": "batch-100",
+      "index": 98,
+      "observationId": "example-observation-98",
+      "digest": "b18a11e4a690ee35ab745e6ae8540521d68e4cf2f6c4dd88c20512c80d05d18e",
+      "status": "failed",
+      "attempt": {
+        "digest": "15966b3931a8bb64a2435887bd4fba3198fa1d5baf502cb55a27f3153c252ae7",
+        "code": "SHADOW_EVALUATION_FAILED",
+        "attemptedAt": "2026-09-03T00:00:00.000Z"
+      }
+    },
+    {
+      "batchId": "batch-100",
+      "index": 99,
+      "observationId": "example-observation-99",
+      "digest": "a022c8c619d5a85385a3b1ca4b57aaa2c7381647d1848050cc6214b27d73c991",
+      "status": "failed",
+      "attempt": {
+        "digest": "d045de76ea1acb9d71e17c6ecaa08b710cc47c0ca76cfcfe74fb6e8c9c4585c2",
+        "code": "SHADOW_EVALUATION_FAILED",
+        "attemptedAt": "2026-09-03T00:00:00.000Z"
+      }
+    }
+  ],
+  "counts": {
+    "expected": 100,
+    "missing": 5,
+    "rejected": 3,
+    "failed": 2,
+    "uncomparable": 10,
+    "compared": 80,
+    "matches": 60,
+    "mismatches": 20
+  },
+  "decisionMatrix": {
+    "allow": {
+      "allow": 0,
+      "deny": 0,
+      "require_approval": 20
+    },
+    "deny": {
+      "allow": 0,
+      "deny": 0,
+      "require_approval": 0
+    },
+    "require_approval": {
+      "allow": 0,
+      "deny": 0,
+      "require_approval": 60
+    }
+  },
+  "differences": [
+    {
+      "observationId": "example-observation-0",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-1",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-2",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-3",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-4",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-5",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-6",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-7",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-8",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-9",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-10",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-11",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-12",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-13",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-14",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-15",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-16",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-17",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-18",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    },
+    {
+      "observationId": "example-observation-19",
+      "productionDecision": "allow",
+      "hypotheticalDecision": "require_approval",
+      "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
+      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    }
+  ],
+  "hashes": {
+    "manifestsSha256": "e17a23f87b1d69f9b0279100a482b4dfaebd117ef29aedff6307aa3085686f76",
+    "recordsSha256": "50894c6e0aa21a951532e3f99cdbdd5416f74783219cd160a6a6ebf960d5b165",
+    "policySha256": "27a505a05ebca320a7bdaa14f85a1fc7f7bfc84f555967c77a12b20c1b2ca0e1"
+  },
+  "keyId": "report-key-1",
+  "signature": "iOeyS1Rf5aF3Art9Y-doYdHnYCXCfcGlipvCUwOHl3VoJ1MfwEE-Vs5WQSxgqwcShi9WaLfxsEWx6n7POBTtAA"
+}

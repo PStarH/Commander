@@ -1,0 +1,7 @@
+{
+  "schema": "commander.shadow-report-trust/v1",
+  "algorithm": "Ed25519",
+  "keyId": "report-key-1",
+  "status": "active",
+  "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA//fuJlZ+wmJ3iLN3lPek2B/nReSLEdqL3vQPkzAtjPg=\n-----END PUBLIC KEY-----\n"
+}

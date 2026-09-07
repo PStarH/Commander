@@ -85,6 +85,7 @@
     "arch:guard": "bash scripts/arch-guard.sh",
     "arch:guard:test": "pnpm exec node --import tsx --test scripts/arch-guard.test.ts",
     "arch:gate": "pnpm exec node --import tsx scripts/architecture-gate.ts",
+    "shadow:phase-a:gate": "pnpm exec node --import tsx scripts/shadow-phase-a-gate.ts",
     "contract:check": "pnpm exec tsx scripts/contract-snapshot-check.ts",
     "contract:snapshot": "pnpm exec tsx scripts/contract-snapshot-check.ts --update-baseline",
     "test:contract": "pnpm exec node --import tsx --test packages/contracts/contract-consumer.test.ts",
