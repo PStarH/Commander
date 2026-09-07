@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { Pool } from 'pg';
 import { actionGatewayPolicySnapshot } from '@commander/contracts';
@@ -31,10 +31,12 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
   let ingestion: Pool;
   let reader: Pool;
   let retention: Pool;
+  let otherIngestion: Pool;
 
   function roleUrl(role: keyof typeof passwords): string {
     const url = new URL(adminUrl!);
-    url.username = `commander_shadow_${role}`;
+    url.username =
+      role === 'installer' ? 'commander_shadow_installer' : `commander_shadow_tenant_live_${role}`;
     url.password = passwords[role];
     return url.toString();
   }
@@ -42,7 +44,17 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
   function repo(pool: Pool): ShadowRepository {
     return new ShadowRepository(asShadowSqlPool(pool), {
       retentionDays: 1,
-      trustedManifestPublicKeys: new Map([['manifest-key-1', keys.publicKey]]),
+      trustedManifestPublicKeys: new Map([
+        [
+          'manifest-key-1',
+          {
+            algorithm: 'Ed25519',
+            keyId: 'manifest-key-1',
+            status: 'active',
+            publicKey: keys.publicKey,
+          },
+        ],
+      ]),
     });
   }
 
@@ -80,7 +92,7 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     const unsigned = {
       schema: 'commander.shadow-manifest/v1',
       campaignId,
-      tenantId: 'tenant-live',
+      tenantId: observations[0]!.tenantId,
       producerId: 'producer-live',
       policyId: snapshot.policyId,
       policyDigest: snapshot.descriptorDigest,
@@ -103,9 +115,13 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     admin = new Pool({ connectionString: adminUrl, max: 2 });
     await admin.query(`
       CREATE ROLE commander_shadow_installer LOGIN PASSWORD '${passwords.installer}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-      CREATE ROLE commander_shadow_ingestion LOGIN PASSWORD '${passwords.ingestion}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-      CREATE ROLE commander_shadow_reader LOGIN PASSWORD '${passwords.reader}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
-      CREATE ROLE commander_shadow_retention LOGIN PASSWORD '${passwords.retention}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      CREATE ROLE commander_shadow_ingestion NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      CREATE ROLE commander_shadow_reader NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      CREATE ROLE commander_shadow_retention NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+      CREATE ROLE commander_shadow_tenant_live_ingestion LOGIN PASSWORD '${passwords.ingestion}' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_ingestion;
+      CREATE ROLE commander_shadow_tenant_live_reader LOGIN PASSWORD '${passwords.reader}' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_reader;
+      CREATE ROLE commander_shadow_tenant_live_retention LOGIN PASSWORD '${passwords.retention}' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_retention;
+      CREATE ROLE commander_shadow_tenant_other_ingestion LOGIN PASSWORD '${passwords.ingestion}' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_ingestion;
       GRANT CREATE ON DATABASE commander TO commander_shadow_installer;
       CREATE SCHEMA shadow_other;
       CREATE TABLE shadow_other.secret (value text);
@@ -113,18 +129,39 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     `);
     installer = new Pool({ connectionString: roleUrl('installer'), max: 1 });
     await installer.query(SHADOW_SCHEMA_SQL);
+    await installer.query(
+      `INSERT INTO commander_shadow.tenant_role_bindings (role_name, tenant_id)
+       VALUES
+         ('commander_shadow_tenant_live_ingestion', 'tenant-live'),
+         ('commander_shadow_tenant_live_reader', 'tenant-live'),
+         ('commander_shadow_tenant_live_retention', 'tenant-live'),
+         ('commander_shadow_tenant_other_ingestion', 'tenant-other')`,
+    );
     ingestion = new Pool({ connectionString: roleUrl('ingestion'), max: 3 });
     reader = new Pool({ connectionString: roleUrl('reader'), max: 2 });
     retention = new Pool({ connectionString: roleUrl('retention'), max: 3 });
+    const otherUrl = new URL(roleUrl('ingestion'));
+    otherUrl.username = 'commander_shadow_tenant_other_ingestion';
+    otherIngestion = new Pool({ connectionString: otherUrl.toString(), max: 1 });
   });
 
   after(async () => {
-    await Promise.all([ingestion?.end(), reader?.end(), retention?.end(), installer?.end()]);
+    await Promise.all([
+      ingestion?.end(),
+      reader?.end(),
+      retention?.end(),
+      installer?.end(),
+      otherIngestion?.end(),
+    ]);
     if (admin) {
       await admin.query(`
         DROP SCHEMA IF EXISTS commander_shadow CASCADE;
         DROP SCHEMA IF EXISTS shadow_other CASCADE;
         REVOKE CREATE ON DATABASE commander FROM commander_shadow_installer;
+        DROP ROLE IF EXISTS commander_shadow_tenant_live_ingestion;
+        DROP ROLE IF EXISTS commander_shadow_tenant_live_reader;
+        DROP ROLE IF EXISTS commander_shadow_tenant_live_retention;
+        DROP ROLE IF EXISTS commander_shadow_tenant_other_ingestion;
         DROP ROLE IF EXISTS commander_shadow_ingestion;
         DROP ROLE IF EXISTS commander_shadow_reader;
         DROP ROLE IF EXISTS commander_shadow_retention;
@@ -179,6 +216,22 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       /permission denied/i,
     );
     await assert.rejects(
+      ingestion.query(
+        "UPDATE commander_shadow.expected_records SET status='missing', attempt_digest=NULL, attempt_code=NULL, attempted_at=NULL WHERE tenant_id='tenant-live'",
+      ),
+      /permission denied/i,
+    );
+    await assert.rejects(
+      ingestion.query(
+        "UPDATE commander_shadow.batches SET state='closed', closed_at=clock_timestamp() WHERE tenant_id='tenant-live'",
+      ),
+      /permission denied/i,
+    );
+    await assert.rejects(
+      ingestion.query("DELETE FROM commander_shadow.observations WHERE tenant_id='tenant-live'"),
+      /permission denied/i,
+    );
+    await assert.rejects(
       retention.query(
         "UPDATE commander_shadow.batches SET manifest='{}'::jsonb WHERE tenant_id='tenant-live'",
       ),
@@ -192,7 +245,7 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       'tenant-live',
       manifest('campaign-persist', 'batch-persist', [input], new Date(now + 60_000).toISOString()),
     );
-    assert.deepEqual(await repo(reader).readiness('tenant-live', 120), {
+    assert.deepEqual(await repo(reader).readiness('tenant-live', 120, 'report-export'), {
       ready: false,
       code: 'SHADOW_CLEANUP_OVERDUE',
     });
@@ -210,6 +263,98 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     assert.equal(
       (await repo(reader).readReport('tenant-live', 'campaign-persist')).records.length,
       1,
+    );
+  });
+
+  it('fails closed when the transaction tenant is absent or differs from the login binding', async () => {
+    const other = observation('campaign-other', 'batch-other', 0, { tenantId: 'tenant-other' });
+    await repo(otherIngestion).registerManifest(
+      'tenant-other',
+      manifest('campaign-other', 'batch-other', [other], new Date(now + 60_000).toISOString()),
+    );
+    await repo(otherIngestion).importObservation('tenant-other', other);
+    assert.equal(
+      (await repo(otherIngestion).readReport('tenant-other', 'campaign-other')).records.length,
+      1,
+    );
+    assert.equal((await repo(reader).readReport('tenant-other', 'campaign-other')).campaign, null);
+    const unbound = await reader.query(
+      "SELECT count(*)::int AS count FROM commander_shadow.campaigns WHERE tenant_id='tenant-live'",
+    );
+    assert.equal(unbound.rows[0]?.count, 0);
+    assert.equal(
+      (await repo(reader).readReport('tenant-other', 'campaign-persist')).campaign,
+      null,
+    );
+
+    const client = await ingestion.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query("SELECT set_config('commander_shadow.tenant_id', 'tenant-other', true)");
+      const hidden = await client.query(
+        "SELECT count(*)::int AS count FROM commander_shadow.campaigns WHERE tenant_id='tenant-live'",
+      );
+      assert.equal(hidden.rows[0]?.count, 0);
+      await assert.rejects(
+        client.query(
+          "SELECT commander_shadow.record_attempt('tenant-live','campaign-persist','batch-persist',0,$1,'FORGED','rejected')",
+          [observationDigest(observation('campaign-persist', 'batch-persist', 0))],
+        ),
+        /SHADOW_ATTEMPT_DATABASE_INVALID/,
+      );
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+  });
+
+  it('denies cross-tenant mutation and audit forgery even with a spoofed tenant setting', async () => {
+    for (const binding of ['tenant-live', 'tenant-other']) {
+      const client = await retention.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('commander_shadow.tenant_id', $1, true)", [binding]);
+        const updated = await client.query(
+          "UPDATE commander_shadow.campaigns SET state='withdrawn' WHERE tenant_id='tenant-other'",
+        );
+        assert.equal(updated.rowCount, 0);
+        const deleted = await client.query(
+          "DELETE FROM commander_shadow.campaigns WHERE tenant_id='tenant-other'",
+        );
+        assert.equal(deleted.rowCount, 0);
+        await assert.rejects(
+          client.query(
+            "INSERT INTO commander_shadow.deletion_audit (tenant_id_hash,campaign_id_hash,reason) VALUES ($1,$2,'withdrawal')",
+            [
+              createHash('sha256').update('tenant-other').digest('hex'),
+              createHash('sha256').update('campaign-other').digest('hex'),
+            ],
+          ),
+          /row-level security/i,
+        );
+      } finally {
+        await client.query('ROLLBACK');
+        client.release();
+      }
+    }
+    assert.equal(
+      (await repo(otherIngestion).readReport('tenant-other', 'campaign-other')).records.length,
+      1,
+    );
+  });
+
+  it('rejects installer readiness and permits only operation-appropriate tenant roles', async () => {
+    assert.equal(
+      (await repo(installer).readiness('tenant-live', 120, 'manifest-register')).ready,
+      false,
+    );
+    assert.equal(
+      (await repo(reader).readiness('tenant-live', 120, 'manifest-register')).ready,
+      false,
+    );
+    assert.equal(
+      (await repo(retention).readiness('tenant-live', 120, 'retention-run')).ready,
+      true,
     );
   });
 
@@ -265,6 +410,10 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     const inputs = [0, 1, 2, 3].map((index) =>
       observation('campaign-attempts', 'batch-attempts', index),
     );
+    inputs.push({
+      ...observation('campaign-attempts', 'batch-attempts', 4),
+      destination: 'operator@example.com',
+    });
     await repo(ingestion).registerManifest(
       'tenant-live',
       manifest('campaign-attempts', 'batch-attempts', inputs, new Date(now + 60_000).toISOString()),
@@ -284,6 +433,33 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       /SHADOW_DIGEST_MISMATCH/,
     );
     await repo(ingestion).importObservation('tenant-live', inputs[1]!);
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await assert.rejects(
+        repo(ingestion).importObservation('tenant-live', inputs[4]!),
+        /SHADOW_SENSITIVE_DATA/,
+      );
+    }
+    const tamper = await ingestion.connect();
+    try {
+      await tamper.query('BEGIN');
+      await tamper.query("SELECT set_config('commander_shadow.tenant_id', 'tenant-live', true)");
+      await assert.rejects(
+        tamper.query(
+          "SELECT commander_shadow.record_attempt('tenant-live','campaign-attempts','batch-attempts',4,$1,'SHADOW_EVALUATION_FAILED','failed')",
+          [observationDigest(inputs[4]!)],
+        ),
+        /SHADOW_ATTEMPT_NOT_WRITABLE/,
+      );
+    } finally {
+      await tamper.query('ROLLBACK');
+      tamper.release();
+    }
+    await assert.rejects(
+      ingestion.query(
+        "SELECT commander_shadow.close_batch(NULL,'campaign-attempts','batch-attempts')",
+      ),
+      /SHADOW_TENANT_NOT_BOUND/,
+    );
     await admin.query(
       "UPDATE commander_shadow.campaigns SET policy_digest='broken-test-pin' WHERE campaign_id='campaign-attempts'",
     );
@@ -302,12 +478,14 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     const report = await repo(reader).readReport('tenant-live', 'campaign-attempts');
     assert.deepEqual(
       report.records.map((record) => record.status),
-      ['rejected', 'compared', 'failed', 'missing'],
+      ['missing', 'compared', 'failed', 'missing', 'rejected'],
     );
-    assert.equal(report.records[0]?.attempt_code, 'SHADOW_DIGEST_MISMATCH');
+    assert.equal(report.records[0]?.attempt_code, null);
     assert.equal(report.records[0]?.canonical_observation, null);
     assert.equal(report.records[1]?.attempt_code, null);
     assert.equal(report.records[2]?.attempt_code, 'SHADOW_EVALUATION_FAILED');
+    assert.equal(report.records[4]?.attempt_code, 'SHADOW_SENSITIVE_DATA');
+    assert.equal(report.records[4]?.canonical_observation, null);
   });
 
   it('returns one complete report snapshot while a concurrent withdrawal waits', async () => {
@@ -358,7 +536,7 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       let blocked = false;
       for (let attempt = 0; attempt < 100; attempt++) {
         const result = await admin.query(
-          "SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename='commander_shadow_retention' AND wait_event='advisory' AND cardinality(pg_blocking_pids(pid))>0",
+          "SELECT count(*)::int AS count FROM pg_stat_activity WHERE usename='commander_shadow_tenant_live_retention' AND wait_event='advisory' AND cardinality(pg_blocking_pids(pid))>0",
         );
         if (result.rows[0]?.count > 0) {
           blocked = true;
@@ -411,6 +589,6 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     );
     assert.equal(await repo(retention).runRetention('tenant-live'), 1);
     assert.equal((await repo(reader).readReport('tenant-live', 'campaign-expire')).campaign, null);
-    assert.equal((await repo(reader).readiness('tenant-live', 120)).ready, true);
+    assert.equal((await repo(reader).readiness('tenant-live', 120, 'report-export')).ready, true);
   });
 });

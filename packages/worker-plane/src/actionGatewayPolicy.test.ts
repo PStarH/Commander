@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
-import { evaluateActionGatewayPolicy } from '@commander/contracts';
+import { ActionAdapterRegistry, type ActionAdapter } from '@commander/action-adapters';
+import {
+  GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+} from '@commander/contracts';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import { createWorkerPolicyEvaluator, evaluateActionGatewayMvpV1 } from './bootstrap.js';
 
@@ -29,6 +33,28 @@ const envelope = {
   args: { title: 'Reset a demo password' },
   idempotencyKey: 'action-key-0001',
 };
+
+function adapter(descriptor: ActionAdapter['descriptor']): ActionAdapter {
+  return {
+    descriptor,
+    async execute() {
+      return {};
+    },
+    async queryOutcome() {
+      return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+    },
+    async compensate() {
+      return {};
+    },
+    async queryCompensationOutcome() {
+      return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+    },
+  };
+}
+
+const kubernetesRegistry = new ActionAdapterRegistry([
+  adapter(KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR),
+]);
 
 async function createActionRun(
   repository: InMemoryKernelRepository,
@@ -146,10 +172,11 @@ function evaluate(
     runId: string;
     stepId: string;
     request?: Record<string, unknown>;
+    registry?: ActionAdapterRegistry;
   },
 ) {
   const request = input.request ?? envelope;
-  return createWorkerPolicyEvaluator(repository).evaluate({
+  return createWorkerPolicyEvaluator(repository, input.registry).evaluate({
     tenantId: input.tenantId,
     runId: input.runId,
     stepId: input.stepId,
@@ -183,6 +210,7 @@ describe('L4-01 Action Gateway worker policy', () => {
           runId: action.runId,
           stepId: action.stepId,
           request: action.actionEnvelope,
+          registry: kubernetesRegistry,
         })
       ).effect,
       'deny',
@@ -208,6 +236,7 @@ describe('L4-01 Action Gateway worker policy', () => {
       runId: action.runId,
       stepId: action.stepId,
       request: action.actionEnvelope,
+      registry: kubernetesRegistry,
     });
     assert.equal(approved.effect, 'allow');
     assert.equal(approved.decisionId, 'action-gateway-allow-after-approval');
@@ -220,6 +249,7 @@ describe('L4-01 Action Gateway worker policy', () => {
         ...action.actionEnvelope,
         destination: 'k8s://kind/commander/deployments/other',
       },
+      registry: kubernetesRegistry,
     });
     assert.equal(crossDestination.effect, 'deny');
     assert.equal(crossDestination.reason, 'ACTION_DIGEST_MISMATCH');
@@ -239,6 +269,7 @@ describe('L4-01 Action Gateway worker policy', () => {
         runId: rejected.runId,
         stepId: rejected.stepId,
         request: rejected.actionEnvelope,
+        registry: kubernetesRegistry,
       });
       assert.equal(decision.effect, 'deny', runId);
       assert.equal(decision.reason, 'ACTION_GATEWAY_DECISION_REVALIDATION_FAILED', runId);
@@ -253,20 +284,55 @@ describe('L4-01 Action Gateway worker policy', () => {
       effectType: 'compensate.kubernetes.deployment.rollback',
       args: { targetRevision: '2', reason: 'compensation proof' },
     };
-    const decision = evaluateActionGatewayMvpV1(policyInput);
-    const shared = evaluateActionGatewayPolicy(policyInput);
+    const decision = evaluateActionGatewayMvpV1(policyInput, kubernetesRegistry);
     assert.deepEqual(decision, {
       effect: 'require_approval',
       decisionId: 'action-gateway-manifest-require_approval',
       reason: "Registered adapter policy requires 'require_approval' for this exact action.",
       policySnapshotId: 'action-gateway-mvp-v1',
     });
-    assert.deepEqual(decision, {
-      effect: shared.effect,
-      decisionId: shared.decisionId,
-      reason: shared.reason,
-      policySnapshotId: shared.policySnapshotId,
-    });
+  });
+
+  it('preserves registry-aware production admission and Kubernetes destination validation', () => {
+    const kubernetes = {
+      ...envelope,
+      effectType: 'connector.kubernetes.deployment.rollback',
+      tool: 'kubernetes.deployment.rollback',
+      destination: 'k8s://cluster-1/namespace-1/deployments/api',
+    };
+    assert.equal(evaluateActionGatewayMvpV1(kubernetes).effect, 'deny');
+    assert.equal(
+      evaluateActionGatewayMvpV1(kubernetes, kubernetesRegistry).effect,
+      'require_approval',
+    );
+    assert.equal(
+      evaluateActionGatewayMvpV1(
+        { ...kubernetes, destination: 'k8s://Cluster_1/namespace-1/deployments/api' },
+        kubernetesRegistry,
+      ).effect,
+      'deny',
+    );
+
+    const githubRegistry = new ActionAdapterRegistry([
+      adapter(GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR),
+    ]);
+    assert.equal(
+      evaluateActionGatewayMvpV1(
+        {
+          ...envelope,
+          effectType: 'connector.github.pull-request.create',
+          tool: 'github.pull-request.create',
+          destination: 'github://commander/repository/pulls',
+        },
+        githubRegistry,
+      ).effect,
+      'deny',
+    );
+    assert.equal(evaluateActionGatewayMvpV1(envelope).effect, 'allow');
+    assert.equal(
+      evaluateActionGatewayMvpV1({ ...envelope, destination: undefined }).reason,
+      "Destination 'undefined' is not registered by the Action Gateway.",
+    );
   });
 
   it('allows only a trusted persisted Action Gateway envelope', async () => {

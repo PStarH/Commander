@@ -34,7 +34,8 @@ export type ShadowContractErrorCode =
   | 'SHADOW_RECORD_LIMIT'
   | 'SHADOW_INDEX_SEQUENCE'
   | 'SHADOW_DUPLICATE_OBSERVATION'
-  | 'SHADOW_SIZE_LIMIT';
+  | 'SHADOW_SIZE_LIMIT'
+  | 'SHADOW_SENSITIVE_DATA';
 
 export class ShadowContractError extends Error {
   constructor(
@@ -116,6 +117,9 @@ const RECORD_KEYS = ['index', 'observationId', 'digest'] as const;
 const IDENTIFIER = /^[\x21-\x7e]{1,128}$/;
 const DIGEST = /^[0-9a-f]{64}$/;
 const SIGNATURE = /^[A-Za-z0-9_-]+$/;
+const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+const SECRET =
+  /(?:sk-(?:proj-)?[A-Za-z0-9_-]{16,}|github_pat_[A-Za-z0-9_]{16,}|gh[pousr]_[A-Za-z0-9]{16,}|xox[baprs]-[A-Za-z0-9-]{16,}|AKIA[A-Z0-9]{16}|\bBearer\s+[A-Za-z0-9._~+/-]{16,}|\b(?:api[_-]?key|token|secret)\s*[:=]\s*[A-Za-z0-9._~+/-]{12,})/i;
 
 function objectValue(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -205,6 +209,17 @@ function assertSize(value: unknown, maximum: number): void {
   }
 }
 
+function rejectSensitiveObservationStrings(input: Record<string, unknown>): void {
+  for (const value of Object.values(input)) {
+    if (typeof value === 'string' && (EMAIL.test(value) || SECRET.test(value))) {
+      throw new ShadowContractError(
+        'SHADOW_SENSITIVE_DATA',
+        'observation contains a known-sensitive string pattern',
+      );
+    }
+  }
+}
+
 export function parseShadowManifest(value: unknown): ShadowManifestV1 {
   assertSize(value, 2 * 1024 * 1024);
   const input = objectValue(value);
@@ -269,6 +284,7 @@ export function parseShadowObservation(value: unknown): ShadowObservationV1 {
   assertSize(value, 16 * 1024);
   const input = objectValue(value);
   exactKeys(input, OBSERVATION_KEYS, OBSERVATION_REQUIRED_KEYS);
+  rejectSensitiveObservationStrings(input);
   if (input.schema !== SHADOW_OBSERVATION_SCHEMA) {
     throw new ShadowContractError(
       'SHADOW_INVALID_SCHEMA',

@@ -4,13 +4,14 @@ import {
   type VerifiedPostgresPoolInput,
 } from '@commander/postgres-runtime';
 import type { PoolConfig } from 'pg';
+import type { ShadowManifestTrust } from './report.js';
 
 export interface ShadowStartupConfig {
   databaseUrl: string;
   poolConfig: PoolConfig;
   tenantId: string;
   retentionDays: number;
-  trustedManifestPublicKeys: ReadonlyMap<string, KeyObject>;
+  trustedManifestPublicKeys: ReadonlyMap<string, ShadowManifestTrust>;
   reportSigningKeyId: string;
   reportSigningPrivateKey: KeyObject;
   cleanupFreshnessMinutes: number;
@@ -47,7 +48,7 @@ function boundedInteger(
   return value;
 }
 
-function manifestKeys(env: NodeJS.ProcessEnv): ReadonlyMap<string, KeyObject> {
+function manifestKeys(env: NodeJS.ProcessEnv): ReadonlyMap<string, ShadowManifestTrust> {
   const raw = required(env, 'COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON');
   let parsed: unknown;
   try {
@@ -55,20 +56,38 @@ function manifestKeys(env: NodeJS.ProcessEnv): ReadonlyMap<string, KeyObject> {
   } catch {
     throw new Error('COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON_INVALID');
   }
-  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+  if (!Array.isArray(parsed) || parsed.length === 0) {
     throw new Error('COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON_INVALID');
   }
-  const entries = Object.entries(parsed as Record<string, unknown>);
-  if (entries.length === 0) throw new Error('COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON_INVALID');
-  const result = new Map<string, KeyObject>();
-  for (const [keyId, pem] of entries) {
-    if (!IDENTIFIER.test(keyId) || PLACEHOLDER.test(keyId) || typeof pem !== 'string') {
+  const result = new Map<string, ShadowManifestTrust>();
+  for (const value of parsed) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('COMMANDER_SHADOW_MANIFEST_KEY_INVALID');
+    }
+    const record = value as Record<string, unknown>;
+    const keyId = record.keyId;
+    if (
+      Object.keys(record).sort().join('\0') !==
+        ['algorithm', 'keyId', 'publicKeyPem', 'status'].sort().join('\0') ||
+      record.algorithm !== 'Ed25519' ||
+      typeof keyId !== 'string' ||
+      !IDENTIFIER.test(keyId) ||
+      PLACEHOLDER.test(keyId) ||
+      (record.status !== 'active' && record.status !== 'revoked') ||
+      typeof record.publicKeyPem !== 'string' ||
+      result.has(keyId)
+    ) {
       throw new Error('COMMANDER_SHADOW_MANIFEST_KEY_INVALID');
     }
     try {
-      const key = createPublicKey(pem);
+      const key = createPublicKey(record.publicKeyPem);
       if (key.asymmetricKeyType !== 'ed25519') throw new Error('wrong type');
-      result.set(keyId, key);
+      result.set(keyId, {
+        algorithm: 'Ed25519',
+        keyId,
+        status: record.status,
+        publicKey: key,
+      });
     } catch {
       throw new Error('COMMANDER_SHADOW_MANIFEST_KEY_INVALID');
     }

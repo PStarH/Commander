@@ -13,6 +13,17 @@ import { runShadowCli, type ShadowCliRepository } from './cli.js';
 const manifestKeys = generateKeyPairSync('ed25519');
 const reportKeys = generateKeyPairSync('ed25519');
 const snapshot = actionGatewayPolicySnapshot();
+const trustedManifests = new Map([
+  [
+    'manifest-key-1',
+    {
+      algorithm: 'Ed25519' as const,
+      keyId: 'manifest-key-1',
+      status: 'active' as const,
+      publicKey: manifestKeys.publicKey,
+    },
+  ],
+]);
 
 function observation() {
   return parseShadowObservation({
@@ -123,8 +134,8 @@ class FakeRepository implements ShadowCliRepository {
     this.calls.push('retention');
     return 2;
   }
-  async readiness() {
-    this.calls.push('status');
+  async readiness(_tenantId?: string, _freshness?: number, operation = 'status') {
+    this.calls.push(`ready:${operation}`);
     return { ready: true, code: 'SHADOW_READY' };
   }
 }
@@ -135,6 +146,7 @@ function dependencies(repository: ShadowCliRepository) {
     tenantId: 'tenant-1',
     cleanupFreshnessMinutes: 90,
     reportSigning: { keyId: 'report-key-1', privateKey: reportKeys.privateKey },
+    manifestTrust: trustedManifests,
     sourceRevision: 'abc123',
     now: () => new Date('2026-09-03T00:00:00.000Z'),
   };
@@ -147,6 +159,7 @@ describe('commander-shadow CLI', () => {
     const importFile = join(directory, 'observations.ndjson');
     const reportFile = join(directory, 'report.json');
     const publicKeyFile = join(directory, 'report-public.json');
+    const manifestKeysFile = join(directory, 'manifest-keys.json');
     writeFileSync(manifestFile, JSON.stringify(manifest()));
     writeFileSync(importFile, `${JSON.stringify(observation())}\n`);
     writeFileSync(
@@ -158,6 +171,17 @@ describe('commander-shadow CLI', () => {
         status: 'active',
         publicKeyPem: reportKeys.publicKey.export({ format: 'pem', type: 'spki' }),
       }),
+    );
+    writeFileSync(
+      manifestKeysFile,
+      JSON.stringify([
+        {
+          algorithm: 'Ed25519',
+          keyId: 'manifest-key-1',
+          status: 'active',
+          publicKeyPem: manifestKeys.publicKey.export({ format: 'pem', type: 'spki' }),
+        },
+      ]),
     );
     const repository = new FakeRepository();
     const deps = dependencies(repository);
@@ -180,6 +204,8 @@ describe('commander-shadow CLI', () => {
       reportFile,
       '--public-key',
       publicKeyFile,
+      '--manifest-keys',
+      manifestKeysFile,
     ]);
     assert.deepEqual(verify, {
       exitCode: 0,
@@ -206,18 +232,26 @@ describe('commander-shadow CLI', () => {
           reportFile,
           '--public-key',
           revokedKeyFile,
+          '--manifest-keys',
+          manifestKeysFile,
         ])
       ).output.code,
       'SHADOW_REPORT_KEY_REVOKED',
     );
     assert.deepEqual(repository.calls, [
+      'ready:manifest-register',
       'register',
+      'ready:import',
       'import',
+      'ready:batch-close',
       'close',
+      'ready:report-export',
       'report',
+      'ready:campaign-withdraw',
       'withdraw',
+      'ready:retention-run',
       'retention',
-      'status',
+      'ready:status',
     ]);
     assert.equal(JSON.parse(readFileSync(reportFile, 'utf8')).schema, 'commander.shadow-report/v1');
   });
@@ -259,6 +293,22 @@ describe('commander-shadow CLI', () => {
     assert.equal(repository.imported.length, 1);
   });
 
+  it('counts sensitive observations as rejections and continues the bounded import', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
+    const file = join(directory, 'sensitive.ndjson');
+    writeFileSync(file, `${JSON.stringify(observation())}\n${JSON.stringify(observation())}\n`);
+    const repository = new FakeRepository();
+    let attempts = 0;
+    repository.importObservation = async () => {
+      if (attempts++ === 0) throw new Error('SHADOW_SENSITIVE_DATA');
+      return { idempotent: false };
+    };
+    assert.deepEqual(await runShadowCli(['import', '--file', file], dependencies(repository)), {
+      exitCode: 1,
+      output: { status: 'error', code: 'SHADOW_IMPORT_PARTIAL', imported: 1, rejected: 1 },
+    });
+  });
+
   it('bounds NDJSON lines and sanitizes unexpected errors', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
     const file = join(directory, 'oversize.ndjson');
@@ -281,5 +331,39 @@ describe('commander-shadow CLI', () => {
       output: { status: 'error', code: 'SHADOW_COMMAND_FAILED' },
     });
     assert.doesNotMatch(JSON.stringify(failed), /top-secret|postgres:/);
+  });
+
+  it('fails closed on operation readiness and lets retention recover overdue cleanup', async () => {
+    const repository = new FakeRepository();
+    repository.readiness = async (
+      _tenantId?: string,
+      _freshness?: number,
+      operation = 'status',
+    ) => {
+      repository.calls.push(`ready:${operation}`);
+      return operation === 'retention-run'
+        ? { ready: true, code: 'SHADOW_READY' }
+        : { ready: false, code: 'SHADOW_CLEANUP_OVERDUE' };
+    };
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
+    const manifestFile = join(directory, 'manifest.json');
+    writeFileSync(manifestFile, JSON.stringify(manifest()));
+
+    assert.deepEqual(
+      await runShadowCli(
+        ['manifest', 'register', '--file', manifestFile],
+        dependencies(repository),
+      ),
+      { exitCode: 1, output: { status: 'error', code: 'SHADOW_CLEANUP_OVERDUE' } },
+    );
+    assert.equal(
+      (await runShadowCli(['retention', 'run'], dependencies(repository))).output.code,
+      'SHADOW_RETENTION_COMPLETE',
+    );
+    assert.deepEqual(repository.calls, [
+      'ready:manifest-register',
+      'ready:retention-run',
+      'retention',
+    ]);
   });
 });

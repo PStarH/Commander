@@ -58,10 +58,10 @@ describe('Shadow Phase A release gate', () => {
       [
         'contracts',
         'architecture',
-        'shadow-tests',
-        'shadow-typecheck',
         'contracts-build',
         'postgres-runtime-build',
+        'shadow-tests',
+        'shadow-typecheck',
         'shadow-clean',
         'shadow-build',
         'shadow-package',
@@ -104,7 +104,7 @@ describe('Shadow Phase A release gate', () => {
     );
   });
 
-  it('builds published workspace dependencies inside the root gate before Shadow builds', async () => {
+  it('builds published workspace dependencies before Shadow tests, typecheck, and build', async () => {
     const calls: ShadowPhaseACommand[] = [];
     await runShadowPhaseAGate({
       ci: false,
@@ -118,10 +118,16 @@ describe('Shadow Phase A release gate', () => {
       (command) => command.id === 'postgres-runtime-build',
     );
     const shadowBuild = calls.findIndex((command) => command.id === 'shadow-build');
+    const shadowTests = calls.findIndex((command) => command.id === 'shadow-tests');
+    const shadowTypecheck = calls.findIndex((command) => command.id === 'shadow-typecheck');
     assert.ok(contractsBuild >= 0);
     assert.ok(postgresRuntimeBuild >= 0);
     assert.ok(contractsBuild < shadowBuild);
     assert.ok(postgresRuntimeBuild < shadowBuild);
+    assert.ok(contractsBuild < shadowTests);
+    assert.ok(postgresRuntimeBuild < shadowTests);
+    assert.ok(contractsBuild < shadowTypecheck);
+    assert.ok(postgresRuntimeBuild < shadowTypecheck);
   });
 
   it('removes prior package output before producing the tarball build', async () => {

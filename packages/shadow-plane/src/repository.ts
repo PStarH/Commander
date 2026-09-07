@@ -1,4 +1,4 @@
-import { createHash, type KeyObject } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import { actionGatewayPolicySnapshot } from '@commander/contracts';
 import { canonicalBytes, sha256Hex, verifyEd25519 } from './canonical.js';
 import {
@@ -15,6 +15,7 @@ import {
   type ShadowEvaluation,
 } from './evaluator.js';
 import { SHADOW_SCHEMA_VERSION } from './schema.js';
+import type { ShadowManifestTrust } from './report.js';
 import type { Pool, PoolClient } from 'pg';
 
 export interface ShadowSqlResult {
@@ -58,7 +59,7 @@ export function asShadowSqlPool(pool: Pool): ShadowSqlPool {
 
 export interface ShadowRepositoryOptions {
   retentionDays: number;
-  trustedManifestPublicKeys: ReadonlyMap<string, KeyObject>;
+  trustedManifestPublicKeys: ReadonlyMap<string, ShadowManifestTrust>;
 }
 
 export interface ShadowImportResult {
@@ -73,8 +74,86 @@ export interface ShadowCampaignReportData {
   records: Record<string, unknown>[];
 }
 
+export type ShadowDatabaseOperation =
+  | 'manifest-register'
+  | 'import'
+  | 'batch-close'
+  | 'report-export'
+  | 'campaign-withdraw'
+  | 'retention-run'
+  | 'status';
+
+function operationPrivilegeSql(operation: ShadowDatabaseOperation): { role: string; sql: string } {
+  switch (operation) {
+    case 'manifest-register':
+      return {
+        role: 'commander_shadow_ingestion',
+        sql: `has_table_privilege(current_user, 'commander_shadow.campaigns', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.batches', 'SELECT')
+          AND has_function_privilege(current_user,
+            'commander_shadow.register_manifest(text,text,text,text,text,text,jsonb,text,timestamp with time zone,timestamp with time zone)',
+            'EXECUTE')`,
+      };
+    case 'import':
+      return {
+        role: 'commander_shadow_ingestion',
+        sql: `has_table_privilege(current_user, 'commander_shadow.campaigns', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.batches', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.expected_records', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.observations', 'SELECT')
+          AND has_function_privilege(current_user,
+            'commander_shadow.record_attempt(text,text,text,integer,text,text,text)', 'EXECUTE')
+          AND has_function_privilege(current_user,
+            'commander_shadow.record_observation(text,text,text,integer,text,text,text,text,text,text,text,text,text)',
+            'EXECUTE')`,
+      };
+    case 'batch-close':
+      return {
+        role: 'commander_shadow_ingestion',
+        sql: `has_table_privilege(current_user, 'commander_shadow.campaigns', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.batches', 'SELECT')
+          AND has_function_privilege(current_user,
+            'commander_shadow.close_batch(text,text,text)', 'EXECUTE')`,
+      };
+    case 'report-export':
+      return {
+        role: 'commander_shadow_reader',
+        sql: `has_table_privilege(current_user, 'commander_shadow.campaigns', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.batches', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.expected_records', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.observations', 'SELECT')`,
+      };
+    case 'campaign-withdraw':
+      return {
+        role: 'commander_shadow_retention',
+        sql: `has_table_privilege(current_user, 'commander_shadow.campaigns', 'SELECT')
+          AND has_column_privilege(current_user, 'commander_shadow.campaigns', 'state', 'UPDATE')
+          AND has_column_privilege(current_user, 'commander_shadow.campaigns', 'withdrawn_at', 'UPDATE')
+          AND has_column_privilege(current_user, 'commander_shadow.campaigns', 'producer_id', 'UPDATE')
+          AND has_column_privilege(current_user, 'commander_shadow.campaigns', 'policy_id', 'UPDATE')
+          AND has_column_privilege(current_user, 'commander_shadow.campaigns', 'policy_digest', 'UPDATE')
+          AND has_table_privilege(current_user, 'commander_shadow.batches', 'DELETE')
+          AND has_table_privilege(current_user, 'commander_shadow.observations', 'DELETE')
+          AND has_table_privilege(current_user, 'commander_shadow.deletion_audit', 'INSERT')`,
+      };
+    case 'retention-run':
+      return {
+        role: 'commander_shadow_retention',
+        sql: `has_table_privilege(current_user, 'commander_shadow.campaigns', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.campaigns', 'DELETE')
+          AND has_table_privilege(current_user, 'commander_shadow.deletion_audit', 'INSERT')
+          AND has_table_privilege(current_user, 'commander_shadow.cleanup_state', 'SELECT')
+          AND has_table_privilege(current_user, 'commander_shadow.cleanup_state', 'INSERT')
+          AND has_column_privilege(current_user, 'commander_shadow.cleanup_state', 'last_completed_at', 'UPDATE')`,
+      };
+    case 'status':
+      return { role: 'commander_shadow_ingestion', sql: 'TRUE' };
+  }
+}
+
 async function transaction<T>(
   pool: ShadowSqlPool,
+  tenantId: string,
   operation: (client: ShadowSqlClient) => Promise<T>,
 ): Promise<T> {
   const client = await pool.connect();
@@ -82,6 +161,7 @@ async function transaction<T>(
   try {
     await client.query('BEGIN');
     begun = true;
+    await client.query("SELECT set_config('commander_shadow.tenant_id', $1, true)", [tenantId]);
     const result = await operation(client);
     await client.query('COMMIT');
     return result;
@@ -142,8 +222,17 @@ export class ShadowRepository {
     requireTenant(tenantId, manifest.tenantId);
     const trustedKey = this.options.trustedManifestPublicKeys.get(manifest.keyId);
     if (!trustedKey) throw new Error('SHADOW_MANIFEST_KEY_UNTRUSTED');
+    if (trustedKey.status === 'revoked') throw new Error('SHADOW_MANIFEST_KEY_REVOKED');
+    if (
+      trustedKey.status !== 'active' ||
+      trustedKey.algorithm !== 'Ed25519' ||
+      trustedKey.keyId !== manifest.keyId ||
+      trustedKey.publicKey.asymmetricKeyType !== 'ed25519'
+    ) {
+      throw new Error('SHADOW_MANIFEST_KEY_INVALID');
+    }
     const { signature, ...signedBody } = manifest;
-    if (!verifyEd25519(signedBody, signature, trustedKey)) {
+    if (!verifyEd25519(signedBody, signature, trustedKey.publicKey)) {
       throw new Error('SHADOW_MANIFEST_SIGNATURE_INVALID');
     }
     const snapshot = actionGatewayPolicySnapshot();
@@ -158,86 +247,26 @@ export class ShadowRepository {
       Date.parse(manifest.closesAt) + this.options.retentionDays * 24 * 60 * 60 * 1000,
     ).toISOString();
 
-    return transaction(this.pool, async (client) => {
+    return transaction(this.pool, tenantId, async (client) => {
       await lockCampaign(client, tenantId, manifest.campaignId);
-      await client.query(
-        `INSERT INTO commander_shadow.campaigns
-           (tenant_id, campaign_id, producer_id, policy_id, policy_digest, state, retention_until)
-         VALUES ($1,$2,$3,$4,$5,'open',$6)
-         ON CONFLICT (tenant_id, campaign_id) DO NOTHING`,
+      const registered = await client.query(
+        `SELECT commander_shadow.register_manifest(
+           $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10
+         ) AS idempotent`,
         [
           tenantId,
           manifest.campaignId,
           manifest.producerId,
           manifest.policyId,
           manifest.policyDigest,
-          retentionUntil,
-        ],
-      );
-      const campaign = await client.query(
-        `SELECT producer_id, policy_id, policy_digest, state
-           FROM commander_shadow.campaigns
-          WHERE tenant_id=$1 AND campaign_id=$2
-          FOR UPDATE`,
-        [tenantId, manifest.campaignId],
-      );
-      const existingCampaign = campaign.rows[0];
-      if (existingCampaign) {
-        if (existingCampaign.state === 'withdrawn') throw new Error('SHADOW_CAMPAIGN_WITHDRAWN');
-        if (
-          existingCampaign.producer_id !== manifest.producerId ||
-          existingCampaign.policy_id !== manifest.policyId ||
-          existingCampaign.policy_digest !== manifest.policyDigest
-        )
-          throw new Error('SHADOW_CAMPAIGN_CONFLICT');
-      }
-      const inserted = await client.query(
-        `INSERT INTO commander_shadow.batches
-           (tenant_id, campaign_id, batch_id, manifest, manifest_digest, closes_at, state)
-         VALUES ($1,$2,$3,$4::jsonb,$5,$6,'open')
-         ON CONFLICT (tenant_id, campaign_id, batch_id) DO NOTHING
-         RETURNING manifest_digest`,
-        [
-          tenantId,
-          manifest.campaignId,
           manifest.batchId,
           JSON.stringify(manifest),
           manifestDigest,
           manifest.closesAt,
+          retentionUntil,
         ],
       );
-      if (inserted.rowCount === 0) {
-        const existing = await client.query(
-          `SELECT manifest_digest FROM commander_shadow.batches
-            WHERE tenant_id=$1 AND campaign_id=$2 AND batch_id=$3 FOR UPDATE`,
-          [tenantId, manifest.campaignId, manifest.batchId],
-        );
-        if (existing.rows[0] && existing.rows[0].manifest_digest !== manifestDigest) {
-          throw new Error('SHADOW_MANIFEST_CONFLICT');
-        }
-        if (existing.rows[0]) return { idempotent: true };
-      }
-      for (const record of manifest.records) {
-        await client.query(
-          `INSERT INTO commander_shadow.expected_records
-             (tenant_id, campaign_id, batch_id, record_index, observation_id, digest, status)
-           VALUES ($1,$2,$3,$4,$5,$6,'pending')`,
-          [
-            tenantId,
-            manifest.campaignId,
-            manifest.batchId,
-            record.index,
-            record.observationId,
-            record.digest,
-          ],
-        );
-      }
-      await client.query(
-        `UPDATE commander_shadow.campaigns SET retention_until=GREATEST(retention_until,$3)
-          WHERE tenant_id=$1 AND campaign_id=$2`,
-        [tenantId, manifest.campaignId, retentionUntil],
-      );
-      return { idempotent: false };
+      return { idempotent: registered.rows[0]?.idempotent === true };
     });
   }
 
@@ -246,6 +275,7 @@ export class ShadowRepository {
     requireTenant(tenantId, observation.tenantId);
     const result = await transaction<ShadowImportResult | { error: string }>(
       this.pool,
+      tenantId,
       async (client) => {
         await lockCampaign(client, tenantId, observation.campaignId);
         const campaignResult = await client.query(
@@ -304,23 +334,18 @@ export class ShadowRepository {
           };
         }
         const recordAttempt = async (status: 'rejected' | 'failed', code: string) => {
-          await client.query(
-            `UPDATE commander_shadow.expected_records
-              SET status=$5, attempt_digest=$6, attempt_code=$7, attempted_at=clock_timestamp()
-            WHERE tenant_id=$1 AND campaign_id=$2 AND batch_id=$3 AND record_index=$4`,
-            [
-              tenantId,
-              observation.campaignId,
-              observation.batchId,
-              observation.index,
-              status,
-              digest,
-              code,
-            ],
-          );
+          await client.query(`SELECT commander_shadow.record_attempt($1,$2,$3,$4,$5,$6,$7)`, [
+            tenantId,
+            observation.campaignId,
+            observation.batchId,
+            observation.index,
+            digest,
+            code,
+            status,
+          ]);
           return { error: code };
         };
-        if (expected.digest !== digest) return recordAttempt('rejected', 'SHADOW_DIGEST_MISMATCH');
+        if (expected.digest !== digest) throw new Error('SHADOW_DIGEST_MISMATCH');
         let evaluation: ShadowEvaluation;
         let parsed: ShadowObservationV1;
         try {
@@ -337,14 +362,10 @@ export class ShadowRepository {
           return recordAttempt('failed', 'SHADOW_EVALUATION_FAILED');
         }
         const comparison = compareShadowDecision(parsed.productionDecision, evaluation.decision);
-        const terminalStatus = comparison === 'uncomparable' ? 'uncomparable' : 'compared';
         await client.query(
-          `INSERT INTO commander_shadow.observations
-           (tenant_id, campaign_id, batch_id, record_index, observation_id, digest,
-            canonical_observation, hypothetical_decision, hypothetical_reason_code,
-            hypothetical_decision_id,
-            production_decision, production_reason_code, comparison)
-         VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13)`,
+          `SELECT commander_shadow.record_observation(
+             $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13
+           )`,
           [
             tenantId,
             observation.campaignId,
@@ -352,25 +373,13 @@ export class ShadowRepository {
             observation.index,
             observation.observationId,
             digest,
-            JSON.stringify(parsed),
+            canonicalBytes(parsed).toString('utf8'),
             evaluation.decision,
-            evaluation.reasonCode,
             evaluation.decisionId,
+            evaluation.reasonCode,
             parsed.productionDecision,
             parsed.productionReasonCode ?? null,
             comparison,
-          ],
-        );
-        await client.query(
-          `UPDATE commander_shadow.expected_records SET status=$5,
-                attempt_digest=NULL, attempt_code=NULL, attempted_at=NULL
-          WHERE tenant_id=$1 AND campaign_id=$2 AND batch_id=$3 AND record_index=$4`,
-          [
-            tenantId,
-            observation.campaignId,
-            observation.batchId,
-            observation.index,
-            terminalStatus,
           ],
         );
         return { idempotent: false, evaluation, comparison };
@@ -382,7 +391,7 @@ export class ShadowRepository {
 
   async closeDueBatch(tenantId: string, campaignId: string, batchId: string): Promise<void> {
     requireTenant(tenantId);
-    await transaction(this.pool, async (client) => {
+    await transaction(this.pool, tenantId, async (client) => {
       await lockCampaign(client, tenantId, campaignId);
       const campaign = await client.query(
         `SELECT state FROM commander_shadow.campaigns
@@ -399,22 +408,17 @@ export class ShadowRepository {
       if (!batch.rows[0]) throw new Error('SHADOW_BATCH_NOT_FOUND');
       if (batch.rows[0].is_due !== true) throw new Error('SHADOW_BATCH_NOT_DUE');
       if (batch.rows[0].state === 'closed') return;
-      await client.query(
-        `UPDATE commander_shadow.expected_records SET status='missing'
-          WHERE tenant_id=$1 AND campaign_id=$2 AND batch_id=$3 AND status='pending'`,
-        [tenantId, campaignId, batchId],
-      );
-      await client.query(
-        `UPDATE commander_shadow.batches SET state='closed', closed_at=clock_timestamp()
-          WHERE tenant_id=$1 AND campaign_id=$2 AND batch_id=$3`,
-        [tenantId, campaignId, batchId],
-      );
+      await client.query(`SELECT commander_shadow.close_batch($1,$2,$3)`, [
+        tenantId,
+        campaignId,
+        batchId,
+      ]);
     });
   }
 
   async readReport(tenantId: string, campaignId: string): Promise<ShadowCampaignReportData> {
     requireTenant(tenantId);
-    return transaction(this.pool, async (client) => {
+    return transaction(this.pool, tenantId, async (client) => {
       await lockCampaign(client, tenantId, campaignId, true);
       const campaign = await client.query(
         `SELECT campaign_id, producer_id, policy_id, policy_digest, state, retention_until, created_at
@@ -444,7 +448,7 @@ export class ShadowRepository {
 
   async withdrawCampaign(tenantId: string, campaignId: string): Promise<void> {
     requireTenant(tenantId);
-    await transaction(this.pool, async (client) => {
+    await transaction(this.pool, tenantId, async (client) => {
       await lockCampaign(client, tenantId, campaignId);
       const campaign = await client.query(
         `SELECT state FROM commander_shadow.campaigns
@@ -478,7 +482,7 @@ export class ShadowRepository {
 
   async runRetention(tenantId: string): Promise<number> {
     requireTenant(tenantId);
-    return transaction(this.pool, async (client) => {
+    return transaction(this.pool, tenantId, async (client) => {
       const expired = await client.query(
         `SELECT campaign_id FROM commander_shadow.campaigns
           WHERE tenant_id=$1 AND retention_until <= clock_timestamp() ORDER BY campaign_id`,
@@ -516,35 +520,61 @@ export class ShadowRepository {
   async readiness(
     tenantId: string,
     cleanupFreshnessMinutes: number,
+    operation: ShadowDatabaseOperation,
   ): Promise<{ ready: boolean; code: string }> {
     requireTenant(tenantId);
-    const privileges = await this.pool.query(
-      `SELECT has_schema_privilege(current_user, 'commander_shadow', 'USAGE') AS schema_usage,
+    const required = operationPrivilegeSql(operation);
+    return transaction(this.pool, tenantId, async (client) => {
+      const privileges = await client.query(
+        `SELECT pg_has_role(current_user, $2, 'MEMBER')
+                AND NOT EXISTS (
+                  SELECT 1 FROM pg_roles privileged
+                   WHERE pg_has_role(session_user, privileged.oid, 'MEMBER')
+                     AND (privileged.rolsuper OR privileged.rolcreaterole OR privileged.rolcreatedb
+                          OR privileged.rolreplication OR privileged.rolbypassrls)
+                )
+                AND NOT pg_has_role(session_user, n.nspowner, 'MEMBER')
+                AND NOT EXISTS (
+                  SELECT 1 FROM pg_class c WHERE c.relnamespace=n.oid
+                    AND pg_has_role(session_user, c.relowner, 'MEMBER')
+                )
+                AND NOT pg_has_role(session_user, 'commander_shadow_installer', 'MEMBER')
+                AS safe_runtime_role,
+              commander_shadow.tenant_access_allowed($1) AS tenant_access,
+              has_schema_privilege(current_user, 'commander_shadow', 'USAGE') AS schema_usage,
               has_schema_privilege(current_user, 'commander_shadow', 'CREATE') AS schema_create,
-              has_table_privilege(current_user, 'commander_shadow.schema_version', 'SELECT') AS version_read
-        WHERE $1::text IS NOT NULL`,
-      [tenantId],
-    );
-    const privilegeRow = privileges.rows[0];
-    if (
-      !privilegeRow ||
-      privilegeRow.schema_usage !== true ||
-      privilegeRow.schema_create !== false ||
-      privilegeRow.version_read !== true
-    )
-      return { ready: false, code: 'SHADOW_DATABASE_PRIVILEGES_INVALID' };
-    const version = await this.pool.query(
-      `SELECT version FROM commander_shadow.schema_version WHERE version=$1`,
-      [SHADOW_SCHEMA_VERSION],
-    );
-    if (version.rows.length !== 1) return { ready: false, code: 'SHADOW_SCHEMA_NOT_READY' };
-    const cleanup = await this.pool.query(
-      `SELECT last_completed_at FROM commander_shadow.cleanup_state
+              has_table_privilege(current_user, 'commander_shadow.schema_version', 'SELECT') AS version_read,
+              (${required.sql}) AS operation_privileges
+         FROM pg_roles r
+         JOIN pg_namespace n ON n.nspname='commander_shadow'
+        WHERE r.rolname=current_user AND $1::text IS NOT NULL`,
+        [tenantId, required.role],
+      );
+      const privilegeRow = privileges.rows[0];
+      if (
+        !privilegeRow ||
+        privilegeRow.safe_runtime_role !== true ||
+        privilegeRow.tenant_access !== true ||
+        privilegeRow.schema_usage !== true ||
+        privilegeRow.schema_create !== false ||
+        privilegeRow.version_read !== true ||
+        privilegeRow.operation_privileges !== true
+      )
+        return { ready: false, code: 'SHADOW_DATABASE_PRIVILEGES_INVALID' };
+      const version = await client.query(
+        `SELECT version FROM commander_shadow.schema_version WHERE version=$1`,
+        [SHADOW_SCHEMA_VERSION],
+      );
+      if (version.rows.length !== 1) return { ready: false, code: 'SHADOW_SCHEMA_NOT_READY' };
+      if (operation === 'retention-run') return { ready: true, code: 'SHADOW_READY' };
+      const cleanup = await client.query(
+        `SELECT last_completed_at FROM commander_shadow.cleanup_state
         WHERE tenant_id=$1
           AND last_completed_at >= clock_timestamp() - ($2 * interval '1 minute')`,
-      [tenantId, cleanupFreshnessMinutes],
-    );
-    if (cleanup.rows.length !== 1) return { ready: false, code: 'SHADOW_CLEANUP_OVERDUE' };
-    return { ready: true, code: 'SHADOW_READY' };
+        [tenantId, cleanupFreshnessMinutes],
+      );
+      if (cleanup.rows.length !== 1) return { ready: false, code: 'SHADOW_CLEANUP_OVERDUE' };
+      return { ready: true, code: 'SHADOW_READY' };
+    });
   }
 }

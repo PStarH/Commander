@@ -17,6 +17,7 @@ export type {
   ShadowProductionReasonCode,
 } from './contracts.js';
 export { canonicalBytes, sha256Hex, verifyEd25519 } from './canonical.js';
+export { actionGatewayPolicySnapshot } from '@commander/contracts';
 export { evaluateShadowObservation, observationDigest } from './evaluator.js';
 export type { ShadowEvaluation, ShadowHypotheticalDecision, ShadowPolicyPin } from './evaluator.js';
 export { compareShadowDecision } from './comparison.js';
@@ -25,6 +26,7 @@ export { SHADOW_SCHEMA_SQL, SHADOW_SCHEMA_VERSION } from './schema.js';
 export { asShadowSqlPool, ShadowRepository } from './repository.js';
 export type {
   ShadowCampaignReportData,
+  ShadowDatabaseOperation,
   ShadowImportResult,
   ShadowRepositoryOptions,
   ShadowSqlClient,
@@ -44,6 +46,7 @@ export type {
   ShadowDecisionMatrix,
   ShadowReportBundle,
   ShadowReportCounts,
+  ShadowManifestTrust,
   ShadowReportRecord,
   ShadowReportSigningOptions,
   ShadowReportTrust,

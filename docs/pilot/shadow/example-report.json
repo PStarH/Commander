@@ -631,7 +631,7 @@
         }
       ],
       "keyId": "example-manifest-key-2026",
-      "signature": "UfSIGopkXt9fZhqFRPK_gxFGMq7n8kLT89NGuu9IP8fV2JpO91y6PKyANim_VGsgKEKULfEAq5yFBfN8YKL3Cw"
+      "signature": "YKbQgq70QZCYeQBnIkdhrMkMzCmtemsiUpiHnyTdQuQlH32rM6J6gKVfOWR0QqHRE6_X6RNptU_uQX_bcXHTCw"
     }
   ],
   "records": [
@@ -3451,10 +3451,10 @@
     }
   ],
   "hashes": {
-    "manifestsSha256": "158e077f4e9fcb8714c4db98cd546658855f9a81ecc2ad25b4ddf60001d2f738",
+    "manifestsSha256": "e17a23f87b1d69f9b0279100a482b4dfaebd117ef29aedff6307aa3085686f76",
     "recordsSha256": "50894c6e0aa21a951532e3f99cdbdd5416f74783219cd160a6a6ebf960d5b165",
     "policySha256": "27a505a05ebca320a7bdaa14f85a1fc7f7bfc84f555967c77a12b20c1b2ca0e1"
   },
-  "keyId": "example-report-key-2026",
-  "signature": "RsgxGgYmpTA039ZAPueQ_gyd-5JAtBguGbv449_ReG3sl-Y4puoUtq0CHsiqT082_yEFE5h5p5UD_4EjhyEcBw"
+  "keyId": "report-key-1",
+  "signature": "iOeyS1Rf5aF3Art9Y-doYdHnYCXCfcGlipvCUwOHl3VoJ1MfwEE-Vs5WQSxgqwcShi9WaLfxsEWx6n7POBTtAA"
 }

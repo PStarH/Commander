@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'vitest';
+import { readShadowDependencyClosure, validateShadowDependencyClosure } from '../../../../scripts/shadow-dependency-guard';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 
@@ -64,23 +65,7 @@ describe('legacy Shadow replay removal', () => {
   });
 
   it('keeps the historical evaluator free of effect-producing dependencies', () => {
-    const packageJson = JSON.parse(source('packages/shadow-plane/package.json')) as {
-      dependencies?: Record<string, string>;
-    };
-    const dependencies = Object.keys(packageJson.dependencies ?? {});
-
-    for (const forbidden of [
-      '@commander/effect-broker',
-      '@kubernetes/client-node',
-      'axios',
-      'undici',
-      'redis',
-    ]) {
-      assert.equal(
-        dependencies.includes(forbidden),
-        false,
-        `@commander/shadow-plane must not depend on ${forbidden}`,
-      );
-    }
+    const manifests = readShadowDependencyClosure(join(ROOT, 'packages/shadow-plane/package.json'));
+    assert.deepEqual(validateShadowDependencyClosure(manifests), []);
   });
 });

@@ -10,7 +10,25 @@ import { buildSignedShadowReport, verifyShadowReport } from './report.js';
 
 const pair = generateKeyPairSync('ed25519');
 const wrong = generateKeyPairSync('ed25519');
+const manifestPair = generateKeyPairSync('ed25519');
 const snapshot = actionGatewayPolicySnapshot();
+const trustedManifests = new Map([
+  [
+    'manifest-key-1',
+    {
+      algorithm: 'Ed25519' as const,
+      keyId: 'manifest-key-1',
+      status: 'active' as const,
+      publicKey: manifestPair.publicKey,
+    },
+  ],
+]);
+
+function resignReport(bundle: ReturnType<typeof buildSignedShadowReport>) {
+  bundle.hashes.recordsSha256 = sha256Hex(canonicalBytes(bundle.records));
+  const { signature: _signature, ...body } = bundle;
+  bundle.signature = sign(null, canonicalBytes(body), pair.privateKey).toString('base64url');
+}
 
 function reportData(): ShadowCampaignReportData {
   const records: Record<string, unknown>[] = [];
@@ -69,7 +87,7 @@ function reportData(): ShadowCampaignReportData {
         : {}),
     });
   }
-  const manifest = {
+  const unsignedManifest = {
     schema: 'commander.shadow-manifest/v1',
     campaignId: 'campaign-100',
     tenantId: 'tenant-1',
@@ -80,7 +98,12 @@ function reportData(): ShadowCampaignReportData {
     closesAt: '2026-09-02T00:00:00.000Z',
     records: manifestRecords,
     keyId: 'manifest-key-1',
-    signature: Buffer.alloc(64, 1).toString('base64url'),
+  };
+  const manifest = {
+    ...unsignedManifest,
+    signature: sign(null, canonicalBytes(unsignedManifest), manifestPair.privateKey).toString(
+      'base64url',
+    ),
   };
   return {
     campaign: {
@@ -102,12 +125,37 @@ function reportData(): ShadowCampaignReportData {
 }
 
 describe('signed historical evaluation report', () => {
+  it('refuses to sign records detached from the signed manifest identity or denominator', () => {
+    for (const mutation of [
+      (data: ShadowCampaignReportData) => {
+        data.records.pop();
+      },
+      (data: ShadowCampaignReportData) => {
+        data.records[0]!.observation_id = 'other';
+      },
+    ]) {
+      const data = reportData();
+      mutation(data);
+      assert.throws(
+        () =>
+          buildSignedShadowReport(data, {
+            keyId: 'report-key-1',
+            privateKey: pair.privateKey,
+            generatedAt: '2026-09-03T00:00:00.000Z',
+            sourceRevision: 'abc123',
+            manifestTrust: trustedManifests,
+          }),
+        /SHADOW_REPORT_MANIFEST_RECORD_MISMATCH/,
+      );
+    }
+  });
   it('reports the exact 100-record denominator and all terminal states without cost or proof claims', () => {
     const bundle = buildSignedShadowReport(reportData(), {
       keyId: 'report-key-1',
       privateKey: pair.privateKey,
       generatedAt: '2026-09-03T00:00:00.000Z',
       sourceRevision: 'abc123',
+      manifestTrust: trustedManifests,
     });
     assert.deepEqual(bundle.counts, {
       expected: 100,
@@ -140,6 +188,7 @@ describe('signed historical evaluation report', () => {
       privateKey: pair.privateKey,
       generatedAt: '2026-09-03T00:00:00.000Z',
       sourceRevision: 'abc123',
+      manifestTrust: trustedManifests,
     });
     const trust = {
       algorithm: 'Ed25519' as const,
@@ -147,25 +196,34 @@ describe('signed historical evaluation report', () => {
       status: 'active' as const,
       publicKey: pair.publicKey,
     };
-    assert.deepEqual(verifyShadowReport(bundle, trust), {
+    assert.deepEqual(verifyShadowReport(bundle, trust, trustedManifests), {
       valid: true,
       code: 'SHADOW_REPORT_VALID',
     });
-    assert.deepEqual(verifyShadowReport(bundle, { ...trust, publicKey: wrong.publicKey }), {
-      valid: false,
-      code: 'SHADOW_REPORT_SIGNATURE_INVALID',
-    });
-    assert.deepEqual(verifyShadowReport(bundle, { ...trust, status: 'revoked' }), {
-      valid: false,
-      code: 'SHADOW_REPORT_KEY_REVOKED',
-    });
-    assert.deepEqual(verifyShadowReport(bundle, { ...trust, keyId: 'replacement-key' }), {
-      valid: false,
-      code: 'SHADOW_REPORT_KEY_ID_MISMATCH',
-    });
+    assert.deepEqual(
+      verifyShadowReport(bundle, { ...trust, publicKey: wrong.publicKey }, trustedManifests),
+      {
+        valid: false,
+        code: 'SHADOW_REPORT_SIGNATURE_INVALID',
+      },
+    );
+    assert.deepEqual(
+      verifyShadowReport(bundle, { ...trust, status: 'revoked' }, trustedManifests),
+      {
+        valid: false,
+        code: 'SHADOW_REPORT_KEY_REVOKED',
+      },
+    );
+    assert.deepEqual(
+      verifyShadowReport(bundle, { ...trust, keyId: 'replacement-key' }, trustedManifests),
+      {
+        valid: false,
+        code: 'SHADOW_REPORT_KEY_ID_MISMATCH',
+      },
+    );
     const tampered = structuredClone(bundle);
     tampered.records[0]!.hypotheticalDecision = 'deny';
-    assert.equal(verifyShadowReport(tampered, trust).valid, false);
+    assert.equal(verifyShadowReport(tampered, trust, trustedManifests).valid, false);
 
     const inconsistent = structuredClone(bundle);
     inconsistent.records[20]!.observationId = 'other-observation';
@@ -174,7 +232,7 @@ describe('signed historical evaluation report', () => {
     inconsistent.signature = sign(null, canonicalBytes(body), pair.privateKey).toString(
       'base64url',
     );
-    assert.deepEqual(verifyShadowReport(inconsistent, trust), {
+    assert.deepEqual(verifyShadowReport(inconsistent, trust, trustedManifests), {
       valid: false,
       code: 'SHADOW_REPORT_MANIFEST_RECORD_MISMATCH',
     });
@@ -190,8 +248,186 @@ describe('signed historical evaluation report', () => {
           privateKey: pair.privateKey,
           generatedAt: '2026-09-03T00:00:00.000Z',
           sourceRevision: 'abc123',
+          manifestTrust: trustedManifests,
         }),
       /SHADOW_REPORT_BATCH_OPEN/,
     );
+  });
+
+  it('normalizes PostgreSQL timestamptz Date values in rejected and failed attempts', () => {
+    const data = reportData();
+    data.records[95]!.attempted_at = new Date('2026-09-01T01:00:00.000Z');
+    data.records[98]!.attempted_at = new Date('2026-09-01T02:00:00.000Z');
+
+    const bundle = buildSignedShadowReport(data, {
+      keyId: 'report-key-1',
+      privateKey: pair.privateKey,
+      generatedAt: '2026-09-03T00:00:00.000Z',
+      sourceRevision: 'abc123',
+      manifestTrust: trustedManifests,
+    });
+
+    assert.equal(bundle.records[95]?.attempt?.attemptedAt, '2026-09-01T01:00:00.000Z');
+    assert.equal(bundle.records[98]?.attempt?.attemptedAt, '2026-09-01T02:00:00.000Z');
+  });
+
+  it('rejects persisted fields that do not belong to the terminal status before signing', () => {
+    for (const status of ['missing', 'rejected'] as const) {
+      const data = reportData();
+      data.records[0]!.status = status;
+      if (status === 'rejected') {
+        data.records[0]!.attempt_digest = 'b'.repeat(64);
+        data.records[0]!.attempt_code = 'SHADOW_INVALID_DECISION';
+        data.records[0]!.attempted_at = '2026-09-01T01:00:00.000Z';
+      }
+      assert.throws(
+        () =>
+          buildSignedShadowReport(data, {
+            keyId: 'report-key-1',
+            privateKey: pair.privateKey,
+            generatedAt: '2026-09-03T00:00:00.000Z',
+            sourceRevision: 'abc123',
+            manifestTrust: trustedManifests,
+          }),
+        /SHADOW_REPORT_RECORD_INVALID/,
+        status,
+      );
+    }
+  });
+
+  it('rejects missing facts and duplicated production decisions during verification', () => {
+    const trust = {
+      algorithm: 'Ed25519' as const,
+      keyId: 'report-key-1',
+      status: 'active' as const,
+      publicKey: pair.publicKey,
+    };
+    const missingFacts = buildSignedShadowReport(reportData(), {
+      keyId: 'report-key-1',
+      privateKey: pair.privateKey,
+      generatedAt: '2026-09-03T00:00:00.000Z',
+      sourceRevision: 'abc123',
+      manifestTrust: trustedManifests,
+    });
+    delete missingFacts.records[0]!.facts;
+    resignReport(missingFacts);
+    assert.deepEqual(verifyShadowReport(missingFacts, trust, trustedManifests), {
+      valid: false,
+      code: 'SHADOW_REPORT_RECORD_INVALID',
+    });
+
+    const inconsistentDecision = buildSignedShadowReport(reportData(), {
+      keyId: 'report-key-1',
+      privateKey: pair.privateKey,
+      generatedAt: '2026-09-03T00:00:00.000Z',
+      sourceRevision: 'abc123',
+      manifestTrust: trustedManifests,
+    });
+    inconsistentDecision.records[20]!.productionDecision = 'deny';
+    resignReport(inconsistentDecision);
+    assert.deepEqual(verifyShadowReport(inconsistentDecision, trust, trustedManifests), {
+      valid: false,
+      code: 'SHADOW_REPORT_RECORD_INVALID',
+    });
+  });
+
+  it('rejects status and comparison disagreement even when aggregates are resigned', () => {
+    const bundle = buildSignedShadowReport(reportData(), {
+      keyId: 'report-key-1',
+      privateKey: pair.privateKey,
+      generatedAt: '2026-09-03T00:00:00.000Z',
+      sourceRevision: 'abc123',
+      manifestTrust: trustedManifests,
+    });
+    bundle.records[0]!.status = 'uncomparable';
+    bundle.counts.compared -= 1;
+    bundle.counts.uncomparable += 1;
+    bundle.counts.mismatches -= 1;
+    bundle.decisionMatrix.allow.require_approval -= 1;
+    bundle.differences.shift();
+    resignReport(bundle);
+
+    assert.deepEqual(
+      verifyShadowReport(
+        bundle,
+        {
+          algorithm: 'Ed25519',
+          keyId: 'report-key-1',
+          status: 'active',
+          publicKey: pair.publicKey,
+        },
+        trustedManifests,
+      ),
+      { valid: false, code: 'SHADOW_REPORT_RECORD_INVALID' },
+    );
+  });
+
+  it('independently verifies active manifest trust during construction and verification', () => {
+    const options = {
+      keyId: 'report-key-1',
+      privateKey: pair.privateKey,
+      generatedAt: '2026-09-03T00:00:00.000Z',
+      sourceRevision: 'abc123',
+      manifestTrust: trustedManifests,
+    };
+    assert.throws(
+      () => buildSignedShadowReport(reportData(), { ...options, manifestTrust: new Map() }),
+      /SHADOW_MANIFEST_KEY_UNTRUSTED/,
+    );
+    assert.throws(
+      () =>
+        buildSignedShadowReport(reportData(), {
+          ...options,
+          manifestTrust: new Map([
+            ['manifest-key-1', { ...trustedManifests.get('manifest-key-1')!, status: 'revoked' }],
+          ]),
+        }),
+      /SHADOW_MANIFEST_KEY_REVOKED/,
+    );
+
+    const bundle = buildSignedShadowReport(reportData(), options);
+    const reportTrust = {
+      algorithm: 'Ed25519' as const,
+      keyId: 'report-key-1',
+      status: 'active' as const,
+      publicKey: pair.publicKey,
+    };
+    assert.deepEqual(verifyShadowReport(bundle, reportTrust, new Map()), {
+      valid: false,
+      code: 'SHADOW_REPORT_MANIFEST_KEY_UNTRUSTED',
+    });
+    assert.deepEqual(
+      verifyShadowReport(
+        bundle,
+        reportTrust,
+        new Map([
+          ['manifest-key-1', { ...trustedManifests.get('manifest-key-1')!, status: 'revoked' }],
+        ]),
+      ),
+      { valid: false, code: 'SHADOW_REPORT_MANIFEST_KEY_REVOKED' },
+    );
+    assert.deepEqual(
+      verifyShadowReport(
+        bundle,
+        reportTrust,
+        new Map([
+          [
+            'manifest-key-1',
+            { ...trustedManifests.get('manifest-key-1')!, publicKey: wrong.publicKey },
+          ],
+        ]),
+      ),
+      { valid: false, code: 'SHADOW_REPORT_MANIFEST_SIGNATURE_INVALID' },
+    );
+
+    const tampered = structuredClone(bundle);
+    tampered.manifests[0]!.producerId = 'other-producer';
+    tampered.hashes.manifestsSha256 = sha256Hex(canonicalBytes(tampered.manifests));
+    const { signature: _signature, ...body } = tampered;
+    tampered.signature = sign(null, canonicalBytes(body), pair.privateKey).toString('base64url');
+    assert.deepEqual(verifyShadowReport(tampered, reportTrust, trustedManifests), {
+      valid: false,
+      code: 'SHADOW_REPORT_MANIFEST_SIGNATURE_INVALID',
+    });
   });
 });

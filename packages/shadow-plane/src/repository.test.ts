@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, generateKeyPairSync, sign } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { actionGatewayPolicySnapshot } from '@commander/contracts';
 import { canonicalBytes } from './canonical.js';
@@ -80,7 +80,17 @@ function manifest() {
 function repository(client: RecordingClient): ShadowRepository {
   return new ShadowRepository(new RecordingPool(client), {
     retentionDays: 14,
-    trustedManifestPublicKeys: new Map([['manifest-key-1', keyPair.publicKey]]),
+    trustedManifestPublicKeys: new Map([
+      [
+        'manifest-key-1',
+        {
+          algorithm: 'Ed25519',
+          keyId: 'manifest-key-1',
+          status: 'active',
+          publicKey: keyPair.publicKey,
+        },
+      ],
+    ]),
   });
 }
 
@@ -95,18 +105,44 @@ describe('shadow PostgreSQL repository contract', () => {
     assert.deepEqual(client.calls, []);
   });
 
+  it('rejects revoked manifest trust before opening a transaction', async () => {
+    const client = new RecordingClient();
+    const repo = new ShadowRepository(new RecordingPool(client), {
+      retentionDays: 14,
+      trustedManifestPublicKeys: new Map([
+        [
+          'manifest-key-1',
+          {
+            algorithm: 'Ed25519',
+            keyId: 'manifest-key-1',
+            status: 'revoked',
+            publicKey: keyPair.publicKey,
+          },
+        ],
+      ]),
+    });
+    await assert.rejects(
+      repo.registerManifest('tenant-1', manifest()),
+      /SHADOW_MANIFEST_KEY_REVOKED/,
+    );
+    assert.deepEqual(client.calls, []);
+  });
+
   it('registers expected records in one tenant-bound transaction', async () => {
     const client = new RecordingClient();
     await repository(client).registerManifest('tenant-1', manifest());
     assert.equal(client.calls[0]?.sql, 'BEGIN');
     assert.equal(client.calls.at(-1)?.sql, 'COMMIT');
     assert.equal(client.released, true);
-    const mutations = client.calls.filter((call) => /INSERT|UPDATE|DELETE/i.test(call.sql));
-    assert.ok(mutations.length >= 3);
-    for (const call of mutations) {
-      assert.match(call.sql, /tenant_id/i);
-      assert.equal(call.values.includes('tenant-1'), true);
-    }
+    const registration = client.calls.find((call) => /register_manifest/.test(call.sql));
+    assert.ok(registration);
+    assert.equal(registration.values.includes('tenant-1'), true);
+    assert.equal(registration.values.includes('campaign-1'), true);
+    assert.equal(registration.values.includes('batch-1'), true);
+    assert.equal(
+      client.calls.some((call) => /\b(?:INSERT|UPDATE|DELETE)\b/.test(call.sql)),
+      false,
+    );
   });
 
   it('locks the tenant campaign before observation admission and withdrawal', async () => {
@@ -134,9 +170,7 @@ describe('shadow PostgreSQL repository contract', () => {
     const repo = repository(client);
     await repo.importObservation('tenant-1', observation());
     const lock = client.calls.findIndex((call) => /campaigns[\s\S]*FOR UPDATE/i.test(call.sql));
-    const insert = client.calls.findIndex((call) =>
-      /INSERT INTO commander_shadow\.observations/i.test(call.sql),
-    );
+    const insert = client.calls.findIndex((call) => /record_observation/i.test(call.sql));
     assert.ok(lock > 0 && insert > lock);
 
     client.calls.length = 0;
@@ -210,7 +244,7 @@ describe('shadow PostgreSQL repository contract', () => {
   it('rolls back and propagates database failures without fallback', async () => {
     const failure = new Error('database unavailable');
     const client = new RecordingClient((sql) => {
-      if (/INSERT INTO commander_shadow\.campaigns/i.test(sql)) throw failure;
+      if (/register_manifest/i.test(sql)) throw failure;
       return {};
     });
     await assert.rejects(repository(client).registerManifest('tenant-1', manifest()), failure);
@@ -265,7 +299,51 @@ describe('shadow PostgreSQL repository contract', () => {
     );
   });
 
-  it('grants runtime roles only the column updates required by repository operations', () => {
+  it('checks operation-specific runtime roles and lets retention run while cleanup is overdue', async () => {
+    const cases = [
+      ['manifest-register', 'commander_shadow_ingestion', true],
+      ['import', 'commander_shadow_ingestion', true],
+      ['batch-close', 'commander_shadow_ingestion', true],
+      ['report-export', 'commander_shadow_reader', true],
+      ['campaign-withdraw', 'commander_shadow_retention', true],
+      ['retention-run', 'commander_shadow_retention', false],
+      ['status', 'commander_shadow_ingestion', true],
+    ] as const;
+    for (const [operation, role, checksFreshness] of cases) {
+      const client = new RecordingClient((sql) => {
+        if (/FROM pg_roles/.test(sql))
+          return {
+            rows: [
+              {
+                safe_runtime_role: true,
+                tenant_access: true,
+                schema_usage: true,
+                schema_create: false,
+                version_read: true,
+                operation_privileges: true,
+              },
+            ],
+          };
+        if (/schema_version/.test(sql)) return { rows: [{ version: 1 }] };
+        return { rows: [] };
+      });
+      const result = await repository(client).readiness('tenant-1', 90, operation);
+      assert.equal(result.ready, operation === 'retention-run', operation);
+      const privilegeCheck = client.calls.find((call) => /FROM pg_roles/.test(call.sql));
+      assert.ok(privilegeCheck, operation);
+      assert.ok(privilegeCheck.values.includes(role), operation);
+      assert.match(privilegeCheck.sql, /rolsuper|rolcreaterole|nspowner|relowner/, operation);
+      assert.equal(
+        client.calls.some((call) =>
+          /SELECT last_completed_at FROM commander_shadow\.cleanup_state/.test(call.sql),
+        ),
+        checksFreshness,
+        operation,
+      );
+    }
+  });
+
+  it('limits remaining direct mutations to retention operations', () => {
     assert.doesNotMatch(
       SHADOW_SCHEMA_SQL,
       /GRANT SELECT, INSERT, UPDATE ON commander_shadow\.(?:campaigns|batches|expected_records|observations)/,
@@ -274,17 +352,128 @@ describe('shadow PostgreSQL repository contract', () => {
       SHADOW_SCHEMA_SQL,
       /GRANT SELECT, UPDATE, DELETE ON commander_shadow\.(?:campaigns|batches|expected_records|observations)/,
     );
-    assert.match(
+    assert.doesNotMatch(
       SHADOW_SCHEMA_SQL,
-      /GRANT UPDATE \(retention_until\) ON commander_shadow\.campaigns TO commander_shadow_ingestion/,
-    );
-    assert.match(
-      SHADOW_SCHEMA_SQL,
-      /GRANT UPDATE \(status, attempt_digest, attempt_code, attempted_at\)[\s\S]*ON commander_shadow\.expected_records TO commander_shadow_ingestion/,
+      /GRANT (?:INSERT|UPDATE|DELETE)[^;]*TO commander_shadow_ingestion/,
     );
     assert.match(
       SHADOW_SCHEMA_SQL,
       /GRANT UPDATE \(state, withdrawn_at, producer_id, policy_id, policy_digest\)[\s\S]*ON commander_shadow\.campaigns TO commander_shadow_retention/,
+    );
+  });
+
+  it('confines ingestion writes to fixed-search-path security-definer functions', () => {
+    const ingestionGrants = SHADOW_SCHEMA_SQL.split(';').filter((statement) =>
+      /TO commander_shadow_ingestion\s*$/m.test(statement),
+    );
+    for (const statement of ingestionGrants) {
+      assert.doesNotMatch(statement, /\b(?:INSERT|UPDATE|DELETE)\b/);
+    }
+    for (const functionName of [
+      'register_manifest',
+      'record_attempt',
+      'record_observation',
+      'close_batch',
+    ]) {
+      assert.match(
+        SHADOW_SCHEMA_SQL,
+        new RegExp(
+          `CREATE FUNCTION commander_shadow\\.${functionName}\\([\\s\\S]*?SECURITY DEFINER[\\s\\S]*?SET search_path = pg_catalog`,
+        ),
+      );
+      assert.match(
+        SHADOW_SCHEMA_SQL,
+        new RegExp(`GRANT EXECUTE ON FUNCTION commander_shadow\\.${functionName}\\(`),
+      );
+    }
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /REVOKE ALL ON ALL FUNCTIONS IN SCHEMA commander_shadow FROM PUBLIC/,
+    );
+  });
+
+  it('keeps database validation fail-closed and aligned with the manifest record bound', () => {
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /jsonb_array_length\(p_manifest->'records'\) NOT BETWEEN 1 AND 10000/,
+    );
+    assert.match(SHADOW_SCHEMA_SQL, /COALESCE\(p_manifest->>'schema', ''\)/);
+    assert.match(SHADOW_SCHEMA_SQL, /tenant_access_allowed\(p_tenant_id\) IS NOT TRUE/);
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /GRANT SELECT ON commander_shadow\.cleanup_state TO commander_shadow_ingestion, commander_shadow_reader/,
+    );
+  });
+
+  it('isolates hashed deletion audit writes by the bound tenant', () => {
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /ALTER TABLE commander_shadow\.deletion_audit FORCE ROW LEVEL SECURITY/,
+    );
+    assert.match(
+      SHADOW_SCHEMA_SQL,
+      /CREATE POLICY deletion_audit_tenant_isolation[\s\S]*tenant_id_hash = encode\(sha256/,
+    );
+  });
+
+  it('preserves terminal rejection evidence against calls to the ingestion write API', () => {
+    const attemptSql = SHADOW_SCHEMA_SQL.split(
+      'CREATE FUNCTION commander_shadow.record_attempt(',
+    )[1]!.split('CREATE FUNCTION')[0]!;
+    assert.match(attemptSql, /AND e\.status = 'pending'/);
+    assert.match(
+      attemptSql,
+      /attempt_digest = p_attempt_digest[\s\S]*attempt_code = p_attempt_code/,
+    );
+    assert.match(SHADOW_SCHEMA_SQL, /e\.status <> 'rejected'/);
+  });
+
+  it('rejects role authority reachable through membership as well as direct ownership', async () => {
+    const client = new RecordingClient();
+    await repository(client).readiness('tenant-1', 90, 'import');
+    const sql = client.calls.find((call) => /FROM pg_roles/.test(call.sql))!.sql;
+    assert.match(sql, /pg_has_role\(session_user, privileged\.oid, 'MEMBER'\)/);
+    assert.match(sql, /pg_has_role\(session_user, c\.relowner, 'MEMBER'\)/);
+    assert.match(sql, /pg_has_role\(session_user, n\.nspowner, 'MEMBER'\)/);
+  });
+
+  it('forces tenant-bound RLS on every tenant table', () => {
+    for (const table of [
+      'campaigns',
+      'batches',
+      'expected_records',
+      'observations',
+      'cleanup_state',
+    ]) {
+      assert.match(
+        SHADOW_SCHEMA_SQL,
+        new RegExp(
+          `ALTER TABLE commander_shadow\\.${table} ENABLE ROW LEVEL SECURITY;[\\s\\S]*?ALTER TABLE commander_shadow\\.${table} FORCE ROW LEVEL SECURITY;`,
+        ),
+      );
+      assert.match(
+        SHADOW_SCHEMA_SQL,
+        new RegExp(
+          `CREATE POLICY ${table}_tenant_isolation ON commander_shadow\\.${table}[\\s\\S]*?tenant_access_allowed\\(tenant_id\\)[\\s\\S]*?WITH CHECK \\(commander_shadow\\.tenant_access_allowed\\(tenant_id\\)\\)`,
+        ),
+      );
+    }
+    assert.match(SHADOW_SCHEMA_SQL, /session_user/);
+    assert.match(SHADOW_SCHEMA_SQL, /current_setting\('commander_shadow\.tenant_id', true\)/);
+  });
+
+  it('binds the tenant transaction-locally before report data access', async () => {
+    const client = new RecordingClient();
+    await repository(client).readReport('tenant-1', 'campaign-1');
+    assert.equal(client.calls[0]?.sql, 'BEGIN');
+    assert.match(
+      client.calls[1]?.sql ?? '',
+      /set_config\('commander_shadow\.tenant_id', \$1, true\)/,
+    );
+    assert.deepEqual(client.calls[1]?.values, ['tenant-1']);
+    assert.ok(
+      client.calls.slice(2).every((call) => !/\b(?:SET|set_config)\b/.test(call.sql)),
+      'tenant binding must be established exactly once before data access',
     );
   });
 
@@ -319,7 +508,7 @@ describe('shadow PostgreSQL repository contract', () => {
     );
   });
 
-  it('commits a bound rejection with only a digest and stable code', async () => {
+  it('does not mutate the expected record when submitted content misses the manifest digest', async () => {
     const client = new RecordingClient((sql) => {
       if (/FROM commander_shadow.campaigns/.test(sql))
         return {
@@ -352,18 +541,14 @@ describe('shadow PostgreSQL repository contract', () => {
       }),
       /SHADOW_DIGEST_MISMATCH/,
     );
-    assert.equal(client.calls.at(-1)?.sql, 'COMMIT');
-    const rejected = client.calls.find(
-      (call) => /attempt_code/.test(call.sql) && /UPDATE/.test(call.sql),
-    );
-    assert.ok(rejected);
-    assert.ok(rejected.values.includes('rejected'));
-    assert.ok(rejected.values.includes('SHADOW_DIGEST_MISMATCH'));
-    assert.equal(JSON.stringify(rejected.values).includes('k8s://different'), false);
+    assert.equal(client.calls.at(-1)?.sql, 'ROLLBACK');
+    const rejected = client.calls.find((call) => /record_attempt/.test(call.sql));
+    assert.equal(rejected, undefined);
   });
 
-  it('records schema-invalid arrived content when its manifest binding is known', async () => {
+  it('records schema-invalid arrived content when its manifest digest matches', async () => {
     const raw = { ...observation(), productionDecision: 'invalid', secret: 'must-not-store' };
+    const rawDigest = createHash('sha256').update(canonicalBytes(raw)).digest('hex');
     const client = new RecordingClient((sql) => {
       if (/FROM commander_shadow.campaigns/.test(sql))
         return {
@@ -383,7 +568,7 @@ describe('shadow PostgreSQL repository contract', () => {
               batch_state: 'open',
               is_due: false,
               observation_id: 'observation-1',
-              digest: observationDigest(observation()),
+              digest: rawDigest,
             },
           ],
         };
@@ -391,10 +576,53 @@ describe('shadow PostgreSQL repository contract', () => {
     });
     await assert.rejects(
       repository(client).importObservation('tenant-1', raw),
-      /SHADOW_DIGEST_MISMATCH/,
+      /SHADOW_UNKNOWN_FIELD/,
     );
     assert.equal(client.calls.at(-1)?.sql, 'COMMIT');
+    const rejected = client.calls.find((call) => /record_attempt/.test(call.sql));
+    assert.ok(rejected);
+    assert.ok(rejected.values.includes('rejected'));
+    assert.ok(rejected.values.includes('SHADOW_UNKNOWN_FIELD'));
     assert.equal(JSON.stringify(client.calls).includes('must-not-store'), false);
+  });
+
+  it('accounts for digest-bound sensitive data as a rejected attempt without persisting it', async () => {
+    const raw = { ...observation(), productionReasonCode: 'notify-ops@example.com' };
+    const rawDigest = createHash('sha256').update(canonicalBytes(raw)).digest('hex');
+    const client = new RecordingClient((sql) => {
+      if (/FROM commander_shadow\.campaigns/.test(sql))
+        return {
+          rows: [
+            {
+              state: 'open',
+              producer_id: 'producer-1',
+              policy_id: snapshot.policyId,
+              policy_digest: snapshot.descriptorDigest,
+            },
+          ],
+        };
+      if (/FROM commander_shadow\.expected_records/.test(sql))
+        return {
+          rows: [
+            {
+              batch_state: 'open',
+              is_due: false,
+              observation_id: 'observation-1',
+              digest: rawDigest,
+            },
+          ],
+        };
+      return {};
+    });
+
+    await assert.rejects(
+      repository(client).importObservation('tenant-1', raw),
+      /SHADOW_SENSITIVE_DATA/,
+    );
+    const rejected = client.calls.find((call) => /record_attempt/.test(call.sql));
+    assert.ok(rejected);
+    assert.ok(rejected.values.includes('SHADOW_SENSITIVE_DATA'));
+    assert.equal(JSON.stringify(client.calls).includes('notify-ops@example.com'), false);
   });
 
   it('refuses unbound or malformed identities before accessing PostgreSQL', async () => {
@@ -448,6 +676,6 @@ describe('shadow PostgreSQL repository contract', () => {
       (await repository(client).importObservation('tenant-1', observation())).comparison,
       'match',
     );
-    assert.ok(client.calls.some((call) => /attempt_code=NULL/.test(call.sql)));
+    assert.ok(client.calls.some((call) => /record_observation/.test(call.sql)));
   });
 });
