@@ -6,14 +6,8 @@ import {
 import type { PoolConfig } from 'pg';
 import type { ShadowManifestTrust } from './report.js';
 
-export type ShadowDatabaseOperation =
-  | 'manifest-register'
-  | 'import'
-  | 'batch-close'
-  | 'report-export'
-  | 'campaign-withdraw'
-  | 'retention-run'
-  | 'status';
+import type { ShadowDatabaseOperation } from './repository.js';
+export type { ShadowDatabaseOperation } from './repository.js';
 
 export interface ShadowStartupConfig {
   databaseUrl: string;
