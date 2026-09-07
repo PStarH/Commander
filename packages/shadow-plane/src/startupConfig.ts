@@ -11,6 +11,7 @@ export interface ShadowStartupConfig {
   poolConfig: PoolConfig;
   tenantId: string;
   retentionDays: number;
+  ingestionAttestationKey?: Buffer;
   trustedManifestPublicKeys: ReadonlyMap<string, ShadowManifestTrust>;
   reportSigningKeyId: string;
   reportSigningPrivateKey: KeyObject;
@@ -96,6 +97,10 @@ function manifestKeys(env: NodeJS.ProcessEnv): ReadonlyMap<string, ShadowManifes
 }
 
 export function loadShadowStartupConfig(env: NodeJS.ProcessEnv = process.env): ShadowStartupConfig {
+  const attestationKeyHex = env.COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX;
+  if (attestationKeyHex !== undefined && !/^[0-9a-f]{64}$/.test(attestationKeyHex)) {
+    throw new Error('COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX_INVALID');
+  }
   const databaseUrl = required(env, 'COMMANDER_SHADOW_DATABASE_URL');
   const poolInput: VerifiedPostgresPoolInput = { connectionString: databaseUrl, max: 4 };
   const poolConfig = buildVerifiedPostgresPoolConfig(poolInput, env);
@@ -115,6 +120,9 @@ export function loadShadowStartupConfig(env: NodeJS.ProcessEnv = process.env): S
     throw new Error('COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_INVALID');
   }
   return {
+    ...(attestationKeyHex === undefined
+      ? {}
+      : { ingestionAttestationKey: Buffer.from(attestationKeyHex, 'hex') }),
     databaseUrl,
     poolConfig,
     tenantId: identifier(env, 'COMMANDER_SHADOW_TENANT_ID'),

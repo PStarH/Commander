@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash, generateKeyPairSync, sign } from 'node:crypto';
+import { createHash, createHmac, generateKeyPairSync, randomBytes, sign } from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import { Pool } from 'pg';
 import { actionGatewayPolicySnapshot } from '@commander/contracts';
@@ -14,6 +14,24 @@ import { asShadowSqlPool, ShadowRepository, type ShadowSqlPool } from './reposit
 import { SHADOW_SCHEMA_SQL } from './schema.js';
 
 const adminUrl = process.env.COMMANDER_SHADOW_PG_ADMIN_URL;
+const ingestionAttestationKey = randomBytes(32);
+const otherAttestationKey = randomBytes(32);
+
+function attest(
+  operation: string,
+  fields: (string | number | null)[],
+  role = 'commander_shadow_tenant_live_ingestion',
+): string {
+  const hmac = createHmac('sha256', ingestionAttestationKey);
+  for (const field of ['commander.shadow-ingestion/v1', operation, role, ...fields]) {
+    const bytes = field === null ? null : Buffer.from(String(field), 'utf8');
+    const length = Buffer.alloc(4);
+    length.writeInt32BE(bytes?.length ?? -1);
+    hmac.update(length);
+    if (bytes) hmac.update(bytes);
+  }
+  return hmac.digest('hex');
+}
 if (process.env.CI && !adminUrl) throw new Error('COMMANDER_SHADOW_PG_ADMIN_URL_REQUIRED');
 
 describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
@@ -43,6 +61,8 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
 
   function repo(pool: Pool): ShadowRepository {
     return new ShadowRepository(asShadowSqlPool(pool), {
+      ingestionAttestationKey:
+        pool === otherIngestion ? otherAttestationKey : ingestionAttestationKey,
       retentionDays: 1,
       trustedManifestPublicKeys: new Map([
         [
@@ -136,6 +156,12 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
          ('commander_shadow_tenant_live_reader', 'tenant-live'),
          ('commander_shadow_tenant_live_retention', 'tenant-live'),
          ('commander_shadow_tenant_other_ingestion', 'tenant-other')`,
+    );
+    await installer.query(
+      `INSERT INTO commander_shadow.ingestion_attestation_keys (role_name, key_bytes)
+       VALUES ('commander_shadow_tenant_live_ingestion', $1),
+              ('commander_shadow_tenant_other_ingestion', $2)`,
+      [ingestionAttestationKey, otherAttestationKey],
     );
     ingestion = new Pool({ connectionString: roleUrl('ingestion'), max: 3 });
     reader = new Pool({ connectionString: roleUrl('reader'), max: 2 });
@@ -266,6 +292,143 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     );
   });
 
+  it('rejects database-credential-only forgery and attestation rebinding before evidence changes', async () => {
+    const input = observation('campaign-attested', 'batch-attested', 0);
+    const declared = manifest(
+      'campaign-attested',
+      'batch-attested',
+      [input],
+      new Date(now + 60_000).toISOString(),
+    );
+    const manifestText = canonicalBytes(declared).toString('utf8');
+    const manifestFields = [
+      'tenant-live',
+      declared.campaignId,
+      declared.producerId,
+      declared.policyId,
+      declared.policyDigest,
+      declared.batchId,
+      manifestText,
+      createHash('sha256').update(manifestText).digest('hex'),
+      declared.closesAt,
+      new Date(Date.parse(declared.closesAt) + 86_400_000).toISOString(),
+    ];
+    const attemptFields = [
+      'tenant-live',
+      declared.campaignId,
+      declared.batchId,
+      0,
+      observationDigest(input),
+      'SHADOW_SENSITIVE_DATA',
+      'rejected',
+    ];
+    const observationFields = [
+      'tenant-live',
+      declared.campaignId,
+      declared.batchId,
+      0,
+      input.observationId,
+      observationDigest(input),
+      canonicalBytes(input).toString('utf8'),
+      'allow',
+      'forged-id',
+      'FORGED_REASON',
+      input.productionDecision,
+      input.productionReasonCode ?? null,
+      'match',
+    ];
+    const call = async (
+      operation: string,
+      fields: (string | number | null)[],
+      proof: string | null,
+    ) => {
+      const client = await ingestion.connect();
+      try {
+        await client.query('BEGIN');
+        await client.query("SELECT set_config('commander_shadow.tenant_id', 'tenant-live', true)");
+        const values = [...fields, proof];
+        await client.query(
+          `SELECT commander_shadow.${operation}(${values.map((_, index) => `$${index + 1}`).join(',')})`,
+          values,
+        );
+      } finally {
+        await client.query('ROLLBACK');
+        client.release();
+      }
+    };
+    for (const operation of ['register_manifest', 'record_attempt', 'record_observation']) {
+      const fields =
+        operation === 'register_manifest'
+          ? manifestFields
+          : operation === 'record_attempt'
+            ? attemptFields
+            : observationFields;
+      for (const proof of [
+        null,
+        '',
+        '00'.repeat(32),
+        attest(operation, fields, 'different_ingestion_login'),
+        attest('different_operation', fields),
+      ]) {
+        await assert.rejects(
+          call(operation, fields, proof),
+          /SHADOW_INGESTION_ATTESTATION_INVALID/,
+        );
+      }
+      const proof = attest(operation, fields);
+      for (let index = 0; index < fields.length; index++) {
+        const changed = [...fields];
+        changed[index] =
+          typeof fields[index] === 'number'
+            ? 1
+            : operation === 'register_manifest' && index >= 8
+              ? new Date(now + 120_000).toISOString()
+              : `${fields[index] ?? ''}-changed`;
+        await assert.rejects(
+          call(operation, changed, proof),
+          /SHADOW_INGESTION_ATTESTATION_INVALID/,
+        );
+      }
+    }
+    assert.equal(
+      (await repo(reader).readReport('tenant-live', declared.campaignId)).campaign,
+      null,
+    );
+    await repo(ingestion).registerManifest('tenant-live', declared);
+    await assert.rejects(
+      call('record_attempt', attemptFields, null),
+      /SHADOW_INGESTION_ATTESTATION_INVALID/,
+    );
+    assert.equal(
+      (await repo(reader).readReport('tenant-live', declared.campaignId)).records[0]?.status,
+      'pending',
+    );
+    await repo(ingestion).importObservation('tenant-live', input);
+    assert.equal(
+      (await repo(reader).readReport('tenant-live', declared.campaignId)).records[0]?.status,
+      'compared',
+    );
+    for (const pool of [ingestion, reader, retention]) {
+      await assert.rejects(
+        pool.query('SELECT key_bytes FROM commander_shadow.ingestion_attestation_keys'),
+        /permission denied/,
+      );
+      await assert.rejects(
+        pool.query(
+          "SELECT commander_shadow.verify_ingestion_attestation('record_attempt', ARRAY['tenant-live'], NULL)",
+        ),
+        /permission denied/,
+      );
+    }
+    await assert.rejects(
+      ingestion.query(
+        "SELECT commander_shadow.record_attempt('tenant-live','campaign-attested','batch-attested',0,$1,'FORGED','rejected')",
+        [observationDigest(input)],
+      ),
+      /does not exist/,
+    );
+  });
+
   it('fails closed when the transaction tenant is absent or differs from the login binding', async () => {
     const other = observation('campaign-other', 'batch-other', 0, { tenantId: 'tenant-other' });
     await repo(otherIngestion).registerManifest(
@@ -297,10 +460,10 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       assert.equal(hidden.rows[0]?.count, 0);
       await assert.rejects(
         client.query(
-          "SELECT commander_shadow.record_attempt('tenant-live','campaign-persist','batch-persist',0,$1,'FORGED','rejected')",
+          "SELECT commander_shadow.record_attempt('tenant-live','campaign-persist','batch-persist',0,$1,'FORGED','rejected',NULL)",
           [observationDigest(observation('campaign-persist', 'batch-persist', 0))],
         ),
-        /SHADOW_ATTEMPT_DATABASE_INVALID/,
+        /SHADOW_INGESTION_ATTESTATION_INVALID/,
       );
     } finally {
       await client.query('ROLLBACK');
@@ -445,8 +608,19 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       await tamper.query("SELECT set_config('commander_shadow.tenant_id', 'tenant-live', true)");
       await assert.rejects(
         tamper.query(
-          "SELECT commander_shadow.record_attempt('tenant-live','campaign-attempts','batch-attempts',4,$1,'SHADOW_EVALUATION_FAILED','failed')",
-          [observationDigest(inputs[4]!)],
+          "SELECT commander_shadow.record_attempt('tenant-live','campaign-attempts','batch-attempts',4,$1,'SHADOW_EVALUATION_FAILED','failed',$2)",
+          [
+            observationDigest(inputs[4]!),
+            attest('record_attempt', [
+              'tenant-live',
+              'campaign-attempts',
+              'batch-attempts',
+              4,
+              observationDigest(inputs[4]!),
+              'SHADOW_EVALUATION_FAILED',
+              'failed',
+            ]),
+          ],
         ),
         /SHADOW_ATTEMPT_NOT_WRITABLE/,
       );
