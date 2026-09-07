@@ -24,7 +24,7 @@ corepack enable
 pnpm init
 npm pkg set 'pnpm.overrides.@commander/contracts=file:./commander-contracts-0.2.0.tgz'
 npm pkg set 'pnpm.overrides.@commander/postgres-runtime=file:./commander-postgres-runtime-0.2.0.tgz'
-pnpm add ./commander-shadow-plane-0.1.0.tgz
+pnpm add ./commander-shadow-plane-0.1.0.tgz ./commander-postgres-runtime-0.2.0.tgz pg@8.22.0
 ```
 
 A database administrator creates one installer, three non-login capability roles,
@@ -192,8 +192,14 @@ Prepare `observations.ndjson` using only the fields in
 exact canonical records. `SHADOW_CLOSES_AT` must be a future canonical UTC
 timestamp and the manifest private key must correspond to `manifest-key-1`.
 
+Use [example-observations.ndjson](example-observations.ndjson) for an installation
+rehearsal only. Its two synthetic records exercise `require_approval` and
+`insufficient_evidence`; they are not customer evidence. Keep rehearsal and
+customer campaigns separate. For the customer run, the approved producer exports
+the declared historical sample and retains the pseudonym mapping locally.
+
 ```sh
-export SHADOW_CLOSES_AT=2026-10-01T00:00:00.000Z
+export SHADOW_CLOSES_AT="$(node -e 'process.stdout.write(new Date(Date.now() + 15 * 60_000).toISOString())')"
 node --input-type=module <<'JS'
 import { createPrivateKey, sign } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -244,6 +250,11 @@ JS
 Initialize cleanup readiness, register and import the sample, and close the
 batch only after its signed `closesAt` deadline. Replace identifiers with the
 values in the signed manifest.
+The example deadline is 15 minutes after manifest creation; choose the actual
+admission window before signing. Run `batch close` only after that deadline.
+The customer-operated scheduler must run `retention run` more often than the
+configured 90-minute freshness bound; run it again before closing/exporting if
+the initial cleanup is stale. Commander does not start a scheduler or listener.
 
 ```sh
 COMMANDER_SHADOW_DATABASE_URL="$SHADOW_RETENTION_URL" pnpm exec commander-shadow retention run

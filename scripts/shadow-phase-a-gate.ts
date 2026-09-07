@@ -64,6 +64,11 @@ function failureDiagnostics(result: ShadowPhaseAChildResult): { diagnostics?: st
     ['PERMISSION_DENIED', /permission denied/],
     ['MODULE_NOT_FOUND', /ERR_MODULE_NOT_FOUND|Cannot find module/],
     ['PNPM_OFFLINE_MISSING', /ERR_PNPM_NO_OFFLINE_TARBALL/],
+    ['PNPM_OFFLINE_METADATA_MISSING', /ERR_PNPM_NO_OFFLINE_META/],
+    ['PNPM_NO_MATCHING_VERSION', /ERR_PNPM_NO_MATCHING_VERSION/],
+    ['PNPM_LOCKFILE_CONFIGURATION', /ERR_PNPM_LOCKFILE_CONFIG_MISMATCH/],
+    ['PACKAGE_ENTRY_UNRESOLVED', /Failed to resolve entry for package/],
+    ['FILE_NOT_FOUND', /ENOENT/],
     ['ATTESTATION_INVALID', /SHADOW_INGESTION_ATTESTATION_INVALID/],
     ['ASSERTION_FAILED', /ERR_ASSERTION/],
     ['SYNTAX_ERROR', /syntax error/],
@@ -88,15 +93,13 @@ export function runBoundedShadowPhaseAChild(
     });
     let stdout = '';
     let stderr = '';
-    let outputBytes = 0;
 
     const append = (value: Buffer, destination: 'stdout' | 'stderr') => {
-      const remaining = MAX_CHILD_OUTPUT_BYTES - outputBytes;
-      if (remaining <= 0) return;
-      const captured = value.subarray(0, remaining).toString('utf8');
-      outputBytes += Buffer.byteLength(captured);
-      if (destination === 'stdout') stdout += captured;
-      else stderr += captured;
+      const previous = destination === 'stdout' ? stdout : stderr;
+      const bytes = Buffer.concat([Buffer.from(previous), value]);
+      const captured = bytes.subarray(-MAX_CHILD_OUTPUT_BYTES / 2).toString('utf8');
+      if (destination === 'stdout') stdout = captured;
+      else stderr = captured;
     };
 
     child.stdout.on('data', (value: Buffer) => append(value, 'stdout'));
