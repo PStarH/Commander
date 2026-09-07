@@ -39,6 +39,7 @@ export interface ShadowPhaseAChildResult {
 
 export interface ShadowPhaseAGateOptions {
   ci?: boolean;
+  githubActions?: boolean;
   databaseUrl?: string;
   sourceRevision?: string;
   run?: (command: ShadowPhaseACommand) => Promise<ShadowPhaseAChildResult>;
@@ -231,7 +232,7 @@ export async function runShadowPhaseAGate(
       passed += 1;
     }
 
-    if (options.ci !== true || !options.databaseUrl) {
+    if (options.ci !== true || options.githubActions !== true || !options.databaseUrl) {
       return {
         exitCode: 1,
         code: SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE,
@@ -278,6 +279,7 @@ export async function runShadowPhaseAGate(
 async function main(): Promise<void> {
   const result = await runShadowPhaseAGate({
     ci: process.env.CI === 'true',
+    githubActions: process.env.GITHUB_ACTIONS === 'true',
     databaseUrl: process.env.COMMANDER_SHADOW_PG_ADMIN_URL,
   });
   process.stdout.write(

@@ -145,6 +145,7 @@ describe('Shadow Phase A release gate', () => {
     const calls: ShadowPhaseACommand[] = [];
     const result = await runShadowPhaseAGate({
       ci: true,
+      githubActions: true,
       databaseUrl: 'postgres://commander:commander@localhost:5432/commander',
       sourceRevision: revision,
       run: successfulRunner(calls),
@@ -158,6 +159,29 @@ describe('Shadow Phase A release gate', () => {
       total: 13,
     });
     assert.equal(calls[calls.length - 1]?.id, 'postgres-live');
+  });
+
+  it('does not run the PostgreSQL authority suite for a user-controlled CI signal', async () => {
+    const calls: ShadowPhaseACommand[] = [];
+    const result = await runShadowPhaseAGate({
+      ci: true,
+      githubActions: false,
+      databaseUrl: 'postgres://commander:commander@localhost:5432/commander',
+      sourceRevision: revision,
+      run: successfulRunner(calls),
+    });
+
+    assert.deepEqual(result, {
+      exitCode: 1,
+      code: SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE,
+      sourceRevision: revision,
+      passed: 12,
+      total: 13,
+    });
+    assert.equal(
+      calls.some((command) => command.id === 'postgres-live'),
+      false,
+    );
   });
 
   it('hard fails in CI when PostgreSQL configuration is missing', async () => {
