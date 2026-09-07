@@ -45,7 +45,7 @@ describe('GapRegistry', () => {
       relatedIssues: [],
     });
     reg.record({
-      source: 'shadow-drift',
+      source: 'security-audit',
       severity: 'critical',
       title: 'B',
       description: 'd',
@@ -68,7 +68,7 @@ describe('GapRegistry', () => {
       relatedIssues: [],
     });
     reg.record({
-      source: 'shadow-drift',
+      source: 'security-audit',
       severity: 'high',
       title: 'B',
       description: 'd',

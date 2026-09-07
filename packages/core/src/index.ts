@@ -1672,16 +1672,8 @@ export type {
   RunVerifierAsyncOptions as RotationRunVerifierAsyncOptions,
 } from './security/rotationSignoffVerifier';
 
-// Shadow / drift detection
-export { ShadowProxy, scrubRequest, DriftReporter } from './shadow';
-export type { ProxyContext, Next as ShadowNext } from './shadow';
-export {
-  loadShadowConfig,
-  defaultShadowConfig,
-  validateShadowConfig,
-  DEFAULT_IGNORE_FIELDS,
-} from './shadow/types';
-export type { ShadowConfig, DriftEntry, DriftMetrics, ValidationResult } from './shadow/types';
+// Request data scrubbing
+export { scrubRequest, redactPii, DEFAULT_IGNORE_FIELDS } from './shadow';
 
 // ============================================================================
 // Architecture V2 surfaces

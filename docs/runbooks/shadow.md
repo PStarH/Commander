@@ -1,44 +1,24 @@
-# Shadow Traffic Runbook
+# Shadow Pilot Runbook
 
-## Enabling Shadow Traffic
+Commander Shadow Pilot Phase A performs an offline, historical policy
+evaluation of declared Kubernetes deployment rollback observations. It does not
+join a customer request path and cannot execute, queue, authorize, or recover
+a Kubernetes rollback.
 
-```bash
-# 1. Create config
-cat > .commander/shadow-config.json <<EOF
-{
-  "enabled": true,
-  "endpoint": "http://localhost:9999",
-  "sampleRate": 0.1
-}
-EOF
+Use the customer-facing operating materials in
+[`docs/pilot/shadow/README.md`](../pilot/shadow/README.md). The required flow
+is to register a signed manifest, import its bounded historical observations,
+close the batch, export a signed report, and verify that report independently.
 
-# 2. Start shadow runner
-npx tsx packages/core/src/cli/commands/shadow.ts runner --port=9999 &
+Phase B runtime evaluation is unavailable. Do not configure a proxy, traffic
+mirror, replay runner, endpoint, or environment toggle for this pilot. Any
+future runtime capability requires its own approved architecture, security
+review, and release gate.
 
-# 3. Enable proxy in production
-export COMMANDER_SHADOW_ENABLED=true
-npx tsx packages/core/src/cli/index.ts serve
-```
+## Incident and stop handling
 
-## Viewing Drift
-
-```bash
-npx tsx packages/core/src/cli/commands/shadow.ts drift
-```
-
-## PII Scrubbing
-
-Forced redacted headers (always redacted, not user-overridable): `Authorization`, `x-api-key`, `x-auth-token`, `cookie`.
-
-Body PII patterns (delegated to `UniversalSanitizer` in `packages/core/src/security/securityPrimitives.ts`):
-
-- API keys: OpenAI (`sk-`), Anthropic (`sk-ant-`), Stripe (`sk_live_`), Slack (`xox*`), GitHub (`ghp_*`), AWS (`AKIA*`)
-- Secrets: JWT tokens, PEM private keys (RSA/EC/OpenSSH/DSA), SSN (`XXX-XX-XXXX`), passwords (`password=...`)
-- Personal: email addresses, phone numbers
-- XSS: `<script>` tags, event handlers, `javascript:` URLs, `data:text/html`
-
-## Troubleshooting
-
-- **Shadow returns 502**: Runner not started. Check process is alive on port 9999.
-- **No drift reports**: `sampleRate` may be too low. Set to 1.0 for testing.
-- **PII leaking**: Check `.commander/shadow-config.json` `ignoreFields` list.
+Stop imports and follow the charter's withdrawal process when validation,
+tenant binding, policy pinning, TLS readiness, cleanup freshness, or the data
+boundary fails. Preserve the signed report and deletion audit supplied by the
+customer-operated PostgreSQL evidence store; do not treat a local log or cache
+as authoritative evidence.

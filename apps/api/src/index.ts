@@ -9,9 +9,6 @@ import {
   getIMProviderRegistry,
   registerBuiltinPlugins,
   zeroTrustMiddleware,
-  ShadowProxy,
-  loadShadowConfig,
-  type ShadowConfig,
   type MemoryStore,
   createMemoryStore,
   resolveMemoryStoreType,
@@ -379,13 +376,6 @@ app.use(
     blockOnCritical: true,
   }),
 );
-
-// 9b. Shadow traffic mirroring. Loads config from .commander/shadow-config.json;
-// disabled by default. When enabled, a sampled subset of requests is scrubbed
-// (PII/auth headers removed) and sent to the shadow endpoint for drift detection.
-const shadowConfig: ShadowConfig = loadShadowConfig();
-const shadowProxy = new ShadowProxy(shadowConfig);
-app.use(shadowProxy.expressMiddleware());
 
 // ── System ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
