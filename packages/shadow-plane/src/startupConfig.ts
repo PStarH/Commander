@@ -6,6 +6,15 @@ import {
 import type { PoolConfig } from 'pg';
 import type { ShadowManifestTrust } from './report.js';
 
+export type ShadowDatabaseOperation =
+  | 'manifest-register'
+  | 'import'
+  | 'batch-close'
+  | 'report-export'
+  | 'campaign-withdraw'
+  | 'retention-run'
+  | 'status';
+
 export interface ShadowStartupConfig {
   databaseUrl: string;
   poolConfig: PoolConfig;
@@ -13,8 +22,7 @@ export interface ShadowStartupConfig {
   retentionDays: number;
   ingestionAttestationKey?: Buffer;
   trustedManifestPublicKeys: ReadonlyMap<string, ShadowManifestTrust>;
-  reportSigningKeyId: string;
-  reportSigningPrivateKey: KeyObject;
+  reportSigning?: { keyId: string; privateKey: KeyObject };
   cleanupFreshnessMinutes: number;
 }
 
@@ -96,7 +104,22 @@ function manifestKeys(env: NodeJS.ProcessEnv): ReadonlyMap<string, ShadowManifes
   return result;
 }
 
-export function loadShadowStartupConfig(env: NodeJS.ProcessEnv = process.env): ShadowStartupConfig {
+function reportSigning(env: NodeJS.ProcessEnv): { keyId: string; privateKey: KeyObject } {
+  const keyId = identifier(env, 'COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID');
+  const pem = required(env, 'COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM');
+  try {
+    const privateKey = createPrivateKey(pem);
+    if (privateKey.asymmetricKeyType !== 'ed25519') throw new Error('wrong type');
+    return { keyId, privateKey };
+  } catch {
+    throw new Error('COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_INVALID');
+  }
+}
+
+export function loadShadowStartupConfig(
+  operation: ShadowDatabaseOperation,
+  env: NodeJS.ProcessEnv = process.env,
+): ShadowStartupConfig {
   const attestationKeyHex = env.COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX;
   if (attestationKeyHex !== undefined && !/^[0-9a-f]{64}$/.test(attestationKeyHex)) {
     throw new Error('COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX_INVALID');
@@ -104,21 +127,6 @@ export function loadShadowStartupConfig(env: NodeJS.ProcessEnv = process.env): S
   const databaseUrl = required(env, 'COMMANDER_SHADOW_DATABASE_URL');
   const poolInput: VerifiedPostgresPoolInput = { connectionString: databaseUrl, max: 4 };
   const poolConfig = buildVerifiedPostgresPoolConfig(poolInput, env);
-  const reportSigningKeyId = identifier(env, 'COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID');
-  let reportSigningPrivateKey: KeyObject;
-  try {
-    reportSigningPrivateKey = createPrivateKey(
-      required(env, 'COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM'),
-    );
-    if (reportSigningPrivateKey.asymmetricKeyType !== 'ed25519') throw new Error('wrong type');
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      error.message === 'COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_REQUIRED'
-    )
-      throw error;
-    throw new Error('COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_INVALID');
-  }
   return {
     ...(attestationKeyHex === undefined
       ? {}
@@ -128,8 +136,7 @@ export function loadShadowStartupConfig(env: NodeJS.ProcessEnv = process.env): S
     tenantId: identifier(env, 'COMMANDER_SHADOW_TENANT_ID'),
     retentionDays: boundedInteger(env, 'COMMANDER_SHADOW_RETENTION_DAYS', 1, 30),
     trustedManifestPublicKeys: manifestKeys(env),
-    reportSigningKeyId,
-    reportSigningPrivateKey,
+    ...(operation === 'report-export' ? { reportSigning: reportSigning(env) } : {}),
     cleanupFreshnessMinutes: boundedInteger(
       env,
       'COMMANDER_SHADOW_CLEANUP_FRESHNESS_MINUTES',

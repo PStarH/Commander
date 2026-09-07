@@ -41,18 +41,57 @@ function validEnvironment(): NodeJS.ProcessEnv {
 }
 
 describe('shadow startup configuration', () => {
+  it('does not load report signing material for other database operations', () => {
+    const env = validEnvironment();
+    delete env.COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID;
+    delete env.COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM;
+    for (const operation of [
+      'manifest-register',
+      'import',
+      'batch-close',
+      'campaign-withdraw',
+      'retention-run',
+      'status',
+    ] as const) {
+      assert.equal(loadShadowStartupConfig(operation, env).reportSigning, undefined);
+      assert.equal(
+        loadShadowStartupConfig(operation, {
+          ...env,
+          COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID: 'replace-me',
+          COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM: 'invalid',
+        }).reportSigning,
+        undefined,
+      );
+    }
+  });
+
+  it('rejects invalid signing material for report export', () => {
+    const env = validEnvironment();
+    assert.throws(
+      () =>
+        loadShadowStartupConfig('report-export', {
+          ...env,
+          COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM: 'invalid',
+        }),
+      /COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_INVALID/,
+    );
+  });
+
   it('validates an independent 256-bit ingestion key without requiring it for readers', () => {
     const env = validEnvironment();
-    assert.equal(loadShadowStartupConfig(env).ingestionAttestationKey, undefined);
+    assert.equal(loadShadowStartupConfig('report-export', env).ingestionAttestationKey, undefined);
     for (const key of ['', 'replace-me', 'aa'.repeat(31), 'gg'.repeat(32)]) {
       assert.throws(
         () =>
-          loadShadowStartupConfig({ ...env, COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX: key }),
+          loadShadowStartupConfig('report-export', {
+            ...env,
+            COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX: key,
+          }),
         /COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX_INVALID/,
       );
     }
     assert.deepEqual(
-      loadShadowStartupConfig({
+      loadShadowStartupConfig('report-export', {
         ...env,
         COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX: 'ab'.repeat(32),
       }).ingestionAttestationKey,
@@ -72,12 +111,15 @@ describe('shadow startup configuration', () => {
     ]) {
       const env = { ...valid };
       delete env[name];
-      assert.throws(() => loadShadowStartupConfig(env), new RegExp(`${name}_REQUIRED`));
+      assert.throws(
+        () => loadShadowStartupConfig('report-export', env),
+        new RegExp(`${name}_REQUIRED`),
+      );
     }
   });
 
   it('returns validated Ed25519 material and a verified pool config', () => {
-    const config = loadShadowStartupConfig(validEnvironment());
+    const config = loadShadowStartupConfig('report-export', validEnvironment());
     assert.equal(config.tenantId, 'tenant-1');
     assert.equal(config.retentionDays, 14);
     assert.equal(config.cleanupFreshnessMinutes, 90);
@@ -87,14 +129,14 @@ describe('shadow startup configuration', () => {
       config.trustedManifestPublicKeys.get('manifest-key-1')?.publicKey.asymmetricKeyType,
       'ed25519',
     );
-    assert.equal(config.reportSigningPrivateKey.asymmetricKeyType, 'ed25519');
+    assert.equal(config.reportSigning?.privateKey.asymmetricKeyType, 'ed25519');
     assert.equal(typeof config.poolConfig.ssl, 'object');
   });
 
   it('rejects placeholders, invalid bounds, malformed keys, and unverified DSNs', () => {
     assert.throws(
       () =>
-        loadShadowStartupConfig({
+        loadShadowStartupConfig('report-export', {
           ...validEnvironment(),
           COMMANDER_SHADOW_TENANT_ID: 'REPLACE_ME',
         }),
@@ -102,12 +144,15 @@ describe('shadow startup configuration', () => {
     );
     assert.throws(
       () =>
-        loadShadowStartupConfig({ ...validEnvironment(), COMMANDER_SHADOW_RETENTION_DAYS: '31' }),
+        loadShadowStartupConfig('report-export', {
+          ...validEnvironment(),
+          COMMANDER_SHADOW_RETENTION_DAYS: '31',
+        }),
       /COMMANDER_SHADOW_RETENTION_DAYS_INVALID/,
     );
     assert.throws(
       () =>
-        loadShadowStartupConfig({
+        loadShadowStartupConfig('report-export', {
           ...validEnvironment(),
           COMMANDER_SHADOW_CLEANUP_FRESHNESS_MINUTES: '0',
         }),
@@ -115,7 +160,7 @@ describe('shadow startup configuration', () => {
     );
     assert.throws(
       () =>
-        loadShadowStartupConfig({
+        loadShadowStartupConfig('report-export', {
           ...validEnvironment(),
           COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: '[]',
         }),
@@ -124,7 +169,7 @@ describe('shadow startup configuration', () => {
     const rsa = generateKeyPairSync('rsa', { modulusLength: 2048 });
     assert.throws(
       () =>
-        loadShadowStartupConfig({
+        loadShadowStartupConfig('report-export', {
           ...validEnvironment(),
           COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: JSON.stringify([
             {
@@ -139,7 +184,7 @@ describe('shadow startup configuration', () => {
     );
     assert.throws(
       () =>
-        loadShadowStartupConfig({
+        loadShadowStartupConfig('report-export', {
           ...validEnvironment(),
           COMMANDER_SHADOW_DATABASE_URL: 'postgres://shadow:secret@db.internal/shadow',
         }),

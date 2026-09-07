@@ -6,7 +6,7 @@ import { open } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { Pool } from 'pg';
 import { atomicExport } from './atomicExport.js';
-import { parseShadowManifest, type ShadowManifestV1 } from './contracts.js';
+import { parseShadowManifest, ShadowContractError, type ShadowManifestV1 } from './contracts.js';
 import {
   buildSignedShadowReport,
   SHADOW_REPORT_TRUST_SCHEMA,
@@ -20,7 +20,7 @@ import {
   type ShadowCampaignReportData,
   type ShadowImportResult,
 } from './repository.js';
-import { loadShadowStartupConfig } from './startupConfig.js';
+import { loadShadowStartupConfig, type ShadowDatabaseOperation } from './startupConfig.js';
 
 const MAX_NDJSON_LINE_BYTES = 16 * 1024;
 const MAX_IMPORT_RECORDS = 10_000;
@@ -29,6 +29,74 @@ const MAX_REPORT_BYTES = 192 * 1024 * 1024;
 const MAX_PUBLIC_KEY_BYTES = 64 * 1024;
 const SOURCE_REVISION = /^[\x21-\x7e]{1,128}$/;
 const TRUST_RECORD_KEYS = ['algorithm', 'keyId', 'publicKeyPem', 'schema', 'status'] as const;
+
+// Only exact application-owned codes may cross the CLI error boundary.
+const SAFE_ERROR_CODES = new Set([
+  'SHADOW_INVALID_VALUE',
+  'SHADOW_UNKNOWN_FIELD',
+  'SHADOW_MISSING_FIELD',
+  'SHADOW_INVALID_IDENTIFIER',
+  'SHADOW_INVALID_SCHEMA',
+  'SHADOW_UNSUPPORTED_WORKFLOW',
+  'SHADOW_INVALID_DECISION',
+  'SHADOW_INVALID_REASON_CODE',
+  'SHADOW_INVALID_TIMESTAMP',
+  'SHADOW_INVALID_DIGEST',
+  'SHADOW_INVALID_SIGNATURE',
+  'SHADOW_RECORD_LIMIT',
+  'SHADOW_INDEX_SEQUENCE',
+  'SHADOW_DUPLICATE_OBSERVATION',
+  'SHADOW_SIZE_LIMIT',
+  'SHADOW_SENSITIVE_DATA',
+  'COMMANDER_SHADOW_DATABASE_URL_REQUIRED',
+  'COMMANDER_SHADOW_TENANT_ID_REQUIRED',
+  'COMMANDER_SHADOW_TENANT_ID_INVALID',
+  'COMMANDER_SHADOW_TENANT_ID_PLACEHOLDER',
+  'COMMANDER_SHADOW_RETENTION_DAYS_REQUIRED',
+  'COMMANDER_SHADOW_RETENTION_DAYS_INVALID',
+  'COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON_REQUIRED',
+  'COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON_INVALID',
+  'COMMANDER_SHADOW_MANIFEST_KEY_INVALID',
+  'COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID_REQUIRED',
+  'COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID_INVALID',
+  'COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID_PLACEHOLDER',
+  'COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_REQUIRED',
+  'COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_INVALID',
+  'COMMANDER_SHADOW_CLEANUP_FRESHNESS_MINUTES_REQUIRED',
+  'COMMANDER_SHADOW_CLEANUP_FRESHNESS_MINUTES_INVALID',
+  'COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX_INVALID',
+  'COMMANDER_SHADOW_SOURCE_REVISION_INVALID',
+  'COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED',
+  'COMMANDER_DATABASE_TLS_CA_FILE_UNREADABLE',
+  'COMMANDER_DATABASE_TLS_CA_FILE_INVALID',
+  'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_REQUIRED',
+  'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256_INVALID',
+  'COMMANDER_DATABASE_DSN_INVALID',
+  'COMMANDER_DATABASE_DSN_TLS_OPTION_FORBIDDEN',
+  'COMMANDER_DATABASE_SSLMODE_VERIFY_FULL_REQUIRED',
+  'COMMANDER_DATABASE_SERVER_CERTIFICATE_INVALID',
+  'COMMANDER_DATABASE_SERVER_SPKI_MISMATCH',
+  'SHADOW_INPUT_TOO_LARGE',
+  'SHADOW_BATCH_NOT_DUE',
+  'SHADOW_BATCH_NOT_FOUND',
+  'SHADOW_BATCH_CLOSED',
+  'SHADOW_CAMPAIGN_CLOSED',
+  'SHADOW_CAMPAIGN_NOT_FOUND',
+  'SHADOW_CAMPAIGN_NOT_OPEN',
+  'SHADOW_INGESTION_ATTESTATION_KEY_REQUIRED',
+  'SHADOW_INGESTION_ROLE_REQUIRED',
+  'SHADOW_MANIFEST_KEY_INVALID',
+  'SHADOW_MANIFEST_KEY_REVOKED',
+  'SHADOW_MANIFEST_KEY_UNTRUSTED',
+  'SHADOW_MANIFEST_SIGNATURE_INVALID',
+  'SHADOW_POLICY_MISMATCH',
+  'SHADOW_PRODUCER_MISMATCH',
+  'SHADOW_TENANT_MISMATCH',
+  'SHADOW_OBSERVATION_CONFLICT',
+  'SHADOW_REPORT_CAMPAIGN_NOT_FOUND',
+  'SHADOW_REPORT_BATCH_OPEN',
+  'SHADOW_REPORT_NOT_TERMINAL',
+]);
 
 export interface ShadowCliRepository {
   registerManifest(tenantId: string, manifest: ShadowManifestV1): Promise<{ idempotent: boolean }>;
@@ -43,14 +111,7 @@ export interface ShadowCliRepository {
   readiness(
     tenantId: string,
     cleanupFreshnessMinutes: number,
-    operation:
-      | 'manifest-register'
-      | 'import'
-      | 'batch-close'
-      | 'report-export'
-      | 'campaign-withdraw'
-      | 'retention-run'
-      | 'status',
+    operation: ShadowDatabaseOperation,
   ): Promise<{ ready: boolean; code: string }>;
 }
 
@@ -58,9 +119,9 @@ export interface ShadowCliDependencies {
   repository: ShadowCliRepository;
   tenantId: string;
   cleanupFreshnessMinutes: number;
-  reportSigning: { keyId: string; privateKey: KeyObject };
+  reportSigning?: { keyId: string; privateKey: KeyObject };
   manifestTrust: ReadonlyMap<string, ShadowManifestTrust>;
-  sourceRevision: string;
+  sourceRevision?: string;
   now?: () => Date;
 }
 
@@ -346,6 +407,10 @@ async function execute(command: ParsedCommand, dependencies: ShadowCliDependenci
       );
       return ok('SHADOW_BATCH_CLOSED');
     case 'report-export': {
+      if (!dependencies.reportSigning)
+        return failure('COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_REQUIRED');
+      if (!dependencies.sourceRevision || !SOURCE_REVISION.test(dependencies.sourceRevision))
+        return failure('COMMANDER_SHADOW_SOURCE_REVISION_INVALID');
       const data = await dependencies.repository.readReport(
         dependencies.tenantId,
         command.campaign,
@@ -375,13 +440,16 @@ async function execute(command: ParsedCommand, dependencies: ShadowCliDependenci
   }
 }
 
-async function productionDependencies(): Promise<{
+async function productionDependencies(operation: ShadowDatabaseOperation): Promise<{
   dependencies: ShadowCliDependencies;
   close: () => Promise<void>;
 }> {
-  const config = loadShadowStartupConfig();
-  const sourceRevision = process.env.COMMANDER_SHADOW_SOURCE_REVISION?.trim();
-  if (!sourceRevision || !SOURCE_REVISION.test(sourceRevision)) {
+  const config = loadShadowStartupConfig(operation);
+  const sourceRevision =
+    operation === 'report-export'
+      ? process.env.COMMANDER_SHADOW_SOURCE_REVISION?.trim()
+      : undefined;
+  if (operation === 'report-export' && (!sourceRevision || !SOURCE_REVISION.test(sourceRevision))) {
     throw new Error('COMMANDER_SHADOW_SOURCE_REVISION_INVALID');
   }
   const pool = new Pool(config.poolConfig);
@@ -396,12 +464,9 @@ async function productionDependencies(): Promise<{
       }),
       tenantId: config.tenantId,
       cleanupFreshnessMinutes: config.cleanupFreshnessMinutes,
-      reportSigning: {
-        keyId: config.reportSigningKeyId,
-        privateKey: config.reportSigningPrivateKey,
-      },
+      ...(config.reportSigning ? { reportSigning: config.reportSigning } : {}),
       manifestTrust: config.trustedManifestPublicKeys,
-      sourceRevision,
+      ...(sourceRevision ? { sourceRevision } : {}),
     },
     close: () => pool.end(),
   };
@@ -416,14 +481,20 @@ export async function runShadowCli(
   try {
     if (command.name === 'report-verify') return await verifyReport(command);
     if (injectedDependencies) return await execute(command, injectedDependencies);
-    const production = await productionDependencies();
+    const production = await productionDependencies(command.name);
     try {
       return await execute(command, production.dependencies);
     } finally {
       await production.close();
     }
-  } catch {
-    return failure('SHADOW_COMMAND_FAILED');
+  } catch (error) {
+    const code =
+      error instanceof ShadowContractError
+        ? error.code
+        : error instanceof Error
+          ? error.message
+          : '';
+    return failure(SAFE_ERROR_CODES.has(code) ? code : 'SHADOW_COMMAND_FAILED');
   }
 }
 
