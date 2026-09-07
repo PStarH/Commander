@@ -1,0 +1,8 @@
+[
+  {
+    "algorithm": "Ed25519",
+    "keyId": "example-manifest-key-2026",
+    "status": "active",
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAHYy63ePKH7NNDaU4tRXunKPHc3EIGGw92lxTkxcDDWU=\n-----END PUBLIC KEY-----\n"
+  }
+]

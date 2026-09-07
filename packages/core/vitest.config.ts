@@ -251,11 +251,9 @@ export default defineConfig({
       'tests/security/securityAnomalyDetector.test.ts',
       'tests/security/securityPrimitives.test.ts',
       'tests/security/tenancy.test.ts',
-      // --- shadow (drift detection / proxy / scrubber / types) ---
-      'tests/shadow/drift.test.ts',
-      'tests/shadow/proxy.test.ts',
+      // --- request data scrubbing ---
       'tests/shadow/scrubber.test.ts',
-      'tests/shadow/types.test.ts',
+      'tests/architecture/shadow-replay-removal.test.ts',
       // --- storage (cached driver regression) ---
       'tests/storage/cachedDriver.test.ts',
       // --- runtime (LLM caller refactor regression) ---

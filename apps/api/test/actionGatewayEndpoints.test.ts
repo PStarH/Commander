@@ -3,7 +3,11 @@ import { createHash, generateKeyPairSync } from 'node:crypto';
 import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 import express from 'express';
-import { ACTION_STATES_V1, type ActionStateV1 } from '@commander/contracts';
+import {
+  ACTION_STATES_V1,
+  evaluateActionGatewayPolicy,
+  type ActionStateV1,
+} from '@commander/contracts';
 import {
   buildRunEvidenceBundle,
   canonicalEvidenceBody,
@@ -399,6 +403,38 @@ describe('L4-04 kill switch matrix', () => {
       });
       assert.equal(decision.effect, 'deny');
       assert.equal(decision.reason, 'KILL_SWITCH_ACTIVE');
+    });
+  });
+});
+
+describe('Action Gateway shared policy parity', () => {
+  it('returns the shared policy decision from the public simulation endpoint', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const action = {
+        ...baseAction,
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-shared-policy-parity',
+      };
+      const response = await postJson(baseUrl, '/v1/actions/simulate', action);
+      assert.equal(response.status, 200);
+      const simulation = ((await response.json()) as { simulation: Record<string, unknown> })
+        .simulation;
+      const shared = evaluateActionGatewayPolicy(action);
+      assert.deepEqual(
+        {
+          effect: simulation.effect,
+          decisionId: simulation.decisionId,
+          reason: simulation.reason,
+          policySnapshotId: simulation.policySnapshotId,
+        },
+        {
+          effect: shared.effect,
+          decisionId: shared.decisionId,
+          reason: shared.reason,
+          policySnapshotId: shared.policySnapshotId,
+        },
+      );
     });
   });
 });
