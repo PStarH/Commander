@@ -606,8 +606,10 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/postgres-runtime build
-      - name: Shadow PostgreSQL authority suite
-        run: pnpm --filter @commander/shadow-plane test:postgres-live
+      - name: Shadow Phase A gate contract
+        run: pnpm exec node --import tsx --test scripts/shadow-phase-a-gate.test.ts
+      - name: Shadow Phase A release gate
+        run: pnpm shadow:phase-a:gate
 
   l4-b-deploy-gates:
     name: L4-B Deploy Gates
