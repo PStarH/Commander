@@ -37,6 +37,15 @@ most 16 KiB; a manifest is at most 2 MiB and declares 1–10,000 records.
 `null` when a policy fact is unavailable; Commander records
 `insufficient_evidence` rather than inventing a fact.
 
+For this workflow, known `effectType` must be
+`connector.kubernetes.deployment.rollback` and known `tool` must be
+`kubernetes.deployment.rollback`. Other known actions are rejected, not coerced.
+Known destinations are evaluated against
+`k8s://{cluster}/{namespace}/deployments/{name}`. Keep the scheme, separators,
+and `deployments` segment intact when pseudonymizing component identifiers;
+do not turn a nonmatching historical destination into a matching one. If that
+property cannot be established, use `null` instead of manufacturing evidence.
+
 Do not include HTTP methods, paths, headers, request or response bodies,
 prompts, logs, source code, ticket text, email addresses, names, access data,
 or other free-form customer content. Opaque identifiers must still preserve the

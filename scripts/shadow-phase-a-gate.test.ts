@@ -25,6 +25,17 @@ function successfulRunner(calls: ShadowPhaseACommand[]) {
 }
 
 describe('Shadow Phase A release gate', () => {
+  it('retains final failure codes after verbose dependency output', async () => {
+    const result = await runBoundedShadowPhaseAChild({
+      id: 'shadow-package-import',
+      file: process.execPath,
+      args: [
+        '--eval',
+        "process.stdout.write('x'.repeat(32768)); process.stdout.write('ERR_PNPM_NO_OFFLINE_META'); process.exitCode=1",
+      ],
+    });
+    assert.ok(result.stdout.endsWith('ERR_PNPM_NO_OFFLINE_META'));
+  });
   it('exports only allowlisted failure diagnostics, never child messages or credentials', async () => {
     const result = await runShadowPhaseAGate({
       sourceRevision: revision,

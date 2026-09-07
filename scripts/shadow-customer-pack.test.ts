@@ -8,6 +8,8 @@ import {
   parseShadowObservation,
 } from '../packages/shadow-plane/src/contracts.ts';
 import { verifyShadowReport } from '../packages/shadow-plane/src/report.ts';
+import { evaluateShadowObservation } from '../packages/shadow-plane/src/evaluator.ts';
+import { actionGatewayPolicySnapshot } from '../packages/contracts/src/actionGatewayPolicy.ts';
 
 const root = resolve(import.meta.dirname, '..');
 const pack = resolve(root, 'docs/pilot/shadow');
@@ -37,6 +39,33 @@ async function text(name: string): Promise<string> {
 }
 
 describe('Shadow Pilot customer delivery pack', () => {
+  it('ships a parseable rehearsal sample with explicit unknown facts', async () => {
+    const sample = (await text('example-observations.ndjson'))
+      .trim()
+      .split('\n')
+      .map((line) => parseShadowObservation(JSON.parse(line)));
+    const snapshot = actionGatewayPolicySnapshot();
+    assert.deepEqual(
+      sample.map(
+        (record) =>
+          evaluateShadowObservation(record, {
+            policyId: snapshot.policyId,
+            policyDigest: snapshot.descriptorDigest,
+          }).decision,
+      ),
+      ['require_approval', 'insufficient_evidence'],
+    );
+    assert.deepEqual(
+      sample.map((record) => record.index),
+      [0, 1],
+    );
+  });
+  it('installs direct dependencies used by customer provisioning scripts', async () => {
+    const readme = await text('README.md');
+    const install = readme.split('\n').find((line) => line.startsWith('pnpm add '));
+    assert.ok(install?.includes('./commander-postgres-runtime-0.2.0.tgz'));
+    assert.match(install!, /\bpg@/);
+  });
   it('documents the strict Phase A boundary and delivery requirements', async () => {
     const documents = await Promise.all(requiredFiles.map(text));
     const combined = documents.join('\n').toLowerCase();
