@@ -153,6 +153,97 @@ function dependencies(repository: ShadowCliRepository) {
 }
 
 describe('commander-shadow CLI', () => {
+  it('reports typed manifest validation codes without their input details', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-invalid-'));
+    const file = join(directory, 'manifest.json');
+    writeFileSync(file, JSON.stringify({ secret_customer_field: 'sensitive-value' }));
+    assert.deepEqual(
+      await runShadowCli(
+        ['manifest', 'register', '--file', file],
+        dependencies(new FakeRepository()),
+      ),
+      {
+        exitCode: 1,
+        output: { status: 'error', code: 'SHADOW_UNKNOWN_FIELD' },
+      },
+    );
+  });
+
+  it('returns actionable allowlisted errors without exposing other error contents', async () => {
+    for (const code of [
+      'SHADOW_BATCH_NOT_DUE',
+      'SHADOW_MANIFEST_KEY_REVOKED',
+      'COMMANDER_SHADOW_TENANT_ID_REQUIRED',
+      'COMMANDER_DATABASE_TLS_CA_FILE_UNREADABLE',
+    ]) {
+      const repository = new FakeRepository();
+      repository.closeDueBatch = async () => {
+        throw new Error(code);
+      };
+      assert.deepEqual(
+        await runShadowCli(
+          ['batch', 'close', '--campaign', 'campaign-1', '--batch', 'batch-1'],
+          dependencies(repository),
+        ),
+        {
+          exitCode: 1,
+          output: { status: 'error', code },
+        },
+      );
+    }
+    for (const error of [
+      new Error('postgres://user:secret@db/tenant'),
+      new Error('SHADOW_BATCH_NOT_DUE secret'),
+      new Error('SHADOW_UNKNOWN_SECRET'),
+      { message: 'SHADOW_BATCH_NOT_DUE', payload: 'secret' },
+      'SHADOW_BATCH_NOT_DUE',
+    ]) {
+      const repository = new FakeRepository();
+      repository.closeDueBatch = async () => {
+        throw error;
+      };
+      assert.deepEqual(
+        await runShadowCli(
+          ['batch', 'close', '--campaign', 'campaign-1', '--batch', 'batch-1'],
+          dependencies(repository),
+        ),
+        {
+          exitCode: 1,
+          output: { status: 'error', code: 'SHADOW_COMMAND_FAILED' },
+        },
+      );
+    }
+  });
+
+  it('permits cleanup without report credentials and fails export before reading data', async () => {
+    const repository = new FakeRepository();
+    const { reportSigning, sourceRevision, ...cleanupDependencies } = dependencies(repository);
+    assert.equal((await runShadowCli(['retention', 'run'], cleanupDependencies)).exitCode, 0);
+    assert.equal(
+      (
+        await runShadowCli(
+          ['campaign', 'withdraw', '--campaign', 'campaign-1', '--confirm', 'campaign-1'],
+          cleanupDependencies,
+        )
+      ).exitCode,
+      0,
+    );
+    assert.deepEqual(
+      await runShadowCli(
+        ['report', 'export', '--campaign', 'campaign-1', '--output', '/unused'],
+        cleanupDependencies,
+      ),
+      {
+        exitCode: 1,
+        output: {
+          status: 'error',
+          code: 'COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM_REQUIRED',
+        },
+      },
+    );
+    assert.equal(repository.calls.includes('report'), false);
+  });
+
   it('routes every command through the repository and verifies exported evidence offline', async () => {
     const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
     const manifestFile = join(directory, 'manifest.json');
