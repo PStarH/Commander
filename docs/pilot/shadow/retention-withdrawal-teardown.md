@@ -8,8 +8,9 @@ Expired campaign data is deleted from the authoritative PostgreSQL schema.
 
 The export owner may create the required historical record with `report export
 --campaign --output`. The recipient independently checks it with `report verify
---bundle --public-key` using the separately distributed JSON trust record and
-retains it according to the customer’s records policy.
+--bundle --public-key --manifest-keys` using the separately distributed report
+and manifest trust records and retains it according to the customer's records
+policy.
 An export is a copy; the customer must decide how any backup or recipient copy is
 handled.
 
@@ -25,7 +26,20 @@ already exported, PostgreSQL backups, or records outside the dedicated schema.
 
 - Confirm the export recipient and retention owner have recorded the outcome.
 - Run campaign withdrawal and record the JSON result.
-- Confirm no active campaign remains with `status`.
+- Use the tenant's reader login for the authoritative check. Confirm `tenant_bound`
+  is true and the count is zero in the same transaction. A false or null binding
+  invalidates the count; the readiness-only `status` command does not count campaigns:
+
+  ```sql
+  BEGIN;
+  SELECT set_config('commander_shadow.tenant_id', 'tenant-1', true);
+  SELECT commander_shadow.tenant_access_allowed('tenant-1') AS tenant_bound;
+  SELECT count(*)
+    FROM commander_shadow.campaigns
+   WHERE tenant_id = 'tenant-1' AND state <> 'withdrawn';
+  COMMIT;
+  ```
+
 - Remove the customer’s Shadow-specific PostgreSQL roles, schema, key references,
   and deployment configuration using the customer change process.
 - Remove or expire report public-key distribution entries according to the

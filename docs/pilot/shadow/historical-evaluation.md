@@ -17,10 +17,10 @@ report independently.
 --batch`. Every manifest index becomes exactly one terminal state:
    `missing`, `rejected`, `failed`, `uncomparable`, or `compared`.
 5. The export owner runs `report export --campaign --output`, then the intended
-   reader uses `report verify --bundle --public-key` with the separately obtained
-   JSON public-key trust record outside the database path. The record must bind
-   the expected `keyId`, `Ed25519` algorithm, and current `active` or `revoked`
-   status to the public key.
+   reader uses `report verify --bundle --public-key --manifest-keys` with the
+   separately obtained report-key record and manifest-key trust set outside the
+   database path. Every record binds its expected `keyId`, `Ed25519` algorithm,
+   current `active` or `revoked` status, and public key.
 6. The mismatch-adjudication owner reviews differences. `allow`, `deny`, and
    `require_approval` remain distinct. `unknown` production decisions and
    `insufficient_evidence` hypothetical decisions are uncomparable.
@@ -33,8 +33,9 @@ cost field and cannot show whether any rollback succeeded.
 ## What signatures establish
 
 The detached Ed25519 report signature binds the canonical report body to the
-identified report key. Verification also recomputes the manifests, records, and
-policy hashes; checks the pinned policy snapshot; and deterministically
+identified report key. Verification independently checks every embedded
+manifest against the manifest trust set, recomputes the manifests, records, and
+policy hashes, checks the pinned policy snapshot, and deterministically
 re-evaluates observed facts. Signatures do not establish that the declared
 sample is complete, that an opaque identifier is truthful, that an approval was
 authentic, or that a rollback was performed.

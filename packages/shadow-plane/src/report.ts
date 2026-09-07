@@ -80,6 +80,7 @@ export interface ShadowReportSigningOptions {
   privateKey: KeyObject;
   generatedAt: string;
   sourceRevision: string;
+  manifestTrust: ReadonlyMap<string, ShadowManifestTrust>;
 }
 
 export interface ShadowReportTrust {
@@ -89,6 +90,8 @@ export interface ShadowReportTrust {
   publicKey: KeyObject;
 }
 
+export type ShadowManifestTrust = ShadowReportTrust;
+
 const TERMINAL = new Set<ShadowTerminalStatus>([
   'missing',
   'rejected',
@@ -97,6 +100,20 @@ const TERMINAL = new Set<ShadowTerminalStatus>([
   'compared',
 ]);
 const COMPARABLE = ['allow', 'deny', 'require_approval'] as const;
+const HYPOTHETICAL = [...COMPARABLE, 'insufficient_evidence'] as const;
+const PRODUCTION = [...COMPARABLE, 'unknown'] as const;
+const COMPARISONS = ['match', 'mismatch', 'uncomparable'] as const;
+const ATTEMPT_ROW_FIELDS = ['attempt_digest', 'attempt_code', 'attempted_at'] as const;
+const DECISION_ROW_FIELDS = [
+  'canonical_observation',
+  'hypothetical_decision',
+  'hypothetical_decision_id',
+  'hypothetical_reason_code',
+  'production_decision',
+  'production_reason_code',
+  'comparison',
+] as const;
+const REPORT_BASE_KEYS = ['batchId', 'digest', 'index', 'observationId', 'status'] as const;
 
 function stringField(row: Record<string, unknown>, name: string): string {
   const value = row[name];
@@ -118,11 +135,48 @@ function digestField(row: Record<string, unknown>, name: string): string {
 }
 
 function timestampField(row: Record<string, unknown>, name: string): string {
-  const value = stringField(row, name);
+  const raw = row[name];
+  const value = raw instanceof Date ? raw.toISOString() : raw;
+  if (typeof value !== 'string') throw new Error('SHADOW_REPORT_DATA_INVALID');
   const time = Date.parse(value);
   if (!Number.isFinite(time) || new Date(time).toISOString() !== value)
     throw new Error('SHADOW_REPORT_DATA_INVALID');
   return value;
+}
+
+function absentRowFields(row: Record<string, unknown>, fields: readonly string[]): boolean {
+  return fields.every((field) => row[field] === null || row[field] === undefined);
+}
+
+function exactObjectKeys(value: Record<string, unknown>, allowed: readonly string[]): boolean {
+  const keys = Object.keys(value).sort();
+  const expected = [...allowed].sort();
+  return keys.length === expected.length && keys.every((key, index) => key === expected[index]);
+}
+
+function reportRecordInvalid(): never {
+  throw new Error('SHADOW_REPORT_RECORD_INVALID');
+}
+
+function manifestTrustError(
+  manifest: ShadowManifestV1,
+  trust: ReadonlyMap<string, ShadowManifestTrust>,
+): string | null {
+  const record = trust.get(manifest.keyId);
+  if (!record) return 'SHADOW_MANIFEST_KEY_UNTRUSTED';
+  if (record.status === 'revoked') return 'SHADOW_MANIFEST_KEY_REVOKED';
+  if (
+    record.status !== 'active' ||
+    record.algorithm !== 'Ed25519' ||
+    record.keyId !== manifest.keyId ||
+    record.publicKey.asymmetricKeyType !== 'ed25519'
+  ) {
+    return 'SHADOW_MANIFEST_KEY_INVALID';
+  }
+  const { signature, ...signedBody } = manifest;
+  return verifyEd25519(signedBody, signature, record.publicKey)
+    ? null
+    : 'SHADOW_MANIFEST_SIGNATURE_INVALID';
 }
 
 function emptyMatrix(): ShadowDecisionMatrix {
@@ -144,8 +198,14 @@ function reportRecords(rows: Record<string, unknown>[]): ShadowReportRecord[] {
       digest: digestField(row, 'digest'),
       status,
     };
-    if (status === 'missing') return base;
+    if (status === 'missing') {
+      if (!absentRowFields(row, [...ATTEMPT_ROW_FIELDS, ...DECISION_ROW_FIELDS])) {
+        reportRecordInvalid();
+      }
+      return base;
+    }
     if (status === 'rejected' || status === 'failed') {
+      if (!absentRowFields(row, DECISION_ROW_FIELDS)) reportRecordInvalid();
       return {
         ...base,
         attempt: {
@@ -155,8 +215,9 @@ function reportRecords(rows: Record<string, unknown>[]): ShadowReportRecord[] {
         },
       };
     }
+    if (!absentRowFields(row, ATTEMPT_ROW_FIELDS)) reportRecordInvalid();
     const facts = parseShadowObservation(row.canonical_observation);
-    return {
+    const record: ShadowReportRecord = {
       ...base,
       facts,
       hypotheticalDecision: stringField(row, 'hypothetical_decision') as ShadowHypotheticalDecision,
@@ -168,7 +229,97 @@ function reportRecords(rows: Record<string, unknown>[]): ShadowReportRecord[] {
         : {}),
       comparison: stringField(row, 'comparison') as ShadowComparison,
     };
+    validateReportRecord(record);
+    return record;
   });
+}
+
+function validateReportRecord(value: unknown): asserts value is ShadowReportRecord {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) reportRecordInvalid();
+  const record = value as Record<string, unknown>;
+  const status = record.status;
+  if (typeof status !== 'string' || !TERMINAL.has(status as ShadowTerminalStatus)) {
+    reportRecordInvalid();
+  }
+  if (
+    typeof record.batchId !== 'string' ||
+    typeof record.observationId !== 'string' ||
+    !Number.isSafeInteger(record.index) ||
+    (record.index as number) < 0 ||
+    typeof record.digest !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(record.digest)
+  ) {
+    reportRecordInvalid();
+  }
+  if (status === 'missing') {
+    if (!exactObjectKeys(record, REPORT_BASE_KEYS)) reportRecordInvalid();
+    return;
+  }
+  if (status === 'rejected' || status === 'failed') {
+    if (!exactObjectKeys(record, [...REPORT_BASE_KEYS, 'attempt'])) reportRecordInvalid();
+    const attempt = record.attempt;
+    if (attempt === null || typeof attempt !== 'object' || Array.isArray(attempt)) {
+      reportRecordInvalid();
+    }
+    const fields = attempt as Record<string, unknown>;
+    const time = typeof fields.attemptedAt === 'string' ? Date.parse(fields.attemptedAt) : NaN;
+    if (
+      !exactObjectKeys(fields, ['attemptedAt', 'code', 'digest']) ||
+      typeof fields.digest !== 'string' ||
+      !/^[0-9a-f]{64}$/.test(fields.digest) ||
+      typeof fields.code !== 'string' ||
+      typeof fields.attemptedAt !== 'string' ||
+      !Number.isFinite(time) ||
+      new Date(time).toISOString() !== fields.attemptedAt
+    ) {
+      reportRecordInvalid();
+    }
+    return;
+  }
+
+  const facts = parseShadowObservation(record.facts);
+  const hasProductionReason = Object.hasOwn(record, 'productionReasonCode');
+  const expectedKeys = [
+    ...REPORT_BASE_KEYS,
+    'facts',
+    'hypotheticalDecision',
+    'hypotheticalDecisionId',
+    'hypotheticalReasonCode',
+    'productionDecision',
+    'comparison',
+    ...(hasProductionReason ? ['productionReasonCode'] : []),
+  ];
+  if (
+    !exactObjectKeys(record, expectedKeys) ||
+    !HYPOTHETICAL.includes(record.hypotheticalDecision as (typeof HYPOTHETICAL)[number]) ||
+    typeof record.hypotheticalDecisionId !== 'string' ||
+    typeof record.hypotheticalReasonCode !== 'string' ||
+    !PRODUCTION.includes(record.productionDecision as (typeof PRODUCTION)[number]) ||
+    !COMPARISONS.includes(record.comparison as (typeof COMPARISONS)[number]) ||
+    (hasProductionReason && typeof record.productionReasonCode !== 'string') ||
+    record.productionDecision !== facts.productionDecision ||
+    record.productionReasonCode !== facts.productionReasonCode ||
+    observationDigest(facts) !== record.digest
+  ) {
+    reportRecordInvalid();
+  }
+  const snapshot = actionGatewayPolicySnapshot();
+  const evaluation = evaluateShadowObservation(facts, {
+    policyId: snapshot.policyId,
+    policyDigest: snapshot.descriptorDigest,
+    expectedDigest: record.digest as string,
+  });
+  const comparison = compareShadowDecision(facts.productionDecision, evaluation.decision);
+  if (
+    record.hypotheticalDecision !== evaluation.decision ||
+    record.hypotheticalDecisionId !== evaluation.decisionId ||
+    record.hypotheticalReasonCode !== evaluation.reasonCode ||
+    record.comparison !== comparison ||
+    (status === 'compared' && comparison === 'uncomparable') ||
+    (status === 'uncomparable' && comparison !== 'uncomparable')
+  ) {
+    reportRecordInvalid();
+  }
 }
 
 function aggregate(records: ShadowReportRecord[], policyDigest: string) {
@@ -214,7 +365,9 @@ function aggregate(records: ShadowReportRecord[], policyDigest: string) {
   return { counts, matrix, differences };
 }
 
-function validateManifestRecordBinding(report: ShadowReportBundle): boolean {
+function validateManifestRecordBinding(
+  report: Pick<ShadowReportBundle, 'manifests' | 'records' | 'campaignId' | 'policySnapshot'>,
+): boolean {
   const expected = new Map<string, { observationId: string; digest: string }>();
   for (const rawManifest of report.manifests) {
     const manifest = parseShadowManifest(rawManifest);
@@ -273,9 +426,16 @@ export function buildSignedShadowReport(
     if (digestField(batch, 'manifest_digest') !== sha256Hex(canonicalBytes(manifest))) {
       throw new Error('SHADOW_MANIFEST_DIGEST_MISMATCH');
     }
+    const trustError = manifestTrustError(manifest, options.manifestTrust);
+    if (trustError) throw new Error(trustError);
     return manifest;
   });
   const records = reportRecords(data.records);
+  if (
+    !validateManifestRecordBinding({ manifests, records, campaignId, policySnapshot: snapshot })
+  ) {
+    throw new Error('SHADOW_REPORT_MANIFEST_RECORD_MISMATCH');
+  }
   const { counts, matrix, differences } = aggregate(records, policyDigest);
   const hashes = {
     manifestsSha256: sha256Hex(canonicalBytes(manifests)),
@@ -306,6 +466,7 @@ export function buildSignedShadowReport(
 export function verifyShadowReport(
   value: unknown,
   trust: ShadowReportTrust,
+  manifestTrust: ReadonlyMap<string, ShadowManifestTrust>,
 ): { valid: boolean; code: string } {
   if (value === null || typeof value !== 'object' || Array.isArray(value))
     return { valid: false, code: 'SHADOW_REPORT_INVALID' };
@@ -326,6 +487,14 @@ export function verifyShadowReport(
   if (!verifyEd25519(signedBody, signature, trust.publicKey))
     return { valid: false, code: 'SHADOW_REPORT_SIGNATURE_INVALID' };
   try {
+    if (!Array.isArray(report.manifests)) {
+      return { valid: false, code: 'SHADOW_REPORT_INVALID' };
+    }
+    for (const rawManifest of report.manifests) {
+      const manifest = parseShadowManifest(rawManifest);
+      const trustError = manifestTrustError(manifest, manifestTrust);
+      if (trustError) return { valid: false, code: `SHADOW_REPORT_${trustError.slice(7)}` };
+    }
     if (
       report.hashes.manifestsSha256 !== sha256Hex(canonicalBytes(report.manifests)) ||
       report.hashes.recordsSha256 !== sha256Hex(canonicalBytes(report.records)) ||
@@ -335,6 +504,12 @@ export function verifyShadowReport(
     const snapshot = actionGatewayPolicySnapshot();
     if (canonicalBytes(report.policySnapshot).compare(canonicalBytes(snapshot)) !== 0) {
       return { valid: false, code: 'SHADOW_REPORT_POLICY_INVALID' };
+    }
+    try {
+      if (!Array.isArray(report.records)) reportRecordInvalid();
+      for (const record of report.records) validateReportRecord(record);
+    } catch {
+      return { valid: false, code: 'SHADOW_REPORT_RECORD_INVALID' };
     }
     const recomputed = aggregate(report.records, snapshot.descriptorDigest);
     if (canonicalBytes(recomputed.counts).compare(canonicalBytes(report.counts)) !== 0) {

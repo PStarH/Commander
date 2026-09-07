@@ -55,6 +55,10 @@ import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from 
 import { createCapabilityAuthority, type CapabilityAuthority } from '@commander/kernel';
 import { ACTION_GATEWAY_POLICY_ID, evaluateActionGatewayPolicy } from '@commander/contracts';
 import {
+  ActionAdapterRegistry,
+  parseKubernetesDeploymentDestination,
+} from '@commander/action-adapters';
+import {
   createActionAdapterEffectExecutor,
   createProductionAdapterRegistry,
 } from './actionAdapterExecutor.js';
@@ -404,7 +408,10 @@ function denyActionGateway(reason: string) {
 /**
  * Worker re-runs the shared policy so a sealed metadata.decision alone cannot authorize effects.
  */
-export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
+export function evaluateActionGatewayMvpV1(
+  envelope: Record<string, unknown>,
+  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
+): {
   effect: 'allow' | 'deny' | 'require_approval';
   decisionId: string;
   reason: string;
@@ -413,15 +420,38 @@ export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
   const effectType = envelope.effectType;
   const tool = envelope.tool;
   const destination = envelope.destination;
+  const adapter = typeof effectType === 'string' ? actionAdapters.resolve(effectType) : null;
   if (
-    typeof effectType !== 'string' ||
-    typeof tool !== 'string' ||
-    typeof destination !== 'string'
+    adapter &&
+    (effectType === adapter.descriptor.effectType ||
+      effectType === adapter.descriptor.compensationEffectType) &&
+    tool === adapter.descriptor.toolName &&
+    adapter.descriptor.adapterId === 'kubernetes.deployment.rollback' &&
+    typeof destination === 'string'
   ) {
+    try {
+      parseKubernetesDeploymentDestination(destination);
+      const effect = adapter.descriptor.defaultGatewayEffect;
+      return {
+        effect,
+        decisionId: `action-gateway-manifest-${effect}`,
+        reason: `Registered adapter policy requires '${effect}' for this exact action.`,
+        policySnapshotId: ACTION_GATEWAY_POLICY_ID,
+      };
+    } catch {
+      // Invalid Kubernetes destinations remain deny-by-default.
+    }
+  }
+  const isDemo =
+    (effectType === 'demo.ticket.create' && tool === 'ticket.create') ||
+    (effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate');
+  if (!isDemo || typeof destination !== 'string') {
     return {
       effect: 'deny',
       decisionId: 'action-gateway-deny',
-      reason: `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
+      reason: isDemo
+        ? `Destination '${String(destination)}' is not registered by the Action Gateway.`
+        : `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
       policySnapshotId: ACTION_GATEWAY_POLICY_ID,
     };
   }
@@ -435,6 +465,7 @@ export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
 
 export function createWorkerPolicyEvaluator(
   kernelOrEnv: ActionGatewayPolicyKernel | NodeJS.ProcessEnv = process.env,
+  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
 ): PolicyEvaluator {
   const kernel = isActionGatewayPolicyKernel(kernelOrEnv) ? kernelOrEnv : null;
   return {
@@ -564,7 +595,7 @@ export function createWorkerPolicyEvaluator(
         // forged or post-create-mutated metadata.decision cannot authorize work.
         let revalidatedDecisionId: string | null = null;
         if (metadata.policySnapshotId === ACTION_GATEWAY_POLICY_ID) {
-          const fresh = evaluateActionGatewayMvpV1(actionEnvelope);
+          const fresh = evaluateActionGatewayMvpV1(actionEnvelope, actionAdapters);
           if (
             fresh.effect !== actionDecision.effect ||
             fresh.decisionId !== actionDecision.decisionId
@@ -763,7 +794,7 @@ export function createEffectBroker(
   assertDurableCapabilityStores(capability, kernel);
 
   const actionAdapters = createProductionAdapterRegistry(undefined, env);
-  const policy = createWorkerPolicyEvaluator(kernel);
+  const policy = createWorkerPolicyEvaluator(kernel, actionAdapters);
   const effectKernel = withDefaultLlmAllowlist(kernel);
   const executor = createWorkerEffectExecutor(
     undefined,

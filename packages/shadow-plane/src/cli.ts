@@ -12,6 +12,7 @@ import {
   SHADOW_REPORT_TRUST_SCHEMA,
   verifyShadowReport,
   type ShadowReportTrust,
+  type ShadowManifestTrust,
 } from './report.js';
 import {
   asShadowSqlPool,
@@ -42,6 +43,14 @@ export interface ShadowCliRepository {
   readiness(
     tenantId: string,
     cleanupFreshnessMinutes: number,
+    operation:
+      | 'manifest-register'
+      | 'import'
+      | 'batch-close'
+      | 'report-export'
+      | 'campaign-withdraw'
+      | 'retention-run'
+      | 'status',
   ): Promise<{ ready: boolean; code: string }>;
 }
 
@@ -50,6 +59,7 @@ export interface ShadowCliDependencies {
   tenantId: string;
   cleanupFreshnessMinutes: number;
   reportSigning: { keyId: string; privateKey: KeyObject };
+  manifestTrust: ReadonlyMap<string, ShadowManifestTrust>;
   sourceRevision: string;
   now?: () => Date;
 }
@@ -64,7 +74,7 @@ type ParsedCommand =
   | { name: 'import'; file: string }
   | { name: 'batch-close'; campaign: string; batch: string }
   | { name: 'report-export'; campaign: string; output: string }
-  | { name: 'report-verify'; bundle: string; publicKey: string }
+  | { name: 'report-verify'; bundle: string; publicKey: string; manifestKeys: string }
   | { name: 'campaign-withdraw'; campaign: string; confirm: string }
   | { name: 'retention-run' }
   | { name: 'status' };
@@ -118,9 +128,14 @@ function parseCommand(argv: string[]): ParsedCommand | null {
       : null;
   }
   if (first === 'report' && second === 'verify') {
-    const parsed = options(rest, ['bundle', 'public-key']);
+    const parsed = options(rest, ['bundle', 'public-key', 'manifest-keys']);
     return parsed
-      ? { name: 'report-verify', bundle: parsed.bundle!, publicKey: parsed['public-key']! }
+      ? {
+          name: 'report-verify',
+          bundle: parsed.bundle!,
+          publicKey: parsed['public-key']!,
+          manifestKeys: parsed['manifest-keys']!,
+        }
       : null;
   }
   if (first === 'campaign' && second === 'withdraw') {
@@ -198,6 +213,7 @@ async function* ndjsonLines(
 async function verifyReport(command: Extract<ParsedCommand, { name: 'report-verify' }>) {
   const bundle = await readJson(command.bundle, MAX_REPORT_BYTES);
   const value = await readJson(command.publicKey, MAX_PUBLIC_KEY_BYTES);
+  const manifestValues = await readJson(command.manifestKeys, MAX_PUBLIC_KEY_BYTES);
   if (value === null || typeof value !== 'object' || Array.isArray(value))
     return failure('SHADOW_REPORT_KEY_INVALID');
   const record = value as Record<string, unknown>;
@@ -225,7 +241,38 @@ async function verifyReport(command: Extract<ParsedCommand, { name: 'report-veri
     status,
     publicKey,
   };
-  const verification = verifyShadowReport(bundle, trust);
+  if (!Array.isArray(manifestValues) || manifestValues.length === 0)
+    return failure('SHADOW_REPORT_MANIFEST_KEY_INVALID');
+  const manifestTrust = new Map<string, ShadowManifestTrust>();
+  for (const value of manifestValues) {
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
+      return failure('SHADOW_REPORT_MANIFEST_KEY_INVALID');
+    const record = value as Record<string, unknown>;
+    if (
+      Object.keys(record).sort().join('\0') !==
+        ['algorithm', 'keyId', 'publicKeyPem', 'status'].sort().join('\0') ||
+      record.algorithm !== 'Ed25519' ||
+      !SOURCE_REVISION.test(typeof record.keyId === 'string' ? record.keyId : '') ||
+      (record.status !== 'active' && record.status !== 'revoked') ||
+      typeof record.publicKeyPem !== 'string' ||
+      manifestTrust.has(record.keyId as string)
+    )
+      return failure('SHADOW_REPORT_MANIFEST_KEY_INVALID');
+    let manifestPublicKey: KeyObject;
+    try {
+      manifestPublicKey = createPublicKey(record.publicKeyPem);
+      if (manifestPublicKey.asymmetricKeyType !== 'ed25519') throw new Error('wrong type');
+    } catch {
+      return failure('SHADOW_REPORT_MANIFEST_KEY_INVALID');
+    }
+    manifestTrust.set(record.keyId as string, {
+      algorithm: 'Ed25519',
+      keyId: record.keyId as string,
+      status: record.status,
+      publicKey: manifestPublicKey,
+    });
+  }
+  const verification = verifyShadowReport(bundle, trust, manifestTrust);
   return verification.valid ? ok(verification.code) : failure(verification.code);
 }
 
@@ -255,7 +302,7 @@ async function importObservations(
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
       if (
-        /^(?:SHADOW_(?:INVALID|UNKNOWN|MISSING|SIZE|UNSUPPORTED)|SHADOW_DIGEST_MISMATCH|SHADOW_EVALUATION_FAILED)/.test(
+        /^(?:SHADOW_(?:INVALID|UNKNOWN|MISSING|SIZE|UNSUPPORTED)|SHADOW_SENSITIVE_DATA|SHADOW_DIGEST_MISMATCH|SHADOW_EVALUATION_FAILED)/.test(
           code,
         )
       ) {
@@ -271,6 +318,13 @@ async function importObservations(
 }
 
 async function execute(command: ParsedCommand, dependencies: ShadowCliDependencies) {
+  if (command.name === 'report-verify') return verifyReport(command);
+  const readiness = await dependencies.repository.readiness(
+    dependencies.tenantId,
+    dependencies.cleanupFreshnessMinutes,
+    command.name,
+  );
+  if (!readiness.ready) return failure(readiness.code);
   switch (command.name) {
     case 'manifest-register': {
       const manifest = parseShadowManifest(await readJson(command.file, MAX_MANIFEST_BYTES));
@@ -301,6 +355,7 @@ async function execute(command: ParsedCommand, dependencies: ShadowCliDependenci
         privateKey: dependencies.reportSigning.privateKey,
         generatedAt: (dependencies.now ?? (() => new Date()))().toISOString(),
         sourceRevision: dependencies.sourceRevision,
+        manifestTrust: dependencies.manifestTrust,
       });
       atomicExport(command.output, `${JSON.stringify(report)}\n`);
       return ok('SHADOW_REPORT_EXPORTED');
@@ -315,14 +370,8 @@ async function execute(command: ParsedCommand, dependencies: ShadowCliDependenci
       return ok('SHADOW_RETENTION_COMPLETE', { deleted });
     }
     case 'status': {
-      const readiness = await dependencies.repository.readiness(
-        dependencies.tenantId,
-        dependencies.cleanupFreshnessMinutes,
-      );
-      return readiness.ready ? ok(readiness.code) : failure(readiness.code);
+      return ok(readiness.code);
     }
-    case 'report-verify':
-      return verifyReport(command);
   }
 }
 
@@ -348,6 +397,7 @@ async function productionDependencies(): Promise<{
         keyId: config.reportSigningKeyId,
         privateKey: config.reportSigningPrivateKey,
       },
+      manifestTrust: config.trustedManifestPublicKeys,
       sourceRevision,
     },
     close: () => pool.end(),

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ShadowContractError, parseShadowManifest, parseShadowObservation } from './contracts.js';
+import { actionGatewayPolicySnapshot } from './index.js';
 
 const digest = 'a'.repeat(64);
 const signature = Buffer.alloc(64, 1).toString('base64url');
@@ -50,6 +51,9 @@ function expectCode(run: () => unknown, code: string): void {
 }
 
 describe('strict shadow contracts', () => {
+  it('exports the pinned policy snapshot for clean-room manifest construction', () => {
+    assert.equal(actionGatewayPolicySnapshot().policyId, 'action-gateway-mvp-v1');
+  });
   it('parses canonical manifest and observation values without preserving caller mutation', () => {
     const rawObservation = observation();
     const parsedObservation = parseShadowObservation(rawObservation);
@@ -115,6 +119,49 @@ describe('strict shadow contracts', () => {
     assert.equal(parsed.effectType, null);
     assert.equal(parsed.tool, null);
     assert.equal(parsed.destination, null);
+  });
+
+  it('rejects known-sensitive patterns in every customer-controlled observation string', () => {
+    for (const field of [
+      'schema',
+      'campaignId',
+      'tenantId',
+      'producerId',
+      'batchId',
+      'observationId',
+      'occurredAt',
+      'workflow',
+      'effectType',
+      'tool',
+      'destination',
+      'productionDecision',
+      'productionReasonCode',
+    ]) {
+      expectCode(
+        () => parseShadowObservation(observation({ [field]: 'operator@example.com' })),
+        'SHADOW_SENSITIVE_DATA',
+      );
+    }
+    for (const destination of [
+      ['sk', 'proj', 'abcdefghijklmnopqrstuvwxyz123456'].join('-'),
+      ['github', 'pat', 'abcdefghijklmnopqrstuvwxyz123456'].join('_'),
+      'Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456',
+    ]) {
+      expectCode(
+        () => parseShadowObservation(observation({ destination })),
+        'SHADOW_SENSITIVE_DATA',
+      );
+    }
+    assert.doesNotThrow(() =>
+      parseShadowObservation(
+        observation({
+          producerId: 'pseudonym-7f84d9',
+          effectType: 'connector.kubernetes.deployment.rollback',
+          tool: 'kubernetes.deployment.rollback',
+          destination: 'k8s://cluster-1/namespace-1/deployments/api',
+        }),
+      ),
+    );
   });
 
   it('requires unique contiguous indexes and observation identities', () => {

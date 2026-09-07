@@ -24,9 +24,14 @@ function validEnvironment(): NodeJS.ProcessEnv {
       'postgres://shadow:secret@db.internal/shadow?sslmode=verify-full',
     COMMANDER_SHADOW_TENANT_ID: 'tenant-1',
     COMMANDER_SHADOW_RETENTION_DAYS: '14',
-    COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: JSON.stringify({
-      'manifest-key-1': manifestKey.publicKey.export({ format: 'pem', type: 'spki' }).toString(),
-    }),
+    COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: JSON.stringify([
+      {
+        algorithm: 'Ed25519',
+        keyId: 'manifest-key-1',
+        status: 'active',
+        publicKeyPem: manifestKey.publicKey.export({ format: 'pem', type: 'spki' }).toString(),
+      },
+    ]),
     COMMANDER_SHADOW_REPORT_SIGNING_KEY_ID: 'report-key-1',
     COMMANDER_SHADOW_REPORT_SIGNING_PRIVATE_KEY_PEM: reportKey.privateKey
       .export({ format: 'pem', type: 'pkcs8' })
@@ -58,8 +63,10 @@ describe('shadow startup configuration', () => {
     assert.equal(config.tenantId, 'tenant-1');
     assert.equal(config.retentionDays, 14);
     assert.equal(config.cleanupFreshnessMinutes, 90);
+    assert.equal(config.trustedManifestPublicKeys.get('manifest-key-1')?.keyId, 'manifest-key-1');
+    assert.equal(config.trustedManifestPublicKeys.get('manifest-key-1')?.status, 'active');
     assert.equal(
-      config.trustedManifestPublicKeys.get('manifest-key-1')?.asymmetricKeyType,
+      config.trustedManifestPublicKeys.get('manifest-key-1')?.publicKey.asymmetricKeyType,
       'ed25519',
     );
     assert.equal(config.reportSigningPrivateKey.asymmetricKeyType, 'ed25519');
@@ -92,7 +99,7 @@ describe('shadow startup configuration', () => {
       () =>
         loadShadowStartupConfig({
           ...validEnvironment(),
-          COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: '{}',
+          COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: '[]',
         }),
       /COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON_INVALID/,
     );
@@ -101,9 +108,14 @@ describe('shadow startup configuration', () => {
       () =>
         loadShadowStartupConfig({
           ...validEnvironment(),
-          COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: JSON.stringify({
-            bad: rsa.publicKey.export({ format: 'pem', type: 'spki' }).toString(),
-          }),
+          COMMANDER_SHADOW_TRUSTED_MANIFEST_KEYS_JSON: JSON.stringify([
+            {
+              algorithm: 'Ed25519',
+              keyId: 'bad',
+              status: 'active',
+              publicKeyPem: rsa.publicKey.export({ format: 'pem', type: 'spki' }).toString(),
+            },
+          ]),
         }),
       /COMMANDER_SHADOW_MANIFEST_KEY_INVALID/,
     );

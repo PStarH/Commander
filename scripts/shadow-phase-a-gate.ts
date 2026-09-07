@@ -139,6 +139,12 @@ function baseCommands(packageDirectory: string, packageFile: string): ShadowPhas
         'tests/architecture/shadow-replay-removal.test.ts',
       ],
     },
+    { id: 'contracts-build', file: 'pnpm', args: ['--filter', '@commander/contracts', 'build'] },
+    {
+      id: 'postgres-runtime-build',
+      file: 'pnpm',
+      args: ['--filter', '@commander/postgres-runtime', 'build'],
+    },
     {
       id: 'shadow-tests',
       file: 'pnpm',
@@ -148,12 +154,6 @@ function baseCommands(packageDirectory: string, packageFile: string): ShadowPhas
       id: 'shadow-typecheck',
       file: 'pnpm',
       args: ['--filter', '@commander/shadow-plane', 'typecheck'],
-    },
-    { id: 'contracts-build', file: 'pnpm', args: ['--filter', '@commander/contracts', 'build'] },
-    {
-      id: 'postgres-runtime-build',
-      file: 'pnpm',
-      args: ['--filter', '@commander/postgres-runtime', 'build'],
     },
     {
       id: 'shadow-clean',
