@@ -6,6 +6,9 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "bin": {
+    "commander-shadow": "./dist/cli.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -18,7 +21,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test src/contracts.test.ts src/evaluator.test.ts src/comparison.test.ts src/startupConfig.test.ts src/repository.test.ts",
+    "test": "node --import tsx --test src/contracts.test.ts src/evaluator.test.ts src/comparison.test.ts src/startupConfig.test.ts src/repository.test.ts src/atomicExport.test.ts src/report.test.ts src/cli.test.ts",
     "test:postgres-live": "node --import tsx --test --test-force-exit src/repository.live.test.ts"
   },
   "license": "MIT",
