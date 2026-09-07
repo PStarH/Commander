@@ -145,7 +145,7 @@ describe('shadow PostgreSQL repository contract', () => {
     );
   });
 
-  it('locks the tenant campaign before observation admission and withdrawal', async () => {
+  it('uses advisory serialization without requiring ingestion table UPDATE privileges', async () => {
     const campaignRow = {
       state: 'open',
       producer_id: 'producer-1',
@@ -169,9 +169,14 @@ describe('shadow PostgreSQL repository contract', () => {
     });
     const repo = repository(client);
     await repo.importObservation('tenant-1', observation());
-    const lock = client.calls.findIndex((call) => /campaigns[\s\S]*FOR UPDATE/i.test(call.sql));
+    const lock = client.calls.findIndex((call) => /pg_advisory_xact_lock/.test(call.sql));
     const insert = client.calls.findIndex((call) => /record_observation/i.test(call.sql));
     assert.ok(lock > 0 && insert > lock);
+    assert.equal(
+      client.calls.some((call) => /FOR UPDATE/i.test(call.sql)),
+      false,
+      'ingestion role has no direct UPDATE privilege; locking belongs in definer functions',
+    );
 
     client.calls.length = 0;
     await repo.withdrawCampaign('tenant-1', 'campaign-1');

@@ -281,8 +281,7 @@ export class ShadowRepository {
         const campaignResult = await client.query(
           `SELECT producer_id, policy_id, policy_digest, state
            FROM commander_shadow.campaigns
-          WHERE tenant_id=$1 AND campaign_id=$2
-          FOR UPDATE`,
+          WHERE tenant_id=$1 AND campaign_id=$2`,
           [tenantId, observation.campaignId],
         );
         const campaign = campaignResult.rows[0];
@@ -295,9 +294,8 @@ export class ShadowRepository {
           `SELECT e.digest, e.observation_id, e.status, b.closes_at,
                 b.closes_at <= clock_timestamp() AS is_due, b.state AS batch_state
            FROM commander_shadow.expected_records e
-           JOIN commander_shadow.batches b USING (tenant_id, campaign_id, batch_id)
-          WHERE e.tenant_id=$1 AND e.campaign_id=$2 AND e.batch_id=$3 AND e.record_index=$4
-          FOR UPDATE OF e, b`,
+          JOIN commander_shadow.batches b USING (tenant_id, campaign_id, batch_id)
+          WHERE e.tenant_id=$1 AND e.campaign_id=$2 AND e.batch_id=$3 AND e.record_index=$4`,
           [tenantId, observation.campaignId, observation.batchId, observation.index],
         );
         const expected = expectedResult.rows[0];
@@ -395,14 +393,14 @@ export class ShadowRepository {
       await lockCampaign(client, tenantId, campaignId);
       const campaign = await client.query(
         `SELECT state FROM commander_shadow.campaigns
-          WHERE tenant_id=$1 AND campaign_id=$2 FOR UPDATE`,
+          WHERE tenant_id=$1 AND campaign_id=$2`,
         [tenantId, campaignId],
       );
       if (!campaign.rows[0] || campaign.rows[0].state !== 'open')
         throw new Error('SHADOW_CAMPAIGN_NOT_OPEN');
       const batch = await client.query(
         `SELECT state, closes_at, closes_at <= clock_timestamp() AS is_due FROM commander_shadow.batches
-          WHERE tenant_id=$1 AND campaign_id=$2 AND batch_id=$3 FOR UPDATE`,
+          WHERE tenant_id=$1 AND campaign_id=$2 AND batch_id=$3`,
         [tenantId, campaignId, batchId],
       );
       if (!batch.rows[0]) throw new Error('SHADOW_BATCH_NOT_FOUND');

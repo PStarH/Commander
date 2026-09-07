@@ -3,10 +3,12 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 
 export interface ShadowPackageManifest {
+  name?: string;
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
+  resolvedDependencies?: Record<string, string>;
 }
 
 const SHADOW_PRODUCTION_ALLOWLIST = new Set([
@@ -37,23 +39,30 @@ function dependencies(manifest: ShadowPackageManifest): string[] {
     ...new Set([
       ...Object.keys(manifest.dependencies ?? {}),
       ...Object.keys(manifest.optionalDependencies ?? {}),
-      ...Object.keys(manifest.peerDependencies ?? {}).filter(
-        (name) => manifest.peerDependenciesMeta?.[name]?.optional !== true,
-      ),
+      ...Object.keys(manifest.peerDependencies ?? {}),
     ]),
   ].sort();
+}
+
+function isOptionalDependency(manifest: ShadowPackageManifest, name: string): boolean {
+  return (
+    manifest.optionalDependencies?.[name] !== undefined ||
+    manifest.peerDependenciesMeta?.[name]?.optional === true
+  );
 }
 
 export function readShadowDependencyClosure(
   rootManifestPath: string,
 ): Record<string, ShadowPackageManifest> {
   const manifests: Record<string, ShadowPackageManifest> = {};
-  const pending = [{ name: '@commander/shadow-plane', path: rootManifestPath }];
+  const rootPath = realpathSync(rootManifestPath);
+  const pending = [{ key: rootPath, path: rootPath }];
   while (pending.length > 0) {
     const current = pending.shift()!;
-    if (manifests[current.name]) continue;
+    if (manifests[current.key]) continue;
     const manifest = JSON.parse(readFileSync(current.path, 'utf8')) as ShadowPackageManifest;
-    manifests[current.name] = manifest;
+    const resolvedDependencies: Record<string, string> = {};
+    manifests[current.key] = { ...manifest, resolvedDependencies };
     const require = createRequire(current.path);
     for (const name of dependencies(manifest)) {
       // Resolve from the declaring package so pnpm's actual production graph is checked.
@@ -61,8 +70,13 @@ export function readShadowDependencyClosure(
         .paths(name)
         ?.map((directory) => join(directory, name, 'package.json'))
         .find(existsSync);
-      if (!path) throw new Error(`package manifest not found: ${name}`);
-      pending.push({ name, path: realpathSync(path) });
+      if (!path) {
+        if (isOptionalDependency(manifest, name)) continue;
+        throw new Error(`package manifest not found: ${name}`);
+      }
+      const resolvedPath = realpathSync(path);
+      resolvedDependencies[name] = resolvedPath;
+      pending.push({ key: resolvedPath, path: resolvedPath });
     }
   }
   return manifests;
@@ -74,25 +88,31 @@ export function validateShadowDependencyClosure(
   const root = '@commander/shadow-plane';
   const issues: string[] = [];
   const visited = new Set<string>();
-  const pending: Array<{ name: string; path: string[] }> = [{ name: root, path: [root] }];
+  const rootKey =
+    manifests[root] === undefined
+      ? (Object.entries(manifests).find(([, manifest]) => manifest.name === root)?.[0] ?? root)
+      : root;
+  const pending: Array<{ key: string; path: string[] }> = [{ key: rootKey, path: [root] }];
 
   while (pending.length > 0) {
     const current = pending.shift()!;
-    if (visited.has(current.name)) continue;
-    visited.add(current.name);
-    const manifest = manifests[current.name];
+    if (visited.has(current.key)) continue;
+    visited.add(current.key);
+    const manifest = manifests[current.key];
     if (!manifest) {
       issues.push(`missing package manifest: ${current.path.join(' -> ')}`);
       continue;
     }
     for (const dependency of dependencies(manifest)) {
       const path = [...current.path, dependency];
+      const dependencyKey = manifest.resolvedDependencies?.[dependency] ?? dependency;
+      if (!manifests[dependencyKey] && isOptionalDependency(manifest, dependency)) continue;
       const postgresDependency =
         current.path.includes('pg') && POSTGRES_PRODUCTION_ALLOWLIST.has(dependency);
       if (!SHADOW_PRODUCTION_ALLOWLIST.has(dependency) && !postgresDependency) {
         issues.push(`forbidden production dependency: ${path.join(' -> ')}`);
       }
-      pending.push({ name: dependency, path });
+      pending.push({ key: dependencyKey, path });
     }
   }
   return issues;
