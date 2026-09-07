@@ -25,6 +25,19 @@ function successfulRunner(calls: ShadowPhaseACommand[]) {
 }
 
 describe('Shadow Phase A release gate', () => {
+  it('exports only allowlisted failure diagnostics, never child messages or credentials', async () => {
+    const result = await runShadowPhaseAGate({
+      sourceRevision: revision,
+      run: async () => ({
+        exitCode: 1,
+        stdout:
+          "code: '42501'\nerror: 'permission denied for schema commander_shadow password=secret'",
+        stderr: 'postgres://secret@db',
+      }),
+    });
+    assert.deepEqual(result.diagnostics, ['SQLSTATE_42501', 'PERMISSION_DENIED']);
+    assert.doesNotMatch(JSON.stringify(result), /password|postgres:|secret|commander_shadow/);
+  });
   it('drains verbose successful child output without treating truncation as a failure', async () => {
     const result = await runBoundedShadowPhaseAChild({
       id: 'contracts',

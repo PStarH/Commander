@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,11 +46,32 @@ export interface ShadowPhaseAGateOptions {
 }
 
 export interface ShadowPhaseAGateResult {
+  diagnostics?: string[];
   exitCode: 0 | 1;
   code: string;
   sourceRevision: string;
   passed: number;
   total: number;
+}
+
+function failureDiagnostics(result: ShadowPhaseAChildResult): { diagnostics?: string[] } {
+  const output = `${result.stdout}\n${result.stderr}`;
+  const signatures: [string, RegExp][] = [
+    ['SQLSTATE_42501', /code: ['"]42501['"]/],
+    ['SQLSTATE_42883', /code: ['"]42883['"]/],
+    ['SQLSTATE_42601', /code: ['"]42601['"]/],
+    ['SQLSTATE_42P01', /code: ['"]42P01['"]/],
+    ['PERMISSION_DENIED', /permission denied/],
+    ['MODULE_NOT_FOUND', /ERR_MODULE_NOT_FOUND|Cannot find module/],
+    ['PNPM_OFFLINE_MISSING', /ERR_PNPM_NO_OFFLINE_TARBALL/],
+    ['ATTESTATION_INVALID', /SHADOW_INGESTION_ATTESTATION_INVALID/],
+    ['ASSERTION_FAILED', /ERR_ASSERTION/],
+    ['SYNTAX_ERROR', /syntax error/],
+  ];
+  const diagnostics = signatures
+    .filter(([, pattern]) => pattern.test(output))
+    .map(([code]) => code);
+  return diagnostics.length ? { diagnostics } : {};
 }
 
 function suiteFailureCode(id: ShadowPhaseACommand['id']): string {
@@ -213,6 +234,7 @@ export async function runShadowPhaseAGate(
       const result = await run(command);
       if (result.exitCode !== 0) {
         return {
+          ...failureDiagnostics(result),
           exitCode: 1,
           code: suiteFailureCode(command.id),
           sourceRevision,
@@ -249,6 +271,7 @@ export async function runShadowPhaseAGate(
     });
     if (databaseResult.exitCode !== 0) {
       return {
+        ...failureDiagnostics(databaseResult),
         exitCode: 1,
         code: suiteFailureCode('postgres-live'),
         sourceRevision,
@@ -285,6 +308,9 @@ async function main(): Promise<void> {
   process.stdout.write(
     `shadow_phase_a_gate status=${result.exitCode === 0 ? 'passed' : 'failed'} code=${result.code} source_revision=${result.sourceRevision} suites_passed=${result.passed} suites_total=${result.total}\n`,
   );
+  if (process.env.GITHUB_ACTIONS === 'true') {
+    await writeFile('shadow-phase-a-evidence.json', `${JSON.stringify(result)}\n`, { mode: 0o600 });
+  }
   process.exitCode = result.exitCode;
 }
 
