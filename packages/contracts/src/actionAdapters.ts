@@ -70,15 +70,28 @@ export const FIXED_ACTION_ADAPTER_MANIFESTS: readonly ActionAdapterDescriptorV1[
   KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
 ];
 
+export const ACTION_ADAPTER_DESTINATION_MATCHING = Object.freeze({
+  algorithm: 'exact-segments-v1',
+  separator: '/',
+  placeholderStart: '{',
+  placeholderEnd: '}',
+  placeholderPattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$',
+  literalComparison: 'case-sensitive-exact',
+  decoding: 'none',
+} as const);
+
+const placeholderPattern = new RegExp(ACTION_ADAPTER_DESTINATION_MATCHING.placeholderPattern);
+
 function destinationMatchesPattern(pattern: string, destination: string): boolean {
-  const patternParts = pattern.split('/');
-  const destinationParts = destination.split('/');
+  const matching = ACTION_ADAPTER_DESTINATION_MATCHING;
+  const patternParts = pattern.split(matching.separator);
+  const destinationParts = destination.split(matching.separator);
   if (patternParts.length !== destinationParts.length) return false;
   for (let i = 0; i < patternParts.length; i += 1) {
     const p = patternParts[i]!;
     const d = destinationParts[i]!;
-    if (p.startsWith('{') && p.endsWith('}')) {
-      if (!d || d.includes('/') || d.includes(':') || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(d)) {
+    if (p.startsWith(matching.placeholderStart) && p.endsWith(matching.placeholderEnd)) {
+      if (!placeholderPattern.test(d)) {
         return false;
       }
       continue;

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   ACTION_GATEWAY_POLICY_ID,
@@ -150,11 +151,67 @@ describe('action gateway policy contracts', () => {
         compensationPatchKeys: ['targetRevision', 'reason'],
       },
     ];
-    assert.deepEqual(snapshot, {
-      policyId: ACTION_GATEWAY_POLICY_ID,
-      version: 1,
-      descriptorDigest: 'd2d34ea6f3bf537b42343c328e8a26b1e522208875dd812b28b585d3ffe24761',
-      descriptors,
-    });
+    assert.deepEqual(snapshot.descriptors, descriptors);
+    assert.equal(snapshot.policyId, ACTION_GATEWAY_POLICY_ID);
+    assert.equal(snapshot.version, 1);
+    assert.notEqual(
+      snapshot.descriptorDigest,
+      createHash('sha256').update(JSON.stringify(descriptors)).digest('hex'),
+    );
+    assert.deepEqual(snapshot.authorizationSemantics.demoActions, [
+      { effectType: 'demo.ticket.create', tool: 'ticket.create' },
+      { effectType: 'compensate.demo.ticket.create', tool: 'ticket.compensate' },
+    ]);
+    assert.equal(
+      snapshot.authorizationSemantics.destinationMatching.placeholderPattern,
+      '^[A-Za-z0-9][A-Za-z0-9._-]*$',
+    );
+    assert.equal(snapshot.authorizationSemantics.unregisteredEffect, 'deny');
+    const { descriptorDigest, ...body } = snapshot;
+    assert.equal(descriptorDigest, createHash('sha256').update(JSON.stringify(body)).digest('hex'));
+    assert.equal(descriptorDigest, '43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c');
+  });
+
+  it('characterizes exact effect/tool and destination matching including demo compensation', () => {
+    const base = {
+      effectType: 'connector.kubernetes.deployment.rollback',
+      tool: 'kubernetes.deployment.rollback',
+    };
+    for (const destination of ['k8s://cluster/ns/deployments/api', 'k8s://C_1/n.s/deployments/a-b'])
+      assert.equal(
+        evaluateActionGatewayPolicy({ ...base, destination }).effect,
+        'require_approval',
+      );
+    for (const destination of [
+      'k8s://cluster//deployments/api',
+      'k8s://cluster/ns/deployments/api/extra',
+      'k8s://cluster/ns/deployments/api?x',
+      'K8s://cluster/ns/deployments/api',
+      'k8s://cluster/ns/deployments/%61pi',
+      'k8s://cluster/ns/deployments/-api',
+      'k8s://cluster/ns/deployments/äpi',
+    ])
+      assert.equal(evaluateActionGatewayPolicy({ ...base, destination }).effect, 'deny');
+    assert.equal(
+      evaluateActionGatewayPolicy({
+        ...base,
+        tool: 'Kubernetes.deployment.rollback',
+        destination: 'k8s://cluster/ns/deployments/api',
+      }).effect,
+      'deny',
+    );
+    for (const [destination, expected] of [
+      ['demo://tickets', 'allow'],
+      ['demo://tickets/approval', 'require_approval'],
+      ['demo://tickets/unknown', 'deny'],
+    ])
+      assert.equal(
+        evaluateActionGatewayPolicy({
+          effectType: 'compensate.demo.ticket.create',
+          tool: 'ticket.compensate',
+          destination: destination!,
+        }).effect,
+        expected,
+      );
   });
 });

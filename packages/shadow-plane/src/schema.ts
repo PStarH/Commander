@@ -44,6 +44,9 @@ CREATE TABLE commander_shadow.expected_records (
   observation_id text NOT NULL,
   digest text NOT NULL,
   status text NOT NULL CHECK (status IN ('pending','missing','compared','uncomparable','failed','rejected')),
+  attempt_digest text,
+  attempt_code text,
+  attempted_at timestamptz,
   PRIMARY KEY (tenant_id, campaign_id, batch_id, record_index),
   UNIQUE (tenant_id, campaign_id, observation_id),
   FOREIGN KEY (tenant_id, campaign_id, batch_id) REFERENCES commander_shadow.batches ON DELETE CASCADE
@@ -85,12 +88,13 @@ CREATE TABLE commander_shadow.cleanup_state (
 GRANT USAGE ON SCHEMA commander_shadow TO commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention;
 GRANT SELECT ON commander_shadow.schema_version TO commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention;
 GRANT SELECT, INSERT, UPDATE ON commander_shadow.campaigns, commander_shadow.batches,
-  commander_shadow.expected_records, commander_shadow.observations, commander_shadow.cleanup_state
+  commander_shadow.expected_records, commander_shadow.observations
   TO commander_shadow_ingestion;
+GRANT SELECT ON commander_shadow.cleanup_state TO commander_shadow_ingestion;
 GRANT SELECT ON ALL TABLES IN SCHEMA commander_shadow TO commander_shadow_reader;
 GRANT SELECT, UPDATE, DELETE ON commander_shadow.campaigns, commander_shadow.batches,
   commander_shadow.expected_records, commander_shadow.observations TO commander_shadow_retention;
 GRANT SELECT, INSERT ON commander_shadow.deletion_audit TO commander_shadow_retention;
-GRANT SELECT, UPDATE ON commander_shadow.cleanup_state TO commander_shadow_retention;
+GRANT SELECT, INSERT, UPDATE ON commander_shadow.cleanup_state TO commander_shadow_retention;
 REVOKE CREATE ON SCHEMA commander_shadow FROM commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention;
 `;
