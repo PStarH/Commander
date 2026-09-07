@@ -132,7 +132,10 @@ from the database administrator. Their format is
 For the `psql` setup commands, set `PGSSLROOTCERT` to the same verified CA file;
 `psql` performs hostname and CA validation but does not consume the Node SPKI setting.
 
-Every database-backed command loads the complete configuration below. The
+Every database-backed command loads the common tenant, TLS, trust, retention,
+and cleanup configuration below. Only `report export` requires the report
+private key and source revision. Withdrawal and retention do not require export
+credentials, so the deletion owner can act independently. The
 manifest trust value is an exact JSON array of Ed25519 trust records. Keep an
 identical independently distributed copy in `manifest-trust.json` for offline
 report verification.

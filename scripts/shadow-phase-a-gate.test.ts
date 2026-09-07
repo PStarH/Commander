@@ -113,10 +113,7 @@ describe('Shadow Phase A release gate', () => {
     assert.ok(importCommand);
     assert.match(importCommand.args[1]!, /package\.json/);
     assert.match(importCommand.args[1]!, /dependencies/);
-    assert.match(
-      importCommand.args[1]!,
-      /pnpm --offline --filter @commander\/shadow-plane deploy --prod/,
-    );
+    assert.match(importCommand.args[1]!, /pnpm --filter @commander\/shadow-plane deploy --prod/);
     assert.match(importCommand.args[1]!, /deploy --prod "\$2\/deployed"/);
     assert.match(
       importCommand.args[1]!,
@@ -124,7 +121,7 @@ describe('Shadow Phase A release gate', () => {
     );
     assert.doesNotMatch(
       importCommand.args[1]!,
-      /ln -s|json-canonicalize|postgres-runtime|@commander\/contracts/,
+      /--offline|ln -s|json-canonicalize|postgres-runtime|@commander\/contracts/,
     );
   });
 
