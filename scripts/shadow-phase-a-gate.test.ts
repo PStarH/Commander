@@ -4,6 +4,7 @@ import {
   SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE,
   runBoundedShadowPhaseAChild,
   runShadowPhaseAGate,
+  sourceRevisionFromGithubSha,
   type ShadowPhaseACommand,
 } from './shadow-phase-a-gate.js';
 
@@ -49,8 +50,8 @@ describe('Shadow Phase A release gate', () => {
       exitCode: 1,
       code: SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE,
       sourceRevision: revision,
-      passed: 10,
-      total: 11,
+      passed: 12,
+      total: 13,
     });
     assert.deepEqual(
       calls.map((command) => command.id),
@@ -59,6 +60,8 @@ describe('Shadow Phase A release gate', () => {
         'architecture',
         'shadow-tests',
         'shadow-typecheck',
+        'contracts-build',
+        'postgres-runtime-build',
         'shadow-clean',
         'shadow-build',
         'shadow-package',
@@ -84,11 +87,37 @@ describe('Shadow Phase A release gate', () => {
 
     const importCommand = calls.find((command) => command.id === 'shadow-package-import');
     assert.ok(importCommand);
-    assert.match(importCommand.args[1]!, /ln -s/);
-    assert.match(importCommand.args[1]!, /json-canonicalize/);
-    assert.match(importCommand.args[1]!, /@commander\/contracts/);
-    assert.match(importCommand.args[1]!, /@commander\/postgres-runtime/);
-    assert.match(importCommand.args[1]!, /\bpg\b/);
+    assert.match(importCommand.args[1]!, /package\.json/);
+    assert.match(importCommand.args[1]!, /dependencies/);
+    assert.match(
+      importCommand.args[1]!,
+      /pnpm --offline --filter @commander\/shadow-plane deploy --prod/,
+    );
+    assert.match(importCommand.args[1]!, /deploy --prod "\$2\/package" && tar -xzf "\$1" -C "\$2"/);
+    assert.doesNotMatch(
+      importCommand.args[1]!,
+      /ln -s|json-canonicalize|postgres-runtime|@commander\/contracts/,
+    );
+  });
+
+  it('builds published workspace dependencies inside the root gate before Shadow builds', async () => {
+    const calls: ShadowPhaseACommand[] = [];
+    await runShadowPhaseAGate({
+      ci: false,
+      databaseUrl: undefined,
+      sourceRevision: revision,
+      run: successfulRunner(calls),
+    });
+
+    const contractsBuild = calls.findIndex((command) => command.id === 'contracts-build');
+    const postgresRuntimeBuild = calls.findIndex(
+      (command) => command.id === 'postgres-runtime-build',
+    );
+    const shadowBuild = calls.findIndex((command) => command.id === 'shadow-build');
+    assert.ok(contractsBuild >= 0);
+    assert.ok(postgresRuntimeBuild >= 0);
+    assert.ok(contractsBuild < shadowBuild);
+    assert.ok(postgresRuntimeBuild < shadowBuild);
   });
 
   it('removes prior package output before producing the tarball build', async () => {
@@ -121,8 +150,8 @@ describe('Shadow Phase A release gate', () => {
       exitCode: 0,
       code: 'SHADOW_PHASE_A_GATE_PASSED',
       sourceRevision: revision,
-      passed: 11,
-      total: 11,
+      passed: 13,
+      total: 13,
     });
     assert.equal(calls[calls.length - 1]?.id, 'postgres-live');
   });
@@ -140,13 +169,41 @@ describe('Shadow Phase A release gate', () => {
       exitCode: 1,
       code: SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE,
       sourceRevision: revision,
-      passed: 10,
-      total: 11,
+      passed: 12,
+      total: 13,
     });
     assert.equal(
       calls.some((command) => command.id === 'postgres-live'),
       false,
     );
+  });
+
+  it('never runs the PostgreSQL authority suite outside CI, even when configured', async () => {
+    const calls: ShadowPhaseACommand[] = [];
+    const result = await runShadowPhaseAGate({
+      ci: false,
+      databaseUrl: 'postgres://commander:commander@localhost:5432/commander',
+      sourceRevision: revision,
+      run: successfulRunner(calls),
+    });
+
+    assert.deepEqual(result, {
+      exitCode: 1,
+      code: SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE,
+      sourceRevision: revision,
+      passed: 12,
+      total: 13,
+    });
+    assert.equal(
+      calls.some((command) => command.id === 'postgres-live'),
+      false,
+    );
+  });
+
+  it('uses unavailable as the source revision for malformed GitHub SHAs', () => {
+    assert.equal(sourceRevisionFromGithubSha('not-a-commit'), 'unavailable');
+    assert.equal(sourceRevisionFromGithubSha(`${revision}\nunsafe`), 'unavailable');
+    assert.equal(sourceRevisionFromGithubSha(revision), revision);
   });
 
   it('fails closed with a stable suite code and does not expose child output', async () => {
@@ -168,7 +225,7 @@ describe('Shadow Phase A release gate', () => {
       code: 'SHADOW_PHASE_A_ARCHITECTURE_FAILED',
       sourceRevision: revision,
       passed: 1,
-      total: 11,
+      total: 13,
     });
     assert.equal(calls.length, 2);
     assert.doesNotMatch(JSON.stringify(result), /password|postgres:|secret/);
