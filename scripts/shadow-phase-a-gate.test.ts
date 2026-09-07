@@ -70,9 +70,9 @@ describe('Shadow Phase A release gate', () => {
       calls.map((command) => command.id),
       [
         'contracts',
-        'architecture',
         'contracts-build',
         'postgres-runtime-build',
+        'architecture',
         'shadow-tests',
         'shadow-typecheck',
         'shadow-clean',
@@ -131,10 +131,13 @@ describe('Shadow Phase A release gate', () => {
       (command) => command.id === 'postgres-runtime-build',
     );
     const shadowBuild = calls.findIndex((command) => command.id === 'shadow-build');
+    const architecture = calls.findIndex((command) => command.id === 'architecture');
     const shadowTests = calls.findIndex((command) => command.id === 'shadow-tests');
     const shadowTypecheck = calls.findIndex((command) => command.id === 'shadow-typecheck');
     assert.ok(contractsBuild >= 0);
     assert.ok(postgresRuntimeBuild >= 0);
+    assert.ok(contractsBuild < architecture);
+    assert.ok(postgresRuntimeBuild < architecture);
     assert.ok(contractsBuild < shadowBuild);
     assert.ok(postgresRuntimeBuild < shadowBuild);
     assert.ok(contractsBuild < shadowTests);
@@ -271,10 +274,10 @@ describe('Shadow Phase A release gate', () => {
       exitCode: 1,
       code: 'SHADOW_PHASE_A_ARCHITECTURE_FAILED',
       sourceRevision: revision,
-      passed: 1,
+      passed: 3,
       total: 13,
     });
-    assert.equal(calls.length, 2);
+    assert.equal(calls.length, 4);
     assert.doesNotMatch(JSON.stringify(result), /password|postgres:|secret/);
   });
 });
