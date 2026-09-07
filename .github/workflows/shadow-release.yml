@@ -40,3 +40,11 @@ jobs:
         run: pnpm exec node --import tsx --test scripts/shadow-phase-a-gate.test.ts
       - name: Shadow Phase A release gate
         run: pnpm shadow:phase-a:gate
+      - name: Sanitized Shadow evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: shadow-phase-a-evidence
+          path: shadow-phase-a-evidence.json
+          if-no-files-found: error
+          retention-days: 7
