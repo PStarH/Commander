@@ -28,27 +28,31 @@ describe('resolveKernelBackend', () => {
 describe('createKernelRepository boot policy', () => {
   it('refuses sqlite in production', async () => {
     await assert.rejects(
-      () => createKernelRepository({
-        env: {
-          NODE_ENV: 'production',
-          COMMANDER_KERNEL_BACKEND: 'sqlite',
-          COMMANDER_KERNEL_SQLITE_PATH: '/tmp/kernel-test.sqlite',
-        },
-        sqlitePath: '/tmp/kernel-test.sqlite',
-      }),
-      (err: unknown) => err instanceof KernelBackendRefusedError && (err as KernelBackendRefusedError).code === 'KERNEL_BACKEND_REFUSED',
+      () =>
+        createKernelRepository({
+          env: {
+            NODE_ENV: 'production',
+            COMMANDER_KERNEL_BACKEND: 'sqlite',
+            COMMANDER_KERNEL_SQLITE_PATH: '/tmp/kernel-test.sqlite',
+          },
+          sqlitePath: '/tmp/kernel-test.sqlite',
+        }),
+      (err: unknown) =>
+        err instanceof KernelBackendRefusedError &&
+        (err as KernelBackendRefusedError).code === 'KERNEL_BACKEND_REFUSED',
     );
   });
 
   it('refuses sqlite for enterprise profile', async () => {
     await assert.rejects(
-      () => createKernelRepository({
-        env: {
-          COMMANDER_PROFILE: 'enterprise',
-          COMMANDER_KERNEL_BACKEND: 'sqlite',
-          COMMANDER_KERNEL_SQLITE_PATH: '/tmp/kernel-test.sqlite',
-        },
-      }),
+      () =>
+        createKernelRepository({
+          env: {
+            COMMANDER_PROFILE: 'enterprise',
+            COMMANDER_KERNEL_BACKEND: 'sqlite',
+            COMMANDER_KERNEL_SQLITE_PATH: '/tmp/kernel-test.sqlite',
+          },
+        }),
       (err: unknown) => err instanceof KernelBackendRefusedError,
     );
   });

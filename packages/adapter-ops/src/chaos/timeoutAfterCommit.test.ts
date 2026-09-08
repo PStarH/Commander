@@ -36,11 +36,15 @@ function adapterExecutor(adapter: ActionAdapter): EffectExecutor {
           idempotencyKey: input.request.idempotencyKey,
           destination,
           forwardResponse:
-            ((input.request as Record<string, unknown>).forwardResponse as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).forwardResponse as Record<
+              string,
+              unknown
+            >) ?? {},
           compensationPatch:
-            ((input.request as Record<string, unknown>).compensationPatch as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).compensationPatch as Record<
+              string,
+              unknown
+            >) ?? {},
           signal: input.signal,
         });
       }
@@ -221,7 +225,11 @@ describe('L4-02 operations chaos — timeout after commit', () => {
             }),
           },
           kernel,
-          { execute: async () => { throw new Error('no write'); } },
+          {
+            execute: async () => {
+              throw new Error('no write');
+            },
+          },
           { append: async () => {} },
           { requireRequestBinding: false },
         ),

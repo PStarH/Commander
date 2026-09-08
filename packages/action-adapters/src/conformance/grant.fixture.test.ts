@@ -5,10 +5,7 @@ import {
   CapabilityTokenVerifier,
   canonicalRequestHash,
 } from '@commander/effect-broker';
-import {
-  buildConformanceIssueInput,
-  conformanceGrantIssueFields,
-} from './grantFixture.js';
+import { buildConformanceIssueInput, conformanceGrantIssueFields } from './grantFixture.js';
 
 describe('conformance grant fixture', () => {
   it('buildConformanceIssueInput() default shape includes required grant fields', () => {

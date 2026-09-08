@@ -125,7 +125,14 @@ export interface WorkerV2 {
 
 // ---------------------------------------------------------------------------
 
-export type EffectStatus = 'ADMITTED' | 'EXECUTING' | 'COMPLETION_UNKNOWN' | 'COMPLETED' | 'FAILED' | 'COMPENSATED' | 'REJECTED';
+export type EffectStatus =
+  | 'ADMITTED'
+  | 'EXECUTING'
+  | 'COMPLETION_UNKNOWN'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'COMPENSATED'
+  | 'REJECTED';
 
 /**
  * A single intended external side effect with idempotency key, policy decision,
@@ -147,7 +154,11 @@ export interface EffectV2 {
   /** The arguments that will be passed to the effect executor. */
   arguments: Record<string, unknown>;
   /** The result of the effect execution, if completed. */
-  result?: { ok: boolean; data?: Record<string, unknown>; error?: { code: string; message: string } };
+  result?: {
+    ok: boolean;
+    data?: Record<string, unknown>;
+    error?: { code: string; message: string };
+  };
   /** Fencing epoch at the time of admission — stale epochs are rejected. */
   fencingEpoch: number;
   createdAt: string;

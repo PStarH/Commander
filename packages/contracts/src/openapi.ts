@@ -31,11 +31,27 @@ const COMPONENTS = {
     // --- Core resources ---
     Run: {
       type: 'object',
-      required: ['id', 'tenantId', 'state', 'version', 'intentHash', 'workGraphHash', 'workGraphVersion', 'policySnapshotId', 'createdAt', 'updatedAt', 'metadata'],
+      required: [
+        'id',
+        'tenantId',
+        'state',
+        'version',
+        'intentHash',
+        'workGraphHash',
+        'workGraphVersion',
+        'policySnapshotId',
+        'createdAt',
+        'updatedAt',
+        'metadata',
+      ],
       properties: {
         id: { type: 'string', description: 'Opaque run identifier.' },
         tenantId: { type: 'string' },
-        state: { type: 'string', enum: [...RUN_STATES], description: 'Canonical run state (uppercase).' },
+        state: {
+          type: 'string',
+          enum: [...RUN_STATES],
+          description: 'Canonical run state (uppercase).',
+        },
         version: { type: 'integer', minimum: 0 },
         intentHash: { type: 'string', pattern: '^[a-f0-9]{64}$' },
         workGraphHash: { type: 'string', pattern: '^[a-f0-9]{64}$' },
@@ -50,7 +66,22 @@ const COMPONENTS = {
     },
     Step: {
       type: 'object',
-      required: ['id', 'runId', 'tenantId', 'kind', 'state', 'version', 'attempt', 'maxAttempts', 'priority', 'dependencies', 'input', 'scheduledAt', 'createdAt', 'updatedAt'],
+      required: [
+        'id',
+        'runId',
+        'tenantId',
+        'kind',
+        'state',
+        'version',
+        'attempt',
+        'maxAttempts',
+        'priority',
+        'dependencies',
+        'input',
+        'scheduledAt',
+        'createdAt',
+        'updatedAt',
+      ],
       properties: {
         id: { type: 'string' },
         runId: { type: 'string' },
@@ -80,7 +111,17 @@ const COMPONENTS = {
     },
     WorkGraph: {
       type: 'object',
-      required: ['id', 'tenantId', 'profile', 'goal', 'hash', 'schemaVersion', 'nodeCount', 'nodes', 'createdAt'],
+      required: [
+        'id',
+        'tenantId',
+        'profile',
+        'goal',
+        'hash',
+        'schemaVersion',
+        'nodeCount',
+        'nodes',
+        'createdAt',
+      ],
       properties: {
         id: { type: 'string' },
         tenantId: { type: 'string' },
@@ -152,14 +193,37 @@ const COMPONENTS = {
     },
     Effect: {
       type: 'object',
-      required: ['id', 'runId', 'stepId', 'tenantId', 'kind', 'status', 'idempotencyKey', 'policyDecisionId', 'arguments', 'fencingEpoch', 'createdAt'],
+      required: [
+        'id',
+        'runId',
+        'stepId',
+        'tenantId',
+        'kind',
+        'status',
+        'idempotencyKey',
+        'policyDecisionId',
+        'arguments',
+        'fencingEpoch',
+        'createdAt',
+      ],
       properties: {
         id: { type: 'string' },
         runId: { type: 'string' },
         stepId: { type: 'string' },
         tenantId: { type: 'string' },
         kind: { type: 'string' },
-        status: { type: 'string', enum: ['ADMITTED', 'EXECUTING', 'COMPLETION_UNKNOWN', 'COMPLETED', 'FAILED', 'COMPENSATED', 'REJECTED'] },
+        status: {
+          type: 'string',
+          enum: [
+            'ADMITTED',
+            'EXECUTING',
+            'COMPLETION_UNKNOWN',
+            'COMPLETED',
+            'FAILED',
+            'COMPENSATED',
+            'REJECTED',
+          ],
+        },
         idempotencyKey: { type: 'string' },
         policyDecisionId: { type: 'string' },
         arguments: { type: 'object', additionalProperties: true },
@@ -181,7 +245,21 @@ const COMPONENTS = {
     },
     AgentDefinition: {
       type: 'object',
-      required: ['id', 'tenantId', 'name', 'version', 'model', 'systemPrompt', 'toolAllowlist', 'requiredCapabilities', 'maxConcurrency', 'timeoutMs', 'metadata', 'createdAt', 'updatedAt'],
+      required: [
+        'id',
+        'tenantId',
+        'name',
+        'version',
+        'model',
+        'systemPrompt',
+        'toolAllowlist',
+        'requiredCapabilities',
+        'maxConcurrency',
+        'timeoutMs',
+        'metadata',
+        'createdAt',
+        'updatedAt',
+      ],
       properties: {
         id: { type: 'string' },
         tenantId: { type: 'string' },
@@ -200,7 +278,21 @@ const COMPONENTS = {
     },
     ToolDefinition: {
       type: 'object',
-      required: ['id', 'tenantId', 'name', 'version', 'description', 'riskLevel', 'inputSchema', 'requiredCapabilities', 'hasExternalEffects', 'timeoutMs', 'metadata', 'createdAt', 'updatedAt'],
+      required: [
+        'id',
+        'tenantId',
+        'name',
+        'version',
+        'description',
+        'riskLevel',
+        'inputSchema',
+        'requiredCapabilities',
+        'hasExternalEffects',
+        'timeoutMs',
+        'metadata',
+        'createdAt',
+        'updatedAt',
+      ],
       properties: {
         id: { type: 'string' },
         tenantId: { type: 'string' },
@@ -219,7 +311,21 @@ const COMPONENTS = {
     },
     ConnectorDefinition: {
       type: 'object',
-      required: ['id', 'tenantId', 'name', 'version', 'endpoint', 'authMode', 'requiredScopes', 'dataClassification', 'egressAllowlist', 'enabled', 'metadata', 'createdAt', 'updatedAt'],
+      required: [
+        'id',
+        'tenantId',
+        'name',
+        'version',
+        'endpoint',
+        'authMode',
+        'requiredScopes',
+        'dataClassification',
+        'egressAllowlist',
+        'enabled',
+        'metadata',
+        'createdAt',
+        'updatedAt',
+      ],
       properties: {
         id: { type: 'string' },
         tenantId: { type: 'string' },
@@ -228,7 +334,10 @@ const COMPONENTS = {
         endpoint: { type: 'string' },
         authMode: { type: 'string', enum: ['api_key', 'oauth2', 'hmac', 'mtls', 'none'] },
         requiredScopes: { type: 'array', items: { type: 'string' } },
-        dataClassification: { type: 'string', enum: ['public', 'internal', 'pii', 'phi', 'confidential'] },
+        dataClassification: {
+          type: 'string',
+          enum: ['public', 'internal', 'pii', 'phi', 'confidential'],
+        },
         egressAllowlist: { type: 'array', items: { type: 'string' } },
         enabled: { type: 'boolean' },
         metadata: { type: 'object', additionalProperties: true },
@@ -238,10 +347,25 @@ const COMPONENTS = {
     },
     KernelEvent: {
       type: 'object',
-      required: ['eventId', 'aggregateType', 'aggregateId', 'sequence', 'type', 'tenantId', 'runId', 'actor', 'schemaVersion', 'payload', 'occurredAt'],
+      required: [
+        'eventId',
+        'aggregateType',
+        'aggregateId',
+        'sequence',
+        'type',
+        'tenantId',
+        'runId',
+        'actor',
+        'schemaVersion',
+        'payload',
+        'occurredAt',
+      ],
       properties: {
         eventId: { type: 'string', format: 'uuid' },
-        aggregateType: { type: 'string', enum: ['run', 'step', 'effect', 'interaction', 'worker', 'tenant'] },
+        aggregateType: {
+          type: 'string',
+          enum: ['run', 'step', 'effect', 'interaction', 'worker', 'tenant'],
+        },
         aggregateId: { type: 'string' },
         sequence: { type: 'integer', minimum: 0 },
         type: { type: 'string' },
@@ -303,7 +427,12 @@ const COMPONENTS = {
   parameters: {
     RunId: { name: 'runId', in: 'path', required: true, schema: { type: 'string' } },
     StepId: { name: 'stepId', in: 'path', required: true, schema: { type: 'string' } },
-    InteractionId: { name: 'interactionId', in: 'path', required: true, schema: { type: 'string' } },
+    InteractionId: {
+      name: 'interactionId',
+      in: 'path',
+      required: true,
+      schema: { type: 'string' },
+    },
     ArtifactId: { name: 'artifactId', in: 'path', required: true, schema: { type: 'string' } },
     EffectId: { name: 'effectId', in: 'path', required: true, schema: { type: 'string' } },
     AgentId: { name: 'agentId', in: 'path', required: true, schema: { type: 'string' } },
@@ -368,13 +497,12 @@ export const OPENAPI_V1_SPEC = {
   info: {
     title: 'Commander V1 Resource API',
     version: '1.0.0',
-    description: 'Versioned control-plane API for Commander Architecture V2. All write operations are asynchronous (202 + Location). Tenant identity is derived from authenticated API keys, never from raw headers.',
+    description:
+      'Versioned control-plane API for Commander Architecture V2. All write operations are asynchronous (202 + Location). Tenant identity is derived from authenticated API keys, never from raw headers.',
     contact: { name: 'Commander', url: 'https://commander.dev' },
     license: { name: 'MIT' },
   },
-  servers: [
-    { url: '/v1', description: 'Default API root.' },
-  ],
+  servers: [{ url: '/v1', description: 'Default API root.' }],
   tags: TAGS,
   security: SECURITY,
   paths: {
@@ -388,10 +516,25 @@ export const OPENAPI_V1_SPEC = {
         parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateRunRequest' } } },
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/CreateRunRequest' } },
+          },
         },
         responses: {
-          202: { $ref: '#/components/responses/Accepted', content: { 'application/json': { schema: { type: 'object', properties: { run: { $ref: '#/components/schemas/Run' }, idempotentReplay: { type: 'boolean' } } } } } },
+          202: {
+            $ref: '#/components/responses/Accepted',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    run: { $ref: '#/components/schemas/Run' },
+                    idempotentReplay: { type: 'boolean' },
+                  },
+                },
+              },
+            },
+          },
           400: { $ref: '#/components/responses/BadRequest' },
           409: { $ref: '#/components/responses/Conflict' },
           503: { $ref: '#/components/responses/ServiceUnavailable' },
@@ -405,7 +548,16 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/RunId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { run: { $ref: '#/components/schemas/Run' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { run: { $ref: '#/components/schemas/Run' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -418,7 +570,18 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/RunId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { events: { type: 'array', items: { $ref: '#/components/schemas/KernelEvent' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    events: { type: 'array', items: { $ref: '#/components/schemas/KernelEvent' } },
+                  },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -430,7 +593,18 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/RunId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { steps: { type: 'array', items: { $ref: '#/components/schemas/Step' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    steps: { type: 'array', items: { $ref: '#/components/schemas/Step' } },
+                  },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -440,9 +614,21 @@ export const OPENAPI_V1_SPEC = {
         tags: ['Steps'],
         summary: 'Get step status',
         security: SECURITY,
-        parameters: [{ $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/StepId' }],
+        parameters: [
+          { $ref: '#/components/parameters/RunId' },
+          { $ref: '#/components/parameters/StepId' },
+        ],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { step: { $ref: '#/components/schemas/Step' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { step: { $ref: '#/components/schemas/Step' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -454,7 +640,16 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/RunId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { workGraph: { $ref: '#/components/schemas/WorkGraph' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { workGraph: { $ref: '#/components/schemas/WorkGraph' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -467,7 +662,21 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/RunId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { interactions: { type: 'array', items: { $ref: '#/components/schemas/Interaction' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    interactions: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/Interaction' },
+                    },
+                  },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -477,9 +686,21 @@ export const OPENAPI_V1_SPEC = {
         tags: ['Interactions'],
         summary: 'Get interaction',
         security: SECURITY,
-        parameters: [{ $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/InteractionId' }],
+        parameters: [
+          { $ref: '#/components/parameters/RunId' },
+          { $ref: '#/components/parameters/InteractionId' },
+        ],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { interaction: { $ref: '#/components/schemas/Interaction' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { interaction: { $ref: '#/components/schemas/Interaction' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -487,10 +708,18 @@ export const OPENAPI_V1_SPEC = {
         tags: ['Interactions'],
         summary: 'Submit interaction response',
         security: SECURITY,
-        parameters: [{ $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/InteractionId' }, { $ref: '#/components/parameters/IdempotencyKey' }],
+        parameters: [
+          { $ref: '#/components/parameters/RunId' },
+          { $ref: '#/components/parameters/InteractionId' },
+          { $ref: '#/components/parameters/IdempotencyKey' },
+        ],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateInteractionResponseRequest' } } },
+          content: {
+            'application/json': {
+              schema: { $ref: '#/components/schemas/CreateInteractionResponseRequest' },
+            },
+          },
         },
         responses: {
           202: { $ref: '#/components/responses/Accepted' },
@@ -507,7 +736,18 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/RunId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { artifacts: { type: 'array', items: { $ref: '#/components/schemas/Artifact' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    artifacts: { type: 'array', items: { $ref: '#/components/schemas/Artifact' } },
+                  },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -517,9 +757,21 @@ export const OPENAPI_V1_SPEC = {
         tags: ['Artifacts'],
         summary: 'Get artifact',
         security: SECURITY,
-        parameters: [{ $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/ArtifactId' }],
+        parameters: [
+          { $ref: '#/components/parameters/RunId' },
+          { $ref: '#/components/parameters/ArtifactId' },
+        ],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { artifact: { $ref: '#/components/schemas/Artifact' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { artifact: { $ref: '#/components/schemas/Artifact' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -532,7 +784,18 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/RunId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { effects: { type: 'array', items: { $ref: '#/components/schemas/Effect' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    effects: { type: 'array', items: { $ref: '#/components/schemas/Effect' } },
+                  },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -542,9 +805,21 @@ export const OPENAPI_V1_SPEC = {
         tags: ['Effects'],
         summary: 'Get effect',
         security: SECURITY,
-        parameters: [{ $ref: '#/components/parameters/RunId' }, { $ref: '#/components/parameters/EffectId' }],
+        parameters: [
+          { $ref: '#/components/parameters/RunId' },
+          { $ref: '#/components/parameters/EffectId' },
+        ],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { effect: { $ref: '#/components/schemas/Effect' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { effect: { $ref: '#/components/schemas/Effect' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -556,7 +831,21 @@ export const OPENAPI_V1_SPEC = {
         summary: 'List policy bundles',
         security: SECURITY,
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { bundles: { type: 'array', items: { $ref: '#/components/schemas/PolicyBundle' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    bundles: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/PolicyBundle' },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
     },
@@ -565,9 +854,20 @@ export const OPENAPI_V1_SPEC = {
         tags: ['Policy'],
         summary: 'Get policy bundle by snapshot ID',
         security: SECURITY,
-        parameters: [{ name: 'snapshotId', in: 'path', required: true, schema: { type: 'string' } }],
+        parameters: [
+          { name: 'snapshotId', in: 'path', required: true, schema: { type: 'string' } },
+        ],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { bundle: { $ref: '#/components/schemas/PolicyBundle' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { bundle: { $ref: '#/components/schemas/PolicyBundle' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -579,7 +879,21 @@ export const OPENAPI_V1_SPEC = {
         summary: 'List agent definitions',
         security: SECURITY,
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { agents: { type: 'array', items: { $ref: '#/components/schemas/AgentDefinition' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    agents: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/AgentDefinition' },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
       post: {
@@ -587,7 +901,12 @@ export const OPENAPI_V1_SPEC = {
         summary: 'Create agent definition',
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
-        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/AgentDefinition' } } } },
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/AgentDefinition' } },
+          },
+        },
         responses: {
           202: { $ref: '#/components/responses/Accepted' },
           400: { $ref: '#/components/responses/BadRequest' },
@@ -602,7 +921,16 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/AgentId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { agent: { $ref: '#/components/schemas/AgentDefinition' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { agent: { $ref: '#/components/schemas/AgentDefinition' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -614,7 +942,21 @@ export const OPENAPI_V1_SPEC = {
         summary: 'List tool definitions',
         security: SECURITY,
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { tools: { type: 'array', items: { $ref: '#/components/schemas/ToolDefinition' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    tools: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/ToolDefinition' },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
       post: {
@@ -622,7 +964,12 @@ export const OPENAPI_V1_SPEC = {
         summary: 'Create tool definition',
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
-        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ToolDefinition' } } } },
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/ToolDefinition' } },
+          },
+        },
         responses: {
           202: { $ref: '#/components/responses/Accepted' },
           400: { $ref: '#/components/responses/BadRequest' },
@@ -637,7 +984,16 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/ToolId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { tool: { $ref: '#/components/schemas/ToolDefinition' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { tool: { $ref: '#/components/schemas/ToolDefinition' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },
@@ -649,7 +1005,21 @@ export const OPENAPI_V1_SPEC = {
         summary: 'List connector definitions',
         security: SECURITY,
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { connectors: { type: 'array', items: { $ref: '#/components/schemas/ConnectorDefinition' } } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    connectors: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/ConnectorDefinition' },
+                    },
+                  },
+                },
+              },
+            },
+          },
         },
       },
       post: {
@@ -657,7 +1027,12 @@ export const OPENAPI_V1_SPEC = {
         summary: 'Create connector definition',
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/IdempotencyKey' }],
-        requestBody: { required: true, content: { 'application/json': { schema: { $ref: '#/components/schemas/ConnectorDefinition' } } } },
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': { schema: { $ref: '#/components/schemas/ConnectorDefinition' } },
+          },
+        },
         responses: {
           202: { $ref: '#/components/responses/Accepted' },
           400: { $ref: '#/components/responses/BadRequest' },
@@ -672,7 +1047,16 @@ export const OPENAPI_V1_SPEC = {
         security: SECURITY,
         parameters: [{ $ref: '#/components/parameters/ConnectorId' }],
         responses: {
-          200: { content: { 'application/json': { schema: { type: 'object', properties: { connector: { $ref: '#/components/schemas/ConnectorDefinition' } } } } } },
+          200: {
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: { connector: { $ref: '#/components/schemas/ConnectorDefinition' } },
+                },
+              },
+            },
+          },
           404: { $ref: '#/components/responses/NotFound' },
         },
       },

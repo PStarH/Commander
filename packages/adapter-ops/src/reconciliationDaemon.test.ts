@@ -67,13 +67,26 @@ describe('ReconciliationDaemon', () => {
       evidenceSigner: signer,
       brokerFactory: () =>
         new EffectBroker(
-          { verify: async () => ({ jti: 'x', tenantId: 'tenant-a', runId: 'r', stepId: 's', effectTypes: [], expiresAt: '' }) },
+          {
+            verify: async () => ({
+              jti: 'x',
+              tenantId: 'tenant-a',
+              runId: 'r',
+              stepId: 's',
+              effectTypes: [],
+              expiresAt: '',
+            }),
+          },
           { evaluate: async () => ({ effect: 'allow', decisionId: 'd', policySnapshotId: 'p' }) },
           {
             getEffect: (id, tenantId) => kernel.getEffect(id, tenantId),
             reconcileEffect: (input) => kernel.reconcileEffect(input),
           },
-          { execute: async () => { throw new Error('no write'); } },
+          {
+            execute: async () => {
+              throw new Error('no write');
+            },
+          },
           { append: async () => {} },
           { requireRequestBinding: false },
         ),
@@ -117,13 +130,26 @@ describe('ReconciliationDaemon', () => {
       evidenceSigner: evidenceSigner(),
       brokerFactory: () =>
         new EffectBroker(
-          { verify: async () => ({ jti: 'x', tenantId: 'tenant-a', runId: 'r', stepId: 's', effectTypes: [], expiresAt: '' }) },
+          {
+            verify: async () => ({
+              jti: 'x',
+              tenantId: 'tenant-a',
+              runId: 'r',
+              stepId: 's',
+              effectTypes: [],
+              expiresAt: '',
+            }),
+          },
           { evaluate: async () => ({ effect: 'allow', decisionId: 'd', policySnapshotId: 'p' }) },
           {
             getEffect: (id, tenantId) => kernel.getEffect(id, tenantId),
             reconcileEffect: (input) => kernel.reconcileEffect(input),
           },
-          { execute: async () => { throw new Error('no write'); } },
+          {
+            execute: async () => {
+              throw new Error('no write');
+            },
+          },
           { append: async () => {} },
           { requireRequestBinding: false },
         ),

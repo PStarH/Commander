@@ -140,9 +140,7 @@ describe('worker-plane authority startup gates', () => {
       ),
     );
     assert.doesNotThrow(() =>
-      assertNonOwnerDatabaseUrl(
-        'postgres://commander_app:commander_app@postgres:5432/commander',
-      ),
+      assertNonOwnerDatabaseUrl('postgres://commander_app:commander_app@postgres:5432/commander'),
     );
   });
 

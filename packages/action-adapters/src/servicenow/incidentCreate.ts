@@ -34,7 +34,8 @@ export function createServiceNowIncidentCreateAdapter(
   options: ServiceNowIncidentCreateAdapterOptions,
 ): ActionAdapter {
   const rawFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) => adapterFetch(rawFetch, url, init);
+  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) =>
+    adapterFetch(rawFetch, url, init);
 
   function baseUrl(instance: string): string {
     return `https://${instance}.service-now.com`;
@@ -53,17 +54,14 @@ export function createServiceNowIncidentCreateAdapter(
       input.tenantId,
       input.destination,
     );
-    const response = await fetchImpl(
-      `${baseUrl(instance)}/api/now/table/incident/${sysId}`,
-      {
-        headers: {
-          Authorization: authHeader(creds.username, creds.password),
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        signal: input.signal,
+    const response = await fetchImpl(`${baseUrl(instance)}/api/now/table/incident/${sysId}`, {
+      headers: {
+        Authorization: authHeader(creds.username, creds.password),
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
       },
-    );
+      signal: input.signal,
+    });
     if (response.status === 404) {
       return { status: 'UNKNOWN' };
     }
@@ -93,17 +91,14 @@ export function createServiceNowIncidentCreateAdapter(
       sysparm_query: `correlation_id=${correlationId}`,
       sysparm_limit: '10',
     });
-    const response = await fetchImpl(
-      `${baseUrl(instance)}/api/now/table/incident?${params}`,
-      {
-        headers: {
-          Authorization: authHeader(creds.username, creds.password),
-          Accept: 'application/json',
-          'Content-Type': 'application/json',
-        },
-        signal: input.signal,
+    const response = await fetchImpl(`${baseUrl(instance)}/api/now/table/incident?${params}`, {
+      headers: {
+        Authorization: authHeader(creds.username, creds.password),
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
       },
-    );
+      signal: input.signal,
+    });
     await assertOkResponse(response, 'ServiceNow query incident');
     const payload = await readJsonResponse<ServiceNowListResponse>(response);
     const incidents = payload.result ?? [];

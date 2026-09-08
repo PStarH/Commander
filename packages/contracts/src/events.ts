@@ -5,7 +5,8 @@
  * this envelope. It is intentionally independent of transport serialization.
  */
 
-export type AggregateType = 'run' | 'step' | 'effect' | 'interaction' | 'worker' | 'tenant' | 'fault-control';
+export type AggregateType =
+  'run' | 'step' | 'effect' | 'interaction' | 'worker' | 'tenant' | 'fault-control';
 
 export interface KernelEvent {
   eventId: string;

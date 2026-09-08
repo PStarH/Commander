@@ -51,11 +51,7 @@ export {
   actionNamespace,
   isValidEffectEnvelopeIdentity,
 } from './effects.js';
-export type {
-  EffectActionNamespace,
-  EffectEnvelope,
-  EffectEnvelopeStatus,
-} from './effects.js';
+export type { EffectActionNamespace, EffectEnvelope, EffectEnvelopeStatus } from './effects.js';
 
 export { KERNEL_ERROR_CODES } from './errors.js';
 export type { KernelErrorCode, KernelErrorDetails } from './errors.js';
@@ -111,16 +107,10 @@ export {
   servicenowCorrelationId,
   SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
 } from './actionAdapters.js';
-export type {
-  ActionAdapterDescriptorV1,
-  ActionGatewayEffect,
-} from './actionAdapters.js';
+export type { ActionAdapterDescriptorV1, ActionGatewayEffect } from './actionAdapters.js';
 
 // --- Shared identity, policy, audit, and plugin contracts ---
-export {
-  CONTROL_PLANE_API_VERSION,
-  CONTROL_PLANE_RESOURCES,
-} from './controlPlane.js';
+export { CONTROL_PLANE_API_VERSION, CONTROL_PLANE_RESOURCES } from './controlPlane.js';
 export type {
   AuditEventV2,
   ControlPlaneResource,
