@@ -1,8 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import {
-  installGlobalFetchGovernor,
-  resetGlobalFetchGovernor,
-} from './securityPrimitives';
+import { installGlobalFetchGovernor, resetGlobalFetchGovernor } from './securityPrimitives';
 describe('fetch governor lifecycle', () => {
   let originalFetch: typeof fetch;
   beforeEach(() => {
