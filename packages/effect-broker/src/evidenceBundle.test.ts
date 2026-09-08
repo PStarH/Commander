@@ -56,15 +56,17 @@ describe('L3-11 evidence bundle v0', () => {
         policySnapshotId: 'ps-pin-1',
       },
       effects: [baseEffect],
-      auditEvents: [{
-        type: 'effect.completed',
-        severity: 'low',
-        tenantId: 'tenant-a',
-        runId: 'run-1',
-        stepId: 'step-1',
-        at: '2026-07-17T06:00:01.000Z',
-        details: { effectId: 'eff-1', policyDecisionId: 'pd-allow-1' },
-      }],
+      auditEvents: [
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details: { effectId: 'eff-1', policyDecisionId: 'pd-allow-1' },
+        },
+      ],
       exportedAt: '2026-07-17T06:00:02.000Z',
       bundleId: 'bundle-test-1',
     });
@@ -85,19 +87,21 @@ describe('L3-11 evidence bundle v0', () => {
       runId: 'run-1',
       policySnapshotId: 'ps-1',
       effects: [baseEffect],
-      auditEvents: [{
-        type: 'effect.completed',
-        severity: 'low',
-        tenantId: 'tenant-a',
-        runId: 'run-1',
-        stepId: 'step-1',
-        at: '2026-07-17T06:00:01.000Z',
-        details: {
-          effectId: 'eff-1',
-          'gen_ai.prompt': 'leak',
-          'gen_ai.completion': 'leak',
+      auditEvents: [
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details: {
+            effectId: 'eff-1',
+            'gen_ai.prompt': 'leak',
+            'gen_ai.completion': 'leak',
+          },
         },
-      }],
+      ],
     });
 
     assert.equal(findDlpViolation(bundle), undefined);
@@ -113,34 +117,38 @@ describe('L3-11 evidence bundle v0', () => {
       tenantId: 'tenant-a',
       runId: 'run-1',
       policySnapshotId: 'ps-1',
-      effects: [{
-        ...baseEffect,
-        response: {
-          contentHash: 'hash-response-bound',
-          status: 'ok',
-          body: 'raw payload must not export',
-          Authorization: 'Bearer secret-token',
-          httpStatus: 200,
-          // Nested under allowlisted key must not smuggle raw payload.
-          ok: { body: 'nested-leak', refresh_token: 'rt-1' },
+      effects: [
+        {
+          ...baseEffect,
+          response: {
+            contentHash: 'hash-response-bound',
+            status: 'ok',
+            body: 'raw payload must not export',
+            Authorization: 'Bearer secret-token',
+            httpStatus: 200,
+            // Nested under allowlisted key must not smuggle raw payload.
+            ok: { body: 'nested-leak', refresh_token: 'rt-1' },
+          },
         },
-      }],
-      auditEvents: [{
-        type: 'effect.completed',
-        severity: 'low',
-        tenantId: 'tenant-a',
-        runId: 'run-1',
-        stepId: 'step-1',
-        at: '2026-07-17T06:00:01.000Z',
-        details: {
-          effectId: 'eff-1',
-          Authorization: 'Bearer audit-token',
-          cookie: 'session=1',
-          refresh_token: 'rt-leak',
-          client_secret: 'cs-leak',
-          access_token: 'at-leak',
+      ],
+      auditEvents: [
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details: {
+            effectId: 'eff-1',
+            Authorization: 'Bearer audit-token',
+            cookie: 'session=1',
+            refresh_token: 'rt-leak',
+            client_secret: 'cs-leak',
+            access_token: 'at-leak',
+          },
         },
-      }],
+      ],
     });
 
     assert.deepEqual(bundle.effects[0].responseSummary, {
@@ -222,9 +230,33 @@ describe('L3-11 evidence bundle v0', () => {
       policySnapshotId: 'ps-1',
       effects: [baseEffect, other],
       auditEvents: [
-        { type: 'effect.completed', severity: 'low', tenantId: 'tenant-a', runId: 'run-1', stepId: 'step-1', at: '2026-07-17T06:00:01.000Z', details: { effectId: 'eff-1' } },
-        { type: 'effect.completed', severity: 'low', tenantId: 'tenant-a', runId: 'run-1', stepId: 'step-1', at: '2026-07-17T06:00:06.000Z', details: { effectId: 'eff-2' } },
-        { type: 'effect.rejected', severity: 'high', tenantId: 'tenant-a', runId: 'run-1', stepId: 'step-1', at: '2026-07-17T06:00:00.500Z', details: { code: 'POLICY_DENIED' } },
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details: { effectId: 'eff-1' },
+        },
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:06.000Z',
+          details: { effectId: 'eff-2' },
+        },
+        {
+          type: 'effect.rejected',
+          severity: 'high',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:00.500Z',
+          details: { code: 'POLICY_DENIED' },
+        },
       ],
     });
     assert.equal(bundle.scope.effectId, 'eff-1');
@@ -299,14 +331,16 @@ describe('L3-11 evidence bundle v0', () => {
     });
 
     const secretLeak = structuredClone(bundle);
-    secretLeak.auditEvents = [{
-      type: 'effect.completed',
-      at: '2026-07-17T06:00:01.000Z',
-      severity: 'low',
-      details: { Authorization: 'Bearer leaked' },
-      entryHash: 'c'.repeat(64),
-      prevEntryHash: EVIDENCE_GENESIS_HASH,
-    }];
+    secretLeak.auditEvents = [
+      {
+        type: 'effect.completed',
+        at: '2026-07-17T06:00:01.000Z',
+        severity: 'low',
+        details: { Authorization: 'Bearer leaked' },
+        entryHash: 'c'.repeat(64),
+        prevEntryHash: EVIDENCE_GENESIS_HASH,
+      },
+    ];
     assert.equal(verifyEvidenceBundle(secretLeak).ok, false);
     assert.equal(verifyEvidenceBundle(secretLeak).brokenAt, 'dlp');
 
@@ -325,15 +359,17 @@ describe('L3-11 evidence bundle v0', () => {
       runId: 'run-1',
       policySnapshotId: 'ps-1',
       effects: [baseEffect],
-      auditEvents: [{
-        type: 'effect.completed',
-        severity: 'low',
-        tenantId: 'tenant-a',
-        runId: 'run-1',
-        stepId: 'step-1',
-        at: '2026-07-17T06:00:01.000Z',
-        details: { effectId: 'eff-1' },
-      }],
+      auditEvents: [
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details: { effectId: 'eff-1' },
+        },
+      ],
     });
 
     const fieldTampered = structuredClone(bundle);
@@ -355,15 +391,17 @@ describe('L3-11 evidence bundle v0', () => {
       runId: 'run-1',
       policySnapshotId: 'ps-1',
       effects: [baseEffect],
-      auditEvents: [{
-        type: 'effect.completed',
-        severity: 'low',
-        tenantId: 'tenant-a',
-        runId: 'run-1',
-        stepId: 'step-1',
-        at: '2026-07-17T06:00:01.000Z',
-        details: { effectId: 'eff-1' },
-      }],
+      auditEvents: [
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details: { effectId: 'eff-1' },
+        },
+      ],
     });
     const tampered = structuredClone(bundle);
     tampered.auditEvents[0].entryHash = 'b'.repeat(64);
@@ -380,14 +418,16 @@ describe('L3-11 evidence bundle v0', () => {
       effects: [baseEffect],
     });
     const leaked = structuredClone(bundle);
-    leaked.auditEvents = [{
-      type: 'effect.completed',
-      at: '2026-07-17T06:00:01.000Z',
-      severity: 'low',
-      details: { 'gen_ai.prompt': 'should-fail-verify' },
-      entryHash: 'c'.repeat(64),
-      prevEntryHash: EVIDENCE_GENESIS_HASH,
-    }];
+    leaked.auditEvents = [
+      {
+        type: 'effect.completed',
+        at: '2026-07-17T06:00:01.000Z',
+        severity: 'low',
+        details: { 'gen_ai.prompt': 'should-fail-verify' },
+        entryHash: 'c'.repeat(64),
+        prevEntryHash: EVIDENCE_GENESIS_HASH,
+      },
+    ];
     const result = verifyEvidenceBundle(leaked);
     assert.equal(result.ok, false);
     assert.equal(result.brokenAt, 'dlp');

@@ -464,7 +464,9 @@ describe('Gateway → Kernel → Worker real execution loop', { skip: !databaseU
       await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
       await pool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [workerId]);
       await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
-      await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [tenantId]);
+      await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
+        tenantId,
+      ]);
       await workerPool.end();
       await pool.end();
     }

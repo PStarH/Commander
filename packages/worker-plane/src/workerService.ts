@@ -43,12 +43,16 @@ function toWorkerExecutionError(error: unknown): WorkerError {
   if (error instanceof Error) {
     const options = (error as Error & { options?: WorkerError['options'] }).options;
     if (options && typeof options === 'object') {
-      return new WorkerError(error.message, {
-        code: options.code,
-        retryable: options.retryable,
-        retryDelayMs: options.retryDelayMs,
-        details: options.details,
-      }, error);
+      return new WorkerError(
+        error.message,
+        {
+          code: options.code,
+          retryable: options.retryable,
+          retryDelayMs: options.retryDelayMs,
+          details: options.details,
+        },
+        error,
+      );
     }
     return new WorkerError(error.message, { code: 'EXECUTOR_FAILED', retryable: false }, error);
   }
@@ -126,15 +130,10 @@ export class WorkerService {
         // Capacity (claimInflight) is released in pollOnce finally; back off and continue.
         // Fail-closed observability: never swallow silently — operators must see claim failures.
         const err = error instanceof Error ? error : new Error(String(error));
-        getGlobalLogger().error(
-          'WorkerService',
-          'claim loop swallowed error; backing off',
-          err,
-          {
-            workerId: this.worker?.id,
-            errorName: err.name,
-          },
-        );
+        getGlobalLogger().error('WorkerService', 'claim loop swallowed error; backing off', err, {
+          workerId: this.worker?.id,
+          errorName: err.name,
+        });
         getGlobalMetrics().incrementCounter('worker.claim_loop.errors', 1, {
           error_name: err.name,
         });
@@ -266,11 +265,15 @@ export class WorkerService {
       if (!leaseLost) {
         const sandboxUnavailable = isSandboxUnavailable(error);
         const known = sandboxUnavailable
-          ? new WorkerError((error as Error).message, {
-              code: 'SANDBOX_UNAVAILABLE',
-              retryable: false,
-              details: error instanceof WorkerError ? error.options.details : undefined,
-            }, error)
+          ? new WorkerError(
+              (error as Error).message,
+              {
+                code: 'SANDBOX_UNAVAILABLE',
+                retryable: false,
+                details: error instanceof WorkerError ? error.options.details : undefined,
+              },
+              error,
+            )
           : toWorkerExecutionError(error);
         const failed = await this.kernel.failStep({
           stepId: step.id,

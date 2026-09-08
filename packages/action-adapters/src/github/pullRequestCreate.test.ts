@@ -106,10 +106,7 @@ describe('github.pullRequestCreate adapter', () => {
     assert.equal(state.createCount, 1);
     assert.match(state.pulls[0]!.body, /<!-- commander-action:/);
     assert.equal(response.prNumber, 1);
-    assert.equal(
-      state.pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey)),
-      true,
-    );
+    assert.equal(state.pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey)), true);
   });
 
   it('double execute with same idempotency creates only one remote PR', async () => {

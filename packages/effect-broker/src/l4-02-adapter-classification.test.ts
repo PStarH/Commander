@@ -90,8 +90,7 @@ describe('L4-02 adapter execution classification', () => {
           lease: { workerId: 'worker-1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
           actor: 'worker-1',
         }),
-      (error: unknown) =>
-        error instanceof EffectBrokerError && error.code === 'EFFECT_FAILED',
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'EFFECT_FAILED',
     );
     assert.equal(failed, true);
     assert.ok(failRequest);
@@ -177,8 +176,7 @@ describe('L4-02 adapter execution classification', () => {
           lease: { workerId: 'worker-1', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
           actor: 'worker-1',
         }),
-      (error: unknown) =>
-        error instanceof EffectBrokerError && error.code === 'COMPLETION_UNKNOWN',
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'COMPLETION_UNKNOWN',
     );
     assert.equal(executeCount, 1, 'write must not be retried without query');
     assert.equal(parked, true);

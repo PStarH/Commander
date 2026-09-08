@@ -151,19 +151,13 @@ describe('withDefaultLlmAllowlist', () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, {});
     assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), false);
-    assert.equal(
-      await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      false,
-    );
+    assert.equal(await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'), false);
   });
 
   it('does not let worker env mutate demo ticket policy', async () => {
     const kernel = new InMemoryKernelRepository();
     const port = withDefaultLlmAllowlist(kernel, { COMMANDER_DEMO_TICKET_ALLOWLIST: '1' });
     assert.equal(await port.isActionAllowed!('tenant-a', 'demo.ticket.create'), false);
-    assert.equal(
-      await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'),
-      false,
-    );
+    assert.equal(await port.isActionAllowed!('tenant-a', 'compensate.demo.ticket.create'), false);
   });
 });

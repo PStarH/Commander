@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
-import {
-  consumeCompensationBatch,
-  KERNEL_COMPENSATION_TOPIC,
-} from '@commander/kernel';
+import { consumeCompensationBatch, KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
 import {
   ActionAdapterRegistry,
   createGitHubPullRequestCreateAdapter,
@@ -84,11 +81,7 @@ describe('L4-02 operations chaos — worker kill / double compensate', () => {
 
     const admitKeys = new Set<string>();
     const broker = {
-      admit: async (input: {
-        effectId: string;
-        idempotencyKey: string;
-        type: string;
-      }) => {
+      admit: async (input: { effectId: string; idempotencyKey: string; type: string }) => {
         if (admitKeys.has(input.idempotencyKey)) {
           return { admitted: true, effectId: input.effectId, replayed: true };
         }
