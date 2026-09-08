@@ -33,9 +33,13 @@ describe('outbox delivery contract', () => {
     await port.publish(envelope('event-2'));
     const [first] = await port.claim('ws2', 1);
     assert.ok(first);
-    assert.equal(await port.retry(first.deliveryId, first.claimToken, {
-      code: 'WS2_FAILED', message: 'transient failure',
-    }), true);
+    assert.equal(
+      await port.retry(first.deliveryId, first.claimToken, {
+        code: 'WS2_FAILED',
+        message: 'transient failure',
+      }),
+      true,
+    );
 
     const [second] = await port.claim('ws2', 1, new Date(Date.now() + 10));
     assert.ok(second);

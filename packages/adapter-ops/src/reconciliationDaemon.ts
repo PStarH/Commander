@@ -111,11 +111,7 @@ export class ReconciliationDaemon {
           }
           continue;
         }
-        await this.options.repository.releaseReconcileClaim(
-          effect.id,
-          effect.tenantId,
-          claimToken,
-        );
+        await this.options.repository.releaseReconcileClaim(effect.id, effect.tenantId, claimToken);
         completed += 1;
       } catch (error) {
         await this.options.repository.rescheduleReconcile({

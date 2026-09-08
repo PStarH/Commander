@@ -14,7 +14,12 @@
  */
 
 import { timingSafeEqual } from 'node:crypto';
-import type { WorkerAuthenticator, WorkerAuthorization, WorkerDefinition, WorkerIdentity } from './types.js';
+import type {
+  WorkerAuthenticator,
+  WorkerAuthorization,
+  WorkerDefinition,
+  WorkerIdentity,
+} from './types.js';
 
 export interface ApiKeyAuthenticatorConfig {
   /** Set of valid API keys. */
@@ -49,7 +54,10 @@ export class ApiKeyWorkerAuthenticator implements WorkerAuthenticator {
     const token = identity.token;
     let tokenValid = false;
     for (const validToken of this.config.validTokens) {
-      if (token.length === validToken.length && timingSafeEqual(Buffer.from(token), Buffer.from(validToken))) {
+      if (
+        token.length === validToken.length &&
+        timingSafeEqual(Buffer.from(token), Buffer.from(validToken))
+      ) {
         tokenValid = true;
         break;
       }
@@ -77,7 +85,8 @@ export class ApiKeyWorkerAuthenticator implements WorkerAuthenticator {
     }
 
     // 4. Resolve capability scope
-    const allowedCapabilities = this.config.tokenCapabilities?.get(token) ?? this.config.defaultCapabilities;
+    const allowedCapabilities =
+      this.config.tokenCapabilities?.get(token) ?? this.config.defaultCapabilities;
 
     // 5. Verify that the worker's declared capabilities are all authorized
     if (!allowedCapabilities.includes('*')) {

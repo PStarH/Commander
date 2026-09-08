@@ -16,7 +16,10 @@ export function hashWorkerClaimSecret(secret: string): Buffer {
   return createHash('sha256').update(secret, 'utf8').digest();
 }
 
-export function verifyWorkerClaimSecret(secret: string | undefined, expectedHash: Buffer | undefined): boolean {
+export function verifyWorkerClaimSecret(
+  secret: string | undefined,
+  expectedHash: Buffer | undefined,
+): boolean {
   if (!secret || secret.length === 0 || !expectedHash || expectedHash.length !== 32) {
     return false;
   }

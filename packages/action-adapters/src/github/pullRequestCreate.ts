@@ -1,7 +1,4 @@
-import {
-  githubPrBodyMarker,
-  GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
-} from '@commander/contracts';
+import { githubPrBodyMarker, GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import type { EffectRemoteOutcome } from '@commander/effect-broker';
 import { assertOkResponse, adapterFetch, readJsonResponse, type FetchFn } from '../http.js';
@@ -32,7 +29,8 @@ export function createGitHubPullRequestCreateAdapter(
   options: GitHubPullRequestCreateAdapterOptions,
 ): ActionAdapter {
   const rawFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) => adapterFetch(rawFetch, url, init);
+  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) =>
+    adapterFetch(rawFetch, url, init);
 
   async function listPullRequests(
     token: string,
@@ -242,9 +240,7 @@ export function createGitHubPullRequestCreateAdapter(
       input: AdapterQueryInput & { compensationResponse?: Record<string, unknown> },
     ): Promise<EffectRemoteOutcome> {
       const { owner, repo } = parseGitHubDestination(input.destination);
-      const prNumber = Number(
-        input.compensationResponse?.prNumber ?? input.request.prNumber,
-      );
+      const prNumber = Number(input.compensationResponse?.prNumber ?? input.request.prNumber);
       if (!Number.isFinite(prNumber)) {
         return { status: 'UNKNOWN' };
       }

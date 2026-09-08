@@ -153,7 +153,10 @@ function canonicalJson(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
   const obj = value as Record<string, unknown>;
-  return `{${Object.keys(obj).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`).join(',')}}`;
+  return `{${Object.keys(obj)
+    .sort()
+    .map((k) => `${JSON.stringify(k)}:${canonicalJson(obj[k])}`)
+    .join(',')}}`;
 }
 
 function sha256(value: unknown): string {
@@ -192,7 +195,12 @@ function isAllowedResponseSummaryKey(key: string): boolean {
 
 /** responseSummary values are metadata scalars only — nested objects are a DLP bypass. */
 function isResponseSummaryScalar(value: unknown): boolean {
-  return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
+  return (
+    value === null ||
+    typeof value === 'string' ||
+    typeof value === 'number' ||
+    typeof value === 'boolean'
+  );
 }
 
 /** Recursively remove DLP keys and secret field names; does not mutate input. */
@@ -225,7 +233,9 @@ export function findDlpViolation(value: unknown, path = ''): string | undefined 
   return undefined;
 }
 
-function summarizeResponse(response?: Record<string, unknown>): Record<string, unknown> | undefined {
+function summarizeResponse(
+  response?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
   if (!response) return undefined;
   const sanitized = sanitizeForEvidence(response) as Record<string, unknown>;
   const summary: Record<string, unknown> = {};
@@ -260,7 +270,9 @@ function scopeEffects(input: BuildEvidenceBundleInput): EvidenceEffectSource[] {
 }
 
 function scopeAuditEvents(input: BuildEvidenceBundleInput): EvidenceAuditSource[] {
-  return (input.auditEvents ?? []).filter((e) => e.tenantId === input.tenantId && e.runId === input.runId);
+  return (input.auditEvents ?? []).filter(
+    (e) => e.tenantId === input.tenantId && e.runId === input.runId,
+  );
 }
 
 function hashChainedEntries<T extends { entryHash: string; prevEntryHash: string }>(
@@ -277,31 +289,39 @@ function hashChainedEntries<T extends { entryHash: string; prevEntryHash: string
 }
 
 function buildEffectEntries(effects: EvidenceEffectSource[]): EvidenceBundleEffectEntry[] {
-  const sorted = [...effects].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
-  const bare = sorted.map((effect) => compact({
-    effectId: effect.id,
-    stepId: effect.stepId,
-    type: effect.type,
-    state: effect.state,
-    policyDecisionId: effect.policyDecisionId,
-    requestHash: effect.requestHash,
-    approvalInteractionId: effect.approvalInteractionId,
-    responseSummary: summarizeResponse(effect.response),
-    createdAt: effect.createdAt,
-    completedAt: effect.completedAt,
-  }));
+  const sorted = [...effects].sort(
+    (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
+  );
+  const bare = sorted.map((effect) =>
+    compact({
+      effectId: effect.id,
+      stepId: effect.stepId,
+      type: effect.type,
+      state: effect.state,
+      policyDecisionId: effect.policyDecisionId,
+      requestHash: effect.requestHash,
+      approvalInteractionId: effect.approvalInteractionId,
+      responseSummary: summarizeResponse(effect.response),
+      createdAt: effect.createdAt,
+      completedAt: effect.completedAt,
+    }),
+  );
   return hashChainedEntries<EvidenceBundleEffectEntry>(bare);
 }
 
 function buildAuditEntries(events: EvidenceAuditSource[]): EvidenceBundleAuditEntry[] {
-  const sorted = [...events].sort((a, b) => a.at.localeCompare(b.at) || a.type.localeCompare(b.type));
-  const bare = sorted.map((event) => compact({
-    type: event.type,
-    at: event.at,
-    severity: event.severity,
-    stepId: event.stepId,
-    details: sanitizeForEvidence(event.details) as Record<string, unknown>,
-  }));
+  const sorted = [...events].sort(
+    (a, b) => a.at.localeCompare(b.at) || a.type.localeCompare(b.type),
+  );
+  const bare = sorted.map((event) =>
+    compact({
+      type: event.type,
+      at: event.at,
+      severity: event.severity,
+      stepId: event.stepId,
+      details: sanitizeForEvidence(event.details) as Record<string, unknown>,
+    }),
+  );
   return hashChainedEntries<EvidenceBundleAuditEntry>(bare);
 }
 
@@ -338,7 +358,12 @@ export function buildEffectEvidenceBundle(
   const match = input.effects.filter((e) => e.id === input.effectId);
   // Only keep audit rows explicitly bound to this effectId (fail-closed scope).
   const audit = (input.auditEvents ?? []).filter((e) => e.details.effectId === input.effectId);
-  return buildRunEvidenceBundle({ ...input, effects: match, auditEvents: audit, effectId: input.effectId });
+  return buildRunEvidenceBundle({
+    ...input,
+    effects: match,
+    auditEvents: audit,
+    effectId: input.effectId,
+  });
 }
 
 function recomputeEffectEntry(entry: EvidenceBundleEffectEntry): string {

@@ -84,7 +84,10 @@ export class CompensationDaemon {
                   runId: info.runId,
                   stepId: info.stepId,
                   at: new Date().toISOString(),
-                  details: { compensationAction: info.compensationAction, messageId: info.messageId },
+                  details: {
+                    compensationAction: info.compensationAction,
+                    messageId: info.messageId,
+                  },
                 });
               }
             : undefined,

@@ -20,8 +20,16 @@ import {
 } from './index.js';
 
 function makeTokens(issuer = 'commander-issuer', keyId = 'k1') {
-  const iss = CapabilityTokenIssuer.generate({ issuer, audience: 'commander.effect-broker', keyId });
-  const ver = new CapabilityTokenVerifier({ issuer, audience: 'commander.effect-broker', publicKeys: { [keyId]: iss.publicKey } });
+  const iss = CapabilityTokenIssuer.generate({
+    issuer,
+    audience: 'commander.effect-broker',
+    keyId,
+  });
+  const ver = new CapabilityTokenVerifier({
+    issuer,
+    audience: 'commander.effect-broker',
+    publicKeys: { [keyId]: iss.publicKey },
+  });
   return { iss, ver };
 }
 
@@ -41,7 +49,12 @@ const baseGrant: CapabilityGrant = {
 
 function makeBroker({
   tokens,
-  policy = async () => ({ effect: 'allow' as const, decisionId: 'd1', reason: 'ok', policySnapshotId: 'p1' }),
+  policy = async () => ({
+    effect: 'allow' as const,
+    decisionId: 'd1',
+    reason: 'ok',
+    policySnapshotId: 'p1',
+  }),
   executor = async () => ({ ok: true }),
   kernel,
   audit = { append: async () => {} },
@@ -62,7 +75,11 @@ function makeBroker({
   // can call policy.evaluate(...). Same for executor → EffectExecutor.
   const policyEvaluator = typeof policy === 'function' ? { evaluate: policy } : policy;
   const effectExecutor = typeof executor === 'function' ? { execute: executor } : executor;
-  return new EffectBroker(tokens as any, policyEvaluator, k, effectExecutor, audit, { audience: 'commander.effect-broker', requireRequestBinding: true, ...options });
+  return new EffectBroker(tokens as any, policyEvaluator, k, effectExecutor, audit, {
+    audience: 'commander.effect-broker',
+    requireRequestBinding: true,
+    ...options,
+  });
 }
 
 describe('WS2 §3 admit/execute separation', () => {
@@ -71,7 +88,10 @@ describe('WS2 §3 admit/execute separation', () => {
     let executorInvoked = false;
     const broker = makeBroker({
       tokens: ver,
-      executor: async () => { executorInvoked = true; return {}; },
+      executor: async () => {
+        executorInvoked = true;
+        return {};
+      },
     });
     const admission = await broker.admit({
       effectId: 'eff-1',
@@ -91,7 +111,10 @@ describe('WS2 §3 admit/execute separation', () => {
     let executorInvoked = false;
     const broker = makeBroker({
       tokens: ver,
-      executor: async () => { executorInvoked = true; return { dispatched: true }; },
+      executor: async () => {
+        executorInvoked = true;
+        return { dispatched: true };
+      },
     });
     const admission = await broker.admit({
       effectId: 'eff-2',
@@ -117,7 +140,8 @@ describe('WS2 §4 production runtime gates', () => {
     try {
       assert.throws(
         () => makeBroker({ tokens: ver, options: { requireRequestBinding: false } }),
-        (err: unknown) => err instanceof EffectBrokerError && err.code === 'REQUEST_BINDING_DISABLED_IN_PROD',
+        (err: unknown) =>
+          err instanceof EffectBrokerError && err.code === 'REQUEST_BINDING_DISABLED_IN_PROD',
       );
     } finally {
       process.env.NODE_ENV = origEnv;
@@ -128,7 +152,12 @@ describe('WS2 §4 production runtime gates', () => {
     const { iss, ver } = makeTokens();
     const broker = makeBroker({
       tokens: ver,
-      policy: async () => ({ effect: 'allow' as const, decisionId: PERMIT_DEFAULT_DECISION_ID, reason: 'permit-all', policySnapshotId: 'p1' }),
+      policy: async () => ({
+        effect: 'allow' as const,
+        decisionId: PERMIT_DEFAULT_DECISION_ID,
+        reason: 'permit-all',
+        policySnapshotId: 'p1',
+      }),
     });
     const admission = await broker.admit({
       effectId: 'eff-pd',
@@ -188,7 +217,10 @@ describe('WS2 §6 capability token lifecycle', () => {
   it('rejects a token whose requestHash does not match the request', async () => {
     const { iss, ver } = makeTokens();
     const broker = makeBroker({ tokens: ver });
-    const token = iss.issue({ ...baseGrant, requestHash: canonicalRequestHash({ original: true }) });
+    const token = iss.issue({
+      ...baseGrant,
+      requestHash: canonicalRequestHash({ original: true }),
+    });
     const admission = await broker.admit({
       effectId: 'eff-rh',
       token,
@@ -205,7 +237,11 @@ describe('WS2 §6 capability token lifecycle', () => {
   it('rejects a token with mismatched effect type (CAPABILITY_DENIED)', async () => {
     const { iss, ver } = makeTokens();
     const broker = makeBroker({ tokens: ver });
-    const token = iss.issue({ ...baseGrant, effectTypes: ['crm.read'], requestHash: canonicalRequestHash({}) });
+    const token = iss.issue({
+      ...baseGrant,
+      effectTypes: ['crm.read'],
+      requestHash: canonicalRequestHash({}),
+    });
     const admission = await broker.admit({
       effectId: 'eff-cap',
       token,
@@ -228,7 +264,11 @@ describe('WS2 §6 capability token lifecycle', () => {
       publicKeys: { k1: iss.publicKey },
       revocations: { isRevoked: async (jti: string, _tenantId: string) => revokedJtis.has(jti) },
     });
-    const token = iss.issue({ ...baseGrant, jti: 'revoked-jti', requestHash: canonicalRequestHash({}) });
+    const token = iss.issue({
+      ...baseGrant,
+      jti: 'revoked-jti',
+      requestHash: canonicalRequestHash({}),
+    });
     revokedJtis.add('revoked-jti');
     const broker = makeBroker({ tokens: ver });
     await assert.rejects(
@@ -263,7 +303,10 @@ describe('WS2 §5 three-layer policy engine called by admit()', () => {
     const broker = makeBroker({
       tokens: ver,
       kernel: {
-        admitEffect: async () => { admitEffectCalled = true; return { admitted: true, effect: { id: 'e', state: 'ADMITTED' } }; },
+        admitEffect: async () => {
+          admitEffectCalled = true;
+          return { admitted: true, effect: { id: 'e', state: 'ADMITTED' } };
+        },
         completeEffect: async () => ({}),
         isActionAllowed: async () => false, // no matching allowlist row ⇒ deny
       },
@@ -282,8 +325,12 @@ describe('WS2 §5 three-layer policy engine called by admit()', () => {
       kernel: {
         admitEffect: async () => ({ admitted: true, effect: { id: 'e', state: 'ADMITTED' } }),
         completeEffect: async () => ({}),
-        isActionAllowed: async (tenantId: string, action: string) => tenantId === 'tenant-a' && action === 'crm.write',
-        incrementQuota: async (input: { tenantId: string; actionClass: string }) => { quotaCalls.push(input); return { countUsed: 1, tokensUsed: 0 }; },
+        isActionAllowed: async (tenantId: string, action: string) =>
+          tenantId === 'tenant-a' && action === 'crm.write',
+        incrementQuota: async (input: { tenantId: string; actionClass: string }) => {
+          quotaCalls.push(input);
+          return { countUsed: 1, tokensUsed: 0 };
+        },
       },
     });
     const admission = await broker.admit(admitInput(iss, 'eff-allow-ok'));

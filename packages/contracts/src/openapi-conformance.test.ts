@@ -20,7 +20,6 @@ import { RUN_STATES, STEP_STATES } from './states.js';
 import { KERNEL_ERROR_CODES } from './errors.js';
 
 describe('OpenAPI Spec Conformance', () => {
-
   describe('OpenAPI 3.1.0 structure', () => {
     it('has correct openapi version', () => {
       assert.equal(OPENAPI_V1_SPEC.openapi, '3.1.0');
@@ -67,7 +66,9 @@ describe('OpenAPI Spec Conformance', () => {
           const operation = (pathItem as Record<string, unknown>)[method] as
             { parameters?: Array<Record<string, unknown>> } | undefined;
           if (!operation) continue;
-          const paramNames = (operation.parameters ?? []).map(resolveParamName).filter(Boolean) as string[];
+          const paramNames = (operation.parameters ?? [])
+            .map(resolveParamName)
+            .filter(Boolean) as string[];
           assert.ok(
             paramNames.includes('Idempotency-Key'),
             `POST/PUT/PATCH/DELETE at ${path} must have Idempotency-Key parameter`,
@@ -83,10 +84,7 @@ describe('OpenAPI Spec Conformance', () => {
           { responses?: Record<string, { description: string }> } | undefined;
         if (!postOp) continue;
         const accepted = postOp.responses?.['202'];
-        assert.ok(
-          accepted,
-          `POST at ${path} must have 202 response (async pattern)`,
-        );
+        assert.ok(accepted, `POST at ${path} must have 202 response (async pattern)`);
       }
     });
   });
@@ -96,13 +94,26 @@ describe('OpenAPI Spec Conformance', () => {
       const schemas = OPENAPI_V1_SPEC.components?.schemas;
       assert.ok(schemas, 'Must have component schemas');
       const required = [
-        'Run', 'Step', 'WorkGraph', 'Interaction', 'Artifact',
-        'PolicyBundle', 'Effect', 'AgentDefinition', 'ToolDefinition',
-        'ConnectorDefinition', 'KernelEvent', 'Error',
-        'CreateRunRequest', 'CreateInteractionResponseRequest',
+        'Run',
+        'Step',
+        'WorkGraph',
+        'Interaction',
+        'Artifact',
+        'PolicyBundle',
+        'Effect',
+        'AgentDefinition',
+        'ToolDefinition',
+        'ConnectorDefinition',
+        'KernelEvent',
+        'Error',
+        'CreateRunRequest',
+        'CreateInteractionResponseRequest',
       ];
       for (const name of required) {
-        assert.ok((schemas as Record<string, unknown>)[name], `Must have component schema: ${name}`);
+        assert.ok(
+          (schemas as Record<string, unknown>)[name],
+          `Must have component schema: ${name}`,
+        );
       }
     });
 
@@ -295,10 +306,7 @@ describe('OpenAPI Spec Conformance', () => {
         '/connectors',
       ];
       for (const expected of expectedPaths) {
-        assert.ok(
-          paths.includes(expected),
-          `OpenAPI spec must cover path: ${expected}`,
-        );
+        assert.ok(paths.includes(expected), `OpenAPI spec must cover path: ${expected}`);
       }
     });
 
@@ -310,7 +318,9 @@ describe('OpenAPI Spec Conformance', () => {
       function resolveParam(p: Record<string, unknown>): { name: string; in: string } | null {
         if (p.$ref) {
           const refPath = (p.$ref as string).replace('#/components/parameters/', '');
-          const resolved = (componentParams as Record<string, { name?: string; in?: string }>)[refPath];
+          const resolved = (componentParams as Record<string, { name?: string; in?: string }>)[
+            refPath
+          ];
           if (resolved?.name && resolved?.in) {
             return { name: resolved.name, in: resolved.in };
           }
@@ -365,10 +375,7 @@ describe('OpenAPI Spec Conformance', () => {
   describe('JSON Schema registry completeness', () => {
     it('all schemas have $id', () => {
       for (const [name, schema] of Object.entries(CONTRACT_SCHEMAS)) {
-        assert.ok(
-          (schema as { $id?: string }).$id,
-          `Schema '${name}' must have $id`,
-        );
+        assert.ok((schema as { $id?: string }).$id, `Schema '${name}' must have $id`);
       }
     });
 

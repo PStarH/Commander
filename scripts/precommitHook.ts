@@ -33,6 +33,7 @@ import { reportSilentFailure } from '../packages/core/src/silentFailureReporter'
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { formattingBaseline } from './scannerFormattingBaseline.js';
 import {
   enumerateHighWarnings,
   evaluateIndexedWarnings,
@@ -184,7 +185,11 @@ async function runScannerGate(): Promise<void> {
       continue;
     }
     const stagedResult = await scanContent(rel, content);
-    const headContent = staged.source === 'git' ? readGitBlob(REPO_ROOT, 'HEAD', rel) : undefined;
+    const headContent = await formattingBaseline(
+      rel,
+      staged.source === 'git' ? readGitBlob(REPO_ROOT, 'HEAD', rel) : undefined,
+      content,
+    );
     const headResult = headContent === undefined ? undefined : await scanContent(rel, headContent);
     const stagedWarnings = [
       ...stagedResult.warnings.filter(

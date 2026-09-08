@@ -9,7 +9,10 @@ import {
   CAPABILITY_PRIVATE_KEY_PEM_ENV,
   createCapabilityAuthority,
 } from './capabilityAuthority.js';
-import { KernelCapabilityReplayStore, KernelCapabilityRevocationStore } from './capabilityStores.js';
+import {
+  KernelCapabilityReplayStore,
+  KernelCapabilityRevocationStore,
+} from './capabilityStores.js';
 
 function ed25519Material(kid: string): {
   privateKeyPem: string;
@@ -265,7 +268,8 @@ describe('createCapabilityAuthority', () => {
         createCapabilityAuthority(
           {
             NODE_ENV: 'test',
-            [CAPABILITY_PRIVATE_KEY_PEM_ENV]: '-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----\n',
+            [CAPABILITY_PRIVATE_KEY_PEM_ENV]:
+              '-----BEGIN PRIVATE KEY-----\nREPLACE_ME\n-----END PRIVATE KEY-----\n',
             [CAPABILITY_KEY_ID_ENV]: mat.keyId,
             [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
           },
@@ -365,7 +369,12 @@ describe('createCapabilityAuthority', () => {
     assert.equal(grant.keyId, 'kid-restart');
     // Same PEM still loads via createPrivateKey / createPublicKey.
     assert.ok(createPrivateKey(mat.privateKeyPem));
-    const jwk = JSON.parse(mat.jwksJson).keys[0] as { kty: string; crv: string; x: string; kid: string };
+    const jwk = JSON.parse(mat.jwksJson).keys[0] as {
+      kty: string;
+      crv: string;
+      x: string;
+      kid: string;
+    };
     assert.ok(createPublicKey({ key: jwk, format: 'jwk' }));
   });
 });

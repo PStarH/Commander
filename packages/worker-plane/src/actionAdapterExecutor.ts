@@ -5,9 +5,7 @@ import {
   type AdapterCredentialProvider,
 } from '@commander/action-adapters';
 
-export function createActionAdapterEffectExecutor(
-  registry: ActionAdapterRegistry,
-): EffectExecutor {
+export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistry): EffectExecutor {
   return {
     execute: async (input) => {
       const adapter = registry.resolve(input.type);
@@ -15,11 +13,7 @@ export function createActionAdapterEffectExecutor(
         throw new Error(`UNREGISTERED_EFFECT_TYPE: ${input.type}`);
       }
       const ctx = input.executionContext;
-      if (
-        !ctx?.tenantId ||
-        !ctx.effectId ||
-        typeof input.request.idempotencyKey !== 'string'
-      ) {
+      if (!ctx?.tenantId || !ctx.effectId || typeof input.request.idempotencyKey !== 'string') {
         throw new Error('EFFECT_AUTHORIZATION_REQUIRED');
       }
       const destination = String(input.request.destination ?? '');
@@ -33,11 +27,15 @@ export function createActionAdapterEffectExecutor(
           idempotencyKey: input.request.idempotencyKey,
           destination,
           forwardResponse:
-            ((input.request as Record<string, unknown>).forwardResponse as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).forwardResponse as Record<
+              string,
+              unknown
+            >) ?? {},
           compensationPatch:
-            ((input.request as Record<string, unknown>).compensationPatch as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).compensationPatch as Record<
+              string,
+              unknown
+            >) ?? {},
           signal: input.signal,
         });
       }
