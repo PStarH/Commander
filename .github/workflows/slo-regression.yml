@@ -1,0 +1,38 @@
+name: SLO Runtime Regression
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'packages/core/src/**'
+      - 'scripts/bench-slo-baseline.ts'
+      - 'scripts/slo-lease-esm.test.mjs'
+      - '.github/workflows/slo-regression.yml'
+  push:
+    branches: [master]
+    paths:
+      - 'packages/core/src/**'
+      - 'scripts/bench-slo-baseline.ts'
+      - 'scripts/slo-lease-esm.test.mjs'
+      - '.github/workflows/slo-regression.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  slo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm rebuild better-sqlite3
+      - run: node --import tsx --test scripts/slo-lease-esm.test.mjs scripts/ci-bench-workflows.test.ts
+      - run: pnpm exec tsx scripts/bench-slo-baseline.ts --output=${{ runner.temp }}/slo-baseline.json
