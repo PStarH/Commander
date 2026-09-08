@@ -7,6 +7,7 @@ on:
       - 'packages/core/src/**'
       - 'scripts/bench-slo-baseline.ts'
       - 'scripts/slo-lease-esm.test.mjs'
+      - 'scripts/storage-esm.test.mjs'
       - '.github/workflows/slo-regression.yml'
   push:
     branches: [master]
@@ -14,6 +15,7 @@ on:
       - 'packages/core/src/**'
       - 'scripts/bench-slo-baseline.ts'
       - 'scripts/slo-lease-esm.test.mjs'
+      - 'scripts/storage-esm.test.mjs'
       - '.github/workflows/slo-regression.yml'
 
 permissions:
@@ -34,5 +36,5 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm rebuild better-sqlite3
-      - run: node --import tsx --test scripts/slo-lease-esm.test.mjs scripts/ci-bench-workflows.test.ts
+      - run: node --import tsx --test scripts/slo-lease-esm.test.mjs scripts/storage-esm.test.mjs scripts/ci-bench-workflows.test.ts
       - run: pnpm exec tsx scripts/bench-slo-baseline.ts --output=${{ runner.temp }}/slo-baseline.json

@@ -17,6 +17,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
+import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { getGlobalLogger } from '../logging';
@@ -44,7 +45,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = createRequire(import.meta.url)('better-sqlite3');
 } catch (err) {
   reportSilentFailure(err, 'checkpointStore:48');
   /* better-sqlite3 not installed — operations throw at runtime */
