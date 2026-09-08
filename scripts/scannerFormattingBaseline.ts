@@ -7,6 +7,11 @@ export async function formattingBaseline(
 ): Promise<string | undefined> {
   if (head === undefined || !/\.[cm]?[jt]sx?$/.test(file)) return head;
   // Fixed options prevent staged configuration from changing what is inherited.
-  const formatted = await format(head, { filepath: file, singleQuote: true, printWidth: 100 });
-  return formatted === staged ? formatted : head;
+  try {
+    const formatted = await format(head, { filepath: file, singleQuote: true, printWidth: 100 });
+    return formatted === staged ? formatted : head;
+  } catch (error) {
+    if (error instanceof SyntaxError) return head;
+    throw error;
+  }
 }
