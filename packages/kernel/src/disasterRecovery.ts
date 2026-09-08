@@ -32,7 +32,9 @@ export async function verifyRunMissing(databaseUrl: string, run: DrilledRun): Pr
 async function main() {
   const [action, databaseUrl, runId, tenantId] = process.argv.slice(2);
   if (!action || !databaseUrl || !runId || !tenantId) {
-    console.error('Usage: tsx packages/kernel/src/disasterRecovery.ts <exists|missing> <databaseUrl> <runId> <tenantId>');
+    console.error(
+      'Usage: tsx packages/kernel/src/disasterRecovery.ts <exists|missing> <databaseUrl> <runId> <tenantId>',
+    );
     process.exit(1);
   }
   const run: DrilledRun = { id: runId, tenantId };

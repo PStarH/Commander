@@ -25,9 +25,19 @@ const PAYLOAD = {
  *  records the error, and messages at maxAttempts are no longer served
  *  (the sweeper would have moved them to the DLQ). */
 function makeOutbox(maxAttempts = 3) {
-  const message: CompensationOutboxMessage & { errors: Array<{ code: string; message: string }>; acked: boolean } = {
-    id: 'msg-1', tenantId: 'tenant-a', topic: 'commander.kernel.compensation.requested', key: 'run-1', payload: PAYLOAD,
-    attempts: 0, claimToken: undefined, errors: [], acked: false,
+  const message: CompensationOutboxMessage & {
+    errors: Array<{ code: string; message: string }>;
+    acked: boolean;
+  } = {
+    id: 'msg-1',
+    tenantId: 'tenant-a',
+    topic: 'commander.kernel.compensation.requested',
+    key: 'run-1',
+    payload: PAYLOAD,
+    attempts: 0,
+    claimToken: undefined,
+    errors: [],
+    acked: false,
   };
   const port: CompensationOutboxPort = {
     async claimOutboxByTopic(_topic, _limit) {
@@ -59,7 +69,10 @@ const okBroker = {
 describe('WS2 §8 compensation consumer', () => {
   it('acks the message only after admit→execute succeeds', async () => {
     const { port, message } = makeOutbox();
-    const result = await consumeCompensationBatch(port, okBroker, async () => 'token', { workerId: 'w1', fencingEpoch: 1 });
+    const result = await consumeCompensationBatch(port, okBroker, async () => 'token', {
+      workerId: 'w1',
+      fencingEpoch: 1,
+    });
     assert.equal(result.succeeded, 1);
     assert.equal(message.acked, true);
     assert.equal(message.errors.length, 0);
@@ -67,7 +80,10 @@ describe('WS2 §8 compensation consumer', () => {
 
   it('records the error via retryOutbox when the token provider refuses', async () => {
     const { port, message } = makeOutbox();
-    const result = await consumeCompensationBatch(port, okBroker, async () => null, { workerId: 'w1', fencingEpoch: 1 });
+    const result = await consumeCompensationBatch(port, okBroker, async () => null, {
+      workerId: 'w1',
+      fencingEpoch: 1,
+    });
     assert.equal(result.failed, 1);
     assert.equal(message.acked, false);
     assert.equal(message.errors[0]?.code, 'COMPENSATION_TOKEN_REFUSED');
@@ -75,8 +91,19 @@ describe('WS2 §8 compensation consumer', () => {
 
   it('records the error via retryOutbox when admit rejects', async () => {
     const { port, message } = makeOutbox();
-    const rejectBroker = { ...okBroker, admit: async () => ({ admitted: false, effectId: '', replayed: false, reason: 'POLICY_DENIED' }) };
-    await consumeCompensationBatch(port, rejectBroker, async () => 'token', { workerId: 'w1', fencingEpoch: 1 });
+    const rejectBroker = {
+      ...okBroker,
+      admit: async () => ({
+        admitted: false,
+        effectId: '',
+        replayed: false,
+        reason: 'POLICY_DENIED',
+      }),
+    };
+    await consumeCompensationBatch(port, rejectBroker, async () => 'token', {
+      workerId: 'w1',
+      fencingEpoch: 1,
+    });
     assert.equal(message.errors[0]?.code, 'COMPENSATION_ADMIT_REJECTED');
     assert.equal(message.errors[0]?.message, 'POLICY_DENIED');
   });
@@ -84,10 +111,18 @@ describe('WS2 §8 compensation consumer', () => {
   it('bounds poison-message retries at maxAttempts (no infinite loop)', async () => {
     const maxAttempts = 3;
     const { port, message } = makeOutbox(maxAttempts);
-    const throwBroker = { ...okBroker, executeAdmitted: async () => { throw new Error('connector down'); } };
+    const throwBroker = {
+      ...okBroker,
+      executeAdmitted: async () => {
+        throw new Error('connector down');
+      },
+    };
     // Drain far more rounds than maxAttempts; the message must stop being served.
     for (let round = 0; round < maxAttempts * 3; round++) {
-      await consumeCompensationBatch(port, throwBroker, async () => 'token', { workerId: 'w1', fencingEpoch: 1 });
+      await consumeCompensationBatch(port, throwBroker, async () => 'token', {
+        workerId: 'w1',
+        fencingEpoch: 1,
+      });
     }
     assert.equal(message.attempts, maxAttempts, 'attempts must stop at maxAttempts');
     assert.equal(message.errors.length, maxAttempts);
@@ -98,7 +133,10 @@ describe('WS2 §8 compensation consumer', () => {
   it('rejects when payload.tenantId diverges from outbox tenant_id', async () => {
     const { port, message } = makeOutbox();
     message.payload = { ...PAYLOAD, tenantId: 'tenant-evil' };
-    const result = await consumeCompensationBatch(port, okBroker, async () => 'token', { workerId: 'w1', fencingEpoch: 1 });
+    const result = await consumeCompensationBatch(port, okBroker, async () => 'token', {
+      workerId: 'w1',
+      fencingEpoch: 1,
+    });
     assert.equal(result.failed, 1);
     assert.equal(message.acked, false);
     assert.equal(message.errors[0]?.code, 'COMPENSATION_TENANT_MISMATCH');
@@ -114,7 +152,10 @@ describe('WS2 §8 compensation consumer', () => {
         return { admitted: true, effectId: 'e1', replayed: false };
       },
     };
-    await consumeCompensationBatch(port, broker, async () => 'token', { workerId: 'compensation-daemon', fencingEpoch: 1 });
+    await consumeCompensationBatch(port, broker, async () => 'token', {
+      workerId: 'compensation-daemon',
+      fencingEpoch: 1,
+    });
     assert.deepEqual(binding, {
       tenantId: 'tenant-a',
       runId: 'run-1',
@@ -126,9 +167,17 @@ describe('WS2 §8 compensation consumer', () => {
   it('fails closed (never invents epoch 1) when neither payload nor options carry a fencingEpoch', async () => {
     const { port, message } = makeOutbox();
     let admitCalled = false;
-    const broker = { ...okBroker, admit: async () => { admitCalled = true; return { admitted: true, effectId: 'e1', replayed: false }; } };
+    const broker = {
+      ...okBroker,
+      admit: async () => {
+        admitCalled = true;
+        return { admitted: true, effectId: 'e1', replayed: false };
+      },
+    };
     // No fencingEpoch option, and PAYLOAD.compensationPayload carries none either.
-    const result = await consumeCompensationBatch(port, broker, async () => 'token', { workerId: 'w1' });
+    const result = await consumeCompensationBatch(port, broker, async () => 'token', {
+      workerId: 'w1',
+    });
     assert.equal(result.failed, 1);
     assert.equal(admitCalled, false, 'must never admit with an invented fencingEpoch');
     assert.equal(message.errors[0]?.code, 'COMPENSATION_FENCING_EPOCH_MISSING');
@@ -137,11 +186,17 @@ describe('WS2 §8 compensation consumer', () => {
 
   it('uses the reclaim-stamped fencingEpoch from payload.compensationPayload over any caller default', async () => {
     const { port } = makeOutbox();
-    port.claimOutboxByTopic = async () => [{
-      id: 'msg-epoch', tenantId: 'tenant-a', topic: 'commander.kernel.compensation.requested', key: 'run-1',
-      payload: { ...PAYLOAD, compensationPayload: { undo: true, fencingEpoch: 7 } },
-      attempts: 1, claimToken: 'claim-1',
-    }];
+    port.claimOutboxByTopic = async () => [
+      {
+        id: 'msg-epoch',
+        tenantId: 'tenant-a',
+        topic: 'commander.kernel.compensation.requested',
+        key: 'run-1',
+        payload: { ...PAYLOAD, compensationPayload: { undo: true, fencingEpoch: 7 } },
+        attempts: 1,
+        claimToken: 'claim-1',
+      },
+    ];
     let capturedEpoch: number | undefined;
     const broker = {
       ...okBroker,
@@ -151,7 +206,10 @@ describe('WS2 §8 compensation consumer', () => {
       },
     };
     // Caller supplies a different default (1) — the payload-carried epoch (7) must win.
-    await consumeCompensationBatch(port, broker, async () => 'token', { workerId: 'w1', fencingEpoch: 1 });
+    await consumeCompensationBatch(port, broker, async () => 'token', {
+      workerId: 'w1',
+      fencingEpoch: 1,
+    });
     assert.equal(capturedEpoch, 7);
   });
 });

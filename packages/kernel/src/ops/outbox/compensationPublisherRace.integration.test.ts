@@ -96,10 +96,7 @@ describe('compensationPublisherRace', () => {
 
     const claimed = await delivery.claim('ws2', 500);
     for (const msg of claimed) {
-      if (
-        msg.topic === KERNEL_COMPENSATION_TOPIC ||
-        msg.topic === LEGACY_COMPENSATION_TOPIC
-      ) {
+      if (msg.topic === KERNEL_COMPENSATION_TOPIC || msg.topic === LEGACY_COMPENSATION_TOPIC) {
         deliveredCompensationTopics.push(msg.topic);
       }
     }
@@ -119,4 +116,3 @@ describe('compensationPublisherRace', () => {
     );
   });
 });
-

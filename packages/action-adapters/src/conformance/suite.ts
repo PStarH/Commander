@@ -81,11 +81,15 @@ function adapterExecutor(adapter: ActionAdapter): EffectExecutor {
           idempotencyKey: input.request.idempotencyKey,
           destination,
           forwardResponse:
-            ((input.request as Record<string, unknown>).forwardResponse as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).forwardResponse as Record<
+              string,
+              unknown
+            >) ?? {},
           compensationPatch:
-            ((input.request as Record<string, unknown>).compensationPatch as Record<string, unknown>) ??
-            {},
+            ((input.request as Record<string, unknown>).compensationPatch as Record<
+              string,
+              unknown
+            >) ?? {},
           signal: input.signal,
         });
       }

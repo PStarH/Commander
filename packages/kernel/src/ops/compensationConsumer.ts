@@ -67,7 +67,10 @@ export interface CompensationEffectBroker {
       workloadId?: string;
     };
   }): Promise<{ admitted: boolean; effectId: string; replayed: boolean; reason?: string }>;
-  executeAdmitted(input: { effectId: string; timeoutMs?: number }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }>;
+  executeAdmitted(input: {
+    effectId: string;
+    timeoutMs?: number;
+  }): Promise<{ effectId: string; replayed: boolean; response?: Record<string, unknown> }>;
 }
 
 /**
@@ -160,8 +163,7 @@ export function normalizeCompensationPayload(
   const effectIds = Array.isArray(base.effectIds)
     ? base.effectIds.filter((id): id is string => typeof id === 'string')
     : [];
-  const isKernelRequest =
-    base.type === 'kernel.compensation.requested' || effectIds.length > 0;
+  const isKernelRequest = base.type === 'kernel.compensation.requested' || effectIds.length > 0;
   if (!isKernelRequest || !base.tenantId || !base.runId || !base.stepId) {
     return null;
   }
@@ -206,27 +208,46 @@ export async function consumeCompensationBatch(
   let replayed = 0;
 
   for (const message of messages) {
-    if (!message.claimToken) { failed++; continue; }
+    if (!message.claimToken) {
+      failed++;
+      continue;
+    }
     const payload = normalizeCompensationPayload(message.payload);
     if (!payload?.tenantId || !payload.runId || !payload.stepId || !payload.compensationAction) {
       // Malformed — retry/DLQ (never silent-ack; audit must see the failure).
       try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_PAYLOAD_MALFORMED',
-          message: 'compensation outbox payload missing tenantId/runId/stepId/action',
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
+        await outbox.retryOutbox(
+          message.id,
+          message.claimToken,
+          {
+            code: 'COMPENSATION_PAYLOAD_MALFORMED',
+            message: 'compensation outbox payload missing tenantId/runId/stepId/action',
+          },
+          undefined,
+          message.tenantId,
+        );
+      } catch {
+        /* claim may have expired */
+      }
       failed++;
       continue;
     }
     // Outbox row tenant_id is authoritative — never trust a spoofed payload.tenantId.
     if (payload.tenantId !== message.tenantId) {
       try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_TENANT_MISMATCH',
-          message: 'compensation payload.tenantId diverged from outbox tenant_id',
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
+        await outbox.retryOutbox(
+          message.id,
+          message.claimToken,
+          {
+            code: 'COMPENSATION_TENANT_MISMATCH',
+            message: 'compensation payload.tenantId diverged from outbox tenant_id',
+          },
+          undefined,
+          message.tenantId,
+        );
+      } catch {
+        /* claim may have expired */
+      }
       failed++;
       continue;
     }
@@ -238,11 +259,19 @@ export async function consumeCompensationBatch(
       !options.registry.resolve(compensationAction)
     ) {
       try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_ADAPTER_UNREGISTERED',
-          message: `No adapter registered for ${compensationAction}`,
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
+        await outbox.retryOutbox(
+          message.id,
+          message.claimToken,
+          {
+            code: 'COMPENSATION_ADAPTER_UNREGISTERED',
+            message: `No adapter registered for ${compensationAction}`,
+          },
+          undefined,
+          message.tenantId,
+        );
+      } catch {
+        /* claim may have expired */
+      }
       await options.onAdapterUnregistered?.({
         tenantId: message.tenantId,
         runId: payload.runId!,
@@ -268,11 +297,19 @@ export async function consumeCompensationBatch(
         : options.fencingEpoch;
     if (typeof fencingEpoch !== 'number' || !Number.isFinite(fencingEpoch)) {
       try {
-        await outbox.retryOutbox(message.id, message.claimToken, {
-          code: 'COMPENSATION_FENCING_EPOCH_MISSING',
-          message: 'no fencingEpoch on payload and no caller-supplied default',
-        }, undefined, message.tenantId);
-      } catch { /* claim may have expired */ }
+        await outbox.retryOutbox(
+          message.id,
+          message.claimToken,
+          {
+            code: 'COMPENSATION_FENCING_EPOCH_MISSING',
+            message: 'no fencingEpoch on payload and no caller-supplied default',
+          },
+          undefined,
+          message.tenantId,
+        );
+      } catch {
+        /* claim may have expired */
+      }
       failed++;
       continue;
     }
@@ -358,7 +395,9 @@ export async function consumeCompensationBatch(
           undefined,
           message.tenantId,
         );
-      } catch { /* claim may have expired; sweeper backoff still applies */ }
+      } catch {
+        /* claim may have expired; sweeper backoff still applies */
+      }
       failed++;
     }
   }

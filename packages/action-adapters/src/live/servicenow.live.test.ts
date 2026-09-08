@@ -7,10 +7,7 @@
  */
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
-import {
-  createServiceNowIncidentCreateAdapter,
-  EnvAdapterCredentialProvider,
-} from '../index.js';
+import { createServiceNowIncidentCreateAdapter, EnvAdapterCredentialProvider } from '../index.js';
 
 const tenantId = process.env.COMMANDER_CELL_TENANT_ID ?? '';
 const instance = process.env.SERVICENOW_INSTANCE ?? '';

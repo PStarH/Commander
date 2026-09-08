@@ -78,11 +78,16 @@ function clearCapabilityEnv(): void {
 }
 
 class InMemoryAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
-  private readonly records = new Map<string, { id: string; generation: number; claimSecret: string }>();
+  private readonly records = new Map<
+    string,
+    { id: string; generation: number; claimSecret: string }
+  >();
 
   async initialize(): Promise<void> {}
 
-  async register(definition: { id: string }): Promise<{ id: string; generation: number; claimSecret: string }> {
+  async register(definition: {
+    id: string;
+  }): Promise<{ id: string; generation: number; claimSecret: string }> {
     const generation = (this.records.get(definition.id)?.generation ?? 0) + 1;
     const record = {
       id: definition.id,
@@ -93,7 +98,9 @@ class InMemoryAdapterOpsWorkerRegistry implements AdapterOpsWorkerRegistry {
     return record;
   }
 
-  async get(workerId: string): Promise<{ id: string; generation: number; claimSecret: string } | null> {
+  async get(
+    workerId: string,
+  ): Promise<{ id: string; generation: number; claimSecret: string } | null> {
     return this.records.get(workerId) ?? null;
   }
 }
@@ -431,10 +438,7 @@ describe('adapter-ops authority startup gates', () => {
 
   it('rejects scheduler-role DSN userinfo', () => {
     assert.throws(
-      () =>
-        assertNonOwnerDatabaseUrl(
-          'postgres://commander_scheduler:x@postgres:5432/commander',
-        ),
+      () => assertNonOwnerDatabaseUrl('postgres://commander_scheduler:x@postgres:5432/commander'),
       (err: unknown) =>
         err instanceof Error && err.message.startsWith(OWNER_DATABASE_ROLE_REJECTED),
     );
@@ -603,10 +607,10 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
 
     try {
       const wiring = await createAdapterOpsWiring({ workerRegistry });
-      assert.deepEqual(registerCalls.sort(), [
-        ADAPTER_OPS_COMPENSATION_WORKER_ID,
-        ADAPTER_OPS_RECONCILE_WORKER_ID,
-      ].sort());
+      assert.deepEqual(
+        registerCalls.sort(),
+        [ADAPTER_OPS_COMPENSATION_WORKER_ID, ADAPTER_OPS_RECONCILE_WORKER_ID].sort(),
+      );
       assert.equal(wiring.compensationLocalWorkerId, ADAPTER_OPS_COMPENSATION_WORKER_ID);
       assert.equal(wiring.workers.compensation.id, ADAPTER_OPS_COMPENSATION_WORKER_ID);
       assert.equal(wiring.workers.reconcile.id, ADAPTER_OPS_RECONCILE_WORKER_ID);
@@ -702,7 +706,10 @@ describe('adapter-ops P0 worker registry + compensation mint', () => {
     assert.equal(grant.workerId, ADAPTER_OPS_COMPENSATION_WORKER_ID);
     assert.equal(grant.workerGeneration, 2);
     // jti must be opaque UUID (not deterministic ops-+Date.now()).
-    assert.match(grant.jti, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    assert.match(
+      grant.jti,
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
   });
 });
 
@@ -720,7 +727,9 @@ describe('adapter-ops egress fail-closed', () => {
 
   it('parses allowlist CSV', () => {
     assert.deepEqual(
-      parseEgressAllowlist({ COMMANDER_ADAPTER_EGRESS_ALLOWLIST: ' api.github.com, *.service-now.com ' }),
+      parseEgressAllowlist({
+        COMMANDER_ADAPTER_EGRESS_ALLOWLIST: ' api.github.com, *.service-now.com ',
+      }),
       ['api.github.com', '*.service-now.com'],
     );
   });

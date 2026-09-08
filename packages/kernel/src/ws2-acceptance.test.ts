@@ -95,7 +95,12 @@ describe('WS2 §6/§7 capability revocation lifecycle', () => {
 
   it('revokeCapability marks a jti as revoked', async () => {
     const kernel = new InMemoryKernelRepository();
-    await kernel.revokeCapability({ jti: 'jti-1', tenantId: 'tenant-a', expiresAt: '2099-01-01T00:00:00.000Z', reason: 'rotated' });
+    await kernel.revokeCapability({
+      jti: 'jti-1',
+      tenantId: 'tenant-a',
+      expiresAt: '2099-01-01T00:00:00.000Z',
+      reason: 'rotated',
+    });
     assert.equal(await kernel.isCapabilityRevoked('jti-1', 'tenant-a'), true);
     assert.equal(await kernel.isCapabilityRevoked('jti-1', 'tenant-b'), false);
     assert.equal(await kernel.isCapabilityRevoked('jti-2', 'tenant-a'), false);
@@ -152,11 +157,18 @@ describe('WS2 §8 compensation outbox claiming', () => {
     const kernel = new InMemoryKernelRepository();
     // Creating a run records a 'run.created' event which enqueues an outbox
     // message on the 'commander.run.created' topic.
-    await kernel.createRun({
-      id: 'run-comp', tenantId: 'tenant-a', intentHash: 'intent',
-      workGraphHash: 'graph', workGraphVersion: 'v1', policySnapshotId: 'p1',
-      steps: [{ id: 'step-a', kind: 'agent' }],
-    }, 'gateway');
+    await kernel.createRun(
+      {
+        id: 'run-comp',
+        tenantId: 'tenant-a',
+        intentHash: 'intent',
+        workGraphHash: 'graph',
+        workGraphVersion: 'v1',
+        policySnapshotId: 'p1',
+        steps: [{ id: 'step-a', kind: 'agent' }],
+      },
+      'gateway',
+    );
     const claimed = await kernel.claimOutboxByTopic('commander.run.created', 10);
     assert.ok(claimed.length >= 1, 'run.created outbox message should be claimable');
     assert.ok(claimed.every((m) => m.topic === 'commander.run.created'));
@@ -188,17 +200,28 @@ describe('WS2 §8 compensation outbox claiming', () => {
       const claimed = await kernel.claimOutboxByTopic('commander.compensation', 10, at);
       assert.equal(claimed.length, 1, `round ${i} should still serve the poison message`);
       const msg = claimed[0]!;
-      await kernel.retryOutbox(msg.id, msg.claimToken!, { code: 'POISON', message: 'always fails' }, at);
+      await kernel.retryOutbox(
+        msg.id,
+        msg.claimToken!,
+        { code: 'POISON', message: 'always fails' },
+        at,
+      );
       clock += 60_000;
     }
 
-    assert.equal((await kernel.claimOutboxByTopic('commander.compensation', 10, new Date(clock))).length, 0);
+    assert.equal(
+      (await kernel.claimOutboxByTopic('commander.compensation', 10, new Date(clock))).length,
+      0,
+    );
     const sweep = await kernel.sweepOutboxDlq(new Date(clock), 10);
     assert.equal(sweep.movedToDlq, 1);
     const dlq = await kernel.listDlqEntries(10, 'commander.compensation');
     assert.equal(dlq.length, 1);
     assert.equal(dlq[0]!.dlqReason, 'max_attempts_exceeded');
-    assert.equal((await kernel.claimOutboxByTopic('commander.compensation', 10, new Date(clock))).length, 0);
+    assert.equal(
+      (await kernel.claimOutboxByTopic('commander.compensation', 10, new Date(clock))).length,
+      0,
+    );
   });
 
   it('generic claimOutbox also stops at max_attempts before sweep (symmetric with ByTopic)', async () => {
@@ -211,7 +234,12 @@ describe('WS2 §8 compensation outbox claiming', () => {
       const at = new Date(clock);
       const claimed = await kernel.claimOutbox(10, at);
       assert.equal(claimed.length, 1, `round ${i}`);
-      await kernel.retryOutbox(claimed[0]!.id, claimed[0]!.claimToken!, { code: 'POISON', message: 'fail' }, at);
+      await kernel.retryOutbox(
+        claimed[0]!.id,
+        claimed[0]!.claimToken!,
+        { code: 'POISON', message: 'fail' },
+        at,
+      );
       clock += 60_000;
     }
     assert.equal((await kernel.claimOutbox(10, new Date(clock))).length, 0);
@@ -222,10 +250,7 @@ describe('WS2 §8 compensation outbox claiming', () => {
   it('Postgres claimOutbox SQL keeps DLQ + max_attempts filters (source ENFORCED)', () => {
     // InMemory proves semantics; this gate prevents the production SQL from
     // regressing to pre-filter claim loops without a live Postgres suite.
-    const src = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), 'postgres.ts'),
-      'utf8',
-    );
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'postgres.ts'), 'utf8');
     const claimOutbox = src.match(/async claimOutbox\([\s\S]*?^  async markOutboxPublished/m);
     const claimByTopic = src.match(
       /async claimOutboxByTopic\([\s\S]*?^  async isCapabilityRevoked/m,
@@ -245,21 +270,14 @@ describe('WS2 §8 compensation outbox claiming', () => {
   });
 
   it('Postgres capability revoke/isRevoked pass tenant scope into withTransaction (source ENFORCED)', () => {
-    const src = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), 'postgres.ts'),
-      'utf8',
-    );
-    const isRevoked = src.match(
-      /async isCapabilityRevoked\([\s\S]*?^  async revokeCapability/m,
-    );
-    const revoke = src.match(
-      /async revokeCapability\([\s\S]*?^  async consumeCapabilityReplay/m,
-    );
+    const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'postgres.ts'), 'utf8');
+    const isRevoked = src.match(/async isCapabilityRevoked\([\s\S]*?^  async revokeCapability/m);
+    const revoke = src.match(/async revokeCapability\([\s\S]*?^  async consumeCapabilityReplay/m);
     assert.ok(isRevoked, 'isCapabilityRevoked not found');
     assert.ok(revoke, 'revokeCapability not found');
     assert.match(
       isRevoked![0],
-      /\}, \[tenantId\]\);/,
+      /\},\s*\[tenantId\],?\s*\);/,
       'isCapabilityRevoked must pass [tenantId] to withTransaction',
     );
     assert.match(
@@ -269,7 +287,7 @@ describe('WS2 §8 compensation outbox claiming', () => {
     );
     assert.match(
       revoke![0],
-      /\}, \[input\.tenantId\]\);/,
+      /\},\s*\[input\.tenantId\],?\s*\);/,
       'revokeCapability must pass [input.tenantId] to withTransaction',
     );
     assert.match(

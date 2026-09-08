@@ -21,7 +21,11 @@ const COMP_PAYLOAD = {
   compensationAction: 'compensate.github.pull-request.create',
   // Mirrors the real requestCompensation payload shape: fencingEpoch is always
   // derived from the original effect's own lease, never invented by the consumer.
-  compensationPayload: { originalEffectId: 'effect-1', forwardResponse: { prNumber: 1 }, fencingEpoch: 1 },
+  compensationPayload: {
+    originalEffectId: 'effect-1',
+    forwardResponse: { prNumber: 1 },
+    fencingEpoch: 1,
+  },
   idempotencyKey: 'cmp:effect-1:1.0.0',
 };
 
@@ -69,7 +73,11 @@ describe('CompensationDaemon', () => {
     });
     const daemon = new CompensationDaemon({
       repository: kernel,
-      registry: { resolve: () => null, outcomeQuerierFor: () => null, listDescriptors: () => [] } as never,
+      registry: {
+        resolve: () => null,
+        outcomeQuerierFor: () => null,
+        listDescriptors: () => [],
+      } as never,
       broker: {
         admit: async () => ({ admitted: true, effectId: 'eff', replayed: false }),
         executeAdmitted: async () => ({ effectId: 'eff', replayed: false, response: {} }),
@@ -100,7 +108,11 @@ describe('CompensationDaemon', () => {
           throw new Error('db unavailable');
         },
       } as never,
-      registry: { resolve: () => null, outcomeQuerierFor: () => null, listDescriptors: () => [] } as never,
+      registry: {
+        resolve: () => null,
+        outcomeQuerierFor: () => null,
+        listDescriptors: () => [],
+      } as never,
       broker: {
         admit: async () => ({ admitted: true, effectId: 'eff', replayed: false }),
         executeAdmitted: async () => ({ effectId: 'eff', replayed: false, response: {} }),

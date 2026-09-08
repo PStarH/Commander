@@ -245,7 +245,10 @@ const serviceNowFactory: ConformanceAdapterFactory = {
       adapter: createServiceNowIncidentCreateAdapter({
         credentials: serviceNowCredentials(),
         fetch: async (input, init) => {
-          if ((init?.method ?? 'GET') === 'GET' && String(input).includes('/api/now/table/incident?')) {
+          if (
+            (init?.method ?? 'GET') === 'GET' &&
+            String(input).includes('/api/now/table/incident?')
+          ) {
             return new Response(JSON.stringify({ result: incidents }), { status: 200 });
           }
           return new Response('unexpected', { status: 500 });
