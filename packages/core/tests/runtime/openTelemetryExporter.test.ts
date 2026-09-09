@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -76,6 +76,36 @@ describe('OpenTelemetryExporter', () => {
   });
 
   describe('start/stop', () => {
+    it('does not schedule a flush after stop interrupts startup', async () => {
+      const interval = vi.spyOn(globalThis, 'setInterval');
+      try {
+        const starting = exporter.start();
+        await exporter.stop();
+        await starting;
+        expect(interval.mock.calls.filter(([, delay]) => delay === 5000)).toHaveLength(0);
+      } finally {
+        await exporter.stop();
+        interval.mockRestore();
+      }
+    });
+
+    it('only schedules the newest startup when restarted during recovery', async () => {
+      const interval = vi.spyOn(globalThis, 'setInterval');
+      try {
+        const starting = exporter.start();
+        const stopping = exporter.stop();
+        const restarting = exporter.start();
+        await Promise.all([starting, stopping, restarting]);
+        expect(interval.mock.calls.filter(([, delay]) => delay === 5000)).toHaveLength(1);
+      } finally {
+        await exporter.stop();
+        for (const result of interval.mock.results) {
+          if (result.type === 'return') clearInterval(result.value);
+        }
+        interval.mockRestore();
+      }
+    });
+
     it('starts and stops cleanly', async () => {
       await exporter.start();
       await exporter.stop();
