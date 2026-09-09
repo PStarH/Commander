@@ -26,6 +26,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
+import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { CheckpointState } from '../runtime/stateCheckpointer';
@@ -34,7 +35,7 @@ import { walCheckpoint } from '../storage/walCheckpoint';
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = createRequire(import.meta.url)('better-sqlite3');
 } catch (err) {
   reportSilentFailure(err, 'checkpointStore:38');
   /* not installed — fall back to InMemoryCheckpointBuffer */

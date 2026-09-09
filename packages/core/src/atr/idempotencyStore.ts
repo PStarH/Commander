@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
+import { createRequire } from 'node:module';
 // IdempotencyStore — P0-1 ATR kernel component.
 // Persistent deduplication for tool side-effect calls. SQLite-backed, per-tenant.
 //
@@ -58,7 +59,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = createRequire(import.meta.url)('better-sqlite3');
 } catch (_silentE_) {
   reportSilentFailure(_silentE_, 'idempotencyStore:62');
 }
