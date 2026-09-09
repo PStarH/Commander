@@ -51,6 +51,51 @@ describe('AgentRuntime', () => {
   }
 
   describe('execution', () => {
+    it('never executes a destructive tool when the scripted provider requests it', async () => {
+      const execute = vi.fn(async () => 'unexpected execution');
+      let calls = 0;
+      runtime.registerTool('shell_execute', {
+        definition: {
+          name: 'shell_execute',
+          description: 'Inert execution counter',
+          inputSchema: {
+            type: 'object',
+            properties: { command: { type: 'string' } },
+            required: ['command'],
+          },
+        },
+        execute,
+      });
+      runtime.registerProvider('openai', {
+        name: 'openai',
+        call: async (request) => {
+          calls++;
+          return {
+            content: calls === 1 ? '' : 'The operation was denied.',
+            model: request.model,
+            usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+            finishReason: calls === 1 ? 'tool_calls' : 'stop',
+            toolCalls:
+              calls === 1
+                ? [{ id: 'denied-call', name: 'shell_execute', arguments: { command: 'rm -rf /' } }]
+                : undefined,
+          };
+        },
+      });
+      try {
+        const result = await runtime.execute(makeContext({ availableTools: ['shell_execute'] }));
+        expect(calls).toBeGreaterThan(0);
+        expect(
+          result.steps.some(
+            (step) =>
+              step.type === 'tool_result' && /BLOCKED|FORBIDDEN|POLICY_DENIED/.test(step.content),
+          ),
+        ).toBe(true);
+        expect(execute).not.toHaveBeenCalled();
+      } finally {
+        runtime.dispose();
+      }
+    });
     it('returns a successful result', async () => {
       const result = await runtime.execute(makeContext());
       expect(result.status).toBe('success');
