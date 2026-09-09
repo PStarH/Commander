@@ -1,13 +1,13 @@
 export { SwarmOrchestrator } from './swarmOrchestrator';
 export { FusionEngine } from './fusionEngine';
 export {
-  SwarmConfig,
+  type SwarmConfig,
   DEFAULT_SWARM_CONFIG,
-  SwarmNode,
-  SwarmManager,
-  SwarmTopology,
-  FusionConflict,
-  FusionReport,
-  SwarmResult,
-  SwarmStatus,
+  type SwarmNode,
+  type SwarmManager,
+  type SwarmTopology,
+  type FusionConflict,
+  type FusionReport,
+  type SwarmResult,
+  type SwarmStatus,
 } from './types';

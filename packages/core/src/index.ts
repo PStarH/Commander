@@ -24,30 +24,30 @@ export { optionalImport, optionalRequire } from './optionalImport';
 
 // Orchestration exports
 export {
-  SequentialStep,
-  SequentialContext,
-  SequentialStepResult,
-  SequentialPipelineStatus,
-  SequentialPipeline,
-  SequentialPipelineRun,
-  SequentialEvent,
-  SequentialEventHandler,
+  type SequentialStep,
+  type SequentialContext,
+  type SequentialStepResult,
+  type SequentialPipelineStatus,
+  type SequentialPipeline,
+  type SequentialPipelineRun,
+  type SequentialEvent,
+  type SequentialEventHandler,
   SequentialPipelineBuilder,
-  OrchestrationMetrics,
+  type OrchestrationMetrics,
   calculateOrchestrationMetrics,
-  TokenUsage,
+  type TokenUsage,
 } from './orchestration';
 
 // Memory exports
 export {
-  MemoryPriority,
-  EpisodicMemoryItem,
-  MemorySearchQuery,
-  MemorySearchResult,
-  MemoryWriteOptions,
-  MemoryManageOptions,
-  MemoryStats,
-  MemoryStore,
+  type MemoryPriority,
+  type EpisodicMemoryItem,
+  type MemorySearchQuery,
+  type MemorySearchResult,
+  type MemoryWriteOptions,
+  type MemoryManageOptions,
+  type MemoryStats,
+  type MemoryStore,
   createMemoryStore,
   resolveMemoryStoreType,
   fromProjectMemoryItem,
@@ -109,8 +109,8 @@ export type {
 export { DEFAULT_MODEL_CONFIG, QualityGateExecutor } from './ultimateFramework';
 export {
   CompensationQueue,
-  CompensationQueueItem,
-  CompensationQueueConfig,
+  type CompensationQueueItem,
+  type CompensationQueueConfig,
   getCompensationQueue,
   resetCompensationQueueForTesting,
   defaultCompensationQueuePath,
@@ -220,7 +220,7 @@ export type {
 
 // ContentScanner exports - Agent Security Layer
 export {
-  ContentScanner,
+  type ContentScanner,
   DefaultContentScanner,
   createContentScanner,
   scanContent,
@@ -243,11 +243,11 @@ export {
   IMProviderRegistry,
   getIMProviderRegistry,
   resetIMProviderRegistry,
-  IMContextStore,
+  type IMContextStore,
   InMemoryIMContextStore,
   getIMContextStore,
   resetIMContextStore,
-  IMOutboundDispatcher,
+  type IMOutboundDispatcher,
   DefaultIMOutboundDispatcher,
   getIMOutboundDispatcher,
   resetIMOutboundDispatcher,
@@ -858,7 +858,7 @@ export {
 
 // Tenant Provider — multi-tenant isolation primitives
 export {
-  TenantProvider,
+  type TenantProvider,
   NullTenantProvider,
   SimpleTenantProvider,
   ThreeLayerMemoryRegistry,
@@ -1197,10 +1197,10 @@ export { TaskComplexityAnalyzer } from './taskComplexityAnalyzer';
 export { CycleDetector } from './runtime/cycleDetector';
 export {
   ToolApproval,
-  ApprovalRequest,
-  ApprovalResult,
-  ApprovalLevel,
-  ApprovalPolicy,
+  type ApprovalRequest,
+  type ApprovalResult,
+  type ApprovalLevel,
+  type ApprovalPolicy,
   DEFAULT_APPROVAL_POLICIES,
 } from './runtime/toolApproval';
 export { EvolutionaryWorkflowEngine } from './runtime/evolutionaryWorkflowEngine';
@@ -1268,9 +1268,9 @@ export type { RebuildParams, RebuildSection, RebuildResult } from './runtime/reb
 // Topology & Workflow Optimization
 export {
   ReflexionTopologicalOptimizer as TopologyOptimizer,
-  TopologyDiagnostics,
-  OptimizationProposal,
-  OptimizationAction,
+  type TopologyDiagnostics,
+  type OptimizationProposal,
+  type OptimizationAction,
 } from './ultimate/topologyOptimizer';
 export { RuntimeWorkflowAdapter } from './ultimate/runtimeWorkflowAdapter';
 export type { AdaptiveExecutionResult } from './ultimate/runtimeWorkflowAdapter';
@@ -1410,25 +1410,25 @@ export type {
 export {
   SwarmOrchestrator,
   FusionEngine,
-  SwarmConfig,
+  type SwarmConfig,
   DEFAULT_SWARM_CONFIG,
-  SwarmNode,
-  SwarmManager,
-  SwarmTopology,
-  FusionConflict,
-  FusionReport,
-  SwarmResult,
-  SwarmStatus,
+  type SwarmNode,
+  type SwarmManager,
+  type SwarmTopology,
+  type FusionConflict,
+  type FusionReport,
+  type SwarmResult,
+  type SwarmStatus,
 } from './swarm';
 
 export {
   DriveOrchestrator,
-  DriveConfig,
+  type DriveConfig,
   DEFAULT_DRIVE_CONFIG,
-  DriveStep,
-  DriveState,
-  DriveResult,
-  DriveStatus,
+  type DriveStep,
+  type DriveState,
+  type DriveResult,
+  type DriveStatus,
 } from './drive';
 
 // Experimental — not yet wired into the main execution flow

@@ -12,15 +12,15 @@
  */
 
 export {
-  ColumnSpec,
-  ColumnType,
-  DriverBackend,
-  DriverConfig,
-  DriverDescription,
-  PersistentDriver,
-  PersistentTable,
-  QueryOptions,
-  TableSchema,
+  type ColumnSpec,
+  type ColumnType,
+  type DriverBackend,
+  type DriverConfig,
+  type DriverDescription,
+  type PersistentDriver,
+  type PersistentTable,
+  type QueryOptions,
+  type TableSchema,
 } from './types';
 
 export type { ApplyMigrationsResult, MigrationStep, FallbackInfo } from './types';

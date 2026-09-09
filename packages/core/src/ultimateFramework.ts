@@ -447,4 +447,4 @@ export interface QualityGateResult {
 // 第四部分：统一导出
 // ============================================================================
 
-export { TaskComplexity, TaskNode, measureTaskComplexity, shouldDecompose };
+export { type TaskComplexity, type TaskNode, measureTaskComplexity, shouldDecompose };
