@@ -7,7 +7,7 @@ export type {
 } from './imProvider';
 export type { IMThreadContext } from './imContextStore';
 export {
-  IMContextStore,
+  type IMContextStore,
   InMemoryIMContextStore,
   getIMContextStore,
   resetIMContextStore,
@@ -18,7 +18,7 @@ export {
   resetIMProviderRegistry,
 } from './imProviderRegistry';
 export {
-  IMOutboundDispatcher,
+  type IMOutboundDispatcher,
   DefaultIMOutboundDispatcher,
   getIMOutboundDispatcher,
   resetIMOutboundDispatcher,
