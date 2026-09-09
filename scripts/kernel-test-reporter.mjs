@@ -5,7 +5,7 @@ export default async function* reporter(source) {
     const data = event.data;
     const file = String(data.file ?? '').replaceAll('\\', '/');
     const relative = file.match(
-      /(?:^|\/)(packages\/kernel\/src\/[a-zA-Z0-9_./-]+\.(?:ts|js))$/,
+      /(?:^|\/)(packages\/(?:kernel\/src\/[a-zA-Z0-9_./-]+\.(?:ts|js)|core\/tests\/tools\/pathSecurity\.test\.ts))$/,
     )?.[1];
     const allowedCodes = new Set([
       'ERR_TEST_FAILURE',
