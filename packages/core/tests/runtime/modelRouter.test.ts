@@ -333,6 +333,22 @@ describe('ModelRouter — user tier & preferred tier', () => {
     const decision = router.route(makeContext(), 'relaxed', 'standard', new Set(['openai']));
     expect(decision.provider).toBe('openai');
   });
+
+  it('keeps the provider filter when the requested tier has no registered candidate', () => {
+    router.registerModel({
+      id: 'isolated-eco',
+      provider: 'isolated',
+      tier: 'eco',
+      costPer1MInput: 1,
+      costPer1MOutput: 1,
+      capabilities: ['code'],
+      contextWindow: 128000,
+      priority: 1,
+    });
+    const decision = router.route(makeContext(), 'relaxed', 'power', new Set(['isolated']));
+    expect(decision.provider).toBe('isolated');
+    expect(decision.modelId).toBe('isolated-eco');
+  });
 });
 
 describe('ModelRouter — cascade & fallback', () => {
