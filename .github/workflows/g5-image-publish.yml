@@ -64,7 +64,7 @@ jobs:
 
       - name: Build and push Gateway image
         id: gateway
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/api/Dockerfile
@@ -79,7 +79,7 @@ jobs:
 
       - name: Build and push Worker image
         id: worker
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: packages/worker-plane/Dockerfile
