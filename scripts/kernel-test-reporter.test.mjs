@@ -48,7 +48,7 @@ test('the reporter preserves real test failure exit status', () => {
     [
       '--test',
       '--test-reporter',
-      fileURLToPath(new URL('./kernel-test-reporter.mjs', import.meta.url)),
+      new URL('./kernel-test-reporter.mjs', import.meta.url).href,
       fileURLToPath(new URL('./fixtures/kernel-reporter/failure.mjs', import.meta.url)),
     ],
     { encoding: 'utf8', env: { ...process.env, NODE_TEST_CONTEXT: undefined } },
