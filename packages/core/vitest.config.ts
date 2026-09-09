@@ -243,6 +243,7 @@ export default defineConfig({
       'tests/security/reversibilityGate.test.ts',
       'tests/security/securityAnomalyDetector.test.ts',
       'tests/security/securityPrimitives.test.ts',
+      'src/security/fetchGovernor.test.ts',
       'tests/security/tenancy.test.ts',
       // --- shadow (drift detection / proxy / scrubber / types) ---
       'tests/shadow/drift.test.ts',
