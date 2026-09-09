@@ -383,10 +383,21 @@ jobs:
           cat packages/core/.commander_benchmarks/slo-report-*.json 2>/dev/null || echo "(no SLO report generated)"
 
       - name: Path security tests
+        shell: bash
         env:
           # Dev/test bypass only — CI runners lack real sandbox runtimes.
           COMMANDER_ALLOW_NO_SANDBOX: true
-        run: pnpm --filter @commander/core test:node:pathsec
+        run: |
+          cd packages/core
+          node --import tsx --test --test-concurrency=1 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=../../scripts/kernel-test-reporter.mjs --test-reporter-destination=path-security-evidence.jsonl tests/tools/pathSecurity.test.ts
+
+      - name: Upload sanitized path security failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: path-security-evidence-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: packages/core/path-security-evidence.jsonl
+          if-no-files-found: ignore
 
       - name: CLI check
         shell: bash

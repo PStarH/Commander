@@ -57,3 +57,20 @@ test('the reporter preserves real test failure exit status', () => {
   assert.ok(result.stdout.includes('"event":"failure"'));
   assert.ok(!result.stdout.includes('private'));
 });
+
+test('path security failures retain only their repository location', async () => {
+  let output = '';
+  for await (const chunk of reporter([
+    {
+      type: 'test:fail',
+      data: {
+        file: '/private/runner/packages/core/tests/tools/pathSecurity.test.ts',
+        line: 42,
+        details: { error: { code: 'ERR_TEST_FAILURE' } },
+      },
+    },
+  ]))
+    output += chunk;
+  assert.equal(JSON.parse(output).file, 'packages/core/tests/tools/pathSecurity.test.ts');
+  assert.ok(!output.includes('/private/runner'));
+});
