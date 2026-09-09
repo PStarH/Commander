@@ -533,118 +533,124 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
 
   cmdHeader(task);
   const rt: AgentRuntime = runtime;
-  const telos = new TELOSOrchestrator(rt);
-  const orch = new UltimateOrchestrator(telos, rt);
+  try {
+    const telos = new TELOSOrchestrator(rt);
+    const orch = new UltimateOrchestrator(telos, rt);
 
-  // ── Live CLI override wiring (no runtime restart required) ───────────────
-  // --cascade toggles SmartModelRouter participation live.
-  // --quality-threshold mutates the orchestrator's quality-gate config in
-  //   place so the very next execute() call sees the updated thresholds.
-  // Both setters mutate the existing instance instead of re-constructing.
-  // --quality-threshold is the only knob that requires orchestrator-side
-  // mutation (orchestrator owns the gate config and re-reads it during
-  // execute()). The remaining CLI flags (--cascade, --model, --tier)
-  // flow through contextData and are lifted by agentRuntime.ts's
-  // late-stage override block onto ctx.preferredModel /
-  // ctx.preferredModelTier / smartRouterActive BEFORE the routing
-  // decision runs. (Audit P0-2 follow-up.)
-  if (routingFlags.qualityThreshold !== undefined) {
-    orch.setQualityGateThreshold('all', routingFlags.qualityThreshold);
-  }
-
-  let lastPhase = '';
-  const startTime = Date.now();
-
-  // Inject preferredModel / preferredModelTier / cascadeEnabled into
-  // contextData so agentRuntime.ts's late-stage override block lifts them
-  // onto ctx.preferredModel / ctx.preferredModelTier / smartRouterActive
-  // before the routing decision runs.
-  const routingContextData: Record<string, unknown> = {
-    availableTools: loadTools(),
-    governanceProfile: { riskLevel: 'LOW' },
-  };
-  if (routingFlags.model !== undefined) routingContextData.preferredModel = routingFlags.model;
-  if (routingFlags.tier !== undefined) {
-    const tierMap: Record<string, 'eco' | 'standard' | 'power' | 'consensus'> = {
-      speed: 'eco',
-      balanced: 'standard',
-      power: 'power',
-    };
-    routingContextData.preferredModelTier = tierMap[routingFlags.tier];
-  }
-  if (routingFlags.cascade === true) routingContextData.cascadeEnabled = true;
-
-  const result = await orch.execute({
-    projectId: 'cli',
-    agentId: 'commander-cli',
-    tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-    goal: task,
-    contextData: routingContextData,
-    onProgress: (phase, detail) => {
-      if (phase === 'COMPLETE') return;
-      if (phase !== lastPhase) {
-        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-        const icons: Record<string, string> = {
-          INIT: '📋',
-          DELIBERATION: '🧠',
-          EFFORT_SCALING: '📊',
-          TOPOLOGY_ROUTING: '🔀',
-          DECOMPOSITION: '📦',
-          TEAM_FORMATION: '👥',
-          EXECUTION: '⚡',
-          SYNTHESIS: '🔗',
-        };
-        const phaseKey: Record<string, string> = {
-          INIT: 'run.phase.init',
-          DELIBERATION: 'run.phase.deliberation',
-          EFFORT_SCALING: 'run.phase.effort_scaling',
-          TOPOLOGY_ROUTING: 'run.phase.topology_routing',
-          DECOMPOSITION: 'run.phase.decomposition',
-          TEAM_FORMATION: 'run.phase.team_formation',
-          EXECUTION: 'run.phase.execution',
-          SYNTHESIS: 'run.phase.synthesis',
-        };
-        console.log(
-          `  ${$.dim}[${elapsed}s]${$.reset} ${icons[phase] || ' '} ${$.bold}${t(phaseKey[phase] ?? 'help.title')}${$.reset} ${$.dim}${detail.slice(0, 70)}${$.reset}`,
-        );
-        lastPhase = phase;
-      }
-    },
-  });
-
-  const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-  console.log();
-
-  section(t('run.section.results'));
-  const icon = result.status === 'SUCCESS' ? '✅' : result.status === 'PARTIAL' ? '⚠️' : '❌';
-  const statusColor =
-    result.status === 'SUCCESS' ? $.green : result.status === 'PARTIAL' ? $.yellow : $.red;
-  console.log(
-    `  ${icon} ${statusColor}${$.bold}${result.status}${$.reset}  ${$.dim}${elapsed}s · ${result.metrics.totalTokens.toLocaleString()} tok · $${result.metrics.totalCostUsd.toFixed(4)}${$.reset}`,
-  );
-
-  if (result.status !== 'SUCCESS' && result.errors.length > 0) {
-    console.log();
-    for (const err of result.errors) {
-      console.log(`  ${$.red}✗${$.reset} ${err.message.slice(0, 120)}`);
+    // ── Live CLI override wiring (no runtime restart required) ───────────────
+    // --cascade toggles SmartModelRouter participation live.
+    // --quality-threshold mutates the orchestrator's quality-gate config in
+    //   place so the very next execute() call sees the updated thresholds.
+    // Both setters mutate the existing instance instead of re-constructing.
+    // --quality-threshold is the only knob that requires orchestrator-side
+    // mutation (orchestrator owns the gate config and re-reads it during
+    // execute()). The remaining CLI flags (--cascade, --model, --tier)
+    // flow through contextData and are lifted by agentRuntime.ts's
+    // late-stage override block onto ctx.preferredModel /
+    // ctx.preferredModelTier / smartRouterActive BEFORE the routing
+    // decision runs. (Audit P0-2 follow-up.)
+    if (routingFlags.qualityThreshold !== undefined) {
+      orch.setQualityGateThreshold('all', routingFlags.qualityThreshold);
     }
+
+    let lastPhase = '';
+    const startTime = Date.now();
+
+    // Inject preferredModel / preferredModelTier / cascadeEnabled into
+    // contextData so agentRuntime.ts's late-stage override block lifts them
+    // onto ctx.preferredModel / ctx.preferredModelTier / smartRouterActive
+    // before the routing decision runs.
+    const routingContextData: Record<string, unknown> = {
+      availableTools: loadTools(),
+      governanceProfile: { riskLevel: 'LOW' },
+    };
+    if (routingFlags.model !== undefined) routingContextData.preferredModel = routingFlags.model;
+    if (routingFlags.tier !== undefined) {
+      const tierMap: Record<string, 'eco' | 'standard' | 'power' | 'consensus'> = {
+        speed: 'eco',
+        balanced: 'standard',
+        power: 'power',
+      };
+      routingContextData.preferredModelTier = tierMap[routingFlags.tier];
+    }
+    if (routingFlags.cascade === true) routingContextData.cascadeEnabled = true;
+
+    const result = await orch.execute({
+      projectId: 'cli',
+      agentId: 'commander-cli',
+      tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+      goal: task,
+      contextData: routingContextData,
+      onProgress: (phase, detail) => {
+        if (phase === 'COMPLETE') return;
+        if (phase !== lastPhase) {
+          const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+          const icons: Record<string, string> = {
+            INIT: '📋',
+            DELIBERATION: '🧠',
+            EFFORT_SCALING: '📊',
+            TOPOLOGY_ROUTING: '🔀',
+            DECOMPOSITION: '📦',
+            TEAM_FORMATION: '👥',
+            EXECUTION: '⚡',
+            SYNTHESIS: '🔗',
+          };
+          const phaseKey: Record<string, string> = {
+            INIT: 'run.phase.init',
+            DELIBERATION: 'run.phase.deliberation',
+            EFFORT_SCALING: 'run.phase.effort_scaling',
+            TOPOLOGY_ROUTING: 'run.phase.topology_routing',
+            DECOMPOSITION: 'run.phase.decomposition',
+            TEAM_FORMATION: 'run.phase.team_formation',
+            EXECUTION: 'run.phase.execution',
+            SYNTHESIS: 'run.phase.synthesis',
+          };
+          console.log(
+            `  ${$.dim}[${elapsed}s]${$.reset} ${icons[phase] || ' '} ${$.bold}${t(phaseKey[phase] ?? 'help.title')}${$.reset} ${$.dim}${detail.slice(0, 70)}${$.reset}`,
+          );
+          lastPhase = phase;
+        }
+      },
+    });
+
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log();
+
+    section(t('run.section.results'));
+    const icon = result.status === 'SUCCESS' ? '✅' : result.status === 'PARTIAL' ? '⚠️' : '❌';
+    const statusColor =
+      result.status === 'SUCCESS' ? $.green : result.status === 'PARTIAL' ? $.yellow : $.red;
+    console.log(
+      `  ${icon} ${statusColor}${$.bold}${result.status}${$.reset}  ${$.dim}${elapsed}s · ${result.metrics.totalTokens.toLocaleString()} tok · $${result.metrics.totalCostUsd.toFixed(4)}${$.reset}`,
+    );
+
+    if (result.status !== 'SUCCESS') process.exitCode = 1;
+
+    if (result.status !== 'SUCCESS' && result.errors.length > 0) {
+      console.log();
+      for (const err of result.errors) {
+        console.log(`  ${$.red}✗${$.reset} ${err.message.slice(0, 120)}`);
+      }
+    }
+
+    if (result.synthesis) {
+      const preview = result.synthesis
+        .split('\n')
+        .filter((l) => l.trim())
+        .slice(0, 8)
+        .join('\n  ');
+      console.log(`\n  ${preview}`);
+      const totalLines = result.synthesis.split('\n').filter((l) => l.trim()).length;
+      if (totalLines > 8) console.log(`  ${$.dim}... (${totalLines - 8} more lines)${$.reset}`);
+    }
+
+    // ── Human feedback ──────────────────────────────────────────────
+    await promptHumanFeedback(result.status === 'SUCCESS', task);
+
+    console.log();
+  } finally {
+    await rt.dispose();
   }
-
-  if (result.synthesis) {
-    const preview = result.synthesis
-      .split('\n')
-      .filter((l) => l.trim())
-      .slice(0, 8)
-      .join('\n  ');
-    console.log(`\n  ${preview}`);
-    const totalLines = result.synthesis.split('\n').filter((l) => l.trim()).length;
-    if (totalLines > 8) console.log(`  ${$.dim}... (${totalLines - 8} more lines)${$.reset}`);
-  }
-
-  // ── Human feedback ──────────────────────────────────────────────
-  await promptHumanFeedback(result.status === 'SUCCESS', task);
-
-  console.log();
 }
 
 async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
@@ -871,13 +877,14 @@ async function promptHumanFeedback(_success: boolean, _task: string): Promise<vo
 
   try {
     const answer = await new Promise<string>((resolve) => {
-      const timer = setTimeout(() => resolve(''), 15000); // Auto-skip after 15s
-      const onData = (data: Buffer) => {
+      const finish = (answer: string) => {
         clearTimeout(timer);
         process.stdin.removeListener('data', onData);
         if (process.stdin.isTTY) process.stdin.pause();
-        resolve(data.toString().trim().toLowerCase());
+        resolve(answer);
       };
+      const onData = (data: Buffer) => finish(data.toString().trim().toLowerCase());
+      const timer = setTimeout(() => finish(''), 15000); // Auto-skip after 15s
       process.stdin.resume();
       process.stdin.on('data', onData);
     });

@@ -1276,7 +1276,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
   }
 
   /** Dispose sub-resources (timers, file handles) when this runtime is discarded */
-  dispose(): void {
+  async dispose(): Promise<void> {
     this.compensationService.dispose();
     this.cacheManager.dispose();
     this.reliabilityEngine.shutdown();
@@ -1290,14 +1290,13 @@ export class AgentRuntime implements AgentRuntimeInterface {
     // Shutdown trace store to flush pending buffers
     if (typeof this.traceStore.shutdown === 'function') this.traceStore.shutdown();
     // Stop OpenTelemetry exporter if running
-    if (this.otelExporter) {
-      this.otelExporter.stop().catch((err) => {
-        getGlobalLogger().debug('AgentRuntime', 'OTel exporter stop failed (non-critical)', {
-          error: (err as Error)?.message,
-        });
+    const telemetryStopped = this.otelExporter?.stop().catch((err) => {
+      getGlobalLogger().debug('AgentRuntime', 'OTel exporter stop failed (non-critical)', {
+        error: (err as Error)?.message,
       });
-    }
+    });
     // Dispose tenant-scoped stores
     this.tenantManager.flushAll();
+    await telemetryStopped;
   }
 }

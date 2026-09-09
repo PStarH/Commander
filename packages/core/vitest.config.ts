@@ -55,6 +55,8 @@ export default defineConfig({
       'tests/runtime/executionRouter.test.ts',
       'tests/runtime/agentRuntime.integration.test.ts',
       'tests/runtime/agentRuntimeInterface.test.ts',
+      'tests/runtime/runtimeDisposal.test.ts',
+      'tests/runtime/cliRunCleanup.test.ts',
       'tests/runtime/runtimeFactory.test.ts',
       'tests/runtime/kernelStepExecutor.test.ts',
       'tests/runtime/mtlsRuntimeIpc.test.ts',
