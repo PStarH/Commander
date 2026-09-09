@@ -7,13 +7,13 @@
  */
 
 export {
-  AgentExecutionState,
-  CheckpointPhaseLabel,
-  ToolStoreEntry,
-  TenantOverrides,
-  CheckpointStartPayload,
-  CheckpointStepPayload,
-  CheckpointTerminalPayload,
+  type AgentExecutionState,
+  type CheckpointPhaseLabel,
+  type ToolStoreEntry,
+  type TenantOverrides,
+  type CheckpointStartPayload,
+  type CheckpointStepPayload,
+  type CheckpointTerminalPayload,
   createInitialAgentExecutionState,
 } from './AgentExecutionState';
 export type { UnfinishedRunEntry, ResumableRunEntry, ActiveRunEntry } from './checkpointing';
