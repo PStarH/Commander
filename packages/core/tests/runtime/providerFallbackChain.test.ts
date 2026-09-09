@@ -7,6 +7,60 @@ import {
 import { CircuitBreaker } from '../../src/runtime/circuitBreaker';
 
 describe('ProviderFallbackChain', () => {
+  it('does not fail over on a fetch certificate validation error', async () => {
+    const error = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('certificate expired'), { code: 'CERT_HAS_EXPIRED' }),
+    });
+    const secondary = vi.fn(async () => 'unexpected');
+    await expect(
+      new ProviderFallbackChain<string>().tryProviders([
+        {
+          name: 'primary',
+          attempt: async () => {
+            throw error;
+          },
+        },
+        { name: 'secondary', attempt: secondary },
+      ]),
+    ).rejects.toBe(error);
+    expect(secondary).not.toHaveBeenCalled();
+  });
+
+  it('still fails over on fetch connection refusal', async () => {
+    const error = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connection refused'), { code: 'ECONNREFUSED' }),
+    });
+    const result = await new ProviderFallbackChain<string>().tryProviders([
+      {
+        name: 'primary',
+        attempt: async () => {
+          throw error;
+        },
+      },
+      { name: 'secondary', attempt: async () => 'ok' },
+    ]);
+    expect(result.providerUsed).toBe('secondary');
+  });
+
+  it('does not announce a provider beyond the attempt cap', async () => {
+    const skipped = vi.fn();
+    const chain = new ProviderFallbackChain<string>({
+      maxProviders: 1,
+      onProviderSkipped: skipped,
+    });
+    await expect(
+      chain.tryProviders([
+        {
+          name: 'primary',
+          attempt: async () => {
+            throw new Error('503');
+          },
+        },
+        { name: 'excluded', attempt: async () => 'unused' },
+      ]),
+    ).rejects.toBeInstanceOf(FallbackChainExhaustedError);
+    expect(skipped).toHaveBeenCalledWith('primary', null);
+  });
   it('returns first successful provider', async () => {
     const chain = new ProviderFallbackChain<string>();
     const providers: ProviderEntry<string>[] = [

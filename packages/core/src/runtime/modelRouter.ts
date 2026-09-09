@@ -1495,7 +1495,9 @@ export class ModelRouter {
           ]
         : walkDown;
       for (const t of order) {
-        candidates = [...(this.tierIndex.get(t) ?? [])];
+        candidates = [...(this.tierIndex.get(t) ?? [])].filter(
+          (model) => !registeredProviders?.size || registeredProviders.has(model.provider),
+        );
         if (candidates.length > 0) break;
       }
     }
