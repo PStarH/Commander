@@ -139,6 +139,7 @@ export class OpenTelemetryExporter {
   private config: Required<OTelExporterConfig>;
   private queue: OTelSpan[] = [];
   private flushTimer: ReturnType<typeof setInterval> | null = null;
+  private startGeneration = 0;
   private running = false;
   private totalExported = 0;
   private totalFailed = 0;
@@ -200,8 +201,11 @@ export class OpenTelemetryExporter {
   async start(): Promise<void> {
     if (this.running) return;
     this.running = true;
+    const generation = ++this.startGeneration;
     // Recover queued spans from filesystem
     await this.recoverFromDisk();
+    // A stop or restart during recovery invalidates this startup.
+    if (!this.running || generation !== this.startGeneration) return;
     // Start batch flush timer
     this.flushTimer = setInterval(() => this.flush(), this.config.batchIntervalMs);
     this.flushTimer.unref();
