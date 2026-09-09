@@ -548,19 +548,24 @@ export function installGlobalFetchGovernor(options?: {
     const url =
       typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
 
-    const governed = await ResourceGovernor.govern(
-      () =>
-        originalFetch!(input, {
-          ...init,
-          signal: combineSignals(init?.signal, timeoutMs),
-        }),
-      { timeoutMs },
-    );
+    const combined = combineSignals(init?.signal, timeoutMs);
+    try {
+      const governed = await ResourceGovernor.govern(
+        () =>
+          originalFetch!(input, {
+            ...init,
+            signal: combined.signal,
+          }),
+        { timeoutMs },
+      );
 
-    if (governed.error) {
-      throw new Error(`fetch(${url}) blocked by ResourceGovernor: ${governed.error}`);
+      if (governed.error) {
+        throw new Error(`fetch(${url}) blocked by ResourceGovernor: ${governed.error}`);
+      }
+      return governed.result!;
+    } finally {
+      combined.cleanup();
     }
-    return governed.result!;
   };
 
   fetchGovernorInstalled = true;
@@ -575,20 +580,19 @@ export function resetGlobalFetchGovernor(): void {
   fetchGovernorInstalled = false;
 }
 
-function combineSignals(signal: AbortSignal | null | undefined, timeoutMs: number): AbortSignal {
+function combineSignals(signal: AbortSignal | null | undefined, timeoutMs: number) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  if (signal) {
-    signal.addEventListener('abort', () => {
+  const abort = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abort();
+  else signal?.addEventListener('abort', abort, { once: true });
+  return {
+    signal: controller.signal,
+    cleanup: () => {
       clearTimeout(timer);
-      controller.abort();
-    });
-  }
-
-  // Always clean up the timeout when the request completes or is aborted.
-  controller.signal.addEventListener('abort', () => clearTimeout(timer));
-  return controller.signal;
+      signal?.removeEventListener('abort', abort);
+    },
+  };
 }
 
 // ══════════════════════════════════════════════════════════════════════════

@@ -287,7 +287,19 @@ jobs:
 
       - name: Kernel unit tests (compensation DLQ + WS2)
         # L2-12: claimOutbox(+ByTopic) DLQ/max_attempts filter + poison→DLQ proofs.
-        run: pnpm --filter @commander/kernel test
+        shell: bash
+        run: |
+          pnpm --filter @commander/kernel run pretest
+          node --test scripts/kernel-test-reporter.test.mjs
+          node scripts/run-kernel-tests-ci.mjs
+
+      - name: Upload sanitized kernel test failures
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel-test-evidence-${{ matrix.os }}-node${{ matrix.node-version }}
+          path: packages/kernel/kernel-test-evidence.jsonl
+          if-no-files-found: ignore
 
       - name: Effect-broker unit tests (approval binding ENFORCED)
         # L2-11: exact request-hash / policy / audience binding proofs.
