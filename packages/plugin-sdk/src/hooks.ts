@@ -56,7 +56,9 @@ export type BeforeLLMCallHandler = (
 ) => Promise<BeforeLLMCallContext | void> | BeforeLLMCallContext | void;
 
 /** Called after an LLM call. Can inspect/modify the response. */
-export type AfterLLMCallHandler = (ctx: AfterLLMCallContext) => Promise<void> | void;
+export type AfterLLMCallHandler = (
+  ctx: AfterLLMCallContext,
+) => Promise<AfterLLMCallContext | void> | AfterLLMCallContext | void;
 
 /** Called when an agent starts execution. */
 export type AgentStartHandler = (ctx: AgentStartContext) => Promise<void> | void;
