@@ -649,6 +649,36 @@ describe('GoalHijackDetector', () => {
         ),
       );
     });
+
+    it('检测器抛错时 fail-closed（拒绝放行）', () => {
+      // strictMode:false so the assertion isolates the fail-closed path itself
+      // rather than the strict-mode override that forces every detection to block.
+      const d = new GoalHijackDetector({ strictMode: false, driftThreshold: 0.7 });
+      // Inject a fault into one detector. A throwing detector must not be
+      // silently dropped — that would let a fault disable hijack defense.
+      Object.assign(d, {
+        detectDirectOverride: () => {
+          throw new Error('injected fault');
+        },
+      });
+
+      const result = d.checkContext({
+        goal: {
+          goalId: 'g-fault',
+          description: 'Summarize report',
+          keywords: ['summarize', 'report'],
+          setAt: new Date().toISOString(),
+          setBy: 'user',
+        },
+        agentId: 'agent-1',
+        sessionId: 's-fault',
+        currentStep: 1,
+        userInput: 'Please summarize the quarterly report.',
+      });
+
+      assert.strictEqual(result.detected, true, 'a detector fault must be treated as detected');
+      assert.strictEqual(result.recommendation, 'block');
+    });
   });
 });
 
