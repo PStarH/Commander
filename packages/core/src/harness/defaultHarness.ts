@@ -292,7 +292,10 @@ export class DefaultHarness extends BaseHarness {
         const safeContent = response?.content || '';
         if (safeContent.length > 0) {
           const contentScan = await services.scanContent(safeContent);
-          if (contentScan.isSafe || safeContent.length > 100) {
+          // Fail closed: a long response is NOT exempt from the content scan.
+          // The previous `|| safeContent.length > 100` let any long answer
+          // bypass the safety check and be reported as success.
+          if (contentScan.isSafe) {
             const result = this.buildResultInternal(
               runId,
               goal,

@@ -440,6 +440,8 @@ export default defineConfig({
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
+      // H-03 fail-closed regression: unsafe final content (any length) is not success.
+      'tests/harness/contentScanFailClosed.test.ts',
       // commander-rotate integration tests exercise the real CLI subprocess,
       // argv parser, persisted audit chain, and receipt contract.
       'tests/security/commander-rotate.test.ts',
