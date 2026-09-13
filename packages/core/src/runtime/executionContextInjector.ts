@@ -56,21 +56,32 @@ export class ExecutionContextInjector {
     const estimateTokens = (text: string) => Math.ceil(text.length / 3.5);
     const contextParts: string[] = [];
 
-    // 1. Check agent inbox for pending messages
-    const inboxMessages = this.deps.agentInbox.pollInbox(ctx.agentId);
+    // 1. Check agent inbox for pending messages.
+    //
+    // RCH-12: acknowledge only the messages that were actually injected. The
+    // previous code acknowledged the whole batch even when the block did not fit
+    // the context cap (or was skipped entirely), so queued instructions vanished
+    // exactly under context pressure. The remainder stays unread and is
+    // delivered by a later run.
+    const inboxMessages = this.deps.agentInbox.peekInbox(ctx.agentId);
     if (inboxMessages.length > 0) {
-      const inboxBlock = inboxMessages
-        .map((m) => `[from:${m.from}] ${m.subject}: ${m.body.slice(0, 300)}`)
-        .join('\n');
-      const inboxTokens = estimateTokens(inboxBlock);
-      if (injectedContextTokens + inboxTokens < contextTokenCap) {
-        contextParts.push(
-          `## Pending Messages\n${inboxBlock}\n\nAddress these messages as part of your execution.`,
-        );
-        injectedContextTokens += inboxTokens;
-      }
+      const inboxHeader = '## Pending Messages\n';
+      const inboxFooter = '\n\nAddress these messages as part of your execution.';
+      const includedLines: string[] = [];
+      let inboxTokens = estimateTokens(inboxHeader + inboxFooter);
       for (const msg of inboxMessages) {
-        this.deps.agentInbox.acknowledge(ctx.agentId, msg.id);
+        const line = `[from:${msg.from}] ${msg.subject}: ${msg.body.slice(0, 300)}`;
+        const lineTokens = estimateTokens(line) + 1;
+        if (injectedContextTokens + inboxTokens + lineTokens >= contextTokenCap) break;
+        includedLines.push(line);
+        inboxTokens += lineTokens;
+      }
+      if (includedLines.length > 0) {
+        contextParts.push(`${inboxHeader}${includedLines.join('\n')}${inboxFooter}`);
+        injectedContextTokens += inboxTokens;
+        for (let index = 0; index < includedLines.length; index++) {
+          this.deps.agentInbox.acknowledge(ctx.agentId, inboxMessages[index]!.id);
+        }
       }
     }
 
