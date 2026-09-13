@@ -194,6 +194,10 @@ export class CodeAgentHarness extends BaseHarness {
       let lastError: string | undefined;
       let finalContent = '';
       let taskComplete = false;
+      // Set when the content scan rejects a final answer. Kept separate from
+      // taskComplete so the post-loop synthesis path cannot turn a rejected
+      // answer into a 'success' result.
+      let contentRejected = false;
 
       // ── Detect: start vs continue ──
       // If messages contain assistant responses with tool_calls, we're continuing.
@@ -327,12 +331,18 @@ export class CodeAgentHarness extends BaseHarness {
           if (!response.toolCalls || response.toolCalls.length === 0) {
             finalContent = response.content || '';
             if (finalContent && finalContent.length > 50) {
-              // Content safety scan
+              // Content safety scan. A long response is NOT exempt: the previous
+              // `|| finalContent.length > 200` let any long answer bypass the
+              // check, and unsafe content must never be a successful final answer.
               const scanResult = await services.scanContent(finalContent);
-              if (scanResult.isSafe || finalContent.length > 200) {
-                taskComplete = true;
+              if (!scanResult.isSafe) {
+                lastError = 'Final content failed the content safety scan';
+                finalContent = '';
+                contentRejected = true;
                 break;
               }
+              taskComplete = true;
+              break;
             }
             // Short/no content — might need to nudge
             if (toolLoopCount === 0) {
@@ -559,7 +569,7 @@ export class CodeAgentHarness extends BaseHarness {
       const finalResult = this.buildResultInternal(
         runId,
         goal,
-        finalContent ? 'success' : 'failed',
+        contentRejected ? 'failed' : finalContent ? 'success' : 'failed',
         finalContent || (lastError ?? 'All attempts exhausted'),
         steps,
         totalTokenUsage,
