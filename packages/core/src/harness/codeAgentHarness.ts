@@ -31,6 +31,7 @@ import type {
 import { getGlobalLogger } from '../logging';
 import { generateId, now } from '../runtime/runtimeHelpers';
 import { BaseHarness } from './baseHarness';
+import { extractDecisionObject } from './decisionJson';
 
 // ============================================================================
 // Capabilities
@@ -693,8 +694,8 @@ Respond with a JSON object:
       const guardianProvider = services.getProvider(this.guardianConfig.provider);
       if (!guardianProvider) {
         return {
-          approved: true,
-          reason: `Guardian provider "${this.guardianConfig.provider}" not available — auto-approved`,
+          approved: false,
+          reason: `Guardian provider "${this.guardianConfig.provider}" not available — denied (fail-closed)`,
         };
       }
 
@@ -705,25 +706,26 @@ Respond with a JSON object:
       });
 
       if (!guardianResponse?.content) {
-        return { approved: true, reason: 'Guardian returned empty response — auto-approved' };
+        return { approved: false, reason: 'Guardian returned empty response — denied (fail-closed)' };
       }
 
-      const jsonMatch = guardianResponse.content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as GuardianDecision;
+      const parsed = extractDecisionObject(guardianResponse.content, 'approved');
+      if (!parsed) {
         return {
-          approved: parsed.approved !== false,
-          reason: parsed.reason || 'Guardian review complete',
-          suggestion: parsed.suggestion,
+          approved: false,
+          reason: 'Could not parse Guardian response — denied (fail-closed)',
         };
       }
-
-      return { approved: true, reason: 'Could not parse Guardian response — auto-approved' };
+      return {
+        approved: parsed.approved === true,
+        reason: typeof parsed.reason === 'string' ? parsed.reason : 'Guardian review complete',
+        suggestion: typeof parsed.suggestion === 'string' ? parsed.suggestion : undefined,
+      };
     } catch (err) {
-      getGlobalLogger().warn('CodeAgentHarness', 'Guardian check failed, auto-approving', {
+      getGlobalLogger().warn('CodeAgentHarness', 'Guardian check failed, denying', {
         error: (err as Error)?.message,
       });
-      return { approved: true, reason: 'Guardian check failed — auto-approved (fail-open)' };
+      return { approved: false, reason: 'Guardian check failed — denied (fail-closed)' };
     }
   }
 

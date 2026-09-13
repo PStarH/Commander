@@ -7,14 +7,16 @@
  * Pattern from OpenAI Codex CLI:
  * - A secondary (cheaper) LLM reviews tool calls before execution
  * - Returns structured approval decision
- * - Fails open on provider errors (auto-approve) to avoid blocking runs
+ * - Fails CLOSED: if the reviewer cannot render a decision (provider missing,
+ *   empty/unparseable response, or an error) the tool call is denied. A safety
+ *   gate that auto-approves when it cannot decide provides no guarantee.
  * - Read-only tools are auto-approved without LLM call
  */
 
-import { reportSilentFailure } from '../silentFailureReporter';
 import type { ToolCall } from '../runtime/types';
 import type { HarnessServices } from './harnessTypes';
 import { getGlobalLogger } from '../logging';
+import { extractDecisionObject } from './decisionJson';
 
 export interface GuardianConfig {
   enabled: boolean;
@@ -99,8 +101,8 @@ export class GuardianService {
       const provider = services.getProvider(this.config.provider);
       if (!provider) {
         return {
-          approved: true,
-          reason: `Guardian provider "${this.config.provider}" not available — auto-approved`,
+          approved: false,
+          reason: `Guardian provider "${this.config.provider}" not available — denied (fail-closed)`,
         };
       }
 
@@ -111,20 +113,20 @@ export class GuardianService {
       });
 
       if (!response?.content) {
-        return { approved: true, reason: 'Guardian returned empty response — auto-approved' };
+        return { approved: false, reason: 'Guardian returned empty response — denied (fail-closed)' };
       }
 
       const parsed = this.parseDecision(response.content);
       return {
-        approved: parsed.approved !== false,
+        approved: parsed.approved === true,
         reason: parsed.reason || 'Guardian review complete',
         suggestion: parsed.suggestion,
       };
     } catch (err) {
-      getGlobalLogger().warn('GuardianService', 'Review failed, auto-approving', {
+      getGlobalLogger().warn('GuardianService', 'Review failed, denying', {
         error: (err as Error)?.message,
       });
-      return { approved: true, reason: 'Guardian check failed — auto-approved (fail-open)' };
+      return { approved: false, reason: 'Guardian check failed — denied (fail-closed)' };
     }
   }
 
@@ -155,15 +157,17 @@ Respond with JSON:
     reason: string;
     suggestion?: string;
   } {
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) {
-      return { approved: true, reason: 'Could not parse Guardian response — auto-approved' };
+    const parsed = extractDecisionObject(content, 'approved');
+    if (!parsed) {
+      return {
+        approved: false,
+        reason: 'Could not parse Guardian response — denied (fail-closed)',
+      };
     }
-    try {
-      return JSON.parse(match[0]) as GuardianDecision;
-    } catch (err) {
-      reportSilentFailure(err, 'guardianService:164');
-      return { approved: true, reason: 'Guardian response parse failed — auto-approved' };
-    }
+    return {
+      approved: parsed.approved === true,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : 'Guardian review complete',
+      suggestion: typeof parsed.suggestion === 'string' ? parsed.suggestion : undefined,
+    };
   }
 }

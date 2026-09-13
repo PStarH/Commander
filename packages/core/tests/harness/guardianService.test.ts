@@ -6,11 +6,17 @@
  *   - Read-only tools auto-approved without LLM call
  *   - Edit tools auto-approved via policy
  *   - LLM-based review (approve / reject / with suggestion)
- *   - Provider not available → fail-open
- *   - Empty response → auto-approve
- *   - Unparseable response → auto-approve
- *   - Provider call error → fail-open
+ *   - Provider not available → DENY (fail-closed)
+ *   - Empty response → DENY (fail-closed)
+ *   - Unparseable response → DENY (fail-closed)
+ *   - Provider call error → DENY (fail-closed)
+ *   - Missing `approved` field → DENY (fail-closed)
  *   - Config update
+ *
+ * NOTE (Batch D, XB-02): these cases previously asserted fail-open
+ * (auto-approve on any error). That behaviour was the defect — a safety gate
+ * that auto-approves when it cannot decide provides no guarantee. The
+ * assertions are intentionally inverted to pin the fail-closed contract.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
@@ -159,31 +165,31 @@ describe('GuardianService', () => {
       assert.strictEqual(decision.suggestion, 'Use ls instead');
     });
 
-    it('auto-approves when provider is not available', async () => {
+    it('denies when provider is not available', async () => {
       const services = makeServices(null);
       const svc = new GuardianService({ enabled: true });
       const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
-      assert.strictEqual(decision.approved, true);
+      assert.strictEqual(decision.approved, false);
       assert.ok(decision.reason.includes('not available'));
     });
 
-    it('auto-approves on empty LLM response', async () => {
+    it('denies on empty LLM response', async () => {
       const services = makeServices({
         call: async () => ({ content: '' }),
       });
       const svc = new GuardianService({ enabled: true });
       const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
-      assert.strictEqual(decision.approved, true);
+      assert.strictEqual(decision.approved, false);
       assert.ok(decision.reason.includes('empty'));
     });
 
-    it('auto-approves on unparseable LLM response', async () => {
+    it('denies on unparseable LLM response', async () => {
       const services = makeServices({
         call: async () => ({ content: 'I cannot decide' }),
       });
       const svc = new GuardianService({ enabled: true });
       const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
-      assert.strictEqual(decision.approved, true);
+      assert.strictEqual(decision.approved, false);
       assert.ok(decision.reason.includes('parse'));
     });
 
@@ -203,7 +209,7 @@ describe('GuardianService', () => {
       assert.strictEqual(decision.reason, 'Risky');
     });
 
-    it('fail-opens on provider call error', async () => {
+    it('denies on provider call error', async () => {
       const services = makeServices({
         call: async () => {
           throw new Error('Network timeout');
@@ -211,11 +217,11 @@ describe('GuardianService', () => {
       });
       const svc = new GuardianService({ enabled: true });
       const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
-      assert.strictEqual(decision.approved, true);
-      assert.ok(decision.reason.includes('fail-open'));
+      assert.strictEqual(decision.approved, false);
+      assert.ok(decision.reason.includes('fail-closed'));
     });
 
-    it('treats approved field being absent as approved', async () => {
+    it('denies when the approved field is absent', async () => {
       const services = makeServices({
         call: async () => ({
           content: JSON.stringify({ reason: 'No decision field' }),
@@ -223,8 +229,8 @@ describe('GuardianService', () => {
       });
       const svc = new GuardianService({ enabled: true });
       const decision = await svc.review(makeToolCall('shell_execute', {}), 'test goal', services);
-      // approved !== false → approved
-      assert.strictEqual(decision.approved, true);
+      // approved must be explicitly true — a missing field is not approval
+      assert.strictEqual(decision.approved, false);
     });
   });
 });

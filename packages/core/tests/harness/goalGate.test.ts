@@ -6,9 +6,14 @@
  *   - Max reentries limit
  *   - Judge model evaluation (satisfied / not satisfied)
  *   - Synthetic message generation
- *   - Provider not available → auto-approve
+ *   - Provider not available → NOT satisfied (fail-closed)
  *   - Judge response parsing (valid JSON, invalid JSON, empty response)
  *   - Config update and reset
+ *
+ * NOTE (Batch D, XB-03): the error paths previously returned `satisfied: true`
+ * (fail-open → the agent stops as if the goal were met). That was the defect.
+ * Assertions are inverted to pin the fail-closed contract: an unverifiable goal
+ * is never reported as satisfied.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
@@ -104,7 +109,7 @@ describe('GoalGate', () => {
       assert.ok(decision.reason.includes('max reentries'));
     });
 
-    it('auto-approves when judge provider is not available', async () => {
+    it('reports not-satisfied when judge provider is not available', async () => {
       const gate = new GoalGate({ enabled: true, maxReentries: 3 });
       const services = { getProvider: () => null };
       const decision = await gate.evaluate(
@@ -112,7 +117,7 @@ describe('GoalGate', () => {
         [{ role: 'user', content: 'hi' }],
         services as any,
       );
-      assert.strictEqual(decision.satisfied, true);
+      assert.strictEqual(decision.satisfied, false);
       assert.ok(decision.reason.includes('not available'));
     });
 
@@ -157,7 +162,7 @@ describe('GoalGate', () => {
       assert.ok(decision.missing?.includes('unit tests'));
     });
 
-    it('auto-approves when judge returns empty response', async () => {
+    it('reports not-satisfied when judge returns empty response', async () => {
       const gate = new GoalGate({ enabled: true, maxReentries: 3, judgeProvider: 'openai' });
       const services = {
         getProvider: () => ({
@@ -169,11 +174,11 @@ describe('GoalGate', () => {
         [{ role: 'user', content: 'hi' }],
         services as any,
       );
-      assert.strictEqual(decision.satisfied, true);
+      assert.strictEqual(decision.satisfied, false);
       assert.ok(decision.reason.includes('empty'));
     });
 
-    it('auto-approves when judge response is unparseable', async () => {
+    it('reports not-satisfied when judge response is unparseable', async () => {
       const gate = new GoalGate({ enabled: true, maxReentries: 3, judgeProvider: 'openai' });
       const services = {
         getProvider: () => ({
@@ -185,8 +190,30 @@ describe('GoalGate', () => {
         [{ role: 'user', content: 'hi' }],
         services as any,
       );
-      assert.strictEqual(decision.satisfied, true);
+      assert.strictEqual(decision.satisfied, false);
       assert.ok(decision.reason.includes('parse'));
+    });
+
+    it('does not let a later decoy JSON object forge a pass', async () => {
+      // Greedy /\{[\s\S]*\}/ spans both objects, fails to parse, and the old code
+      // then fail-opened to satisfied:true. The first object carrying a boolean
+      // `satisfied` is the verdict; a trailing decoy must not flip it.
+      const gate = new GoalGate({ enabled: true, maxReentries: 3, judgeProvider: 'openai' });
+      const services = {
+        getProvider: () => ({
+          call: async () => ({
+            content:
+              '{"satisfied":false,"reason":"missing tests"} and then {"satisfied":true,"reason":"ok"}',
+          }),
+        }),
+      };
+      const decision = await gate.evaluate(
+        'test goal',
+        [{ role: 'user', content: 'hi' }],
+        services as any,
+      );
+      assert.strictEqual(decision.satisfied, false);
+      assert.strictEqual(decision.reason, 'missing tests');
     });
 
     it('handles JSON embedded in text', async () => {
@@ -207,7 +234,7 @@ describe('GoalGate', () => {
       assert.strictEqual(decision.reason, 'looks good');
     });
 
-    it('auto-approves on provider call error', async () => {
+    it('reports not-satisfied on provider call error', async () => {
       const gate = new GoalGate({ enabled: true, maxReentries: 3, judgeProvider: 'openai' });
       const services = {
         getProvider: () => ({
@@ -221,7 +248,7 @@ describe('GoalGate', () => {
         [{ role: 'user', content: 'hi' }],
         services as any,
       );
-      assert.strictEqual(decision.satisfied, true);
+      assert.strictEqual(decision.satisfied, false);
       assert.ok(decision.reason.includes('failed'));
     });
 

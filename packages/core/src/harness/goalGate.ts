@@ -9,9 +9,15 @@
  *
  * This prevents the agent from falsely claiming success when the goal is
  * only partially met or when critical constraints were ignored.
+ *
+ * Fails CLOSED: when the judge cannot render a verdict (provider missing,
+ * empty/unparseable response, or an error) the goal is reported as NOT
+ * satisfied rather than satisfied, so an unverifiable goal is never treated as
+ * achieved. Each such outcome still counts toward maxReentries so the loop
+ * terminates.
  */
 
-import { reportSilentFailure } from '../silentFailureReporter';
+import { extractDecisionObject } from './decisionJson';
 export interface GoalGateConfig {
   enabled: boolean;
   judgeModel: string;
@@ -104,10 +110,7 @@ Respond with JSON:
     try {
       const provider = services.getProvider(this.config.judgeProvider);
       if (!provider) {
-        return {
-          satisfied: true,
-          reason: `Judge provider "${this.config.judgeProvider}" not available`,
-        };
+        return this.unverified(`Judge provider "${this.config.judgeProvider}" not available`);
       }
 
       const response = await provider.call({
@@ -117,7 +120,7 @@ Respond with JSON:
       });
 
       if (!response?.content) {
-        return { satisfied: true, reason: 'Judge returned empty response' };
+        return this.unverified('Judge returned empty response');
       }
 
       const parsed = this.parseDecision(response.content);
@@ -126,8 +129,18 @@ Respond with JSON:
       }
       return parsed;
     } catch (err) {
-      return { satisfied: true, reason: `Goal gate evaluation failed: ${(err as Error)?.message}` };
+      return this.unverified(`Goal gate evaluation failed: ${(err as Error)?.message}`);
     }
+  }
+
+  /**
+   * A goal that cannot be verified is never reported as satisfied. Counts
+   * toward the re-entry budget so a persistently unavailable judge still
+   * terminates instead of looping forever.
+   */
+  private unverified(reason: string): GoalGateDecision {
+    this.reentries++;
+    return { satisfied: false, reason: `${reason} — not verified (fail-closed)` };
   }
 
   /**
@@ -140,15 +153,20 @@ Respond with JSON:
   }
 
   private parseDecision(content: string): GoalGateDecision {
-    const match = content.match(/\{[\s\S]*\}/);
-    if (!match) {
-      return { satisfied: true, reason: 'Could not parse judge response' };
+    const parsed = extractDecisionObject(content, 'satisfied');
+    if (!parsed) {
+      return {
+        satisfied: false,
+        reason: 'Could not parse judge response — not verified (fail-closed)',
+      };
     }
-    try {
-      return JSON.parse(match[0]) as GoalGateDecision;
-    } catch (err) {
-      reportSilentFailure(err, 'goalGate:149');
-      return { satisfied: true, reason: 'Judge response parse failed — auto-approved' };
-    }
+    const missing = Array.isArray(parsed.missing)
+      ? parsed.missing.filter((m): m is string => typeof m === 'string')
+      : undefined;
+    return {
+      satisfied: parsed.satisfied === true,
+      reason: typeof parsed.reason === 'string' ? parsed.reason : 'Judge review complete',
+      missing,
+    };
   }
 }
