@@ -3,6 +3,10 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { VCRProvider, createVCRProvider } from '../../src/runtime/vcrProvider';
 import type { LLMProvider, LLMRequest, LLMResponse } from '../../src/runtime/types';
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 class StubProvider implements LLMProvider {
   readonly name = 'stub';

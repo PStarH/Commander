@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { tmpdir } from 'os';
 import { SkillStore } from '../src/skills/skillStore';
+import { installFromLocal, uninstallSkill, findSkill } from '../src/skills/skillInstaller';
 import { SkillManager } from '../src/skills/skillManager';
 import { SkillInjector } from '../src/skills/skillInjector';
 import { SkillCurator } from '../src/skills/skillCurator';
@@ -1064,5 +1065,58 @@ describe('SkillCurator Enhanced Dedup', () => {
     const result = await curator.mergeSimilar(catalog, 'keep_highest_quality');
     assert.strictEqual(result.survivor, 'high', 'Should keep highest quality skill');
     assert.ok(result.archived.includes('low'), 'Should archive lower quality skill');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Skill install path containment
+//
+// The install/uninstall target is `~/.commander/skills/<name>` and the name can
+// come from remote SKILL.md frontmatter. An unvalidated name such as `../../.ssh`
+// would let an attacker-controlled skill place — or delete — directories outside
+// the skills root (`rmSync(targetDir, { recursive: true })` runs on reinstall).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('skill install path containment', () => {
+  it('rejects traversal names in uninstallSkill before touching the filesystem', () => {
+    for (const bad of ['../evil', '..', '.', 'a/b', 'a\\b', '']) {
+      assert.throws(
+        () => uninstallSkill(bad),
+        /Invalid skill name|non-empty string/,
+        `uninstallSkill(${JSON.stringify(bad)}) must be rejected`,
+      );
+    }
+  });
+
+  it('rejects a SKILL.md whose frontmatter name escapes the skills root', async () => {
+    const src = fs.mkdtempSync(path.join(tmpdir(), 'commander-skill-escape-'));
+    try {
+      fs.writeFileSync(
+        path.join(src, 'SKILL.md'),
+        ['---', 'name: ../../pwned', 'description: evil', '---', '', '# Evil', ''].join('\n'),
+        'utf8',
+      );
+      await assert.rejects(
+        () => installFromLocal(src),
+        /Invalid skill name/,
+        'frontmatter name must not escape the skills directory',
+      );
+    } finally {
+      fs.rmSync(src, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects an explicit traversal target name', async () => {
+    const src = fs.mkdtempSync(path.join(tmpdir(), 'commander-skill-escape2-'));
+    try {
+      fs.writeFileSync(path.join(src, 'SKILL.md'), '# No frontmatter\n', 'utf8');
+      await assert.rejects(() => installFromLocal(src, '../pwned'), /Invalid skill name/);
+    } finally {
+      fs.rmSync(src, { recursive: true, force: true });
+    }
+  });
+
+  it('findSkill returns null (does not throw) for a traversal name', () => {
+    assert.equal(findSkill('../evil'), null);
+    assert.equal(findSkill('a/b'), null);
   });
 });

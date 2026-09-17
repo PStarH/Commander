@@ -11,7 +11,7 @@ import type {
 import type { AgentRuntimeInterface } from '../runtime';
 import type { AgentExecutionContext, AgentExecutionResult, ModelTier } from '../runtime/types';
 import type { StateCheckpointer } from '../runtime/stateCheckpointer';
-import { getHumanApprovalManager } from './humanApprovalManager';
+import { getHumanApprovalManager, type ApprovalAuthenticator } from './humanApprovalManager';
 import { assessNodeRisk, shouldRequestApproval } from './riskAssessor';
 import { ArtifactSystem, getArtifactSystem } from './artifactSystem';
 import { getTeamManager } from './agentTeamManager';
@@ -38,6 +38,15 @@ import { scheduleSubtaskLevels } from './taskTreeDag';
 
 /** Critical path token budget multiplier (LAMaS: give critical tasks more resources) */
 const CRITICAL_PATH_TOKEN_MULTIPLIER = 1.5;
+
+/**
+ * Tool grant used when a sub-agent's role is missing or unrecognised.
+ *
+ * Deliberately read-only. The role-scoped tool list is a grant, so an unknown
+ * role must not end up with a broader grant than a known one — which is what
+ * returning the full toolset would do.
+ */
+const READ_ONLY_TOOL_HINTS = ['file_read', 'read_file', 'grep', 'file_search', 'diff'];
 
 /** Slack threshold in ms — nodes with less slack than this are considered critical */
 const CRITICAL_PATH_SLACK_THRESHOLD_MS = 100;
@@ -119,6 +128,14 @@ export class SubAgentExecutor {
 
   setApprovalGate(gate: HumanApprovalGate | null): void {
     this.approvalGate = gate;
+  }
+
+  /**
+   * Configure the trusted host authentication boundary used by approval
+   * responses. Without this, HumanApprovalManager.respond() fails closed.
+   */
+  setApprovalAuthenticator(authenticator?: ApprovalAuthenticator): void {
+    getHumanApprovalManager().configureApproverAuthenticator(authenticator);
   }
 
   getSkippedApprovals(): Array<{ nodeId: string; reason: string }> {
@@ -1123,6 +1140,14 @@ export class SubAgentExecutor {
   /**
    * Filter tools per role — sub-agents don't need all tools.
    * Researchers need search/read; coders need read/write/edit/bash; etc.
+   *
+   * This is a *grant*, not a hint: the returned list becomes the sub-agent's
+   * `scope.tools` and the only tools it can reach. It therefore fails closed.
+   * Both branches previously fell back to `allTools`, which meant any role
+   * missing from the table received the complete toolset — including `bash`
+   * and `file_write`. That was not a corner case: three of the six roles in
+   * `ROMARole` (`LEAD`, `TESTER`, `SPECIALIST`) were absent, as was any
+   * typo'd or model-invented role name.
    */
   private filterToolsForRole(allTools: string[], role?: string): string[] {
     const roleLower = (role ?? '').toLowerCase();
@@ -1150,13 +1175,21 @@ export class SubAgentExecutor {
       reviewer: ['file_read', 'read_file', 'grep', 'file_search', 'diff'],
       synthesizer: ['file_read', 'read_file', 'file_write', 'write_file'],
       planner: ['file_read', 'read_file', 'grep', 'file_search'],
+      // TESTER has to run the suite, so it needs `bash` — but not the write
+      // tools a coder gets.
+      tester: ['file_read', 'read_file', 'bash', 'grep', 'file_search'],
+      // SPECIALIST and LEAD coordinate/investigate rather than mutate.
+      specialist: ['file_read', 'read_file', 'grep', 'file_search', 'web_search', 'web_fetch'],
+      lead: ['file_read', 'read_file', 'grep', 'file_search'],
     };
 
-    const hints = roleToolHints[roleLower];
-    if (!hints) return allTools;
+    // An unrecognised role must never be *more* privileged than a recognised
+    // one, so the fallback is the read-only baseline rather than `allTools`.
+    const hints = roleToolHints[roleLower] ?? READ_ONLY_TOOL_HINTS;
 
-    const filtered = hints.filter((t) => allTools.includes(t));
-    return filtered.length > 0 ? filtered : allTools;
+    // No `length > 0 ? filtered : allTools` escape: if a role's hints match
+    // nothing in the available set, the correct grant is the empty set.
+    return hints.filter((t) => allTools.includes(t));
   }
 
   /**

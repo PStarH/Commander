@@ -4,6 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { CapabilityTokenIssuer } from '@commander/effect-broker';
 import { ConnectorStepExecutor } from './connectorStepExecutor.js';
 import {
   isCatalogAuthorizedLocalOnly,
@@ -15,6 +16,7 @@ import {
   createDefaultWorkerToolEffectCatalog,
 } from './toolEffectCatalog.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
+import { runWithStepWorkloadIdentity } from './stepWorkloadIdentity.js';
 import type { ClaimedStep, WorkerRecord } from './types.js';
 
 const ac = new AbortController();
@@ -47,12 +49,31 @@ function createMockStep(overrides?: Partial<ClaimedStep>): ClaimedStep {
     input: { toolName: 'echo', args: { message: 'hello' } },
     lease: {
       workerId: 'worker-1',
+      workerGeneration: 1,
       token: 'token-1',
       fencingEpoch: 1,
       expiresAt: new Date(Date.now() + 30_000).toISOString(),
     },
     ...overrides,
   };
+}
+
+function makeCapabilityIssuer(): CapabilityTokenIssuer {
+  return CapabilityTokenIssuer.generate({
+    issuer: 'commander-worker-test',
+    audience: 'commander.effect-broker',
+    keyId: 'l3-03b',
+  });
+}
+
+async function executeWithWorkload(
+  executor: ToolStepExecutor,
+  step: ClaimedStep,
+): Promise<Record<string, unknown> | undefined> {
+  const worker = createMockWorker();
+  return runWithStepWorkloadIdentity(step, worker, () =>
+    executor.execute(step, { signal: ac.signal, worker }),
+  );
 }
 
 async function withEnv<T>(
@@ -136,6 +157,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
       },
     };
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
+      const issuer = makeCapabilityIssuer();
       const executor = new ToolStepExecutor(
         {
           get: () => ({
@@ -146,7 +168,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
           }),
         },
         stubBroker,
-        undefined,
+        issuer,
         catalog,
       );
       const step = createMockStep({
@@ -159,10 +181,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
           capabilityToken: 'tok',
         },
       });
-      const result = await executor.execute(step, {
-        signal: ac.signal,
-        worker: createMockWorker(),
-      });
+      const result = await executeWithWorkload(executor, step);
       assert.equal(handlerInvoked, false);
       assert.equal(brokerInvoked, true);
       assert.deepEqual((result as { result: unknown }).result, { via: 'broker' });
@@ -179,6 +198,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
       },
     };
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
+      const issuer = makeCapabilityIssuer();
       const executor = new ToolStepExecutor(
         {
           get: (name) =>
@@ -192,7 +212,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
               : null,
         },
         stubBroker,
-        undefined,
+        issuer,
         DENY_ALL_TOOL_EFFECT_CATALOG,
       );
       const step = createMockStep({
@@ -205,7 +225,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
           capabilityToken: 'tok',
         },
       });
-      await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      await executeWithWorkload(executor, step);
       assert.equal(handlerInvoked, false);
       assert.equal(brokerInvoked, true);
     });
@@ -388,6 +408,7 @@ describe('L3-03b dev compatibility', () => {
     let brokerHit = false;
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       // Catalog arg omitted — ToolStepExecutor must default to DENY_ALL.
+      const issuer = makeCapabilityIssuer();
       const executor = new ToolStepExecutor(
         {
           get: (name) => {
@@ -406,6 +427,7 @@ describe('L3-03b dev compatibility', () => {
             return { effectId: 'eff-deny', replayed: false, response: { gated: true } };
           },
         },
+        issuer,
       );
       const step = createMockStep({
         input: {
@@ -417,7 +439,7 @@ describe('L3-03b dev compatibility', () => {
           capabilityToken: 'tok',
         },
       });
-      await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      await executeWithWorkload(executor, step);
       assert.equal(registryHit, false);
       assert.equal(brokerHit, true);
     });

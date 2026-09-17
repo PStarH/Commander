@@ -45,11 +45,7 @@ import { resetConversationStore } from '../src/memory/conversationStore';
 import { resetUserModelManager } from '../src/memory/userModel';
 import { resetUnifiedMemory } from '../src/memory/unifiedMemory';
 import { resetGlobalThreeLayerMemory, wireGlobalThreeLayerMemory } from '../src/threeLayerMemory';
-import {
-  resetSideEffectGate,
-  setSideEffectGate,
-  type SideEffectGate,
-} from '../src/runtime/sideEffectGate';
+import { resetSideEffectGate } from '../src/runtime/sideEffectGate';
 
 // Runtime integration tests must not write to the checkout's durable WAL.
 // A caller can still provide an explicit path for tests that exercise WAL
@@ -62,30 +58,22 @@ if (process.env.COMMANDER_OTEL_ENABLED === undefined) {
 }
 
 /**
- * Always-admit SideEffectGate for unit/integration tests that exercise
- * AgentRuntime tool loops without a full ATR run handle.
+ * LM-03: the always-admit SideEffectGate is deliberately NOT installed here.
  *
- * Production still requires admit() via getSideEffectGate(); tests inject a
- * soft gate so tool handlers run. Individual SideEffectGate unit tests call
- * resetSideEffectGate() and construct real gates themselves.
+ * It used to be re-injected in the global `beforeEach` below, which made
+ * "admitted" the default security state of every test in `packages/core`: no
+ * test could observe a regression in the production fail-closed admission path,
+ * because whatever `ToolExecutionService` did, the stub returned `allow: true`.
  *
- * Soft bypass via COMMANDER_EFFECT_BROKER_COMPAT is intentionally NOT enabled
- * globally here — that flag is production-gated and would hide fail-closed bugs.
+ * The stub now lives in `tests/helpers/runtimeUnitFixture.ts` and is opt-in per
+ * test file (`installAlwaysAdmitGate()` / `withAlwaysAdmitGate()`). The global
+ * hook still *resets* the singleton, so the default is the real, fail-closed
+ * `SideEffectGate`.
+ *
+ * Soft bypass via COMMANDER_EFFECT_BROKER_COMPAT remains intentionally NOT
+ * enabled globally — that flag is production-gated and would hide fail-closed
+ * bugs.
  */
-function createAlwaysAdmitGate(): SideEffectGate {
-  return {
-    admit: async (req: { stepId: string; toolName?: string }) => ({
-      replayed: false,
-      actionId: `test-admit:${req.stepId}`,
-      decision: {
-        decisionId: 'test_always_admit',
-        allow: true,
-        effect: 'allow',
-      },
-      decisionId: 'test_always_admit',
-    }),
-  } as unknown as SideEffectGate;
-}
 
 // CI Quality Gates sets NODE_ENV=production. Capability token issuance
 // refuses the default key in production unless COMMANDER_CAPABILITY_TOKEN_KEY
@@ -162,10 +150,10 @@ beforeEach(async () => {
   resetUnifiedMemory();
   wireGlobalThreeLayerMemory(null);
 
-  // V2 gate: reinstall always-admit stub after reset so AgentRuntime tool
-  // integration tests can execute tool bodies without a full ATR handle.
+  // LM-03: reset to the REAL, fail-closed SideEffectGate. Tests that need the
+  // always-admit unit fixture must install it explicitly — see
+  // `tests/helpers/runtimeUnitFixture.ts`.
   resetSideEffectGate();
-  setSideEffectGate(createAlwaysAdmitGate());
 });
 
 afterEach(async () => {

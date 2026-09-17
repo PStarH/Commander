@@ -136,6 +136,11 @@ describe('Agent Loop E2E', () => {
     };
     const echoTool: Tool = {
       definition: echoDef,
+      // The default ATR policy pack is fail-closed (`default allow = false`), and
+      // for a custom tool the only unconditional allow is `isReadOnly == true`.
+      // Without this classification the Guardian denies the call and the run ends
+      // in `TOOL_EXECUTION_FAILED` before the tool body ever executes.
+      isReadOnly: true,
       execute: async (args) => `Echo: ${args.message}`,
     };
     runtime.registerTool('echo_tool', echoTool);
@@ -234,6 +239,9 @@ describe('Agent Loop E2E', () => {
           description: 'Echo',
           parameters: { type: 'object', properties: {} },
         },
+        // Must be admissible, otherwise the loop stops on a policy denial rather
+        // than on maxSteps and this test passes for the wrong reason.
+        isReadOnly: true,
         execute: async () => 'echo',
       });
 
@@ -264,6 +272,10 @@ describe('Agent Loop E2E', () => {
       };
       runtime.registerTool('fail_tool', {
         definition: failDef,
+        // Read-only (it produces no side effects, it only throws) so the policy
+        // admits it — otherwise the test would exercise the policy denial path
+        // instead of the tool-error path it is named for.
+        isReadOnly: true,
         execute: async () => {
           throw new Error('Tool exploded');
         },
@@ -281,8 +293,26 @@ describe('Agent Loop E2E', () => {
         }),
       );
 
-      // Runtime should handle the error and continue
-      assert.ok(result.status === 'success' || result.status === 'partial');
+      // "Gracefully" means the failure is surfaced as a tool result and the loop
+      // continues: the LLM gets a second call and returns a final answer instead
+      // of the run throwing.
+      assert.strictEqual(provider.callCount, 2, 'the LLM must get a chance to react');
+      assert.strictEqual(
+        result.steps.filter((s) => s.type === 'tool_result').length,
+        1,
+        'the failure must be recorded as exactly one tool result',
+      );
+
+      // The run is nevertheless reported as failed, and that is deliberate: a
+      // non-recoverable tool failure must not be reported as success
+      // (`isRecoverableFrameworkToolError` in agentLoopOrchestrator separates
+      // tolerated framework errors from tool errors that fail the run). This
+      // assertion previously expected 'success' | 'partial'; 'partial' is only
+      // the pre-loop placeholder in AgentExecutionState and is never a terminal
+      // outcome, so the old expectation could not be met by any code path.
+      assert.strictEqual(result.status, 'failed');
+      assert.match(result.error ?? '', /TOOL_EXECUTION_FAILED/);
+      assert.match(result.error ?? '', /fail_tool/);
     });
 
     it('handles LLM provider errors', async () => {
@@ -307,6 +337,7 @@ describe('Agent Loop E2E', () => {
           description: 'Echo',
           parameters: { type: 'object', properties: {} },
         },
+        isReadOnly: true,
         execute: async () => 'echo',
       });
 

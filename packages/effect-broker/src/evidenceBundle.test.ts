@@ -1,10 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
 import {
   assertTerminalEvidence,
   buildEffectEvidenceBundle,
   buildRunEvidenceBundle,
   canonicalEvidenceBody,
+  canonicalEvidenceJson,
   EVIDENCE_GENESIS_HASH,
   findDlpViolation,
   sanitizeForEvidence,
@@ -34,6 +37,168 @@ const baseEffect = {
   completedAt: '2026-07-17T06:00:01.000Z',
   approvalInteractionId: 'int-approve-1',
 };
+
+describe('EB03 canonical evidence JSON persistence', () => {
+  it('preserves canonical bytes and hashes for ordinary JSON objects', () => {
+    const value = { z: [null, true, 1.5, { b: 'text', a: false }], '2': 2, '10': 10, a: {} };
+    const expected = '{"10":10,"2":2,"a":{},"z":[null,true,1.5,{"a":false,"b":"text"}]}';
+    const canonical = canonicalEvidenceJson(value);
+    assert.equal(canonical, expected);
+    assert.equal(
+      createHash('sha256').update(canonical).digest('hex'),
+      createHash('sha256').update(expected).digest('hex'),
+    );
+  });
+
+  it('omits nested undefined object members without mutating the input', () => {
+    const value = {
+      z: undefined,
+      details: { optional: undefined, nested: { b: 2, a: undefined } },
+    };
+    const before = structuredClone(value);
+    assert.equal(canonicalEvidenceJson(value), '{"details":{"nested":{"b":2}}}');
+    assert.equal(
+      canonicalEvidenceJson(value),
+      canonicalEvidenceJson(JSON.parse(JSON.stringify(value))),
+    );
+    assert.deepEqual(value, before);
+  });
+
+  it('serializes undefined and sparse array holes as null at every depth', () => {
+    const items = new Array<unknown>(4);
+    items[1] = undefined;
+    items[2] = { z: undefined, values: [undefined, 3] };
+    assert.equal(canonicalEvidenceJson(items), '[null,null,{"values":[null,3]},null]');
+    assert.equal(
+      canonicalEvidenceJson(items),
+      canonicalEvidenceJson(JSON.parse(JSON.stringify(items))),
+    );
+    assert.equal(0 in items, false);
+    assert.equal(1 in items, true);
+    assert.equal(3 in items, false);
+  });
+
+  for (const [name, value] of [
+    ['undefined', undefined],
+    ['function', () => 1],
+    ['symbol', Symbol('not-json')],
+  ] as const) {
+    it(`rejects top-level ${name} instead of returning a non-string`, () => {
+      assert.throws(() => canonicalEvidenceJson(value), TypeError);
+    });
+  }
+
+  it('uses native JSON persistence semantics for non-JSON members and toJSON', () => {
+    const value = {
+      date: new Date('2026-07-17T06:00:00.000Z'),
+      numbers: [NaN, Infinity, -Infinity, -0],
+      omittedFunction: () => 1,
+      omittedSymbol: Symbol('omitted'),
+      items: [() => 1, Symbol('null')],
+    };
+    assert.equal(
+      canonicalEvidenceJson(value),
+      '{"date":"2026-07-17T06:00:00.000Z","items":[null,null],"numbers":[null,null,null,0]}',
+    );
+    assert.equal(
+      canonicalEvidenceJson(value),
+      canonicalEvidenceJson(JSON.parse(JSON.stringify(value))),
+    );
+  });
+
+  it('rejects BigInt and cycles but allows shared acyclic objects', () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    assert.throws(() => canonicalEvidenceJson(cyclic), TypeError);
+    assert.throws(() => canonicalEvidenceJson({ value: 1n }), TypeError);
+    const shared = { b: 2, a: 1 };
+    assert.equal(canonicalEvidenceJson([shared, shared]), '[{"a":1,"b":2},{"a":1,"b":2}]');
+  });
+
+  it('keeps nested audit hashes and a real Ed25519 signature valid after JSON round-trip', async () => {
+    const details = {
+      effectId: 'eff-1',
+      optional: undefined,
+      nested: { missing: undefined, status: 'ok' },
+      items: [undefined, , { omitted: undefined, count: 2 }],
+    };
+    const input = {
+      tenantId: 'tenant-a',
+      runId: 'run-1',
+      actionDigest: 'a'.repeat(64),
+      policySnapshotId: 'ps-1',
+      effects: [baseEffect],
+      auditEvents: [
+        {
+          type: 'effect.completed',
+          severity: 'low' as const,
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details,
+        },
+      ],
+      bundleId: 'bundle-eb03',
+      exportedAt: '2026-07-17T06:00:02.000Z',
+    };
+    const bundle = buildRunEvidenceBundle(input);
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const signer = createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId: 'eb03-test',
+    });
+    bundle.signature = await signer.sign(canonicalEvidenceBody(bundle));
+    assert.equal(signer.verify(canonicalEvidenceBody(bundle), bundle.signature), true);
+    assert.deepEqual(verifyEvidenceBundle(bundle), { ok: true });
+    const roundTripped = JSON.parse(JSON.stringify(bundle));
+    assert.deepEqual(verifyEvidenceBundle(roundTripped), { ok: true });
+    assert.equal(canonicalEvidenceBody(roundTripped), canonicalEvidenceBody(bundle));
+    assert.equal(
+      verifyEvidenceSignature(
+        canonicalEvidenceBody(roundTripped),
+        roundTripped.signature,
+        signer.jwks,
+      ),
+      true,
+    );
+    const persistedInputBundle = buildRunEvidenceBundle(JSON.parse(JSON.stringify(input)));
+    assert.equal(persistedInputBundle.contentHash, bundle.contentHash);
+    assert.equal(persistedInputBundle.auditEvents[0].entryHash, bundle.auditEvents[0].entryHash);
+    assert.equal(Object.hasOwn(details.nested, 'missing'), true);
+    assert.equal(1 in details.items, false);
+  });
+
+  it('rejects historical invalid-JSON audit hashes without rewriting the evidence', () => {
+    const bundle = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId: 'run-1',
+      policySnapshotId: 'ps-1',
+      effects: [baseEffect],
+      auditEvents: [
+        {
+          type: 'effect.completed',
+          severity: 'low',
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          at: '2026-07-17T06:00:01.000Z',
+          details: { effectId: 'eff-1' },
+        },
+      ],
+    });
+    const historicalBytes = `{"at":"2026-07-17T06:00:01.000Z","details":{"effectId":"eff-1","optional":undefined},"prevEntryHash":"${EVIDENCE_GENESIS_HASH}","severity":"low","stepId":"step-1","type":"effect.completed"}`;
+    bundle.auditEvents[0].entryHash = createHash('sha256').update(historicalBytes).digest('hex');
+    const before = structuredClone(bundle);
+    assert.deepEqual(verifyEvidenceBundle(bundle), {
+      ok: false,
+      reason: 'audit entryHash mismatch',
+      brokenAt: 'auditEvents',
+      index: 0,
+    });
+    assert.deepEqual(bundle, before);
+  });
+});
 
 describe('L3-11 evidence bundle v0', () => {
   it('binds the exact action digest and terminal disposition into the canonical body', () => {
@@ -559,5 +724,128 @@ describe('L3-11 evidence bundle v0', () => {
     assert.equal('issuer' in (bundle.identity.capabilityGrant ?? {}), false);
     const roundTripped = JSON.parse(JSON.stringify(bundle));
     assert.equal(verifyEvidenceBundle(roundTripped).ok, true);
+  });
+});
+
+/**
+ * EB-02: `verifyEvidenceBundle` destructured `signature` away and never verified it, so a
+ * bundle whose body had been rewritten — with every hash recomputed using the public
+ * canonicalisation — and whose `signature` object was copied from an honest bundle passed
+ * the only integrity gate on the evidence write path.
+ */
+describe('EB-02 evidence bundle signature verification', () => {
+  function signerFor(keyId: string) {
+    const { privateKey } = generateKeyPairSync('ed25519');
+    return createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId,
+    });
+  }
+
+  const signer = signerFor('eb02-key');
+  const otherSigner = signerFor('eb02-other-key');
+
+  async function signedBundle(bundleId = 'bundle-eb02') {
+    const bundle = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId: 'run-1',
+      actionDigest: 'a'.repeat(64),
+      policySnapshotId: 'ps-1',
+      effects: [baseEffect],
+      bundleId,
+      exportedAt: '2026-07-17T06:00:02.000Z',
+    });
+    bundle.signature = await signer.sign(canonicalEvidenceBody(bundle));
+    return bundle;
+  }
+
+  function recomputeHashes(bundle: ReturnType<typeof buildRunEvidenceBundle>): void {
+    for (const entry of bundle.effects) {
+      const { entryHash: _entryHash, ...body } = entry;
+      entry.entryHash = createHash('sha256').update(canonicalEvidenceJson(body)).digest('hex');
+    }
+    for (const entry of bundle.auditEvents) {
+      const { entryHash: _entryHash, ...body } = entry;
+      entry.entryHash = createHash('sha256').update(canonicalEvidenceJson(body)).digest('hex');
+    }
+    const { contentHash: _contentHash, signature: _signature, ...body } = bundle;
+    bundle.contentHash = createHash('sha256').update(canonicalEvidenceJson(body)).digest('hex');
+  }
+
+  it('accepts a bundle whose signature verifies', async () => {
+    const bundle = await signedBundle();
+    assert.deepEqual(verifyEvidenceBundle(bundle, { jwks: signer.jwks }), { ok: true });
+    assert.deepEqual(
+      verifyEvidenceBundle(bundle, { verifySignature: (body, sig) => signer.verify(body, sig) }),
+      { ok: true },
+    );
+  });
+
+  it('rejects an unsigned bundle when a verifier is supplied', async () => {
+    const bundle = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId: 'run-1',
+      actionDigest: 'a'.repeat(64),
+      policySnapshotId: 'ps-1',
+      effects: [baseEffect],
+      bundleId: 'bundle-unsigned',
+      exportedAt: '2026-07-17T06:00:02.000Z',
+    });
+    const result = verifyEvidenceBundle(bundle, { jwks: signer.jwks });
+    assert.equal(result.ok, false);
+    assert.equal(result.brokenAt, 'signature');
+    assert.equal(result.reason, 'evidence bundle is not signed');
+  });
+
+  it('rejects a forged body that reuses an honest signature', async () => {
+    const honest = await signedBundle();
+    const forged = structuredClone(honest);
+    forged.effects[0].responseSummary = { status: 'FORGED' };
+    recomputeHashes(forged);
+
+    // The structural checks are self-referential: a forger can satisfy them.
+    assert.equal(verifyEvidenceBundle(forged).ok, true);
+    // The real verifier sees through it.
+    assert.equal(
+      verifyEvidenceSignature(canonicalEvidenceBody(forged), forged.signature!, signer.jwks),
+      false,
+    );
+    const result = verifyEvidenceBundle(forged, { jwks: signer.jwks });
+    assert.equal(result.ok, false);
+    assert.equal(result.brokenAt, 'signature');
+    assert.equal(result.reason, 'evidence signature verification failed');
+  });
+
+  it('rejects a tampered signature value and a signature from another key', async () => {
+    const bundle = await signedBundle();
+    const tampered = structuredClone(bundle);
+    tampered.signature!.value = 'A' + tampered.signature!.value.slice(1);
+    assert.equal(verifyEvidenceBundle(tampered, { jwks: signer.jwks }).ok, false);
+
+    assert.equal(verifyEvidenceBundle(bundle, { jwks: otherSigner.jwks }).ok, false);
+  });
+
+  it('fails closed when a signature is required but no verifier was supplied', async () => {
+    const bundle = await signedBundle();
+    const result = verifyEvidenceBundle(bundle, { requireSignature: true });
+    assert.equal(result.ok, false);
+    assert.equal(result.brokenAt, 'signature');
+    assert.match(result.reason ?? '', /EVIDENCE_SIGNATURE_VERIFIER_REQUIRED/);
+  });
+
+  it('documents that structural-only verification proves no authenticity', async () => {
+    // No verifier and no requireSignature: this is the legacy structural-only mode. It is
+    // not an authenticity guarantee — acceptance paths must pass a verifier (see the
+    // forged-body case above, which passes here and fails with a verifier).
+    const unsigned = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId: 'run-1',
+      actionDigest: 'a'.repeat(64),
+      policySnapshotId: 'ps-1',
+      effects: [baseEffect],
+      bundleId: 'bundle-structural-only',
+      exportedAt: '2026-07-17T06:00:02.000Z',
+    });
+    assert.equal(verifyEvidenceBundle(unsigned).ok, true);
   });
 });

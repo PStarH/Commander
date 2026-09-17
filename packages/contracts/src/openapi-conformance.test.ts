@@ -288,22 +288,48 @@ describe('OpenAPI Spec Conformance', () => {
     });
 
     it('rejects run with invalid state enum', () => {
+      // Fully-populated payload so the only defect is the out-of-enum state:
+      // `runSchema.properties.state` is `{ type: 'string', enum: [...RUN_STATES] }`,
+      // so validateResource() must reject it and name the offending field.
       const result = validateResource('run', {
         id: 'run-1',
         tenantId: 'tenant-1',
         state: 'INVALID_STATE',
-        intentHash: 'abc123',
-        workGraphHash: 'def456',
+        version: 0,
+        intentHash: 'abc123def456abc123def456abc123def456abc123def456abc123def456abcd',
+        workGraphHash: 'def456abc123def456abc123def456abc123def456abc123def456abc123abc12',
         workGraphVersion: 'v1',
         policySnapshotId: 'policy-1',
         createdAt: '2026-01-01T00:00:00Z',
         updatedAt: '2026-01-01T00:00:00Z',
+        metadata: {},
       });
-      // If the schema has enum validation, this should fail
-      // If not, at least the structure is correct
-      if (result.ok) {
-        // Some schemas don't have enum constraints in the structural validator
-        // That's acceptable — the state machine validates transitions separately
+
+      assert.equal(result.ok, false, 'an out-of-enum run state must be rejected');
+      assert.ok(
+        result.errors.some((e) => e.includes("'state'")),
+        `expected an error naming 'state', got: ${result.errors.join(', ')}`,
+      );
+    });
+
+    it('accepts every declared run state', () => {
+      // Guard the other direction: the enum must cover RUN_STATES, otherwise the
+      // rejection above could be passing for the wrong reason.
+      for (const state of RUN_STATES) {
+        const result = validateResource('run', {
+          id: 'run-1',
+          tenantId: 'tenant-1',
+          state,
+          version: 0,
+          intentHash: 'abc123def456abc123def456abc123def456abc123def456abc123def456abcd',
+          workGraphHash: 'def456abc123def456abc123def456abc123def456abc123def456abc123abc12',
+          workGraphVersion: 'v1',
+          policySnapshotId: 'policy-1',
+          createdAt: '2026-01-01T00:00:00Z',
+          updatedAt: '2026-01-01T00:00:00Z',
+          metadata: {},
+        });
+        assert.equal(result.ok, true, `${state} must validate: ${result.errors.join(', ')}`);
       }
     });
   });
@@ -330,10 +356,17 @@ describe('OpenAPI Spec Conformance', () => {
       assert.ok(changes.some((c) => c.includes('WorkerV2')));
     });
 
-    it('detects no breaking changes when identical', () => {
-      const snapshot = snapshotContracts();
-      const changes = detectBreakingChanges(snapshot, snapshot);
-      assert.equal(changes.length, 0, 'Should detect no breaking changes');
+    it('does not flag added resources/schemas as breaking', () => {
+      const baseline = snapshotContracts();
+      // Comparing a value to itself asserts nothing: an implementation that
+      // always returned [] passed. Assert instead on a *different* snapshot
+      // whose only difference is additive, which must not be breaking.
+      const current = {
+        ...baseline,
+        resources: [...baseline.resources, 'BrandNewV2'],
+        schemaNames: [...baseline.schemaNames, 'brandNew'],
+      };
+      assert.deepEqual(detectBreakingChanges(baseline, current), []);
     });
 
     it('detects breaking changes when error codes are removed', () => {

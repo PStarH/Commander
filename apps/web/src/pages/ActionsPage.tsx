@@ -65,6 +65,7 @@ export function ActionsPage({ token }: ActionsPageProps) {
   const [simulation, setSimulation] = useState<ActionSimulationV1 | null>(null);
   const [action, setAction] = useState<GovernedActionV1 | null>(null);
   const [approvalDigest, setApprovalDigest] = useState('');
+  const [rejectionReason, setRejectionReason] = useState('');
   const [evidence, setEvidence] = useState<ActionEvidenceV1 | null>(null);
   const [compensation, setCompensation] = useState<ActionCompensationRequestResponseV1 | null>(
     null,
@@ -145,7 +146,11 @@ export function ActionsPage({ token }: ActionsPageProps) {
             },
             operationKey('approve', action.runId),
           )
-        : await client.rejectAction(action.runId, undefined, operationKey('reject', action.runId));
+        : await client.rejectAction(
+            action.runId,
+            rejectionReason.trim(),
+            operationKey('reject', action.runId),
+          );
       setAction(updated);
     });
   }
@@ -359,7 +364,18 @@ export function ActionsPage({ token }: ActionsPageProps) {
                 <Check size={15} />
                 Approve
               </Button>
-              <Button variant="danger" onClick={() => review(false)} disabled={busy}>
+              <Input
+                value={rejectionReason}
+                onChange={(event) => setRejectionReason(event.target.value)}
+                aria-label="Rejection reason"
+                placeholder="Reason (required)"
+              />
+              <Button
+                variant="danger"
+                onClick={() => review(false)}
+                disabled={busy || rejectionReason.trim().length === 0}
+                title="Reject with a recorded reason"
+              >
                 <X size={15} />
                 Reject
               </Button>

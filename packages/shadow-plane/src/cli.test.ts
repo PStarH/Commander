@@ -313,6 +313,30 @@ describe('commander-shadow CLI', () => {
       output: { status: 'ok', code: 'SHADOW_REPORT_VALID' },
     });
 
+    // CLI-level tamper detection: mutating a record inside the exported bundle
+    // must not verify. Previously the only tampered-bundle coverage lived in
+    // report.test.ts (the unit verifier), not in the CLI command path.
+    const tamperedFile = join(directory, 'report-tampered.json');
+    const exported = JSON.parse(readFileSync(reportFile, 'utf8')) as {
+      records: Array<{ hypotheticalDecision: string }>;
+    };
+    assert.ok(exported.records.length > 0, 'the exported report must carry records');
+    exported.records[0]!.hypotheticalDecision = 'deny';
+    writeFileSync(tamperedFile, JSON.stringify(exported));
+    const tampered = await runShadowCli([
+      'report',
+      'verify',
+      '--bundle',
+      tamperedFile,
+      '--public-key',
+      publicKeyFile,
+      '--manifest-keys',
+      manifestKeysFile,
+    ]);
+    assert.equal(tampered.exitCode, 1);
+    assert.equal(tampered.output.status, 'error');
+    assert.equal((tampered.output as { code?: string }).code, 'SHADOW_REPORT_SIGNATURE_INVALID');
+
     const revokedKeyFile = join(directory, 'report-revoked.json');
     writeFileSync(
       revokedKeyFile,

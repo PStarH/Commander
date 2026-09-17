@@ -103,12 +103,49 @@ const RISK_RANK: Record<NodeRiskLevel, number> = {
   critical: 3,
 };
 
-export function assessNodeRisk(node: TaskTreeNode, riskProfile?: string): NodeRiskAssessment {
+/**
+ * Compiled `\bkeyword\b` patterns, keyed by keyword.
+ *
+ * Matching is word-boundary based, not substring based. The lists contain
+ * short common tokens (`key`, `auth`, `live`, `prod`, `pii`), so substring
+ * matching classified `monkey` as a `key` hit, `author` as an `auth` hit and
+ * `lively` as a `live` hit — an innocuous goal could be escalated to CRITICAL
+ * and routed into the human-approval path. Word boundaries keep the intended
+ * signal (`deploy to production`, `rotate the auth token`) without the noise.
+ */
+const KEYWORD_PATTERNS = new Map<string, RegExp>();
+
+function matchesKeyword(haystackLower: string, keyword: string): boolean {
+  let pattern = KEYWORD_PATTERNS.get(keyword);
+  if (!pattern) {
+    const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    pattern = new RegExp(`\\b${escaped}\\b`);
+    KEYWORD_PATTERNS.set(keyword, pattern);
+  }
+  return pattern.test(haystackLower);
+}
+
+export interface RiskClassification {
+  level: NodeRiskLevel;
+  reasons: string[];
+}
+
+/**
+ * Classify risk from a goal plus a tool list.
+ *
+ * Pure and I/O-free. Extracted from `assessNodeRisk` so the same heuristic can
+ * serve both sub-agent nodes and top-level entry points, which previously
+ * asserted `riskLevel: 'LOW'` without measuring anything.
+ */
+export function classifyRisk(
+  goal: string,
+  tools: readonly string[] = [],
+  riskProfile?: string,
+): RiskClassification {
   const reasons: string[] = [];
   let level: NodeRiskLevel = 'low';
 
-  const goal = node.goal.toLowerCase();
-  const tools = node.context.availableTools ?? [];
+  const goalLower = goal.toLowerCase();
 
   for (const tool of tools) {
     if (CRITICAL_RISK_TOOLS.has(tool)) {
@@ -125,7 +162,7 @@ export function assessNodeRisk(node: TaskTreeNode, riskProfile?: string): NodeRi
   }
 
   for (const keyword of CRITICAL_RISK_KEYWORDS) {
-    if (goal.includes(keyword)) {
+    if (matchesKeyword(goalLower, keyword)) {
       if (RISK_RANK.critical > RISK_RANK[level]) {
         level = 'critical';
         reasons.push(`Goal references critical concept: '${keyword}'`);
@@ -134,7 +171,7 @@ export function assessNodeRisk(node: TaskTreeNode, riskProfile?: string): NodeRi
   }
 
   for (const keyword of MEDIUM_RISK_KEYWORDS) {
-    if (goal.includes(keyword)) {
+    if (matchesKeyword(goalLower, keyword)) {
       if (RISK_RANK.medium > RISK_RANK[level]) {
         level = 'medium';
         reasons.push(`Goal references mutating action: '${keyword}'`);
@@ -143,7 +180,7 @@ export function assessNodeRisk(node: TaskTreeNode, riskProfile?: string): NodeRi
   }
 
   if (level === 'low' && tools.length === 0) {
-    const hasReadOnly = LOW_RISK_KEYWORDS.some((k) => goal.includes(k));
+    const hasReadOnly = LOW_RISK_KEYWORDS.some((k) => matchesKeyword(goalLower, k));
     if (hasReadOnly) {
       reasons.push('Read-only operation with no risky tools');
     } else {
@@ -170,13 +207,41 @@ export function assessNodeRisk(node: TaskTreeNode, riskProfile?: string): NodeRi
     reasons.push('Default low risk: no risky keywords or tools detected');
   }
 
-  const confidence = Math.min(1, 0.5 + reasons.length * 0.1);
+  return { level, reasons };
+}
+
+/**
+ * Uppercase risk level for `contextData.governanceProfile.riskLevel`.
+ *
+ * `CommanderCore.run`, `Commander.run` and `AgentLoop.run` used to hardcode
+ * `'LOW'`. Because `telosOrchestrator.analyzeTask` derives
+ * `requiresApproval: riskLevel === 'CRITICAL' || riskLevel === 'HIGH'`, that
+ * constant made `requiresApproval` permanently false on the primary entry
+ * paths — the human-in-the-loop path could never engage, and the model router
+ * never scored risk. Deriving the level keeps the governance profile a
+ * measurement instead of an assertion.
+ */
+export function assessGovernanceRiskLevel(
+  goal: string,
+  tools: readonly string[] = [],
+  riskProfile?: string,
+): 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL' {
+  return classifyRisk(goal, tools, riskProfile).level.toUpperCase() as
+    'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+}
+
+export function assessNodeRisk(node: TaskTreeNode, riskProfile?: string): NodeRiskAssessment {
+  const { level, reasons } = classifyRisk(
+    node.goal,
+    node.context.availableTools ?? [],
+    riskProfile,
+  );
 
   return {
     nodeId: node.id,
     level,
     reasons,
-    confidence,
+    confidence: Math.min(1, 0.5 + reasons.length * 0.1),
   };
 }
 

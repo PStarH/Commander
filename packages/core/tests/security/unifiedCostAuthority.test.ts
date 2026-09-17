@@ -470,4 +470,59 @@ describe('UnifiedCostAuthority', () => {
       });
     });
   });
+  // ── Invalid cost measurement must not corrupt the budget ──────────────
+  describe('invalid cost inputs', () => {
+    it('rejects a negative actual cost instead of crediting the budget', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () => localUca.postCall({ runId: 'neg-run', tenantId: 'tenant-neg' }, { costUsd: -5 }),
+        /invalid costUsd/i,
+      );
+    });
+
+    it('rejects a NaN actual cost instead of poisoning cap comparisons', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () => localUca.postCall({ runId: 'nan-run', tenantId: 'tenant-nan' }, { costUsd: NaN }),
+        /invalid costUsd/i,
+      );
+    });
+
+    it('rejects a non-finite estimated token count in preCall', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () =>
+          localUca.preCall({
+            runId: 'tok-run',
+            tenantId: 'tenant-tok',
+            model: 'gpt-4o',
+            estimatedTokens: Number.NaN,
+          }),
+        /invalid estimatedTokens/i,
+      );
+      assert.throws(
+        () =>
+          localUca.preCall({
+            runId: 'tok-run-2',
+            tenantId: 'tenant-tok',
+            model: 'gpt-4o',
+            estimatedTokens: -10,
+          }),
+        /invalid estimatedTokens/i,
+      );
+    });
+
+    it('rejects an omitted token estimate instead of treating a model call as free', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () =>
+          localUca.preCall({
+            runId: 'missing-token-run',
+            tenantId: 'tenant-missing-token',
+            model: 'gpt-4o',
+          }),
+        /estimatedTokens is required/i,
+      );
+    });
+  });
 });

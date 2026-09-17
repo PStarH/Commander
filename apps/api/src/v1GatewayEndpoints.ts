@@ -10,6 +10,7 @@ import {
 import { isTerminalRunState } from '@commander/contracts';
 import { getGlobalGdprComplianceManager } from '@commander/core/security/gdprCompliance';
 import { createActionGatewayRouter } from './actionGatewayEndpoints';
+import { mountNestedRouter } from './routerRegistry';
 
 const idSchema = z.string().regex(/^[a-zA-Z0-9._:-]{1,128}$/);
 const providerSnapshotSchema = z.object({
@@ -162,7 +163,12 @@ function renderRun(run: {
 /** V1 resource API. It schedules durable work; it never constructs AgentRuntime. */
 export function createV1GatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
-  router.use('/actions', createActionGatewayRouter(resolveKernel));
+  // Use the recording mount so the OpenAPI generator can reflect these routes
+  // at /v1/actions/... rather than dropping the prefix. Express 5 discards the
+  // mount path from the layer, so a bare `router.use('/actions', ...)` would
+  // publish /v1/kill-switches, /v1/{runId}/approve, ... — a plausible-looking
+  // but wrong document.
+  mountNestedRouter(router, '/actions', createActionGatewayRouter(resolveKernel));
   router.post('/runs', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;

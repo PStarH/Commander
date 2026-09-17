@@ -133,7 +133,10 @@ describe('OIDC exchange identity and tenant binding', () => {
     const body = (await response.json()) as { token?: string; refreshToken?: string };
     assert.equal(body.token, undefined);
     assert.equal(body.refreshToken, undefined);
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'),
+      undefined,
+    );
   });
 
   it('accepts a valid explicit tenant claim in multi-tenant mode', async () => {
@@ -179,7 +182,10 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     const rejected = await exchange();
     assert.equal(rejected.status, 401);
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'),
+      undefined,
+    );
 
     process.env.OIDC_DEFAULT_TENANT_ID = 'single-tenant-default';
     const accepted = await exchange();
@@ -299,7 +305,10 @@ describe('OIDC exchange identity and tenant binding', () => {
 
     const response = await exchange();
     assert.equal(response.status, 401);
-    assert.equal(await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'), undefined);
+    assert.equal(
+      await findUserByOidcIdentity('https://idp.example.test', 'subject-alice'),
+      undefined,
+    );
   });
 
   it('preserves the OIDC tenant when rotating the refresh token', async () => {

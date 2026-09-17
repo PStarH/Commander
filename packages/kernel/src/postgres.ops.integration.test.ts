@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { Pool } from 'pg';
 import {
   consumeCompensationBatch,
@@ -13,12 +13,24 @@ import { PostgresKernelRepository } from './postgres.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 
+// F-K1-8: both tests need a live PostgreSQL 16 fixture and `pnpm test:integration`
+// has no env guard, so a silent skip would report PASS for an unrun durability
+// proof. Absent fixture is NOT VERIFIED and must fail the run.
+const LIVE_PG_SKIP_REASON =
+  'NOT VERIFIED: COMMANDER_KERNEL_DATABASE_URL/DATABASE_URL is unset - the live PostgreSQL ' +
+  'tenant-pause / reclaim / WS2 delivery durability proof did not run';
+if (!databaseUrl) {
+  process.stderr.write(`[kernel:integration] ${LIVE_PG_SKIP_REASON}\n`);
+  test('live PostgreSQL fixture is configured (REQUIRED)', () => {
+    assert.fail(LIVE_PG_SKIP_REASON);
+  });
+}
+
 describe('PostgreSQL kernel ops durability', () => {
   it(
     'persists tenant pause, reclaim compensation via consumer, and WS2 delivery',
-    { skip: !databaseUrl },
+    { skip: databaseUrl ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl) return;
       const pool = new Pool({ connectionString: databaseUrl, max: 8 });
       const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const tenantA = `ops-a-${suffix}`;
@@ -262,10 +274,9 @@ describe('PostgreSQL kernel ops durability', () => {
   it(
     'locks COMPLETED|ADMITTED effects before compensation snapshot so sibling completeEffect cannot orphan',
     {
-      skip: !databaseUrl,
+      skip: databaseUrl ? false : LIVE_PG_SKIP_REASON,
     },
     async () => {
-      if (!databaseUrl) return;
       // 并发回归：failStep→COMPENSATING 与 sibling completeEffect 竞态时，
       // 凡最终 COMPLETED 的 effect 必须落在 compensation.requested.effectIds 内。
       const pool = new Pool({ connectionString: databaseUrl, max: 12 });

@@ -799,6 +799,15 @@ export class ConversationStore {
       this.db = null;
       this.initialized = false;
     }
+    // `init()` short-circuits on a non-null `initPromise` (`if (this.initPromise)
+    // return this.initPromise`). Leaving the already-resolved promise in place
+    // made a close-then-reuse cycle silently skip re-initialisation: `this.db`
+    // stayed null while the cached statements kept pointing at the *closed*
+    // connection, so every subsequent call threw
+    // `TypeError: The database connection is not open` instead of reopening.
+    // Clearing it lets the next operation rebuild the connection, and
+    // `prepareStatements()` then rebinds all 11 cached statements.
+    this.initPromise = null;
   }
 }
 

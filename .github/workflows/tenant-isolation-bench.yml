@@ -1,5 +1,9 @@
 name: Tenant Isolation Bench Regression
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 # Day 7 closeout: capture today's cross-tenant fuzz baseline via
 # `pnpm bench:tenant-isolation`, compare against yesterday's baseline
 # JSON, fail the run if any tenant isolation leak was detected.
@@ -25,12 +29,11 @@ on:
   workflow_dispatch:
     inputs:
       maxNewLeaks:
-        description: 'Maximum additional leaks vs yesterday (default 0)'
+        description: Maximum additional leaks vs yesterday (default 0)
         required: false
         default: '0'
   schedule:
-    - cron: '30 7 * * *'
-
+    - cron: 30 7 * * *
 jobs:
   bench-tenant-isolation-regress:
     name: Tenant Isolation Regression
@@ -40,22 +43,18 @@ jobs:
       TZ: UTC
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - name: Setup Node 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
-          cache: 'pnpm'
-
+          cache: pnpm
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
-
       - name: Resolve today / yesterday (UTC)
         id: dates
         run: |
@@ -63,10 +62,8 @@ jobs:
           YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
           echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
-
       - name: Run tenant-isolation bench (captures today baseline)
         run: pnpm bench:tenant-isolation
-
       - name: Verify today's baseline JSON exists
         run: |
           TODAY_FILE="docs/baselines/tenant-isolation.${{ steps.dates.outputs.today }}.json"
@@ -75,7 +72,6 @@ jobs:
             exit 2
           fi
           echo "today's baseline: $TODAY_FILE"
-
       - name: Extract today's metrics
         id: metrics
         if: always()
@@ -108,7 +104,6 @@ jobs:
             out("totalCases", totalCases);
             out("defended", defended);
           ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
-
       - name: Compare today vs yesterday (drift gate)
         if: always()
         id: regress
@@ -183,51 +178,71 @@ jobs:
             }
             console.log("regressed=false");
           ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
-
       - name: Append markdown to GitHub Step Summary
         if: always()
         run: |
           SUMMARY="$RUNNER_TEMP/tenant-isolation-regress-summary.md"
           if [ -s "$SUMMARY" ]; then cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"; else exit 2; fi
-
       - name: Upload today's baseline as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tenant-isolation-baseline-${{ steps.dates.outputs.today }}
           path: docs/baselines/tenant-isolation.${{ steps.dates.outputs.today }}.json
           retention-days: 90
           if-no-files-found: error
-
+    outputs:
+      today: ${{ steps.dates.outputs.today }}
+      metric_leakCount: ${{ steps.metrics.outputs.leakCount }}
+      metric_totalCases: ${{ steps.metrics.outputs.totalCases }}
+      metric_defended: ${{ steps.metrics.outputs.defended }}
+      metric_passed: ${{ steps.metrics.outputs.passed }}
+  open-baseline-pr:
+    name: Open baseline PR
+    runs-on: ubuntu-latest
+    needs:
+      - bench-tenant-isolation-regress
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: tenant-isolation-baseline-${{ needs.bench-tenant-isolation-regress.outputs.today }}
       - name: Open PR for today's tenant-isolation baseline
         if: success()
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/tenant-isolation-baseline-${{ steps.dates.outputs.today }}
+          branch: bench/tenant-isolation-baseline-${{ needs.bench-tenant-isolation-regress.outputs.today }}
           delete-branch: true
-          title: 'ci(tenant-isolation-bench): baseline ${{ steps.dates.outputs.today }} - leaks=${{ steps.metrics.outputs.leakCount }}/${{ steps.metrics.outputs.totalCases }}'
+          title: 'ci(tenant-isolation-bench): baseline ${{ needs.bench-tenant-isolation-regress.outputs.today }} - leaks=${{ needs.bench-tenant-isolation-regress.outputs.metric_leakCount }}/${{ needs.bench-tenant-isolation-regress.outputs.metric_totalCases }}'
           commit-message: |
-            ci(tenant-isolation-bench): baseline ${{ steps.dates.outputs.today }}
+            ci(tenant-isolation-bench): baseline ${{ needs.bench-tenant-isolation-regress.outputs.today }}
 
             Auto-generated by .github/workflows/tenant-isolation-bench.yml.
 
-            leakCount: ${{ steps.metrics.outputs.leakCount }}
-            totalCases: ${{ steps.metrics.outputs.totalCases }}
-            defended: ${{ steps.metrics.outputs.defended }}
+            leakCount: ${{ needs.bench-tenant-isolation-regress.outputs.metric_leakCount }}
+            totalCases: ${{ needs.bench-tenant-isolation-regress.outputs.metric_totalCases }}
+            defended: ${{ needs.bench-tenant-isolation-regress.outputs.metric_defended }}
           body: |
-            ## Tenant isolation baseline - ${{ steps.dates.outputs.today }}
+            ## Tenant isolation baseline - ${{ needs.bench-tenant-isolation-regress.outputs.today }}
 
             Auto-generated by [`.github/workflows/tenant-isolation-bench.yml`](../workflows/tenant-isolation-bench.yml).
             Triggered daily at `07:30 UTC` or via manual `workflow_dispatch`.
 
             | Metric | Value |
             |---|---|
-            | passed | **${{ steps.metrics.outputs.passed }}** |
-            | leakCount | **${{ steps.metrics.outputs.leakCount }}** |
-            | totalCases | **${{ steps.metrics.outputs.totalCases }}** |
-            | defended | **${{ steps.metrics.outputs.defended }}** |
+            | passed | **${{ needs.bench-tenant-isolation-regress.outputs.metric_passed }}** |
+            | leakCount | **${{ needs.bench-tenant-isolation-regress.outputs.metric_leakCount }}** |
+            | totalCases | **${{ needs.bench-tenant-isolation-regress.outputs.metric_totalCases }}** |
+            | defended | **${{ needs.bench-tenant-isolation-regress.outputs.metric_defended }}** |
 
             Generated by `.github/workflows/tenant-isolation-bench.yml`
           labels: |
             automated
             ci-bench
+permissions:
+  contents: read

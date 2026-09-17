@@ -4,7 +4,7 @@ import { createPublicKey, type KeyObject } from 'node:crypto';
 import { createReadStream, realpathSync } from 'node:fs';
 import { open } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
-import { Pool } from 'pg';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { atomicExport } from './atomicExport.js';
 import { parseShadowManifest, ShadowContractError, type ShadowManifestV1 } from './contracts.js';
 import {
@@ -452,7 +452,7 @@ async function productionDependencies(operation: ShadowDatabaseOperation): Promi
   if (operation === 'report-export' && (!sourceRevision || !SOURCE_REVISION.test(sourceRevision))) {
     throw new Error('COMMANDER_SHADOW_SOURCE_REVISION_INVALID');
   }
-  const pool = new Pool(config.poolConfig);
+  const pool = createVerifiedPostgresPool(config.poolInput);
   return {
     dependencies: {
       repository: new ShadowRepository(asShadowSqlPool(pool), {

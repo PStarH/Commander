@@ -30,12 +30,11 @@ describe('FailureInjection', () => {
       assert.strictEqual(inj.getInjected().length, 0);
     });
 
-    it('creates an injector with a seed for deterministic RNG', () => {
+    it('creates an injector with a seed for deterministic RNG', async () => {
       const inj1 = new FailureInjector({ seed: 42 });
       const inj2 = new FailureInjector({ seed: 42 });
       inj1.addRule({ target: 'http', mode: 'http_500', probability: 0.5 });
       inj2.addRule({ target: 'http', mode: 'http_500', probability: 0.5 });
-      // Same seed → same random sequence
       const send = async (): Promise<HttpResponse> => ({
         status: 200,
         headers: {},
@@ -44,12 +43,35 @@ describe('FailureInjection', () => {
       });
       const wrapped1 = inj1.wrapHttp(send);
       const wrapped2 = inj2.wrapHttp(send);
-      // Both should produce the same injection pattern
-      // (at least both should either inject or not inject)
       const req: HttpRequest = { method: 'GET', url: 'http://test', timeoutMs: 100 };
-      // We can't guarantee exact match without checking, but seed determinism
-      // means the RNG output is the same
-      assert.ok(true);
+
+      const outcomes1: number[] = [];
+      const outcomes2: number[] = [];
+      for (let i = 0; i < 20; i++) {
+        outcomes1.push((await wrapped1({ ...req })).status);
+        outcomes2.push((await wrapped2({ ...req })).status);
+      }
+
+      // Two injectors sharing a seed must produce the identical decision sequence.
+      assert.deepStrictEqual(outcomes1, outcomes2, 'same seed must replay the same sequence');
+      // mulberry32(42) with p=0.5 injects on exactly 9 of the first 20 draws.
+      assert.strictEqual(inj1.injectedCount(), 9);
+      assert.strictEqual(inj2.injectedCount(), 9);
+      assert.strictEqual(
+        outcomes1.filter((s) => s === 500).length,
+        9,
+        'injected calls must surface as 500s',
+      );
+
+      // A different seed must produce a different sequence — proves the seeded
+      // RNG is actually wired in rather than falling through to Math.random.
+      const inj3 = new FailureInjector({ seed: 7 });
+      inj3.addRule({ target: 'http', mode: 'http_500', probability: 0.5 });
+      const wrapped3 = inj3.wrapHttp(send);
+      const outcomes3: number[] = [];
+      for (let i = 0; i < 20; i++) outcomes3.push((await wrapped3({ ...req })).status);
+      assert.strictEqual(inj3.injectedCount(), 11);
+      assert.notDeepStrictEqual(outcomes1, outcomes3, 'seed 7 must diverge from seed 42');
     });
 
     it('addRule adds a fault rule', () => {
@@ -381,13 +403,28 @@ describe('FailureInjection', () => {
   });
 
   describe('clock skew', () => {
-    it('skewClock adjusts the clock', () => {
+    it('skewClock adjusts the clock', async () => {
       const inj = new FailureInjector({ seed: 1 });
       const before = Date.now();
       inj.skewClock(5000);
-      // The injected clock should be ahead by ~5000ms
-      // We can't assert exact values but the skew should be applied
-      assert.ok(true);
+      inj.addRule({ target: 'http', mode: 'http_500' });
+
+      const wrapped = inj.wrapHttp(async () => ({
+        status: 200,
+        headers: {},
+        body: '',
+        ok: true,
+      }));
+      await wrapped({ method: 'GET', url: 'http://skew-test' });
+
+      const injected = inj.getInjected();
+      assert.strictEqual(injected.length, 1, 'the rule must fire so a timestamp is recorded');
+      const stamped = injected[0]!.timestamp;
+      // skewClock(5000) makes the injector's clock read ~5s ahead of wall time.
+      assert.ok(
+        stamped >= before + 5000 && stamped <= Date.now() + 5000,
+        `injected timestamp ${stamped} must be ~5000ms ahead of ${before}`,
+      );
     });
   });
 });

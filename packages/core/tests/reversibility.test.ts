@@ -15,6 +15,15 @@ import { describe, it, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createRequire } from 'node:module';
+
+// A per-module require. The global `require` does not exist in an ES module, so
+// the six "module loads" smoke tests below used to fail with
+// `ReferenceError: require is not defined` — reporting a missing module for
+// every module, which is the opposite of what they assert. Kept lazy (rather
+// than hoisted into static imports) so a module that cannot initialise fails
+// only its own test.
+const nodeRequire = createRequire(import.meta.url);
 
 import {
   installProcessCrashHandlers,
@@ -381,7 +390,7 @@ describe('M6: Two processes resume same run → fencing epoch protects', () => {
 
 describe('M7: Hallucinated tool args → validator feedback → correct args on retry', () => {
   it('regression: toolCallValidator exposes formatValidationErrors or validateToolCall', () => {
-    const mod = require('../src/runtime/toolCallValidator') as Record<string, unknown>;
+    const mod = nodeRequire('../src/runtime/toolCallValidator') as Record<string, unknown>;
     assert.ok(
       typeof mod.formatValidationErrors === 'function' ||
         typeof mod.validateToolCall === 'function',
@@ -392,12 +401,12 @@ describe('M7: Hallucinated tool args → validator feedback → correct args on 
 
 describe('M8: Tool wrong output → verification fail → reflexion → correct output', () => {
   it('regression: hallucinationDetector module loads', () => {
-    const mod = require('../src/hallucinationDetector') as Record<string, unknown>;
+    const mod = nodeRequire('../src/hallucinationDetector') as Record<string, unknown>;
     assert.ok(mod, 'hallucinationDetector module loads');
   });
 
   it('v2 fix: reflexionInjector module loads (Tier 3.2 wire-up target)', () => {
-    const mod = require('../src/memory/reflexionInjector') as Record<string, unknown>;
+    const mod = nodeRequire('../src/memory/reflexionInjector') as Record<string, unknown>;
     assert.ok(mod, 'reflexionInjector module loads');
   });
 
@@ -673,21 +682,21 @@ describe('M13: Checkpoint write fails → prior checkpoint durable (atomic tmp+r
 
 describe('M14: Network partition during handoff → agentInbox persists', () => {
   it('regression: agentInbox module loads', () => {
-    const mod = require('../src/runtime/agentInbox') as Record<string, unknown>;
+    const mod = nodeRequire('../src/runtime/agentInbox') as Record<string, unknown>;
     assert.ok(mod, 'agentInbox module loads');
   });
 });
 
 describe('M15: Lease expires during long tool → heartbeat extends or run fences', () => {
   it('regression: leaseManager module loads (tested end-to-end in tests/atr/)', () => {
-    const mod = require('../src/atr/leaseManager') as Record<string, unknown>;
+    const mod = nodeRequire('../src/atr/leaseManager') as Record<string, unknown>;
     assert.ok(mod, 'leaseManager module loads');
   });
 });
 
 describe('M16: Token budget exhausted → tokenGovernor aborts', () => {
   it('regression: tokenGovernor module loads', () => {
-    const mod = require('../src/runtime/tokenGovernor') as Record<string, unknown>;
+    const mod = nodeRequire('../src/runtime/tokenGovernor') as Record<string, unknown>;
     assert.ok(mod, 'tokenGovernor module loads');
   });
 });

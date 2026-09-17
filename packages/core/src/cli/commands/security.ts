@@ -33,6 +33,8 @@ import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import path from 'path';
 import { $, section, bullet } from '../util';
+import { getDirname } from '../../esmCompat';
+const __dirname = getDirname(import.meta.url);
 
 /** Maps a `commander security <sub>` subcommand to its standalone script. */
 const SECURITY_SCRIPTS: Record<string, string> = {

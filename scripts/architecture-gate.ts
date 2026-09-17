@@ -42,14 +42,82 @@ function* walk(dir: string): Generator<string> {
   }
 }
 
+/**
+ * Every module specifier a file statically references, plus the count of
+ * dynamic imports whose specifier is not a string literal.
+ */
+interface SpecifierScan {
+  specifiers: string[];
+  unresolvedDynamicImports: number;
+}
+
+/**
+ * Collect module specifiers from the real syntax tree.
+ *
+ * LM-18 / MOD-02: the previous implementation was a single regex,
+ * `\bfrom\s+['"]<imp>['"]`, which had two defects:
+ *   1. It required the specifier to be *exactly* the forbidden string, so
+ *      `import '@commander/core/runtime/agentRuntime'` — a real subpath — passed
+ *      the gate even though `@commander/core/runtime` is on the forbidden list.
+ *   2. It matched text in comments and ordinary string literals, so a comment
+ *      mentioning a forbidden import was reported as a violation.
+ *
+ * Reading the AST fixes both and additionally covers `export ... from`,
+ * `import x = require(...)`, literal `require(...)` and literal dynamic
+ * `import(...)`, none of which the regex covered.
+ */
+function collectModuleSpecifiers(path: string, content: string): SpecifierScan {
+  const source = ts.createSourceFile(path, content, ts.ScriptTarget.Latest, true);
+  const specifiers: string[] = [];
+  let unresolvedDynamicImports = 0;
+
+  const addLiteral = (node: ts.Node | undefined): void => {
+    if (node && ts.isStringLiteralLike(node)) specifiers.push(node.text);
+  };
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      addLiteral(node.moduleSpecifier);
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      if (ts.isExternalModuleReference(node.moduleReference)) {
+        addLiteral(node.moduleReference.expression);
+      }
+    } else if (ts.isCallExpression(node)) {
+      const callee = node.expression;
+      const isRequire = ts.isIdentifier(callee) && callee.text === 'require';
+      const isDynamicImport = callee.kind === ts.SyntaxKind.ImportKeyword;
+      if (isRequire || isDynamicImport) {
+        const arg = node.arguments[0];
+        if (arg && ts.isStringLiteralLike(arg)) specifiers.push(arg.text);
+        else if (isDynamicImport) unresolvedDynamicImports += 1;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+
+  visit(source);
+  return { specifiers, unresolvedDynamicImports };
+}
+
+/**
+ * A specifier is forbidden when it *is* the forbidden module or a true
+ * subpath of it. A bare string prefix must not match, so that
+ * `@commander/core-extra` is not treated as `@commander/core`.
+ */
+function isForbiddenSpecifier(specifier: string, forbidden: string): boolean {
+  return specifier === forbidden || specifier.startsWith(`${forbidden}/`);
+}
+
 function checkFile(path: string, forbiddenImports: string[]): string[] {
   const content = readFileSync(path, 'utf-8');
-  const found: string[] = [];
-  for (const imp of forbiddenImports) {
-    const pattern = new RegExp(`\\bfrom\\s+['"]${imp.replace(/\//g, '\\/')}['"]`, 'g');
-    if (pattern.test(content)) found.push(imp);
+  const { specifiers } = collectModuleSpecifiers(path, content);
+  const found = new Set<string>();
+  for (const specifier of specifiers) {
+    for (const forbidden of forbiddenImports) {
+      if (isForbiddenSpecifier(specifier, forbidden)) found.add(forbidden);
+    }
   }
-  return found;
+  return [...found];
 }
 
 // Legacy execution is quarantined during the strangler migration. Every file
@@ -151,12 +219,33 @@ function hasInProcessAuthorityMap(path: string, content: string): boolean {
   return found;
 }
 
+/**
+ * True when any *directory* segment of a repo-relative POSIX path is a test
+ * directory. The file name itself is excluded, so `src/contest.ts` is not
+ * treated as a test file while `test/helpers.ts` is.
+ */
+function hasTestDirSegment(rel: string): boolean {
+  const TEST_DIRS = new Set(['test', 'tests', 'testing', '__tests__', '__test__']);
+  return rel
+    .split('/')
+    .slice(0, -1)
+    .some((segment) => TEST_DIRS.has(segment));
+}
+
 for (const pkg of [...config.v2Packages, 'apps/api']) {
   const dir = join(ROOT, pkg);
   try {
     for (const file of walk(dir)) {
       const rel = relative(ROOT, file).replace(/\\/g, '/');
-      if (rel.includes('.test.') || rel.includes('/testing/')) continue;
+      // Test-only files and trees carry no production authority and are skipped.
+      // The original check covered `*.test.*` and `/testing/` but missed sibling
+      // conventions, so `apps/api/test/` — a ~100-file test tree — was scanned as
+      // production and its explicitly-labelled test double
+      // (`test/authRepositories.ts`) was reported as "in-process Map as
+      // authority". Match on the *path segment* so every test convention is
+      // covered without matching a production file that merely contains the
+      // letters, e.g. `contest.ts` or `latest.ts`.
+      if (rel.includes('.test.') || rel.includes('.spec.') || hasTestDirSegment(rel)) continue;
       if (config.authorityExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`))) continue;
       const apiBase = rel.startsWith('apps/api/src/') ? rel.slice('apps/api/src/'.length) : null;
       const isExistingMigrationException =

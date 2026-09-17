@@ -1,19 +1,16 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
-  <img src="https://img.shields.io/badge/providers-25-purple?style=flat-square" />
-  <img src="https://img.shields.io/badge/topologies-5-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>看清 AI 在做什么。检查结果。花费更少。</strong></p>
+<p align="center"><strong>本地智能体运行时与行动治理网关 · Alpha</strong></p>
 
 > **Alpha 提示：** Commander 目前是 alpha，尚未达到生产就绪标准。输出、基准、POC
 > 场景和仪表盘数据都可能是开发或演示信号；未经自行审查，不要用于无人值守的生产工作负载或敏感数据。
 
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
-  <sub>无需安装。一条命令。实时查看多智能体事件和工具调用流式传输到你的终端。</sub>
+  <sub>完成源码安装及配置后，可在终端查看运行事件与工具调用。</sub>
 </p>
 
 <p align="center">
@@ -22,7 +19,7 @@
 
 ---
 
-> **两种运行方式：** Commander 以两个 SKU 提供 —— **Local CLI**（本地工具，默认，可用于本地开发/单机）与 **Enterprise Gateway**（`/v1` + 可选 Postgres，**alpha**，非 live-fire 证明的完整多租户 SaaS）。详见英文 [README.md](README.md) 的 SKU 表与 [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md)。
+> **两种运行方式：** Commander 提供 **Local CLI**（本地开发工具）与 **Enterprise Gateway**（`/v1`，需要 PostgreSQL，**alpha**，不代表完整多租户 SaaS 已通过验收）。当前企业试用从 [Shadow Phase A](docs/pilot/shadow/README.md) 开始，仅评估历史样本，不执行或授权外部 rollback。实时 rollback 仍冻结。详见英文 [README.md](README.md) 与 [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md)。
 
 ## Commander 的独特之处
 
@@ -41,7 +38,7 @@
 ## 30 秒演示
 
 ```bash
-# 如果已有 tsx，无需安装（或使用 pnpm/npx）
+# 在已完成安装和配置的源码目录中运行
 pnpm exec tsx packages/core/src/cliEntry.ts watch "find the bug in src/server.ts and fix it"
 ```
 
@@ -135,7 +132,7 @@ packages/core/src/
 
 ### 前提条件
 
-- Node.js ≥ 18
+- Node.js 22.x（≥ 22.9.0，< 23）
 - pnpm（推荐）或 npm
 - 任意 LLM 提供商的 API 密钥
 
@@ -252,13 +249,25 @@ pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 ## 部署
 
 ```bash
-# 本地（Docker Compose）
+# 本地（Docker Compose）— 仅 API，SQLite 存储，kernel 显式关闭
+# 注意：api 的五个认证权威仅支持 PostgreSQL 且无本地回退，
+# 该 profile 未注入 DATABASE_URL，容器会在启动阶段以
+# AUTH_DATABASE_URL_REQUIRED 退出。可启动路径请使用下面的 v2 profile。
+cp .env.example .env   # 填入全部必需密钥，示例值不可直接启动
 docker compose up -d
-# → API: localhost:4000  |  Web GUI: localhost:3000
+# → api 容器启动即退出（AUTH_DATABASE_URL_REQUIRED）
 
-# 生产环境（VM / VPS）
+# 本地 + Web 控制台（同样缺少认证 DSN，api 会退出）
+docker compose --profile web up -d
+
+# 可启动的本地/生产形态（Postgres + kernel + worker plane，含 commander_app DSN）
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+
+# 生产环境（VM / VPS，预构建镜像）
 ./scripts/deploy-vm.sh your-vm-ip --env-file .env.production
 ```
+
+默认 `docker compose up` 只启动 `api`（本地 SQLite），但该容器没有 `DATABASE_URL`，会在启动阶段以 `AUTH_DATABASE_URL_REQUIRED` 退出：api 的五个认证权威（用户、API Key、refresh token、认证失败、限流）仅由 PostgreSQL 提供，且必须使用 `commander_app` 角色，没有任何本地 / SQLite / 内存回退。要启动真正可用的栈，请使用 `v2` 或 `cell` profile。Web 控制台、Postgres、worker plane 均需显式启用对应 profile；完整清单见 `docs/deploy.md`。
 
 生产 Compose 覆盖层还可加：CPU/内存限制、JSON 文件日志、自动重启、健康检查、速率限制。多租户属于 **Enterprise Gateway（alpha）**——请求上下文隔离已有；存储层隔离为 opt-in，须对照 `ENTERPRISE_READINESS.md`，**勿当作完整多租户 SaaS**。
 
@@ -273,7 +282,7 @@ docker compose up -d
 
 ## 文档
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — 系统设计、模块图、数据流
+- [docs/architecture/](docs/architecture/000-index.md) — 架构决策记录（V2 资源模型、状态机、持久化、身份、effect broker、worker 协议、事件语义）
 - [docs/getting-started.md](docs/getting-started.md) — 快速开始
 - [docs/deploy.md](docs/deploy.md) — 部署
 - [docs/v2-migration-guide.md](docs/v2-migration-guide.md) — Architecture V2 迁移

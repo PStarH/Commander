@@ -1,5 +1,9 @@
 name: P0 Kernel E2E
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 # Lightweight gate for Architecture V2 closure work.
 # Complements ci.yml kernel-postgres-integration; runs on P0 branches and on demand.
 
@@ -10,6 +14,11 @@ on:
       - master
       - main
   workflow_dispatch:
+
+# Least privilege: the workflow default is read-only; any job that needs a write scope
+# or an OIDC token declares it explicitly on that job.
+permissions:
+  contents: read
 
 jobs:
   p0-kernel-e2e:
@@ -48,9 +57,9 @@ jobs:
       COMMANDER_INTERACTION_DB: ':memory:'
       # full-loop uses deterministic worker executor (not full AgentRuntime)
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'

@@ -1016,14 +1016,28 @@ export class RuntimeDependencyGuard {
       }
     }
 
-    this.stats.packagesTracked = this.integrityRecords.size;
+    // `tracked` counts package *directories* that were hashed, but
+    // `integrityRecords` is keyed by `name@version` (:1008), so two directories
+    // resolving to the same identity collapse onto a single record. The number
+    // of packages the guard can actually verify against is therefore the record
+    // count, not the directory count — and that is what `stats.packagesTracked`
+    // has always stored (:1019). Returning `tracked` instead made the method's
+    // return value disagree with its own stats: measured on this repo, 489
+    // directories but 486 distinct identities. Both numbers are now reported,
+    // each under a name that says what it counts.
+    const packagesTracked = this.integrityRecords.size;
+    this.stats.packagesTracked = packagesTracked;
     this.stats.lastInitializedAt = nowIso();
-    this.log('info', '依赖完整性基线已建立', { packagesTracked: tracked });
+    this.log('info', '依赖完整性基线已建立', {
+      packagesTracked,
+      packageDirsHashed: tracked,
+    });
     this.audit('security_scan', 'low', '依赖完整性基线建立', {
-      packagesTracked: tracked,
+      packagesTracked,
+      packageDirsHashed: tracked,
       nodeModulesRoot,
     });
-    return tracked;
+    return packagesTracked;
   }
 
   /**

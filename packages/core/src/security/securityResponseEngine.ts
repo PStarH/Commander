@@ -79,8 +79,8 @@ const throttledAgents: Map<string, number> = new Map();
 const quarantinedAgents: Set<string> = new Set();
 
 /** Callbacks for external actions (token revocation, session termination). */
-let terminateCallback: ((agentId: string, reason: string) => void) | null = null;
-let revokeTokensCallback: ((agentId: string) => void) | null = null;
+let terminateCallback: ((agentId: string, reason: string) => boolean) | null = null;
+let revokeTokensCallback: ((agentId: string) => boolean) | null = null;
 
 /**
  * Register external action callbacks.
@@ -88,8 +88,8 @@ let revokeTokensCallback: ((agentId: string) => void) | null = null;
  * revoke tokens in the runtime.
  */
 export function registerResponseCallbacks(callbacks: {
-  terminateSession?: (agentId: string, reason: string) => void;
-  revokeTokens?: (agentId: string) => void;
+  terminateSession?: (agentId: string, reason: string) => boolean;
+  revokeTokens?: (agentId: string) => boolean;
 }): void {
   terminateCallback = callbacks.terminateSession ?? null;
   revokeTokensCallback = callbacks.revokeTokens ?? null;
@@ -192,6 +192,7 @@ export function resetSecurityResponseState(): void {
  */
 export function processSecurityAlert(alert: SecurityAlert): ResponseResult {
   const actions: ResponseAction[] = [];
+  const failures: string[] = [];
   const { severity, agentId, type, message } = alert;
 
   // Always log
@@ -214,7 +215,7 @@ export function processSecurityAlert(alert: SecurityAlert): ResponseResult {
       actions.push('suspend');
       actions.push('revoke_tokens');
       suspendAgent(agentId, message);
-      revokeTokens(agentId);
+      if (!revokeTokens(agentId)) failures.push('TOKEN_REVOCATION_NOT_EXECUTED');
       break;
 
     case 'critical':
@@ -223,17 +224,20 @@ export function processSecurityAlert(alert: SecurityAlert): ResponseResult {
       actions.push('quarantine');
       actions.push('revoke_tokens');
       actions.push('security_snapshot');
-      terminateAgent(agentId, message);
+      if (!terminateAgent(agentId, message)) failures.push('SESSION_TERMINATION_NOT_EXECUTED');
       quarantineAgent(agentId);
-      revokeTokens(agentId);
+      if (!revokeTokens(agentId)) failures.push('TOKEN_REVOCATION_NOT_EXECUTED');
       createSecuritySnapshot(alert);
       break;
   }
 
   return {
     actions,
-    success: true,
-    message: `Response executed: ${actions.join(', ')}`,
+    success: failures.length === 0,
+    message:
+      failures.length === 0
+        ? `Response executed: ${actions.join(', ')}`
+        : `Response incomplete: ${failures.join(', ')}`,
   };
 }
 
@@ -345,16 +349,29 @@ function suspendAgent(agentId: string, reason: string): void {
   });
 }
 
-function terminateAgent(agentId: string, reason: string): void {
+function terminateAgent(agentId: string, reason: string): boolean {
   if (terminateCallback) {
-    terminateCallback(agentId, reason);
-  } else {
-    getGlobalLogger().warn(
-      'SecurityResponseEngine',
-      'No terminate callback registered — agent termination requested but not executed',
-      { agentId, reason },
-    );
+    try {
+      return terminateCallback(agentId, reason) === true;
+    } catch (error) {
+      getGlobalLogger().error(
+        'SecurityResponseEngine',
+        'Terminate callback failed',
+        error as Error,
+        {
+          agentId,
+          reason,
+        },
+      );
+      return false;
+    }
   }
+  getGlobalLogger().warn(
+    'SecurityResponseEngine',
+    'No terminate callback registered — agent termination requested but not executed',
+    { agentId, reason },
+  );
+  return false;
 }
 
 function quarantineAgent(agentId: string): void {
@@ -367,23 +384,36 @@ function quarantineAgent(agentId: string): void {
   getGlobalLogger().error('SecurityResponseEngine', 'Agent quarantined', undefined, { agentId });
 }
 
-function revokeTokens(agentId: string): void {
+function revokeTokens(agentId: string): boolean {
   if (revokeTokensCallback) {
-    revokeTokensCallback(agentId);
-  } else {
-    // Try to revoke via the token issuer directly
     try {
-      const issuer = getCapabilityTokenIssuer();
-      // Revoke all tokens for this agent (best-effort)
-      getGlobalLogger().warn('SecurityResponseEngine', 'Revoking capability tokens', { agentId });
-    } catch {
-      getGlobalLogger().warn(
+      return revokeTokensCallback(agentId) === true;
+    } catch (error) {
+      getGlobalLogger().error(
         'SecurityResponseEngine',
-        'Could not revoke tokens — no callback and issuer unavailable',
-        { agentId },
+        'Token revocation callback failed',
+        error as Error,
+        {
+          agentId,
+        },
       );
+      return false;
     }
   }
+  // The issuer only revokes by JTI; it cannot honestly revoke "all tokens for
+  // this agent" without a lineage registry. Do not report a best-effort log as
+  // a completed revocation.
+  try {
+    getCapabilityTokenIssuer();
+  } catch {
+    // no issuer available
+  }
+  getGlobalLogger().warn(
+    'SecurityResponseEngine',
+    'Could not revoke tokens — no agent-bound revocation callback registered',
+    { agentId },
+  );
+  return false;
 }
 
 function createSecuritySnapshot(alert: SecurityAlert): void {

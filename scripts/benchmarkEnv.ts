@@ -244,6 +244,130 @@ export function withBenchmarkEnv<T extends Record<string, unknown>>(
   };
 }
 
+// ── Capability verdict ──────────────────────────────────────────────────────
+
+/**
+ * How a benchmark produced the numbers it is scoring.
+ *
+ *   - `scaffold`  : no real executor. Stub/fixture results exercise the pipeline
+ *                   only; they say nothing about model capability.
+ *   - `simulated` : local in-process simulation of the workload.
+ *   - `live`      : a real executor produced the outputs that were scored.
+ *
+ * Only `live` can yield a capability PASS. A scaffold run that "passes" its
+ * assertions has proved its plumbing, not its capability — conflating the two is
+ * the defect this type exists to prevent.
+ */
+export type BenchmarkExecutionMode = 'scaffold' | 'simulated' | 'live';
+
+export type CapabilityStatus = 'PASS' | 'FAIL' | 'NOT_EVALUATED';
+
+export interface CapabilityVerdictInput {
+  /** How the numbers were produced. */
+  mode: BenchmarkExecutionMode;
+  /** Measured accuracy for this run. */
+  accuracy: number;
+  /** Reviewed baseline accuracy, or `null` when no baseline exists yet. */
+  baselineAccuracy: number | null;
+  /**
+   * When true, a run that cannot yield a capability verdict exits non-zero.
+   * Set from `COMMANDER_BENCHMARK_STRICT=1` in a required CI job.
+   */
+  strict?: boolean;
+}
+
+export interface CapabilityVerdict {
+  status: CapabilityStatus;
+  /** Exit code the benchmark process should use. */
+  exitCode: number;
+  /**
+   * Whether this run may be counted as capability evidence. `false` for every
+   * non-live run, and for a run with no reviewed baseline.
+   */
+  scoringEligible: boolean;
+  reason: string;
+}
+
+/**
+ * Decide the capability verdict for a benchmark run.
+ *
+ * Fails closed in every direction that used to succeed silently:
+ *   - a scaffold/simulated run is NOT_EVALUATED, never PASS;
+ *   - a missing baseline is NOT_EVALUATED, never an auto-created pass — creating
+ *     a baseline must be a separate, reviewed operation;
+ *   - only a live run at or above its reviewed baseline is a PASS.
+ *
+ * Pure: no I/O, no `process.exit`, so it is directly testable.
+ */
+export function capabilityVerdict(input: CapabilityVerdictInput): CapabilityVerdict {
+  const strict = input.strict === true;
+
+  if (input.mode !== 'live') {
+    return {
+      status: 'NOT_EVALUATED',
+      exitCode: strict ? 1 : 0,
+      scoringEligible: false,
+      reason:
+        `execution mode is '${input.mode}', not 'live': this run validates the ` +
+        'benchmark pipeline and must not be reported as a capability result',
+    };
+  }
+
+  if (input.baselineAccuracy === null) {
+    return {
+      status: 'NOT_EVALUATED',
+      exitCode: strict ? 1 : 0,
+      scoringEligible: false,
+      reason:
+        'no reviewed baseline exists; creating one is a separate reviewed operation ' +
+        'and is never a by-product of a verification run',
+    };
+  }
+
+  if (input.accuracy < input.baselineAccuracy) {
+    return {
+      status: 'FAIL',
+      exitCode: 1,
+      scoringEligible: true,
+      reason: `capability regression: accuracy=${input.accuracy} < baseline=${input.baselineAccuracy}`,
+    };
+  }
+
+  return {
+    status: 'PASS',
+    exitCode: 0,
+    scoringEligible: true,
+    reason: `accuracy=${input.accuracy} >= baseline=${input.baselineAccuracy} (live run)`,
+  };
+}
+
+/**
+ * One-line human-readable rendering. Deliberately never prints the string
+ * "Capability check passed" unless the verdict is an actual PASS, so a scaffold
+ * run cannot be mistaken for a capability result in a CI log.
+ */
+export function formatCapabilityVerdict(
+  verdict: CapabilityVerdict,
+  measured: { accuracy: number; baselineAccuracy: number | null },
+): string {
+  const detail =
+    `accuracy=${measured.accuracy} baseline=${measured.baselineAccuracy ?? 'none'} ` +
+    `scoringEligible=${verdict.scoringEligible}`;
+  switch (verdict.status) {
+    case 'PASS':
+      return `Capability check passed: ${detail} — ${verdict.reason}`;
+    case 'FAIL':
+      return `Capability check failed: ${detail} — ${verdict.reason}`;
+    default:
+      return `Capability NOT_EVALUATED (this is not a pass): ${detail} — ${verdict.reason}`;
+  }
+}
+
+/** Read the strict-mode flag from the environment. */
+export function capabilityStrictFromEnv(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.COMMANDER_BENCHMARK_STRICT === '1';
+}
+
 // CLI helper: print the current env envelope as JSON.
 if (import.meta.url === `file://${process.argv[1]}`) {
   const evidence = (process.argv[2] as BenchmarkEvidence) ?? 'simulated';

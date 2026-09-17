@@ -98,7 +98,7 @@ describe('ActionGatewayClient', () => {
       { actionDigest: 'a'.repeat(64), simulationId: 'sim-1', policySnapshotId: 'policy-1' },
       'approve-1',
     );
-    await client.rejectAction('run-1', undefined, 'reject-1');
+    await client.rejectAction('run-1', 'operator rejected: policy mismatch', 'reject-1');
     await client.reconcileAction('run-1', 'reconcile-1');
     await client.setKillSwitch({ scope: 'tool', value: 'ticket.create', enabled: true }, 'kill-1');
 
@@ -106,6 +106,15 @@ describe('ActionGatewayClient', () => {
       calls.map(({ init }) => new Headers(init.headers).get('idempotency-key')),
       ['approve-1', 'reject-1', 'reconcile-1', 'kill-1'],
     );
+
+    // A rejection must carry a recorded reason: the published contract
+    // (`actionRejectionRequestSchema`) requires it, because a reason-less
+    // rejection is an operator decision with no accountability.
+    const rejectCall = calls.find(({ url }) => String(url).endsWith('/reject'));
+    assert.ok(rejectCall, 'expected a reject call');
+    assert.deepEqual(JSON.parse(String(rejectCall.init.body)), {
+      reason: 'operator rejected: policy mismatch',
+    });
   });
 
   it('preserves the canonical evidence verification result', async () => {

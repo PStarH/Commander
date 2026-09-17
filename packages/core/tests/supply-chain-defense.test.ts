@@ -8,6 +8,7 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { createHash } from 'node:crypto';
 
 import { ToolPoisoningGuard } from '../src/security/toolPoisoningGuard';
 import { CVEDatabaseIntegration } from '../src/security/cveDatabaseIntegration';
@@ -131,8 +132,12 @@ describe('ToolPoisoningGuard', () => {
 
   it('should verify tool integrity by hash', () => {
     const desc = 'A test tool for testing.';
-    const crypto = require('node:crypto');
-    const expectedHash = crypto.createHash('sha256').update(desc).digest('hex');
+    // ESM: `require` is not defined in this package ("type": "module"), so the
+    // previous `const crypto = require('node:crypto')` threw
+    // `ReferenceError: require is not defined` before a single assertion ran.
+    // This file is a node:test file, and the node:test runner is not invoked by
+    // any workflow, so the failure was invisible to CI.
+    const expectedHash = createHash('sha256').update(desc).digest('hex');
 
     // Use a guard with pre-trusted hash
     const trustedGuard = new ToolPoisoningGuard({
@@ -384,11 +389,21 @@ describe('RuntimeDependencyGuard', () => {
   });
 
   it('should support whitelist and blacklist', () => {
+    const before = guard.getStats();
     guard.whitelistPackage('my-safe-package');
     guard.blacklistPackage('known-malicious-pkg');
 
-    // These should not throw
-    assert.ok(true);
+    const after = guard.getStats();
+    assert.strictEqual(after.whitelistSize, before.whitelistSize + 1);
+    assert.strictEqual(after.blacklistSize, before.blacklistSize + 1);
+
+    // Re-adding the same package must not inflate the counts: the sets are the
+    // authority, and a duplicate would overstate how much is actually covered.
+    guard.whitelistPackage('my-safe-package');
+    guard.blacklistPackage('known-malicious-pkg');
+    const again = guard.getStats();
+    assert.strictEqual(again.whitelistSize, after.whitelistSize);
+    assert.strictEqual(again.blacklistSize, after.blacklistSize);
   });
 
   it('should check dependency confusion for private packages', () => {
@@ -425,24 +440,35 @@ describe('RuntimeDependencyGuard', () => {
     assert.ok(Array.isArray(results2));
   });
 
-  it('should initialize hashes without errors', () => {
-    // initializeHashes may or may not find node_modules, but shouldn't throw
-    try {
-      guard.initializeHashes();
-      assert.ok(true);
-    } catch {
-      // If node_modules doesn't exist, that's acceptable in test env
-      assert.ok(true);
-    }
+  it('should initialize hashes and report whether a baseline exists', () => {
+    // The tracked-package count is environment-dependent (node_modules may be
+    // absent), so assert the contract that holds either way. The previous
+    // version asserted `true` in both the try *and* the catch branch, so it
+    // passed no matter what — including when initializeHashes() threw.
+    const tracked = guard.initializeHashes();
+    assert.strictEqual(typeof tracked, 'number');
+    assert.ok(Number.isInteger(tracked) && tracked >= 0, `expected a count, got ${tracked}`);
+
+    const report = guard.getViolationReport();
+    assert.strictEqual(report.initialized, true, 'initializeHashes must stamp a baseline');
+    assert.strictEqual(report.totalViolations, 0, 'building a baseline is not a violation');
+    assert.strictEqual(guard.getStats().packagesTracked, tracked);
   });
 
   it('should verify integrity without errors', () => {
-    try {
-      const violations = guard.verifyIntegrity();
-      assert.ok(Array.isArray(violations));
-    } catch {
-      // Acceptable in test environment
-      assert.ok(true);
+    // Without a baseline verifyIntegrity() is a documented no-op that returns 0.
+    // It must not throw, and it must not invent violations. The previous version
+    // swallowed a throw in the catch branch, so a crash looked like a pass.
+    assert.strictEqual(guard.verifyIntegrity(), 0, 'no baseline means no violations');
+
+    const tracked = guard.initializeHashes();
+    if (tracked > 0) {
+      // A baseline that was just computed must verify clean against itself.
+      assert.strictEqual(
+        guard.verifyIntegrity(),
+        0,
+        'a freshly built baseline must not report violations',
+      );
     }
   });
 });

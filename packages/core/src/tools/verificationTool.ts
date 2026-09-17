@@ -5,6 +5,9 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 import { execSandboxed } from './sandboxedExec';
 import { safePath } from './fileSystemTool';
 import { getGlobalLogger } from '../logging';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 const DEFINITION: ToolDefinition = {
   name: 'verify',
@@ -199,7 +202,7 @@ export class VerificationTool implements Tool {
       const args = ['vitest', 'run'];
       if (sanitizedPattern) args.push(sanitizedPattern);
       try {
-        const { execFileSync } = require('child_process');
+        const { execFileSync } = nodeRequire('child_process');
         const stdout = execFileSync('npx', args, {
           cwd,
           timeout: 120000,
@@ -233,7 +236,7 @@ export class VerificationTool implements Tool {
       const args = ['jest'];
       if (sanitizedPattern) args.push(sanitizedPattern);
       try {
-        const { execFileSync } = require('child_process');
+        const { execFileSync } = nodeRequire('child_process');
         const stdout = execFileSync('npx', args, {
           cwd,
           timeout: 120000,

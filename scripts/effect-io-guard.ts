@@ -34,13 +34,26 @@ function escapedIdentifier(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * A `require`-like module load: the bare CommonJS `require(...)` plus the
+ * ESM-safe helpers this repository uses instead of it (`nodeRequire` /
+ * `optionalRequire` from packages/core/src/esmCompat.ts and optionalImport.ts).
+ *
+ * Matching only the bare `require` is a silent blind spot: 13 of 14 packages are
+ * `"type": "module"`, so the bare form is forbidden and the codebase migrated to
+ * the helpers. A case-sensitive `require\s*\(` never matches `nodeRequire(`, so
+ * the migration made real subprocess/HTTP I/O invisible to this guard — the
+ * exception went stale (CI failure) and the I/O itself stopped being reported.
+ */
+const REQUIRE_LIKE = '(?:nodeRequire|optionalRequire|require)';
+
 function hasHttpOutbound(source: string, moduleName: 'http' | 'https'): boolean {
   const modulePattern = `(?:node:)?${moduleName}`;
   const methods = '(?:get|request)';
 
   if (
     new RegExp(
-      `(?:require|import)\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)\\s*\\.\\s*${methods}\\s*\\(`,
+      `(?:${REQUIRE_LIKE}|import)\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)\\s*\\.\\s*${methods}\\s*\\(`,
     ).test(source) ||
     new RegExp(
       `\\(\\s*await\\s+import\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)\\s*\\)\\s*\\.\\s*${methods}\\s*\\(`,
@@ -57,7 +70,7 @@ function hasHttpOutbound(source: string, moduleName: 'http' | 'https'): boolean 
     ),
     new RegExp(`import\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*['\"]${modulePattern}['\"]`, 'g'),
     new RegExp(
-      `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*require\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
+      `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
       'g',
     ),
     new RegExp(
@@ -81,7 +94,7 @@ function hasHttpOutbound(source: string, moduleName: 'http' | 'https'): boolean 
   const namedBindingPatterns = [
     new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['\"]${modulePattern}['\"]`, 'g'),
     new RegExp(
-      `(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*require\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
+      `(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
       'g',
     ),
     new RegExp(
@@ -106,15 +119,15 @@ function hasHttpOutbound(source: string, moduleName: 'http' | 'https'): boolean 
 
 function hasNetOutbound(source: string): boolean {
   if (
-    /import\s*\{[^}]*\b(?:connect|createConnection)\b[^}]*\}\s*from\s*['"](?:node:)?net['"]/.test(
-      source,
-    ) ||
-    /(?:const|let|var)\s*\{[^}]*\b(?:connect|createConnection)\b[^}]*\}\s*=\s*require\s*\(\s*['"](?:node:)?net['"]\s*\)/.test(
-      source,
-    ) ||
-    /require\s*\(\s*['"](?:node:)?net['"]\s*\)\s*\.\s*(?:connect|createConnection)\s*\(/.test(
-      source,
-    )
+    new RegExp(
+      `import\\s*\\{[^}]*\\b(?:connect|createConnection)\\b[^}]*\\}\\s*from\\s*['"](?:node:)?net['"]`,
+    ).test(source) ||
+    new RegExp(
+      `(?:const|let|var)\\s*\\{[^}]*\\b(?:connect|createConnection)\\b[^}]*\\}\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?net['"]\\s*\\)`,
+    ).test(source) ||
+    new RegExp(
+      `${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?net['"]\\s*\\)\\s*\\.\\s*(?:connect|createConnection)\\s*\\(`,
+    ).test(source)
   ) {
     return true;
   }
@@ -122,7 +135,10 @@ function hasNetOutbound(source: string): boolean {
   const bindings = [
     ...source.matchAll(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"](?:node:)?net['"]/g),
     ...source.matchAll(
-      /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*require\s*\(\s*['"](?:node:)?net['"]\s*\)/g,
+      new RegExp(
+        `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?net['"]\\s*\\)`,
+        'g',
+      ),
     ),
   ];
   return bindings.some((match) => {
@@ -134,24 +150,22 @@ function hasNetOutbound(source: string): boolean {
 }
 
 function hasChildProcessExecution(source: string): boolean {
+  const execMembers = '(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)';
   if (
-    /import\s*\{[^}]*\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\b[^}]*\}\s*from\s*['"](?:node:)?child_process['"]/.test(
-      source,
-    ) ||
-    /(?:const|let|var)\s*\{[^}]*\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\b[^}]*\}\s*=\s*require\s*\(\s*['"](?:node:)?child_process['"]\s*\)/.test(
-      source,
-    )
+    new RegExp(
+      `import\\s*\\{[^}]*\\b${execMembers}\\b[^}]*\\}\\s*from\\s*['"](?:node:)?child_process['"]`,
+    ).test(source) ||
+    new RegExp(
+      `(?:const|let|var)\\s*\\{[^}]*\\b${execMembers}\\b[^}]*\\}\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?child_process['"]\\s*\\)`,
+    ).test(source)
   ) {
     return true;
   }
   const importsChildProcess =
     /\bfrom\s*['"](?:node:)?child_process['"]/.test(source) ||
-    /\brequire\s*\(\s*['"](?:node:)?child_process['"]\s*\)/.test(source) ||
+    new RegExp(`${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?child_process['"]\\s*\\)`).test(source) ||
     /\bimport\s*\(\s*['"](?:node:)?child_process['"]\s*\)/.test(source);
-  return (
-    importsChildProcess &&
-    /\b(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)\s*\(/.test(source)
-  );
+  return importsChildProcess && new RegExp(`\\b${execMembers}\\s*\\(`).test(source);
 }
 
 interface IoPattern {

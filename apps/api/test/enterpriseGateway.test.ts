@@ -32,101 +32,117 @@ async function withApp(
   }
 }
 
+/**
+ * F-A-15: set COMMANDER_PROFILE for the duration of `body` and restore the
+ * previous value in `finally`, so a failing assertion cannot leak the profile
+ * into later tests in the same process.
+ */
+async function withProfile<T>(profile: string, body: () => Promise<T>): Promise<T> {
+  const previous = process.env.COMMANDER_PROFILE;
+  process.env.COMMANDER_PROFILE = profile;
+  try {
+    return await body();
+  } finally {
+    if (previous === undefined) delete process.env.COMMANDER_PROFILE;
+    else process.env.COMMANDER_PROFILE = previous;
+  }
+}
+
 describe('enterpriseRouteFreeze', () => {
   it('rejects non-/v1 product routes with 410 Gone + x-legacy when enterprise', async () => {
-    process.env.COMMANDER_PROFILE = 'enterprise';
-    await withApp(
-      (app) => {
-        app.use(enterpriseRouteFreeze());
-        app.get('/projects', (_req, res) => res.json({ served: true }));
-        app.get('/v1/runs', (_req, res) => res.json({ served: true }));
-      },
-      async (base) => {
-        const res = await request(base, '/projects');
-        assert.equal(res.status, 410);
-        assert.equal(res.headers.get('x-legacy'), 'true');
-        const body = (await res.json()) as { error: { code: string } };
-        assert.equal(body.error.code, 'GONE');
-      },
-    );
-    delete process.env.COMMANDER_PROFILE;
+    await withProfile('enterprise', async () => {
+      await withApp(
+        (app) => {
+          app.use(enterpriseRouteFreeze());
+          app.get('/projects', (_req, res) => res.json({ served: true }));
+          app.get('/v1/runs', (_req, res) => res.json({ served: true }));
+        },
+        async (base) => {
+          const res = await request(base, '/projects');
+          assert.equal(res.status, 410);
+          assert.equal(res.headers.get('x-legacy'), 'true');
+          const body = (await res.json()) as { error: { code: string } };
+          assert.equal(body.error.code, 'GONE');
+        },
+      );
+    });
   });
 
   it('allows /v1 paths and ops paths through in enterprise profile', async () => {
-    process.env.COMMANDER_PROFILE = 'enterprise';
-    await withApp(
-      (app) => {
-        app.use(enterpriseRouteFreeze());
-        app.get('/v1/runs', (_req, res) => res.json({ served: true }));
-        app.get('/health', (_req, res) => res.json({ served: true }));
-        app.get('/ready', (_req, res) => res.json({ served: true }));
-        app.get('/metrics', (_req, res) => res.json({ served: true }));
-        app.get('/system/status', (_req, res) => res.json({ served: true }));
-      },
-      async (base) => {
-        for (const path of ['/v1/runs', '/health', '/ready', '/metrics', '/system/status']) {
-          const res = await request(base, path);
-          assert.equal(res.status, 200, `${path} should be reachable`);
-          assert.equal(res.headers.get('x-legacy'), null, `${path} must not be x-legacy`);
-        }
-      },
-    );
-    delete process.env.COMMANDER_PROFILE;
+    await withProfile('enterprise', async () => {
+      await withApp(
+        (app) => {
+          app.use(enterpriseRouteFreeze());
+          app.get('/v1/runs', (_req, res) => res.json({ served: true }));
+          app.get('/health', (_req, res) => res.json({ served: true }));
+          app.get('/ready', (_req, res) => res.json({ served: true }));
+          app.get('/metrics', (_req, res) => res.json({ served: true }));
+          app.get('/system/status', (_req, res) => res.json({ served: true }));
+        },
+        async (base) => {
+          for (const path of ['/v1/runs', '/health', '/ready', '/metrics', '/system/status']) {
+            const res = await request(base, path);
+            assert.equal(res.status, 200, `${path} should be reachable`);
+            assert.equal(res.headers.get('x-legacy'), null, `${path} must not be x-legacy`);
+          }
+        },
+      );
+    });
   });
 
   it('passes every route through when standard profile (no 410)', async () => {
-    process.env.COMMANDER_PROFILE = 'standard';
-    await withApp(
-      (app) => {
-        app.use(enterpriseRouteFreeze());
-        app.get('/projects', (_req, res) => res.json({ served: true }));
-      },
-      async (base) => {
-        const res = await request(base, '/projects');
-        assert.equal(res.status, 200);
-        assert.equal(((await res.json()) as { served: boolean }).served, true);
-      },
-    );
-    delete process.env.COMMANDER_PROFILE;
+    await withProfile('standard', async () => {
+      await withApp(
+        (app) => {
+          app.use(enterpriseRouteFreeze());
+          app.get('/projects', (_req, res) => res.json({ served: true }));
+        },
+        async (base) => {
+          const res = await request(base, '/projects');
+          assert.equal(res.status, 200);
+          assert.equal(((await res.json()) as { served: boolean }).served, true);
+        },
+      );
+    });
   });
 });
 
 describe('legacyHeader', () => {
   it('adds x-legacy: true to non-/v1 product routes in standard profile', async () => {
-    process.env.COMMANDER_PROFILE = 'standard';
-    await withApp(
-      (app) => {
-        app.use(legacyHeader());
-        app.get('/projects', (_req, res) => res.json({ ok: true }));
-        app.get('/v1/runs', (_req, res) => res.json({ ok: true }));
-        app.get('/health', (_req, res) => res.json({ ok: true }));
-      },
-      async (base) => {
-        const legacy = await request(base, '/projects');
-        assert.equal(legacy.headers.get('x-legacy'), 'true');
-        const v1 = await request(base, '/v1/runs');
-        assert.equal(v1.headers.get('x-legacy'), null);
-        const health = await request(base, '/health');
-        assert.equal(health.headers.get('x-legacy'), null);
-      },
-    );
-    delete process.env.COMMANDER_PROFILE;
+    await withProfile('standard', async () => {
+      await withApp(
+        (app) => {
+          app.use(legacyHeader());
+          app.get('/projects', (_req, res) => res.json({ ok: true }));
+          app.get('/v1/runs', (_req, res) => res.json({ ok: true }));
+          app.get('/health', (_req, res) => res.json({ ok: true }));
+        },
+        async (base) => {
+          const legacy = await request(base, '/projects');
+          assert.equal(legacy.headers.get('x-legacy'), 'true');
+          const v1 = await request(base, '/v1/runs');
+          assert.equal(v1.headers.get('x-legacy'), null);
+          const health = await request(base, '/health');
+          assert.equal(health.headers.get('x-legacy'), null);
+        },
+      );
+    });
   });
 
   it('does not double-mark in enterprise profile (freeze already handles 410)', async () => {
-    process.env.COMMANDER_PROFILE = 'enterprise';
-    await withApp(
-      (app) => {
-        app.use(enterpriseRouteFreeze());
-        app.use(legacyHeader());
-        app.get('/v1/runs', (_req, res) => res.json({ ok: true }));
-      },
-      async (base) => {
-        const v1 = await request(base, '/v1/runs');
-        assert.equal(v1.headers.get('x-legacy'), null);
-      },
-    );
-    delete process.env.COMMANDER_PROFILE;
+    await withProfile('enterprise', async () => {
+      await withApp(
+        (app) => {
+          app.use(enterpriseRouteFreeze());
+          app.use(legacyHeader());
+          app.get('/v1/runs', (_req, res) => res.json({ ok: true }));
+        },
+        async (base) => {
+          const v1 = await request(base, '/v1/runs');
+          assert.equal(v1.headers.get('x-legacy'), null);
+        },
+      );
+    });
   });
 });
 

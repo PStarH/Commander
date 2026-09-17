@@ -417,7 +417,7 @@ export async function buildTerminalEvidenceRecordFromKernel(input: {
     anchoredAt: input.recordedAt,
     retentionUntil: input.retentionUntil,
   };
-  assertEvidenceRecord(record);
+  assertEvidenceRecord(record, { verifySignature: input.signer.verify });
   return record;
 }
 
@@ -785,6 +785,7 @@ export interface AdmissionStore {
 
 export interface AdmittedEffect {
   effectId: string;
+  actionDigest: string;
   grant: CapabilityGrant;
   decision: PolicyDecision;
   type: string;
@@ -930,11 +931,10 @@ export class EffectBroker {
     private readonly audit: AuditSink,
     options: EffectBrokerOptions = {},
   ) {
-    const production = process.env.NODE_ENV === 'production';
     const productionProfile = isProductionProfile();
     const requireRequestBinding = options.requireRequestBinding ?? true;
     // WS2 §4 runtime gate: production must not disable request binding.
-    if (production && !requireRequestBinding) {
+    if (productionProfile && !requireRequestBinding) {
       throw new EffectBrokerError('REQUEST_BINDING_DISABLED_IN_PROD');
     }
     // Production/enterprise/COMMANDER_REQUIRE_WORKLOAD_BINDING=1 workers must
@@ -1216,6 +1216,7 @@ export class EffectBroker {
     };
     this.admissionStore.put(input.effectId, {
       effectId: input.effectId,
+      actionDigest,
       grant,
       decision,
       type: input.type,
@@ -1404,7 +1405,7 @@ export class EffectBroker {
         severity: 'low',
         details: { policyDecisionId: admission.decision.decisionId },
       });
-      assertEvidenceRecord(record);
+      assertEvidenceRecord(record, { verifySignature: this.evidenceSigner.verify });
       if (this.kernel.compensationTerminalEvidenceRequired) {
         if (!admission.compensationClaim || !this.kernel.completeCompensationEffectWithEvidence) {
           throw new Error('COMPENSATION_TERMINAL_EVIDENCE_AUTHORITY_REQUIRED');
@@ -1452,7 +1453,7 @@ export class EffectBroker {
         severity: 'high',
         details: { errorCode: error.code },
       });
-      assertEvidenceRecord(record);
+      assertEvidenceRecord(record, { verifySignature: this.evidenceSigner?.verify });
       if (this.kernel.compensationTerminalEvidenceRequired) {
         if (!admission.compensationClaim || !failCompensationEffectWithEvidence) {
           throw new Error('COMPENSATION_TERMINAL_EVIDENCE_AUTHORITY_REQUIRED');
@@ -1530,7 +1531,7 @@ export class EffectBroker {
       throw new Error('EVIDENCE_LIFECYCLE_TRUTH_INVALID');
     }
     if (
-      (target.actionDigest && target.actionDigest !== admission.grant.actionDigest) ||
+      target.actionDigest !== admission.actionDigest ||
       target.policyDecisionId !== admission.decision.decisionId ||
       (target.policySnapshotId && target.policySnapshotId !== admission.decision.policySnapshotId)
     ) {
@@ -1570,7 +1571,7 @@ export class EffectBroker {
     const body = buildRunEvidenceBundle({
       tenantId: admission.grant.tenantId,
       runId: admission.grant.runId,
-      actionDigest: admission.grant.actionDigest ?? canonicalRequestHash(admission.request),
+      actionDigest: admission.actionDigest,
       effectId: admission.kernelEffectId,
       policySnapshotId: target.policySnapshotId ?? admission.decision.policySnapshotId,
       effects,

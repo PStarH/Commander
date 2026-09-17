@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
 import {
@@ -6,7 +7,7 @@ import {
   KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
   KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
 } from './evidenceSchema.js';
-import { KERNEL_SIGNED_EVIDENCE_MIGRATIONS } from './migrations.js';
+import { KERNEL_SIGNED_EVIDENCE_MIGRATIONS, KERNEL_MIGRATIONS } from './migrations.js';
 import {
   PostgresKernelRepository,
   type SqlClient,
@@ -146,6 +147,30 @@ describe('Campaign 2 critical authority hardening', () => {
       historical?.checksum,
       'd76d0dc499b7c2b69abe779252792cf3fd7dd1921e09cd9b8d77e42035f7149d',
     );
+  });
+
+  // F-K1-17: the authority statements below are asserted by regexing SQL text.
+  // Text that is never applied is inert, so every body this file reasons about
+  // must also be reachable through a checksummed migration descriptor.
+  it('applies every reviewed authority body through a checksummed migration', () => {
+    for (const sql of [
+      KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
+      KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+      KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
+      KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+    ]) {
+      const registered = KERNEL_MIGRATIONS.filter((migration) => migration.sql === sql);
+      assert.equal(
+        registered.length,
+        1,
+        'each reviewed authority body must be applied by exactly one registered migration',
+      );
+      assert.equal(
+        registered[0]!.checksum,
+        createHash('sha256').update(sql).digest('hex'),
+        'the migration checksum must pin this exact body',
+      );
+    }
   });
 
   it('validates and locks reconciliation authority before receipt and terminal mutation', () => {

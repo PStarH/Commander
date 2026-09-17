@@ -10,13 +10,20 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
+import { createRequire } from 'node:module';
+
+// A per-module require. The global `require` does not exist in an ES module, so
+// every call below used to raise `ReferenceError: require is not defined` —
+// which the availability probe swallowed as "better-sqlite3 is missing", so the
+// whole suite skipped itself and the dynamic-require strategy never ran at all.
+const nodeRequire = createRequire(import.meta.url);
 
 // Detect whether better-sqlite3 native bindings are actually usable for the
 // current Node ABI. The JS wrapper may load even when the compiled .node file
 // is for a different Node version, so we perform a real in-memory open.
 let betterSqlite3Available = false;
 try {
-  const Database = require('better-sqlite3');
+  const Database = nodeRequire('better-sqlite3');
   const db = new Database(':memory:');
   db.prepare('SELECT 1').get();
   db.close();
@@ -33,16 +40,22 @@ describe('ATR pause / wake (Architecture V2)', { skip: !betterSqlite3Available }
     return;
   }
 
-  // Dynamic require keeps the eager `better-sqlite3` imports from being loaded
-  // when the native binding is absent.
-  const { RunLedger } =
-    require('../../src/atr/runLedger') as typeof import('../../src/atr/runLedger');
-  const { LeaseManager } =
-    require('../../src/atr/leaseManager') as typeof import('../../src/atr/leaseManager');
-  const { IdempotencyStore } =
-    require('../../src/atr/idempotencyStore') as typeof import('../../src/atr/idempotencyStore');
-  const { ExecutionScheduler } =
-    require('../../src/atr/scheduler') as typeof import('../../src/atr/scheduler');
+  // A call-time require keeps the eager `better-sqlite3` imports from being
+  // loaded when the native binding is absent. `createRequire` is not hoisted,
+  // so nothing is resolved until these lines execute — and the specifiers
+  // resolve against THIS file, which is what makes the relative paths correct.
+  const { RunLedger } = nodeRequire(
+    '../../src/atr/runLedger',
+  ) as typeof import('../../src/atr/runLedger');
+  const { LeaseManager } = nodeRequire(
+    '../../src/atr/leaseManager',
+  ) as typeof import('../../src/atr/leaseManager');
+  const { IdempotencyStore } = nodeRequire(
+    '../../src/atr/idempotencyStore',
+  ) as typeof import('../../src/atr/idempotencyStore');
+  const { ExecutionScheduler } = nodeRequire(
+    '../../src/atr/scheduler',
+  ) as typeof import('../../src/atr/scheduler');
 
   function newBundle() {
     const lease = new LeaseManager({

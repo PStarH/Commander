@@ -31,7 +31,10 @@ function buildApp(principalTenant: string) {
     next();
   });
   app.use(tenantContextMiddleware);
-  app.use('/v1', createV1GatewayRouter(() => null));
+  app.use(
+    '/v1',
+    createV1GatewayRouter(() => null),
+  );
   return app;
 }
 

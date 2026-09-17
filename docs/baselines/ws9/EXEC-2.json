@@ -5,6 +5,6 @@
   "breach": false,
   "details": "Workload reuse prevention: tenantPathSegment(A)=tenant_tenant-a ≠ (B)=tenant_tenant-b. workloadId A=run-tenant-a-123 ≠ B=run-tenant-b-456. Container/workdir/volume paths are tenant-scoped; mismatch = rejection.",
   "artifacts": [],
-  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
-  "ranAt": "2026-08-10T02:38:25.378Z"
+  "gitSha": "0134054d8643a3bd582f79e1e06eeae595e3f3a0",
+  "ranAt": "2026-09-17T06:14:32.438Z"
 }

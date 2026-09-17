@@ -941,12 +941,8 @@ export type {
 } from './ttsrEngine';
 
 // UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
-export {
-  UniversalSanitizer,
-  ResourceGovernor,
-  IntegrityLayer,
-  type SignedEntry,
-} from './securityPrimitives';
+export { UniversalSanitizer, ResourceGovernor, IntegrityLayer } from './securityPrimitives';
+export type { SignedEntry } from './securityPrimitives';
 
 // WS9 audit-chain integrity (manifest + fail-closed persistor).
 // Runtime wiring: installAuditChainIntegrity() when COMMANDER_AUDIT_MANIFEST_DIR is set.

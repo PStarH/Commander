@@ -8,7 +8,10 @@
  * Endpoint:
  *   GET /api/cost/dashboard?timeRange=today|7d|30d|all
  *
- * Data source: `.commander_traces/*.ndjson` files. Each trace event of type
+ * Data source: the configured trace directory (see
+ * `@commander/core/runtime/traceStore#resolveConfiguredTraceBase`) —
+ * `<base>/tenant_<tenantId>/*.ndjson` when a tenant context is present,
+ * `<base>/*.ndjson` otherwise. Each trace event of type
  * `llm_call` carries `data.modelInfo` (provider, model, tier) and
  * `data.tokenUsage` (promptTokens, completionTokens, totalTokens). Cost is
  * calculated from token usage using a built-in pricing table. If no cost data
@@ -16,6 +19,7 @@
  */
 import { reportSilentFailure } from '@commander/core';
 import { getCurrentTenantId } from '@commander/core/runtime/tenantContext';
+import { resolveConfiguredTraceBase, resolveTraceDir } from '@commander/core/runtime/traceStore';
 import { Router, type Request, type Response } from 'express';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
@@ -25,7 +29,7 @@ import { toErrorMessage } from './routeHelpers';
 
 export type CostTimeRange = 'today' | '7d' | '30d' | 'all';
 
-interface ModelPricing {
+export interface ModelPricing {
   inputPer1k: number;
   outputPer1k: number;
   cachedInputPer1k?: number;
@@ -121,19 +125,29 @@ const PRICING_TABLE: Record<string, ModelPricing> = {
 
 const FALLBACK_PRICING: ModelPricing = { inputPer1k: 0.001, outputPer1k: 0.002 };
 
-function getPricing(provider: string, model: string): ModelPricing {
-  const key = `${provider.toLowerCase()}:${model.toLowerCase()}`;
+export function getPricing(provider: string, model: string): ModelPricing {
+  const normalizedProvider = provider.toLowerCase();
+  const normalizedModel = model.toLowerCase();
+  const key = `${normalizedProvider}:${normalizedModel}`;
   const exact = PRICING_TABLE[key];
   if (exact) return exact;
 
-  // Prefix match (e.g. "gpt-4o-2024-08-06" matches "gpt-4o")
-  for (const [k, v] of Object.entries(PRICING_TABLE)) {
-    const [p, m] = k.split(':');
-    if (p === provider.toLowerCase() && model.toLowerCase().startsWith(m)) {
-      return v;
-    }
-  }
-  return FALLBACK_PRICING;
+  // Prefer the most-specific model prefix. Iterating object insertion order
+  // made `gpt-4o-mini-2024...` match `gpt-4o` before `gpt-4o-mini`, and did the
+  // same for `o1-mini` vs `o1`; dated model ids were therefore silently billed
+  // at the wrong rate.
+  const candidates = Object.entries(PRICING_TABLE)
+    .map(([entry, pricing]) => {
+      const [p, m] = entry.split(':');
+      return { provider: p, modelPrefix: m, pricing };
+    })
+    .filter(
+      (candidate) =>
+        candidate.provider === normalizedProvider &&
+        normalizedModel.startsWith(candidate.modelPrefix),
+    )
+    .sort((a, b) => b.modelPrefix.length - a.modelPrefix.length);
+  return candidates[0]?.pricing ?? FALLBACK_PRICING;
 }
 
 function calculateCost(
@@ -177,35 +191,50 @@ interface TraceEvent {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
-function findTracesDir(): string {
-  return path.join(process.cwd(), '.commander_traces');
+/**
+ * Resolve the trace directory for the requesting scope.
+ *
+ * Uses the same single-owner rule as the trace writer: the configured base
+ * (honouring COMMANDER_TRACE_DIR / the legacy COMMANDER_TRACES_DIR alias) plus
+ * the canonical `tenant_<id>` segment. Reading the hard-coded cwd path while
+ * the writer honoured the configured base made every tenant's dashboard report
+ * zero cost in any deployment that configured a trace directory.
+ */
+function findTracesDir(tenantId?: string): string {
+  return resolveTraceDir(resolveConfiguredTraceBase(), tenantId);
 }
 
+/**
+ * Read a trace NDJSON file.
+ *
+ * Fail-closed: only a genuinely absent file yields an empty list. Any other
+ * read failure (EACCES/EIO/…) propagates so the dashboard answers non-2xx — a
+ * permission error must never be rendered as "$0 spent".
+ */
 async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
   // AUDIT-API11: line cap mirrors auditLogEndpoints — every dashboard hit
   // re-reads every trace file; unbounded files were an I/O+heap DoS lever.
   const MAX_LINES_PER_FILE = 200_000;
+  let raw: string;
   try {
-    await fsp.access(filePath);
-    const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
-    if (!raw) return [];
-    const events: TraceEvent[] = [];
-    const lines = raw.split('\n');
-    for (const line of lines.length > MAX_LINES_PER_FILE
-      ? lines.slice(-MAX_LINES_PER_FILE)
-      : lines) {
-      try {
-        events.push(JSON.parse(line) as TraceEvent);
-      } catch (err) {
-        reportSilentFailure(err, 'costDashboardEndpoints:readNdjson');
-        /* skip corrupt lines */
-      }
-    }
-    return events;
+    raw = await fsp.readFile(filePath, 'utf-8');
   } catch (err) {
-    reportSilentFailure(err, 'costDashboardEndpoints:readNdjsonFile');
-    return [];
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
   }
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const events: TraceEvent[] = [];
+  const lines = trimmed.split('\n');
+  for (const line of lines.length > MAX_LINES_PER_FILE ? lines.slice(-MAX_LINES_PER_FILE) : lines) {
+    try {
+      events.push(JSON.parse(line) as TraceEvent);
+    } catch (err) {
+      reportSilentFailure(err, 'costDashboardEndpoints:readNdjson');
+      throw new Error(`TRACE_DATA_INVALID: malformed NDJSON in ${filePath}`);
+    }
+  }
+  return events;
 }
 
 function toNumber(value: unknown): number {
@@ -214,18 +243,26 @@ function toNumber(value: unknown): number {
 }
 
 /**
- * Returns true when a trace event belongs to the requesting tenant.
+ * Returns true when a trace event may be counted for the requesting scope.
  *
- * Events without an explicit tenantId belong only to the legacy/default
- * context, matching the cost-ledger isolation rule.
+ * The *directory* is the authoritative scope: a `tenant_<id>` directory is
+ * written only by that tenant's runs, so events inside it that carry no
+ * explicit tenantId still belong to that tenant. Events that explicitly carry
+ * a different tenant are rejected as defence in depth.
+ *
+ * When no tenant context exists the shared base is read and only unattributed
+ * legacy events are visible — the single-tenant mode this endpoint documents.
  */
-function eventMatchesTenant(event: TraceEvent, tenantId: string | undefined): boolean {
-  if (!event.tenantId) {
-    return (
-      tenantId === undefined || tenantId === (process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local')
-    );
-  }
-  return event.tenantId === tenantId;
+function eventMatchesScope(
+  event: TraceEvent,
+  tenantId: string | undefined,
+  tenantScoped: boolean,
+): boolean {
+  if (event.tenantId) return event.tenantId === tenantId;
+  if (tenantScoped) return true;
+  return (
+    tenantId === undefined || tenantId === (process.env.COMMANDER_DEFAULT_TENANT_ID ?? 'local')
+  );
 }
 
 function toString(value: unknown, fallback = 'unknown'): string {
@@ -529,13 +566,16 @@ export function createCostDashboardRouter(): Router {
           ? rawRange
           : '7d';
 
-      const tracesDir = findTracesDir();
+      const tracesDir = findTracesDir(tenantId);
+      const tenantScoped = typeof tenantId === 'string' && tenantId.length > 0;
       let files: string[] = [];
       try {
         files = (await fsp.readdir(tracesDir)).filter((f) => f.endsWith('.ndjson'));
       } catch (err) {
-        reportSilentFailure(err, 'costDashboardEndpoints:readdir');
-        /* dir may not exist */
+        // A missing directory is a legitimate "no data yet" state. Any other
+        // failure (EACCES/EIO/ENOTDIR) is propagated so it cannot be reported
+        // as a successful zero-cost dashboard.
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
       }
 
       if (files.length === 0) {
@@ -554,8 +594,7 @@ export function createCostDashboardRouter(): Router {
         );
         for (const events of results) {
           for (const event of events) {
-            // Filter by tenant (fall back to 'default' in single-tenant mode)
-            if (!eventMatchesTenant(event, tenantId)) continue;
+            if (!eventMatchesScope(event, tenantId, tenantScoped)) continue;
 
             // Filter by time range
             if (rangeStart !== null) {
@@ -576,6 +615,7 @@ export function createCostDashboardRouter(): Router {
       const dashboard = buildDashboard(allCalls, timeRange);
       res.json(dashboard);
     } catch (error) {
+      reportSilentFailure(error, 'costDashboardEndpoints:dashboard');
       res.status(500).json({ error: toErrorMessage(error) });
     }
   });

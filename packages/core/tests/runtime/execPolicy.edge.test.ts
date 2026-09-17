@@ -31,7 +31,6 @@ import * as assert from 'node:assert/strict';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { execSync } from 'node:child_process';
 
 import { ExecPolicyEngine } from '../../src/sandbox/execPolicy';
 
@@ -118,36 +117,34 @@ describe('D3 hardening — ExecPolicyEngine edge cases', () => {
   });
 
   describe('symlink-following via commandNameAliases.resolveRealPath', () => {
-    it('a tmp symlink to /bin/cat resolves to command name `cat` and is allow-classified', () => {
-      // Windows symlinks require admin/developer mode, and `which cat` returns
+    it('a tmp symlink to a `cat` binary resolves to command name `cat` and is allow-classified', () => {
+      // Windows symlinks require admin/developer mode, and the executable is
       // `cat.exe` — the policy pattern `cat` won't match `cat.exe`. Skip cleanly.
       if (process.platform === 'win32') return;
 
-      // Resolve the platform's real `cat` binary path. macOS hides /bin behind
-      // a redirector in some configs; Linux is straightforward. We surface the
-      // environment failure as a test error rather than a silent skip so CI
-      // is unaware of regressions in the symlink-resolution path.
-      let realCat: string;
-      try {
-        realCat = execSync('which cat', { encoding: 'utf-8' }).trim();
-        if (!realCat) throw new Error('which cat returned empty');
-      } catch (err) {
-        throw new Error(
-          `symlink test requires \`which cat\` to succeed (got: ${(err as Error).message}). ` +
-            'Symlink-via-resolveRealPath cannot be exercised in this environment.',
-        );
-      }
-
+      // Build our own `cat` instead of resolving the host's via `which cat`.
+      // Sandboxes routinely shim coreutils: in the WorkBuddy sandbox `which cat`
+      // points at a brokered-bin wrapper whose realpath is
+      // `codebuddy-toybox-dispatch`, so `resolveRealPath` correctly yields the
+      // dispatcher's name and the command is (rightly) unknown → prompt. That
+      // made this test measure the host's PATH layout rather than the engine's
+      // symlink resolution. Owning the target keeps the test about the engine.
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'execPolicy-symlink-'));
       try {
+        const binDir = path.join(tmpDir, 'bin');
+        fs.mkdirSync(binDir);
+        const ownCat = path.join(binDir, 'cat');
+        fs.writeFileSync(ownCat, '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+
         // Force an uppercase path segment so Linux case-sensitivity is exercised
         // even when mkdtemp's random suffix happens to be all-lowercase.
         const mixedCaseDir = path.join(tmpDir, 'SymLinkCase');
         fs.mkdirSync(mixedCaseDir);
         const link = path.join(mixedCaseDir, 'mycat');
-        fs.symlinkSync(realCat, link);
+        fs.symlinkSync(ownCat, link);
+
         const r = engine.evaluate(`${link} /etc/shadow`);
-        // After commandNameAliases.resolveRealPath, the basename is 'cat';
+        // After commandNameAliases.resolveRealPath the basename is 'cat';
         // 'cat' is in SAFE_READONLY (priority 1).
         assert.equal(r.decision, 'allow');
         assert.equal(r.matchedPattern, 'cat');

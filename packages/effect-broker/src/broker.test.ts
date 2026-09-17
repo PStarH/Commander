@@ -13,6 +13,7 @@ import {
   buildTerminalEvidenceRecordFromKernel,
   canonicalRequestHash,
   isClassAEffectType,
+  type EffectKernelPort,
   type CapabilityGrant,
   type EvidenceRecord,
 } from './index.js';
@@ -57,6 +58,246 @@ function makeTokens() {
     verify: (token: string) => verifier.verify(token),
   };
 }
+
+describe('EB04 terminal evidence retains the admitted action digest', () => {
+  for (const scenario of [
+    { name: 'completes non-Class-A without a grant digest', type: 'llm.chat' },
+    { name: 'records non-Class-A failure without a grant digest', type: 'llm.chat', fails: true },
+    {
+      name: 'retains the digest when the request changes after admit',
+      type: 'local.hash',
+      mutateRequest: true,
+    },
+    {
+      name: 'parks a tampered non-Class-A ledger digest',
+      type: 'llm.chat',
+      ledgerDigest: 'b'.repeat(64),
+    },
+    { name: 'parks a missing ledger digest', type: 'llm.chat', ledgerDigest: undefined },
+    { name: 'parks an empty ledger digest', type: 'llm.chat', ledgerDigest: '' },
+    {
+      name: 'preserves an explicit Class A grant digest',
+      type: 'crm.write',
+      grantDigest: 'a'.repeat(64),
+    },
+    {
+      name: 'parks a tampered Class A ledger digest',
+      type: 'crm.write',
+      grantDigest: 'a'.repeat(64),
+      ledgerDigest: 'b'.repeat(64),
+    },
+  ]) {
+    it(scenario.name, async () => {
+      const tokens = makeTokens();
+      const request = { value: 1 };
+      const requestHash = canonicalRequestHash(request);
+      const expectedDigest = scenario.grantDigest ?? requestHash;
+      const signedGrant: CapabilityGrant = {
+        ...grant,
+        effectTypes: [scenario.type],
+        requestHash,
+      };
+      if (scenario.grantDigest) signedGrant.actionDigest = scenario.grantDigest;
+      else delete signedGrant.actionDigest;
+      const token = tokens.issue(signedGrant);
+      assert.equal((await tokens.verify(token)).actionDigest, scenario.grantDigest);
+      assert.equal(isClassAEffectType(scenario.type), scenario.type === 'crm.write');
+      const effectId = 'effect-eb04';
+      const lease = { workerId: 'w', workerGeneration: 1, token: 'lease', fencingEpoch: 1 };
+      let ledger: Awaited<ReturnType<NonNullable<EffectKernelPort['listEffectsForRun']>>>[number];
+      const records: EvidenceRecord[] = [];
+      const parks: Parameters<NonNullable<EffectKernelPort['markEffectCompletionUnknown']>>[0][] =
+        [];
+      let executions = 0;
+      const broker = new EffectBroker(
+        tokens,
+        {
+          evaluate: async () => ({
+            effect: 'allow',
+            decisionId: 'd1',
+            reason: 'ok',
+            policySnapshotId: 'p1',
+          }),
+        },
+        {
+          admitEffect: async (input) => {
+            assert.equal(input.actionDigest, expectedDigest);
+            ledger = {
+              id: input.id,
+              runId: input.runId,
+              stepId: input.stepId,
+              tenantId: input.tenantId,
+              type: input.type,
+              state: 'ADMITTED',
+              policyDecisionId: input.policyDecisionId,
+              policySnapshotId: input.policySnapshotId,
+              actionDigest: input.actionDigest,
+              requestHash,
+              createdAt: '2026-07-29T00:00:00.000Z',
+            };
+            return { admitted: true, effect: { id: input.id, state: 'ADMITTED' } };
+          },
+          completeEffect: async () => assert.fail('must not bypass atomic evidence completion'),
+          completeEffectWithEvidence: async (
+            id,
+            tenantId,
+            completedLease,
+            _response,
+            _actor,
+            record,
+          ) => {
+            assert.equal(id, effectId);
+            assert.equal(tenantId, grant.tenantId);
+            assert.deepEqual(completedLease, lease);
+            records.push(record);
+            return { id, state: 'COMPLETED' };
+          },
+          failEffectWithEvidence: async (input) => {
+            records.push(input.evidence);
+            return { id: input.effectId, state: 'FAILED' };
+          },
+          getTerminalEvidenceContext: async (id, runId, tenantId, claimToken) => {
+            assert.deepEqual(
+              [id, runId, tenantId, claimToken],
+              [effectId, grant.runId, grant.tenantId, lease.token],
+            );
+            return { effect: { ...ledger }, events: [] };
+          },
+          markEffectCompletionUnknown: async (input) => {
+            parks.push(input);
+            ledger.state = 'COMPLETION_UNKNOWN';
+            return { id: input.effectId, state: ledger.state };
+          },
+        },
+        {
+          execute: async () => {
+            executions += 1;
+            if (scenario.fails) {
+              throw new AdapterExecutionError('rejected before commit', {
+                code: 'REMOTE_REJECTED',
+                commitState: 'NOT_COMMITTED',
+                retryMode: 'NEVER',
+              });
+            }
+            return { status: 'ok' };
+          },
+        },
+        { append: async () => {} },
+        {
+          requireEvidencePersistence: true,
+          evidenceSigner: {
+            sign: async () => ({
+              algorithm: 'Ed25519',
+              keyId: 'eb04-test',
+              signedAt: new Date().toISOString(),
+              value: 'test-signature',
+            }),
+            verify: () => true,
+          },
+        },
+      );
+      const admitted = await broker.admit({
+        effectId,
+        token,
+        type: scenario.type,
+        request,
+        idempotencyKey: 'eb04',
+        lease,
+        actor: 'w',
+      });
+      assert.equal(admitted.admitted, true);
+      if (scenario.mutateRequest) request.value = 2;
+      const invalidLedger = Object.hasOwn(scenario, 'ledgerDigest');
+      if (invalidLedger) ledger!.actionDigest = scenario.ledgerDigest;
+      if (invalidLedger || scenario.fails) {
+        await assert.rejects(
+          broker.executeAdmitted({ effectId }),
+          (error: unknown) =>
+            error instanceof EffectBrokerError &&
+            error.code === (invalidLedger ? 'EVIDENCE_PERSIST_FAILED' : 'EFFECT_FAILED'),
+        );
+      } else {
+        const result = await broker.executeAdmitted({ effectId });
+        assert.deepEqual(result, { effectId, replayed: false, response: { status: 'ok' } });
+      }
+      assert.equal(executions, 1);
+      if (invalidLedger) {
+        assert.equal(records.length, 0);
+        assert.deepEqual(parks, [
+          {
+            effectId,
+            tenantId: grant.tenantId,
+            reason: 'EVIDENCE_PERSIST_FAILED',
+            actor: 'w',
+            lease,
+          },
+        ]);
+        assert.equal(ledger!.state, 'COMPLETION_UNKNOWN');
+      } else {
+        assert.equal(parks.length, 0);
+        assert.equal(records.length, 1);
+        assert.equal(records[0].actionDigest, expectedDigest);
+        assert.equal(records[0].body.actionDigest, expectedDigest);
+        assert.equal(records[0].body.effects[0].state, scenario.fails ? 'FAILED' : 'COMPLETED');
+      }
+      await assert.rejects(broker.executeAdmitted({ effectId }), /ADMISSION_NOT_FOUND/);
+    });
+  }
+});
+
+describe('EB05 request binding uses every production profile signal', () => {
+  const profiles = [
+    ['NODE_ENV', 'production'],
+    ['COMMANDER_ENV', 'production'],
+    ['COMMANDER_PROFILE', 'enterprise'],
+    ['COMMANDER_CELL_TIER', 'enterprise'],
+    ['COMMANDER_REQUIRE_WORKLOAD_BINDING', '1'],
+  ] as const;
+  for (const [key, value] of profiles) {
+    it(`rejects requireRequestBinding=false for ${key}=${value}`, () => {
+      const previous = profiles.map(([name]) => [name, process.env[name]] as const);
+      try {
+        for (const [name] of profiles) delete process.env[name];
+        process.env[key] = value;
+        const construct = (requireRequestBinding?: boolean) =>
+          new EffectBroker(
+            makeTokens(),
+            {
+              evaluate: async () => ({
+                effect: 'allow',
+                decisionId: 'd1',
+                reason: 'ok',
+                policySnapshotId: 'p1',
+              }),
+            },
+            { admitEffect: async () => ({ admitted: false }), completeEffect: async () => null },
+            { execute: async () => ({}) },
+            { append: async () => {} },
+            {
+              requireRequestBinding,
+              localWorkerId: 'w',
+              replay: { consume: () => false },
+              revocations: { revoke: () => undefined, isRevoked: () => false },
+            },
+          );
+        assert.doesNotThrow(() => construct());
+        assert.doesNotThrow(() => construct(true));
+        assert.throws(
+          () => construct(false),
+          (error: unknown) =>
+            error instanceof EffectBrokerError && error.code === 'REQUEST_BINDING_DISABLED_IN_PROD',
+        );
+        delete process.env[key];
+        assert.doesNotThrow(() => construct(false));
+      } finally {
+        for (const [name, original] of previous) {
+          if (original === undefined) delete process.env[name];
+          else process.env[name] = original;
+        }
+      }
+    });
+  }
+});
 
 describe('EffectBroker', () => {
   it('builds terminal evidence from one effect-scoped kernel context', async () => {
@@ -319,6 +560,7 @@ describe('EffectBroker', () => {
             type: 'crm.write',
             state: 'ADMITTED',
             policyDecisionId: 'd1',
+            actionDigest: grant.actionDigest,
             requestHash: canonicalRequestHash({}),
             createdAt: '2026-07-29T00:00:02.000Z',
           },
@@ -406,6 +648,7 @@ describe('EffectBroker', () => {
             type: 'crm.write',
             state: 'ADMITTED',
             policyDecisionId: 'd1',
+            actionDigest: grant.actionDigest,
             requestHash: canonicalRequestHash({}),
             createdAt: '2026-07-29T00:00:00.000Z',
           },

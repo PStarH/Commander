@@ -4,6 +4,13 @@
  * quota before an authenticated principal establishes the tenant identity.
  */
 import * as assert from 'node:assert/strict';
+
+// F-B-2: RATE_LIMIT_MAX is parsed at module load, so pin a tiny limit BEFORE
+// importing ../src/securityMiddleware. At the default 120 the six spoofed
+// requests below cannot exhaust the victim tier, so the regression test could
+// never fail when the header-keying bug was reintroduced.
+process.env.API_RATE_LIMIT = '1';
+process.env.API_RATE_LIMIT_TENANT = '1';
 import { after, before, describe, test } from 'node:test';
 import express from 'express';
 import { authMiddleware } from '../src/authMiddleware';
@@ -19,14 +26,7 @@ import {
   setAuthFailureStore,
   type AuthFailureStore,
 } from '../src/authFailureStore';
-import {
-  _resetRateLimitStoreForTesting,
-  rateLimitMiddleware,
-  setRateLimitStoreForTesting,
-  type RateLimitBucket,
-  type RateLimitEntry,
-  type RateLimitStore,
-} from '../src/securityMiddleware';
+import type { RateLimitBucket, RateLimitEntry, RateLimitStore } from '../src/securityMiddleware';
 import { tenantContextMiddleware } from '../src/tenantContextMiddleware';
 
 class EmptyApiKeyStore implements ApiKeyStore {
@@ -92,6 +92,11 @@ const unlockedFailures: AuthFailureStore = {
 const originalJwtSecret = process.env.JWT_SECRET;
 process.env.JWT_SECRET = 'audit-rl-secret';
 const { createJwtMiddleware, signAccessToken } = await import('../src/jwtMiddleware');
+// F-B-2: import the middleware AFTER API_RATE_LIMIT is set (see the top of the
+// file) — a static import would hoist above the assignment and keep the 120
+// default, making the spoof unobservable.
+const { _resetRateLimitStoreForTesting, rateLimitMiddleware, setRateLimitStoreForTesting } =
+  await import('../src/securityMiddleware');
 const jwtMiddleware = createJwtMiddleware(async (id) =>
   id === 'user-victim'
     ? {
@@ -148,23 +153,47 @@ after(async () => {
   else process.env.JWT_SECRET = originalJwtSecret;
 });
 
+const VICTIM_TOKEN = () =>
+  signAccessToken({
+    id: 'user-victim',
+    username: 'victim',
+    role: 'viewer',
+    authVersion: 1,
+    tenantId: 'tenant-victim',
+  });
+
 describe('AUDIT-B: spoofed X-Tenant-ID cannot consume the victim quota', () => {
+  test('the tier limit really is 1, so a single request consumes a bucket', async () => {
+    // F-B-2 control: the previous version left API_RATE_LIMIT at its 120
+    // default, so six spoofed requests could never exhaust anything and the
+    // assertion held no matter which key the middleware used.
+    const first = await request('/probe', { headers: { 'x-tenant-id': 'tenant-victim' } });
+    assert.notEqual(first.status, 429);
+    const second = await request('/probe', { headers: { 'x-tenant-id': 'tenant-victim' } });
+    assert.equal(second.status, 429, 'limit=1 must trip on the second request');
+  });
+
   test('unauthenticated spoofed-header flood does not throttle a tenant JWT user', async () => {
     for (let count = 0; count < 6; count += 1) {
       await request('/probe', { headers: { 'x-tenant-id': 'tenant-victim' } });
     }
 
-    const token = signAccessToken({
-      id: 'user-victim',
-      username: 'victim',
-      role: 'viewer',
-      authVersion: 1,
-      tenantId: 'tenant-victim',
-    });
     const response = await request('/probe', {
-      headers: { authorization: `Bearer ${token}`, 'x-tenant-id': 'tenant-victim' },
+      headers: { authorization: `Bearer ${VICTIM_TOKEN()}`, 'x-tenant-id': 'tenant-victim' },
     });
 
-    assert.equal(response.status, 200, 'legitimate tenant user must not be throttled');
+    // If the raw header were read, the victim's tenant bucket would already
+    // hold 6+ tokens and this request would be 429.
+    assert.equal(
+      response.status,
+      200,
+      'legitimate tenant user must not be throttled by a spoofed-header flood',
+    );
+
+    // The victim's own tenant bucket is fresh, so its second request trips it.
+    const second = await request('/probe', {
+      headers: { authorization: `Bearer ${VICTIM_TOKEN()}`, 'x-tenant-id': 'tenant-victim' },
+    });
+    assert.equal(second.status, 429, 'the tenant bucket must be the one that is consumed');
   });
 });

@@ -14,6 +14,7 @@ import { WorkerExecutionError } from './types.js';
 import type { CapabilityTokenIssuer, WorkloadBinding } from '@commander/effect-broker';
 import {
   assertEffectBrokerForProduction,
+  isProductionEffectGate,
   mustRouteExternalEffectThroughBroker,
   workerExecutionErrorFromEffectFailure,
 } from './effectGate.js';
@@ -135,10 +136,11 @@ export class ToolStepExecutor implements StepExecutor {
       const request = input.actionEnvelope ?? input.args ?? {};
       const effectType = input.effectType ?? input.toolName;
       let capabilityToken = input.capabilityToken;
-      const production =
-        process.env.NODE_ENV === 'production' ||
-        process.env.COMMANDER_PROFILE === 'enterprise' ||
-        process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1';
+      // The production gate must be the shared one (effectGate.isProductionEffectGate()).
+      // A locally re-derived predicate that omitted COMMANDER_REQUIRE_EFFECT_BROKER let a
+      // deployment that had switched the broker gate on fall back to the step's own
+      // caller-supplied capabilityToken instead of demanding the step-bound mint.
+      const production = isProductionEffectGate();
       let workloadBinding = getStepWorkloadBinding();
       if (this.capabilityIssuer) {
         workloadBinding = requireStepWorkloadBinding();

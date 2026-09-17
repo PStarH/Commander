@@ -186,12 +186,18 @@ describe('CommanderHttpServer — OIDC Authentication Integration', () => {
   describe('auth bypass endpoints still work', () => {
     it('/health bypasses auth with OIDC plugin registered', async () => {
       const { status } = await requestJson('GET', `${baseUrl}/health`);
-      assert.strictEqual(status, 200);
+      // The point of this test is that the OIDC plugin does not gate /health —
+      // not that the probe is healthy. A bare server has no runtime wired, so
+      // the fail-closed health route correctly answers 503; what must never
+      // happen is a 401/403.
+      assert.notStrictEqual(status, 401);
+      assert.notStrictEqual(status, 403);
     });
 
     it('/ready bypasses auth with OIDC plugin registered', async () => {
       const { status } = await requestJson('GET', `${baseUrl}/ready`);
-      assert.strictEqual(status, 200);
+      assert.notStrictEqual(status, 401);
+      assert.notStrictEqual(status, 403);
     });
 
     it('/openapi.json bypasses auth with OIDC plugin registered', async () => {

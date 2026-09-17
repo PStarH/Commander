@@ -110,15 +110,17 @@ async function invoke(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const stack = (router as unknown as {
-    stack: Array<{
-      route?: {
-        path: string;
-        methods: Record<string, boolean>;
-        stack: Array<{ handle: RequestHandler }>;
-      };
-    }>;
-  }).stack;
+  const stack = (
+    router as unknown as {
+      stack: Array<{
+        route?: {
+          path: string;
+          methods: Record<string, boolean>;
+          stack: Array<{ handle: RequestHandler }>;
+        };
+      }>;
+    }
+  ).stack;
   for (const layer of stack) {
     if (!layer.route) continue;
     if (layer.route.path === routePath && layer.route.methods[method]) {

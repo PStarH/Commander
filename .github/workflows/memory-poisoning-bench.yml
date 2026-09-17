@@ -1,5 +1,9 @@
 name: Memory Poisoning Bench
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 # Companion to .github/workflows/tenant-isolation-bench.yml. The two workflows
 # guard the same class-level attack surface against cross-tenant data bleed —
 # tenant-isolation-bench.yml covers the in-memory key/value target
@@ -30,12 +34,11 @@ on:
   workflow_dispatch:
     inputs:
       maxNewLeaks:
-        description: 'Maximum additional leaks tolerated vs yesterday (default 0)'
+        description: Maximum additional leaks tolerated vs yesterday (default 0)
         required: false
         default: '0'
   schedule:
-    - cron: '30 7 * * *'
-
+    - cron: 30 7 * * *
 jobs:
   bench-memory-poisoning-regress:
     name: Cross-Tenant Memory Poisoning Regression
@@ -45,22 +48,18 @@ jobs:
       TZ: UTC
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - name: Setup Node 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
-          cache: 'pnpm'
-
+          cache: pnpm
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
-
       - name: Resolve today / yesterday (UTC)
         id: dates
         run: |
@@ -68,10 +67,8 @@ jobs:
           YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
           echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
-
       - name: Run memory-poisoning bench (captures today baseline)
         run: pnpm bench:memory-poisoning
-
       - name: Verify today's baseline JSON exists
         run: |
           TODAY_FILE="docs/baselines/memory-poisoning.${{ steps.dates.outputs.today }}.json"
@@ -80,7 +77,6 @@ jobs:
             exit 2
           fi
           echo "today's baseline: $TODAY_FILE"
-
       - name: Extract today's metrics (leakCount is the gate signal)
         id: metrics
         if: always()
@@ -94,7 +90,6 @@ jobs:
             out("leakCount", d.summary.leakCount ?? d.report.leaks.length);
             out("durationMs", d.report.durationMs);
           ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
-
       - name: Compare today vs yesterday (leak-count delta gate)
         if: always()
         id: regress
@@ -164,45 +159,57 @@ jobs:
             }
             console.log("regressed=false");
           ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
-
       - name: Append markdown to GitHub Step Summary
         if: always()
         run: |
           SUMMARY="$RUNNER_TEMP/memory-poisoning-regress-summary.md"
           if [ -s "$SUMMARY" ]; then cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"; else exit 2; fi
-
-      # Day-N+1 regress gate dependency: PR auto-creation pairs with team
-      # auto-merge policy (Settings -> General -> Allow auto-merge + branch
-      # rule matching labels automated+ci-bench). Until auto-merge is
-      # enabled, tomorrow sees first-day SKIP for the day the PR is open
-      # but not yet merged; the day AFTER it merges, the gate fires for
-      # real. If strict day-N+1 continuity is later required, switch this
-      # guard to `if: always() && hashFiles('docs/baselines/memory-poisoning.*.json')`.
+    outputs:
+      today: ${{ steps.dates.outputs.today }}
+      metric_leakCount: ${{ steps.metrics.outputs.leakCount }}
+      metric_totalCases: ${{ steps.metrics.outputs.totalCases }}
+      metric_defended: ${{ steps.metrics.outputs.defended }}
+      metric_durationMs: ${{ steps.metrics.outputs.durationMs }}
+  open-baseline-pr:
+    name: Open baseline PR
+    runs-on: ubuntu-latest
+    needs:
+      - bench-memory-poisoning-regress
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: memory-poisoning-baseline-${{ needs.bench-memory-poisoning-regress.outputs.today }}
       - name: Open PR for today's memory-poisoning baseline
         if: success()
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/memory-poisoning-baseline-${{ steps.dates.outputs.today }}
+          branch: bench/memory-poisoning-baseline-${{ needs.bench-memory-poisoning-regress.outputs.today }}
           delete-branch: true
-          title: 'ci(memory-poisoning-bench): baseline ${{ steps.dates.outputs.today }} - leaks=${{ steps.metrics.outputs.leakCount }}/${{ steps.metrics.outputs.totalCases }}'
+          title: 'ci(memory-poisoning-bench): baseline ${{ needs.bench-memory-poisoning-regress.outputs.today }} - leaks=${{ needs.bench-memory-poisoning-regress.outputs.metric_leakCount }}/${{ needs.bench-memory-poisoning-regress.outputs.metric_totalCases }}'
           commit-message: |
-            ci(memory-poisoning-bench): baseline ${{ steps.dates.outputs.today }}
+            ci(memory-poisoning-bench): baseline ${{ needs.bench-memory-poisoning-regress.outputs.today }}
 
             Auto-generated by .github/workflows/memory-poisoning-bench.yml.
 
-            leakCount: ${{ steps.metrics.outputs.leakCount }}
-            defended: ${{ steps.metrics.outputs.defended }} / ${{ steps.metrics.outputs.totalCases }}
+            leakCount: ${{ needs.bench-memory-poisoning-regress.outputs.metric_leakCount }}
+            defended: ${{ needs.bench-memory-poisoning-regress.outputs.metric_defended }} / ${{ needs.bench-memory-poisoning-regress.outputs.metric_totalCases }}
           body: |
-            ## Memory poisoning baseline - ${{ steps.dates.outputs.today }}
+            ## Memory poisoning baseline - ${{ needs.bench-memory-poisoning-regress.outputs.today }}
 
             Auto-generated by [`.github/workflows/memory-poisoning-bench.yml`](../workflows/memory-poisoning-bench.yml).
             Triggered daily at `07:30 UTC` or via manual `workflow_dispatch`.
 
             | Metric | Value |
             |---|---|
-            | leakCount | **${{ steps.metrics.outputs.leakCount }}** |
-            | defended / total | **${{ steps.metrics.outputs.defended }} / ${{ steps.metrics.outputs.totalCases }}** |
-            | durationMs | **${{ steps.metrics.outputs.durationMs }}** |
+            | leakCount | **${{ needs.bench-memory-poisoning-regress.outputs.metric_leakCount }}** |
+            | defended / total | **${{ needs.bench-memory-poisoning-regress.outputs.metric_defended }} / ${{ needs.bench-memory-poisoning-regress.outputs.metric_totalCases }}** |
+            | durationMs | **${{ needs.bench-memory-poisoning-regress.outputs.metric_durationMs }}** |
 
             > The bench is a security fail-loud test by design. Per-vector leakage is a class-level attack surface that must be closed in `packages/core/src/threeLayerMemory.ts`; this PR only persists the baseline JSON for forensic comparisons.
 
@@ -210,3 +217,5 @@ jobs:
           labels: |
             automated
             ci-bench
+permissions:
+  contents: read

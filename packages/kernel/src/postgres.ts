@@ -621,6 +621,49 @@ export class PostgresKernelRepository implements KernelRepository {
     };
   }
 
+  /**
+   * Resolve the governed compensation authorization from durable evidence — the
+   * `commander_compensation_requests` row the producer wrote, its
+   * `commander_compensation_authorizations` row and the completed forward effect —
+   * exactly like the SQLite / in-memory repositories. The legacy
+   * `admit_compensation_effect_v1` RPC instead reads a sealed authorization from run
+   * metadata and the outbox payload, which the active `request_compensation`
+   * producer never writes.
+   */
+  private async admitCompensationEffectViaDurableEvidence(
+    client: SqlClient,
+    input: AdmitEffectRequest & {
+      requestId: string;
+      requestClaimToken: string;
+      outboxMessageId: string;
+      outboxClaimToken: string;
+    },
+  ): Promise<AdmitEffectResult> {
+    const result = await client.query<{
+      result:
+        | {
+            admitted: boolean;
+            replayed?: boolean;
+            reason?: Extract<AdmitEffectResult, { admitted: false }>['reason'];
+            effect?: DbEffect;
+          }
+        | string;
+    }>('SELECT admit_compensation_effect($1::jsonb) AS result', [json(input)]);
+    const raw = result.rows[0]?.result;
+    const value = (typeof raw === 'string' ? JSON.parse(raw) : raw) ?? {};
+    if (!value.admitted || !value.effect) {
+      return {
+        admitted: false,
+        reason: value.reason ?? 'COMPENSATION_ADMISSION_UNAVAILABLE',
+      };
+    }
+    return {
+      admitted: true,
+      replayed: value.replayed === true,
+      effect: fromEffect(value.effect),
+    };
+  }
+
   async createRun(command: CreateKernelRun, actor: string): Promise<KernelRun> {
     this.assertGraph(command);
     return this.withTransaction(
@@ -1599,6 +1642,27 @@ export class PostgresKernelRepository implements KernelRepository {
           const isCompensation = request.type.toLowerCase().startsWith('compensate.');
           if (!this.options.schedulerMode) {
             if (isCompensation && this.options.adapterOpsMode) {
+              // Route to the durable-evidence RPC whenever the binding carries the
+              // request/outbox identifiers it resolves from. The legacy RPC stays
+              // reachable for callers that still supply the sealed authorization in
+              // run metadata and the outbox payload.
+              const binding = request.compensationBinding;
+              const requestClaimToken = binding?.requestClaimToken ?? binding?.claimToken;
+              const outboxClaimToken = binding?.outboxClaimToken ?? binding?.claimToken;
+              if (
+                binding?.requestId &&
+                binding.outboxMessageId &&
+                requestClaimToken &&
+                outboxClaimToken
+              ) {
+                return this.admitCompensationEffectViaDurableEvidence(client, {
+                  ...request,
+                  requestId: binding.requestId,
+                  requestClaimToken,
+                  outboxMessageId: binding.outboxMessageId,
+                  outboxClaimToken,
+                });
+              }
               return this.admitCompensationEffectViaRpc(client, request);
             }
             const fingerprint = requestHash(request.request);
@@ -2580,13 +2644,7 @@ export class PostgresKernelRepository implements KernelRepository {
   ): Promise<AdmitEffectResult> {
     const client = await this.pool.connect();
     try {
-      const result = await client.query<{ result: AdmitEffectResult | string }>(
-        'SELECT admit_compensation_effect($1::jsonb) AS result',
-        [json(input)],
-      );
-      const raw = result.rows[0]?.result;
-      if (!raw) return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
-      return typeof raw === 'string' ? JSON.parse(raw) : raw;
+      return await this.admitCompensationEffectViaDurableEvidence(client, input);
     } finally {
       client.release();
     }

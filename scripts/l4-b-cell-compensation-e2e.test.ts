@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
 import {
+  adapterOpsCompensationMockPassed,
   notReadyControlledChangeEvidence,
   runAdapterOpsCompensationMock,
   runCellCompensationE2E,
@@ -14,27 +16,26 @@ describe('l4-b-cell-compensation-e2e', () => {
     assert.equal(notReadyControlledChangeEvidence().remoteOutcome, 'UNKNOWN');
   });
 
-  it('mock mode proves adapter-ops compensation consumer (ENFORCED)', async (t) => {
-    try {
-      const ok = await runAdapterOpsCompensationMock();
-      if (!ok) {
-        t.skip('adapter-ops mock deps unavailable');
-        return;
-      }
-      assert.equal(ok, true);
-    } catch (err) {
-      t.skip(`deps unavailable: ${err instanceof Error ? err.message : String(err)}`);
-    }
+  it('mock mode proves adapter-ops compensation consumer (ENFORCED)', async () => {
+    const evidence = await runAdapterOpsCompensationMock();
+    assert.equal(evidence.consumed, 1, 'daemon must consume the governed compensation request');
+    assert.equal(evidence.succeeded, 1, 'daemon must complete the governed compensation');
+    assert.equal(evidence.escalated, 0, 'a valid authorization must not be escalated');
+    assert.equal(evidence.executions, 1, 'compensation effect must execute exactly once');
+    assert.equal(evidence.compensationEffectState, 'COMPLETED');
+    assert.deepEqual(evidence.compensationEffectResponse, { state: 'closed' });
+    assert.equal(evidence.compensationRunState, 'SUCCEEDED');
+    assert.equal(evidence.remainingCompensationOutbox, 0, 'compensation outbox must be drained');
+    assert.ok(evidence.genericClaimTopics.includes('commander.run.created'));
+    assert.ok(!evidence.genericClaimTopics.includes(KERNEL_COMPENSATION_TOPIC));
+    assert.equal(adapterOpsCompensationMockPassed(evidence), true);
   });
 
-  it('runCellCompensationE2E mock verdict is ENFORCED-script-only when passing', async (t) => {
+  it('runCellCompensationE2E mock verdict is ENFORCED-script-only when passing', async () => {
     const result = await runCellCompensationE2E({ mode: 'mock' });
-    if (!result.steps.S_mock_adapter_ops) {
-      t.skip('mock compensation deps unavailable');
-      return;
-    }
-    assert.equal(result.verdict, 'ENFORCED-script-only');
+    assert.equal(result.steps.S_mock_adapter_ops, true);
     assert.equal(result.passed, true);
+    assert.equal(result.verdict, 'ENFORCED-script-only');
   });
 
   it('sends a valid route-specific Idempotency-Key on every Action write', async () => {

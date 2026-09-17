@@ -79,8 +79,8 @@ services:
   api-1:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: api
+      dockerfile: apps/api/Dockerfile
+      target: production
     image: ${COMMANDER_API_IMAGE:-commander-api:latest}
     environment:
       NODE_ENV: production
@@ -119,8 +119,8 @@ services:
   api-2:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: api
+      dockerfile: apps/api/Dockerfile
+      target: production
     image: ${COMMANDER_API_IMAGE:-commander-api:latest}
     environment:
       NODE_ENV: production
@@ -159,8 +159,8 @@ services:
   worker:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: worker
+      dockerfile: packages/worker-plane/Dockerfile
+      target: production
     image: ${COMMANDER_WORKER_IMAGE:-commander-worker:latest}
     environment:
       NODE_ENV: production

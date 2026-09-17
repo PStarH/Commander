@@ -107,6 +107,12 @@ describe('Helm lifecycle static contract', () => {
           'database.backend=sqlite',
           '--set',
           'database.postgres.bundled=false',
+          // The chart deliberately refuses the sqlite backend while
+          // config.nodeEnv=production (requireDurableKernel), so the local-first
+          // evaluation path is only renderable at a non-production nodeEnv —
+          // the same remedy that guard's failure message prescribes.
+          '--set',
+          'config.nodeEnv=development',
         ]),
         'api',
       ),

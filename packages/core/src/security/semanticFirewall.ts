@@ -887,7 +887,16 @@ export class SemanticFirewall {
     if (s.startsWith('tool:') || s.startsWith('verified_tool:')) return 'verified_tool';
     if (s.startsWith('tool_output:') || s.includes('tool_output')) return 'tool_output';
     if (s.startsWith('user:') || s === 'user_input') return 'user_input';
-    if (s.startsWith('agent:') || s.includes('agent_generated')) return 'agent_generated';
+    // `agent:` and `agent_generated` were recognised but the bare form was not, so
+    // `source: 'agent'` — the canonical value — fell through to `unknown` and was
+    // treated as UNTRUSTED. Under AI-6 (:811-825) that made the semantic gate fail
+    // closed for every agent-originated write when no analyzer is injected, and
+    // tightened the threshold factor from 0.9 to 0.6 when one is. The sibling
+    // branches already accept bare forms (`s === 'user_input'`, `s.includes(
+    // 'tool_output')`); this makes the agent branch consistent.
+    if (s.startsWith('agent:') || s === 'agent' || s.includes('agent_generated')) {
+      return 'agent_generated';
+    }
     return 'unknown';
   }
 

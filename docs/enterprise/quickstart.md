@@ -1,12 +1,15 @@
 # Enterprise Pilot Quickstart
 
-This is the shortest supported path for one dedicated, self-hosted design-partner
-deployment. It is an acceptance workflow, not a general SaaS signup. Shared
-multi-tenant hosting remains alpha.
+For the current enterprise evaluation, start with [Shadow Pilot Phase A](../pilot/shadow/README.md).
+It evaluates historical observations without executing or authorizing external writes.
+The live-write acceptance procedure below is a gated engineering reference;
+Kubernetes rollback is frozen and is not offered as the current customer pilot.
+Shared multi-tenant hosting remains alpha.
 
-## What this proves
+## Future live-write acceptance target
 
-The pilot proves one reversible Kubernetes `Deployment` rollback can be proposed
+Before this workflow can be offered, release-specific evidence must demonstrate
+that one Kubernetes `Deployment` rollback can be proposed
 by an external Agent Runtime, approved by a named operator, recovered after a
 process failure, reconciled without a second write, and closed with an
 independently verifiable receipt.
@@ -30,9 +33,9 @@ failed preflight, not permission to substitute a fake external system.
 ## 1. Start the dedicated stack
 
 Use the repository's V2 compose topology for technical acceptance. The following
-creates ephemeral local-only authority and signing keys, then binds the API key
-to the pilot tenant. Do not use this key-generation path for production; load
-the same variables from a secret manager instead.
+creates ephemeral local-only authority and signing keys, then sets the API
+credentials the compose file requires. Do not use this key-generation path for
+production; load the same variables from a secret manager instead.
 
 ```bash
 export COMMANDER_MASTER_KEY="$(openssl rand -hex 32)"
@@ -47,6 +50,7 @@ export COMMANDER_CAPABILITY_KEY_ID="pilot-capability-$(date -u +%Y%m%d%H%M%S)"
 export COMMANDER_EVIDENCE_SIGNING_KEY_ID="pilot-evidence-$(date -u +%Y%m%d%H%M%S)"
 export API_KEYS="${COMMANDER_API_KEY}:pilot:read;write;admin;actions:approve"
 export TENANT_API_KEYS="${COMMANDER_TENANT_ID}:${COMMANDER_API_KEY}"
+export ADMIN_PASSWORD="$(openssl rand -hex 16)"
 
 PILOT_KEY_DIR="$(mktemp -d "${TMPDIR:-/tmp}/commander-pilot-keys.XXXXXX")"
 node --input-type=module - "$PILOT_KEY_DIR" <<'NODE'
@@ -76,6 +80,17 @@ export COMMANDER_EVIDENCE_JWKS_JSON="$(< "$PILOT_KEY_DIR/evidence-jwks.json")"
 docker compose -f deploy/docker/v2-compose.yml config >/dev/null
 docker compose -f deploy/docker/v2-compose.yml up -d
 ```
+
+> **How inbound API keys actually work.** `API_KEYS` / `TENANT_API_KEYS` are
+> required by `deploy/docker/v2-compose.yml`, which refuses to start without
+> them — but since the PostgreSQL auth migration they no longer bind an inbound
+> key. `apps/api/src/authMiddleware.ts` authenticates **only** against the
+> `commander_auth_api_keys` table, and `apps/api/test/authMiddlewareImport.test.ts`
+> forbids any reference to those two env vars in that file. `COMMANDER_API_KEY`
+> is the outbound Action Gateway credential. To get an inbound key for the
+> pilot, sign in as the initial admin account seeded from `ADMIN_PASSWORD`, then
+> create a tenant-scoped key through the control-plane API and use that as the
+> Gateway credential.
 
 Wait for `/health` and `/ready` on the configured Gateway endpoint. Keep the
 Gateway, kernel-ops, worker, and adapter-ops identities separate. Keep

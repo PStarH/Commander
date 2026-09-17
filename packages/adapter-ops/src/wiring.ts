@@ -34,7 +34,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
+import { cellTier, createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
 import { ReconciliationDaemon } from './reconciliationDaemon.js';
 import { CompensationDaemon } from './compensationDaemon.js';
 
@@ -766,8 +766,9 @@ function emitOpsLoopTelemetry(event: {
 function createProductionRegistry(
   credentials: EnvAdapterCredentialProvider,
   egressAllowlist: readonly string[],
+  options: { allowEmptyAllowlist?: boolean } = {},
 ): ActionAdapterRegistry {
-  const fetchImpl = createEgressGatedFetch(egressAllowlist);
+  const fetchImpl = createEgressGatedFetch(egressAllowlist, undefined, options);
   return new ActionAdapterRegistry([
     createGitHubPullRequestCreateAdapter({ credentials, fetch: fetchImpl }),
     createKubernetesDeploymentRollbackAdapter({ credentials, fetch: fetchImpl }),
@@ -942,7 +943,11 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
       );
     }
     const credentials = EnvAdapterCredentialProvider.fromProcessEnv();
-    const registry = createProductionRegistry(credentials, egressAllowlist);
+    // AO-05: an unset allowlist must not mean "allow any host". Only the explicitly
+    // declared demo tier keeps the documented open behaviour; every other tier denies.
+    const registry = createProductionRegistry(credentials, egressAllowlist, {
+      allowEmptyAllowlist: cellTier() === 'demo',
+    });
     const issuer = capability.issuer;
     const tokens = capability.verifier;
     const policy = demoOpen ? createHollowDemoPolicy() : createRegistryPolicy(registry);
@@ -1270,6 +1275,18 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
     const safeStop = (reason: string): Promise<void> => {
       safeStopPromise ??= (async () => {
         const errors: unknown[] = [];
+        // AO-01: stop the loops BEFORE draining their registrations. `stop()` clears the
+        // poll timer and awaits the in-flight tick; draining first released the claim
+        // while a tick could still be executing, so a concurrent instance could pick the
+        // same effect up. `drain: false` only suppresses the daemon's *own* drain call —
+        // the registry drain below is still performed, in the safe order.
+        const stopped = await Promise.allSettled([
+          reconciliation.stop({ drain: false }),
+          compensation.stop({ drain: false }),
+        ]);
+        for (const result of stopped) {
+          if (result.status === 'rejected') errors.push(result.reason);
+        }
         if (lifecycleRegistry && reconcileClaimSecret && compensationClaimSecret) {
           const drained = await Promise.allSettled([
             lifecycleRegistry.drain(reconcileWorkerId, reconcileGeneration, reconcileClaimSecret),
@@ -1282,13 +1299,6 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
           for (const result of drained) {
             if (result.status === 'rejected') errors.push(result.reason);
           }
-        }
-        const stopped = await Promise.allSettled([
-          reconciliation.stop({ drain: false }),
-          compensation.stop({ drain: false }),
-        ]);
-        for (const result of stopped) {
-          if (result.status === 'rejected') errors.push(result.reason);
         }
         if (errors.length > 0) {
           throw new AggregateError(errors, `adapter-ops safe stop failed: ${reason}`);

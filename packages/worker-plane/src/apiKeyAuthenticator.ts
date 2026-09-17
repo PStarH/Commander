@@ -26,11 +26,14 @@ export interface ApiKeyAuthenticatorConfig {
   validTokens: Set<string>;
   /** Default tenant IDs if not encoded in the token. */
   defaultTenantIds: string[];
-  /** Default capabilities if not encoded in the token. */
+  /** Default capabilities if not encoded in the token. Also the capability ceiling. */
   defaultCapabilities: string[];
   /** Optional: map from token → specific tenant IDs (overrides default). */
   tokenTenants?: Map<string, string[]>;
-  /** Optional: map from token → specific capabilities (overrides default). */
+  /**
+   * Optional: map from token → specific capabilities. The effective grant is the
+   * intersection with `defaultCapabilities` (the ceiling) — a token can only narrow it.
+   */
   tokenCapabilities?: Map<string, string[]>;
 }
 
@@ -46,7 +49,8 @@ export class ApiKeyWorkerAuthenticator implements WorkerAuthenticator {
     definition: WorkerDefinition,
   ): Promise<WorkerAuthorization> {
     // 1. Check token expiry
-    if (Date.parse(identity.expiresAt) <= Date.now()) {
+    const expiresAt = Date.parse(identity.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
       throw new WorkerAuthError('TOKEN_EXPIRED', 'Worker identity token has expired');
     }
 
@@ -84,9 +88,28 @@ export class ApiKeyWorkerAuthenticator implements WorkerAuthenticator {
       );
     }
 
-    // 4. Resolve capability scope
+    // 4. Resolve capability scope — tokenCapabilities may only narrow defaultCapabilities,
+    //    never widen. A token used to *replace* the defaults, so a token entry could grant
+    //    a capability the deployment's default (ceiling) set denies. The effective grant is
+    //    the intersection of the two, with '*' interpreted as "every capability".
+    const capabilityCeiling = this.config.defaultCapabilities;
+    const requestedCapabilities = this.config.tokenCapabilities?.get(token);
+    const capabilityCeilingSet = new Set(capabilityCeiling);
+    const ceilingAllowsAll = capabilityCeilingSet.has('*');
     const allowedCapabilities =
-      this.config.tokenCapabilities?.get(token) ?? this.config.defaultCapabilities;
+      requestedCapabilities === undefined
+        ? [...capabilityCeiling]
+        : requestedCapabilities.includes('*')
+          ? ceilingAllowsAll
+            ? ['*']
+            : [...capabilityCeiling]
+          : [
+              ...new Set(
+                requestedCapabilities.filter(
+                  (cap) => ceilingAllowsAll || capabilityCeilingSet.has(cap),
+                ),
+              ),
+            ];
 
     // 5. Verify that the worker's declared capabilities are all authorized
     if (!allowedCapabilities.includes('*')) {

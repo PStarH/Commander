@@ -27,6 +27,23 @@ import { createRequire } from 'node:module';
  *
  * Note: packages/core is ESM, so we construct a require function with
  * `module.createRequire` rather than calling the undefined global `require`.
+ *
+ * **`moduleName` must be a bare specifier** (`pg`, `node:fs`, `@scope/pkg`).
+ * `createRequire` resolves *relative* specifiers against **this file's** URL,
+ * not the caller's, so `optionalRequire('./sibling')` would resolve against
+ * `src/` and fail with `MODULE_NOT_FOUND`. For a relative specifier, bind your
+ * own require in the calling module:
+ *
+ * ```ts
+ * import { createRequire } from 'node:module';
+ * const nodeRequire = createRequire(import.meta.url);
+ * const mod = nodeRequire('./sibling');
+ * ```
+ *
+ * There is deliberately no shared `nodeRequire` export here: a single
+ * module-scoped require silently mis-resolves relative specifiers, which is the
+ * same class of "looks fine, fails at runtime" defect this module exists to
+ * eliminate. Every module binds its own (see the 45 files that already do).
  */
 const requireModule = createRequire(import.meta.url);
 export function optionalRequire<T = unknown>(moduleName: string): T | null {

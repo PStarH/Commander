@@ -18,13 +18,25 @@ describe('EnvAdapterCredentialProvider', () => {
     );
   });
 
-  it('returns github token for matching tenant without logging value', async () => {
+  it('returns github token for matching tenant without logging value', async (t) => {
     const previous = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = 'gh-secret-token';
+    // The title claims a logging property; assert it instead of only checking the value.
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
+      t.mock.method(console, method),
+    );
     try {
       const provider = new EnvAdapterCredentialProvider({ cellTenantId: 'tenant-a' });
       const token = await provider.getGitHubToken('tenant-a', 'github://octo/repo/pulls');
       assert.equal(token, 'gh-secret-token');
+      const logged = spies.flatMap((spy) =>
+        spy.mock.calls.map((call) => JSON.stringify(call.arguments)),
+      );
+      assert.equal(
+        logged.some((line) => line.includes('gh-secret-token')),
+        false,
+        'the credential value must never reach the console',
+      );
     } finally {
       if (previous === undefined) delete process.env.GITHUB_TOKEN;
       else process.env.GITHUB_TOKEN = previous;

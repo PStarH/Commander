@@ -1,6 +1,28 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
+import {
+  canonicalEvidenceBody,
+  createEvidenceSigner,
+  verifyEvidenceSignature,
+  type EvidenceBundle,
+  type EvidenceSignature,
+} from '@commander/effect-broker';
 import { ReconciliationDaemon, reconcileQueryThrownError } from './reconciliationDaemon.js';
+
+/**
+ * A real Ed25519 signer: the daemon self-checks `assertEvidenceRecord(record,
+ * { verifySignature: signer.verify })`, and a `verify: () => true` double turned
+ * that acceptance boundary into a no-op, so terminal evidence signatures were
+ * never actually verified.
+ */
+const TEST_EVIDENCE_SIGNER = createEvidenceSigner({
+  privateKeyPem: generateKeyPairSync('ed25519').privateKey.export({
+    type: 'pkcs8',
+    format: 'pem',
+  }) as string,
+  keyId: 'test-key',
+});
 
 const TEST_RECONCILE_WORKER = {
   workerId: 'reconcile:test-instance',
@@ -45,14 +67,34 @@ function mutationWithoutEvidence(input: unknown): Record<string, unknown> {
 
 function assertSignedEvidence(input: unknown): void {
   assert.ok(input && typeof input === 'object');
-  const evidence = (input as Record<string, unknown>).evidence;
+  const evidence = (input as Record<string, unknown>).evidence as
+    { body?: unknown; signature?: unknown } | undefined;
   assert.ok(evidence && typeof evidence === 'object');
-  assert.deepEqual((evidence as { signature?: unknown }).signature, {
-    algorithm: 'Ed25519',
-    keyId: 'test-key',
-    signedAt: '2026-07-29T00:00:01.000Z',
-    value: 'signature',
-  });
+  const signature = evidence.signature as EvidenceSignature;
+  assert.equal(signature.algorithm, 'Ed25519');
+  assert.equal(signature.keyId, 'test-key');
+  // Cryptographically verify the terminal evidence instead of comparing it to
+  // the value the stub signer happened to return.
+  assert.equal(
+    verifyEvidenceSignature(
+      canonicalEvidenceBody(evidence.body as EvidenceBundle),
+      signature,
+      TEST_EVIDENCE_SIGNER.jwks,
+    ),
+    true,
+    'terminal evidence signature must verify against the signing key',
+  );
+  // A tampered body must not verify — the check above must be able to fail.
+  const tampered = { ...(evidence.body as Record<string, unknown>), runId: 'run-tampered' };
+  assert.equal(
+    verifyEvidenceSignature(
+      canonicalEvidenceBody(tampered as EvidenceBundle),
+      signature,
+      TEST_EVIDENCE_SIGNER.jwks,
+    ),
+    false,
+    'a tampered evidence body must fail verification',
+  );
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
@@ -97,15 +139,7 @@ function daemonFor(input: {
     } as never,
     pollIntervalMs: 60_000,
     batchSize: 10,
-    evidenceSigner: {
-      sign: async () => ({
-        algorithm: 'Ed25519',
-        keyId: 'test-key',
-        signedAt: '2026-07-29T00:00:01.000Z',
-        value: 'signature',
-      }),
-      verify: () => true,
-    },
+    evidenceSigner: TEST_EVIDENCE_SIGNER,
     brokerFactory: () => {
       brokerFactoryCalls += 1;
       if ('brokerFactoryError' in input) throw input.brokerFactoryError;

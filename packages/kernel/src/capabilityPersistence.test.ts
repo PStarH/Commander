@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
+import { KERNEL_MIGRATIONS } from './migrations.js';
 import {
   PostgresKernelRepository,
   type SqlClient,
@@ -15,6 +17,14 @@ function result<T>(rows: T[] = []): SqlQueryResult<T> {
 class RecordingClient implements SqlClient {
   readonly queries: Array<{ sql: string; values: readonly unknown[] }> = [];
 
+  // F-K1-13: these were hard-coded, so the assertions only echoed the stub and no
+  // revocation/replay logic was exercised. They are now inputs, and the test
+  // checks both polarities plus the arguments actually bound into the RPC.
+  constructor(
+    private readonly revocation = true,
+    private readonly replayConsumed = false,
+  ) {}
+
   async query<T = Record<string, unknown>>(
     sql: string,
     values: readonly unknown[] = [],
@@ -24,10 +34,10 @@ class RecordingClient implements SqlClient {
       return result([{ login_role: 'commander_adapter_ops' } as T]);
     }
     if (/read_capability_revocation_v1/i.test(sql)) {
-      return result([{ read_capability_revocation_v1: true } as T]);
+      return result([{ read_capability_revocation_v1: this.revocation } as T]);
     }
     if (/consume_capability_replay_v1/i.test(sql)) {
-      return result([{ consume_capability_replay_v1: false } as T]);
+      return result([{ consume_capability_replay_v1: this.replayConsumed } as T]);
     }
     return result<T>();
   }
@@ -44,6 +54,20 @@ class Pool implements SqlPool {
 }
 
 describe('adapter-ops capability persistence boundary', () => {
+  // F-K1-14: the regex assertions below would all pass on SQL text that is never
+  // applied. Pin the body to the checksummed migration descriptor that executes it.
+  it('applies the capability authority body through a checksummed migration', () => {
+    const registered = KERNEL_MIGRATIONS.filter(
+      (migration) => migration.sql === KERNEL_CAPABILITY_DURABLE_ACCESS_SQL,
+    );
+    assert.equal(registered.length, 1, 'the capability authority body must be applied once');
+    assert.equal(
+      registered[0]!.checksum,
+      createHash('sha256').update(KERNEL_CAPABILITY_DURABLE_ACCESS_SQL).digest('hex'),
+      'the migration checksum must pin this exact body',
+    );
+  });
+
   it('publishes only tenant-scoped owner RPC execution to adapter-ops', () => {
     assert.match(
       KERNEL_CAPABILITY_DURABLE_ACCESS_SQL,
@@ -96,6 +120,38 @@ describe('adapter-ops capability persistence boundary', () => {
         ({ sql }) =>
           !/FROM\s+commander_capability_|INSERT\s+INTO\s+commander_capability_/i.test(sql),
       ),
+    );
+    // F-K1-13: pin the identity actually bound into each owner RPC.
+    const revocationCall = capabilityQueries.find(({ sql }) =>
+      /read_capability_revocation_v1/i.test(sql),
+    );
+    assert.deepEqual(revocationCall?.values, ['tenant-a', 'jti-a']);
+    const replayCall = capabilityQueries.find(({ sql }) =>
+      /consume_capability_replay_v1/i.test(sql),
+    );
+    assert.deepEqual(replayCall?.values, [
+      'tenant-a',
+      'jti-a',
+      'nonce-a',
+      '2099-01-01T00:00:00.000Z',
+    ]);
+  });
+
+  it('honours the RPC result in both polarities instead of a fixed answer', async () => {
+    // F-K1-13: no revocation recorded and no replay consumed must read back as
+    // false/false; a repository that hard-coded either answer fails here.
+    const client = new RecordingClient(false, true);
+    const repository = new PostgresKernelRepository(new Pool(client), { adapterOpsMode: true });
+
+    assert.equal(await repository.isCapabilityRevoked('jti-b', 'tenant-b'), false);
+    assert.equal(
+      await repository.consumeCapabilityReplay({
+        tenantId: 'tenant-b',
+        jti: 'jti-b',
+        nonce: 'nonce-b',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+      }),
+      true,
     );
   });
 });

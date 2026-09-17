@@ -23,13 +23,17 @@ test('pre-auth API-key lookup uses the explicit global RLS scope', async () => {
 
   await store.findByHash('sha256');
 
-  assert.deepEqual(client.calls.slice(0, 2), [
-    { sql: 'BEGIN', values: undefined },
-    {
-      sql: "SELECT set_config('app.tenant_scope', $1, true)",
-      values: [''],
-    },
-  ]);
+  // F-A-24: assert the whole transaction, not just the preamble — a lookup that
+  // ran the SELECT under a different scope, or skipped COMMIT, must fail here.
+  assert.equal(client.calls.length, 4);
+  assert.deepEqual(client.calls[0], { sql: 'BEGIN', values: undefined });
+  assert.deepEqual(client.calls[1], {
+    sql: "SELECT set_config('app.tenant_scope', $1, true)",
+    values: [''],
+  });
+  assert.match(client.calls[2]!.sql, /SELECT .* FROM commander_auth_api_keys WHERE key_hash = \$1/);
+  assert.deepEqual(client.calls[2]!.values, ['sha256']);
+  assert.deepEqual(client.calls[3], { sql: 'COMMIT', values: undefined });
 });
 
 test('tenant-bound API-key creation uses that tenant RLS scope', async () => {
@@ -45,6 +49,12 @@ test('tenant-bound API-key creation uses that tenant RLS scope', async () => {
       values: ['tenant-a'],
     },
   ]);
+  // F-A-24: assert the full transaction — the INSERT must carry the tenant id
+  // as its $6 tenant_id parameter, and the unit of work must COMMIT.
+  assert.match(client.calls[2]!.sql, /^INSERT INTO commander_auth_api_keys/);
+  assert.equal(client.calls[2]!.values![5], 'tenant-a');
+  assert.deepEqual(client.calls[3], { sql: 'COMMIT', values: undefined });
+  assert.equal(client.calls.length, 4);
 });
 
 test('tenant-scoped API-key revocation constrains the mutation to that tenant', async () => {

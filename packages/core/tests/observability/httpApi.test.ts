@@ -69,10 +69,16 @@ async function dispatch(
   const r = await handleObservabilityRequest(req, deps, segments, queryStr);
   if (r.handled) {
     res.statusCode = r.status;
-    res.body = r.body;
+    // `ObservabilityResult.body` is the *structured* payload, not a serialised
+    // string: the real caller is `res.status(result.status).json(result.body)`
+    // in apps/api's observabilityEndpoints, so Express does the serialising.
+    // Mirror that here. Assigning the object straight to `res.body` made
+    // `MockRes.json()` call `JSON.parse` on it, which coerces the object to
+    // "[object Object]" and throws — every test in this file failed on that.
+    res.body = r.body === undefined ? '' : JSON.stringify(r.body);
   } else {
     res.statusCode = 404;
-    res.body = { error: 'Not found' };
+    res.body = JSON.stringify({ error: 'Not found' });
   }
   return res;
 }

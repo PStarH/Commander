@@ -18,6 +18,8 @@ import { GapRegistry } from '../plugins/builtin/gap/registry';
 import { appendNdjson, readNdjson, ensureDir } from '../plugins/builtin/gap/storage';
 import { IssueAutoCreate } from '../plugins/builtin/gap/issueAutoCreate';
 import type { GapConfig } from '../plugins/builtin/gap/config';
+import { getDirname } from '../esmCompat';
+const __dirname = getDirname(import.meta.url);
 
 interface Finding {
   id: string;

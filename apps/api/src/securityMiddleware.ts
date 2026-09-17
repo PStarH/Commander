@@ -144,9 +144,12 @@ declare global {
   }
 }
 
-export function requestIdMiddleware(req: Request, _res: Response, next: NextFunction): void {
+export function requestIdMiddleware(req: Request, res: Response, next: NextFunction): void {
   req.requestId = (req.headers['x-request-id'] as string) ?? crypto.randomUUID();
   req.startTime = Date.now();
+  // AUDIT F-B-4: the middleware generated the id but never emitted it, so
+  // callers could not correlate a response with server logs. Echo it back.
+  res.setHeader('X-Request-ID', req.requestId);
   next();
 }
 

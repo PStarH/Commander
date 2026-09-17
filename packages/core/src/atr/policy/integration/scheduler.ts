@@ -84,6 +84,7 @@ export class PolicyHook {
       const hit = this.cache.get(cacheKey);
       if (hit) {
         if (this.enableAudit) this.auditDecision(hit, 'cache_hit');
+        this.emitBlockMarker(hit);
         return hit;
       }
     }
@@ -92,7 +93,19 @@ export class PolicyHook {
       this.cache.set(cacheKey, decision);
     }
     if (this.enableAudit) this.auditDecision(decision, 'evaluated');
+    this.emitBlockMarker(decision);
     return decision;
+  }
+
+  /**
+   * Buyer-visible interception signal for denied tool calls (asserted by the
+   * demo-qa golden-path suite). Console output intentionally — stdout, not the
+   * logger pipeline, so it is visible in raw terminal demos.
+   */
+  private emitBlockMarker(decision: PolicyDecision): void {
+    if (decision.effect !== 'deny' && decision.effect !== 'deny_class') return;
+    // eslint-disable-next-line no-console
+    console.log(`[🔥 拦截成功] ${decision.matchedRule ?? 'policy'}: ${decision.reason}`);
   }
 
   invalidateRun(runId: string): number {

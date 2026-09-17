@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe } from 'node:test';
+import { describe, it } from 'node:test';
 import {
   commanderActionMarker,
   compensationIdempotencyKey,
@@ -528,8 +528,31 @@ const kubernetesFactory: ConformanceAdapterFactory = {
   },
 };
 
+/**
+ * Counts factory invocations so this file can prove the registration actually
+ * produced runnable cases: if `registerConformanceSuite` silently registered
+ * nothing, no factory would ever be called and the guard below would fail.
+ */
+let factoryInvocations = 0;
+function countingFactory(base: ConformanceAdapterFactory): ConformanceAdapterFactory {
+  return {
+    ...base,
+    createAdapter: () => {
+      factoryInvocations += 1;
+      return base.createAdapter();
+    },
+  };
+}
+
 describe('L4-02 adapter conformance suite', () => {
-  registerConformanceSuite({ factory: githubFactory });
-  registerConformanceSuite({ factory: serviceNowFactory });
-  registerConformanceSuite({ factory: kubernetesFactory });
+  registerConformanceSuite({ factory: countingFactory(githubFactory) });
+  registerConformanceSuite({ factory: countingFactory(serviceNowFactory) });
+  registerConformanceSuite({ factory: countingFactory(kubernetesFactory) });
+
+  it('actually registered runnable conformance cases for every adapter', () => {
+    assert.ok(
+      factoryInvocations >= 3,
+      `expected the suite to exercise all three adapter factories, saw ${factoryInvocations}`,
+    );
+  });
 });

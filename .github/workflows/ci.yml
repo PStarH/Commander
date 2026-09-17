@@ -1,5 +1,9 @@
 name: CI
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 on:
   push:
     branches: [master, main]
@@ -17,6 +21,11 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+# Least privilege: the workflow default is read-only; any job that needs a write scope
+# or an OIDC token declares it explicitly on that job.
+permissions:
+  contents: read
+
 jobs:
   quality:
     name: Quality Gates (${{ matrix.os }}, Node ${{ matrix.node-version }})
@@ -32,11 +41,11 @@ jobs:
           && '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true}]}'
           || '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true},{"os":"ubuntu-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"22","canonical":false},{"os":"windows-latest","node-version":"20","canonical":false},{"os":"windows-latest","node-version":"22","canonical":false}]}') }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
@@ -242,22 +251,39 @@ jobs:
       - name: Security audit policy regression
         run: pnpm exec node --import tsx --test scripts/ci-audit-policy.test.ts
 
-      - name: ESLint check (no-console rule)
-        run: pnpm exec eslint packages/core/src
+      # Every workflow claims "Enforced by scripts/workflow-supply-chain.test.ts",
+      # but nothing ran it: the mutable-remote-ref, permissions, and
+      # pull_request_target policies were never observed in CI.
+      - name: Workflow supply-chain policy regression
+        run: pnpm exec node --import tsx --test scripts/workflow-supply-chain.test.ts
 
-      - name: Prettier format check
-        run: pnpm exec prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
+      # These two steps used to run over a hand-written subset of the tree
+      # (`packages/core/src`, three globs) while the repo's own gates cover every
+      # first-party TypeScript scope. A gate whose scope is narrower than it
+      # claims reports safety it has not verified, so they now delegate to the
+      # same script a developer runs.
+      - name: ESLint (all first-party TypeScript)
+        run: pnpm run lint:eslint
+
+      - name: Prettier format check (all first-party TypeScript)
+        run: pnpm run format:check
 
       - name: Claim honesty gate
         run: pnpm claim:gate:test
 
-      - name: TypeScript check (core)
+      - name: TypeScript check (core + kernel, source and tests)
         run: |
           # tsc --noEmit resolves @commander/plugin-sdk types from dist; clean CI has none
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/postgres-runtime build
-          pnpm --filter @commander/core exec tsc --noEmit
+          pnpm --filter @commander/effect-broker build
+          pnpm --dir packages/core exec tsc --noEmit
+          # packages/kernel has a `typecheck:test` script (tsconfig.test.json)
+          # that no root script or workflow invoked, which is how two type errors
+          # in its live-PostgreSQL suites survived unnoticed.
+          pnpm --dir packages/kernel exec tsc --noEmit
+          pnpm --dir packages/kernel run typecheck:test
 
       - name: TypeScript check (SDK)
         run: |
@@ -271,7 +297,7 @@ jobs:
 
       - name: Upload SBOM artifact
         if: matrix.canonical
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
           path: sbom.json
@@ -371,7 +397,7 @@ jobs:
         run: pnpm --filter @commander/core test:slo
 
       - name: Upload SLO report
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always() && matrix.canonical
         with:
           name: slo-report-${{ matrix.os }}-node${{ matrix.node-version }}
@@ -394,6 +420,14 @@ jobs:
       - name: CLI check
         shell: bash
         run: cd packages/core && pnpm exec tsx src/cliEntry.ts status
+
+      # G2 requires `doctor` to exit zero on a fresh environment and to request
+      # no credential. Nothing ran it, so its exit code was unobserved — and it
+      # couples to host disk pressure (`pass: usePercent < 95`), meaning a
+      # 90%-full machine fails a check that is not about the product.
+      - name: CLI doctor offline (G2 install/first-run contract)
+        shell: bash
+        run: cd packages/core && pnpm exec tsx src/cliEntry.ts doctor --offline
 
       - name: Red Team Smoke Test (security gate)
         if: runner.os == 'Linux' && matrix.canonical
@@ -455,9 +489,9 @@ jobs:
       GIT_TERMINAL_PROMPT: '0'
       COMMANDER_INTERACTION_DB: ':memory:'
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -561,7 +595,7 @@ jobs:
         run: pnpm cell:compensation-dual-race -- --seed=16
       - name: Upload dual-process race artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-compensation-dual-race
           path: artifacts/l4-b-compensation-dual-race-*.json
@@ -595,9 +629,9 @@ jobs:
     env:
       COMMANDER_SHADOW_PG_ADMIN_URL: postgres://commander:commander@localhost:5432/commander
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -631,11 +665,11 @@ jobs:
       COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
       OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -655,7 +689,7 @@ jobs:
           pnpm --filter @commander/core build
 
       - name: Install Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
           version: v3.17.3
 
@@ -714,6 +748,7 @@ jobs:
           test -n "$COMMANDER_TASK2_PG_URL"
           test -n "$COMMANDER_COMPENSATION_PG_URL"
           pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/task2.postgres-live.test.ts
+          pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/evidenceRepository.postgres-live.test.ts
           pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/compensation.postgres-live.test.ts
 
       - name: Restore deploy-gate role authority after live suites
@@ -743,14 +778,15 @@ jobs:
     environment: cd-live-proof
     runs-on: [self-hosted, linux, x64, commander-dr]
     timeout-minutes: 90
+
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -867,12 +903,20 @@ jobs:
           }
           NODE
 
+      # This suite was registered by a package script but invoked by NO workflow,
+      # so its live RLS proofs never ran. That is exactly how four of its cases had
+      # gone stale against the enforced tenant-context phase without anyone seeing
+      # a red run. It needs only the DSN and role bootstrap this job already
+      # provides.
+      - name: PostgreSQL RLS live-fire
+        run: pnpm --filter @commander/kernel test:rls-live-fire
+
       # Raw pg_dump data is intentionally excluded. Retention belongs to the
       # protected backup system; this artifact contains only the sanitized log,
       # public JWKS, and the machine-readable result needed for review.
       - name: Upload sanitized G4 proof report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-g4-proof-${{ github.run_id }}
           if-no-files-found: error
@@ -887,11 +931,11 @@ jobs:
     runs-on: ubuntu-latest
     needs: l4-b-deploy-gates
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -931,7 +975,7 @@ jobs:
 
       - name: Upload cell up-assert artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-cell-up-assert
           path: artifacts/l4-b-cell-up-assert-*.json
@@ -939,7 +983,7 @@ jobs:
 
       - name: Upload cell compensation e2e artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-cell-compensation-e2e
           path: artifacts/l4-b-cell-compensation-e2e-*.json
@@ -947,7 +991,7 @@ jobs:
 
       - name: Upload image boot smoke artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-image-boot-smoke
           path: artifacts/l4-b-image-boot-smoke-*.json
@@ -957,11 +1001,11 @@ jobs:
     name: Web GUI Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'

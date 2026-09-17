@@ -4,7 +4,7 @@
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { Pool } from 'pg';
 import { runKernelMigrations } from '../../migrations.js';
 import { PostgresKernelRepository, PostgresTenantContextAuthority } from '../../postgres.js';
@@ -19,6 +19,22 @@ import { KernelOutboxPublisher } from './kernelOutboxPublisher.js';
 import { PostgresOutboxDeliveryPort } from './postgresOutboxDeliveryPort.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+
+// F-K1-7: the live-PG race proof needs a PostgreSQL 16 fixture and
+// `pnpm test:integration` has no env guard, so a silent skip would report PASS
+// for an unrun race proof. Absent fixture is NOT VERIFIED and must fail the run.
+const LIVE_PG_SKIP_REASON =
+  'NOT VERIFIED: COMMANDER_KERNEL_DATABASE_URL/DATABASE_URL is unset - the live PostgreSQL ' +
+  'publisher/consumer interleaved-race proof did not run';
+if (!databaseUrl) {
+  process.stderr.write(`[kernel:integration] ${LIVE_PG_SKIP_REASON}\n`);
+  test('live PostgreSQL fixture is configured (REQUIRED)', () => {
+    assert.fail(LIVE_PG_SKIP_REASON);
+  });
+}
+
+// Narrowed view for the live-gated body below.
+const liveDatabaseUrl = databaseUrl as string;
 
 function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string): string {
   const url = new URL(baseUrl);
@@ -64,9 +80,8 @@ async function seedOutboxRow(
 describe('compensationPublisherRace (postgres)', () => {
   it(
     'publisher never steals compensation topics across 100 interleaved rounds',
-    { skip: !databaseUrl },
+    { skip: databaseUrl ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl) return;
       const pool = new Pool({ connectionString: databaseUrl, max: 8 });
       const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const tenantId = `race-pg-${suffix}`;
@@ -75,7 +90,7 @@ describe('compensationPublisherRace (postgres)', () => {
         connectionString:
           process.env.COMMANDER_APP_DATABASE_URL ??
           deriveRoleDatabaseUrl(
-            databaseUrl,
+            liveDatabaseUrl,
             'commander_app',
             process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
           ),
@@ -85,7 +100,7 @@ describe('compensationPublisherRace (postgres)', () => {
         connectionString:
           process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL ??
           deriveRoleDatabaseUrl(
-            databaseUrl,
+            liveDatabaseUrl,
             'commander_tenant_authority',
             process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority',
           ),
@@ -95,7 +110,7 @@ describe('compensationPublisherRace (postgres)', () => {
         connectionString:
           process.env.COMMANDER_ADAPTER_OPS_DATABASE_URL ??
           deriveRoleDatabaseUrl(
-            databaseUrl,
+            liveDatabaseUrl,
             'commander_adapter_ops',
             process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops',
           ),
@@ -235,6 +250,7 @@ describe('compensationPublisherRace (postgres)', () => {
         let brokerExecutions = 0;
         let consumerConsumed = 0;
         let consumerEscalated = 0;
+        let publishedTotal = 0;
         for (let round = 0; round < 100; round++) {
           const [pub, consumed] = await Promise.all([
             publisher.publish(5),
@@ -263,7 +279,13 @@ describe('compensationPublisherRace (postgres)', () => {
           ]);
           consumerConsumed += consumed.consumed;
           consumerEscalated += consumed.escalated;
-          assert.ok(pub.published + pub.duplicates + pub.retried + pub.failed >= 0);
+          // F-K1-6: the previous assertion was `published + duplicates + retried +
+          // failed >= 0`, true for any non-negative counters.
+          assert.equal(pub.duplicates, 0, `round ${round}: no duplicate publications expected`);
+          assert.equal(pub.retried, 0, `round ${round}: no retries expected`);
+          assert.equal(pub.failed, 0, `round ${round}: no failed publications expected`);
+          assert.ok(pub.published <= 5, `round ${round}: publish limit must be respected`);
+          publishedTotal += pub.published;
         }
 
         const claimed = await delivery.claim('ws2-race', 500);
@@ -290,13 +312,23 @@ describe('compensationPublisherRace (postgres)', () => {
         );
         assert.equal(consumerEscalated, 40, 'unregistered adapters must be escalated fail-closed');
 
-        const outstanding = await pool.query<{ legacy: string; governed: string }>(
+        const outstanding = await pool.query<{
+          legacy: string;
+          governed: string;
+          generic: string;
+        }>(
           `SELECT
              count(*) FILTER (WHERE topic=$2 AND published_at IS NULL)::text AS legacy,
-             count(*) FILTER (WHERE topic=$3 AND published_at IS NULL)::text AS governed
+             count(*) FILTER (WHERE topic=$3 AND published_at IS NULL)::text AS governed,
+             count(*) FILTER (WHERE topic NOT IN ($2,$3))::text AS generic
            FROM commander_outbox
            WHERE tenant_id=$1`,
           [tenantId, LEGACY_COMPENSATION_TOPIC, KERNEL_COMPENSATION_TOPIC],
+        );
+        assert.equal(
+          publishedTotal,
+          Number(outstanding.rows[0]?.generic ?? 0),
+          'the generic publisher must publish exactly the non-compensation outbox rows',
         );
         assert.equal(Number(outstanding.rows[0]?.legacy ?? 0), legacySeeded);
         assert.equal(

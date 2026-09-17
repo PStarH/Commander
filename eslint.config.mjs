@@ -2,9 +2,50 @@
 // The project's primary lint gate is `tsc --noEmit` (TypeScript strict).
 import tseslint from 'typescript-eslint';
 
+/**
+ * Rules shared by every scope that has a config block below.
+ *
+ * A file with NO matching block is parsed by ESLint's default parser, which
+ * cannot parse TypeScript at all — it reports a parsing error per file and the
+ * file is never actually linted. That is what happened to `apps/**`,
+ * `integrations/**`, most `packages/*` and all of `scripts/**`: widening
+ * `lint:eslint` to them produced 347 parsing errors, i.e. the files were being
+ * counted as "linted" while nothing was checked.
+ */
+const sharedRules = {
+  'no-console': ['warn', { allow: ['warn', 'error'] }],
+  '@typescript-eslint/no-unused-vars': [
+    'warn',
+    { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
+  ],
+  // None of these scopes is error-clean on `no-explicit-any` yet; keeping it a
+  // warning here matches `packages/kernel` and keeps the gate actionable
+  // without pretending the backlog is closed.
+  '@typescript-eslint/no-explicit-any': 'warn',
+  '@typescript-eslint/no-require-imports': 'off',
+  'prefer-const': 'warn',
+};
+
 export default tseslint.config(
   {
     ignores: ['**/*.js', '**/*.d.ts'],
+  },
+  // Every first-party TypeScript scope gets a parser. Specific blocks below
+  // narrow `no-console` and tighten rules where a scope is already clean.
+  {
+    files: [
+      'packages/*/src/**/*.ts',
+      'packages/*/tests/**/*.ts',
+      'packages/*/test/**/*.ts',
+      'apps/*/src/**/*.ts',
+      'apps/*/test/**/*.ts',
+      'apps/*/tests/**/*.ts',
+      'integrations/*/src/**/*.ts',
+      'integrations/*/tests/**/*.ts',
+      'scripts/**/*.ts',
+    ],
+    extends: [tseslint.configs.base],
+    rules: sharedRules,
   },
   {
     files: ['packages/core/src/**/*.ts'],
@@ -60,6 +101,13 @@ export default tseslint.config(
       'packages/core/src/security/unknownAdversarialTest.ts',
     ],
     rules: { 'no-console': 'off', '@typescript-eslint/no-explicit-any': 'warn' },
+  },
+  // Repository scripts and integrations are operator/CLI/acceptance tooling:
+  // `console` is the intended output mechanism, and they are not part of the
+  // TypeScript build, so no-console carries no signal there.
+  {
+    files: ['scripts/**/*.ts', 'integrations/**/*.ts'],
+    rules: { 'no-console': 'off' },
   },
   // SDK and web app — separate packages with their own conventions
   {

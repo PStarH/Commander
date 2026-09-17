@@ -1,0 +1,20 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alert-rules.yml
+
+scrape_configs:
+  # ── Commander API (integrated compose) ────────────────────────────────
+  # Used when Prometheus runs inside the main docker-compose network alongside
+  # the `api` service. Targets the service name `api` on port 4000 (the API
+  # default). Do not use this file with the standalone observability compose —
+  # use prometheus.yml there (host.docker.internal:4000).
+  - job_name: 'commander'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['api:4000']
+    metrics_path: /metrics
+    params:
+      format: [openmetrics]

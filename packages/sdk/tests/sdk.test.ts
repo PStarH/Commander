@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { generateKeyPairSync, sign } from 'node:crypto';
+import { generateKeyPairSync, sign, type KeyObject } from 'node:crypto';
 import { CommanderClient } from '../src/commanderClient';
 import {
   CommanderGatewayClient,
@@ -547,5 +547,41 @@ void describe('@commander/sdk — Gateway V1 client', () => {
     forgedSignature[0] ^= 1;
     const forgedReceipt = `${receiptParts[0]}.${receiptParts[1]}.${forgedSignature.toString('base64url')}`;
     assert.equal(verifyActionEvidence(forgedReceipt, jwks).valid, false);
+
+    // The negative cases the audit found missing: a signed header claiming
+    // `alg:none`, an unknown `kid`, and a receipt signed by the wrong key.
+    const signWithHeader = (
+      header: Record<string, unknown>,
+      key: KeyObject = privateKey,
+    ): string => {
+      const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
+      const input = `${encodedHeader}.${payload}`;
+      return `${input}.${sign(null, Buffer.from(input), key).toString('base64url')}`;
+    };
+
+    const algNone = verifyActionEvidence(
+      signWithHeader({ alg: 'none', kid: 'evidence-key-1', typ: 'JWT' }),
+      jwks,
+    );
+    assert.equal(algNone.valid, false);
+    assert.equal(algNone.valid ? undefined : algNone.error.code, 'EVIDENCE_RECEIPT_INVALID');
+
+    const unknownKid = verifyActionEvidence(
+      signWithHeader({ alg: 'EdDSA', kid: 'unknown-key', typ: 'JWT' }),
+      jwks,
+    );
+    assert.equal(unknownKid.valid, false);
+    assert.equal(unknownKid.valid ? undefined : unknownKid.error.code, 'EVIDENCE_KEY_NOT_FOUND');
+
+    const wrongKey = generateKeyPairSync('ed25519');
+    const wrongKeyReceipt = verifyActionEvidence(
+      signWithHeader({ alg: 'EdDSA', kid: 'evidence-key-1', typ: 'JWT' }, wrongKey.privateKey),
+      jwks,
+    );
+    assert.equal(wrongKeyReceipt.valid, false);
+    assert.equal(
+      wrongKeyReceipt.valid ? undefined : wrongKeyReceipt.error.code,
+      'EVIDENCE_SIGNATURE_INVALID',
+    );
   });
 });

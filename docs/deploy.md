@@ -1,9 +1,20 @@
 # Commander — Deployment Guide
 
-Commander ships as a Local-First application: a single `docker compose up`
-starts only the **api** and **web** services with an in-memory EventBus and no
-external dependencies. Distributed execution, observability, and tracing stacks
-are opt-in via Docker Compose **profiles**.
+Commander's API keeps its five authentication authorities (users, API keys,
+refresh tokens, auth failures, rate limits) in PostgreSQL with **no
+local/SQLite/in-memory fallback**: `apps/api/src/authDb.ts` fails closed with
+`AUTH_DATABASE_URL_REQUIRED` when `DATABASE_URL` is absent, in every
+`NODE_ENV`. The API also requires that DSN to authenticate as the
+`commander_app` role (`AUTH_DATABASE_ROLE_INVALID` otherwise).
+
+Consequently the **base profile is not a runnable deployment by itself**. A bare
+`docker compose up` starts only the `api` service, and that container exits at
+startup with `COMMANDER_API_STARTUP_FAILED: AUTH_DATABASE_URL_REQUIRED`, because
+the base file deliberately injects no DSN. Use the `v2` or `cell` profile — both
+wire `DATABASE_URL=postgres://commander_app:…@postgres:5432/commander` — for a
+stack that actually boots. The web console, the database, the worker plane,
+distributed execution, observability, and tracing stacks are opt-in via Docker
+Compose **profiles**.
 
 > **Alpha / non-production-ready:** this guide documents a self-hosted development
 > and evaluation path. The checklist below does not establish production readiness,
@@ -13,36 +24,143 @@ are opt-in via Docker Compose **profiles**.
 
 ## Quick start (single-box)
 
+`.env.example` is a **template, not a working configuration**: it ships with
+blank required secrets, so `cp .env.example .env` alone will not start the API.
+Fill in every required value before bringing the stack up.
+
 ```bash
 cp .env.example .env
 # Edit .env: set all required API startup credentials and at least one LLM provider key
-docker compose up
+docker compose up                  # api only — exits with AUTH_DATABASE_URL_REQUIRED, see above
+docker compose --profile web up    # api + web console (same exit)
 ```
 
-This starts:
-- `api` on port 4000 (Commander execution engine + War Room REST API)
-- `web` on port 3000 (Agent dashboard UI)
+For a stack that boots, use the `v2` or `cell` profile (each wires the
+`commander_app` DSN and Postgres). Both are kernel-on, and the kernel refuses to
+connect without pinned database TLS, so generate that material first:
 
-State is persisted in named volumes (`commander_state`, `commander_traces`,
-`commander_memory`, `commander_results`).
+```bash
+sh deploy/docker/kernel-tls/generate-certificates.sh ./.commander/db-tls
+export COMMANDER_DATABASE_TLS_HOST_DIR="$PWD/.commander/db-tls"
+export COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=<printed by the generator>
+
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+```
+
+`createVerifiedPostgresPool` (`packages/postgres-runtime`) is the only sanctioned
+pool factory, and it verifies the CA, the DSN hostname, and a pinned server
+public key. The `api`, `worker`, `kernel-ops` and `kernel-migrate` services each
+build one, so with no material they exit during startup with
+`COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED`. `docker-compose.kernel-tls.yml` wires
+the material into both profiles; it is not a separate stack, and running `v2` or
+`cell` without exporting those two variables fails compose interpolation before
+anything starts.
+
+`docker compose up` with no profile starts:
+
+- `api` on `127.0.0.1:4000` (Commander execution engine + War Room REST API),
+  backed by local SQLite with the shared kernel explicitly disabled. It publishes
+  on loopback only. It carries **no** `DATABASE_URL`, so it cannot satisfy the
+  mandatory PostgreSQL auth authorities and exits during startup.
+
+Adding `--profile web` (alias `--profile gui`) also starts:
+
+- `web` on `127.0.0.1:3000` (Agent dashboard UI; nginx reverse-proxies to `api`)
+
+`web` has `depends_on: api: condition: service_healthy`, so it starts only after
+the API health check passes. The `web` image is built from the tracked
+[`apps/web/Dockerfile`](../apps/web/Dockerfile) — never from the repository-root
+`Dockerfile`, which is gitignored and therefore absent from a fresh clone.
+
+State is persisted in named volumes (`commander_local_state` for the SQLite API
+state plus `commander_state`, `commander_traces`, `commander_memory`,
+`commander_results`).
+
+For a production-shaped stack (Postgres + kernel + worker plane) use the `v2`
+profile rather than combining the local base with the worker profile:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+```
+
+The `v2` and `cell` overrides set `NODE_ENV=production`, enable the shared kernel,
+supply the role DSNs (`sslmode=verify-full`, wired by
+`docker-compose.kernel-tls.yml`), require the Ed25519 authority key material **and**
+the pinned database TLS material from the quick start above, and gate the API and
+worker on the owner migration completing. The base file stays local-only, so
+`--profile worker` on its own adds workers against a still-local API — use `v2` or
+`cell` for an end-to-end kernel-backed run.
+
+### Owner migration and the tenant-authority closure
+
+`kernel-migrate` runs as the `commander_owner` role and is the only component
+allowed to change schema. It applies **two** stages: the immutable baseline
+descriptor set, then the phase-bound Task-1 closure, and finally re-applies the
+forward set so post-closure descriptors land in the same run.
+
+That second stage is not optional. Until the canonical *enforce* closure row is
+recorded, the forward set is truncated to the pre-closure baseline — which does
+**not** include the auth-persistence schema (`commander_auth_users`, API keys,
+refresh tokens, auth failures, rate limits). An API started against a
+baseline-only database dies with
+`COMMANDER_API_STARTUP_FAILED: relation "commander_auth_users" does not exist`,
+even though the migration reported success. This is why every path that starts
+migrations as a long-lived service passes the closure action explicitly — the
+Compose `kernel-migrate` service, the Helm owner Job, and the production Compose
+driver all do.
+
+`COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE` selects the phase and defaults to
+`enforce` (the fresh-install phase, matching the chart default
+`tenantAuthority.cutoverPhase`). A legacy upgrade that must sequence an
+`expand` phase before `enforce` overrides it for the first run.
+
+## Verifying a deployment
+
+`pnpm verify:deployment` is a static gate that needs no Docker, Helm, or
+cluster. It proves the documented paths are internally consistent with the
+current code — compose build sources and bind-mount sources exist, are
+git-tracked, and are not gitignored, build targets resolve, Dockerfiles install
+the full workspace dependency closure, every `${VAR:?…}` required by the
+single-box compose files is documented as an **uncommented** assignment in
+`.env.example` (a commented `# VAR=` line does not count), Helm `.Values`
+references and helpers resolve, the documented health routes are mounted, and
+the npm scripts this guide requires exist.
+
+It runs as part of `pnpm test:deploy-gates`.
 
 ## Opt-in profiles
 
 | Profile | Adds | When to enable |
 |---|---|---|
+| `web` / `gui` | Web console (host port 3000) | You want the browser dashboard |
+| `database` | PostgreSQL | You need a durable local database |
+| `worker` | `postgres`, `kernel-migrate`, `worker`, `kernel-ops`, `adapter-ops` | Distributed execution; needs Postgres + Ed25519 keys. The base `api` stays local, so prefer `v2`/`cell` for an end-to-end kernel-backed run |
 | `distributed` | Redis | Multi-node EventBus fan-out, >1 api replica |
-| `observability` | Prometheus + Grafana | Production metrics collection + dashboards |
+| `observability` | Prometheus + Grafana | Metrics collection + dashboards |
 | `tracing` | Jaeger | OTLP distributed tracing of LLM + tool calls |
+| `v2` | Full V2 stack via `docker-compose.v2.yml` (kernel-on, so it also needs the pinned database TLS material) | Kernel/worker-plane evaluation |
+| `cell` | Cell topology via `docker-compose.cell.yml` (same TLS requirement) | Sandboxed cell deployment |
 
 Profiles compose freely:
 
 ```bash
+# Single-box with the web console
+docker compose --profile web up
+
 # Single-box with metrics dashboard
 docker compose --profile observability up
 
 # Optional ops stack (Redis + metrics + tracing) — not a certified multi-tenant SaaS deploy
 docker compose --profile distributed --profile observability --profile tracing up
+
+# Durable V2 stack (adds Postgres + worker plane; needs the pinned TLS material
+# exported first — see the quick start)
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
 ```
+
+The root `package.json` wraps only three combinations: `pnpm docker:up` (api),
+`pnpm docker:v2`, and `pnpm docker:cell`. Everything else is the raw
+`docker compose` invocation above.
 
 ## Service endpoints (default ports)
 
@@ -60,9 +178,11 @@ docker compose --profile distributed --profile observability --profile tracing u
 ## Health checks
 
 Long-running compose services expose healthchecks. The `api` service serves
-`/health` and `/ready`; **kernel-ops** (worker/v2 profiles) serves
-`GET /health` (process up) and `GET /ready` (ops loops healthy + Postgres
-`SELECT 1` + compensation **drain** mode — probe-only wiring returns **503**)
+`/health` (liveness), `/ready` (readiness), `/health/detailed`, `/v1/health`,
+`/metrics`, and `/system/status`. There is no `/readyz` or `/livez` alias.
+**kernel-ops** (worker/v2 profiles) serves
+`GET /health` (process up) and `GET /ready` (the loops kernel-ops owns —
+reclaim, timer, outbox, compensation probe — plus Postgres `SELECT 1`)
 on `COMMANDER_OPS_HEALTH_PORT` (compose default `8081`; `expose`
 and the in-container healthcheck use the same variable). Helm values may
 choose another port and must keep probes in sync. The Helm chart
@@ -71,6 +191,24 @@ Deployment. The `web` service waits for `api` to become healthy
 (`depends_on: condition: service_healthy`), and `grafana` waits for
 `prometheus`. A single `docker compose up --profile observability` therefore
 boots in dependency order without manual orchestration.
+
+Probe ownership matters when reading readiness: kernel-ops reports readiness for
+the loops it actually runs and surfaces `compensationMode` /
+`compensationDraining` as detail fields only (its default wiring is probe-only,
+so it is not the compensation drain owner). The real EffectBroker-backed drain
+readiness belongs to **adapter-ops**: `/ready` is its drain gate, `/health`
+reflects its ops-loop health, and `/livez` is the process-only liveness route
+(used as the chart's `livenessProbe`) so a transient database or claim outage
+does not trigger a restart storm.
+
+The Helm chart follows the same split for the api Deployment. With the
+PostgreSQL backend, `readinessProbe` is an exec probe against the
+tenant-authority proof listener (`tenantAuthority.apiProof.port`, default
+`9443`, path `/ready/tenant-authority/v1`) because that listener also proves the
+runtime identity. Without that backend the probe is a plain `httpGet` on
+`api.health.readinessPath` (default `/ready`) over the `http` port. `startupProbe`
+and `livenessProbe` always use `api.health.livenessPath` (default `/health`) on
+`http`.
 
 Default compose is the **local / single-box** path. Durable multi-tenant
 Enterprise Gateway needs a Postgres DSN + `/v1` kernel and remains **alpha**
@@ -121,7 +259,8 @@ One step: append a `registerRouter()` call in the manifest section of
 
 Implement the `CommanderPlugin` interface (see
 [packages/core/src/pluginTypes.ts](../packages/core/src/pluginTypes.ts) for the full
-hook surface: 16 fire points, config schema, tool adapter). Register via
+hook surface: 21 hook callbacks / 19 `HookManager` fire points, config schema,
+tool adapter). Register via
 `getHookManager().register(plugin)` at boot. Third-party plugins are sandboxed
 through `buildSandboxedLoadContext` so their permissions stay strictly below
 the host's (see `packages/core/tests/pluginPermissions.test.ts`).
@@ -138,12 +277,54 @@ API cells may still set `COMMANDER_CAPABILITY_TOKEN_KEY` (HMAC) for the API
 surface only. Worker and adapter-ops authority uses Ed25519 PEM/JWKS/key id —
 never the HMAC env on those components.
 
+The chart does not accept a `commander.apiKey` value and does not generate API
+startup secrets outside the disposable `demo` tier. For any non-demo tier
+(`team`, `enterprise`) the release **fails to render** unless you supply either
+`api.secrets.existingSecret` or all of the individual secret references
+(`COMMANDER_API_KEY`, `COMMANDER_MASTER_KEY`, `JWT_SECRET`,
+`COMMANDER_CAPABILITY_TOKEN_KEY`, `COMMANDER_INTEGRITY_KEY`, `ADMIN_PASSWORD`).
+The same fail-fast applies to `worker.authTokenSecret` when `worker.enabled=true`,
+and `web.enabled=true` is rejected because the chart renders no web workload.
+Create the Secret (or the individual references) before installing:
+
 ```bash
-helm install commander deploy/helm/commander \
-  --set commander.apiKey=$(openssl rand -hex 32) \
-  --set ingress.enabled=true \
-  --set ingress.hosts[0].host=commander.example.com
+# Pre-create the API startup Secret, then reference it.
+kubectl create secret generic commander-api-secrets \
+  --from-literal=COMMANDER_API_KEY="$(openssl rand -hex 32)" \
+  --from-literal=COMMANDER_MASTER_KEY="$(openssl rand -hex 32)" \
+  --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
+  --from-literal=COMMANDER_CAPABILITY_TOKEN_KEY="$(openssl rand -hex 32)" \
+  --from-literal=COMMANDER_INTEGRITY_KEY="$(openssl rand -hex 32)" \
+  --from-literal=ADMIN_PASSWORD="$(openssl rand -base64 24)"
 ```
+
+Supplying the API startup secrets alone is **not** sufficient to install a
+non-demo tier. The API is a production process and refuses to start without the
+durable shared kernel, so a release that renders `config.nodeEnv=production`
+while `database.enabled=false` / `database.backend=sqlite` now **fails at
+template time** with an actionable message instead of producing a Deployment
+that CrashLoops in the cluster. A non-demo tier therefore also needs the
+PostgreSQL + tenant-authority lifecycle material (owner / app /
+tenant-authority DSNs, the database TLS CA, and the API proof certificate)
+described in the next section — or `config.nodeEnv` set to a non-production
+value for a local-first evaluation deployment.
+
+Render a disposable smoke release with the `demo` overlay (chart-created
+ephemeral secrets, bundled PostgreSQL):
+
+```bash
+helm template cell-demo deploy/helm/commander \
+  -f deploy/helm/commander/values-demo.yaml \
+  --set image.tag=test \
+  --set tenantAuthority.proofOwnerSecret=cell-demo-proof-owner-r1 \
+  --set tenantAuthority.releaseProjectionConfigMap=cell-demo-release-projection-r1
+```
+
+For a real install, use the tenant cutover entrypoint in the next section rather
+than a bare `helm install`.
+
+The lifecycle harness pins **Helm 3.17.3**; the chart's post-renderer contract is
+not compatible with Helm 4.
 
 ### Tenant-authority Helm lifecycle
 

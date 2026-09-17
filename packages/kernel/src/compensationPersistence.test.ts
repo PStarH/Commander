@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
 import type { KernelRepository } from './repository.js';
 import type {
@@ -24,6 +25,24 @@ import {
   KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
 } from './compensationSchema.js';
 import { KERNEL_TASK2_RECONCILIATION_RPCS_SQL } from './task2Reconciliation.js';
+import { KERNEL_MIGRATIONS } from './migrations.js';
+
+// F-K1-18: the block below asserts compensation authority by regexing SQL text.
+// Text that is present but never applied is inert, so pin the bodies to the
+// checksummed migration descriptors that actually execute them.
+const assertRegisteredMigration = (sql: string): void => {
+  const registered = KERNEL_MIGRATIONS.filter((migration) => migration.sql === sql);
+  assert.equal(
+    registered.length,
+    1,
+    'each authority body must be applied by exactly one registered migration',
+  );
+  assert.equal(
+    registered[0]!.checksum,
+    createHash('sha256').update(sql).digest('hex'),
+    'the migration checksum must pin this exact body',
+  );
+};
 
 const TENANT = 'tenant-compensation';
 
@@ -303,6 +322,11 @@ describe('compensation terminal evidence schema', () => {
       /WHERE id=v_request->>'compensation_run_id' AND tenant_id=p_tenant_id[\s\S]*UPDATE public\.commander_runs[\s\S]*WHERE id=v_request->>'compensation_run_id'/i,
       'metadata must be written to the durable compensation run returned by the legacy RPC',
     );
+  });
+
+  it('applies the terminal-closure and signed-evidence authority bodies as checksummed migrations', () => {
+    assertRegisteredMigration(KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL);
+    assertRegisteredMigration(KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL);
   });
 });
 

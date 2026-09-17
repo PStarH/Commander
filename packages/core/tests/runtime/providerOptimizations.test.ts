@@ -610,8 +610,10 @@ describe('Provider Performance Optimizations', () => {
       const provider = new GoogleProvider({ apiKey: 'test' });
       const originalFetch = global.fetch;
       let capturedUrl: string;
-      global.fetch = (async (url: any) => {
+      let capturedBody: any;
+      global.fetch = (async (url: any, init: any) => {
         capturedUrl = url as string;
+        capturedBody = JSON.parse(init.body);
         return new Response(
           JSON.stringify({
             candidates: [{ content: { parts: [{ text: 'Hi' }] }, finishReason: 'STOP' }],
@@ -628,9 +630,9 @@ describe('Provider Performance Optimizations', () => {
             reasoningConfig: { enabled: true, budget: 2048 },
           }),
         );
-        // We can't easily inspect the body since GoogleProvider builds it internally,
-        // but we can verify the request didn't throw
         assert.ok(capturedUrl!);
+        // GoogleProvider nests the thinking budget under generationConfig.
+        assert.strictEqual(capturedBody.generationConfig.thinkingConfig.thinkingBudget, 2048);
       } finally {
         global.fetch = originalFetch;
       }
@@ -639,14 +641,17 @@ describe('Provider Performance Optimizations', () => {
     it('sets thinkingBudget to 0 when effort is "none"', async () => {
       const provider = new GoogleProvider({ apiKey: 'test' });
       const originalFetch = global.fetch;
-      global.fetch = (async () =>
-        new Response(
+      let capturedBody: any;
+      global.fetch = (async (_url: any, init: any) => {
+        capturedBody = JSON.parse(init.body);
+        return new Response(
           JSON.stringify({
             candidates: [{ content: { parts: [{ text: 'Hi' }] }, finishReason: 'STOP' }],
             usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 },
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
-        )) as typeof fetch;
+        );
+      }) as typeof fetch;
 
       try {
         await provider.call(
@@ -655,8 +660,7 @@ describe('Provider Performance Optimizations', () => {
             reasoningConfig: { enabled: true, effort: 'none' },
           }),
         );
-        // Should not throw
-        assert.ok(true);
+        assert.strictEqual(capturedBody.generationConfig.thinkingConfig.thinkingBudget, 0);
       } finally {
         global.fetch = originalFetch;
       }

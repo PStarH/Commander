@@ -5,7 +5,7 @@ import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { cmdDoctor } from '../../src/cli/commands/manage';
+import { cmdDoctor, cmdStatus } from '../../src/cli/commands/manage';
 import { ENV_MAP } from '../../src/config/commanderConfig';
 import { isSupportedNodeVersion } from '../../src/cli/nodeSupport';
 import { executeReview, formatReviewOutput } from '../../src/reviewAgent';
@@ -102,12 +102,26 @@ describe('first-user CLI readiness', () => {
       throw new Error('network must not be called in offline mode');
     });
     vi.stubGlobal('fetch', fetchMock);
-    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    const printed: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      printed.push(args.map(String).join(' '));
+    });
 
     await cmdDoctor(['--offline']);
 
+    // The subject of this case is offline behaviour: no provider is contacted
+    // and connectivity is explicitly reported as skipped.
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(process.exitCode).toBe(isSupportedNodeVersion(process.version) ? 0 : 1);
+    expect(printed.join('\n')).toContain('Skipped (offline mode)');
+    expect(printed.join('\n')).toContain('Node.js 22.x');
+    // `process.exitCode` is deliberately NOT asserted. The doctor's aggregate
+    // verdict also depends on the host — `df` disk usage, `git` availability and
+    // the presence of a lockfile in `cwd` — so pinning it to 0 made this case
+    // fail on any machine with a nearly-full disk (observed: 99% used) or no git,
+    // for reasons that have nothing to do with offline mode. The Node-version
+    // expectation this assertion was reaching for is covered hermetically by the
+    // `quickstart --check` case above, which asserts the spawned CLI status
+    // against `isSupportedNodeVersion(process.version)`.
   });
 
   it('returns a non-zero status when mandatory doctor checks fail', async () => {
@@ -830,5 +844,29 @@ describe('first-user CLI readiness', () => {
     } finally {
       await rm(workspace, { recursive: true, force: true });
     }
+  });
+});
+
+// `status` reports on capabilities, so it must not silently omit one that has no
+// producer. `MetaLearner.recordShadowComparison` has no production caller — the
+// orchestrator's post-execution shadow block was removed in 9f504252 — so the
+// previous `if (shadows.length > 0)` guard made the gap invisible forever.
+describe('cmdStatus capability reporting', () => {
+  it('reports shadow mode as not wired instead of omitting it', async () => {
+    for (const env of Object.values(ENV_MAP)) {
+      vi.stubEnv(env.key, '');
+      vi.stubEnv(env.url, '');
+      vi.stubEnv(env.model, '');
+    }
+    const printed: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+      printed.push(args.map(String).join(' '));
+    });
+
+    await cmdStatus();
+
+    const output = printed.join('\n');
+    expect(output).toContain('Shadow mode');
+    expect(output).toContain('not wired');
   });
 });

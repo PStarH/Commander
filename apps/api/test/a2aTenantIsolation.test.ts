@@ -51,11 +51,7 @@ async function startServer(): Promise<TestServer> {
   };
 }
 
-async function createTask(
-  baseUrl: string,
-  tenantId: string,
-  description: string,
-): Promise<Task> {
+async function createTask(baseUrl: string, tenantId: string, description: string): Promise<Task> {
   const res = await fetch(`${baseUrl}/a2a/tasks`, {
     method: 'POST',
     headers: a2aHeaders(tenantId, { 'Content-Type': 'application/json' }),

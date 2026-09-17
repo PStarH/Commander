@@ -1,9 +1,5 @@
 <p align="center">
-  <a href="https://www.npmjs.com/package/@commander/core"><img src="https://img.shields.io/badge/npm-pending-CB3837?style=flat-square&label=npm" /></a>
   <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?style=flat-square&label=CI&logo=github" /></a>
-  <img src="https://img.shields.io/badge/providers-25-7C3AED?style=flat-square" />
-  <img src="https://img.shields.io/badge/topologies-5-EF4444?style=flat-square" />
-  <img src="https://img.shields.io/badge/tools-18-10B981?style=flat-square" />
   <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
   <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
@@ -34,15 +30,15 @@
 
 ## What is Commander
 
-Commander takes a task — any task — and automatically breaks it down, routes it to the right agents, and runs configured verification checks on outputs.
+Commander provides a local agent runtime and a PostgreSQL-backed gateway for governed actions. The runtime routes tasks to configured providers and can run verification checks on their output.
 
 - **Simple tasks** get one agent, one pass.
 - **Research tasks** get parallel agents, then synthesis.
-- **Complex engineering tasks** get a full pipeline: analysis → implementation → review → merge.
+- **Engineering tasks** can use an analysis, implementation, and review pipeline; repository changes still require review before merging.
 
-Agent events and emitted decisions stream to you in real time. On paths with the verification pipeline enabled, configured quality gates run before you see the result. When a provider fails, the next one takes over. When an agent writes buggy code, the review agent can catch it.
+Agent events and emitted decisions stream to you in real time. Paths with the verification pipeline enabled run configured checks. Retryable provider failures can trigger fallback to another configured provider. These checks do not guarantee correct output.
 
-**No graph building. No YAML. No black boxes.**
+For enterprise evaluation, [Shadow Phase A](docs/pilot/shadow/README.md) compares historical observations with a pinned policy and exports a verifiable report. It does not execute external actions.
 
 ---
 
@@ -141,8 +137,10 @@ read-only or production-ready.
 ### Enterprise Gateway (alpha)
 
 This first-user guide intentionally does not provide a runnable Gateway command:
-the path requires additional secrets, PostgreSQL, and operational controls. Use
-the [enterprise quickstart](docs/enterprise/quickstart.md) together with
+the path requires additional secrets, PostgreSQL, and operational controls.
+For enterprise evaluation, use [Shadow Pilot Phase A](docs/pilot/shadow/README.md),
+which evaluates historical observations and performs no external rollback.
+The gated [live-write reference](docs/enterprise/quickstart.md) must be read with
 [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md). The bounded E1
 design-partner workflow remains gated by the
 [launch-readiness runbook](docs/runbooks/design-partner-launch-readiness.md).
@@ -210,7 +208,7 @@ If the output fails a configured gate, the system retries or reports the failure
 | ----------------- | ----------------------------------------------------------------- |
 | Circuit Breakers  | 3-state (CLOSED/OPEN/HALF-OPEN), per-provider error rate tracking |
 | Dead Letter Queue | Append-only NDJSON, 7 categories, replay support                  |
-| Saga Compensation | Failed mutations → automatic rollback                             |
+| Saga Compensation | Registered compensation steps; external rollback is not guaranteed |
 | Checkpointing     | SQLite + WAL, crash-safe recovery (<5s target)                    |
 | Semantic Caching  | SHA-256 exact + cosine-similarity deduplication                   |
 
@@ -276,15 +274,34 @@ Commander includes a web-based control console for visual monitoring, chat-based
 pnpm gui
 ```
 
-Open `http://localhost:5173`. The console provides:
+Open `http://localhost:5173`. The console routes are:
 
-- **Dashboard** — Battle report, token trends, live topology, agent roster, mission board
-- **Chat** — Conversational interface with real-time agent streaming
-- **Governance** — Approval queue, unified policy configuration, audit log
-- **DLQ** — Dead letter queue management with replay
-- **Security** — ISO 42001 / NIST AI RMF compliance reporting posture (reporters, not certification)
-- **Execution** — Real-time execution feed with hallucination risk panel
-- **Agents** — Agent roster with lineage tree visualization
+| Route | Page |
+| --- | --- |
+| `/` | Dashboard — battle report, token trends, live topology, agent roster, mission board |
+| `/agents` | Agent roster |
+| `/missions` | Mission board and approvals |
+| `/execution` | Real-time execution feed |
+| `/memory` | Memory browser and search |
+| `/governance` | Approval queue and policy configuration |
+| `/security` | Security posture — ISO 42001 / NIST AI RMF **reporting** (reporters, not certification) |
+| `/slo` | SLO panel |
+| `/chat` | Conversational interface with real-time agent streaming |
+| `/dlq` | Dead letter queue management with replay |
+| `/audit` | Audit log |
+| `/cost` | Cost and token reporting |
+| `/knowledge` | Knowledge base |
+| `/alerts` | Alerts |
+| `/onboarding` | First-run onboarding |
+| `/users` | User administration |
+| `/settings`, `/settings/sso` | Settings and OIDC/SSO configuration |
+| `/workflows` | Workflow list and scheduling |
+| `/poc` | POC/demo views |
+| `/research` | Research view |
+| `/actions` | Action Gateway queue (approve / reject / compensate) |
+
+When running the Compose `web` profile instead of `pnpm gui`, the same console
+is served on `http://localhost:3000`.
 
 ---
 
@@ -319,11 +336,15 @@ Full matrix: [BENCHMARK.md](BENCHMARK.md)
 ## Health Check
 
 ```bash
-curl http://localhost:4000/health          # Basic
+curl http://localhost:4000/health          # Basic liveness (200 / 503)
 curl http://localhost:4000/health/detailed # All components
-curl http://localhost:4000/readyz          # Kubernetes readiness
-curl http://localhost:4000/metrics          # Prometheus
+curl http://localhost:4000/ready           # Readiness (DB, kernel, stores)
+curl http://localhost:4000/v1/health       # Gateway-narrowed readiness
+curl http://localhost:4000/metrics         # Prometheus
+curl http://localhost:4000/system/status   # Runtime module summary
 ```
+
+There is no `/readyz` or `/livez` alias — readiness is `/ready`.
 
 Monitors: memory, circuit breakers, DLQ size, checkpoint staleness, pending compensations, event bus backlog, provider availability, disk space.
 
@@ -341,7 +362,7 @@ The system uses familiar distributed-system patterns: circuit breakers, dead let
 
 ## Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — System design, module map, data flow
+- [docs/architecture/](docs/architecture/000-index.md) — Architecture Decision Records (V2 resource model, state machine, persistence, identity, effect broker, worker protocol, event semantics)
 - [docs/getting-started.md](docs/getting-started.md) — Quick start
 - [docs/deploy.md](docs/deploy.md) — Deployment
 - [docs/v2-migration-guide.md](docs/v2-migration-guide.md) — Architecture V2 migration

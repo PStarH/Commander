@@ -1,0 +1,99 @@
+# =============================================================================
+# Commander — kernel-on TLS material override (v2 / cell)
+# =============================================================================
+# Included by docker-compose.v2.yml and docker-compose.cell.yml.
+#
+# The kernel never connects with `sslmode=require`. `createVerifiedPostgresPool`
+# (packages/postgres-runtime) is the only sanctioned pool factory and it demands
+# three things a plain DSN does not carry:
+#
+#   1. `sslmode=verify-full` in the DSN itself,
+#   2. `COMMANDER_DATABASE_TLS_CA_FILE` + `COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY`,
+#   3. `COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256` — the pinned public
+#      key of the server certificate.
+#
+# Without them every service that builds a verified pool (api, worker,
+# kernel-ops, kernel-migrate) exits at startup with
+# `COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED`, because postgres presents a
+# self-signed certificate on the private compose network. Generate the material
+# first and export both variables:
+#
+#   sh deploy/docker/kernel-tls/generate-certificates.sh ./.commander/db-tls
+#   export COMMANDER_DATABASE_TLS_HOST_DIR=$PWD/.commander/db-tls
+#   export COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=<printed>
+#
+# The role DSNs default to the same bench role logins the v2/cell profiles
+# already use (deploy/docker/postgres-init.bench.sql); override the matching
+# variable if you rotated them. The CA certificate is public material and is
+# bind-mounted read-only; the server private key is never mounted into an
+# application container.
+# =============================================================================
+
+services:
+  postgres:
+    entrypoint: ['/run/commander/kernel-tls/postgres-tls-entrypoint.sh']
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/var/lib/postgresql/server-tls/tls.crt
+      - -c
+      - ssl_key_file=/var/lib/postgresql/server-tls/tls.key
+      - -c
+      - ssl_ca_file=/var/lib/postgresql/server-tls/ca.crt
+      - -c
+      - ssl_min_protocol_version=TLSv1.3
+    volumes:
+      - ${COMMANDER_DATABASE_TLS_HOST_DIR:?run deploy/docker/kernel-tls/generate-certificates.sh first}:/run/commander/database-tls-source:ro
+      - ./deploy/docker/kernel-tls/postgres-tls-entrypoint.sh:/run/commander/kernel-tls/postgres-tls-entrypoint.sh:ro
+
+  api:
+    environment:
+      - DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY=bind/database-tls:ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?run deploy/docker/kernel-tls/generate-certificates.sh first}
+    volumes:
+      - ${COMMANDER_DATABASE_TLS_HOST_DIR:?run deploy/docker/kernel-tls/generate-certificates.sh first}/ca.crt:/run/commander/database-tls/ca.crt:ro
+
+  worker:
+    environment:
+      - DATABASE_URL=${COMMANDER_WORKER_TLS_DSN:-postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_WORKER_TLS_DSN:-postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY=bind/database-tls:ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?run deploy/docker/kernel-tls/generate-certificates.sh first}
+    volumes:
+      - ${COMMANDER_DATABASE_TLS_HOST_DIR:?run deploy/docker/kernel-tls/generate-certificates.sh first}/ca.crt:/run/commander/database-tls/ca.crt:ro
+
+  kernel-ops:
+    environment:
+      - DATABASE_URL=${COMMANDER_SCHEDULER_TLS_DSN:-postgres://commander_scheduler:commander_scheduler@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_SCHEDULER_TLS_DSN:-postgres://commander_scheduler:commander_scheduler@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY=bind/database-tls:ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?run deploy/docker/kernel-tls/generate-certificates.sh first}
+    volumes:
+      - ${COMMANDER_DATABASE_TLS_HOST_DIR:?run deploy/docker/kernel-tls/generate-certificates.sh first}/ca.crt:/run/commander/database-tls/ca.crt:ro
+
+  kernel-migrate:
+    environment:
+      - DATABASE_URL=${COMMANDER_OWNER_TLS_DSN:-postgres://commander_owner:commander_owner@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_OWNER_TLS_DSN:-postgres://commander_owner:commander_owner@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY=bind/database-tls:ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?run deploy/docker/kernel-tls/generate-certificates.sh first}
+    volumes:
+      - ${COMMANDER_DATABASE_TLS_HOST_DIR:?run deploy/docker/kernel-tls/generate-certificates.sh first}/ca.crt:/run/commander/database-tls/ca.crt:ro
+
+  adapter-ops:
+    environment:
+      - DATABASE_URL=${COMMANDER_ADAPTER_OPS_TLS_DSN:-postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_ADAPTER_OPS_TLS_DSN:-postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY=bind/database-tls:ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?run deploy/docker/kernel-tls/generate-certificates.sh first}
+    volumes:
+      - ${COMMANDER_DATABASE_TLS_HOST_DIR:?run deploy/docker/kernel-tls/generate-certificates.sh first}/ca.crt:/run/commander/database-tls/ca.crt:ro

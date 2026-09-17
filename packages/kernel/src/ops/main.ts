@@ -25,13 +25,16 @@ export async function main(): Promise<void> {
     maxAttempts: positiveInteger('COMMANDER_OUTBOX_MAX_ATTEMPTS', 10),
   });
 
-  // Default compensation loop is probe-only (limit-0 claim + DLQ sweep) so the
-  // kernel package stays free of EffectBroker. That proves claimability, not drain.
+  // Compensation loop is probe-only (limit-0 claim + DLQ sweep) so the kernel
+  // package stays free of EffectBroker. That proves the claim/outbox path is
+  // alive; it does NOT drain compensation effects.
   //
-  // Fail-closed for K8s httpGet: /ready returns 503 unless a real drain tick
-  // is wired (compensation.isDraining()). Honesty fields alone are insufficient
-  // because probes only check status codes. Wire tick when a broker-backed
-  // drain owner co-locates with kernel-ops.
+  // EffectBroker-backed compensation drain is owned by adapter-ops
+  // (packages/adapter-ops/src/wiring.ts). kernel-ops /ready therefore gates on
+  // the loops this process owns — reclaim / timer / outbox / this probe — plus
+  // DB health, and reports compensationMode / compensationDraining as detail
+  // only. Gating readiness on `isDraining()` was a permanent 503 for the shipped
+  // wiring, so Helm `--wait` could never converge.
   const compensation = new CompensationConsumerDaemon({
     intervalMs: positiveInteger('COMMANDER_COMPENSATION_INTERVAL_MS', 5_000),
     probe: async () => {
@@ -69,12 +72,12 @@ export async function main(): Promise<void> {
       }
       return isKernelOpsReadyForTraffic({
         loopsReady: runtime.isReady(),
-        compensationDraining: compensation.isDraining(),
         databaseOk,
       });
     },
     getReadyDetails: () => ({
-      // Explicit honesty: default wiring is probe-only until a drain tick is supplied.
+      // Explicit honesty: this process runs the probe, not the drain. Detail
+      // fields do not gate the status code — adapter-ops owns real drain.
       compensationMode: compensation.mode(),
       compensationDraining: compensation.isDraining(),
     }),

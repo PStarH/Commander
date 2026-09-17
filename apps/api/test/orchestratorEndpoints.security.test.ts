@@ -14,7 +14,10 @@ import express from 'express';
 import type { Express, Request, Response, NextFunction } from 'express';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { isLegacyExecutionAllowed, legacyExecutionDisabledReason } from '../src/legacyExecutionGuard';
+import {
+  isLegacyExecutionAllowed,
+  legacyExecutionDisabledReason,
+} from '../src/legacyExecutionGuard';
 import { hasRole, type UserRole } from '../src/userStore';
 
 const srcDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src');
@@ -60,22 +63,12 @@ function createLegacyExecuteApp(): Express {
     }
     next();
   });
-  app.post(
-    '/orchestrator/execute',
-    requireAuth,
-    requireRole('admin'),
-    (_req, res) => {
-      res.status(400).json({ error: 'goal is required' });
-    },
-  );
-  app.post(
-    '/api/pipeline/execute',
-    requireAuth,
-    requireRole('admin'),
-    (_req, res) => {
-      res.status(400).json({ error: 'id and steps[] are required' });
-    },
-  );
+  app.post('/orchestrator/execute', requireAuth, requireRole('admin'), (_req, res) => {
+    res.status(400).json({ error: 'goal is required' });
+  });
+  app.post('/api/pipeline/execute', requireAuth, requireRole('admin'), (_req, res) => {
+    res.status(400).json({ error: 'id and steps[] are required' });
+  });
   return app;
 }
 

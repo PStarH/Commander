@@ -1,4 +1,4 @@
-import { after, before, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import express, { type Request } from 'express';
 import type { AddressInfo } from 'node:net';
@@ -49,10 +49,17 @@ describe('onboarding provider configuration authorization', () => {
     });
   }
 
-  it('rejects unauthenticated and low-privilege callers without writing', async () => {
+  // F-A-18: reset the shared fixtures before each test so neither test depends
+  // on the other's side effects (the old `writes.length === 2` assumed the
+  // first test wrote nothing).
+  beforeEach(() => {
     principal = null;
     apiKeyId = undefined;
     scopes = [];
+    writes.length = 0;
+  });
+
+  it('rejects unauthenticated and low-privilege callers without writing', async () => {
     assert.equal((await saveConfig()).status, 401);
 
     principal = { id: 'user-1', username: 'user', role: 'viewer' };
@@ -67,6 +74,7 @@ describe('onboarding provider configuration authorization', () => {
     apiKeyId = undefined;
     scopes = [];
     assert.equal((await saveConfig()).status, 200);
+    assert.equal(writes.length, 1);
 
     principal = null;
     apiKeyId = 'admin-key';

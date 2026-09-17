@@ -262,6 +262,38 @@ describe('PostgreSQL evidence repository availability probe', () => {
       false,
     );
   });
+
+  // F-K1-19: the probe was only ever asserted with a stub returning
+  // `available: true`, so "unavailable" was never distinguished from "ready".
+  it('reports not-ready when the evidence table is absent', async () => {
+    const client: SqlClient = {
+      async query<T>(sql: string) {
+        if (sql.includes('session_user')) {
+          return { rows: [{ login_role: 'commander_app' }] as T[], rowCount: 1 };
+        }
+        return { rows: [{ available: false }] as T[], rowCount: 1 };
+      },
+      release() {},
+    };
+    const repository = new PostgresKernelRepository({ connect: async () => client });
+
+    assert.deepEqual(await repository.checkEvidenceRepositoryAvailability?.(), { ready: false });
+  });
+
+  it('fails closed instead of reporting ready when the catalog probe errors', async () => {
+    const client: SqlClient = {
+      async query<T>(sql: string) {
+        if (sql.includes('session_user')) {
+          return { rows: [{ login_role: 'commander_app' }] as T[], rowCount: 1 };
+        }
+        throw new Error('catalog unavailable');
+      },
+      release() {},
+    };
+    const repository = new PostgresKernelRepository({ connect: async () => client });
+
+    assert.deepEqual(await repository.checkEvidenceRepositoryAvailability?.(), { ready: false });
+  });
 });
 
 describe('atomic terminal evidence authority', () => {

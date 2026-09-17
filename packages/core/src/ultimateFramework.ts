@@ -9,12 +9,8 @@
  * 3. 强制质量门控 - 每个步骤都有验证
  */
 
-import {
-  TaskComplexity,
-  TaskNode,
-  measureTaskComplexity,
-  shouldDecompose,
-} from './models/taskComplexity';
+import type { TaskComplexity, TaskNode } from './models/taskComplexity';
+import { measureTaskComplexity, shouldDecompose } from './models/taskComplexity';
 import { getHallucinationDetector } from './hallucinationDetector';
 
 // ============================================================================
@@ -447,4 +443,5 @@ export interface QualityGateResult {
 // 第四部分：统一导出
 // ============================================================================
 
-export { TaskComplexity, TaskNode, measureTaskComplexity, shouldDecompose };
+export type { TaskComplexity, TaskNode };
+export { measureTaskComplexity, shouldDecompose };

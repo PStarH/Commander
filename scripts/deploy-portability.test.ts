@@ -235,9 +235,13 @@ describe('deployment gate portability', () => {
       const parsed = load(readFileSync(join(process.cwd(), workflow), 'utf8')) as {
         jobs?: Record<string, { steps?: Array<{ uses?: string; with?: { version?: string } }> }>;
       };
+      // Remote actions are pinned to an immutable 40-hex commit SHA with the
+      // human-readable ref kept as a trailing comment. js-yaml strips that
+      // comment, so the parsed value is `owner/repo@<40-hex>`; a bare tag is
+      // still accepted so the check does not depend on the pinning style.
       const helmSteps = Object.values(parsed.jobs ?? {})
         .flatMap((job) => job.steps ?? [])
-        .filter((step) => step.uses === 'azure/setup-helm@v4');
+        .filter((step) => /^azure\/setup-helm@(?:[0-9a-f]{40}|v[0-9]+)$/.test(step.uses ?? ''));
       assert.notEqual(helmSteps.length, 0, `${workflow} must install Helm`);
       for (const step of helmSteps) assert.equal(step.with?.version, 'v3.17.3', workflow);
     }

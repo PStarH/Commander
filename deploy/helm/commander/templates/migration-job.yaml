@@ -106,11 +106,6 @@ spec:
               value: {{ .Values.databaseTls.expectedServerSpkiSha256 | quote }}
             - name: COMMANDER_TENANT_AUTHORITY_PROOF_PUBLIC_CERT_FILE
               value: /run/commander/api-proof-public/tls.crt
-            - name: COMMANDER_ADAPTER_OPS_DATABASE_URL
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "commander.databaseUrlSecretName" . | quote }}
-                  key: {{ include "commander.databaseAdapterOpsSecretKey" . | quote }}
             {{- if .Release.IsInstall }}
             {{- if include "commander.bundledPostgres" . }}
             - name: COMMANDER_BUNDLED_POSTGRES_BOOTSTRAP

@@ -125,7 +125,14 @@ export class SimpleTenantProvider implements TenantProvider {
 
   validateWorkspacePath(tenantId: string, filePath: string): boolean {
     const config = this.tenants.get(tenantId);
-    if (!config?.workspacePath) return true;
+    // ET-03 (batchE-core-top): `if (!config?.workspacePath) return true` was an
+    // allow-all default inside a security primitive — an unknown tenant could
+    // reach any path, and the enterprise wiring installs this provider with an
+    // empty config list. `getSafeRoot()` already refuses (throws
+    // TenantIsolationError) in exactly this situation when multi-tenant mode is
+    // on, so the two disagreed. Fail closed for both the unknown tenant and the
+    // known tenant without a configured workspace.
+    if (!config?.workspacePath) return false;
     const resolved = path.resolve(filePath);
     const workspace = path.resolve(config.workspacePath);
     return resolved === workspace || resolved.startsWith(workspace + path.sep);

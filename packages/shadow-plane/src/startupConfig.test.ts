@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rootCertificates } from 'node:tls';
 import { describe, it } from 'node:test';
+import { buildVerifiedPostgresPoolConfig } from '@commander/postgres-runtime';
 import { loadShadowStartupConfig } from './startupConfig.js';
 
 function validEnvironment(): NodeJS.ProcessEnv {
@@ -130,7 +131,12 @@ describe('shadow startup configuration', () => {
       'ed25519',
     );
     assert.equal(config.reportSigning?.privateKey.asymmetricKeyType, 'ed25519');
-    assert.equal(typeof config.poolConfig.ssl, 'object');
+    // The DSN is verified at config time and again when the pool is built; the
+    // builder is the single source of the TLS material.
+    assert.equal(
+      typeof buildVerifiedPostgresPoolConfig(config.poolInput, validEnvironment()).ssl,
+      'object',
+    );
   });
 
   it('rejects placeholders, invalid bounds, malformed keys, and unverified DSNs', () => {

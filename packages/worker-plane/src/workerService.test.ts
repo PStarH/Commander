@@ -4,7 +4,7 @@ import { getGlobalLogger, getGlobalMetrics, resetControlPlane } from '@commander
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
-import type { ClaimedStep, KernelWorkerPort, WorkerLease } from './types.js';
+import type { ClaimedStep, KernelWorkerPort, WorkerIdentity, WorkerLease } from './types.js';
 import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
 
@@ -171,6 +171,62 @@ class FakeKernel implements KernelWorkerPort {
 }
 
 describe('worker plane', () => {
+  for (const [label, expiresAt] of [
+    ['malformed', 'not-a-date'],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['missing', undefined],
+    ['null', null],
+    ['out-of-range', '+999999-01-01T00:00:00.000Z'],
+    ['expired', '2029-12-31T23:59:59.999Z'],
+    ['at current time', '2030-01-01T00:00:00.000Z'],
+  ] as const) {
+    it(`WP01 rejects ${label} expiry before authentication or registration`, async (t) => {
+      t.mock.method(Date, 'now', () => Date.parse('2030-01-01T00:00:00.000Z'));
+      const registry = new InMemoryWorkerRegistry();
+      const initialize = t.mock.method(registry, 'initialize');
+      const register = t.mock.method(registry, 'register');
+      const authenticate = t.mock.fn(auth.authenticate);
+      const onRegistered = t.mock.fn();
+      const service = new WorkerService(
+        definition,
+        { ...identity, expiresAt } as WorkerIdentity,
+        { authenticate },
+        registry,
+        new FakeKernel(),
+        { execute: async () => ({}) },
+        { onRegistered },
+      );
+      t.after(() => service.stop());
+
+      await assert.rejects(service.start(), /Worker identity is expired/);
+      assert.equal(authenticate.mock.callCount(), 0);
+      assert.equal(initialize.mock.callCount(), 0);
+      assert.equal(register.mock.callCount(), 0);
+      assert.equal(onRegistered.mock.callCount(), 0);
+      assert.equal(await registry.get(definition.id), null);
+      assert.equal(service.record, null);
+      assert.equal(await service.pollOnce(), false);
+    });
+  }
+
+  it('WP01 registers an identity expiring one millisecond in the future', async (t) => {
+    t.mock.method(Date, 'now', () => Date.parse('2030-01-01T00:00:00.000Z'));
+    const registry = new InMemoryWorkerRegistry();
+    const register = t.mock.method(registry, 'register');
+    const service = new WorkerService(
+      definition,
+      { ...identity, expiresAt: '2030-01-01T00:00:00.001Z' },
+      auth,
+      registry,
+      new FakeKernel(),
+      { execute: async () => ({}) },
+    );
+    t.after(() => service.stop());
+    assert.equal((await service.start()).id, definition.id);
+    assert.equal(register.mock.callCount(), 1);
+  });
+
   it('wraps each claimed step with step-scoped workload identity ALS', async () => {
     const kernel = new FakeKernel();
     kernel.addRun('run-wrapped', 'tenant-a', [{ id: 'wrapped-step', kind: 'agent' }]);
@@ -205,11 +261,12 @@ describe('worker plane', () => {
     await service.stop();
   });
 
-  it('authenticates, registers, claims only authorized work, and completes through the kernel', async () => {
+  it('authenticates, registers, claims only capability-authorized work, and completes through the kernel', async (t) => {
     const kernel = new FakeKernel();
     kernel.addRun('run-a', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);
     kernel.addRun('run-b', 'tenant-b', [{ id: 'tool-step', kind: 'tool' }]);
     const registry = new InMemoryWorkerRegistry();
+    const register = t.mock.method(registry, 'register');
     const service = new WorkerService(
       definition,
       identity,
@@ -220,8 +277,21 @@ describe('worker plane', () => {
       { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
+    // Tenant scoping is DB-owned: the worker registers its authenticated tenant
+    // ceiling and the claim RPC authorizes against `commander_workers`, so the
+    // poll must NOT forward caller-supplied tenantIds (they could only widen it).
+    assert.deepEqual(
+      register.mock.calls[0]?.arguments[2],
+      ['tenant-a'],
+      'the authenticated tenant ceiling must be registered',
+    );
     assert.equal(await service.pollOnce(), true);
     assert.equal(kernel.lastClaimGeneration, 1);
+    assert.equal(
+      kernel.lastClaimTenantIds,
+      undefined,
+      'claim tenant scope is DB-owned, never caller-supplied',
+    );
     await service.waitForIdle();
     assert.equal(kernel.getRun('run-a')?.state, 'SUCCEEDED');
     assert.equal(kernel.getRun('run-b')?.state, 'PENDING');

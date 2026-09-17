@@ -1,5 +1,9 @@
 name: Red Team Security Battery
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 # ── Continuous Red Team Testing ─────────────────────────────────────
 # Runs adversarial security tests on every PR and every push to main.
 #
@@ -46,20 +50,31 @@ on:
           - smoke
           - critical-only
 
+# Least privilege: the workflow default is read-only; any job that needs a write scope
+# or an OIDC token declares it explicitly on that job.
+permissions:
+  contents: read
+
 jobs:
   red-team:
     name: Red Team (${{ github.event_name == 'pull_request' && 'Smoke' || 'Full Battery' }})
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read
+
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 2 # Needed for git diff checks
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -193,7 +208,7 @@ jobs:
 
       - name: Post PR comment (regressions)
         if: github.event_name == 'pull_request' && steps.comparison.outputs.passed == 'false'
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const fs = require('fs');
@@ -362,7 +377,7 @@ jobs:
 
       - name: Upload red team report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: red-team-report-${{ github.run_id }}
           path: /tmp/red-team-report.json
@@ -371,7 +386,7 @@ jobs:
 
       - name: Upload compliance audit report (markdown)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compliance-audit-report-${{ github.run_id }}.md
           path: /tmp/compliance-audit-report.md
@@ -380,7 +395,7 @@ jobs:
 
       - name: Upload compliance audit report (JSON)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compliance-audit-report-${{ github.run_id }}.json
           path: /tmp/compliance-audit-report.json

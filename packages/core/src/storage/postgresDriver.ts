@@ -25,6 +25,9 @@ import type {
   ColumnSpec,
 } from './types';
 import { coerceColumn, isCompatibleWithSpec, cloneRow, matchesFilter } from './utils';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 interface PgQueryResult<T = Record<string, unknown>> {
   rows: T[];
@@ -343,7 +346,7 @@ export interface PostgresAvailability {
 
 export function probePostgres(): PostgresAvailability {
   try {
-    const pg = require('pg');
+    const pg = nodeRequire('pg');
     if (typeof pg.Pool !== 'function') {
       return { available: false, reason: 'pg module did not export a Pool constructor' };
     }

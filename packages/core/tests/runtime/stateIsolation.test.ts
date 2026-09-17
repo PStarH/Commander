@@ -12,7 +12,7 @@
  * via ScriptedLLMProvider, but CircuitBreaker, DLQ, CostGuard, and
  * ToolOrchestrator are all real.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // These E2E tests mutate shared singleton state (circuit breakers, DLQ,
 // budgets). Force sequential execution within the file to prevent cross-test
@@ -28,6 +28,21 @@ import {
   makeContext,
   resetGlobalState,
 } from './e2eTestHelpers';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file drives tool loops end to end through AgentRuntime.execute()
+// and asserts nothing about SideEffectGate admission, so it opts in explicitly
+// to the always-admit unit fixture. The global default is now the real,
+// fail-closed gate. This is a unit convenience, NOT an admission proof.
+// (`resetGlobalState()` does not touch the gate singleton, so the file-level
+// install survives the describe-level hook below.)
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
   beforeEach(() => {

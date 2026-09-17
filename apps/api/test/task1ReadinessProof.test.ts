@@ -13,9 +13,16 @@ class Response implements Task1ReadinessResponse {
   statusCode = 200;
   readonly headers = new Map<string, string>();
   body = '';
-  status(value: number): this { this.statusCode = value; return this; }
-  setHeader(name: string, value: string): void { this.headers.set(name.toLowerCase(), value); }
-  end(value = ''): void { this.body = value; }
+  status(value: number): this {
+    this.statusCode = value;
+    return this;
+  }
+  setHeader(name: string, value: string): void {
+    this.headers.set(name.toLowerCase(), value);
+  }
+  end(value = ''): void {
+    this.body = value;
+  }
 }
 
 function request(overrides: Partial<Task1ReadinessRequest> = {}): Task1ReadinessRequest {
@@ -44,13 +51,22 @@ function fixture() {
     imageDigest: `sha256:${digest('a')}`,
     configurationSha256: digest('c'),
   });
-  return { proof, advance: (milliseconds: number) => { now += milliseconds; } };
+  return {
+    proof,
+    advance: (milliseconds: number) => {
+      now += milliseconds;
+    },
+  };
 }
 
 describe('Task 1 challenged readiness proof', () => {
   it('serves only the exact GET path and handles non-GET before middleware', () => {
     const { proof } = fixture();
-    for (const url of ['/ready/tenant-authority/v1/', '/ready//tenant-authority/v1', '/ready/tenant-authority/v1?x=1']) {
+    for (const url of [
+      '/ready/tenant-authority/v1/',
+      '/ready//tenant-authority/v1',
+      '/ready/tenant-authority/v1?x=1',
+    ]) {
       const response = new Response();
       assert.equal(proof.handle(request({ url }), response), false);
       assert.equal(response.body, '');
@@ -103,16 +119,24 @@ describe('Task 1 challenged readiness proof', () => {
     const state = fixture();
     state.advance(1_001);
     let response = new Response();
-    state.proof.handle(request({ rawHeaders: ['X-Commander-Readiness-Challenge', challenge] }), response);
+    state.proof.handle(
+      request({ rawHeaders: ['X-Commander-Readiness-Challenge', challenge] }),
+      response,
+    );
     assert.equal(response.statusCode, 503);
     assert.equal(response.body, '');
 
     state.proof.recordRuntimeIdentity({
-      operationVersion: '18', phase: 'enforce', imageDigest: `sha256:${digest('a')}`,
+      operationVersion: '18',
+      phase: 'enforce',
+      imageDigest: `sha256:${digest('a')}`,
       configurationSha256: digest('f'),
     });
     response = new Response();
-    state.proof.handle(request({ rawHeaders: ['X-Commander-Readiness-Challenge', challenge] }), response);
+    state.proof.handle(
+      request({ rawHeaders: ['X-Commander-Readiness-Challenge', challenge] }),
+      response,
+    );
     assert.equal(response.statusCode, 503);
   });
 

@@ -3,6 +3,7 @@
 # Commander — Worker Deployment
 # =============================================================================
 {{- if .Values.worker.enabled }}
+{{- include "commander.requireWorkerAuthRef" . }}
 {{- include "commander.requireEnterpriseSecrets" . }}
 apiVersion: apps/v1
 kind: Deployment

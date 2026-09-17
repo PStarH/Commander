@@ -2,16 +2,31 @@
 
 ## Running Chaos Tests
 
+There is no `commander chaos` command. `packages/core/src/cli/commands/chaos.ts`
+exports a `runChaosCli()` helper, but it is not registered in
+`packages/core/src/cliEntry.ts`, has no callers, and the file has no top-level
+entry point — running it directly executes nothing. Drive the layers through the
+suites below instead.
+
 ```bash
-# Single layer
-npx tsx packages/core/src/cli/commands/chaos.ts --layers=L1 --tenant=ci-staging
+# Layer suites (L1/L2/L3/L4) + orchestrator/recovery-verifier contract.
+# These are opt-in: they are deliberately absent from vitest.config.ts's
+# `include`, so a bare `vitest run tests/chaos` finds nothing and the suite is
+# reached through its own config.
+pnpm --filter @commander/core test:chaos:layers
 
-# Multiple layers
-npx tsx packages/core/src/cli/commands/chaos.ts --layers=L1,L2,L3 --tenant=ci-staging --duration=60
+# End-to-end failure-injection suite (provider fallback, SQLite failure, OOM)
+pnpm --filter @commander/core test:chaos
 
-# With recovery verification (default)
-npx tsx packages/core/src/cli/commands/chaos.ts --layers=L1,L2 --tenant=ci-staging
+# Benchmark harness (simulated fault campaigns, scored)
+pnpm benchmark:chaos
+pnpm benchmark:chaos:full          # --max 255
+pnpm benchmark:chaos:stats
 ```
+
+For a full end-to-end pass that includes the gap-discovery loop and the chaos
+orchestrator, run the smoke test at
+`packages/core/src/smoke/smokeTestE2E.ts`.
 
 ## Layers
 
@@ -22,14 +37,28 @@ npx tsx packages/core/src/cli/commands/chaos.ts --layers=L1,L2 --tenant=ci-stagi
 
 ## Adding New Scenarios
 
-1. Add fault config to layer module (`l1LlmLayer.ts` / `l2ToolLayer.ts` / `l3SystemLayer.ts` / `l4TenantLayer.ts`)
-2. Write test in `tests/chaos/`
-3. Add to `ChaosOrchestrator.runLayer()` dispatcher
+1. Add fault config to the layer module under `packages/core/src/chaos/`
+   (`l1LlmLayer.ts` / `l2ToolLayer.ts` / `l3SystemLayer.ts` / `l4TenantLayer.ts`).
+2. Write the test under `packages/core/tests/chaos/`.
+3. Wire it into the dispatcher in `packages/core/src/chaos/orchestrator.ts`.
+   Note that `runLayer()` is currently a stub that only reports the scenario's
+   first `faultType`; it does not yet arm the layers, so a new scenario also
+   needs the dispatch logic that actually injects the fault.
 
 ## Recovery Verification
 
-Every chaos run calls `RecoveryBootstrapper.bootstrap()` after fault injection.
-If recovery fails, the run is marked failed in the report.
+`ChaosOrchestrator.run()` calls `RecoveryVerifier.verifyAndRecover()` after each
+layer run. The verifier awaits the `bootstrap` callback injected through
+`OrchestratorDeps`; if that callback throws, it returns
+`recoverySucceeded: false` and the layer result records the failure. Note that
+`RecoveryBootstrapper.bootstrap()` — the callback wired in by the CLI helper — is
+a *synchronous* zombie-run scan that logs and returns a summary rather than
+throwing, so with that wiring `recoverySucceeded` is effectively always `true`.
+
+A failed recovery is not written to a report object. `onGapDetected` fires on
+the `GapCallback` only when a fault was actually injected **and** recovery
+failed; healthy runs and successful recoveries are not gaps. The CLI helper
+prints one `recovery OK|FAILED` line per layer.
 
 ## Governed Rollback Pilot
 

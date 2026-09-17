@@ -10,8 +10,9 @@
  * freshness for env-related test prerequisites.
  *
  * Coverage:
- *   1. Admin gate: non-admin scopes are 403'd (toggles AUTH_DISABLED
- *      locally so the gate fires instead of bypassing).
+ *   1. Admin gate: non-admin scopes are 403'd, admin JWT / admin-scoped key pass.
+ *      (F-A-12: the gate reads `req.user.role` or `req.apiScopes`; it does NOT
+ *      read AUTH_DISABLED, so the old "bypass" ceremony was a no-op.)
  *   2. REST happy path: GET / returns typed BusPayloadMap entries from
  *      the three runtime.{cycle,retry_block,circuit}_correlated topics.
  *   3. Filters: runId, topic, toolName restrict the visible timeline.
@@ -21,7 +22,7 @@
  *   7. SSE /stream registers a client, fans out a future publish, and
  *      cleans up on req `close`.
  */
-import { test } from 'node:test';
+import { test, describe } from 'node:test';
 import * as assert from 'node:assert/strict';
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import { getMessageBus, resetMessageBus, type MessageBus } from '@commander/core/runtime';
@@ -33,11 +34,6 @@ import {
 // (`apiKeyId?: string`, `apiScopes?: string[]`) declared in authMiddleware
 // so we can type req.auth-scoped fields without per-call casts.
 import '../src/authMiddleware';
-
-// Default bypass so tests #2..#7 can exercise the router without
-// setting up a real API key. Test #1 explicitly clears this env var
-// to verify the gate's behaviour under the no-bypass path.
-process.env.AUTH_DISABLED = 'true';
 
 type Scope = 'read' | 'write' | 'admin';
 
@@ -117,43 +113,32 @@ function listenPort(server: ReturnType<Express['listen']>): number {
   return addr.port;
 }
 
-/**
- * Temporarily run `body` with AUTH_DISABLED cleared (so the admin gate
- * actually evaluates `req.apiScopes`) and restore the previous value
- * regardless of body outcome. Lets the gate-fire tests (test #1) and
- * the bypass-mode tests (tests #2..#7) coexist in one file without
- * polluting module-scope env state.
- */
-async function withGateActive<T>(body: () => Promise<T>): Promise<T> {
-  const previous = process.env.AUTH_DISABLED;
-  delete process.env.AUTH_DISABLED;
-  try {
-    return await body();
-  } finally {
-    if (previous === undefined) {
-      delete process.env.AUTH_DISABLED;
-    } else {
-      process.env.AUTH_DISABLED = previous;
-    }
-  }
-}
-
 // --- Tests -----------------------------------------------------------------
 
 test('admin gate: without admin scope the GET summary returns 403', async () => {
-  await withGateActive(async () => {
-    const app = buildAppWithScopes(['read', 'write']);
-    const server = app.listen(0);
-    try {
-      const port = listenPort(server);
-      const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub`);
-      assert.equal(res.status, 403);
-      const body = (await res.json()) as { error?: string };
-      assert.match(body.error ?? '', /Admin authority required/);
-    } finally {
-      server.close();
-    }
-  });
+  const app = buildAppWithScopes(['read', 'write']);
+  const server = app.listen(0);
+  try {
+    const port = listenPort(server);
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub`);
+    assert.equal(res.status, 403);
+    const body = (await res.json()) as { error?: string };
+    assert.match(body.error ?? '', /Admin authority required/);
+  } finally {
+    server.close();
+  }
+});
+
+test('admin gate: without any scopes the GET summary returns 403', async () => {
+  const app = buildAppWithScopes([]);
+  const server = app.listen(0);
+  try {
+    const port = listenPort(server);
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub`);
+    assert.equal(res.status, 403);
+  } finally {
+    server.close();
+  }
 });
 
 test('admin gate: with admin scope the GET summary returns 200 + REST shape', async () => {
@@ -261,17 +246,32 @@ test('GET summary rejects invalid topic with 400 + allowed list', async () => {
 
 test('GET summary clamps limit to MAX_REST_LIMIT=1000', async () => {
   resetMessageBus();
+  // F-A-6: the previous version published 5 events and requested limit=99999,
+  // then asserted count===5 — below the clamp, so removing the clamp changed
+  // nothing. Publish >MAX_REST_LIMIT events so the ceiling is observable.
+  _resetHubCorrelationsForTests();
   const app = buildAppWithScopes(['admin']);
   const server = app.listen(0);
   try {
     const port = listenPort(server);
     const bus = getMessageBus();
-    for (let i = 0; i < 5; i += 1) {
+    const total = 1005;
+    for (let i = 0; i < total; i += 1) {
       publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle(`r-${i}`));
     }
     const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub?limit=99999`);
-    const body = (await res.json()) as { count: number };
-    assert.equal(body.count, 5);
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      count: number;
+      total: number;
+      items: Array<{ payload: { runId: string } }>;
+    };
+    assert.equal(body.total, total);
+    assert.equal(body.count, 1000, 'limit must be clamped to MAX_REST_LIMIT');
+    assert.equal(body.items.length, 1000);
+    // Unclamped, the first five published events would still be in the page.
+    assert.equal(body.items[0]!.payload.runId, 'r-5', 'newest 1000 events are retained');
+    assert.equal(body.items[999]!.payload.runId, `r-${total - 1}`);
   } finally {
     server.close();
   }
@@ -325,4 +325,197 @@ test('SSE /stream registers a client, will receive a future publish, and deregis
   } finally {
     server.close();
   }
+});
+
+// ---------------------------------------------------------------------------
+// LM-25 / AUDIT api-remaining#L14 — filter + cursor must share one snapshot.
+//
+// Before the fix `toolName === 'string'` compared the query value against the
+// literal string 'string', so the toolName filter never applied; and the cursor
+// branch re-read the ring and discarded every previously applied filter, then
+// took `slice(-limit)`, which skips every unconsumed event in between.
+// ---------------------------------------------------------------------------
+
+interface HubItem {
+  busId: string;
+  topic: string;
+  payload: { runId?: string; toolName?: string };
+}
+interface HubBody {
+  items: HubItem[];
+  nextCursor?: string;
+  count: number;
+  total: number;
+}
+
+describe('LM-25: hub correlation filtering and cursor share one snapshot', () => {
+  function startHub(): { port: number; server: ReturnType<Express['listen']> } {
+    resetMessageBus();
+    const app = buildAppWithScopes(['admin']);
+    const server = app.listen(0);
+    return { port: listenPort(server), server };
+  }
+
+  async function readHub(port: number, query: string): Promise<HubBody> {
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub${query}`);
+    assert.equal(res.status, 200, `GET /api/v1/hub${query} failed`);
+    return (await res.json()) as HubBody;
+  }
+
+  test('toolName filter actually applies (substring match preserved)', async () => {
+    const { port, server } = startHub();
+    try {
+      const bus = getMessageBus();
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('r-1', 'shell_execute'));
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('r-2', 'python_execute'));
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('r-3', 'python_execute'));
+
+      const all = await readHub(port, '');
+      assert.equal(all.count, 3, 'sanity: all three events are in the ring');
+
+      const filtered = await readHub(port, '?toolName=python');
+      assert.equal(filtered.count, 2, 'toolName must filter, not pass everything through');
+      for (const item of filtered.items) {
+        assert.ok(item.payload.toolName?.includes('python'));
+      }
+
+      const exact = await readHub(port, '?toolName=shell_execute');
+      assert.equal(exact.count, 1);
+      assert.equal(exact.items[0]?.payload.toolName, 'shell_execute');
+
+      const none = await readHub(port, '?toolName=does-not-exist');
+      assert.equal(none.count, 0);
+      assert.equal(none.nextCursor, undefined, 'an empty page must not invent a cursor');
+    } finally {
+      server.close();
+    }
+  });
+
+  test('filters still apply after a cursor is supplied', async () => {
+    const { port, server } = startHub();
+    try {
+      const bus = getMessageBus();
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('anchor', 'anchor_tool'));
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('a1', 'alpha_tool'));
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('b1', 'beta_tool'));
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('a2', 'alpha_tool'));
+
+      const all = await readHub(port, '');
+      assert.equal(all.count, 4);
+      const anchor = all.items[0]!.busId;
+
+      // The cursor itself does not match the filter — it is still a valid
+      // position, and the filter must be applied to everything after it.
+      const paged = await readHub(port, `?toolName=alpha_tool&cursor=${anchor}`);
+      assert.equal(paged.count, 2, 'the toolName filter must survive cursor resolution');
+      assert.deepEqual(
+        paged.items.map((item) => item.payload.runId),
+        ['a1', 'a2'],
+      );
+
+      const topicFiltered = await readHub(
+        port,
+        `?topic=runtime.circuit_correlated&cursor=${anchor}`,
+      );
+      assert.equal(topicFiltered.count, 0, 'the topic filter must survive cursor resolution');
+
+      const runFiltered = await readHub(port, `?runId=b1&cursor=${anchor}`);
+      assert.deepEqual(
+        runFiltered.items.map((item) => item.payload.runId),
+        ['b1'],
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  test('cursor paging consumes every matching event exactly once', async () => {
+    const { port, server } = startHub();
+    try {
+      const bus = getMessageBus();
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('anchor', 'anchor_tool'));
+      for (let i = 1; i <= 6; i += 1) {
+        publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle(`m-${i}`, 'match_tool'));
+      }
+
+      const all = await readHub(port, '');
+      const anchor = all.items[0]!.busId;
+
+      const seen: string[] = [];
+      let cursor = anchor;
+      let pages = 0;
+      for (;;) {
+        const page = await readHub(port, `?toolName=match_tool&limit=2&cursor=${cursor}`);
+        pages += 1;
+        assert.ok(pages <= 10, 'paging must terminate');
+        if (page.count === 0) {
+          assert.equal(page.nextCursor, undefined);
+          break;
+        }
+        assert.ok(page.count <= 2, 'limit must be honoured');
+        for (const item of page.items) seen.push(item.payload.runId!);
+        assert.equal(
+          page.nextCursor,
+          page.items[page.items.length - 1]!.busId,
+          'nextCursor must be the last returned event',
+        );
+        cursor = page.nextCursor!;
+      }
+
+      assert.deepEqual(
+        seen,
+        ['m-1', 'm-2', 'm-3', 'm-4', 'm-5', 'm-6'],
+        'paging must be contiguous: no skipped events, no duplicates, no reordering',
+      );
+      assert.equal(new Set(seen).size, seen.length);
+    } finally {
+      server.close();
+    }
+  });
+
+  test('a first read without a cursor still returns the most recent window', async () => {
+    const { port, server } = startHub();
+    try {
+      const bus = getMessageBus();
+      for (let i = 1; i <= 5; i += 1) {
+        publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle(`r-${i}`, 'tail_tool'));
+      }
+      const page = await readHub(port, '?limit=2');
+      assert.equal(page.count, 2);
+      assert.equal(page.total, 5);
+      assert.deepEqual(
+        page.items.map((item) => item.payload.runId),
+        ['r-4', 'r-5'],
+        'the admin tail view shows the newest events',
+      );
+    } finally {
+      server.close();
+    }
+  });
+
+  test('an unknown cursor is still rejected with 400 and no data', async () => {
+    const { port, server } = startHub();
+    try {
+      const bus = getMessageBus();
+      publishCorrelation(bus, CORRELATION_TOPIC.cycle, makeCycle('r-1'));
+      const res = await fetch(`http://127.0.0.1:${port}/api/v1/hub?cursor=ghost`);
+      assert.equal(res.status, 400);
+      const body = (await res.json()) as { error?: string; items?: unknown };
+      assert.match(body.error ?? '', /Invalid cursor/);
+      assert.equal(body.items, undefined, 'a rejected cursor must not replay from the ring start');
+    } finally {
+      server.close();
+    }
+  });
+
+  test('non-admin callers are still rejected', async () => {
+    const app = buildAppWithScopes(['read']);
+    const server = app.listen(0);
+    try {
+      const res = await fetch(`http://127.0.0.1:${listenPort(server)}/api/v1/hub?toolName=x`);
+      assert.equal(res.status, 403);
+    } finally {
+      server.close();
+    }
+  });
 });

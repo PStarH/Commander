@@ -469,6 +469,122 @@ describe('llmBrokerBridge (WS2 §1)', () => {
     assert.match(a, /^[a-f0-9]{64}$/);
   });
 
+  it('WP07 preserves the legacy hash when new semantic fields are unset', () => {
+    const request: LLMRequest = { model: 'gpt', messages: [{ role: 'user', content: 'legacy' }] };
+    const legacyHash = canonicalRequestHash({
+      model: 'gpt',
+      messages: [{ role: 'user', content: 'legacy' }],
+      maxTokens: null,
+      temperature: null,
+      stop: null,
+      tools: null,
+      responseFormat: null,
+      reasoningConfig: null,
+      safePrompt: null,
+    });
+    assert.equal(hashLlmCallContent(request), legacyHash);
+    assert.equal(
+      hashLlmCallContent({
+        ...request,
+        cacheConfig: undefined,
+        parallelToolCalls: undefined,
+      }),
+      legacyHash,
+    );
+  });
+
+  it('WP07 distinguishes unset, false, and true parallelToolCalls', () => {
+    const request: LLMRequest = { model: 'gpt', messages: [] };
+    const hashes = [
+      hashLlmCallContent(request),
+      hashLlmCallContent({ ...request, parallelToolCalls: false }),
+      hashLlmCallContent({ ...request, parallelToolCalls: true }),
+    ];
+    assert.equal(new Set(hashes).size, 3);
+  });
+
+  const cacheConfig: NonNullable<LLMRequest['cacheConfig']> = {
+    cacheSystemPrompt: false,
+    cacheTools: false,
+    useCacheControl: false,
+  };
+  for (const change of [
+    { cacheSystemPrompt: true },
+    { cacheTools: true },
+    { useCacheControl: true },
+    { cacheHistory: 2 },
+    { cacheTtl: '1h' },
+    { promptCacheKey: 'cache-key' },
+    { geminiCachedContentName: 'cachedContents/test' },
+    { isBatch: false },
+    { isBatch: true },
+    { promptCacheRetention: '24h' },
+  ] satisfies Array<Partial<NonNullable<LLMRequest['cacheConfig']>>>) {
+    it(`WP07 binds cacheConfig variant ${JSON.stringify(change)}`, () => {
+      const request: LLMRequest = { model: 'gpt', messages: [] };
+      const hashes = [
+        hashLlmCallContent(request),
+        hashLlmCallContent({ ...request, cacheConfig }),
+        hashLlmCallContent({ ...request, cacheConfig: { ...cacheConfig, ...change } }),
+      ];
+      assert.equal(new Set(hashes).size, 3);
+    });
+  }
+
+  it('WP07 canonicalizes cacheConfig property order', () => {
+    const request: LLMRequest = { model: 'gpt', messages: [], parallelToolCalls: false };
+    assert.equal(
+      hashLlmCallContent({ ...request, cacheConfig: { ...cacheConfig, isBatch: true } }),
+      hashLlmCallContent({ ...request, cacheConfig: { isBatch: true, ...cacheConfig } }),
+    );
+  });
+
+  it('WP07 ignores signal identity and abort state in content hashes', () => {
+    for (const semantic of [{}, { cacheConfig, parallelToolCalls: false }]) {
+      const request: LLMRequest = { model: 'gpt', messages: [], ...semantic };
+      const expected = hashLlmCallContent(request);
+      const first = new AbortController();
+      const second = new AbortController();
+      assert.equal(hashLlmCallContent({ ...request, signal: first.signal }), expected);
+      assert.equal(hashLlmCallContent({ ...request, signal: second.signal }), expected);
+      first.abort(new Error('cancelled'));
+      assert.equal(hashLlmCallContent({ ...request, signal: first.signal }), expected);
+    }
+  });
+
+  it('WP07 gives semantic variants distinct broker effect IDs and idempotency keys', async (t) => {
+    const { broker, issuer } = makeBroker();
+    const execute = t.mock.method(broker, 'execute');
+    const wrapped = wrapProviderWithEffectBroker(mockProvider(), broker);
+    const auth = createLlmEffectAuth({
+      tenantId: 't1',
+      runId: 'r1',
+      stepId: 's1',
+      actor: 'worker-1',
+      lease: { workerId: DEFAULT_WORKER_ID, workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+      issuer,
+    });
+    const base: LLMRequest = { model: 'gpt', messages: [] };
+    const requests: LLMRequest[] = [
+      base,
+      { ...base, parallelToolCalls: false },
+      { ...base, parallelToolCalls: true },
+      { ...base, cacheConfig },
+      { ...base, cacheConfig: { ...cacheConfig, isBatch: true } },
+    ];
+    for (const request of requests) {
+      await runWithLlmEffectAuth(auth, () => wrapped.call(request));
+    }
+    const inputs = execute.mock.calls.map((call) => call.arguments[0]);
+    assert.equal(new Set(inputs.map((input) => input.effectId)).size, requests.length);
+    for (const [index, input] of inputs.entries()) {
+      assert.equal(input.effectId, `llm:r1:s1:${hashLlmCallContent(requests[index]!)}`);
+      assert.equal(input.idempotencyKey, input.effectId);
+      assert.equal(input.request.effectId, input.effectId);
+    }
+    assert.equal(__testLlmInvokeRegistrySize(), 0);
+  });
+
   it('fail-closes admit when lease.workerGeneration mismatches (kernel fencing)', async () => {
     const issuer = CapabilityTokenIssuer.generate({
       issuer: 'commander-worker',

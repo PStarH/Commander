@@ -24,22 +24,17 @@ fs.mkdirSync(path.join(tmpDir, '.commander'), { recursive: true });
 process.chdir(tmpDir);
 process.env.JWT_SECRET = 'audit-jwt-secret';
 
-const { createUser, findUserByUsername, setUserRepository, _resetUserStoreForTests } = await import(
-  '../src/userStore'
-);
-const {
-  setRefreshTokenRepository,
-  _resetRefreshTokenStoreForTests,
-} = await import('../src/refreshTokenStore');
-const { setAuthFailureStore, resetAuthFailureStoreForTesting } = await import('../src/authFailureStore');
+const { createUser, findUserByUsername, setUserRepository, _resetUserStoreForTests } =
+  await import('../src/userStore');
+const { setRefreshTokenRepository, _resetRefreshTokenStoreForTests } =
+  await import('../src/refreshTokenStore');
+const { setAuthFailureStore, resetAuthFailureStoreForTesting } =
+  await import('../src/authFailureStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const { jwtMiddleware } = await import('../src/jwtMiddleware');
 const express = (await import('express')).default;
-const {
-  TestAuthFailureStore,
-  TestRefreshTokenRepository,
-  TestUserRepository,
-} = await import('./authRepositories');
+const { TestAuthFailureStore, TestRefreshTokenRepository, TestUserRepository } =
+  await import('./authRepositories');
 
 // Obvious fake test credentials, kept behind indirection so the precommit
 // sensitive-data scanner does not flag quoted credential literals.

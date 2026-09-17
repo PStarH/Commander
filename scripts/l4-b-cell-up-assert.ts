@@ -17,6 +17,7 @@ import {
   COMPOSE_CMD,
   ensureCellSandboxImage,
   generateCellCapabilityMaterials,
+  generateCellDatabaseTlsMaterials,
   generateCellEvidenceSigningMaterials,
 } from './l4-b-cell-compose.js';
 
@@ -44,6 +45,9 @@ Env (optional — generated when unset):
   COMMANDER_WORKER_AUTH_TOKEN,
   COMMANDER_CAPABILITY_PRIVATE_KEY_PEM / COMMANDER_CAPABILITY_KEY_ID /
   COMMANDER_CAPABILITY_JWKS_JSON (worker/adapter Ed25519; openssl/node when unset)
+  COMMANDER_DATABASE_TLS_HOST_DIR / COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256
+  (pinned database TLS; generated into a temp dir — the cell services build
+  verified pools and refuse to start without it)
 
 DOCKER_GID is forced to 0 for this harness (adversarial deploy default).
 `;
@@ -94,6 +98,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
     COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
     ...capability,
     ...evidenceSigning,
+    ...generateCellDatabaseTlsMaterials(),
     COMMANDER_ENABLE_DEMO_TICKET: '1',
     COMMANDER_CELL_TENANT_ID: CELL_E2E_TENANT,
     COMMANDER_DEFAULT_TENANT_ID: CELL_E2E_TENANT,

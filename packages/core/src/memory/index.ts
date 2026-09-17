@@ -33,10 +33,10 @@ export type {
 export {
   MemoryCurator,
   getMemoryCurator,
-  DEFAULT_CURATOR_CONFIG,
-  TtlMemoryCurator, // @deprecated alias
+  DEFAULT_CURATOR_CONFIG, // @deprecated alias
   DEFAULT_TTL_CURATOR_CONFIG, // @deprecated alias
 } from './curator';
+export type { TtlMemoryCurator } from './curator';
 export type {
   CuratorConfig,
   CurationResult,

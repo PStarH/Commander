@@ -3,10 +3,53 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { generateKeyPairSync } from 'node:crypto';
-import { execSync } from 'node:child_process';
+import { createHash, generateKeyPairSync, X509Certificate } from 'node:crypto';
+import { execFileSync, execSync } from 'node:child_process';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 
 export const CELL_E2E_TENANT = 'cell-smoke-tenant';
+
+/** Repo root, derived from this file rather than cwd. */
+const REPO_ROOT = resolve(import.meta.dirname, '..');
+
+/**
+ * Pinned database TLS material for the kernel-on cell profile.
+ *
+ * Every cell service that builds a pool does so through
+ * `createVerifiedPostgresPool`, which verifies the CA, the DSN hostname and a
+ * pinned server SPKI — and refuses `sslmode` other than `verify-full`. The cell
+ * compose stack therefore cannot start without this material, so the CI helpers
+ * generate it rather than assuming a pre-provisioned directory.
+ *
+ * The server certificate's SAN must cover `postgres` (the in-network DSN host),
+ * which is why this reuses the deployment generator instead of the
+ * `deploy/testing/postgres-tls` fixture (that one is pinned to `localhost`).
+ *
+ * Cached: the generator shells out to openssl.
+ */
+let cellDatabaseTlsMaterials: Record<string, string> | undefined;
+
+export function generateCellDatabaseTlsMaterials(): Record<string, string> {
+  if (cellDatabaseTlsMaterials) return cellDatabaseTlsMaterials;
+  const directory = mkdtempSync(join(tmpdir(), 'commander-cell-db-tls-'));
+  execFileSync(
+    'sh',
+    [join(REPO_ROOT, 'deploy/docker/kernel-tls/generate-certificates.sh'), directory, 'postgres'],
+    {
+      stdio: 'pipe',
+    },
+  );
+  const certificate = new X509Certificate(readFileSync(join(directory, 'server.crt')));
+  cellDatabaseTlsMaterials = {
+    COMMANDER_DATABASE_TLS_HOST_DIR: directory,
+    COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: createHash('sha256')
+      .update(certificate.publicKey.export({ format: 'der', type: 'spki' }))
+      .digest('hex'),
+  };
+  return cellDatabaseTlsMaterials;
+}
 
 /** Ephemeral Ed25519 materials for cell worker/adapter authority (fail-closed compose). */
 export function generateCellCapabilityMaterials(): {
@@ -43,6 +86,7 @@ export function generateCellEvidenceSigningMaterials(): {
 
 const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
 const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
+const CELL_DATABASE_TLS_MATERIALS = generateCellDatabaseTlsMaterials();
 
 export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
@@ -58,6 +102,7 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
   ...CELL_CAPABILITY_MATERIALS,
   ...CELL_EVIDENCE_SIGNING_MATERIALS,
+  ...CELL_DATABASE_TLS_MATERIALS,
 };
 
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */
@@ -99,8 +144,17 @@ export function resolveDockerGid(
   return '0';
 }
 
-/** In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG). */
-const CELL_POSTGRES_URL = `postgres://commander:${COMPOSE_CONFIG_ENV.POSTGRES_PASSWORD}@postgres:5432/commander`;
+/**
+ * In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG).
+ *
+ * Role and transport are both fail-closed:
+ *  - `commander_app` (bench password from deploy/docker/postgres-init.bench.sql).
+ *    `validateAuthDatabaseUrl` rejects every other role, so a superuser DSN
+ *    aborts startup with AUTH_DATABASE_ROLE_INVALID.
+ *  - `sslmode=verify-full`, the only mode `createVerifiedPostgresPool` accepts.
+ */
+const CELL_POSTGRES_URL =
+  'postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full';
 
 export const CELL_COMPOSE_ENV: Record<string, string> = {
   ...COMPOSE_CONFIG_ENV,

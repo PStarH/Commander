@@ -134,6 +134,11 @@ async function fetchPage(url: string): Promise<string> {
     // Navigation can issue follow-up requests after redirects and page scripts
     // can issue arbitrary requests. Check each HTTP request immediately before
     // Chromium is allowed to connect, including a fresh DNS resolution.
+    //
+    // The policy enforces the domain allowlist (or a registered tenant-bound
+    // authorization) as well as SSRF/private-address blocking — a passed SSRF
+    // check is not an authorization, so a public host that is not allowlisted
+    // is blocked here rather than silently proxied.
     await page.route('**/*', async (route) => {
       const requestUrl = route.request().url();
       if (!requestUrl.startsWith('http://') && !requestUrl.startsWith('https://')) {

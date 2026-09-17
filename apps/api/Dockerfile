@@ -98,7 +98,8 @@ FROM base AS production
 RUN apk add --no-cache tini=0.19.0-r3 \
     && addgroup -g 1001 commander \
     && adduser -u 1001 -G commander -s /bin/sh -D commander \
-    && mkdir -p /app/.commander_state \
+    && mkdir -p /app/.commander \
+               /app/.commander_state \
                /app/.commander_traces \
                /app/.commander_memory \
                /app/.commander_results \

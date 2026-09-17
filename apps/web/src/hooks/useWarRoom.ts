@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../lib/silentFailure';
+import { openAuthenticatedEventStream } from '../lib/authenticatedEventStream';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   WarRoomSnapshot,
@@ -65,28 +66,25 @@ export function useWarRoom() {
   useEffect(() => {
     loadAll();
 
-    let eventSource: EventSource | null = null;
+    let eventStream: ReturnType<typeof openAuthenticatedEventStream> | null = null;
     try {
-      const params = new URLSearchParams();
-      const token = getAuthToken();
-      if (token) {
-        // Cookie preferred when API is same-site; query kept as cross-origin fallback
-        // (server strips access_token from req.url before logging).
-        document.cookie = `commander_access_token=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
-        params.set('access_token', token);
-      }
-      const qs = params.toString();
-      eventSource = new EventSource(
-        `${API_BASE}/projects/${PROJECT_ID}/events${qs ? `?${qs}` : ''}`,
-        { withCredentials: true },
+      eventStream = openAuthenticatedEventStream(
+        `${API_BASE}/projects/${PROJECT_ID}/events`,
+        getAuthToken(),
+        {
+          onOpen: () => setConnectionStatus('connected'),
+          onEvent: (eventName) => {
+            if (eventName === 'snapshot') loadAllRef.current?.();
+          },
+          onError: (err) => {
+            reportSilentFailure(err, 'useWarRoom:82');
+            setConnectionStatus('disconnected');
+          },
+        },
       );
-      eventSource.onopen = () => setConnectionStatus('connected');
-      eventSource.addEventListener('snapshot', () => {
-        loadAllRef.current?.();
-      });
-      eventSource.onerror = () => {
-        setConnectionStatus('disconnected');
-      };
+      // The helper reports failures through onError; avoid an unhandled promise
+      // while still allowing callers/tests to await `.ready` directly.
+      void eventStream.ready.catch(() => undefined);
     } catch (err) {
       reportSilentFailure(err, 'useWarRoom:82');
       setConnectionStatus('disconnected');
@@ -96,7 +94,7 @@ export function useWarRoom() {
 
     return () => {
       window.clearInterval(timer);
-      eventSource?.close();
+      eventStream?.close();
     };
   }, [loadAll]);
 

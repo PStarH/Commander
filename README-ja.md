@@ -1,19 +1,16 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
-  <img src="https://img.shields.io/badge/providers-25-purple?style=flat-square" />
-  <img src="https://img.shields.io/badge/topologies-5-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>AI が何をしているか見えるように。結果を確認。コストを削減。</strong></p>
+<p align="center"><strong>ローカルエージェントランタイムとアクション管理ゲートウェイ · Alpha</strong></p>
 
 > **Alpha 注意:** Commander は現在 alpha で、プロダクション対応ではありません。出力、ベンチマーク、POC
 > シナリオ、ダッシュボード値は開発またはデモ用の信号です。独自の確認なしに、無人の本番ワークロードや機密データに使用しないでください。
 
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
-  <sub>インストール不要。ワンコマンド。マルチエージェントのイベントとツール呼び出しをリアルタイムでターミナルに表示。</sub>
+  <sub>ソースのインストールと設定後、実行イベントとツール呼び出しをターミナルで確認できます。</sub>
 </p>
 
 <p align="center">
@@ -22,7 +19,7 @@
 
 ---
 
-> **2 つの実行形態：** Commander は 2 つの SKU で提供されます —— **Local CLI**（ローカルツール、デフォルト）と **Enterprise Gateway**（`/v1` + 任意 Postgres、**alpha**。live-fire 証明済みの完全マルチテナント SaaS ではありません）。詳細は英語の [README.md](README.md) SKU 表と [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) を参照。
+> **2 つの実行形態：** Commander は **Local CLI**（ローカル開発ツール）と **Enterprise Gateway**（`/v1`、PostgreSQL 必須、**alpha**）を提供します。共有マルチテナント SaaS の受入完了を意味しません。企業評価は [Shadow Phase A](docs/pilot/shadow/README.md) から開始し、履歴サンプルのみを評価します。外部 rollback の実行・承認は行わず、ライブ rollback は引き続き凍結中です。詳細は英語の [README.md](README.md) と [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) を参照。
 
 ## Commander の独自性
 
@@ -41,7 +38,7 @@
 ## 30 秒デモ
 
 ```bash
-# tsx があればインストール不要（または pnpm/npx を使用）
+# インストールと設定を済ませたソースディレクトリで実行
 pnpm exec tsx packages/core/src/cliEntry.ts watch "find the bug in src/server.ts and fix it"
 ```
 
@@ -135,7 +132,7 @@ packages/core/src/
 
 ### 前提条件
 
-- Node.js ≥ 18
+- Node.js 22.x（≥ 22.9.0、< 23）
 - pnpm（推奨）または npm
 - 任意の LLM プロバイダーの API キー
 
@@ -168,8 +165,8 @@ pnpm exec tsx packages/core/src/cliEntry.ts run "your task here"
 # 基本例を実行
 pnpm exec tsx examples/basic.ts
 
-# Docker を使用
-docker compose up -d
+# Docker を使用（api は認証用 PostgreSQL DSN を必要とするため v2 profile を使用）
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
 ```
 
 ---
@@ -252,13 +249,25 @@ pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 ## デプロイ
 
 ```bash
-# ローカル（Docker Compose）
+# ローカル（Docker Compose）— API のみ、SQLite、kernel は明示的に無効
+# 注意: api の 5 つの認証オーソリティは PostgreSQL 専用でローカル代替がなく、
+# この profile は DATABASE_URL を注入しないため、コンテナは起動時に
+# AUTH_DATABASE_URL_REQUIRED で終了します。起動可能な経路は下の v2 profile。
+cp .env.example .env   # 必須シークレットをすべて入力（雛形のままでは起動しません）
 docker compose up -d
-# → API: localhost:4000  |  Web GUI: localhost:3000
+# → api コンテナは起動直後に終了（AUTH_DATABASE_URL_REQUIRED）
 
-# 本番環境（VM / VPS）
+# ローカル + Web コンソール（同じく認証 DSN が無く api は終了）
+docker compose --profile web up -d
+
+# 起動可能なローカル／本番形態（Postgres + kernel + worker plane、commander_app DSN 付き）
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+
+# 本番環境（VM / VPS、ビルド済みイメージ）
 ./scripts/deploy-vm.sh your-vm-ip --env-file .env.production
 ```
+
+既定の `docker compose up` は `api` のみを起動します（ローカル SQLite）が、そのコンテナには `DATABASE_URL` が無いため起動時に `AUTH_DATABASE_URL_REQUIRED` で終了します。api の 5 つの認証オーソリティ（ユーザー、API キー、refresh token、認証失敗、レート制限）は PostgreSQL 専用で `commander_app` ロールを要求し、ローカル／SQLite／インメモリのフォールバックは存在しません。実際に起動するスタックには `v2` または `cell` profile を使用してください。Web コンソール、Postgres、worker plane は対応する profile を明示的に有効化してください。詳細は `docs/deploy.md` を参照。
 
 本番 Compose オーバーレイで追加できるもの：CPU/メモリ制限、JSON ファイルログ、自動再起動、ヘルスチェック、レート制限。マルチテナンシーは **Enterprise Gateway（alpha）** —— リクエスト文脈の隔離はあり、ストレージ隔離は opt-in。`ENTERPRISE_READINESS.md` を参照し、完成形 SaaS 隔離とみなさないでください。
 
@@ -273,7 +282,7 @@ docker compose up -d
 
 ## ドキュメント
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — システム設計・モジュール図・データフロー
+- [docs/architecture/](docs/architecture/000-index.md) — アーキテクチャ決定記録（V2 リソースモデル・状態機械・永続化・アイデンティティ・effect broker・worker プロトコル・イベントセマンティクス）
 - [docs/getting-started.md](docs/getting-started.md) — クイックスタート
 - [docs/deploy.md](docs/deploy.md) — デプロイ
 - [docs/v2-migration-guide.md](docs/v2-migration-guide.md) — Architecture V2 移行

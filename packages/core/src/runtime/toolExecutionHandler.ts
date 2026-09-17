@@ -344,7 +344,15 @@ export class ToolExecutionHandler {
     }
 
     // Process tool calls in a loop — with caching, planning, cycle detection, and output management
-    const maxIterations = Math.max(ctx.maxSteps || 10, 20);
+    //
+    // `ctx.maxSteps` is the caller's iteration budget and must be honoured as an
+    // upper bound. The previous `Math.max(ctx.maxSteps || 10, 20)` silently
+    // raised *every* budget to at least 20, so a caller asking for 1 or 3
+    // iterations still got 20 tool rounds — defeating the budget for callers that
+    // deliberately pass `maxSteps: 1` (contractLlmRouter, mcpRemoteProvider) to
+    // bound a single round-trip. Absent a budget the effective default is 20,
+    // which `?? 20` preserves exactly.
+    const maxIterations = ctx.maxSteps ?? 20;
     let toolLoopCount = 0;
     this.deps.getCycleDetector().reset();
     const executedMutations: PlannedToolCall[] = [];
@@ -356,6 +364,10 @@ export class ToolExecutionHandler {
     let retryLoopDetected = false;
     void 0;
     let cycleDetected = false;
+    // Last security denial observed this run (hook/policy). Preserved so a
+    // subsequent retry-loop crash reports the *root cause* instead of the
+    // generic "Retry loop detected" string.
+    let lastSecurityDenial: string | null = null;
     let interruptData: { reason: string; value: unknown; humanInputRequired?: boolean } | null =
       null;
     let operatorPaused = false;
@@ -523,7 +535,7 @@ export class ToolExecutionHandler {
                 console.warn(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
                 if (gate.kind === 'retry') {
                   retryLoopDetected = true;
-                  return toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
+                  return toolErrorRow(tc, lastSecurityDenial ?? `Retry loop detected: ${tc.name}`);
                 }
                 if (gate.kind === 'cycle') {
                   cycleDetected = true;
@@ -547,6 +559,7 @@ export class ToolExecutionHandler {
                   return toolErrorRow(tc, `Cycle detected: ${gate.description}`);
                 }
                 if (gate.kind === 'hooked') {
+                  lastSecurityDenial = `GUARDIAN_BLOCKED: ${gate.errorMsg || 'denied by policy'}`;
                   bus.publish('tool.blocked', ctx.agentId, {
                     runId,
                     toolName: tc.name,
@@ -577,7 +590,11 @@ export class ToolExecutionHandler {
                     reportSilentFailure(err, 'agentRuntime:2430');
                     /* best-effort */
                   }
-                  return toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
+                  // Buyer-visible marker: policy/hook denials surface as
+                  // GUARDIAN_BLOCKED so downstream assertions (and the
+                  // demo-qa golden path) can detect interception uniformly.
+                  const hookBlockedMsg = `GUARDIAN_BLOCKED: ${gate.errorMsg || 'denied by policy'}`;
+                  return toolErrorRow(tc, hookBlockedMsg);
                 }
                 // gate.kind === 'siblingAbort'
                 return gate.row;
@@ -712,11 +729,18 @@ export class ToolExecutionHandler {
                   reason: 'hook_denied',
                   detail: gate.errorMsg,
                 });
-                blockingRow = toolErrorRow(tc, `Hook blocked: ${gate.errorMsg || 'denied'}`);
+                // Buyer-visible marker: policy/hook denials surface as
+                // GUARDIAN_BLOCKED so downstream assertions (and the demo-qa
+                // golden path) can detect interception uniformly.
+                lastSecurityDenial = `GUARDIAN_BLOCKED: ${gate.errorMsg || 'denied by policy'}`;
+                blockingRow = toolErrorRow(tc, lastSecurityDenial);
                 break;
               case 'retry':
                 retryLoopDetected = true;
-                blockingRow = toolErrorRow(tc, `Retry loop detected: ${tc.name}`);
+                blockingRow = toolErrorRow(
+                  tc,
+                  lastSecurityDenial ?? `Retry loop detected: ${tc.name}`,
+                );
                 shouldBreak = true;
                 break;
               case 'cycle':
@@ -830,6 +854,10 @@ export class ToolExecutionHandler {
             this.deps.getCacheManager().getToolCache().set(tc, toolResult, tenantId);
             this.deps.invalidateMutationCache(tc.name);
             trackExecutedMutation(executedMutations, tc, this.deps.getTools().get(tc.name));
+          } else if (toolResult.error.startsWith('GUARDIAN_BLOCKED')) {
+            // Preserve the security root cause so a retry-loop crash reports
+            // the denial instead of the generic loop message.
+            lastSecurityDenial = toolResult.error;
           }
           // Capture file_write content for artifact propagation
           if (tc.name === 'file_write' && !toolResult.error) {

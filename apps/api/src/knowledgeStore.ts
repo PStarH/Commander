@@ -404,6 +404,42 @@ interface DocumentsFile {
 
 const DEFAULT_DIMENSION = 256;
 
+const DOCUMENT_STATUSES: KnowledgeDocumentStatus[] = ['ready', 'indexing', 'failed'];
+
+/** Stable, non-leaking error codes for the HTTP boundary. */
+export type KnowledgeStoreErrorCode =
+  /** A metadata/chunk file exists but could not be read or parsed. */
+  | 'KNOWLEDGE_STORE_UNAVAILABLE'
+  /** Ingestion failed before the visibility commit; nothing was published. */
+  | 'KNOWLEDGE_INGEST_FAILED';
+
+/**
+ * Typed store failure.
+ *
+ * LM-22 / AUDIT api-completion#API-C06: read errors used to be swallowed and
+ * converted into an empty in-memory state, which the next write then persisted —
+ * turning a transient EACCES/EIO/corrupt-JSON into permanent document loss. The
+ * store now fails closed with a typed, client-safe code instead.
+ */
+export class KnowledgeStoreError extends Error {
+  constructor(
+    readonly code: KnowledgeStoreErrorCode,
+    message: string,
+    readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'KnowledgeStoreError';
+  }
+}
+
+function isNotFoundError(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | undefined)?.code === 'ENOENT';
+}
+
+export function isKnowledgeStoreError(err: unknown): err is KnowledgeStoreError {
+  return err instanceof KnowledgeStoreError;
+}
+
 export class KnowledgeStore {
   private readonly baseDir: string;
   private readonly chunksDir: string;
@@ -415,7 +451,17 @@ export class KnowledgeStore {
   // In-memory cache of all chunks (chunkId → chunk), lazily loaded.
   private cache: Map<string, KnowledgeChunk> | null = null;
   private documentsCache: KnowledgeDocument[] | null = null;
+  private manifestCache: IndexManifest | null = null;
   private initPromise: Promise<void> | null = null;
+  /**
+   * Serialises mutations within this store instance.
+   *
+   * Without it, two concurrent `addDocument` calls each read index.json, each
+   * add their own chunks, and the later write wins — silently dropping the
+   * other document's index entries. This is an in-process guarantee only; it
+   * does not make the file store safe across replicas.
+   */
+  private mutationChain: Promise<unknown> = Promise.resolve();
 
   constructor(baseDir?: string) {
     this.baseDir = path.resolve(
@@ -428,68 +474,183 @@ export class KnowledgeStore {
 
   /** Lazily ensure the storage directory tree exists. */
   private async ensureDirs(): Promise<void> {
-    await fsp.mkdir(this.chunksDir, { recursive: true });
+    try {
+      await fsp.mkdir(this.chunksDir, { recursive: true });
+    } catch (err) {
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge store directory is unusable',
+        err,
+      );
+    }
   }
 
   /**
    * Initialize the store: ensure directories exist and load metadata files.
-   * Safe to call multiple times; the first call wins.
+   *
+   * Safe to call multiple times. On failure the in-flight promise is cleared so
+   * a caller can retry once the underlying problem is fixed — a poisoned
+   * `initPromise` would otherwise pin the store to "empty" forever.
    */
   async init(): Promise<void> {
     if (this.initPromise) return this.initPromise;
-    this.initPromise = this.doInit();
+    const attempt = this.doInit();
+    this.initPromise = attempt.catch((err: unknown) => {
+      this.initPromise = null;
+      throw err;
+    });
     return this.initPromise;
   }
 
   private async doInit(): Promise<void> {
-    try {
-      await this.ensureDirs();
-      await this.loadDocuments();
-      await this.loadIndex();
-    } catch (err) {
-      reportSilentFailure(err, 'knowledgeStore:init');
-    }
+    await this.ensureDirs();
+    await this.loadDocuments();
+    await this.loadIndex();
   }
 
   // ── Persistence helpers ───────────────────────────────────────────────
 
+  /**
+   * Read + validate documents.json.
+   *
+   * Only a missing file (fresh store) yields an empty list. Any other failure —
+   * EACCES/EIO, malformed JSON, wrong shape, duplicate ids — is raised: treating
+   * it as "no documents" is what allowed the next write to overwrite the real
+   * file with a single document.
+   */
   private async loadDocuments(): Promise<KnowledgeDocument[]> {
     if (this.documentsCache) return this.documentsCache;
+    let raw: string;
     try {
-      const raw = await fsp.readFile(this.documentsPath, 'utf-8');
-      const parsed = JSON.parse(raw) as DocumentsFile;
-      this.documentsCache = Array.isArray(parsed.documents) ? parsed.documents : [];
+      raw = await fsp.readFile(this.documentsPath, 'utf-8');
     } catch (err) {
-      reportSilentFailure(err, 'knowledgeStore:loadDocuments');
-      this.documentsCache = [];
+      if (isNotFoundError(err)) {
+        this.documentsCache = [];
+        return this.documentsCache;
+      }
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge documents are unreadable',
+        err,
+      );
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge documents are corrupt',
+        err,
+      );
+    }
+
+    const documents = (parsed as DocumentsFile | null)?.documents;
+    if (!Array.isArray(documents)) {
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge documents have an unexpected shape',
+      );
+    }
+    const seenIds = new Set<string>();
+    for (const candidate of documents) {
+      const doc = candidate as Partial<KnowledgeDocument> | null;
+      if (
+        !doc ||
+        typeof doc.id !== 'string' ||
+        doc.id.length === 0 ||
+        typeof doc.name !== 'string' ||
+        !SUPPORTED_CONTENT_TYPES.includes(doc.type as SupportedContentType) ||
+        !DOCUMENT_STATUSES.includes(doc.status as KnowledgeDocumentStatus)
+      ) {
+        throw new KnowledgeStoreError(
+          'KNOWLEDGE_STORE_UNAVAILABLE',
+          'Knowledge documents contain an invalid record',
+        );
+      }
+      if (seenIds.has(doc.id)) {
+        throw new KnowledgeStoreError(
+          'KNOWLEDGE_STORE_UNAVAILABLE',
+          'Knowledge documents contain a duplicate id',
+        );
+      }
+      seenIds.add(doc.id);
+    }
+
+    this.documentsCache = documents.map((doc) => ({ ...doc }));
     return this.documentsCache;
   }
 
-  private async persistDocuments(): Promise<void> {
+  /**
+   * Durably write the document list, then publish it to the in-memory cache.
+   * The cache is only replaced after the write succeeded, so a failed write can
+   * never leave the process believing uncommitted data is visible.
+   */
+  private async commitDocuments(candidate: readonly KnowledgeDocument[]): Promise<void> {
     await this.ensureDirs();
-    const docs = this.documentsCache ?? [];
-    const payload: DocumentsFile = { documents: docs };
+    const payload: DocumentsFile = { documents: candidate.map((doc) => ({ ...doc })) };
     await this.atomicWrite(this.documentsPath, JSON.stringify(payload, null, 2));
+    this.documentsCache = payload.documents;
   }
 
+  /**
+   * Read + validate index.json.
+   *
+   * Only a missing file yields an empty manifest. A corrupt or unreadable index
+   * must not be replaced by an empty one: the next write would then persist a
+   * manifest containing only its own chunks and orphan every other document.
+   */
   private async loadIndex(): Promise<IndexManifest> {
+    if (this.manifestCache) return this.manifestCache;
+    let raw: string;
     try {
-      const raw = await fsp.readFile(this.indexPath, 'utf-8');
-      const parsed = JSON.parse(raw) as IndexManifest;
-      if (!parsed || typeof parsed !== 'object' || !parsed.chunks) {
-        return { dimension: this.dimension, chunks: {} };
-      }
-      return parsed;
+      raw = await fsp.readFile(this.indexPath, 'utf-8');
     } catch (err) {
-      reportSilentFailure(err, 'knowledgeStore:loadIndex');
-      return { dimension: this.dimension, chunks: {} };
+      if (isNotFoundError(err)) {
+        this.manifestCache = { dimension: this.dimension, chunks: {} };
+        return this.manifestCache;
+      }
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge index is unreadable',
+        err,
+      );
     }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (err) {
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge index is corrupt',
+        err,
+      );
+    }
+    const manifest = parsed as IndexManifest | null;
+    if (!manifest || typeof manifest !== 'object' || typeof manifest.chunks !== 'object') {
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge index has an unexpected shape',
+      );
+    }
+    this.manifestCache = {
+      dimension: typeof manifest.dimension === 'number' ? manifest.dimension : this.dimension,
+      chunks: { ...manifest.chunks },
+    };
+    return this.manifestCache;
   }
 
+  /** Durably write the manifest, then publish it to the in-memory cache. */
   private async persistIndex(manifest: IndexManifest): Promise<void> {
     await this.ensureDirs();
-    await this.atomicWrite(this.indexPath, JSON.stringify(manifest, null, 2));
+    const payload: IndexManifest = {
+      dimension: manifest.dimension,
+      chunks: { ...manifest.chunks },
+    };
+    await this.atomicWrite(this.indexPath, JSON.stringify(payload, null, 2));
+    this.manifestCache = payload;
   }
 
   /** Atomic write via temp file + rename to avoid torn reads. */
@@ -503,46 +664,134 @@ export class KnowledgeStore {
     return path.join(this.chunksDir, `${docId}.ndjson`);
   }
 
-  /** Load all chunks from disk into the in-memory cache. */
+  /**
+   * Load all chunks from disk into the in-memory cache.
+   *
+   * A partial read must not be published as a complete cache: a missing chunk
+   * directory entry or an unparsable NDJSON line means we cannot tell the caller
+   * what the knowledge base actually contains, so we fail closed instead of
+   * serving a silently truncated index.
+   */
   private async loadCache(): Promise<Map<string, KnowledgeChunk>> {
     if (this.cache) return this.cache;
     await this.ensureDirs();
     const cache = new Map<string, KnowledgeChunk>();
-    let files: string[] = [];
+    const documents = await this.loadDocuments();
+    const documentIds = new Set(documents.map((doc) => doc.id));
+    const manifest = await this.loadIndex();
+    let files: string[];
     try {
       files = await fsp.readdir(this.chunksDir);
     } catch (err) {
-      reportSilentFailure(err, 'knowledgeStore:loadCache:readdir');
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Knowledge chunk directory is unreadable',
+        err,
+      );
     }
     for (const file of files) {
       if (!file.endsWith('.ndjson')) continue;
       const filePath = path.join(this.chunksDir, file);
+      let raw: string;
       try {
-        const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
-        if (!raw) continue;
-        for (const line of raw.split('\n')) {
-          if (!line.trim()) continue;
-          try {
-            const chunk = JSON.parse(line) as KnowledgeChunk;
-            if (chunk && chunk.chunkId) cache.set(chunk.chunkId, chunk);
-          } catch (err) {
-            reportSilentFailure(err, 'knowledgeStore:loadCache:parse');
-          }
-        }
+        raw = (await fsp.readFile(filePath, 'utf-8')).trim();
       } catch (err) {
-        reportSilentFailure(err, 'knowledgeStore:loadCache:read');
+        throw new KnowledgeStoreError(
+          'KNOWLEDGE_STORE_UNAVAILABLE',
+          'Knowledge chunk file is unreadable',
+          err,
+        );
+      }
+      if (!raw) continue;
+      for (const line of raw.split('\n')) {
+        if (!line.trim()) continue;
+        let chunk: KnowledgeChunk;
+        try {
+          chunk = JSON.parse(line) as KnowledgeChunk;
+        } catch (err) {
+          throw new KnowledgeStoreError(
+            'KNOWLEDGE_STORE_UNAVAILABLE',
+            'Knowledge chunk file is corrupt',
+            err,
+          );
+        }
+        if (
+          !chunk ||
+          typeof chunk.chunkId !== 'string' ||
+          chunk.chunkId.length === 0 ||
+          typeof chunk.docId !== 'string' ||
+          !documentIds.has(chunk.docId) ||
+          !Number.isInteger(chunk.chunkIndex) ||
+          chunk.chunkIndex < 0 ||
+          !Number.isInteger(chunk.offset) ||
+          chunk.offset < 0 ||
+          !Number.isInteger(chunk.length) ||
+          chunk.length < 0 ||
+          typeof chunk.text !== 'string' ||
+          !Array.isArray(chunk.embedding) ||
+          chunk.embedding.length !== this.dimension ||
+          chunk.embedding.some((value) => typeof value !== 'number' || !Number.isFinite(value))
+        ) {
+          throw new KnowledgeStoreError(
+            'KNOWLEDGE_STORE_UNAVAILABLE',
+            'Knowledge chunk contains an invalid record',
+          );
+        }
+        const indexed = manifest.chunks[chunk.chunkId];
+        if (!indexed || indexed.docId !== chunk.docId || indexed.chunkIndex !== chunk.chunkIndex) {
+          throw new KnowledgeStoreError(
+            'KNOWLEDGE_STORE_UNAVAILABLE',
+            'Knowledge chunk is not bound to the index manifest',
+          );
+        }
+        if (cache.has(chunk.chunkId)) {
+          throw new KnowledgeStoreError(
+            'KNOWLEDGE_STORE_UNAVAILABLE',
+            'Knowledge chunk id is duplicated',
+          );
+        }
+        cache.set(chunk.chunkId, chunk);
+      }
+    }
+    for (const [chunkId, indexed] of Object.entries(manifest.chunks)) {
+      const chunk = cache.get(chunkId);
+      if (!chunk || chunk.docId !== indexed.docId || chunk.chunkIndex !== indexed.chunkIndex) {
+        throw new KnowledgeStoreError(
+          'KNOWLEDGE_STORE_UNAVAILABLE',
+          'Knowledge index references a missing or mismatched chunk',
+        );
       }
     }
     this.cache = cache;
     return cache;
   }
 
+  /** Serialise mutations so concurrent writers cannot lose each other's updates. */
+  private enqueueMutation<T>(operation: () => Promise<T>): Promise<T> {
+    const run = this.mutationChain.then(operation, operation);
+    this.mutationChain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
   // ── Public API ────────────────────────────────────────────────────────
 
   /**
    * Add a document: extract plain text, chunk, embed, and persist.
-   * Returns the document metadata (status 'ready' on success, 'failed' on
-   * embedding/persistence error with an `error` message).
+   *
+   * Commit order (LM-22):
+   *   1. stage the chunk file,
+   *   2. persist the index manifest,
+   *   3. commit `documents.json` with `status: 'ready'` — this is the single
+   *      visibility commit point,
+   *   4. only then publish the chunks into the search cache.
+   *
+   * A failure in 1–2 leaves `documents.json` untouched (the document is simply
+   * not visible) and removes the staged chunk file. Throwing — rather than
+   * returning a `failed` document — is deliberate: a persisted `failed` record
+   * would still be a visible document whose chunks were never committed.
    */
   async addDocument(params: {
     name: string;
@@ -550,79 +799,76 @@ export class KnowledgeStore {
     content: string;
     tags?: string[];
   }): Promise<KnowledgeDocument> {
-    await this.init();
-    const { name, type, content, tags } = params;
-    const docId = uuidv4();
-    const now = new Date().toISOString();
+    return this.enqueueMutation(async () => {
+      await this.init();
+      const { name, type, content, tags } = params;
+      const docId = uuidv4();
+      const now = new Date().toISOString();
 
-    const doc: KnowledgeDocument = {
-      id: docId,
-      name: name.slice(0, 256) || 'untitled',
-      type,
-      size: Buffer.byteLength(content, 'utf-8'),
-      chunks: 0,
-      status: 'indexing',
-      createdAt: now,
-      updatedAt: now,
-      tags: tags && tags.length > 0 ? tags.slice(0, 20) : undefined,
-    };
+      const doc: KnowledgeDocument = {
+        id: docId,
+        name: name.slice(0, 256) || 'untitled',
+        type,
+        size: Buffer.byteLength(content, 'utf-8'),
+        chunks: 0,
+        status: 'ready',
+        createdAt: now,
+        updatedAt: now,
+        tags: tags && tags.length > 0 ? tags.slice(0, 20) : undefined,
+      };
 
-    const docs = await this.loadDocuments();
-    docs.push(doc);
-    await this.persistDocuments();
+      const docs = await this.loadDocuments();
 
-    try {
-      const plainText = extractPlainText(content, type);
-      const pieces = chunkText(plainText);
-      if (pieces.length === 0) {
-        // Empty / whitespace-only document — keep it but with zero chunks.
-        doc.status = 'ready';
-        doc.chunks = 0;
-        doc.updatedAt = new Date().toISOString();
-        await this.persistDocuments();
-        return doc;
+      let chunks: KnowledgeChunk[] = [];
+      try {
+        const plainText = extractPlainText(content, type);
+        const pieces = chunkText(plainText);
+        chunks = pieces.map((piece, idx) => ({
+          chunkId: uuidv4(),
+          docId,
+          chunkIndex: idx,
+          offset: piece.offset,
+          length: piece.text.length,
+          text: piece.text,
+          embedding: this.embedder.generate(piece.text),
+        }));
+
+        if (chunks.length > 0) {
+          // Persist chunks as ndjson (one JSON object per line).
+          const ndjson = chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
+          await this.ensureDirs();
+          await this.atomicWrite(this.chunkFilePath(docId), ndjson);
+
+          const manifest = await this.loadIndex();
+          const nextManifest: IndexManifest = {
+            dimension: this.dimension,
+            chunks: { ...manifest.chunks },
+          };
+          for (const c of chunks) {
+            nextManifest.chunks[c.chunkId] = { docId, chunkIndex: c.chunkIndex };
+          }
+          await this.persistIndex(nextManifest);
+        }
+      } catch (err) {
+        // Nothing was published: the document is not in documents.json. Remove
+        // the staged chunk file so it cannot be mistaken for committed content.
+        await fsp.unlink(this.chunkFilePath(docId)).catch(() => undefined);
+        reportSilentFailure(err, 'knowledgeStore:addDocument');
+        throw new KnowledgeStoreError('KNOWLEDGE_INGEST_FAILED', 'Document indexing failed', err);
       }
 
-      const chunks: KnowledgeChunk[] = pieces.map((piece, idx) => ({
-        chunkId: uuidv4(),
-        docId,
-        chunkIndex: idx,
-        offset: piece.offset,
-        length: piece.text.length,
-        text: piece.text,
-        embedding: this.embedder.generate(piece.text),
-      }));
-
-      // Persist chunks as ndjson (one JSON object per line).
-      const ndjson = chunks.map((c) => JSON.stringify(c)).join('\n') + '\n';
-      await this.ensureDirs();
-      await this.atomicWrite(this.chunkFilePath(docId), ndjson);
-
-      // Update global index manifest.
-      const manifest = await this.loadIndex();
-      for (const c of chunks) {
-        manifest.chunks[c.chunkId] = { docId, chunkIndex: c.chunkIndex };
-      }
-      manifest.dimension = this.dimension;
-      await this.persistIndex(manifest);
-
-      // Update in-memory caches.
-      const cache = await this.loadCache();
-      for (const c of chunks) cache.set(c.chunkId, c);
-
+      // Visibility commit. Until this succeeds the document does not exist.
       doc.chunks = chunks.length;
-      doc.status = 'ready';
       doc.updatedAt = new Date().toISOString();
-      await this.persistDocuments();
-      return doc;
-    } catch (err) {
-      reportSilentFailure(err, 'knowledgeStore:addDocument');
-      doc.status = 'failed';
-      doc.error = err instanceof Error ? err.message : 'Unknown indexing error';
-      doc.updatedAt = new Date().toISOString();
-      await this.persistDocuments();
-      return doc;
-    }
+      await this.commitDocuments([...docs, doc]);
+
+      // Publish to the search cache only after the durable commit.
+      if (chunks.length > 0) {
+        const cache = await this.loadCache();
+        for (const c of chunks) cache.set(c.chunkId, c);
+      }
+      return { ...doc };
+    });
   }
 
   /** Get a single document's metadata by id. */
@@ -642,39 +888,69 @@ export class KnowledgeStore {
     const sorted = [...docs].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     const start = (page - 1) * limit;
     const slice = sorted.slice(start, start + limit);
-    return { documents: slice, total: docs.length, page, limit };
+    return { documents: slice.map((doc) => ({ ...doc })), total: docs.length, page, limit };
   }
 
-  /** Delete a document and all of its chunks. */
+  /**
+   * Delete a document and all of its chunks.
+   *
+   * Commit order (LM-22): `documents.json` is committed first without the id —
+   * from that moment the document is gone and cannot be retrieved. Chunk/index
+   * cleanup runs afterwards; if cleanup fails the deletion still stands and the
+   * incomplete cleanup is reported, rather than pretending nothing happened or
+   * restoring the document.
+   */
   async deleteDocument(id: string): Promise<boolean> {
-    await this.init();
-    const docs = await this.loadDocuments();
-    const idx = docs.findIndex((d) => d.id === id);
-    if (idx < 0) return false;
+    return this.enqueueMutation(async () => {
+      await this.init();
+      const docs = await this.loadDocuments();
+      if (!docs.some((doc) => doc.id === id)) return false;
 
-    docs.splice(idx, 1);
-    await this.persistDocuments();
+      await this.commitDocuments(docs.filter((doc) => doc.id !== id));
 
-    // Remove the chunk file.
-    try {
-      await fsp.unlink(this.chunkFilePath(id));
-    } catch (err) {
-      reportSilentFailure(err, 'knowledgeStore:deleteDocument:unlink');
-    }
+      const cleanupFailures: string[] = [];
 
-    // Update index manifest + in-memory cache.
-    const manifest = await this.loadIndex();
-    const cache = await this.loadCache();
-    const toRemove: string[] = [];
-    for (const [chunkId, entry] of Object.entries(manifest.chunks)) {
-      if (entry.docId === id) toRemove.push(chunkId);
-    }
-    for (const chunkId of toRemove) {
-      delete manifest.chunks[chunkId];
-      cache.delete(chunkId);
-    }
-    await this.persistIndex(manifest);
-    return true;
+      try {
+        await fsp.unlink(this.chunkFilePath(id));
+      } catch (err) {
+        if (!isNotFoundError(err)) cleanupFailures.push('chunk-file');
+      }
+
+      const removedChunkIds: string[] = [];
+      try {
+        const manifest = await this.loadIndex();
+        const nextManifest: IndexManifest = {
+          dimension: this.dimension,
+          chunks: { ...manifest.chunks },
+        };
+        for (const [chunkId, entry] of Object.entries(nextManifest.chunks)) {
+          if (entry.docId === id) {
+            delete nextManifest.chunks[chunkId];
+            removedChunkIds.push(chunkId);
+          }
+        }
+        await this.persistIndex(nextManifest);
+      } catch (err) {
+        cleanupFailures.push('index-manifest');
+      }
+
+      try {
+        const cache = await this.loadCache();
+        for (const chunkId of removedChunkIds) cache.delete(chunkId);
+      } catch {
+        // The cache was not published; nothing to correct in memory.
+      }
+
+      if (cleanupFailures.length > 0) {
+        reportSilentFailure(
+          new Error(
+            `knowledge document ${id} committed as deleted but post-commit cleanup was incomplete: ${cleanupFailures.join(', ')}`,
+          ),
+          'knowledgeStore:deleteDocument:cleanup',
+        );
+      }
+      return true;
+    });
   }
 
   /**

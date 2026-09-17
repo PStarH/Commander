@@ -146,7 +146,7 @@ export class FileChangeTracker {
   private tenantId?: string;
   private config: FileChangeTrackerConfig;
   private writeQueue: Array<() => Promise<void>> = [];
-  private flushing = false;
+  private drainPromise: Promise<void> | null = null;
   private snapshotCounters: Map<string, number> = new Map();
 
   constructor(baseDir?: string, tenantId?: string, config?: Partial<FileChangeTrackerConfig>) {
@@ -403,18 +403,28 @@ export class FileChangeTracker {
     }
   }
 
+  /**
+   * Wait until every queued write has reached disk.
+   *
+   * This has to be a real barrier: `recordChange()` only *queues* its NDJSON
+   * append, and callers read `changes.ndjson` straight afterwards, so `flush()`
+   * is the only thing standing between them and a partially-written file.
+   *
+   * It previously began with `if (this.flushing) return;`. Because
+   * `enqueueWrite()` starts a background drain immediately, `flushing` was
+   * already `true` by the time any caller could reach `flush()` — so the guard
+   * turned every call into a silent no-op and the read raced the append. That
+   * is what made records look missing, query counts come back one short, and
+   * `changes.ndjson` not exist yet when a test checked for it.
+   */
   async flush(): Promise<void> {
-    if (this.flushing) return;
-    this.flushing = true;
-    try {
-      let idx = 0;
-      while (idx < this.writeQueue.length) {
-        const task = this.writeQueue[idx++];
-        if (task) await task();
-      }
-    } finally {
-      this.writeQueue.length = 0;
-      this.flushing = false;
+    // Guarded so the loop cannot spin: `startDrain()` always produces a promise,
+    // so calling it unconditionally would make `pending` perpetually non-null and
+    // spin on resolved promises without ever yielding to the event loop.
+    while (this.drainPromise || this.writeQueue.length > 0) {
+      this.startDrain();
+      const pending = this.drainPromise;
+      if (pending) await pending;
     }
   }
 
@@ -434,27 +444,33 @@ export class FileChangeTracker {
 
   private enqueueWrite(task: () => Promise<void>): void {
     this.writeQueue.push(task);
-    if (!this.flushing) {
-      this.flushing = true;
-      this.drainQueue();
-    }
+    this.startDrain();
+  }
+
+  /**
+   * Start a drain unless one is already running, and expose it as
+   * `drainPromise` so `flush()` can await it instead of racing it.
+   */
+  private startDrain(): void {
+    if (this.drainPromise) return;
+    this.drainPromise = this.drainQueue().finally(() => {
+      this.drainPromise = null;
+      // A task enqueued while the drain was settling must not be stranded.
+      if (this.writeQueue.length > 0) this.startDrain();
+    });
+    // Tasks are best-effort — `appendLine()` already logs its own failures.
+    // Mark the rejection handled so a background drain cannot surface as an
+    // unhandled rejection; `flush()` still observes it via the promise it awaits.
+    this.drainPromise.catch(() => {});
   }
 
   private async drainQueue(): Promise<void> {
-    try {
-      let idx = 0;
-      while (idx < this.writeQueue.length) {
-        const task = this.writeQueue[idx++];
-        if (task) await task();
-      }
-      this.writeQueue.length = 0;
-    } finally {
-      this.flushing = false;
-      if (this.writeQueue.length > 0) {
-        this.flushing = true;
-        this.drainQueue();
-      }
+    let idx = 0;
+    while (idx < this.writeQueue.length) {
+      const task = this.writeQueue[idx++];
+      if (task) await task();
     }
+    this.writeQueue.length = 0;
   }
 
   private async appendLine(record: FileChangeRecord): Promise<void> {

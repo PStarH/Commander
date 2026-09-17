@@ -1,5 +1,9 @@
 name: SLO Bench Regression
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 # Day 7 closeout: capture today's SLO baseline via `pnpm bench:slo`, compare
 # against yesterday's baseline JSON, fail the run if any of the 4 SLO
 # measurements (recovery / failover / compensation / dlq) failed or threw.
@@ -29,14 +33,11 @@ on:
   workflow_dispatch:
     inputs:
       maxNewFailures:
-        description: 'Maximum additional failed measurements vs yesterday (default 0)'
+        description: Maximum additional failed measurements vs yesterday (default 0)
         required: false
         default: '0'
   schedule:
-    # Daily at 07:00 UTC. Off WAL bench (06:00) and cost-bench (06:30) by
-    # 30+ minutes so the three cron jobs do not race for runners.
-    - cron: '0 7 * * *'
-
+    - cron: 0 7 * * *
 jobs:
   bench-slo-regress:
     name: SLO Bench Regression
@@ -46,22 +47,18 @@ jobs:
       TZ: UTC
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - name: Setup Node 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
-          cache: 'pnpm'
-
+          cache: pnpm
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
-
       - name: Resolve today / yesterday (UTC)
         id: dates
         run: |
@@ -69,10 +66,8 @@ jobs:
           YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
           echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
-
       - name: Run SLO bench (captures today baseline)
         run: pnpm bench:slo
-
       - name: Verify today's baseline JSON exists
         run: |
           TODAY_FILE="docs/baselines/slo-baseline.${{ steps.dates.outputs.today }}.json"
@@ -81,7 +76,6 @@ jobs:
             exit 2
           fi
           echo "today's baseline: $TODAY_FILE"
-
       - name: Extract today's metrics
         id: metrics
         if: always()
@@ -96,7 +90,6 @@ jobs:
             const failedNames = (d.measurements || []).filter(m => !m.passed).map(m => m.name + (m.reason ? "(" + m.reason + ")" : "")).join(",");
             out("failedNames", failedNames);
           ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
-
       - name: Compare today vs yesterday (drift gate)
         if: always()
         id: regress
@@ -152,7 +145,6 @@ jobs:
             }
             console.log("regressed=false");
           ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
-
       - name: Append markdown to GitHub Step Summary
         if: always()
         run: |
@@ -163,52 +155,66 @@ jobs:
             echo "::error::regress step did not write a summary file at $SUMMARY"
             exit 2
           fi
-
       - name: Upload today's baseline as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: slo-baseline-${{ steps.dates.outputs.today }}
           path: docs/baselines/slo-baseline.${{ steps.dates.outputs.today }}.json
           retention-days: 90
           if-no-files-found: error
-
-      # Day-N+1 regress gate dependency: PR auto-creation pairs with team
-      # auto-merge policy (Settings -> General -> Allow auto-merge + branch
-      # rule matching labels automated+ci-bench). Until auto-merge is
-      # enabled, tomorrow sees first-day SKIP for the day the PR is open
-      # but not yet merged; the day AFTER it merges, the gate fires for
-      # real. If strict day-N+1 continuity is later required, switch this
-      # guard to `if: always() && hashFiles('docs/baselines/slo-baseline.*.json')`.
+    outputs:
+      today: ${{ steps.dates.outputs.today }}
+      metric_failed: ${{ steps.metrics.outputs.failed }}
+      metric_total: ${{ steps.metrics.outputs.total }}
+      metric_failedNames: ${{ steps.metrics.outputs.failedNames }}
+      metric_passed: ${{ steps.metrics.outputs.passed }}
+  open-baseline-pr:
+    name: Open baseline PR
+    runs-on: ubuntu-latest
+    needs:
+      - bench-slo-regress
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: slo-baseline-${{ needs.bench-slo-regress.outputs.today }}
       - name: Open PR for today's SLO baseline
         if: success()
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/slo-baseline-${{ steps.dates.outputs.today }}
+          branch: bench/slo-baseline-${{ needs.bench-slo-regress.outputs.today }}
           delete-branch: true
-          title: 'ci(slo-bench): baseline ${{ steps.dates.outputs.today }} - failed=${{ steps.metrics.outputs.failed }}/${{ steps.metrics.outputs.total }}'
+          title: 'ci(slo-bench): baseline ${{ needs.bench-slo-regress.outputs.today }} - failed=${{ needs.bench-slo-regress.outputs.metric_failed }}/${{ needs.bench-slo-regress.outputs.metric_total }}'
           commit-message: |
-            ci(slo-bench): baseline ${{ steps.dates.outputs.today }}
+            ci(slo-bench): baseline ${{ needs.bench-slo-regress.outputs.today }}
 
             Auto-generated by .github/workflows/slo-bench.yml. Provides yesterday's
             SLO baseline for the next day's regress gate.
 
-            failed: ${{ steps.metrics.outputs.failed }} / ${{ steps.metrics.outputs.total }}
-            failedNames: ${{ steps.metrics.outputs.failedNames }}
+            failed: ${{ needs.bench-slo-regress.outputs.metric_failed }} / ${{ needs.bench-slo-regress.outputs.metric_total }}
+            failedNames: ${{ needs.bench-slo-regress.outputs.metric_failedNames }}
           body: |
-            ## SLO bench baseline - ${{ steps.dates.outputs.today }}
+            ## SLO bench baseline - ${{ needs.bench-slo-regress.outputs.today }}
 
             Auto-generated by [`.github/workflows/slo-bench.yml`](../workflows/slo-bench.yml).
             Triggered daily at `07:00 UTC` or via manual `workflow_dispatch`.
 
             | Metric | Value |
             |---|---|
-            | passed | **${{ steps.metrics.outputs.passed }}** |
-            | failed | **${{ steps.metrics.outputs.failed }}** |
-            | total | **${{ steps.metrics.outputs.total }}** |
-            | failed names | **${{ steps.metrics.outputs.failedNames }}** |
+            | passed | **${{ needs.bench-slo-regress.outputs.metric_passed }}** |
+            | failed | **${{ needs.bench-slo-regress.outputs.metric_failed }}** |
+            | total | **${{ needs.bench-slo-regress.outputs.metric_total }}** |
+            | failed names | **${{ needs.bench-slo-regress.outputs.metric_failedNames }}** |
 
             Generated by `.github/workflows/slo-bench.yml`
           labels: |
             automated
             ci-bench
+permissions:
+  contents: read

@@ -3,7 +3,6 @@ import {
   buildVerifiedPostgresPoolConfig,
   type VerifiedPostgresPoolInput,
 } from '@commander/postgres-runtime';
-import type { PoolConfig } from 'pg';
 import type { ShadowManifestTrust } from './report.js';
 
 import type { ShadowDatabaseOperation } from './repository.js';
@@ -11,7 +10,7 @@ export type { ShadowDatabaseOperation } from './repository.js';
 
 export interface ShadowStartupConfig {
   databaseUrl: string;
-  poolConfig: PoolConfig;
+  poolInput: VerifiedPostgresPoolInput;
   tenantId: string;
   retentionDays: number;
   ingestionAttestationKey?: Buffer;
@@ -120,13 +119,18 @@ export function loadShadowStartupConfig(
   }
   const databaseUrl = required(env, 'COMMANDER_SHADOW_DATABASE_URL');
   const poolInput: VerifiedPostgresPoolInput = { connectionString: databaseUrl, max: 4 };
-  const poolConfig = buildVerifiedPostgresPoolConfig(poolInput, env);
+  // The verified pool config is built here purely to fail closed at config time:
+  // its builder is what reads the trusted CA, requires the pinned server SPKI,
+  // and enforces sslmode=verify-full on the DSN. The config value itself is
+  // discarded — pool construction belongs to createVerifiedPostgresPool, which
+  // is the single factory this repository allows to construct a pg.Pool.
+  buildVerifiedPostgresPoolConfig(poolInput, env);
   return {
     ...(attestationKeyHex === undefined
       ? {}
       : { ingestionAttestationKey: Buffer.from(attestationKeyHex, 'hex') }),
     databaseUrl,
-    poolConfig,
+    poolInput,
     tenantId: identifier(env, 'COMMANDER_SHADOW_TENANT_ID'),
     retentionDays: boundedInteger(env, 'COMMANDER_SHADOW_RETENTION_DAYS', 1, 30),
     trustedManifestPublicKeys: manifestKeys(env),

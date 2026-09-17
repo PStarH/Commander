@@ -143,14 +143,36 @@ groups:
           summary: "Step queue age is high"
           description: "P95 step queue age is {{ $value }}ms. Workers may be underscaled."
 
-      - alert: CommanderNoActiveWorkers
-        expr: commander_workers_active == 0
-        for: 2m
+      # DISABLED — `commander_workers_active` is not an emitted metric. It exists
+      # only as the SQL index `commander_workers_active_idx` in the kernel schema,
+      # so this expression would never evaluate and the alert would stay silent.
+      # Worker liveness is tracked in the kernel `commander_workers` table. To
+      # reinstate this alert, first export a worker gauge from the worker registry
+      # (or scrape Postgres via postgres_exporter), then uncomment and retarget.
+      #
+      # - alert: CommanderNoActiveWorkers
+      #   expr: commander_workers_active == 0
+      #   for: 2m
+      #   labels:
+      #     severity: critical
+      #   annotations:
+      #     summary: "No active workers registered"
+      #     description: "All workers are offline. Steps cannot be claimed."
+
+      # Substitute signal that IS emitted: sustained step queue age means workers
+      # are not draining the queue.
+      - alert: CommanderStepQueueStalled
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(commander_step_queue_age_ms_bucket[5m])) by (le)
+          ) > 30000
+        for: 10m
         labels:
           severity: critical
         annotations:
-          summary: "No active workers registered"
-          description: "All workers are offline. Steps cannot be claimed."
+          summary: "Step queue is not draining"
+          description: "P95 step queue age is {{ $value }}ms for 10m. Workers may be offline or underscaled."
 
       - alert: CommanderTenantSaturation
         expr: |

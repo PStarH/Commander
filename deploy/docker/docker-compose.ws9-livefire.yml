@@ -95,7 +95,9 @@ services:
       - ws9-livefire-net
 
   # ---------------------------------------------------------------------------
-  # Commander API — built from repo Dockerfile (api target).
+  # Commander API — built from apps/api/Dockerfile (production target).
+  # The repo-root Dockerfile is gitignored and absent from a fresh clone, so it
+  # must never be used as a build source here.
   # NODE_ENV=production + COMMANDER_V2_MODE=1 disable legacy /api/* execution
   # (apps/api/src/legacyExecutionGuard.ts), leaving /v1, /health, /metrics as
   # the only reachable surface (enforced/verified by ws9-env-check).
@@ -103,8 +105,8 @@ services:
   commander-api:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: api
+      dockerfile: apps/api/Dockerfile
+      target: production
     image: ${COMMANDER_API_IMAGE:-commander-api:ws9-livefire}
     container_name: ws9-commander-api
     environment:

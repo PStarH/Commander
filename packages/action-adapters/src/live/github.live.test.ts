@@ -22,15 +22,27 @@ const repo = process.env.GITHUB_TEST_REPO ?? '';
 const token = process.env.GITHUB_TOKEN ?? process.env.GITHUB_PAT ?? '';
 const destination = owner && repo ? `github://${owner}/${repo}/pulls` : '';
 
-/** Keep the opt-in live test write-scoped to an explicitly test-only target. */
+/**
+ * Keep the opt-in live test write-scoped to an explicitly test-only target.
+ *
+ * The `commander-live-` prefix is only accepted for the configured test owner:
+ * keying on the name prefix alone accepted *any* owner with a repo of that name,
+ * so a live run could write outside the approved account.
+ */
 export function isAllowlistedGitHubTestRepository(
   repositoryOwner: string,
   repositoryName: string,
   approvedRepository = process.env.COMMANDER_LIVE_APPROVED_REPO ?? '',
+  approvedOwner = process.env.GITHUB_TEST_OWNER ?? '',
 ): boolean {
   if (!repositoryOwner || !repositoryName) return false;
   const canonicalRepository = `${repositoryOwner}/${repositoryName}`;
-  return repositoryName.startsWith('commander-live-') || approvedRepository === canonicalRepository;
+  if (approvedRepository === canonicalRepository) return true;
+  return (
+    approvedOwner !== '' &&
+    repositoryOwner === approvedOwner &&
+    repositoryName.startsWith('commander-live-')
+  );
 }
 
 const allowlistedTarget = isAllowlistedGitHubTestRepository(owner, repo);
@@ -64,17 +76,30 @@ function printCleanup(): void {
 
 describe('GitHub live target preflight', () => {
   it('rejects a non-test repository without an exact approval', () => {
-    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'Commander'), false);
+    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'Commander', '', 'PStarH'), false);
     assert.equal(
-      isAllowlistedGitHubTestRepository('PStarH', 'Commander', 'other/test-repo'),
+      isAllowlistedGitHubTestRepository('PStarH', 'Commander', 'other/test-repo', 'PStarH'),
       false,
     );
   });
 
-  it('accepts the dedicated prefix or an exact approved repository', () => {
-    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'commander-live-demo'), true);
+  it('rejects the commander-live- prefix under an unapproved owner', () => {
+    // The prefix alone does not scope the write to the approved account.
     assert.equal(
-      isAllowlistedGitHubTestRepository('PStarH', 'private-test', 'PStarH/private-test'),
+      isAllowlistedGitHubTestRepository('attacker', 'commander-live-x', '', 'PStarH'),
+      false,
+    );
+    // Without a configured test owner nothing prefix-based is allowlisted.
+    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'commander-live-demo', '', ''), false);
+  });
+
+  it('accepts the dedicated prefix for the approved owner or an exact approved repository', () => {
+    assert.equal(
+      isAllowlistedGitHubTestRepository('PStarH', 'commander-live-demo', '', 'PStarH'),
+      true,
+    );
+    assert.equal(
+      isAllowlistedGitHubTestRepository('PStarH', 'private-test', 'PStarH/private-test', ''),
       true,
     );
   });

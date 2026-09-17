@@ -6,7 +6,8 @@
  * TenantResolutionPhase, CoreExecutionLoopPhase here.
  */
 
-export {
+export { createInitialAgentExecutionState } from './AgentExecutionState';
+export type {
   AgentExecutionState,
   CheckpointPhaseLabel,
   ToolStoreEntry,
@@ -14,7 +15,7 @@ export {
   CheckpointStartPayload,
   CheckpointStepPayload,
   CheckpointTerminalPayload,
-  createInitialAgentExecutionState,
 } from './AgentExecutionState';
 export type { UnfinishedRunEntry, ResumableRunEntry, ActiveRunEntry } from './checkpointing';
-export { CheckpointingPhase, type CheckpointingPhaseServices } from './checkpointing';
+export { CheckpointingPhase } from './checkpointing';
+export type { CheckpointingPhaseServices } from './checkpointing';

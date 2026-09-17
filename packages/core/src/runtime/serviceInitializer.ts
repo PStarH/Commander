@@ -73,6 +73,7 @@ import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
 import { getRunLedgerBundle } from '../atr/runLedger';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
 import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '../security/capabilityToken';
+import { getAgentLineage } from '../security/agentLineage';
 import {
   getReversibilityGate,
   resetReversibilityGate,
@@ -325,7 +326,18 @@ export function initializeServices(
   const samplesStore = new SamplesStore();
   const resolvedTraceStore = new PersistentTraceStore();
   const stepTimeout = new StepTimeoutManager();
-  const fallbackChain = new ProviderFallbackChain<import('./types').LLMResponse>();
+  const fallbackChain = new ProviderFallbackChain<import('./types').LLMResponse>({
+    // Buyer-visible failover signal: the golden-path demo-qa suite (and the
+    // viral demo) assert the `[Fallback] <from> 切换至 <to>` marker on stdout.
+    onProviderSkipped: (from, to) => {
+      // eslint-disable-next-line no-console
+      console.log(`[Fallback] ${from} 切换至 ${to ?? '(none left)'}`);
+      getGlobalLogger().warn('ProviderFallbackChain', `Provider ${from} failed; falling back`, {
+        from,
+        to: to ?? 'exhausted',
+      });
+    },
+  });
 
   const compensationService = new CompensationService({
     dlq: resolvedDlq,
@@ -648,17 +660,34 @@ export function initializeServices(
   try {
     registerResponseCallbacks({
       terminateSession: (agentId, reason) => {
-        getGlobalLogger().warn('SecurityResponseEngine', 'Terminate session requested', {
+        const count = getAgentLineage().revokeByAgentId(agentId, `terminate: ${reason}`);
+        if (count === 0) {
+          getGlobalLogger().warn(
+            'SecurityResponseEngine',
+            'No live lineage session matched termination',
+            {
+              agentId,
+              reason,
+            },
+          );
+          return false;
+        }
+        getGlobalLogger().warn('SecurityResponseEngine', 'Agent lineage terminated', {
           agentId,
           reason,
+          revokedNodes: count,
         });
+        return true;
       },
-      revokeTokens: () => {
-        try {
-          getCapabilityTokenIssuer();
-        } catch {
-          // best-effort — issuer may be unavailable in stripped-down runtimes
-        }
+      revokeTokens: (agentId) => {
+        // AgentLineage.revokeByAgentId revokes every tracked capability JTI for
+        // the agent and its descendants. A boolean result is required so the
+        // response engine cannot claim success when no registry entry existed.
+        const count = getAgentLineage().revokeByAgentId(
+          agentId,
+          'security response token revocation',
+        );
+        return count > 0;
       },
     });
     startSecurityResponseEngine();

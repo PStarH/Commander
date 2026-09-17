@@ -24,7 +24,7 @@ export class InMemoryTicketAdapter implements EffectOutcomeQuerier {
   compensateInvocations = 0;
 
   private key(tenantId: string, idempotencyKey: string): string {
-    return `${tenantId}:${idempotencyKey}`;
+    return JSON.stringify([tenantId, idempotencyKey]);
   }
 
   /** External write — the side effect under reconcile. */

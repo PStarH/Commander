@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { verifyEvidenceSignature, type EvidenceJwks } from './evidenceSigner.js';
 import type { CapabilityGrant } from './index.js';
 
 export const EVIDENCE_BUNDLE_SCHEMA = 'l3-11.v0' as const;
@@ -172,18 +173,39 @@ export interface BuildEvidenceBundleInput {
 export interface VerifyEvidenceBundleResult {
   ok: boolean;
   reason?: string;
-  brokenAt?: 'effects' | 'auditEvents' | 'contentHash' | 'dlp';
+  brokenAt?: 'effects' | 'auditEvents' | 'contentHash' | 'dlp' | 'signature';
   index?: number;
 }
 
+export interface VerifyEvidenceBundleOptions {
+  /**
+   * Injected verifier for `bundle.signature`. Key material stays at the call site —
+   * this module never holds keys.
+   */
+  verifySignature?: (canonicalBody: string, signature: EvidenceSignature) => boolean;
+  /** Public keys for the built-in Ed25519 verifier (alternative to `verifySignature`). */
+  jwks?: EvidenceJwks;
+  /**
+   * Require a cryptographically verified signature. Defaults to `true` as soon as a
+   * verifier is supplied; passing `true` without a verifier fails closed.
+   */
+  requireSignature?: boolean;
+}
+
 export function canonicalEvidenceJson(value: unknown): string {
-  if (value === null || typeof value !== 'object') return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalEvidenceJson).join(',')}]`;
-  const obj = value as Record<string, unknown>;
-  return `{${Object.keys(obj)
-    .sort()
-    .map((k) => `${JSON.stringify(k)}:${canonicalEvidenceJson(obj[k])}`)
-    .join(',')}}`;
+  // Hash the persisted JSON representation, retaining the existing lexicographic key order.
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) throw new TypeError('EVIDENCE_JSON_VALUE_REQUIRED');
+  const canonical = (input: unknown): string => {
+    if (input === null || typeof input !== 'object') return JSON.stringify(input);
+    if (Array.isArray(input)) return `[${input.map(canonical).join(',')}]`;
+    const obj = input as Record<string, unknown>;
+    return `{${Object.keys(obj)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonical(obj[key])}`)
+      .join(',')}}`;
+  };
+  return canonical(JSON.parse(serialized));
 }
 
 function sha256(value: unknown): string {
@@ -468,7 +490,27 @@ function recomputeAuditEntry(entry: EvidenceBundleAuditEntry): string {
   return sha256(body);
 }
 
-export function verifyEvidenceBundle(bundle: EvidenceBundle): VerifyEvidenceBundleResult {
+/**
+ * Verify an evidence bundle.
+ *
+ * Structural checks (DLP, both hash chains, contentHash) prove only self-consistency —
+ * the hash algorithm is public, so anyone who rewrites the body can recompute them. The
+ * signature is the only thing that binds the body to a trusted issuer, and this function
+ * used to destructure it away without ever verifying it (EB-02).
+ *
+ * Signature contract (fail closed):
+ * - a verifier (`verifySignature` or `jwks`) supplied → the bundle MUST carry a signature
+ *   and it MUST verify; an unsigned or invalidly-signed bundle returns `ok: false`.
+ * - `requireSignature: true` without a verifier → `ok: false`
+ *   (`EVIDENCE_SIGNATURE_VERIFIER_REQUIRED`): asking for proof without keys is not a pass.
+ * - no verifier and no `requireSignature` → structural-only verification. Callers on an
+ *   acceptance path must pass a verifier; the structural result is not an authenticity
+ *   guarantee.
+ */
+export function verifyEvidenceBundle(
+  bundle: EvidenceBundle,
+  options: VerifyEvidenceBundleOptions = {},
+): VerifyEvidenceBundleResult {
   const dlpHit = findDlpViolation(bundle);
   if (dlpHit) return { ok: false, reason: `DLP field present: ${dlpHit}`, brokenAt: 'dlp' };
 
@@ -516,5 +558,43 @@ export function verifyEvidenceBundle(bundle: EvidenceBundle): VerifyEvidenceBund
     return { ok: false, reason: 'contentHash mismatch', brokenAt: 'contentHash' };
   }
 
+  return verifyBundleSignature(bundle, options);
+}
+
+function resolveSignatureVerifier(
+  options: VerifyEvidenceBundleOptions,
+): ((canonicalBody: string, signature: EvidenceSignature) => boolean) | undefined {
+  if (options.verifySignature) return options.verifySignature;
+  const jwks = options.jwks;
+  if (!jwks) return undefined;
+  return (canonicalBody, signature) => verifyEvidenceSignature(canonicalBody, signature, jwks);
+}
+
+function verifyBundleSignature(
+  bundle: EvidenceBundle,
+  options: VerifyEvidenceBundleOptions,
+): VerifyEvidenceBundleResult {
+  const verifier = resolveSignatureVerifier(options);
+  const requireSignature = options.requireSignature ?? verifier !== undefined;
+  if (!verifier) {
+    if (requireSignature) {
+      return {
+        ok: false,
+        reason: 'EVIDENCE_SIGNATURE_VERIFIER_REQUIRED: no signature verifier was supplied',
+        brokenAt: 'signature',
+      };
+    }
+    return { ok: true };
+  }
+  if (!bundle.signature) {
+    return { ok: false, reason: 'evidence bundle is not signed', brokenAt: 'signature' };
+  }
+  if (!verifier(canonicalEvidenceBody(bundle), bundle.signature)) {
+    return {
+      ok: false,
+      reason: 'evidence signature verification failed',
+      brokenAt: 'signature',
+    };
+  }
   return { ok: true };
 }

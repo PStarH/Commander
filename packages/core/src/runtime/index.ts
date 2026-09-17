@@ -210,9 +210,8 @@ export {
   getSOPMarkdown,
   getSOPDashboardData,
   renderSOPDashboardHtml,
-  type SOPListItem,
-  type SOPDashboardData,
 } from './sopDashboard';
+export type { SOPListItem, SOPDashboardData } from './sopDashboard';
 
 export { CommanderHttpServer, createHttpServer } from './httpServer';
 export { HttpRequestError, parseBody, sendJson } from './httpUtils';
@@ -301,16 +300,15 @@ export {
 } from './tenantFairnessMonitor';
 
 // Extracted runtime modules (structural-debt cleanup baseline 2026-07-05)
-export { LlmCaller, type LLMCallerDeps, type LLMCallerCallInput } from './llm/llmCaller';
+export { LlmCaller } from './llm/llmCaller';
+export type { LLMCallerDeps, LLMCallerCallInput } from './llm/llmCaller';
 export { normalizeToolCall } from './tool/toolCallNormalizer';
 export { ToolCallRetryLoopDetector } from './tool/toolCallRetryLoopDetector';
-export {
-  ToolCallSecurityGate,
-  type ToolCallSecurityGateDeps,
-  type BeforeToolCallSecurityResult,
+export { ToolCallSecurityGate } from './tool/toolCallSecurityGate';
+export type {
+  ToolCallSecurityGateDeps,
+  BeforeToolCallSecurityResult,
 } from './tool/toolCallSecurityGate';
-export {
-  TenantContextResolver,
-  type TenantContextResolverDeps,
-} from './tenant/tenantContextResolver';
+export { TenantContextResolver } from './tenant/tenantContextResolver';
+export type { TenantContextResolverDeps } from './tenant/tenantContextResolver';
 export { runWithTenant } from './tenantContext';

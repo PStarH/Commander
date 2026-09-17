@@ -1,4 +1,4 @@
-import { before, after, beforeEach, describe, it } from 'node:test';
+import { before, after, beforeEach, afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
@@ -13,22 +13,23 @@ import {
   resetTenantFairnessMonitor,
   resetTenantManager,
 } from '@commander/core/runtime';
-import {
-  recordTenantMetricUsage,
-  resetTenantMetricsStore,
-} from '../src/tenantMetricsStore';
+import { recordTenantMetricUsage, resetTenantMetricsStore } from '../src/tenantMetricsStore';
 import { exportTenantMetrics } from '../src/tenantMetricsExporter';
 
 describe('/metrics tenant label control', () => {
   let app: express.Express;
   let server: ReturnType<typeof app.listen>;
   let baseUrl: string;
+  // F-A-14: COMMANDER_LEGACY_EXECUTION was set in beforeEach with no restore.
+  let savedLegacyExecution: string | undefined;
 
   before(async () => {
     app = express();
     app.get('/metrics', (_req, res) => {
       const tenantMetrics = exportTenantMetrics(process.env.METRICS_TENANT_LABELS === 'true');
-      res.type('text/plain; version=0.0.4').send(getMetricsCollector().exportOpenMetrics() + tenantMetrics);
+      res
+        .type('text/plain; version=0.0.4')
+        .send(getMetricsCollector().exportOpenMetrics() + tenantMetrics);
     });
     server = app.listen(0);
     await new Promise<void>((resolve) => server.on('listening', resolve));
@@ -38,7 +39,10 @@ describe('/metrics tenant label control', () => {
 
   after(async () => {
     // Force-close any lingering keep-alive connections so server.close() can resolve.
-    if ('closeAllConnections' in server && typeof (server as any).closeAllConnections === 'function') {
+    if (
+      'closeAllConnections' in server &&
+      typeof (server as any).closeAllConnections === 'function'
+    ) {
       (server as any).closeAllConnections();
     }
     await new Promise<void>((resolve, reject) =>
@@ -47,6 +51,10 @@ describe('/metrics tenant label control', () => {
   });
 
   beforeEach(() => {
+    // F-A-14: save/restore the legacy-execution flag so this suite does not
+    // leak global env into later tests in the same process.
+    if (savedLegacyExecution === undefined)
+      savedLegacyExecution = process.env.COMMANDER_LEGACY_EXECUTION;
     process.env.COMMANDER_LEGACY_EXECUTION = '1';
     delete process.env.METRICS_TENANT_LABELS;
     getMetricsCollector().reset();
@@ -54,6 +62,12 @@ describe('/metrics tenant label control', () => {
     resetTokenGovernor();
     resetTenantFairnessMonitor();
     resetTenantManager();
+  });
+
+  afterEach(() => {
+    if (savedLegacyExecution === undefined) delete process.env.COMMANDER_LEGACY_EXECUTION;
+    else process.env.COMMANDER_LEGACY_EXECUTION = savedLegacyExecution;
+    savedLegacyExecution = undefined;
   });
 
   function seedTenant(tenantId: string, runs: number, tokens: number, durationMs: number) {

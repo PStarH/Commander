@@ -40,10 +40,10 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 // ---------------------------------------------------------------------------
 
 const SDK_TO_CONTRACT_RESOURCE: Record<string, string> = {
-  'runs': 'RunV2',
-  'workgraphs': 'WorkGraphV2',
-  'interactions': 'InteractionV2',
-  'artifacts': 'ArtifactV2',
+  runs: 'RunV2',
+  workgraphs: 'WorkGraphV2',
+  interactions: 'InteractionV2',
+  artifacts: 'ArtifactV2',
   'policy-bundles': 'PolicyBundleV2',
 };
 
@@ -299,7 +299,9 @@ const RESOURCE_EXAMPLES: Record<ContractSchemaName, Record<string, unknown>> = {
   },
   actionCompensationRequest: ACTION_COMPENSATION_FIXTURE,
   actionCompensationApprovalRequest: ACTION_COMPENSATION_APPROVAL_FIXTURE,
-  actionRejectionRequest: {},
+  actionRejectionRequest: {
+    reason: 'operator rejected: change window closed',
+  },
   actionSimulationResponse: { simulation: ACTION_SIMULATION_FIXTURE },
   actionResponse: ACTION_APPROVAL_FIXTURE,
   actionProposeResponse: ACTION_PROPOSE_FIXTURE,
@@ -317,7 +319,6 @@ const RESOURCE_EXAMPLES: Record<ContractSchemaName, Record<string, unknown>> = {
 // ---------------------------------------------------------------------------
 
 describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
-
   // ── a) All SDK resources exist in contract schemas ──
 
   describe('a) SDK resources exist in contract schemas', () => {
@@ -522,7 +523,11 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
           true,
           `Schema '${schemaName}' example failed validation: ${result.errors.join('; ')}`,
         );
-        assert.equal(result.errors.length, 0, `Unexpected errors for '${schemaName}': ${result.errors.join('; ')}`);
+        assert.equal(
+          result.errors.length,
+          0,
+          `Unexpected errors for '${schemaName}': ${result.errors.join('; ')}`,
+        );
       });
     }
 
@@ -533,7 +538,10 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
         // missing state, version, intentHash, etc.
       });
       assert.equal(result.ok, false, 'Should reject incomplete run');
-      assert.ok(result.errors.some((e) => e.includes('state')), 'Should report missing state field');
+      assert.ok(
+        result.errors.some((e) => e.includes('state')),
+        'Should report missing state field',
+      );
     });
 
     it('validateResource rejects invalid enum value', () => {
@@ -542,7 +550,10 @@ describe('Consumer-Driven Contract Test — SDK vs Contracts', () => {
         state: 'NOT_A_REAL_STATE',
       });
       assert.equal(result.ok, false, 'Should reject invalid enum');
-      assert.ok(result.errors.some((e) => e.includes('state')), 'Should report enum error for state');
+      assert.ok(
+        result.errors.some((e) => e.includes('state')),
+        'Should report enum error for state',
+      );
     });
   });
 });

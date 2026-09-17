@@ -11,14 +11,9 @@ import type { AuthUser } from '../src/jwtMiddleware.js';
 import type { UserRole } from '../src/userStore.js';
 
 type AuthOpts =
-  | { kind: 'scopes'; scopes: string[] }
-  | { kind: 'jwt'; role: UserRole }
-  | { kind: 'anon' };
+  { kind: 'scopes'; scopes: string[] } | { kind: 'jwt'; role: UserRole } | { kind: 'anon' };
 
-async function withApp(
-  auth: AuthOpts,
-  action: (base: string) => Promise<void>,
-): Promise<void> {
+async function withApp(auth: AuthOpts, action: (base: string) => Promise<void>): Promise<void> {
   const store = new MemoryStoreFacade(new InMemoryMemoryService(), 'tenant-ns-rbac');
   const app = express();
   app.use(express.json());
@@ -127,10 +122,7 @@ describe('namespaced memory RBAC', () => {
       const body = (await res.json()) as {
         rules: Array<{ role: string; namespaces: string[] }>;
       };
-      assert.deepEqual(
-        body.rules.map((r) => r.role).sort(),
-        ['admin', 'reader', 'writer'],
-      );
+      assert.deepEqual(body.rules.map((r) => r.role).sort(), ['admin', 'reader', 'writer']);
     });
     await withApp({ kind: 'scopes', scopes: ['write'] }, async (base) => {
       const res = await fetch(`${base}/api/namespaced-memory/acl`);

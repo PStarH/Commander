@@ -3,7 +3,9 @@
 # Commander API — Deployment
 # =============================================================================
 {{- include "commander.requireEnterpriseSecrets" . }}
+{{- include "commander.requireApiStartupSecrets" . }}
 {{- include "commander.requireLifecycleValues" . }}
+{{- include "commander.requireDurableKernel" . }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -127,13 +129,18 @@ spec:
               value: "0.0.0.0"
             - name: COMMANDER_API_REPLICAS
               value: {{ .Values.api.replicas | quote }}
+            {{- if include "commander.postgresBackend" . }}
+            # The tenant-authority runtime identity is consumed only by the
+            # proof listener, which the API starts only when PROOF_PORT is
+            # present. Emitting the identity trio without PROOF_PORT makes the
+            # API throw COMMANDER_TENANT_AUTHORITY_PROOF_PORT_REQUIRED at boot,
+            # so they are gated on the same condition as the port itself.
             - name: COMMANDER_TENANT_AUTHORITY_IMAGE_DIGEST
               value: {{ .Values.image.digest | quote }}
             - name: COMMANDER_TENANT_AUTHORITY_CONFIGURATION_SHA256
               value: {{ .Values.tenantAuthority.configurationSha256 | quote }}
             - name: COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE
               value: {{ .Values.tenantAuthority.cutoverPhase | quote }}
-            {{- if include "commander.postgresBackend" . }}
             - name: COMMANDER_TENANT_AUTHORITY_PROOF_PORT
               value: {{ .Values.tenantAuthority.apiProof.port | quote }}
             - name: COMMANDER_TENANT_AUTHORITY_PROOF_CERT_FILE
@@ -350,6 +357,9 @@ spec:
               port: http
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
+          {{- if include "commander.postgresBackend" . }}
+          # Context-aware releases gate readiness on the tenant-authority proof
+          # listener: a separate TLS port that also proves the runtime identity.
           readinessProbe:
             exec:
               command:
@@ -362,6 +372,17 @@ spec:
                   req.setTimeout(1500, () => { req.destroy(); process.exit(1); });
             initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
             periodSeconds: {{ .Values.api.health.periodSeconds }}
+          {{- else }}
+          # Without the tenant-authority proof listener the API still serves the
+          # documented readiness route, so probe that instead of a port that
+          # never opens.
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.api.health.readinessPath }}
+              port: http
+            initialDelaySeconds: {{ .Values.api.health.initialDelaySeconds }}
+            periodSeconds: {{ .Values.api.health.periodSeconds }}
+          {{- end }}
           volumeMounts:
             - name: tmp
               mountPath: /tmp

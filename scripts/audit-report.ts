@@ -4,12 +4,18 @@
  *
  * Collects operability metrics from the kernel and produces a JSON audit
  * report with HMAC signature (using IntegrityLayer from securityPrimitives).
- * The report is written to docs/audits/audit-{YYYY-MM-DD}.json.
  *
  * Modes:
  *   - Production: connects to PostgreSQL via DATABASE_URL (uses psql)
- *   - Testing:    uses InMemoryKernelRepository (when DATABASE_URL is not set
- *                 or --test flag is passed)
+ *   - Test:       uses InMemoryKernelRepository, only when --test is passed
+ *                 EXPLICITLY. A missing DATABASE_URL is never interpreted as
+ *                 "run in test mode" — it is a configuration error.
+ *
+ * A test-mode report is a fixture artifact. It is labelled
+ * executionMode=test / evidenceLevel=simulated / measurementStatus=SIMULATED
+ * and its overall `status` is NOT_EVALUATED: it can never carry production
+ * PASS semantics, whatever the fixture checks happen to produce (that result
+ * is reported separately as `fixtureChecksPassed`).
  *
  * Metrics collected:
  *   - Run count by state (PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED, PAUSED, ...)
@@ -19,14 +25,14 @@
  *   - WAL size (PostgreSQL pg_wal directory, estimated in test mode)
  *   - Active workers (count + heartbeat health)
  *   - Tenant count (unique tenants with runs)
- *   - Event log size + hash-chain integrity
+ *   - Event log size, per-aggregate sequence contiguity, and cryptographic
+ *     chain integrity. These are two DIFFERENT claims and are reported
+ *     separately; see `eventSequenceContiguity` below.
  *
  * Exit codes:
  *   0 — All metrics within acceptable bounds
- *   1 — One or more CRITICAL metrics failed:
- *        * Hash chain broken (event sequence gaps detected)
- *        * DLQ depth exceeds threshold (default 100)
- *        * No active workers / all heartbeats stale (production mode only)
+ *   1 — One or more CRITICAL metrics failed, or the configuration/connection
+ *       was unusable (AUDIT_DATABASE_REQUIRED, AUDIT_DATABASE_UNREACHABLE)
  *
  * Usage:
  *   # Production (PostgreSQL):
@@ -50,8 +56,9 @@
  */
 
 import { execSync } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { mkdirSync, writeFileSync, renameSync, existsSync, unlinkSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { IntegrityLayer } from '../packages/core/src/security/securityPrimitives';
 import { InMemoryKernelRepository } from '../packages/kernel/src/testing/inMemoryRepository';
 
@@ -62,21 +69,46 @@ const DLQ_DEPTH_THRESHOLD = parseInt(process.env.AUDIT_DLQ_DEPTH_THRESHOLD ?? '1
 const WORKER_STALE_MS = parseInt(process.env.AUDIT_WORKER_STALE_MS ?? '60000', 10);
 const SQL_TIMEOUT_MS = 30_000;
 
+/**
+ * Stable, secret-free error codes. Anything an operator sees is one of these
+ * plus a masked context value — never a raw DSN or a driver dump.
+ */
+export const AUDIT_ERROR_CODES = {
+  databaseRequired: 'AUDIT_DATABASE_REQUIRED',
+  databaseUnreachable: 'AUDIT_DATABASE_UNREACHABLE',
+  inMemoryUnavailable: 'AUDIT_IN_MEMORY_UNAVAILABLE',
+  outputNotWritable: 'AUDIT_OUTPUT_NOT_WRITABLE',
+  outputExists: 'AUDIT_OUTPUT_EXISTS',
+} as const;
+
 // ============================================================================
 // CLI flags
 // ============================================================================
 
-interface CliFlags {
+export interface CliFlags {
   json: boolean;
   test: boolean;
   help: boolean;
+  output?: string;
 }
 
-function parseFlags(argv: string[]): CliFlags {
+export function parseFlags(argv: string[]): CliFlags {
+  const outputIndex = argv.findIndex((arg) => arg === '--output' || arg.startsWith('--output='));
+  let output: string | undefined;
+  if (outputIndex >= 0) {
+    const arg = argv[outputIndex]!;
+    const value = arg.startsWith('--output=')
+      ? arg.slice('--output='.length)
+      : argv[outputIndex + 1];
+    if (value !== undefined && value.length > 0 && !value.startsWith('-')) {
+      output = value.trim() || undefined;
+    }
+  }
   return {
     json: argv.includes('--json'),
     test: argv.includes('--test') || argv.includes('--in-memory'),
     help: argv.includes('--help') || argv.includes('-h'),
+    output,
   };
 }
 
@@ -88,26 +120,32 @@ USAGE:
   npx tsx scripts/audit-report.ts [OPTIONS]
 
 OPTIONS:
-  --json     Output the JSON report to stdout instead of writing to a file
-  --test     Use InMemoryKernelRepository instead of PostgreSQL (testing mode)
-  --help, -h Show this help message
+  --json            Output the JSON report to stdout instead of writing a file
+  --test            Use InMemoryKernelRepository instead of PostgreSQL
+                    (explicit opt-in; produces a SIMULATED, non-production artifact)
+  --output <path>   Write the report to <path> instead of the default location
+  --help, -h        Show this help message
 
 MODES:
-  Production  Set DATABASE_URL to connect to PostgreSQL and collect real metrics.
-  Testing     Without DATABASE_URL (or with --test), uses InMemoryKernelRepository.
+  Production  Requires DATABASE_URL. Connects to PostgreSQL and collects real
+              metrics. A missing DATABASE_URL is an error, never a silent
+              fallback to the in-memory repository.
+  Testing     Only with --test. The report is labelled simulated and its
+              overall status is NOT_EVALUATED.
 
 ENVIRONMENT:
-  DATABASE_URL                PostgreSQL connection string (production mode)
-  AUDIT_DLQ_DEPTH_THRESHOLD   DLQ depth failure threshold (default: 100)
+  DATABASE_URL                PostgreSQL connection string (required in production)
+  AUDIT_DLQ_DEPTH_THRESHOLD   DLQ depth failure threshold (default 100)
   AUDIT_WORKER_STALE_MS       Worker heartbeat staleness threshold in ms (default: 60000)
   COMMANDER_INTEGRITY_KEY     HMAC signing key for reports (default: dev key)
 
 OUTPUT:
-  docs/audits/audit-{YYYY-MM-DD}.json  (unless --json is used)
+  Default: .internal/audits/audit-<ISO timestamp>.json
+  (An existing file is never overwritten.)
 
 EXIT CODES:
-  0  All metrics within acceptable bounds
-  1  One or more CRITICAL metrics failed
+  0  All metrics within acceptable bounds (production) / fixture checks passed (--test)
+  1  One or more CRITICAL metrics failed, or the audit could not be measured
 `);
 }
 
@@ -135,6 +173,25 @@ type StepState =
   | 'CANCELLED'
   | 'SKIPPED';
 
+/**
+ * Per-aggregate sequence contiguity.
+ *
+ * This is NOT cryptographic integrity. It only proves that the `sequence`
+ * column has no holes per aggregate. A tampered `payload` on an otherwise
+ * contiguous sequence still reports CONTIGUOUS. The two claims are therefore
+ * reported as separate fields and must not be conflated.
+ */
+export type SequenceContiguity = 'CONTIGUOUS' | 'GAPS_DETECTED' | 'UNKNOWN';
+
+/**
+ * Cryptographic chain verification outcome for the event log.
+ *
+ * `commander_events` has no prev-hash / entry-hash columns in the current
+ * schema, so there is nothing to verify. NOT_VERIFIED means exactly that —
+ * it is an absence of evidence, never a statement that the log is intact.
+ */
+export type CryptographicChainIntegrity = 'VERIFIED' | 'NOT_VERIFIED' | 'EMPTY';
+
 interface AuditMetrics {
   /** Run counts grouped by state */
   runsByState: Record<string, number>;
@@ -148,8 +205,10 @@ interface AuditMetrics {
   outboxPending: number;
   /** Total event log entries */
   eventLogSize: number;
-  /** Whether the event log hash chain is intact (no sequence gaps) */
-  hashChainIntact: boolean;
+  /** Whether the event log sequence numbers are contiguous per aggregate */
+  eventSequenceContiguity: SequenceContiguity;
+  /** Whether a cryptographic chain over the event log was actually verified */
+  cryptographicChainIntegrity: CryptographicChainIntegrity;
   /** Number of registered active workers */
   workerCount: number;
   /** Whether all active workers have recent heartbeats */
@@ -164,11 +223,27 @@ interface AuditMetrics {
   tenantCount: number;
 }
 
+export type AuditStatus = 'PASS' | 'FAIL' | 'NOT_EVALUATED';
+
 interface AuditReport {
+  /** Report schema version. Consumers must reject unknown versions. */
+  schemaVersion: 2;
   /** ISO timestamp of report generation */
   timestamp: string;
   /** Data source: "postgresql" or "in-memory" */
   source: string;
+  /** Whether this artifact came from a real database or the in-memory fixture */
+  executionMode: 'production' | 'test';
+  /** Evidence level of the measurements in this artifact */
+  evidenceLevel: 'live' | 'simulated';
+  /** Whether the numbers were actually measured against a real system */
+  measurementStatus: 'MEASURED' | 'SIMULATED';
+  /**
+   * What this report's integrity claim actually covers. SEQUENCE_ONLY means
+   * only per-aggregate sequence contiguity was checked; no cryptographic chain
+   * was verified.
+   */
+  integrityClaim: 'SEQUENCE_ONLY' | 'NONE';
   /** Masked database URL for traceability (production mode only) */
   databaseUrlMasked: string;
   /** Thresholds used for evaluation */
@@ -178,8 +253,16 @@ interface AuditReport {
   };
   /** Collected metrics */
   metrics: AuditMetrics;
-  /** Overall pass/fail status */
-  status: 'PASS' | 'FAIL';
+  /**
+   * Overall status. NOT_EVALUATED means this artifact is not a production
+   * audit verdict (e.g. it was produced with --test).
+   */
+  status: AuditStatus;
+  /**
+   * Test mode only: the outcome of the fixture checks. Never a production
+   * verdict, and never conflated with `status`.
+   */
+  fixtureChecksPassed?: boolean;
   /** List of critical failures (empty if PASS) */
   failures: string[];
   /** List of non-critical warnings */
@@ -194,7 +277,20 @@ interface AuditReport {
 // Database helpers (psql via execSync — same pattern as dr-backup-verify.ts)
 // ============================================================================
 
-const REPO_ROOT = resolve(__dirname, '..');
+export const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+
+/**
+ * Parse a scalar SQL result as a non-negative integer.
+ * Returns undefined for empty, non-numeric, negative, or non-finite input so
+ * that callers cannot mistake "not measured" for a measured zero.
+ */
+export function parseNonNegativeInt(raw: string | undefined): number | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return undefined;
+  const value = Number.parseInt(trimmed, 10);
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
 
 /**
  * Execute a SQL query against the database and return the raw output.
@@ -318,22 +414,39 @@ function collectMetricsFromPostgres(dbUrl: string): AuditMetrics {
   // ── Event log size ──────────────────────────────────────────────────────────
   const eventLogSize = parseInt(queryScalar(dbUrl, 'SELECT COUNT(*) FROM commander_events'), 10);
 
-  // ── Hash chain integrity ───────────────────────────────────────────────────
-  // Verifies that event sequences are contiguous per aggregate (no gaps).
-  // Returns 1 if intact (no gaps), 0 if broken.
-  const hashChainResult = queryScalar(
-    dbUrl,
-    `SELECT CASE WHEN COUNT(*) = 0 THEN 1 ELSE 0 END
-     FROM (
-       SELECT aggregate_type, aggregate_id,
-              MAX(sequence) - MIN(sequence) + 1 AS expected,
-              COUNT(*) AS actual
-       FROM commander_events
-       GROUP BY aggregate_type, aggregate_id
-     ) t
-     WHERE expected <> actual`,
-  );
-  const hashChainIntact = hashChainResult !== '0';
+  // ── Event log: sequence contiguity (NOT cryptographic integrity) ───────────
+  // commander_events is uniquely keyed by (aggregate_type, aggregate_id,
+  // sequence); tenant_id is functionally determined by that key, so the GROUP
+  // BY below matches the real unique key and does not need a tenant column.
+  // A query failure or an unparseable count is UNKNOWN — never "intact".
+  let eventSequenceContiguity: SequenceContiguity = 'UNKNOWN';
+  try {
+    const gapCount = parseNonNegativeInt(
+      queryScalar(
+        dbUrl,
+        `SELECT COUNT(*) FROM (
+           SELECT aggregate_type, aggregate_id,
+                  MAX(sequence) - MIN(sequence) + 1 AS expected,
+                  COUNT(*) AS actual
+           FROM commander_events
+           GROUP BY aggregate_type, aggregate_id
+         ) t
+         WHERE expected <> actual`,
+      ),
+    );
+    if (gapCount !== undefined) {
+      eventSequenceContiguity = gapCount === 0 ? 'CONTIGUOUS' : 'GAPS_DETECTED';
+    }
+  } catch {
+    eventSequenceContiguity = 'UNKNOWN';
+  }
+
+  // ── Event log: cryptographic chain integrity ───────────────────────────────
+  // commander_events has no prev-hash / entry-hash / signature columns, so
+  // there is no chain in this store to verify. Report the capability gap
+  // honestly rather than deriving an integrity claim from sequence numbers.
+  const cryptographicChainIntegrity: CryptographicChainIntegrity =
+    eventLogSize === 0 ? 'EMPTY' : 'NOT_VERIFIED';
 
   // ── WAL size ────────────────────────────────────────────────────────────────
   // Query pg_wal directory size via pg_walfile_name + pg_ls_dir, or use
@@ -385,7 +498,8 @@ function collectMetricsFromPostgres(dbUrl: string): AuditMetrics {
     dlqOldestEntry,
     outboxPending: isNaN(outboxPending) ? 0 : outboxPending,
     eventLogSize: isNaN(eventLogSize) ? 0 : eventLogSize,
-    hashChainIntact,
+    eventSequenceContiguity,
+    cryptographicChainIntegrity,
     workerCount: isNaN(workerCount) ? 0 : workerCount,
     workerHeartbeatsHealthy,
     staleWorkerCount: isNaN(staleWorkerCount) ? 0 : staleWorkerCount,
@@ -446,25 +560,29 @@ async function collectMetricsFromInMemory(repo?: InMemoryKernelRepository): Prom
   // ── Event log size ──────────────────────────────────────────────────────────
   const eventLogSize = snapshot.events.length;
 
-  // ── Hash chain integrity ───────────────────────────────────────────────────
-  // Check for sequence gaps per aggregate
+  // ── Event log sequence contiguity (NOT cryptographic integrity) ────────────
   const aggregateSequences: Record<string, number[]> = {};
   for (const event of snapshot.events) {
     const key = `${event.aggregateType}:${event.aggregateId}`;
     if (!aggregateSequences[key]) aggregateSequences[key] = [];
     aggregateSequences[key].push(event.sequence);
   }
-  let hashChainIntact = true;
+  let sequencesContiguous = true;
   for (const sequences of Object.values(aggregateSequences)) {
     sequences.sort((a, b) => a - b);
     for (let i = 1; i < sequences.length; i++) {
-      if (sequences[i] !== sequences[i - 1] + 1) {
-        hashChainIntact = false;
+      if (sequences[i] !== sequences[i - 1]! + 1) {
+        sequencesContiguous = false;
         break;
       }
     }
-    if (!hashChainIntact) break;
+    if (!sequencesContiguous) break;
   }
+  const eventSequenceContiguity: SequenceContiguity = sequencesContiguous
+    ? 'CONTIGUOUS'
+    : 'GAPS_DETECTED';
+  const cryptographicChainIntegrity: CryptographicChainIntegrity =
+    eventLogSize === 0 ? 'EMPTY' : 'NOT_VERIFIED';
 
   // ── WAL size (estimated from event count — ~2KB per event) ──────────────────
   const walSizeMb = Math.round((eventLogSize * 2048) / (1024 * 1024));
@@ -487,7 +605,8 @@ async function collectMetricsFromInMemory(repo?: InMemoryKernelRepository): Prom
     dlqOldestEntry,
     outboxPending,
     eventLogSize,
-    hashChainIntact,
+    eventSequenceContiguity,
+    cryptographicChainIntegrity,
     workerCount,
     workerHeartbeatsHealthy,
     staleWorkerCount,
@@ -502,21 +621,22 @@ async function collectMetricsFromInMemory(repo?: InMemoryKernelRepository): Prom
 // ============================================================================
 
 /**
- * Generate the timestamp-based filename for the audit report.
- * Format: audit-{YYYY-MM-DD}.json
+ * Generate a unique, collision-free report filename.
+ * Format: audit-{ISO-8601-with-dashes}.json
+ * The previous date-only name silently overwrote same-day history.
  */
-function generateReportFilename(): string {
-  const now = new Date();
-  const yyyy = now.getUTCFullYear();
-  const mm = String(now.getUTCMonth() + 1).padStart(2, '0');
-  const dd = String(now.getUTCDate()).padStart(2, '0');
-  return `audit-${yyyy}-${mm}-${dd}.json`;
+function generateReportFilename(now: Date = new Date()): string {
+  return `audit-${now.toISOString().replace(/[:.]/g, '-')}.json`;
 }
 
 /**
- * Evaluate metrics and produce pass/fail status with failure reasons.
+ * Evaluate metrics and produce a pass/fail status with failure reasons.
+ *
+ * Fail-closed: an unmeasurable integrity claim is a failure, not a warning.
+ * Sequence contiguity and cryptographic integrity are separate claims and are
+ * evaluated separately.
  */
-function evaluate(
+export function evaluate(
   metrics: AuditMetrics,
   isTestMode: boolean,
 ): {
@@ -527,10 +647,23 @@ function evaluate(
   const failures: string[] = [];
   const warnings: string[] = [];
 
-  // Critical: Hash chain broken
-  if (!metrics.hashChainIntact) {
+  // Critical: sequence gaps in the event log
+  if (metrics.eventSequenceContiguity === 'GAPS_DETECTED') {
     failures.push(
-      'CRITICAL: Event log hash-chain integrity check FAILED — sequence gaps detected in commander_events',
+      'CRITICAL: Event log sequence contiguity FAILED — sequence gaps detected in commander_events',
+    );
+  }
+  if (metrics.eventSequenceContiguity === 'UNKNOWN') {
+    failures.push(
+      'CRITICAL: Event log sequence contiguity could not be measured (UNKNOWN) — treated as failure',
+    );
+  }
+
+  // Critical: no verifiable cryptographic chain. This is a capability gap, not
+  // a finding of tampering, but it must never be reported as intact.
+  if (metrics.cryptographicChainIntegrity === 'NOT_VERIFIED') {
+    failures.push(
+      'CRITICAL: Event log cryptographic chain integrity is NOT_VERIFIED — commander_events has no verifiable hash chain in this schema',
     );
   }
 
@@ -553,6 +686,11 @@ function evaluate(
   }
 
   // Non-critical warnings
+  if (metrics.eventSequenceContiguity === 'CONTIGUOUS') {
+    warnings.push(
+      'INFO: sequence numbers are contiguous per aggregate; this is not cryptographic integrity',
+    );
+  }
   if (metrics.outboxPending > 0) {
     warnings.push(`WARNING: ${metrics.outboxPending} outbox messages pending publication`);
   }
@@ -578,26 +716,37 @@ function evaluate(
 
 /**
  * Build and HMAC-sign the final audit report using IntegrityLayer.
+ *
+ * In test mode the overall status is always NOT_EVALUATED: a fixture run is
+ * not a production verdict. The fixture outcome is reported separately as
+ * `fixtureChecksPassed`, and the signature covers every one of these labels so
+ * a test artifact cannot be re-labelled as a production pass.
  */
-function buildReport(
+export function buildReport(
   source: string,
   dbUrlMasked: string,
   metrics: AuditMetrics,
   isTestMode: boolean,
 ): AuditReport {
-  const { status, failures, warnings } = evaluate(metrics, isTestMode);
+  const { status: fixtureStatus, failures, warnings } = evaluate(metrics, isTestMode);
   const timestamp = new Date().toISOString();
 
   const reportData: Omit<AuditReport, '_sig' | '_ts'> = {
+    schemaVersion: 2,
     timestamp,
     source,
+    executionMode: isTestMode ? 'test' : 'production',
+    evidenceLevel: isTestMode ? 'simulated' : 'live',
+    measurementStatus: isTestMode ? 'SIMULATED' : 'MEASURED',
+    integrityClaim: 'SEQUENCE_ONLY',
     databaseUrlMasked: dbUrlMasked,
     thresholds: {
       dlqDepth: DLQ_DEPTH_THRESHOLD,
       workerStaleMs: WORKER_STALE_MS,
     },
     metrics,
-    status,
+    status: isTestMode ? 'NOT_EVALUATED' : fixtureStatus,
+    ...(isTestMode ? { fixtureChecksPassed: fixtureStatus === 'PASS' } : {}),
     failures,
     warnings,
   };
@@ -620,10 +769,18 @@ function printSummary(report: AuditReport, reportFilename: string | null): void 
   console.log(border);
   console.log(`  Timestamp:     ${report.timestamp}`);
   console.log(`  Source:        ${report.source}`);
+  console.log(`  Execution:     ${report.executionMode} (evidence: ${report.evidenceLevel})`);
+  console.log(`  Measurement:   ${report.measurementStatus}`);
+  console.log(`  Integrity:     ${report.integrityClaim}`);
   if (report.databaseUrlMasked) {
     console.log(`  Database:      ${report.databaseUrlMasked}`);
   }
-  console.log(`  Status:        ${report.status === 'PASS' ? 'PASS' : 'FAIL'}`);
+  console.log(`  Status:        ${report.status}`);
+  if (report.status === 'NOT_EVALUATED') {
+    console.log(
+      `  Fixture checks: ${report.fixtureChecksPassed ? 'passed' : 'failed'} (NOT a production verdict)`,
+    );
+  }
   console.log(thin);
 
   // Runs by state
@@ -677,7 +834,10 @@ function printSummary(report: AuditReport, reportFilename: string | null): void 
   // Event log
   console.log('  Event log:');
   console.log(`    Size:                   ${String(m.eventLogSize).padStart(8)}`);
-  console.log(`    Hash chain integrity:   ${m.hashChainIntact ? 'INTACT' : 'BROKEN'}`);
+  console.log(
+    `    Sequence contiguity:    ${m.eventSequenceContiguity} (not cryptographic integrity)`,
+  );
+  console.log(`    Cryptographic chain:    ${m.cryptographicChainIntegrity}`);
   console.log(thin);
 
   // Workers
@@ -706,7 +866,7 @@ function printSummary(report: AuditReport, reportFilename: string | null): void 
   }
 
   if (reportFilename) {
-    console.log(`  Report file: docs/audits/${reportFilename}`);
+    console.log(`  Report file: ${reportFilename}`);
   }
   console.log(`  Signature:   ${report._sig.slice(0, 16)}...`);
   console.log(border);
@@ -717,16 +877,54 @@ function printSummary(report: AuditReport, reportFilename: string | null): void 
 // Main
 // ============================================================================
 
-async function main(): Promise<void> {
-  const flags = parseFlags(process.argv.slice(2));
+/** Default output directory: a controlled internal path, not the public docs tree. */
+export const DEFAULT_AUDIT_OUTPUT_DIR = join(REPO_ROOT, '.internal', 'audits');
+
+/**
+ * Atomically write a report: temp file with owner-only permissions, then
+ * rename. Never overwrites an existing report.
+ */
+export function writeReportAtomic(reportPath: string, body: string): void {
+  if (existsSync(reportPath)) {
+    throw new Error(AUDIT_ERROR_CODES.outputExists);
+  }
+  mkdirSync(dirname(reportPath), { recursive: true });
+  const tmpPath = `${reportPath}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmpPath, body, { encoding: 'utf-8', mode: 0o600 });
+    renameSync(tmpPath, reportPath);
+  } catch (err) {
+    try {
+      if (existsSync(tmpPath)) unlinkSync(tmpPath);
+    } catch {
+      /* best-effort temp cleanup */
+    }
+    throw err;
+  }
+}
+
+export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
+  const flags = parseFlags(argv);
 
   if (flags.help) {
     printHelp();
-    process.exit(0);
+    return;
   }
 
-  const dbUrl = process.env.DATABASE_URL;
-  const isTestMode = flags.test || !dbUrl;
+  const dbUrl = process.env.DATABASE_URL?.trim();
+  // --test is an explicit opt-in. A missing DATABASE_URL is a configuration
+  // error, never an implicit switch to the in-memory fixture.
+  const isTestMode = flags.test;
+
+  if (!isTestMode && !dbUrl) {
+    console.error(
+      `${AUDIT_ERROR_CODES.databaseRequired}: DATABASE_URL is not set. ` +
+        'Refusing to fall back to the in-memory fixture for a production audit. ' +
+        'Pass --test explicitly if a fixture run is what you want.',
+    );
+    process.exitCode = 1;
+    return;
+  }
 
   // ── Collect metrics ────────────────────────────────────────────────────────
   let metrics: AuditMetrics;
@@ -739,25 +937,22 @@ async function main(): Promise<void> {
     try {
       metrics = await collectMetricsFromInMemory();
     } catch (err) {
-      console.error('');
-      console.error('ERROR: Failed to collect audit metrics from InMemoryKernelRepository.');
-      console.error(`  ${(err as Error).message}`);
-      console.error('');
-      process.exit(1);
+      console.error(`${AUDIT_ERROR_CODES.inMemoryUnavailable}: ${(err as Error).name}`);
+      process.exitCode = 1;
+      return;
     }
   } else {
     source = 'postgresql';
     dbUrlMasked = maskDbUrl(dbUrl!);
     try {
       metrics = collectMetricsFromPostgres(dbUrl!);
-    } catch (err) {
-      console.error('');
-      console.error('ERROR: Failed to collect audit metrics from database.');
-      console.error(`  ${(err as Error).message}`);
-      console.error('');
-      console.error('Tip: Use --test flag to run with InMemoryKernelRepository instead.');
-      console.error('');
-      process.exit(1);
+    } catch {
+      console.error(
+        `${AUDIT_ERROR_CODES.databaseUnreachable}: could not collect audit metrics from ${dbUrlMasked}.`,
+      );
+      console.error('No report was produced. Use --test for an in-memory fixture run.');
+      process.exitCode = 1;
+      return;
     }
   }
 
@@ -766,30 +961,49 @@ async function main(): Promise<void> {
 
   // ── Output ───────────────────────────────────────────────────────────────────
   if (flags.json) {
-    // JSON output to stdout
     console.log(JSON.stringify(report, null, 2));
   } else {
-    // Write report to docs/audits/ and print human-readable summary
-    const auditsDir = join(REPO_ROOT, 'docs', 'audits');
-    mkdirSync(auditsDir, { recursive: true });
+    const reportPath = flags.output
+      ? resolve(flags.output)
+      : join(DEFAULT_AUDIT_OUTPUT_DIR, generateReportFilename());
+    try {
+      writeReportAtomic(reportPath, JSON.stringify(report, null, 2) + '\n');
+    } catch (err) {
+      const code = (err as Error).message;
+      console.error(
+        code === AUDIT_ERROR_CODES.outputExists
+          ? `${AUDIT_ERROR_CODES.outputExists}: ${reportPath} already exists; refusing to overwrite.`
+          : `${AUDIT_ERROR_CODES.outputNotWritable}: ${reportPath}`,
+      );
+      process.exitCode = 1;
+      return;
+    }
 
-    const reportFilename = generateReportFilename();
-    const reportPath = join(auditsDir, reportFilename);
-    writeFileSync(reportPath, JSON.stringify(report, null, 2) + '\n', 'utf-8');
-
-    printSummary(report, reportFilename);
+    printSummary(report, reportPath);
 
     if (report.status === 'FAIL') {
       console.error(`Audit FAILED — ${report.failures.length} critical issue(s) found.`);
       console.error(`Report written to: ${reportPath}`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
-
-    console.log(`Audit PASSED — report written to: ${reportPath}`);
+    if (report.status === 'NOT_EVALUATED') {
+      console.log(
+        `Audit NOT_EVALUATED (fixture checks ${report.fixtureChecksPassed ? 'passed' : 'failed'}) — report written to: ${reportPath}`,
+      );
+    } else {
+      console.log(`Audit PASSED — report written to: ${reportPath}`);
+    }
   }
 
-  // ── Exit code ──────────────────────────────────────────────────────────────────
-  process.exit(report.status === 'FAIL' ? 1 : 0);
+  // ── Exit code ────────────────────────────────────────────────────────────────
+  if (report.status === 'FAIL') {
+    process.exitCode = 1;
+  } else if (report.status === 'NOT_EVALUATED' && report.fixtureChecksPassed !== true) {
+    process.exitCode = 1;
+  }
 }
 
-main();
+if (import.meta.url === `file://${process.argv[1]}`) {
+  main();
+}

@@ -21,6 +21,20 @@ import {
   makeContext,
   resetGlobalState,
 } from './e2eTestHelpers';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file drives deploy/rollback tool loops end to end through
+// AgentRuntime.execute() and asserts nothing about SideEffectGate admission, so
+// it opts in explicitly to the always-admit unit fixture. The global default is
+// now the real, fail-closed gate. This is a unit convenience, NOT an admission
+// proof.
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 interface DeployEnv {
   baseDir: string;

@@ -1,6 +1,18 @@
 # @commander/sdk
 
-TypeScript client for Commander's canonical Gateway V1 API.
+TypeScript SDK for Commander. It ships **two** clients with different
+requirements — pick the one that matches how you run Commander.
+
+| Client | Transport | Needs `@commander/core` | Use it for |
+| --- | --- | --- | --- |
+| `CommanderGatewayClient` | HTTP to the Gateway `/v1` API | No | The current server path. Recommended for integrations. |
+| `CommanderClient` | In-process (dynamic import) | Yes (peer dependency) | Embedding the orchestration runtime in your own Node process. Alpha. |
+
+Both are exported from the package root:
+
+```typescript
+import { CommanderGatewayClient, CommanderClient } from '@commander/sdk';
+```
 
 > Alpha: use this package for evaluated integrations only. It is not a claim
 > that Commander or the Gateway is production-ready.
@@ -41,8 +53,29 @@ Consequential actions use the `/v1/actions` methods on
 digest and policy snapshot, and verify the evidence receipt before treating an
 action as complete.
 
-The legacy in-process `CommanderClient` remains alpha. It may initialize local
-state and configured tools and is not a read-only first-user path.
+## In-process client
+
+`CommanderClient` embeds the runtime in your process. It dynamically imports
+`@commander/core`, so `@commander/core` must be installed alongside this
+package. It is **alpha** and is **not** a read-only path: it may initialize
+local state under `.commander_state/` and invoke configured tools.
+
+```typescript
+import { CommanderClient } from '@commander/sdk';
+
+const client = new CommanderClient({
+  provider: 'openai',
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+await client.connect();
+const result = await client.run('Summarise this repository');
+await client.disconnect();
+```
+
+Other members: `plan(task)`, `createAgent` / `submitTask` / `awaitTask` for
+multi-agent work, `writeMemory` / `queryMemory` / `getMemoryStats`,
+`onEvent(handler)` for streaming, and `getStatus()` / `getReliabilityStats()`.
 
 See the repository's `PRIVACY.md` and enterprise quickstart before sending
 sensitive data or enabling target-system writes.

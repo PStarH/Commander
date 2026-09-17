@@ -1,8 +1,24 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
+import { createEvidenceSigner } from '@commander/effect-broker';
 import type { CompensationOutboxPort } from '@commander/kernel';
 import { CompensationDaemon } from './compensationDaemon.js';
 import { canonicalCompensationHash } from '../../kernel/src/ops/compensationAuthority.js';
+
+/**
+ * A real signer rather than a `verify: () => true` double: the assertion below
+ * requires the daemon to hand back already-committed evidence untouched, and
+ * re-signing it (which the stub hid, because it always returned the same
+ * signature value) is now observable.
+ */
+const TEST_EVIDENCE_SIGNER = createEvidenceSigner({
+  privateKeyPem: generateKeyPairSync('ed25519').privateKey.export({
+    type: 'pkcs8',
+    format: 'pem',
+  }) as string,
+  keyId: 'compensation-daemon-test-key',
+});
 
 const WORKER = {
   workerId: 'compensation:pod-a',
@@ -159,10 +175,7 @@ describe('CompensationDaemon', () => {
         }),
       } as never,
       tokenProvider: async () => 'token',
-      evidenceSigner: {
-        sign: async () => evidence.signature,
-        verify: () => true,
-      },
+      evidenceSigner: TEST_EVIDENCE_SIGNER,
       terminalEvidenceContext: {
         getTerminalEvidenceContext: async (...args: unknown[]) => {
           contextReads.push(args);

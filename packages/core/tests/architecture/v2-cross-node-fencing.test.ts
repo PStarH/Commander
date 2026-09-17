@@ -588,7 +588,7 @@ describe('V2 Cross-Node Fencing — In-Memory Lease Transfer & Zombie Rejection'
 
   // ─── 10. Effect idempotency with fencing: same effect key replayed after lease transfer ───
 
-  it('should reject zombie admitEffect but allow idempotent replay by new lease holder', async () => {
+  it('should reject zombie admitEffect, replay same-key admission idempotently, and park an effect-bearing step for reconciliation', async () => {
     const command = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 3 }]);
     const run = await kernel.createRun(command, 'gateway');
 
@@ -624,18 +624,63 @@ describe('V2 Cross-Node Fencing — In-Memory Lease Transfer & Zombie Rejection'
       assert.equal(admitted1.replayed, false, 'First admission should not be a replay');
     }
 
+    // Re-admitting the same idempotencyKey on the SAME live lease is an
+    // idempotent replay — the effect is not created twice. (This is the
+    // reachable form of "replay": `admitEffectValidated` requires the step to be
+    // RUNNING under a live lease, so the replay must be observed before the
+    // lease expires.)
+    const replay = await kernel.admitEffect({
+      id: randomUUID(),
+      runId: run.id,
+      stepId: c1!.id,
+      tenantId,
+      type: 'notification',
+      idempotencyKey: 'effect-1',
+      policyDecisionId: 'policy-1',
+      policySnapshotId: 'policy-1',
+      actionDigest: 'a'.repeat(64),
+      request: effectRequest,
+      lease: lease1,
+      actor: 'worker-1',
+    });
+    assert.equal(replay.admitted, true, 'Same-key re-admission on a live lease should be admitted');
+    if (replay.admitted) {
+      assert.equal(
+        replay.replayed,
+        true,
+        'Second admission with the same idempotencyKey must be an idempotent replay',
+      );
+    }
+
     // Sleep 80ms, reclaim (lease expires)
     await sleep(80);
-    await kernel.reclaimExpiredLeases(new Date(), 100);
+    const reclaimed = await kernel.reclaimExpiredLeases(new Date(), 100);
+    assert.equal(reclaimed.length, 1, 'exactly one expired lease should be reclaimed');
 
-    // Worker-2 claims (gets new lease)
+    // The step already has an ADMITTED effect, so the lease expiry must NOT
+    // requeue it for re-execution — that would risk running the effect twice.
+    // It goes to WAITING_FOR_RECONCILIATION instead: the effect may or may not
+    // have reached the outside world, so a reconciler must resolve it first.
+    assert.equal(
+      reclaimed[0].state,
+      'WAITING_FOR_RECONCILIATION',
+      'a step with an admitted effect must be reconciled, not blindly requeued',
+    );
+
+    // Fail-closed: a step awaiting reconciliation is not claimable, so no worker
+    // can re-run the step (and therefore cannot re-emit the effect) until the
+    // reconciler has decided its outcome.
     const c2 = await kernel.claimNextStep({
       workerId: 'worker-2',
       leaseTtlMs: 30_000,
       tenantIds: [],
       capabilities: [],
     });
-    assert.ok(c2, 'Worker-2 should claim the requeued step');
+    assert.equal(
+      c2,
+      null,
+      'Worker-2 must not be able to claim a step that is awaiting reconciliation',
+    );
 
     // Zombie Worker-1 tries admitEffect with stale lease for same idempotencyKey → LEASE_LOST
     const zombieAdmit = await kernel.admitEffect({
@@ -655,30 +700,6 @@ describe('V2 Cross-Node Fencing — In-Memory Lease Transfer & Zombie Rejection'
     assert.equal(zombieAdmit.admitted, false, 'Zombie admitEffect should be rejected');
     if (!zombieAdmit.admitted) {
       assert.equal(zombieAdmit.reason, 'LEASE_LOST', 'Zombie reject reason should be LEASE_LOST');
-    }
-
-    // Worker-2 tries admitEffect with valid lease for same idempotencyKey → idempotent replay
-    const replay = await kernel.admitEffect({
-      id: randomUUID(),
-      runId: run.id,
-      stepId: c2!.id,
-      tenantId,
-      type: 'notification',
-      idempotencyKey: 'effect-1',
-      policyDecisionId: 'policy-1',
-      policySnapshotId: 'policy-1',
-      actionDigest: 'a'.repeat(64),
-      request: effectRequest,
-      lease: c2!.lease!,
-      actor: 'worker-2',
-    });
-    assert.equal(replay.admitted, true, 'Worker-2 should successfully admit (replay) the effect');
-    if (replay.admitted) {
-      assert.equal(
-        replay.replayed,
-        true,
-        'Second admission with same idempotencyKey should be an idempotent replay',
-      );
     }
   });
 
