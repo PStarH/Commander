@@ -488,6 +488,16 @@ jobs:
       OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
       GIT_TERMINAL_PROMPT: '0'
       COMMANDER_INTERACTION_DB: ':memory:'
+      # Provisioned-instance admission for scripts that MUTATE the database
+      # (scripts/ci-database-scope.ts). Without these the bootstrap job fails
+      # closed with CI_DATABASE_MUTATION_REFUSED before any test runs. The
+      # service container above is the provisioner-owned instance: it is
+      # discarded with the runner. The guard's own header records that it cannot
+      # prove exclusive ownership — that is why its loopback/private-host check
+      # is the load-bearing control, and this target is localhost.
+      COMMANDER_CI_INSTANCE_MUTATION: 'yes'
+      COMMANDER_CI_INSTANCE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMMANDER_CI_PROVISION_TOKEN: ci-${{ github.run_id }}-${{ github.run_attempt }}-provision
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
@@ -664,6 +674,11 @@ jobs:
       COMMANDER_TASK1_PG_URL: postgres://commander_ci_admin:commander_ci_admin@localhost:5432/commander
       COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
       OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
+      # See the matching block in kernel-postgres-integration: the migration
+      # bootstrap refuses to run without provisioned-instance admission.
+      COMMANDER_CI_INSTANCE_MUTATION: 'yes'
+      COMMANDER_CI_INSTANCE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMMANDER_CI_PROVISION_TOKEN: ci-${{ github.run_id }}-${{ github.run_attempt }}-provision
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
