@@ -14,6 +14,10 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Send, Trash2, Loader, AlertCircle } from 'lucide-react';
 import { sendChatMessageStream, API_BASE, PROJECT_ID, getAuthToken } from '../api';
+import {
+  openAuthenticatedEventStream,
+  type AuthenticatedEventStream,
+} from '../lib/authenticatedEventStream';
 import type { ChatMessage, ChatStreamStep } from '../api';
 
 export function ChatPage() {
@@ -24,7 +28,7 @@ export function ChatPage() {
   const [streamingThoughts, setStreamingThoughts] = useState<string[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const eventStreamRef = useRef<AuthenticatedEventStream | null>(null);
 
   // Load conversation history on mount
   useEffect(() => {
@@ -48,73 +52,47 @@ export function ChatPage() {
 
   // Subscribe to SSE for real-time Agent thoughts during execution
   const subscribeToStream = useCallback(() => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
-
-    const params = new URLSearchParams({
-      topics: 'agent.message,tool.executed,tool.started',
-    });
-    const token = getAuthToken();
-    if (token) {
-      // Cookie preferred when API is same-site; query kept as cross-origin fallback
-      // (server strips access_token from req.url before logging).
-      document.cookie = `commander_access_token=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
-      params.set('access_token', token);
-    }
-    const es = new EventSource(`${API_BASE}/projects/${PROJECT_ID}/events?${params.toString()}`, {
-      withCredentials: true,
-    });
-    eventSourceRef.current = es;
-
-    es.addEventListener('agent.message', (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data);
-        if (data.payload?.content) {
-          setStreamingThoughts((prev) => [...prev, data.payload.content]);
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    });
-
-    es.addEventListener('tool.started', (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data);
-        if (data.payload?.toolName) {
-          setStreamingThoughts((prev) => [...prev, `🔧 Using tool: ${data.payload.toolName}`]);
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    });
-
-    es.addEventListener('tool.executed', (e) => {
-      try {
-        const data = JSON.parse((e as MessageEvent).data);
-        if (data.payload?.toolName && data.payload?.success !== undefined) {
-          const status = data.payload.success ? '✓' : '✗';
-          setStreamingThoughts((prev) => [
-            ...prev,
-            `${status} Tool ${data.payload.toolName} ${data.payload.success ? 'completed' : 'failed'}`,
-          ]);
-        }
-      } catch {
-        // Ignore parse errors
-      }
-    });
-
-    es.onerror = () => {
-      // SSE will auto-reconnect; no action needed
-    };
+    eventStreamRef.current?.close();
+    const topics = 'agent.message,tool.executed,tool.started';
+    const stream = openAuthenticatedEventStream(
+      `${API_BASE}/projects/${PROJECT_ID}/events?topics=${encodeURIComponent(topics)}`,
+      getAuthToken(),
+      {
+        onEvent: (eventName, rawData) => {
+          try {
+            const data = JSON.parse(rawData) as {
+              payload?: { content?: string; toolName?: string; success?: boolean };
+            };
+            const payload = data.payload;
+            if (eventName === 'agent.message' && payload?.content) {
+              const content = payload.content;
+              setStreamingThoughts((prev) => [...prev, content]);
+            } else if (eventName === 'tool.started' && payload?.toolName) {
+              const toolName = payload.toolName;
+              setStreamingThoughts((prev) => [...prev, `Using tool: ${toolName}`]);
+            } else if (
+              eventName === 'tool.executed' &&
+              payload?.toolName &&
+              payload.success !== undefined
+            ) {
+              const toolName = payload.toolName;
+              const status = payload.success ? 'completed' : 'failed';
+              setStreamingThoughts((prev) => [...prev, `Tool ${toolName} ${status}`]);
+            }
+          } catch {
+            // Ignore malformed event payloads; the authenticated stream remains open.
+          }
+        },
+      },
+    );
+    eventStreamRef.current = stream;
+    void stream.ready.catch(() => undefined);
   }, []);
 
   // Cleanup SSE on unmount
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      eventStreamRef.current?.close();
     };
   }, []);
 
@@ -255,10 +233,8 @@ export function ChatPage() {
     } finally {
       setLoading(false);
       setStreamingThoughts([]);
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-        eventSourceRef.current = null;
-      }
+      eventStreamRef.current?.close();
+      eventStreamRef.current = null;
       inputRef.current?.focus();
     }
   }

@@ -16,6 +16,7 @@ import * as path from 'node:path';
 import type { AgentRuntimeInterface } from '../runtime';
 import type { AgentExecutionContext } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
+import { assessGovernanceRiskLevel } from '../ultimate/riskAssessor';
 
 // ============================================================================
 // Types
@@ -413,13 +414,20 @@ export async function runShowcase(
   // Phase 3: Run Red and Blue teams in parallel (with graceful degradation)
   logger.info('Showcase', 'Running Red and Blue teams...');
 
-  const baseCtx: Omit<AgentExecutionContext, 'agentId' | 'goal'> = {
+  // ET-02: the governance profile was a hardcoded 'LOW' for both teams, so the
+  // approval/escalation gates could never fire on this path either. Each agent
+  // now gets the level measured from its own goal.
+  const baseCtx: Omit<AgentExecutionContext, 'agentId' | 'goal' | 'contextData'> = {
     projectId: 'showcase',
-    contextData: { governanceProfile: { riskLevel: 'LOW' } },
     availableTools: [],
     maxSteps: 10,
     tokenBudget: cfg.tokenBudgetPerAgent,
   };
+  const governanceFor = (goal: string) => ({
+    governanceProfile: { riskLevel: assessGovernanceRiskLevel(goal, []) },
+  });
+  const redGoal = `${RED_TEAM_PROMPT}\n\n以下是你需要审查的代码文件：${redFileBlock}\n\n请逐个审查以上每个文件，列出所有发现的问题。`;
+  const blueGoal = `${BLUE_TEAM_PROMPT}\n\n以下是你需要审查的代码文件：${blueFileBlock}\n\n请逐个分析以上每个文件，列出所有发现的设计优点和架构合理性。`;
 
   let redRaw = '';
   let blueRaw = '';
@@ -431,12 +439,14 @@ export async function runShowcase(
       runtime.execute({
         ...baseCtx,
         agentId: 'red-team',
-        goal: `${RED_TEAM_PROMPT}\n\n以下是你需要审查的代码文件：${redFileBlock}\n\n请逐个审查以上每个文件，列出所有发现的问题。`,
+        goal: redGoal,
+        contextData: governanceFor(redGoal),
       }),
       runtime.execute({
         ...baseCtx,
         agentId: 'blue-team',
-        goal: `${BLUE_TEAM_PROMPT}\n\n以下是你需要审查的代码文件：${blueFileBlock}\n\n请逐个分析以上每个文件，列出所有发现的设计优点和架构合理性。`,
+        goal: blueGoal,
+        contextData: governanceFor(blueGoal),
       }),
     ]);
 
@@ -490,6 +500,7 @@ export async function runShowcase(
       ...baseCtx,
       agentId: 'judge',
       goal: judgeGoal,
+      contextData: governanceFor(judgeGoal),
       maxSteps: 12,
       tokenBudget: cfg.tokenBudgetPerAgent * 2,
     });

@@ -11,6 +11,19 @@ import type { TaskTreeNode } from '../../src/ultimate/types';
 import type { ArtifactReference } from '../../src/shared/types';
 import type { AgentRuntimeInterface } from '../../src/runtime';
 import { OrchestratorOutputCollector } from '../../src/ultimate/orchestratorOutput';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file drives output-collector tool loops and asserts nothing about
+// SideEffectGate admission, so it opts in explicitly to the always-admit unit
+// fixture. The global default is now the real, fail-closed gate.
+// This is a unit convenience, NOT an admission proof.
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

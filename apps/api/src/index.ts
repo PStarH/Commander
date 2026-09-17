@@ -217,8 +217,12 @@ const confidenceReporter = new ConfidenceReporter(actionRationaleStore);
 const agentCardRegistry = new AgentCardRegistry();
 const evaluator = new LLMEvaluator();
 const smoother = new ScoreSmoother();
-// Security: Use real LLM provider for LLM-as-Judge evaluation.
-// Mock is only used when COMMANDER_EVAL_MOCK=true is explicitly set.
+// LM-28: no governed judge adapter is wired, so the evaluation execution path
+// is retired here. `createProductionLLMCall()` fails closed with
+// EVALUATION_NOT_AVAILABLE and performs zero network I/O, rather than calling a
+// paid provider directly with no deadline and no cost authority. Wiring a
+// governed adapter (provider + cost reservation + settlement) is a separate,
+// product-owner-approved change.
 const productionLLMCall = createProductionLLMCall();
 const evaluationRouter = createEvaluationRouter(evaluator, smoother, productionLLMCall);
 const checkpointManager = new CheckpointManager();

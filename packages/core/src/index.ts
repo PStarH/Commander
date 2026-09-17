@@ -23,7 +23,8 @@ export { reportSilentFailure } from './silentFailureReporter';
 export { optionalImport, optionalRequire } from './optionalImport';
 
 // Orchestration exports
-export {
+export { SequentialPipelineBuilder, calculateOrchestrationMetrics } from './orchestration';
+export type {
   SequentialStep,
   SequentialContext,
   SequentialStepResult,
@@ -32,14 +33,18 @@ export {
   SequentialPipelineRun,
   SequentialEvent,
   SequentialEventHandler,
-  SequentialPipelineBuilder,
   OrchestrationMetrics,
-  calculateOrchestrationMetrics,
   TokenUsage,
 } from './orchestration';
 
 // Memory exports
 export {
+  createMemoryStore,
+  resolveMemoryStoreType,
+  fromProjectMemoryItem,
+  toProjectMemoryItem,
+} from './episodicMemory';
+export type {
   MemoryPriority,
   EpisodicMemoryItem,
   MemorySearchQuery,
@@ -48,10 +53,6 @@ export {
   MemoryManageOptions,
   MemoryStats,
   MemoryStore,
-  createMemoryStore,
-  resolveMemoryStoreType,
-  fromProjectMemoryItem,
-  toProjectMemoryItem,
 } from './episodicMemory';
 export type {
   ProjectMemoryItem,
@@ -83,11 +84,8 @@ export { PostgresMemoryService } from './memory/postgresMemoryService';
 export { MemoryStoreFacade } from './memory/memoryStoreFacade';
 export { writeProductMemory } from './memory/writeProductMemory';
 export { MemoryMigrationRunner } from './memory/memoryMigration';
-export {
-  assertNamespaced,
-  assertNamespacedStoreInput,
-  type MemoryNamespaceAcl,
-} from './memory/namespaceGuard';
+export { assertNamespaced, assertNamespacedStoreInput } from './memory/namespaceGuard';
+export type { MemoryNamespaceAcl } from './memory/namespaceGuard';
 export type {
   LegacyMemoryRecord,
   MemoryMigrationCheckpointStore,
@@ -109,12 +107,11 @@ export type {
 export { DEFAULT_MODEL_CONFIG, QualityGateExecutor } from './ultimateFramework';
 export {
   CompensationQueue,
-  CompensationQueueItem,
-  CompensationQueueConfig,
   getCompensationQueue,
   resetCompensationQueueForTesting,
   defaultCompensationQueuePath,
 } from './atr/compensationQueue';
+export type { CompensationQueueItem, CompensationQueueConfig } from './atr/compensationQueue';
 
 // Ultimate Multi-Agent Orchestration System (v2)
 export {
@@ -220,15 +217,16 @@ export type {
 
 // ContentScanner exports - Agent Security Layer
 export {
-  ContentScanner,
   DefaultContentScanner,
   createContentScanner,
   scanContent,
   scanToolOutputForInjection,
 } from './contentScanner';
+export type { ContentScanner } from './contentScanner';
 
 // UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
-export { UniversalSanitizer, ResourceGovernor, IntegrityLayer, type SignedEntry } from './security';
+export { UniversalSanitizer, ResourceGovernor, IntegrityLayer } from './security';
+export type { SignedEntry } from './security';
 
 // IM Provider SPI
 export type {
@@ -238,16 +236,16 @@ export type {
   IMIncomingRequest,
   IMOutboundCredentials,
   IMThreadContext,
+  IMContextStore,
+  IMOutboundDispatcher,
 } from './im';
 export {
   IMProviderRegistry,
   getIMProviderRegistry,
   resetIMProviderRegistry,
-  IMContextStore,
   InMemoryIMContextStore,
   getIMContextStore,
   resetIMContextStore,
-  IMOutboundDispatcher,
   DefaultIMOutboundDispatcher,
   getIMOutboundDispatcher,
   resetIMOutboundDispatcher,
@@ -838,13 +836,8 @@ export {
 // instead of the previous fake "not wired" stub. Exposed so surfaces like
 // apps/api can construct a wired HealthCollector without re-implementing the
 // per-getter error-fallback plumbing each time.
-export {
-  HealthCollector,
-  buildHealthSources,
-  type HealthSources,
-  type HealthCheckResult,
-  type DLQCategoryCount,
-} from './runtime/healthCheck';
+export { HealthCollector, buildHealthSources } from './runtime/healthCheck';
+export type { HealthSources, HealthCheckResult, DLQCategoryCount } from './runtime/healthCheck';
 
 // Evaluation — LLM-as-Judge, dataset versioning, A/B experiment comparison
 // Now delivered via the builtin-eval plugin (plugins/builtin/eval).
@@ -858,7 +851,6 @@ export {
 
 // Tenant Provider — multi-tenant isolation primitives
 export {
-  TenantProvider,
   NullTenantProvider,
   SimpleTenantProvider,
   ThreeLayerMemoryRegistry,
@@ -868,6 +860,7 @@ export {
   getGlobalMemoryRegistry,
   resetGlobalMemoryRegistry,
 } from './runtime/tenantProvider';
+export type { TenantProvider } from './runtime/tenantProvider';
 
 // Cost Model — token-based price calculation (single source of truth in core)
 export {
@@ -1195,13 +1188,12 @@ export { TaskComplexityAnalyzer } from './taskComplexityAnalyzer';
 
 // Runtime Enhancements — Agent Execution Improvements
 export { CycleDetector } from './runtime/cycleDetector';
-export {
-  ToolApproval,
+export { ToolApproval, DEFAULT_APPROVAL_POLICIES } from './runtime/toolApproval';
+export type {
   ApprovalRequest,
   ApprovalResult,
   ApprovalLevel,
   ApprovalPolicy,
-  DEFAULT_APPROVAL_POLICIES,
 } from './runtime/toolApproval';
 export { EvolutionaryWorkflowEngine } from './runtime/evolutionaryWorkflowEngine';
 export type {
@@ -1266,8 +1258,8 @@ export {
 } from './runtime/rebuildPrompt';
 export type { RebuildParams, RebuildSection, RebuildResult } from './runtime/rebuildPrompt';
 // Topology & Workflow Optimization
-export {
-  ReflexionTopologicalOptimizer as TopologyOptimizer,
+export { ReflexionTopologicalOptimizer as TopologyOptimizer } from './ultimate/topologyOptimizer';
+export type {
   TopologyDiagnostics,
   OptimizationProposal,
   OptimizationAction,
@@ -1302,11 +1294,11 @@ export { createTaintTrackingPlugin } from './plugins/builtin/taintTrackingPlugin
 export { createGapPlugin } from './plugins/builtin/gap/gapPlugin';
 export { createObservabilityPlugin } from './plugins/builtin/observabilityPlugin';
 export { createRaspExtensionsPlugin } from './plugins/builtin/raspExtensionsPlugin';
-export {
-  registerBuiltinPlugins,
-  type RegisterBuiltinPluginsOptions,
-  type RegisterBuiltinPluginsResult,
-  type BuiltinPluginId,
+export { registerBuiltinPlugins } from './plugins/builtin/registerBuiltinPlugins';
+export type {
+  RegisterBuiltinPluginsOptions,
+  RegisterBuiltinPluginsResult,
+  BuiltinPluginId,
 } from './plugins/builtin/registerBuiltinPlugins';
 export {
   KnowledgeBaseStore,
@@ -1407,11 +1399,9 @@ export type {
   ActionGatewayExecutor,
 } from './mcp';
 
-export {
-  SwarmOrchestrator,
-  FusionEngine,
+export { SwarmOrchestrator, FusionEngine, DEFAULT_SWARM_CONFIG } from './swarm';
+export type {
   SwarmConfig,
-  DEFAULT_SWARM_CONFIG,
   SwarmNode,
   SwarmManager,
   SwarmTopology,
@@ -1421,15 +1411,8 @@ export {
   SwarmStatus,
 } from './swarm';
 
-export {
-  DriveOrchestrator,
-  DriveConfig,
-  DEFAULT_DRIVE_CONFIG,
-  DriveStep,
-  DriveState,
-  DriveResult,
-  DriveStatus,
-} from './drive';
+export { DriveOrchestrator, DEFAULT_DRIVE_CONFIG } from './drive';
+export type { DriveConfig, DriveStep, DriveState, DriveResult, DriveStatus } from './drive';
 
 // Experimental — not yet wired into the main execution flow
 export { PluginLoader, getPluginLoader } from './pluginLoader';

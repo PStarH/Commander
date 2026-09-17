@@ -80,7 +80,10 @@ describe('evaluation batch limits', () => {
 
     const app = express();
     app.use(express.json({ limit: '2mb' }));
-    app.use('/evaluation', createEvaluationRouter(new LLMEvaluator(), new ScoreSmoother(), llmCall));
+    app.use(
+      '/evaluation',
+      createEvaluationRouter(new LLMEvaluator(), new ScoreSmoother(), llmCall),
+    );
     const { port, close } = await listen(app);
     try {
       const items = Array.from({ length: 9 }, (_, i) => ({
@@ -97,8 +100,11 @@ describe('evaluation batch limits', () => {
       assert.equal(res.status, 200);
       const body = (await res.json()) as { count: number };
       assert.equal(body.count, 9);
-      assert.ok(peak <= MAX_BATCH_CONCURRENCY, `peak concurrency ${peak} > ${MAX_BATCH_CONCURRENCY}`);
-      assert.ok(peak >= 1);
+      assert.equal(
+        peak,
+        MAX_BATCH_CONCURRENCY,
+        `with 9 items the batch must saturate the ${MAX_BATCH_CONCURRENCY}-way limit`,
+      );
     } finally {
       await close();
     }

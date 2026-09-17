@@ -13,6 +13,7 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import {
   safePath,
@@ -248,31 +249,29 @@ describe('FileWriteTool — workspace boundary', () => {
 
 describe('FileWriteTool — edge cases', () => {
   let tool: FileWriteTool;
-  const tempFiles: string[] = [];
-
-  afterEach(() => {
-    // Clean up in reverse depth order
-    const sorted = [...tempFiles].sort((a, b) => b.length - a.length);
-    for (const f of sorted) {
-      try {
-        if (fs.existsSync(f)) {
-          const stat = fs.statSync(f);
-          if (stat.isDirectory()) fs.rmdirSync(f);
-          else fs.unlinkSync(f);
-        }
-      } catch {
-        /* best-effort */
-      }
-    }
-  });
+  let scratchDir: string;
 
   beforeEach(() => {
     tool = new FileWriteTool();
+    // Every artifact goes inside ONE per-test directory under the workspace root.
+    // Writing them directly into the workspace root left `_test_pathsec_*.txt`
+    // behind whenever a run was killed before `afterEach` could unlink it, and
+    // nothing in .gitignore covered those names — so `git add -A` would have
+    // committed them. A single directory removed with `recursive: true` makes
+    // cleanup atomic instead of a depth-ordered list of individual deletions.
+    scratchDir = `_test_pathsec_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  });
+
+  afterEach(() => {
+    try {
+      fs.rmSync(path.resolve(getSafeRoot(), scratchDir), { recursive: true, force: true });
+    } catch {
+      /* best-effort */
+    }
   });
 
   it('accepts write within workspace', { timeout: 10000 }, async () => {
-    const testFile = `_test_pathsec_${Date.now()}.txt`;
-    tempFiles.push(path.resolve(getSafeRoot(), testFile));
+    const testFile = `${scratchDir}/written.txt`;
     const result = await tool.execute({ path: testFile, content: 'test content' });
     assert.ok(
       result.includes('Written'),
@@ -284,22 +283,18 @@ describe('FileWriteTool — edge cases', () => {
   });
 
   it('handles empty content', { timeout: 10000 }, async () => {
-    const testFile = `_test_pathsec_empty_${Date.now()}.txt`;
-    tempFiles.push(path.resolve(getSafeRoot(), testFile));
+    const testFile = `${scratchDir}/empty.txt`;
     const result = await tool.execute({ path: testFile, content: '' });
     assert.ok(result.includes('Written'), `Should write empty file, got: ${result.slice(0, 80)}`);
   });
 
   it('creates parent directories automatically', { timeout: 10000 }, async () => {
-    const nestedDir = `_test_pathsec_nested_${Date.now()}`;
-    const testFile = `${nestedDir}/subdir/data.txt`;
-    // Register all paths for cleanup
-    const f1 = path.resolve(getSafeRoot(), `${nestedDir}/subdir/data.txt`);
-    const f2 = path.resolve(getSafeRoot(), `${nestedDir}/subdir`);
-    const f3 = path.resolve(getSafeRoot(), nestedDir);
-    tempFiles.push(f1, f2, f3);
+    const testFile = `${scratchDir}/nested/subdir/data.txt`;
     const result = await tool.execute({ path: testFile, content: 'nested content' });
     assert.ok(result.includes('Written'), `Should create nested path, got: ${result.slice(0, 80)}`);
+    const resolved = await safePath(testFile);
+    assert.ok(fs.existsSync(resolved), 'Nested file should exist on disk');
+    assert.strictEqual(fs.readFileSync(resolved, 'utf-8'), 'nested content');
   });
 });
 
@@ -509,64 +504,198 @@ describe('CodeRefinerTool — codeFile workspace boundary', () => {
 });
 
 // ============================================================================
-// CodeSearchTool — COMMANDER_WORKSPACE respect (uses safePath directly)
+// CodeSearchTool — workspace containment (controlled fixtures)
+//
+// LM-15: these cases used to scan the real repository, which made them slow and
+// non-deterministic. They now run against owned temporary A/B/C fixtures so the
+// assertions are about the containment logic rather than about whatever happens
+// to be on disk. The fixtures are realpath-normalised because macOS aliases
+// /var → /private/var, which would otherwise turn positive cases red.
 // ============================================================================
-describe('CodeSearchTool — workspace boundary', () => {
+describe('CodeSearchTool — workspace containment', () => {
   let tool: CodeSearchTool;
+  let base: string;
+  let wsA: string;
+  let wsB: string;
+  let wsC: string;
+  let outside: string;
+  let shimDir: string;
+  let grepCallLog: string;
+  let originalWorkspace: string | undefined;
+  let originalPath: string | undefined;
+  let originalGrepLog: string | undefined;
+
+  const uniq = `${process.pid}_${Date.now().toString(36)}`;
+  const MARKER_A = `WS5_ALPHA_${uniq}`;
+  const MARKER_B = `WS5_BETA_${uniq}`;
+  const MARKER_C = `WS5_GAMMA_${uniq}`;
+  const MARKER_OUTSIDE = `WS5_OUTSIDE_${uniq}`;
+
+  /** Installs a `grep` shim on PATH that records its argv and matches nothing. */
+  function installGrepShim(): void {
+    shimDir = path.join(base, 'shim');
+    fs.mkdirSync(shimDir, { recursive: true });
+    const shimPath = path.join(shimDir, 'grep');
+    fs.writeFileSync(
+      shimPath,
+      '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$WS5_GREP_CALL_LOG"\nexit 1\n',
+      { mode: 0o755 },
+    );
+    grepCallLog = path.join(base, 'grep-calls.log');
+    process.env.PATH = `${shimDir}${path.delimiter}${originalPath ?? ''}`;
+    process.env.WS5_GREP_CALL_LOG = grepCallLog;
+  }
+
+  function grepCalls(): string[] {
+    if (!fs.existsSync(grepCallLog)) return [];
+    return fs
+      .readFileSync(grepCallLog, 'utf-8')
+      .split('\n')
+      .filter((line) => line.length > 0);
+  }
 
   beforeEach(() => {
     tool = new CodeSearchTool();
+    // realpath first: os.tmpdir() is /var/... on macOS but resolves to
+    // /private/var/..., and the tool compares real paths.
+    base = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ws5-pathsec-')));
+    wsA = path.join(base, 'wsA');
+    wsB = path.join(base, 'wsB');
+    wsC = path.join(base, 'wsC');
+    outside = path.join(base, 'outside');
+    for (const dir of [wsA, wsB, wsC, outside]) fs.mkdirSync(dir, { recursive: true });
+
+    fs.writeFileSync(path.join(wsA, 'alpha.ts'), `export const a = '${MARKER_A}';\n`);
+    fs.writeFileSync(path.join(wsB, 'beta.ts'), `export const b = '${MARKER_B}';\n`);
+    fs.writeFileSync(path.join(wsC, 'gamma.ts'), `export const c = '${MARKER_C}';\n`);
+    fs.writeFileSync(path.join(outside, 'secret.ts'), `export const s = '${MARKER_OUTSIDE}';\n`);
+
+    // Symlinks that live inside the workspace but point outside it.
+    fs.symlinkSync(path.join(outside, 'secret.ts'), path.join(wsA, 'escape-file.ts'));
+    fs.symlinkSync(outside, path.join(wsA, 'escape-dir'));
+    // A searchDomain subdirectory that is really an outside directory.
+    fs.symlinkSync(outside, path.join(wsA, 'tests'));
+
+    originalWorkspace = process.env.COMMANDER_WORKSPACE;
+    originalPath = process.env.PATH;
+    originalGrepLog = process.env.WS5_GREP_CALL_LOG;
+    process.env.COMMANDER_WORKSPACE = wsA;
   });
 
-  it('uses getSafeRoot() not process.cwd() for workspace', { timeout: 30000 }, async () => {
-    const safeRoot = getSafeRoot();
-    assert.ok(safeRoot.length > 0, 'getSafeRoot() should return a valid path');
-    const result = await tool.execute({ pattern: 'import', maxResults: 3 });
-    assert.ok(typeof result === 'string');
+  afterEach(() => {
+    if (originalWorkspace === undefined) delete process.env.COMMANDER_WORKSPACE;
+    else process.env.COMMANDER_WORKSPACE = originalWorkspace;
+    if (originalPath === undefined) delete process.env.PATH;
+    else process.env.PATH = originalPath;
+    if (originalGrepLog === undefined) delete process.env.WS5_GREP_CALL_LOG;
+    else process.env.WS5_GREP_CALL_LOG = originalGrepLog;
+    fs.rmSync(base, { recursive: true, force: true });
+  });
+
+  it('uses the workspace root, not process.cwd(), for the recursive scan', async () => {
+    assert.strictEqual(getSafeRoot(), wsA, 'getSafeRoot() should be the fixture root');
+    const result = await tool.execute({ pattern: 'WS5_', maxResults: 50 });
+    assert.ok(result.includes(MARKER_A), `Should find the current root marker, got: ${result}`);
+    assert.ok(!result.includes(MARKER_B), 'Must not reach sibling workspace B');
+    assert.ok(!result.includes(MARKER_C), 'Must not reach sibling workspace C');
+    assert.ok(!result.includes(MARKER_OUTSIDE), 'Must not reach the outside directory');
+  });
+
+  it('follows a COMMANDER_WORKSPACE switch from A to B', async () => {
+    const inA = await tool.execute({ pattern: 'WS5_', maxResults: 50 });
+    assert.ok(inA.includes(MARKER_A), `A should be searched, got: ${inA}`);
+    assert.ok(!inA.includes(MARKER_B), 'B must not be searched while the root is A');
+
+    process.env.COMMANDER_WORKSPACE = wsB;
+    assert.strictEqual(getSafeRoot(), wsB);
+    const inB = await tool.execute({ pattern: 'WS5_', maxResults: 50 });
+    assert.ok(inB.includes(MARKER_B), `B should be searched, got: ${inB}`);
+    assert.ok(!inB.includes(MARKER_A), 'A must not be searched once the root is B');
+    assert.ok(!inB.includes(MARKER_OUTSIDE), 'Must not reach the outside directory');
+  });
+
+  it('finds a workspace file through an explicit filePattern', async () => {
+    const result = await tool.execute({ pattern: MARKER_A, filePattern: 'alpha.ts' });
+    assert.ok(result.includes(MARKER_A), `Expected a match, got: ${result}`);
+  });
+
+  it('denies a ../ filePattern before invoking grep', async () => {
+    installGrepShim();
+    const result = await tool.execute({ pattern: MARKER_B, filePattern: '../wsB' });
     assert.ok(
-      result.includes('Found') || result.includes('No results') || result.includes('matches'),
-      `Should search without error, got: ${result.slice(0, 100)}`,
+      result.startsWith('Error: Access denied'),
+      `Expected an access denial, got: ${result}`,
+    );
+    assert.ok(!result.includes(MARKER_B), 'Must not read the sibling workspace');
+    assert.deepStrictEqual(grepCalls(), [], 'grep must not be invoked for a traversal target');
+  });
+
+  it('denies an absolute outside filePattern before invoking grep', async () => {
+    installGrepShim();
+    const result = await tool.execute({
+      pattern: MARKER_OUTSIDE,
+      filePattern: path.join(outside, 'secret.ts'),
+    });
+    assert.ok(
+      result.startsWith('Error: Access denied'),
+      `Expected an access denial, got: ${result}`,
+    );
+    assert.ok(!result.includes(MARKER_OUTSIDE), 'Must not read outside the workspace');
+    assert.deepStrictEqual(grepCalls(), [], 'grep must not be invoked for an outside target');
+  });
+
+  it('denies a symlinked file that points outside the workspace, before invoking grep', async () => {
+    installGrepShim();
+    const result = await tool.execute({ pattern: MARKER_OUTSIDE, filePattern: 'escape-file.ts' });
+    // A lexical containment check accepts this path; only resolving the real
+    // path shows that the symlink leaves the workspace.
+    assert.ok(
+      result.startsWith('Error: Access denied'),
+      `Expected a symlink escape to be denied, got: ${result}`,
+    );
+    assert.ok(!result.includes(MARKER_OUTSIDE), 'Must not read through the escaping symlink');
+    assert.deepStrictEqual(grepCalls(), [], 'grep must not be invoked for an escaping symlink');
+  });
+
+  it('denies a symlinked directory that points outside the workspace, before invoking grep', async () => {
+    installGrepShim();
+    const result = await tool.execute({ pattern: MARKER_OUTSIDE, filePattern: 'escape-dir' });
+    assert.ok(
+      result.startsWith('Error: Access denied'),
+      `Expected a symlink escape to be denied, got: ${result}`,
+    );
+    assert.ok(!result.includes(MARKER_OUTSIDE), 'Must not read through the escaping symlink');
+    assert.deepStrictEqual(grepCalls(), [], 'grep must not be invoked for an escaping symlink');
+  });
+
+  it('denies a searchDomain subdirectory that is a symlink out of the workspace', async () => {
+    installGrepShim();
+    const result = await tool.execute({ pattern: MARKER_OUTSIDE, searchDomain: 'tests' });
+    assert.ok(
+      result.startsWith('Error: Access denied'),
+      `Expected a symlink escape to be denied, got: ${result}`,
+    );
+    assert.ok(!result.includes(MARKER_OUTSIDE), 'Must not read through the escaping symlink');
+    assert.deepStrictEqual(
+      grepCalls(),
+      [],
+      'grep must not be invoked for an escaping searchDomain',
     );
   });
 
-  it('respects COMMANDER_WORKSPACE env var override', { timeout: 30000 }, async () => {
-    const original = process.env.COMMANDER_WORKSPACE;
-    const subdir = path.resolve(getSafeRoot(), '..');
-    try {
-      process.env.COMMANDER_WORKSPACE = subdir;
-
-      const root = getSafeRoot();
-      assert.strictEqual(root, subdir, 'getSafeRoot() should return COMMANDER_WORKSPACE path');
-
-      const pkg = await safePath('package.json');
-      assert.ok(pkg.startsWith(root), `safePath should resolve under override root, got: ${pkg}`);
-      assert.ok(pkg.endsWith('package.json'));
-
-      await assert.rejects(
-        () => safePath('../../../package.json'),
-        /Access denied/,
-        'safePath should reject traversal out of the overridden root',
-      );
-
-      const result = await tool.execute({ pattern: 'import', maxResults: 3 });
-      assert.ok(typeof result === 'string');
-      const isGrepError = result.includes('Search failed') && result.includes('ENOENT');
-      const isSearchOk =
-        result.includes('Found') || result.includes('No results') || result.includes('matches');
-      assert.ok(
-        isSearchOk || isGrepError,
-        `Should search under override root (or report grep unavailable), got: ${result.slice(0, 120)}`,
-      );
-    } finally {
-      // IMPORTANT: delete the env var if it was originally unset;
-      // assigning undefined sets the STRING "undefined", corrupting all
-      // subsequent getSafeRoot() calls.
-      if (original === undefined) {
-        delete process.env.COMMANDER_WORKSPACE;
-      } else {
-        process.env.COMMANDER_WORKSPACE = original;
-      }
-    }
+  // Control: proves the shim above really intercepts the tool's grep, so the
+  // "zero calls" assertions are meaningful rather than vacuous.
+  it('does invoke grep for a legitimate in-workspace search (shim control)', async () => {
+    installGrepShim();
+    await tool.execute({ pattern: MARKER_A, filePattern: 'alpha.ts' });
+    const calls = grepCalls();
+    assert.strictEqual(
+      calls.length,
+      1,
+      `Expected exactly one grep invocation, got: ${calls.length}`,
+    );
+    assert.ok(calls[0].includes(MARKER_A), `Expected the pattern in argv, got: ${calls[0]}`);
+    assert.ok(calls[0].includes('alpha.ts'), `Expected the target in argv, got: ${calls[0]}`);
   });
 });
 

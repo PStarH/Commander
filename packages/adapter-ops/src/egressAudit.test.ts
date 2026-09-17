@@ -42,3 +42,79 @@ describe('egress allowlist fail-closed (AUDIT-F1)', () => {
     assert.doesNotThrow(() => assertEgressAllowlistBeforeDaemonStart('demo', []));
   });
 });
+
+/**
+ * AO-05: the transport gate itself was fail-open — an empty allowlist returned without
+ * adjudicating anything, a CIDR-only list did the same, and the URL's scheme was never
+ * checked (plaintext http to an allowed host passed). Bare entries also matched any
+ * subdomain via `host.endsWith('.' + entry)`.
+ */
+describe('egress transport gate fail-closed (AO-05)', () => {
+  test('empty allowlist denies instead of allowing any host', () => {
+    assert.throws(
+      () => assertEgressUrlAllowed('https://exfil.example/steal', []),
+      /ADAPTER_OPS_EGRESS_DENIED: COMMANDER_ADAPTER_EGRESS_ALLOWLIST is empty/,
+    );
+  });
+
+  test('empty allowlist is allowed only when the caller declares demo openness', () => {
+    assert.doesNotThrow(() =>
+      assertEgressUrlAllowed('https://exfil.example/steal', [], { allowEmptyAllowlist: true }),
+    );
+  });
+
+  test('CIDR-only allowlist denies the hostname instead of returning', () => {
+    assert.throws(
+      () => assertEgressUrlAllowed('https://exfil.example/steal', ['10.0.0.0/8']),
+      /no hostname entry to adjudicate/,
+    );
+  });
+
+  test('plaintext http to an allowlisted host is denied', () => {
+    assert.throws(
+      () => assertEgressUrlAllowed('http://api.github.com/repos', ['api.github.com']),
+      /scheme http: is not permitted/,
+    );
+  });
+
+  test('http stays available for loopback targets', () => {
+    for (const host of ['127.0.0.1', 'localhost', '[::1]']) {
+      assert.doesNotThrow(() =>
+        assertEgressUrlAllowed(`http://${host}:8080/health`, [host.replace(/^\[|\]$/g, '')]),
+      );
+    }
+  });
+
+  test('non-http(s) schemes are denied', () => {
+    assert.throws(
+      () => assertEgressUrlAllowed('file:///etc/passwd', ['api.github.com']),
+      /scheme file: is not permitted/,
+    );
+  });
+
+  test('a bare entry no longer matches arbitrary subdomains', () => {
+    assert.throws(
+      () => assertEgressUrlAllowed('https://attacker.github.com/repos', ['github.com']),
+      /ADAPTER_OPS_EGRESS_DENIED: host attacker\.github\.com/,
+    );
+    assert.doesNotThrow(() => assertEgressUrlAllowed('https://github.com/repos', ['github.com']));
+  });
+
+  test('an explicit *. entry still matches subdomains', () => {
+    assert.doesNotThrow(() =>
+      assertEgressUrlAllowed('https://acme.service-now.com/api', ['*.service-now.com']),
+    );
+    assert.throws(
+      () =>
+        assertEgressUrlAllowed('https://service-now.com.evil.example/api', ['*.service-now.com']),
+      /ADAPTER_OPS_EGRESS_DENIED/,
+    );
+  });
+
+  test('a malformed wildcard entry is rejected rather than never matching', () => {
+    assert.throws(
+      () => assertEgressUrlAllowed('https://api.github.com/x', ['api.*.com']),
+      /ADAPTER_OPS_EGRESS_ALLOWLIST_INVALID/,
+    );
+  });
+});

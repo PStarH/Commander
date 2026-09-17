@@ -3,7 +3,7 @@
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,14 +33,32 @@ describe('claim honesty', () => {
     assert.match(body, /isDurable\(\): boolean/, 'must expose isDurable() for callers');
   });
 
-  it('ARCHITECTURE + PRINCIPLES do not claim packages/operations is the timer/outbox plane', () => {
-    const arch = readFileSync(join(ROOT, 'ARCHITECTURE.md'), 'utf8');
-    const principles = readFileSync(join(ROOT, 'PRINCIPLES.md'), 'utf8');
-    const maps = arch + principles;
+  it('the architecture maps do not claim packages/operations is the timer/outbox plane', () => {
+    // ARCHITECTURE.md was deliberately removed in `8ab4fc42` ("docs: remove
+    // obsolete architecture overview"), so hardcoding it made this gate fail on
+    // a missing file rather than on a false claim. Read whichever architecture
+    // documentation the repository actually ships, and fail if there is none —
+    // the ownership claims below must live *somewhere*, not nowhere.
+    const candidates = ['PRINCIPLES.md', 'ARCHITECTURE.md', 'docs/ARCHITECTURE.md'];
+    const archDir = join(ROOT, 'docs/architecture');
+    if (existsSync(archDir)) {
+      for (const name of readdirSync(archDir)) {
+        if (name.endsWith('.md')) candidates.push(`docs/architecture/${name}`);
+      }
+    }
+    const present = candidates.filter((rel) => existsSync(join(ROOT, rel)));
+    assert.ok(
+      present.length > 0,
+      `no architecture documentation found among: ${candidates.join(', ')}`,
+    );
+    const maps = present.map((rel) => readFileSync(join(ROOT, rel), 'utf8')).join('\n');
+
+    // Applied to the whole map set rather than to one hardcoded file: the false
+    // claim is forbidden wherever it appears.
     assert.doesNotMatch(
-      arch,
+      maps,
       /packages\/operations`\s*\|\s*Outbox\/timer mains/i,
-      'ARCHITECTURE must not describe ABSENT operations as outbox/timer',
+      'the maps must not describe ABSENT operations as outbox/timer',
     );
     assert.match(
       maps,
@@ -100,8 +118,6 @@ describe('claim honesty', () => {
 
   it('security-sensitive Gateway JSON stores use atomicWrite + readJsonFileSafe (REL-3/REL-4)', () => {
     const arrayStores = [
-      'apps/api/src/userStore.ts',
-      'apps/api/src/apiKeyStore.ts',
       'apps/api/src/webhookEndpoints.ts',
       'apps/api/src/workflowEndpoints.ts',
       'apps/api/src/actionRationale.ts',
@@ -112,21 +128,63 @@ describe('claim honesty', () => {
       'apps/api/src/approvalConfigEndpoints.ts',
       'apps/api/src/onboardingEndpoints.ts',
     ];
-    const files = [...arrayStores, ...objectStores, 'apps/api/src/refreshTokenStore.ts'];
+    /**
+     * Migrated to PostgreSQL — these no longer persist JSON at all, so the
+     * atomic-file-write requirement does not apply. They are still audited, but
+     * with the *shape-independent* invariant below: a store may hold durable
+     * state either in PostgreSQL or in a JSON file, and whichever it uses must
+     * not be able to tear. Asserting `atomicWriteFileSync` on a Postgres
+     * repository was a false failure (it made the whole gate red from
+     * 2026-09-16 onward); asserting nothing would let the file be gutted.
+     */
+    const postgresStores = [
+      'apps/api/src/userStore.ts',
+      'apps/api/src/apiKeyStore.ts',
+      'apps/api/src/refreshTokenStore.ts',
+    ];
+    const jsonStores = [...arrayStores, ...objectStores];
+    const files = [...jsonStores, ...postgresStores];
+
     for (const rel of files) {
       const p = join(ROOT, rel);
       assert.ok(existsSync(p), `${rel} must exist`);
       const body = readFileSync(p, 'utf8');
+
+      // Shape-independent: whatever a store uses for durable state, it must not
+      // write it non-atomically.
+      assert.doesNotMatch(
+        body,
+        /fs\.writeFileSync\s*\(/,
+        `${rel} must not use non-atomic fs.writeFileSync`,
+      );
+    }
+
+    for (const rel of jsonStores) {
+      const body = readFileSync(join(ROOT, rel), 'utf8');
       assert.match(body, /atomicWriteFileSync/, `${rel} must use atomicWriteFileSync`);
       assert.match(
         body,
         /readJsonFileSafe/,
         `${rel} must use readJsonFileSafe (corrupt-load must not silent-[] then wipe)`,
       );
+    }
+
+    for (const rel of postgresStores) {
+      const body = readFileSync(join(ROOT, rel), 'utf8');
+      // Anti-rot: prove the file really is Postgres-backed rather than merely
+      // emptied. Without this, deleting the persistence code would also make
+      // the atomic-write requirement disappear and the gate would stay green.
+      assert.match(
+        body,
+        /SqlPool|createVerifiedPostgresPool|createAuthPool/,
+        `${rel} is exempt from the JSON-store rule only while it is PostgreSQL-backed`,
+      );
+      // If JSON file persistence ever comes back, it must come back atomically —
+      // and this assertion fails so the file is moved into `jsonStores`.
       assert.doesNotMatch(
         body,
-        /fs\.writeFileSync\s*\(/,
-        `${rel} must not use non-atomic fs.writeFileSync`,
+        /atomicWriteFileSync|readJsonFileSafe/,
+        `${rel} no longer persists JSON; if that changed, move it into jsonStores`,
       );
     }
     for (const rel of arrayStores) {
@@ -145,11 +203,22 @@ describe('claim honesty', () => {
         `${rel} must use isPlainObjectJson shape guard (wrong-shape must quarantine)`,
       );
     }
+    // refreshTokenStore moved to PostgreSQL (see `postgresStores` above), and its
+    // JSON shape guards went with the file format: `isRefreshStoreShape` and
+    // `isSignedEnvelope` no longer exist anywhere in the repository. The
+    // durability property those guards protected — a jti that can be consumed by
+    // exactly one caller even under concurrency — is now enforced by the
+    // database, so assert that instead of the removed helper names.
     const refreshBody = readFileSync(join(ROOT, 'apps/api/src/refreshTokenStore.ts'), 'utf8');
     assert.match(
       refreshBody,
-      /isRefreshStoreShape|isSignedEnvelope/,
-      'refreshTokenStore must validate signed-or-array top-level shape',
+      /UPDATE[\s\S]{0,400}?RETURNING/,
+      'refreshTokenStore must consume a jti with an atomic UPDATE ... RETURNING',
+    );
+    assert.match(
+      refreshBody,
+      /revoked_at IS NULL/,
+      'refreshTokenStore consumption must be single-use (only an unrevoked row may be claimed)',
     );
     const helper = readFileSync(join(ROOT, 'apps/api/src/atomicWrite.ts'), 'utf8');
     assert.match(

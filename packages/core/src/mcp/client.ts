@@ -290,6 +290,10 @@ export class StreamableHTTPClientTransport implements MCPTransport {
     const id = request.id ?? ++this.msgId;
     const body = JSON.stringify({ ...request, id, jsonrpc: '2.0' });
 
+    // Operator-configured MCP server endpoint. The policy requires it to be
+    // allowlisted (or to hold a registered tenant-bound authorization) and to
+    // pass the SSRF/private-address check — an MCP server that is not a
+    // configured egress destination is denied rather than silently reached.
     const res = await getOutboundNetworkPolicy().ssrfCheckedFetch(this.url, {
       method: 'POST',
       headers: this.headers,

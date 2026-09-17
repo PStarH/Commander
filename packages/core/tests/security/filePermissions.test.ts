@@ -23,6 +23,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { StateCheckpointer, CheckpointState } from '../../src/runtime/stateCheckpointer';
 import { PersistentTraceStore } from '../../src/runtime/traceStore';
+import { optionalRequire } from '../../src/optionalImport';
 
 // Helper: get octal permission string (e.g. '0o600') from file stat
 function getFileMode(filePath: string): number {
@@ -322,8 +323,8 @@ describe('ConversationStore file permissions', () => {
 
   it('sets database file to 0o600 after creation', async () => {
     let ConversationStore: new (config: { dbPath: string }) => {
-      init(): void;
-      close(): void;
+      init(): Promise<void>;
+      close(): Promise<void>;
     };
     try {
       const mod = await import('../../src/memory/conversationStore');
@@ -335,14 +336,13 @@ describe('ConversationStore file permissions', () => {
 
     const dbPath = path.join(tmpDir, 'conversations.db');
 
-    // Check if better-sqlite3 is actually available
-    let BetterSqlite3: unknown;
-    try {
-      BetterSqlite3 = require('better-sqlite3');
-    } catch {
-      // Skip this test if better-sqlite3 is not installed
-      return;
-    }
+    // Check if better-sqlite3 is actually available.
+    //
+    // Probe only — the binding was never read. `optionalRequire` returns null
+    // for an absent optional peer; the bare `require` it replaces raised
+    // `ReferenceError: require is not defined` in this ES module, so the catch
+    // below fired on every run and the test silently never executed.
+    if (!optionalRequire('better-sqlite3')) return;
 
     // Suppress unhandled rejections from SQLite cleanup
     const origListeners = process.listeners('unhandledRejection');
@@ -351,14 +351,17 @@ describe('ConversationStore file permissions', () => {
 
     try {
       const store = new ConversationStore({ dbPath });
-      store.init();
+      // `init()` is async (it opens SQLite and runs the schema DDL). Not awaiting
+      // it made the assertions below race the setup, so the file did not exist
+      // yet — the test failed for a reason unrelated to file permissions.
+      await store.init();
 
       assert.ok(fs.existsSync(dbPath), 'Database file must exist');
 
       const mode = getFileMode(dbPath);
       assert.strictEqual(mode, 0o600, `Database file should be 0o600, got 0o${mode.toString(8)}`);
 
-      store.close();
+      await store.close();
     } finally {
       process.removeAllListeners('unhandledRejection');
       for (const listener of origListeners) {
@@ -369,8 +372,8 @@ describe('ConversationStore file permissions', () => {
 
   it('creates data directory with 0o700', async () => {
     let ConversationStore: new (config: { dbPath: string }) => {
-      init(): void;
-      close(): void;
+      init(): Promise<void>;
+      close(): Promise<void>;
     };
     try {
       const mod = await import('../../src/memory/conversationStore');
@@ -379,12 +382,8 @@ describe('ConversationStore file permissions', () => {
       return;
     }
 
-    let BetterSqlite3: unknown;
-    try {
-      BetterSqlite3 = require('better-sqlite3');
-    } catch {
-      return;
-    }
+    // Probe only — see the note on the 0o600 case above.
+    if (!optionalRequire('better-sqlite3')) return;
 
     // Suppress unhandled rejections from SQLite cleanup
     const origListeners = process.listeners('unhandledRejection');
@@ -394,7 +393,8 @@ describe('ConversationStore file permissions', () => {
     try {
       const dbPath = path.join(tmpDir, 'subdir', 'conversations.db');
       const store = new ConversationStore({ dbPath });
-      store.init();
+      // Await the async init — see the note on the 0o600 case above.
+      await store.init();
 
       const dataDir = path.join(tmpDir, 'subdir');
       assert.ok(fs.existsSync(dataDir), 'Data directory must be created');
@@ -402,7 +402,7 @@ describe('ConversationStore file permissions', () => {
       const mode = getFileMode(dataDir);
       assert.strictEqual(mode, 0o700, `Data directory should be 0o700, got 0o${mode.toString(8)}`);
 
-      store.close();
+      await store.close();
     } finally {
       process.removeAllListeners('unhandledRejection');
       for (const listener of origListeners) {

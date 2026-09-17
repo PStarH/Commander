@@ -15,6 +15,7 @@ import { MockLLMProvider } from '../src/runtime/mockLLMProvider';
 import { ModelRouter, resetModelRouter } from '../src/runtime/modelRouter';
 import {
   getHumanApprovalManager,
+  configureHumanApprovalManager,
   resetHumanApprovalManager,
 } from '../src/ultimate/humanApprovalManager';
 import type { ExecutionError, HumanApprovalGate, TaskTreeNode } from '../src/ultimate/types';
@@ -52,6 +53,7 @@ describe('SubAgentExecutor — P3 approval gate integration', () => {
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'appr-int-'));
     resetHumanApprovalManager();
+    configureHumanApprovalManager(({ approverId }) => approverId === 'user-1');
     const built = buildRuntimeWithMockProvider();
     runtime = built.runtime;
     provider = built.provider;

@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import type { TenantConfig } from './tenantProvider';
 import { isMultiTenantEnabled } from './tenantContext';
 import { SamplesStore } from './samplesStore';
-import { PersistentTraceStore } from './traceStore';
+import { PersistentTraceStore, resolveConfiguredTraceBase, resolveTraceDir } from './traceStore';
 import { StateCheckpointer } from './stateCheckpointer';
 import { TokenGovernor } from './tokenGovernor';
 import { getGlobalMemoryRegistry, getGlobalTenantProvider } from './tenantProvider';
@@ -261,14 +261,28 @@ export class TenantManager {
   private computeTenantStorageBytes(tenantId: string, cfg: TenantConfig): number {
     let total = 0;
     const dirs = new Set<string>();
+    // Trace bytes must be accounted against the same directory the trace
+    // writer uses. Previously this read COMMANDER_TRACES_DIR (plural) while the
+    // writer/observability reader used COMMANDER_TRACE_DIR (singular) or the
+    // cwd default, so a configured deployment under-counted tenant trace
+    // storage to zero. resolveConfiguredTraceBase() is the single owner of that
+    // rule; it is pure, so an unresolvable configuration simply skips the term
+    // rather than aborting quota accounting.
+    let traceBase: string | undefined;
+    try {
+      traceBase = resolveTraceDir(resolveConfiguredTraceBase(), tenantId);
+    } catch (err) {
+      getGlobalLogger().warn('TenantManager', 'Failed to resolve trace directory for quota', {
+        error: (err as Error)?.message,
+      });
+      traceBase = undefined;
+    }
     const storePaths = [
       cfg.storagePath,
       process.env.COMMANDER_SAMPLES_DIR
         ? path.join(process.env.COMMANDER_SAMPLES_DIR, `tenant_${tenantId}`)
         : undefined,
-      process.env.COMMANDER_TRACES_DIR
-        ? path.join(process.env.COMMANDER_TRACES_DIR, `tenant_${tenantId}`)
-        : undefined,
+      traceBase,
       process.env.COMMANDER_CHECKPOINT_DIR
         ? path.join(process.env.COMMANDER_CHECKPOINT_DIR, `tenant_${tenantId}`)
         : undefined,

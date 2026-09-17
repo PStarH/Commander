@@ -14,6 +14,9 @@
 
 import { reportSilentFailure } from '../../silentFailureReporter';
 import { $, warn } from '../util';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // 1. commander pr — Create PR with one command
@@ -400,7 +403,7 @@ export async function cmdMonitor(dir: string, flags: Record<string, string>): Pr
         if (flags['--run']) {
           console.log(`  ${$.dim}Running: ${flags['--run']}${$.reset}`);
           try {
-            const { execSync } = require('child_process');
+            const { execSync } = nodeRequire('child_process');
             execSync(flags['--run'], { stdio: 'inherit' });
           } catch (err) {
             reportSilentFailure(err, 'convenience:403');

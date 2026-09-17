@@ -10,7 +10,9 @@ import { generateOpenApiSpec, type OpenApiMeta } from '../src/openApiGenerator.j
 
 // ── Test helpers ────────────────────────────────────────────────────────────
 
-function makeRouter(routes: Array<{ method: 'get' | 'post' | 'patch' | 'put' | 'delete'; path: string }>): RequestHandler {
+function makeRouter(
+  routes: Array<{ method: 'get' | 'post' | 'patch' | 'put' | 'delete'; path: string }>,
+): RequestHandler {
   const router = express.Router();
   for (const r of routes) {
     router[r.method](r.path, (_req, res) => res.json({ ok: true }));
@@ -91,9 +93,7 @@ describe('openApiGenerator — spec §4 authenticity', () => {
         name: 'params',
         mountPath: '/v1',
         factory: () =>
-          makeRouter([
-            { method: 'get', path: '/projects/:projectId/memory/:memoryId' },
-          ]),
+          makeRouter([{ method: 'get', path: '/projects/:projectId/memory/:memoryId' }]),
       });
 
       const spec = generateOpenApiSpec({ title: 'Test', version: '1.0.0' });
@@ -139,10 +139,7 @@ describe('openApiGenerator — spec §4 authenticity', () => {
       reg({
         name: 'legacy',
         mountPath: '/api',
-        factory: () =>
-          makeRouter([
-            { method: 'get', path: '/projects' },
-          ]),
+        factory: () => makeRouter([{ method: 'get', path: '/projects' }]),
       });
 
       const spec = generateOpenApiSpec({ title: 'Test', version: '1.0.0' });
@@ -155,10 +152,7 @@ describe('openApiGenerator — spec §4 authenticity', () => {
       reg({
         name: 'v1',
         mountPath: '/v1',
-        factory: () =>
-          makeRouter([
-            { method: 'post', path: '/runs' },
-          ]),
+        factory: () => makeRouter([{ method: 'post', path: '/runs' }]),
       });
 
       const spec = generateOpenApiSpec({ title: 'Test', version: '1.0.0' });
@@ -226,10 +220,7 @@ describe('openApiGenerator — spec §4 authenticity', () => {
       reg({
         name: 'v1',
         mountPath: '/v1',
-        factory: () =>
-          makeRouter([
-            { method: 'post', path: '/runs' },
-          ]),
+        factory: () => makeRouter([{ method: 'post', path: '/runs' }]),
       });
 
       const spec = generateOpenApiSpec({ title: 'Test', version: '1.0.0' });
@@ -249,7 +240,9 @@ describe('openApiGenerator — spec §4 authenticity', () => {
       reg({
         name: 'middleware-only',
         mountPath: '/v1',
-        factory: () => (_req, _res, next) => { next(); },
+        factory: () => (_req, _res, next) => {
+          next();
+        },
       });
 
       const spec = generateOpenApiSpec({ title: 'Test', version: '1.0.0' });

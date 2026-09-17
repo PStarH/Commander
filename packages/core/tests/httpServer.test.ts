@@ -83,38 +83,53 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
   });
 
   describe('/health', () => {
-    it('returns 200 with uptime and session info', async () => {
+    // A bare CommanderHttpServer has no runtime registered, so every probe that
+    // needs one (circuit breaker, provider, DLQ, checkpoints, compensation)
+    // reports "not wired" and the report comes back `degraded`. The endpoint
+    // deliberately maps that to 503 and names the components — it replaced an
+    // unconditional `status: 'ok'`, which the audit called security theater
+    // because a load balancer would otherwise route traffic to a process whose
+    // dependencies were unreachable. See src/runtime/httpHealthRoutes.ts.
+    it('reports degraded (503) and names the unwired components', async () => {
       const { status, body } = await fetchJson('/health');
-      assert.strictEqual(status, 200);
-      assert.strictEqual(body.status, 'ok');
+      assert.strictEqual(status, 503);
+      assert.strictEqual(body.status, 'degraded');
+      assert.ok(
+        Array.isArray(body.degradedComponents) && body.degradedComponents.length > 0,
+        'an unwired server must name the components it could not verify',
+      );
       assert.ok(typeof body.uptime === 'number');
       assert.ok(typeof body.timestamp === 'string');
     });
 
     it('bypasses authentication', async () => {
       const { status } = await fetchJson('/health');
-      assert.strictEqual(status, 200);
+      // Health is public: the response must be served, not a 401/403.
+      assert.notStrictEqual(status, 401);
+      assert.notStrictEqual(status, 403);
+      assert.strictEqual(status, 503);
     });
 
     it('returns a request id header and preserves incoming request id', async () => {
-      const { status, headers } = await fetchJson('/health', { requestId: 'req-test-123' });
-      assert.strictEqual(status, 200);
+      const { headers } = await fetchJson('/health', { requestId: 'req-test-123' });
       assert.strictEqual(headers['x-request-id'], 'req-test-123');
     });
   });
 
   describe('/ready', () => {
-    it('returns 200 with ready status', async () => {
+    it('reports not_ready (503) when dependencies are unwired', async () => {
       const { status, body } = await fetchJson('/ready');
-      assert.strictEqual(status, 200);
-      assert.strictEqual(body.status, 'ready');
+      assert.strictEqual(status, 503);
+      assert.strictEqual(body.status, 'not_ready');
       assert.ok(typeof body.uptime === 'number');
       assert.ok(typeof body.memory?.rss === 'number');
     });
 
     it('is unauthenticated', async () => {
       const { status } = await fetchJson('/ready');
-      assert.strictEqual(status, 200);
+      assert.notStrictEqual(status, 401);
+      assert.notStrictEqual(status, 403);
+      assert.strictEqual(status, 503);
     });
   });
 
@@ -204,11 +219,29 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       const authBaseUrl = `http://127.0.0.1:${authServer.getPort()}`;
 
       try {
-        const { status, body } = await requestJson('GET', `${authBaseUrl}/api/v1/status`, {
+        // The hashed key authenticates. Probe a *non-tenant-scoped* route: once
+        // `tenantApiKeys` is configured, every tenant-scoped route requires a
+        // *mapped* key (`requireTenant` in httpTenantGate.ts) and a global key
+        // is deliberately not a tenant identity. `/openapi.json` is the
+        // unauthenticated 200 endpoint that proves authentication succeeded.
+        const { status } = await requestJson('GET', `${authBaseUrl}/openapi.json`, {
           headers: { Authorization: `Bearer ${rawKey}` },
         });
         assert.strictEqual(status, 200);
-        assert.strictEqual(typeof body.activeSessions, 'number');
+
+        // Pin the tenant-gate policy from both sides, so it cannot silently
+        // drift into either "global key reaches tenant routes" or "nothing does".
+        const globalOnTenantRoute = await requestJson('GET', `${authBaseUrl}/api/v1/status`, {
+          headers: { Authorization: `Bearer ${rawKey}` },
+        });
+        assert.strictEqual(globalOnTenantRoute.status, 401);
+        assert.match(globalOnTenantRoute.body.error, /Tenant required/);
+
+        const mappedOnTenantRoute = await requestJson('GET', `${authBaseUrl}/api/v1/status`, {
+          headers: { Authorization: 'Bearer tenant-raw-key' },
+        });
+        assert.strictEqual(mappedOnTenantRoute.status, 200);
+        assert.strictEqual(typeof mappedOnTenantRoute.body.activeSessions, 'number');
 
         const retainedConfig = (
           authServer as unknown as {
@@ -235,7 +268,12 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
   describe('HTTP hardening', () => {
     it('does not emit wildcard CORS by default', async () => {
-      const { status, headers } = await fetchJson('/health', { origin: 'https://evil.example' });
+      // `/openapi.json` is unauthenticated and returns 200. `/health` is not a
+      // usable probe here: it fails closed with 503 while the runtime
+      // dependencies are unwired (see the `/health` suite above).
+      const { status, headers } = await fetchJson('/openapi.json', {
+        origin: 'https://evil.example',
+      });
       assert.strictEqual(status, 200);
       assert.notStrictEqual(headers['access-control-allow-origin'], '*');
       assert.strictEqual(headers['access-control-allow-origin'], undefined);
@@ -253,12 +291,18 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       await corsServer.start();
       const corsBaseUrl = `http://127.0.0.1:${corsServer.getPort()}`;
 
-      const { status, headers } = await requestJson('GET', `${corsBaseUrl}/health`, {
-        origin: 'http://localhost:3000',
-      });
-      assert.strictEqual(status, 200);
-      assert.strictEqual(headers['access-control-allow-origin'], 'http://localhost:3000');
-      await corsServer.stop();
+      // try/finally is load-bearing: without it a failing assertion skips
+      // `stop()` and leaks a listening socket, which hangs the whole file
+      // (and, under `node --test`, aborts every later test in it).
+      try {
+        const { status, headers } = await requestJson('GET', `${corsBaseUrl}/openapi.json`, {
+          origin: 'http://localhost:3000',
+        });
+        assert.strictEqual(status, 200);
+        assert.strictEqual(headers['access-control-allow-origin'], 'http://localhost:3000');
+      } finally {
+        await corsServer.stop();
+      }
     });
 
     it('rejects oversized JSON request bodies', async () => {
@@ -277,7 +321,11 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
           body: { sessionId: 'x'.repeat(128) },
         });
         assert.strictEqual(status, 413);
-        assert.ok(body.error.includes('Request body too large'));
+        // Errors are emitted as RFC 7807 Problem Details (`sendProblem` in
+        // apiErrors.ts), so the machine-readable field is `code` and the
+        // human-readable one is `detail` — not `error`.
+        assert.strictEqual(body.code, 'PAYLOAD_TOO_LARGE');
+        assert.match(body.detail, /Request body too large/);
       } finally {
         await smallServer.stop();
       }
@@ -301,10 +349,17 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         const { status: readyStatus } = await requestJson('GET', `${protectedBaseUrl}/ready`);
         assert.strictEqual(readyStatus, 401);
 
+        // With the key supplied the request must no longer be *rejected by auth*.
+        // It is not necessarily 200: `/health` fails closed with 503 while the
+        // runtime dependencies are unwired, and that is the correct report here.
         const { status: okStatus } = await requestJson('GET', `${protectedBaseUrl}/health`, {
           headers: { Authorization: 'Bearer health-test-key' },
         });
-        assert.strictEqual(okStatus, 200);
+        assert.ok(
+          okStatus !== 401 && okStatus !== 403,
+          `an authenticated request must not be rejected by auth, got ${okStatus}`,
+        );
+        assert.strictEqual(okStatus, 503);
       } finally {
         await protectedServer.stop();
       }

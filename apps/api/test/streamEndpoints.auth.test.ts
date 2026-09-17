@@ -114,7 +114,7 @@ describe('streamEndpoints auth', () => {
     }
   });
 
-  it('rejects tenant-wide aliases for a project-limited EventSource JWT', async () => {
+  it('rejects URL query tokens instead of treating them as a second auth authority', async () => {
     process.env.JWT_SECRET = process.env.JWT_SECRET || 'test-jwt-secret-for-sse-access-token';
     const { signAccessToken } = await import('../src/jwtMiddleware');
     const users = new TestUserRepository();
@@ -139,7 +139,7 @@ describe('streamEndpoints auth', () => {
         `http://127.0.0.1:${port}/events?access_token=${encodeURIComponent(token)}`,
         { headers: { Accept: 'text/event-stream' } },
       );
-      assert.equal(res.status, 403);
+      assert.equal(res.status, 401);
     } finally {
       await close();
       _resetUserStoreForTests();
@@ -169,8 +169,8 @@ describe('streamEndpoints auth', () => {
       const res = await fetch(
         `http://127.0.0.1:${port}/events?access_token=${encodeURIComponent(token)}`,
       );
-      assert.equal(res.status, 503);
-      assert.deepEqual(await res.json(), { error: { code: 'AUTHORITY_UNAVAILABLE' } });
+      assert.equal(res.status, 401);
+      assert.deepEqual(await res.json(), { error: 'Authentication required' });
     } finally {
       await close();
       _resetUserStoreForTests();

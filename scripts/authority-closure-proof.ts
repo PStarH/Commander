@@ -5,9 +5,16 @@
  * Fail-closed: every nested boolean must be true or exit 1 with evidenceLevel FAILED.
  * Skipped / soft-pass is not allowed.
  *
- * Usage:
- *   export OWNER_DSN='postgres://commander:commander@127.0.0.1:5433/commander'
+ * Usage (only against a provisioner-owned, run-scoped instance — see
+ * ci-database-scope.ts; the proof applies migrations and re-passwords the five
+ * non-owner deploy-gate roles, so it must never run against a shared cluster):
+ *   export OWNER_DSN='postgres://<owner>:<password>@<host>:5432/<db>'
  *   export COMMANDER_KERNEL_DATABASE_URL="$OWNER_DSN"
+ *   export COMMANDER_CI_INSTANCE_MUTATION=yes
+ *   export COMMANDER_CI_INSTANCE_ID="<provisioner run id>"
+ *   export COMMANDER_CI_PROVISION_TOKEN="<provisioner run credential>"
+ *   export COMMANDER_CI_PASSWORD_COMMANDER_APP="<run-scoped password>"
+ *   # ... one COMMANDER_CI_PASSWORD_* per deploy-gate role
  *   pnpm proof:authority
  */
 
@@ -18,6 +25,12 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Pool } from 'pg';
+import {
+  DEPLOY_GATE_ROLES,
+  assertProvisionedCiInstance,
+  resolveRolePassword,
+  type DeployGateRole,
+} from './ci-database-scope.js';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
@@ -59,12 +72,12 @@ const SOURCE_MANIFEST_PATH = resolve(
   ROOT,
   '.superpowers/sdd/authority-closure-proof-latest.source.json',
 );
-const FALLBACK_DSN = 'postgres://commander:commander@127.0.0.1:5433/commander';
-
-const appPassword = process.env.COMMANDER_APP_PASSWORD ?? 'commander_app';
-const schedulerPassword = process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler';
-const workerPassword = process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker';
-const adapterOpsPassword = process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops';
+/**
+ * The proof used to fall back to a public default DSN on port 5433 with the
+ * password equal to the user name, and to public default role passwords equal
+ * to the role name. Both are gone: a missing DSN or password is a failure,
+ * evaluated before any connection is opened.
+ */
 
 export interface AuthorityProofResult {
   gitSha: string;
@@ -146,6 +159,62 @@ const nonEmpty = (value: unknown): boolean =>
         ? Number.isFinite(value) && value >= 0
         : typeof value === 'boolean';
 
+/**
+ * Presence is not provenance. `nonEmpty()` returns true for *any* boolean, so
+ * a `dirty: true` source passed the mandatory-field check and the proof signed
+ * an ENFORCED certificate from an unclean worktree. These checks validate the
+ * value, not the field's existence.
+ *
+ * The failure codes deliberately reuse the ones `deriveTechnicalVerdict` in
+ * proof-metadata.ts already emits (SOURCE_DIRTY, SOURCE_COMMIT_INVALID) so the
+ * repository has one vocabulary for one condition.
+ */
+export function validateSourceProvenance(
+  source: AuthorityProofMetadata['source'] | undefined,
+  expectedCommit?: string,
+): string[] {
+  const failures: string[] = [];
+  const commit = source?.commit;
+
+  if (typeof commit !== 'string' || !/^[a-f0-9]{40,64}$/.test(commit)) {
+    failures.push('SOURCE_COMMIT_INVALID: source.commit is not a full 40-64 hex commit');
+  } else if (expectedCommit !== undefined && commit !== expectedCommit) {
+    failures.push('SOURCE_COMMIT_MISMATCH: source.commit is not this candidate');
+  }
+
+  // The correct value of `dirty` is exactly `false`; missing, 'false', 0 and
+  // true are all failures.
+  if (source?.dirty !== false) {
+    failures.push('SOURCE_DIRTY: source.dirty is not exactly false');
+  }
+
+  return failures;
+}
+
+/**
+ * Detect source drift between the start and the end of a proof run. A proof
+ * that measured one source snapshot cannot certify another.
+ */
+export function sourceSnapshotFailures(
+  expected: AuthorityProofMetadata['source'],
+  observed: AuthorityProofMetadata['source'],
+): string[] {
+  const failures: string[] = [];
+  if (expected.commit !== observed.commit) {
+    failures.push('SOURCE_DRIFTED_DURING_PROOF: commit changed mid-run');
+  }
+  if (expected.dirty !== observed.dirty) {
+    failures.push('SOURCE_DRIFTED_DURING_PROOF: worktree cleanliness changed mid-run');
+  }
+  if (expected.trackedDiffSha256 !== observed.trackedDiffSha256) {
+    failures.push('SOURCE_DRIFTED_DURING_PROOF: tracked diff changed mid-run');
+  }
+  if (canonicalJson(expected.untrackedFiles) !== canonicalJson(observed.untrackedFiles)) {
+    failures.push('SOURCE_DRIFTED_DURING_PROOF: untracked source set changed mid-run');
+  }
+  return failures;
+}
+
 export function validateProofMetadata(metadata: AuthorityProofMetadata): string[] {
   const mandatory: Array<[string, unknown]> = [
     ['workflowId', metadata.workflowId],
@@ -180,6 +249,7 @@ export function validateProofMetadata(metadata: AuthorityProofMetadata): string[
   const failures = mandatory
     .filter(([, value]) => !nonEmpty(value))
     .map(([name]) => `mandatory metadata empty: ${name}`);
+  failures.push(...validateSourceProvenance(metadata.source));
   if (
     metadata.source?.trackedDiffSha256 &&
     !/^[a-f0-9]{64}$/.test(metadata.source.trackedDiffSha256)
@@ -237,27 +307,38 @@ function resolveGitDirty(): boolean {
   }
 }
 
-function captureWorkspaceSource(gitSha: string): AuthorityProofMetadata['source'] {
-  const trackedDiff = execFileSync('git', ['diff', '--binary', 'HEAD', '--'], {
-    cwd: ROOT,
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  const untrackedOutput = execFileSync(
-    'git',
-    ['ls-files', '--others', '--exclude-standard', '-z'],
-    { cwd: ROOT, encoding: 'utf8' },
-  );
-  const untrackedFiles = untrackedOutput
-    .split('\0')
-    .filter(Boolean)
-    .sort()
-    .map((path) => `${path}:sha256:${sha256Hex(readFileSync(resolve(ROOT, path)))}`);
-  return {
-    commit: gitSha,
-    dirty: resolveGitDirty(),
-    trackedDiffSha256: sha256Hex(trackedDiff),
-    untrackedFiles,
-  };
+export function captureWorkspaceSource(gitSha: string): AuthorityProofMetadata['source'] {
+  try {
+    const trackedDiff = execFileSync('git', ['diff', '--binary', 'HEAD', '--'], {
+      cwd: ROOT,
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    const untrackedOutput = execFileSync(
+      'git',
+      ['ls-files', '--others', '--exclude-standard', '-z'],
+      { cwd: ROOT, encoding: 'utf8' },
+    );
+    const untrackedFiles = untrackedOutput
+      .split('\0')
+      .filter(Boolean)
+      .sort()
+      .map((path) => `${path}:sha256:${sha256Hex(readFileSync(resolve(ROOT, path)))}`);
+    return {
+      commit: gitSha,
+      dirty: resolveGitDirty(),
+      trackedDiffSha256: sha256Hex(trackedDiff),
+      untrackedFiles,
+    };
+  } catch {
+    // Git collection failed. Never degrade to a clean-looking default: report
+    // an explicitly unknown source so every downstream check fails closed.
+    return {
+      commit: 'SOURCE_UNKNOWN',
+      dirty: true,
+      trackedDiffSha256: '',
+      untrackedFiles: [],
+    };
+  }
 }
 
 function createSourceManifestBody(source: AuthorityProofMetadata['source']): string {
@@ -349,16 +430,61 @@ export type AuthorityProofFlags = {
   capability: AuthorityProofResult['capability'];
 };
 
-/** Prefer OWNER_DSN, then kernel URL, then DATABASE_URL, then local fallback. */
-export function resolveOwnerDsn(env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * Prefer OWNER_DSN, then the kernel URL, then DATABASE_URL.
+ * There is no local fallback DSN: an unconfigured target is a failure, not a
+ * guess at a developer's machine.
+ */
+export function resolveOwnerDsn(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const owner = env.OWNER_DSN?.trim();
   if (owner) return owner;
   const kernel = env.COMMANDER_KERNEL_DATABASE_URL?.trim();
   if (kernel) return kernel;
   const database = env.DATABASE_URL?.trim();
   if (database) return database;
-  return FALLBACK_DSN;
+  return undefined;
 }
+
+/**
+ * Role passwords for the five non-owner proof identities.
+ *
+ * These are run-scoped values the provisioner supplies. The proof used to
+ * default each one to the role name itself; it now fails closed instead.
+ */
+export interface ProofRolePasswords {
+  app: string;
+  tenantAuthority: string;
+  scheduler: string;
+  worker: string;
+  adapterOps: string;
+}
+
+export function resolveProofRolePasswords(env: NodeJS.ProcessEnv = process.env): {
+  passwords?: ProofRolePasswords;
+  failures: string[];
+} {
+  const mapping: Record<keyof ProofRolePasswords, DeployGateRole> = {
+    app: 'commander_app',
+    tenantAuthority: 'commander_tenant_authority',
+    scheduler: 'commander_scheduler',
+    worker: 'commander_worker',
+    adapterOps: 'commander_adapter_ops',
+  };
+  const failures: string[] = [];
+  const resolved: Partial<ProofRolePasswords> = {};
+  for (const [key, role] of Object.entries(mapping) as Array<
+    [keyof ProofRolePasswords, DeployGateRole]
+  >) {
+    const { password, failures: roleFailures } = resolveRolePassword(role, env);
+    if (password === undefined) failures.push(...roleFailures);
+    else resolved[key] = password;
+  }
+  if (failures.length > 0) return { failures };
+  return { passwords: resolved as ProofRolePasswords, failures };
+}
+
+/** The deploy-gate roles the proof exercises, for admission diagnostics. */
+export const PROOF_ROLES: readonly DeployGateRole[] = DEPLOY_GATE_ROLES;
 
 export function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string): string {
   const url = new URL(baseUrl);
@@ -401,6 +527,8 @@ export function finalizeResult(input: {
   const { database, effect, capability } = input.flags;
   const metadata = input.metadata ?? emptyProofMetadata();
   failures.push(...validateProofMetadata(metadata));
+  // Bind the metadata's source to THIS candidate, not merely to "some commit".
+  failures.push(...validateSourceProvenance(metadata.source, input.gitSha));
 
   const boolChecks: Array<[string, boolean]> = [
     ['database.rlsEnabled', database.rlsEnabled],
@@ -1335,6 +1463,8 @@ async function checkWorkerDsnThreat(input: {
   workerRepo: PostgresKernelRepository;
   appRepo: PostgresKernelRepository;
   allowedTenant: string;
+  ownerDsn: string;
+  workerPassword: string;
   failures: string[];
 }): Promise<{
   workerDirectInsertRejected: boolean;
@@ -1718,11 +1848,7 @@ async function checkWorkerDsnThreat(input: {
   // Identity takeover: dedicated short-lived pool so register_worker cannot poison
   // the shared workerRepo pool used by later effect proofs.
   const hijackId = `proof-hijack-${randomUUID().slice(0, 8)}`;
-  const workerUrl = deriveRoleDatabaseUrl(
-    resolveOwnerDsn(),
-    'commander_worker',
-    process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker',
-  );
+  const workerUrl = deriveRoleDatabaseUrl(input.ownerDsn, 'commander_worker', input.workerPassword);
   const hijackPool = new Pool({ connectionString: workerUrl, max: 1 });
   try {
     const first = await hijackPool.query<{
@@ -2106,27 +2232,67 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
   const tenantB = `proof-b-${suffix}`;
   const tenantCap = `proof-cap-${suffix}`;
 
+  // ── Admission gate ────────────────────────────────────────────────────────
+  // This proof runs migrations and re-passwords five cluster-level roles. That
+  // is a mutating, cluster-scoped operation, so it must not happen implicitly
+  // as part of an ordinary acceptance run. All of the following are checked
+  // BEFORE a connection is opened, a migration is applied, or a role is touched.
+  const rolePasswords = resolveProofRolePasswords();
+  const admissionFailures = [
+    ...(ownerDsn === undefined
+      ? [
+          'PROOF_OWNER_DSN_REQUIRED: no OWNER_DSN / COMMANDER_KERNEL_DATABASE_URL / DATABASE_URL configured',
+        ]
+      : assertProvisionedCiInstance(process.env, ownerDsn)),
+    ...rolePasswords.failures,
+  ];
+  if (admissionFailures.length > 0) {
+    failures.push(...admissionFailures);
+    const endedAt = new Date().toISOString();
+    return finalizeResult({
+      gitSha,
+      flags,
+      failures,
+      metadata: buildProofMetadata({
+        gitSha,
+        startedAt,
+        endedAt,
+        flags,
+        failures,
+        tenants: [tenantA, tenantB, tenantCap],
+        source,
+      }),
+    });
+  }
+  const {
+    app: appPassword,
+    tenantAuthority: tenantAuthorityPassword,
+    scheduler: schedulerPassword,
+    worker: workerPassword,
+    adapterOps: adapterOpsPassword,
+  } = rolePasswords.passwords!;
+
   try {
-    ownerPool = new Pool({ connectionString: ownerDsn, max: 4 });
+    ownerPool = new Pool({ connectionString: ownerDsn!, max: 4 });
     await ownerPool.query('SELECT 1');
     await runKernelMigrations(ownerPool);
 
     await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
-    await ensureRoleLogin(ownerPool, 'commander_tenant_authority', 'commander_tenant_authority');
+    await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
     await ensureRoleLogin(ownerPool, 'commander_scheduler', schedulerPassword);
     await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
     await ensureRoleLogin(ownerPool, 'commander_adapter_ops', adapterOpsPassword);
 
-    const appUrl = deriveRoleDatabaseUrl(ownerDsn, 'commander_app', appPassword);
+    const appUrl = deriveRoleDatabaseUrl(ownerDsn!, 'commander_app', appPassword);
     const tenantAuthorityUrl = deriveRoleDatabaseUrl(
-      ownerDsn,
+      ownerDsn!,
       'commander_tenant_authority',
-      'commander_tenant_authority',
+      tenantAuthorityPassword,
     );
-    const workerUrl = deriveRoleDatabaseUrl(ownerDsn, 'commander_worker', workerPassword);
-    const schedulerUrl = deriveRoleDatabaseUrl(ownerDsn, 'commander_scheduler', schedulerPassword);
+    const workerUrl = deriveRoleDatabaseUrl(ownerDsn!, 'commander_worker', workerPassword);
+    const schedulerUrl = deriveRoleDatabaseUrl(ownerDsn!, 'commander_scheduler', schedulerPassword);
     const adapterOpsUrl = deriveRoleDatabaseUrl(
-      ownerDsn,
+      ownerDsn!,
       'commander_adapter_ops',
       adapterOpsPassword,
     );
@@ -2170,6 +2336,8 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
       workerRepo,
       appRepo,
       allowedTenant: tenantA,
+      ownerDsn: ownerDsn!,
+      workerPassword,
       failures,
     });
     flags.database.workerDirectInsertRejected = workerThreat.workerDirectInsertRejected;
@@ -2284,6 +2452,13 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
   }
 
   const endedAt = new Date().toISOString();
+  // The proof measured a specific source snapshot. Re-capture it now and refuse
+  // to certify anything if the source moved while the probes were running.
+  // The proof's own artifacts are written by main() after this point, so they
+  // cannot be mistaken for source drift.
+  const observedSource = captureWorkspaceSource(gitSha);
+  failures.push(...sourceSnapshotFailures(source, observedSource));
+
   return finalizeResult({
     gitSha,
     flags,
@@ -2295,7 +2470,7 @@ export async function runAuthorityProof(): Promise<AuthorityProofResult> {
       flags,
       failures,
       tenants: [tenantA, tenantB, tenantCap],
-      source,
+      source: observedSource,
     }),
   });
 }

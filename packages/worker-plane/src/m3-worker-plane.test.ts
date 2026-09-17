@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, beforeEach } from 'node:test';
 import { ApiKeyWorkerAuthenticator, WorkerAuthError } from './apiKeyAuthenticator.js';
+import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
 import { ConnectorStepExecutor } from './connectorStepExecutor.js';
 import { EvaluatorStepExecutor } from './evaluatorStepExecutor.js';
@@ -111,6 +112,39 @@ describe('ApiKeyWorkerAuthenticator', () => {
     );
   });
 
+  for (const [label, expiresAt] of [
+    ['malformed', 'not-a-date'],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['missing', undefined],
+    ['null', null],
+    ['out-of-range', '+999999-01-01T00:00:00.000Z'],
+    ['expired', '2029-12-31T23:59:59.999Z'],
+    ['at current time', '2030-01-01T00:00:00.000Z'],
+  ] as const) {
+    it(`WP01 rejects ${label} expiry with TOKEN_EXPIRED`, async (t) => {
+      t.mock.method(Date, 'now', () => Date.parse('2030-01-01T00:00:00.000Z'));
+      const identity = { subject: 'worker:worker-1', token: validToken, expiresAt };
+      await assert.rejects(
+        authenticator.authenticate(identity as WorkerIdentity, definition),
+        (err: unknown) => err instanceof WorkerAuthError && err.code === 'TOKEN_EXPIRED',
+      );
+    });
+  }
+
+  it('WP01 accepts expiry one millisecond in the future', async (t) => {
+    t.mock.method(Date, 'now', () => Date.parse('2030-01-01T00:00:00.000Z'));
+    const result = await authenticator.authenticate(
+      {
+        subject: 'worker:worker-1',
+        token: validToken,
+        expiresAt: '2030-01-01T00:00:00.001Z',
+      },
+      definition,
+    );
+    assert.deepEqual(result.tenantIds, ['tenant-a', 'tenant-b']);
+  });
+
   it('rejects unauthorized capability', async () => {
     const identity: WorkerIdentity = {
       subject: 'worker:worker-1',
@@ -179,6 +213,45 @@ describe('ApiKeyWorkerAuthenticator', () => {
       (err: unknown) => err instanceof WorkerAuthError && err.code === 'TENANT_SCOPE_DENIED',
     );
   });
+});
+
+describe('awaitWithAbortTimeout', () => {
+  for (const behavior of ['resolve', 'throw', 'cooperative-reject', 'hang'] as const) {
+    it(`WP03 rejects before starting pre-aborted ${behavior} work`, async (t) => {
+      const parent = new AbortController();
+      parent.abort(new Error('already cancelled'));
+      const expected = new Error('mapped abort');
+      const abortError = t.mock.fn((_cooperative: boolean) => expected);
+      const timeoutError = t.mock.fn(() => new Error('unexpected timeout'));
+      const timer = t.mock.method(globalThis, 'setTimeout');
+      const listen = t.mock.method(parent.signal, 'addEventListener');
+      const work = t.mock.fn((signal: AbortSignal): Promise<string> => {
+        if (behavior === 'throw') throw new Error('work must not throw');
+        if (behavior === 'resolve') return Promise.resolve('work must not resolve');
+        return new Promise((_resolve, reject) => {
+          if (behavior === 'cooperative-reject') {
+            signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+          }
+        });
+      });
+      const pending = awaitWithAbortTimeout(work, {
+        parentSignal: parent.signal,
+        timeoutMs: 1_000,
+        abortGraceMs: 10,
+        abortError,
+        timeoutError,
+      });
+      const immediateAbortCalls = abortError.mock.calls.map((call) => call.arguments);
+      const scheduledTimers = timer.mock.callCount();
+      await assert.rejects(pending, (error: unknown) => error === expected);
+      assert.equal(work.mock.callCount(), 0);
+      assert.deepEqual(immediateAbortCalls, [[false]]);
+      assert.equal(abortError.mock.callCount(), 1);
+      assert.equal(timeoutError.mock.callCount(), 0);
+      assert.equal(scheduledTimers, 0);
+      assert.equal(listen.mock.callCount(), 0);
+    });
+  }
 });
 
 // ── ToolStepExecutor tests ──
@@ -1067,7 +1140,7 @@ describe('EvaluatorStepExecutor', () => {
     assert.equal((result as any).score, 0.5);
   });
 
-  it('passes with no rules', async () => {
+  it('fails closed instead of passing when no rules are defined', async () => {
     const executor = new EvaluatorStepExecutor();
     const step = createMockStep({
       kind: 'evaluator',
@@ -1077,9 +1150,11 @@ describe('EvaluatorStepExecutor', () => {
         criteria: { rules: [] },
       },
     });
-    const result = await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
-    assert.equal((result as any).passed, true);
-    assert.equal((result as any).score, 1.0);
+    // WP-06: an evaluation that measured nothing used to report `score: 1.0, passed: true`.
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) => err.options.code === 'EVALUATION_UNMEASURED',
+    );
   });
 
   it('throws on missing criteria', async () => {
@@ -1147,7 +1222,13 @@ describe('CompositeStepExecutor', () => {
     // Evaluator step
     const evalStep = createMockStep({
       kind: 'evaluator',
-      input: { subject: {}, method: 'rules', criteria: { rules: [] } },
+      input: {
+        subject: { ready: true },
+        method: 'rules',
+        criteria: {
+          rules: [{ name: 'ready', path: 'ready', check: 'equals', expected: true, weight: 1 }],
+        },
+      },
     });
     const evalResult = await composite.execute(evalStep, {
       signal: ac.signal,

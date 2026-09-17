@@ -575,3 +575,37 @@ describe('HookManager withTimeout per-plugin limit (GAP-3 fix)', () => {
     assert.ok(elapsed < 500, `Hook should timeout near 50ms, took ${elapsed}ms`);
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Filesystem grant containment
+//
+// A `/**` grant must only match real descendants. Plain `startsWith(prefix)`
+// also matches a *sibling* whose name merely shares the prefix
+// (`/workspace/data/**` accepting `/workspace/database/...`).
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('filesystem grant containment (sibling-prefix)', () => {
+  it('does not treat a sibling directory sharing a name prefix as inside the grant', () => {
+    const enforcer = new PluginPermissionEnforcer('prefix-plugin', {
+      filesystem: { read: ['/workspace/data/**'], write: ['/workspace/data/**'] },
+    });
+
+    // Real descendants (and the granted root itself) are allowed.
+    assert.equal(enforcer.checkFileRead('/workspace/data/file.txt').allowed, true);
+    assert.equal(enforcer.checkFileRead('/workspace/data').allowed, true);
+    assert.equal(enforcer.checkFileWrite('/workspace/data/nested/deep.txt').allowed, true);
+
+    // `/workspace/database` only shares the string prefix `/workspace/data`.
+    assert.equal(enforcer.checkFileRead('/workspace/database/secrets.txt').allowed, false);
+    assert.equal(enforcer.checkFileWrite('/workspace/database/secrets.txt').allowed, false);
+    assert.equal(enforcer.checkFileRead('/workspace/data2/file.txt').allowed, false);
+  });
+
+  it('keeps trailing-slash grants working for real descendants', () => {
+    const enforcer = new PluginPermissionEnforcer('slash-plugin', {
+      filesystem: { read: ['/workspace/data/'] },
+    });
+    assert.equal(enforcer.checkFileRead('/workspace/data/file.txt').allowed, true);
+    assert.equal(enforcer.checkFileRead('/workspace/database/file.txt').allowed, false);
+  });
+});

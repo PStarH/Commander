@@ -14,6 +14,11 @@
  *   commander --version                 Show version
  *   commander help                      Show this help
  */
+// NOTE: this import MUST stay first. ESM evaluates the static import list in
+// source order, so this side-effect module loads the walk-up `.env` before any
+// command/config module below is evaluated — several of them read `process.env`
+// at module scope. Reordering it silently reintroduces the startup bug.
+import './cli/bootstrapEnv';
 import { reportSilentFailure } from './silentFailureReporter';
 import { $, parseFlags, setTheme } from './cli/util';
 
@@ -62,6 +67,10 @@ import {
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
 import { cmdSandbox } from './cli/commands/sandbox';
+import { getDirname, getRequire } from './esmCompat';
+
+const nodeRequire = getRequire(import.meta.url);
+const __dirname = getDirname(import.meta.url);
 
 // ============================================================================
 // Per-command help text
@@ -167,8 +176,12 @@ async function main() {
 
   if (args[0] === '--version' || args[0] === 'version') {
     try {
-      const pkgPath = require.resolve('../../package.json');
-      console.log(`${require(pkgPath).version} (profile: ${resolveActiveProfile()})`);
+      // `../package.json` is packages/core/package.json from BOTH `src/` (dev,
+      // tsx) and `dist/` (built) — they are sibling directories. The previous
+      // `../../package.json` resolved to packages/package.json, which does not
+      // exist, so `--version` always fell through to "unknown".
+      const pkgPath = nodeRequire.resolve('../package.json');
+      console.log(`${nodeRequire(pkgPath).version} (profile: ${resolveActiveProfile()})`);
     } catch (err) {
       reportSilentFailure(err, 'cli:120');
       console.log(`unknown (profile: ${resolveActiveProfile()})`);
@@ -399,8 +412,8 @@ async function main() {
       // Security: Use spawn with explicit argv array instead of execSync with
       // template literal to prevent command injection via CLI arguments.
       // Per OWASP OS Command Injection Defense Cheat Sheet: avoid shell interpretation.
-      const { spawn } = require('child_process');
-      const vizPath = require('path').join(__dirname, '../../../viz/dist/index.js');
+      const { spawn } = nodeRequire('child_process');
+      const vizPath = nodeRequire('path').join(__dirname, '../../../viz/dist/index.js');
       try {
         spawn('node', [vizPath, ...rest], { stdio: 'inherit', shell: false });
       } catch (err) {

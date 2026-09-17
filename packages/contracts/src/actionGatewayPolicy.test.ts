@@ -169,7 +169,10 @@ describe('action gateway policy contracts', () => {
     assert.equal(snapshot.authorizationSemantics.unregisteredEffect, 'deny');
     const { descriptorDigest, ...body } = snapshot;
     assert.equal(descriptorDigest, createHash('sha256').update(JSON.stringify(body)).digest('hex'));
-    assert.equal(descriptorDigest, '43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c');
+    assert.equal(
+      descriptorDigest,
+      '43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c',
+    );
   });
 
   it('characterizes exact effect/tool and destination matching including demo compensation', () => {

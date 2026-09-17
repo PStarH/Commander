@@ -316,7 +316,10 @@ export class PluginPermissionEnforcer {
     // Prefix match with /**
     if (normalizedPattern.endsWith('/**')) {
       const prefix = normalizedPattern.slice(0, -3);
-      return normalizedPath.startsWith(prefix);
+      // `startsWith` alone treats a sibling directory whose name merely shares a
+      // prefix as inside the grant: `/workspace/data/**` would accept
+      // `/workspace/database/x`. Require the match to end at a path separator.
+      return normalizedPath === prefix || normalizedPath.startsWith(prefix + '/');
     }
 
     // Prefix match with /

@@ -72,13 +72,21 @@ describe('ExecPolicyEngine', () => {
     assert.ok(result.rule?.id.includes('allow-readonly'));
   });
 
-  it('allows dev tooling', async () => {
+  it('requires approval for dev tooling', async () => {
     const { ExecPolicyEngine } = await import('../src/sandbox/execPolicy');
     const engine = new ExecPolicyEngine();
 
+    // SBX-02: DEVELOPMENT_TOOLS_REQUIRING_APPROVAL are pinned at the immutable
+    // restrictive floor (priority 50), above allow-readonly (priority 1), because
+    // these tools execute project-controlled code. They must never be auto-allowed.
     for (const cmd of ['npm install', 'pnpm test', 'tsc --noEmit', 'eslint .', 'vitest run']) {
       const result = engine.evaluate(cmd);
-      assert.strictEqual(result.decision, 'allow', `${cmd} should be allowed`);
+      assert.strictEqual(result.decision, 'prompt', `${cmd} must require approval`);
+      assert.strictEqual(
+        result.rule?.id,
+        'prompt-dev-execution',
+        `${cmd} must match the dev-execution prompt rule`,
+      );
     }
   });
 

@@ -506,4 +506,66 @@ describe('SubAgentExecutor', () => {
     expect(node.status).toBe('COMPLETED');
     expect(node.subtasks.every((s) => s.status === 'COMPLETED')).toBe(true);
   });
+
+  // -------------------------------------------------------------------------
+  // UB-01: role-scoped tools are a grant, not a hint. An unrecognised role must
+  // not receive a broader grant than a recognised one.
+  // -------------------------------------------------------------------------
+  describe('UB-01: filterToolsForRole fails closed', () => {
+    const ALL_TOOLS = [
+      'bash',
+      'file_write',
+      'write_file',
+      'file_edit',
+      'edit_file',
+      'file_read',
+      'read_file',
+      'grep',
+      'file_search',
+      'web_search',
+      'web_fetch',
+      'diff',
+    ];
+
+    function grantFor(role?: string): string[] {
+      const executor = new SubAgentExecutor(makeRuntime(), getArtifactSystem(), 1);
+      // Pure function of (allTools, role) — exercised directly so the assertion
+      // is about the grant itself rather than a downstream side effect.
+      return (
+        executor as unknown as { filterToolsForRole(a: string[], r?: string): string[] }
+      ).filterToolsForRole(ALL_TOOLS, role);
+    }
+
+    it('does not grant write/bash tools to a role it does not recognise', () => {
+      const granted = grantFor('not-a-real-role');
+      expect(granted).not.toContain('bash');
+      expect(granted).not.toContain('file_write');
+      expect(granted).not.toContain('write_file');
+      expect(granted).toEqual(['file_read', 'read_file', 'grep', 'file_search', 'diff']);
+    });
+
+    it('does not grant the full toolset when the role is absent', () => {
+      const granted = grantFor(undefined);
+      expect(granted.length).toBeLessThan(ALL_TOOLS.length);
+      expect(granted).not.toContain('bash');
+    });
+
+    it('scopes every declared ROMARole to a strict subset of the available tools', () => {
+      for (const role of ['LEAD', 'RESEARCHER', 'CODER', 'REVIEWER', 'TESTER', 'SPECIALIST']) {
+        const granted = grantFor(role);
+        expect(granted.length, `${role} should be scoped`).toBeGreaterThan(0);
+        expect(granted.length, `${role} must not receive everything`).toBeLessThan(
+          ALL_TOOLS.length,
+        );
+      }
+    });
+
+    it('grants the empty set rather than everything when a role hints match nothing', () => {
+      const executor = new SubAgentExecutor(makeRuntime(), getArtifactSystem(), 1);
+      const granted = (
+        executor as unknown as { filterToolsForRole(a: string[], r?: string): string[] }
+      ).filterToolsForRole(['some_unrelated_tool'], 'reviewer');
+      expect(granted).toEqual([]);
+    });
+  });
 });

@@ -12,6 +12,16 @@ type WorkflowStep = {
   with?: Record<string, string | number>;
 };
 
+/**
+ * Remote actions are pinned to an immutable 40-hex commit SHA with the
+ * human-readable ref kept as a trailing comment. js-yaml strips that comment,
+ * so the parsed value is `owner/repo@<40-hex>`; a bare tag is still accepted so
+ * the check does not depend on the pinning style.
+ */
+function usesAction(step: WorkflowStep, action: string): boolean {
+  return new RegExp(`^${action}@(?:[0-9a-f]{40}|v[0-9]+)$`).test(step.uses ?? '');
+}
+
 type Workflow = {
   jobs?: Record<
     string,
@@ -65,9 +75,9 @@ describe('Module A CI workflow', () => {
     assert.equal(job.env?.COMMANDER_CI_EVIDENCE_DIR, '.internal/evidence/ci/module-a');
 
     const steps = job.steps ?? [];
-    const setupPnpm = steps.find((step) => step.uses === 'pnpm/action-setup@v6');
+    const setupPnpm = steps.find((step) => usesAction(step, 'pnpm/action-setup'));
     assert.equal(setupPnpm?.with?.version, '9.15.4');
-    const setupNode = steps.find((step) => step.uses === 'actions/setup-node@v7');
+    const setupNode = steps.find((step) => usesAction(step, 'actions/setup-node'));
     assert.equal(setupNode?.with?.['node-version'], '22');
 
     const install = steps.find((step) => step.name === 'Install locked dependencies');
@@ -78,7 +88,7 @@ describe('Module A CI workflow', () => {
 
     const artifact = steps.find((step) => step.name === 'Upload Module A evidence');
     assert.equal(artifact?.if, 'always()');
-    assert.equal(artifact?.uses, 'actions/upload-artifact@v4');
+    assert.equal(artifact !== undefined && usesAction(artifact, 'actions/upload-artifact'), true);
     assert.equal(artifact?.with?.path, '.internal/evidence/ci/module-a/');
   });
 

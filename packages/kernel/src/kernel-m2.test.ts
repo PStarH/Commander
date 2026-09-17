@@ -685,24 +685,33 @@ describe('KernelRepository — Outbox DLQ', () => {
     repo = new InMemoryKernelRepository();
   });
 
-  it('moves messages to DLQ after max attempts', async () => {
+  it('moves messages to DLQ after max attempts and stops claiming them', async () => {
     const runCmd = createRunCommand();
     await repo.createRun(runCmd, 'tester');
+    // F-K1-4: the previous loop mutated returned copies (claimOutbox clones) and
+    // asserted `movedToDlq >= 0`, so it passed even though nothing reached the DLQ.
+    // Drive the real path: one claim, one attempt, max attempts = 1.
+    repo.outboxMaxAttempts = 1;
 
-    // The run creation should have created outbox messages
-    // Simulate failed attempts by claiming without publishing
-    for (let i = 0; i < 11; i++) {
-      const messages = await repo.claimOutbox(10);
-      for (const msg of messages) {
-        // Don't publish — simulate failure
-        // The claim will expire, and we manually increment attempts
-        (msg as any).attempts = i + 1;
-      }
-    }
+    const claimed = await repo.claimOutbox(10);
+    assert.equal(claimed.length, 1, 'run creation must seed exactly one claimable outbox message');
+    assert.equal(claimed[0]!.attempts, 1, 'claim must persist the consumed attempt');
 
-    const result = await repo.sweepOutboxDlq(new Date(), 10);
-    // Some messages should have been moved to DLQ
-    assert.ok(result.movedToDlq >= 0);
+    // Sweep past the claim lease so the sweep may touch the row (it mirrors
+    // PostgreSQL FOR UPDATE SKIP LOCKED and skips actively-claimed rows).
+    const result = await repo.sweepOutboxDlq(new Date(Date.now() + 61_000), 10);
+    assert.equal(result.movedToDlq, 1, 'a message at max attempts must be promoted to the DLQ');
+
+    const dlqEntries = await repo.listDlqEntries(100);
+    assert.equal(dlqEntries.length, 1);
+    assert.equal(dlqEntries[0]!.originalId, claimed[0]!.id);
+    assert.equal(dlqEntries[0]!.attempts, 1);
+    assert.equal(dlqEntries[0]!.dlqReason, 'max_attempts_exceeded');
+    assert.deepEqual(
+      await repo.claimOutbox(10),
+      [],
+      'DLQ-promoted messages must never be claimed again',
+    );
   });
 
   it('lists DLQ entries', async () => {

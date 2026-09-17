@@ -513,6 +513,29 @@ function luhnCheck(input: string): boolean {
 }
 
 /**
+ * Plausible payment-card prefix check (ISO/IEC 7812 major industry identifier).
+ *
+ * Luhn alone is not evidence of a card: roughly one arbitrary digit run in ten
+ * passes it. A 13-digit Unix-millisecond timestamp therefore had about a 10%
+ * chance of being masked as a card number, which silently rewrote legitimate
+ * data — an API response field carrying epoch milliseconds came back as
+ * `****-****-****-7457`, and whether it did depended on the timestamp's value.
+ *
+ * Real card numbers never begin with 1 (airline), 0, 7 (petroleum) or 8/9
+ * (telecom / national assignment), and Visa is the only 13-digit brand. This
+ * keeps every real brand detectable while excluding the timestamp and
+ * generic-identifier classes.
+ */
+function plausibleCardPrefix(input: string): boolean {
+  const digits = input.replace(/\D/g, '');
+  if (digits.length < 13 || digits.length > 19) return false;
+  const first = digits[0]!;
+  if (digits.length === 13) return first === '4'; // Visa is the only 13-digit brand
+  // 2 Mastercard, 3 Amex/JCB/Diners, 4 Visa, 5 Mastercard, 6 Discover
+  return first >= '2' && first <= '6';
+}
+
+/**
  * 中国身份证号校验码验证（GB 11643-1999）。
  * @param id - 18 位身份证号字符串
  * @returns 是否通过校验码验证
@@ -886,7 +909,7 @@ export class DataLossPrevention {
   private isValidMatch(value: string, type: SensitiveDataType): boolean {
     switch (type) {
       case 'credit_card':
-        return luhnCheck(value);
+        return plausibleCardPrefix(value) && luhnCheck(value);
       case 'chinese_id':
         return chineseIdCheck(value);
       case 'bank_account': {

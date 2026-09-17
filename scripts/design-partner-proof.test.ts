@@ -252,6 +252,26 @@ describe('technical design-partner proof', () => {
     assert.equal(gateCalls, 0);
     assert.equal(JSON.stringify(result).includes('postgres://'), false);
   });
+
+  it('derives the fault matrix from the observation instead of asserting it', async () => {
+    // The three campaign flags (matrixComplete / allFaultPointsObserved /
+    // artifactsVerified) must be computed from what the driver observed. When
+    // they were hardcoded `true`, the matching checks in deriveTechnicalVerdict
+    // were unreachable, so the matrix was never actually validated at that
+    // layer. Dropping a declared fault point must be caught.
+    const dropped = DESIGN_PARTNER_FAULT_POINTS[DESIGN_PARTNER_FAULT_POINTS.length - 1]!;
+    const incomplete = ports();
+    const runCampaign = incomplete.runCampaign;
+    incomplete.runCampaign = async (value) => {
+      const campaign = await runCampaign(value);
+      campaign.observation.faultPoints = [...DESIGN_PARTNER_FAULT_POINTS].slice(0, -1);
+      return campaign;
+    };
+    const result = await runDesignPartnerTechnicalProof(config(), incomplete);
+    assert.equal(result.manifest.verdict, 'NOT_READY');
+    assert.equal(result.manifest.passed, false);
+    assert.ok(result.manifest.failures.includes(`FAULT_POINT_MISSING:${dropped}`));
+  });
 });
 
 describe('field review', () => {

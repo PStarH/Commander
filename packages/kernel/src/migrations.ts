@@ -52,6 +52,7 @@ import {
   KERNEL_AUTH_PERSISTENCE_SQL,
 } from './authPersistenceSchema.js';
 import { KERNEL_MEMORY_SCHEMA_SQL } from './memorySchema.js';
+import { assertSafeSqlIdentifier } from './sqlSafety.js';
 
 export interface KernelMigration {
   id: string;
@@ -785,6 +786,11 @@ export async function runKernelMigrations(
       'SELECT rolbypassrls, rolname FROM pg_roles WHERE rolname = current_user',
     );
     if (!ownerInfo.rows[0]?.rolbypassrls) {
+      // AUDIT-K5 (F-K2-6): `rolname` comes from pg_roles and cannot be
+      // parameterised inside ALTER ROLE, so it must pass the identifier guard
+      // before interpolation — otherwise a hostile owner role name can close
+      // the identifier and inject DDL through the simple-query protocol.
+      assertSafeSqlIdentifier(ownerInfo.rows[0].rolname, 'migration owner rolname');
       await client.query(`ALTER ROLE "${ownerInfo.rows[0].rolname}" BYPASSRLS`);
     }
 

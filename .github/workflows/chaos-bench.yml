@@ -1,5 +1,9 @@
 name: Chaos Bench Regression
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 # Day 7 closeout: capture today's Chaos Engineering benchmark v2 baseline
 # via `npx tsx benchmarks/chaos-runner/src/index.ts run --simulated --scripted`,
 # compare against yesterday's baseline JSON, fail the run if any case failed
@@ -33,50 +37,36 @@ on:
   workflow_dispatch:
     inputs:
       maxCases:
-        description: 'Chaos-runner --max override (0 = all cases; chaos-255 day sets this to 255+)'
+        description: Chaos-runner --max override (0 = all cases; chaos-255 day sets this to 255+)
         required: false
         default: '0'
       passRateDriftPct:
-        description: 'Pass-rate regression threshold (percent rel., default 10)'
+        description: Pass-rate regression threshold (percent rel., default 10)
         required: false
         default: '10'
   schedule:
-    # Daily at 07:45 UTC. Slot 4 of 4 in the morning cron block —
-    # 07:30 memory-poisoning + 07:45 chaos + 08:00 gaia close out the gate.
-    - cron: '45 7 * * *'
-
+    - cron: 45 7 * * *
 jobs:
   bench-chaos-regress:
     name: Chaos Regression
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      # Force UTC so downstream code reading `new Date().toISOString().slice(0,10)`
-      # matches the date the workflow's yesterday-lookup step computes. Same
-      # pattern as slo-bench.yml / cost-bench.yml.
       TZ: UTC
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # fetch-depth: 0 is required so today's run can compare against
-          # yesterday's baseline JSON committed to HEAD by the previous day's
-          # scheduled run. Without it the regress step would always see
-          # "first-day run".
           fetch-depth: 0
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v6
-
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
       - name: Setup Node 22
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
-          cache: 'pnpm'
-
+          cache: pnpm
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
-
       - name: Resolve today / yesterday (UTC)
         id: dates
         run: |
@@ -88,7 +78,6 @@ jobs:
           echo "yesterday=$YESTERDAY"
           echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
-
       - name: Run chaos bench (captures today baseline)
         env:
           MAX_CASES: ${{ github.event.inputs.maxCases || '0' }}
@@ -110,7 +99,6 @@ jobs:
             ARGS="$ARGS --max=$MAX_CASES"
           fi
           npx tsx benchmarks/chaos-runner/src/index.ts $ARGS
-
       - name: Move report to docs/baselines/
         if: always()
         run: |
@@ -118,7 +106,6 @@ jobs:
           mkdir -p "$(dirname "$TODAY_FILE")"
           cp /tmp/chaos-report.json "$TODAY_FILE"
           echo "today's baseline: $TODAY_FILE"
-
       - name: Verify today's baseline JSON exists
         if: always()
         run: |
@@ -128,7 +115,6 @@ jobs:
             exit 2
           fi
           echo "today's baseline: $TODAY_FILE"
-
       - name: Extract today's metrics for PR body
         id: metrics
         if: always()
@@ -147,7 +133,6 @@ jobs:
             out("mttdMs", s.mttd_ms);
             out("mttrMs", s.mttr_ms);
           ' "$TODAY_FILE" >> "$GITHUB_OUTPUT"
-
       - name: Compare today vs yesterday (drift gate)
         if: always()
         id: regress
@@ -239,7 +224,6 @@ jobs:
             }
             console.log("regressed=false");
           ' "$TODAY_FILE" "$YESTERDAY_FILE" "$SUMMARY"
-
       - name: Append markdown to GitHub Step Summary
         if: always()
         run: |
@@ -250,41 +234,57 @@ jobs:
             echo "::error::regress step did not write a summary file at $SUMMARY"
             exit 2
           fi
-
       - name: Upload today's baseline as artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: chaos-runner-baseline-${{ steps.dates.outputs.today }}
           path: docs/baselines/chaos-runner.${{ steps.dates.outputs.today }}.json
           retention-days: 90
           if-no-files-found: error
-
-      # Day-N+1 regress gate dependency: PR auto-creation pairs with team
-      # auto-merge policy (Settings -> General -> Allow auto-merge + branch
-      # rule matching labels automated+ci-bench). Until auto-merge is
-      # enabled, tomorrow sees first-day SKIP for the day the PR is open
-      # but not yet merged; the day AFTER it merges, the gate fires for
-      # real. Mirrors slo-bench.yml / tenant-isolation-bench.yml pattern.
+    outputs:
+      today: ${{ steps.dates.outputs.today }}
+      metric_passRate: ${{ steps.metrics.outputs.passRate }}
+      metric_failed: ${{ steps.metrics.outputs.failed }}
+      metric_totalCases: ${{ steps.metrics.outputs.totalCases }}
+      metric_overallScore: ${{ steps.metrics.outputs.overallScore }}
+      metric_passed: ${{ steps.metrics.outputs.passed }}
+      metric_mttdMs: ${{ steps.metrics.outputs.mttdMs }}
+      metric_mttrMs: ${{ steps.metrics.outputs.mttrMs }}
+  open-baseline-pr:
+    name: Open baseline PR
+    runs-on: ubuntu-latest
+    needs:
+      - bench-chaos-regress
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: chaos-baseline-${{ needs.bench-chaos-regress.outputs.today }}
       - name: Open PR for today's chaos baseline
         if: success()
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/chaos-runner-baseline-${{ steps.dates.outputs.today }}
+          branch: bench/chaos-runner-baseline-${{ needs.bench-chaos-regress.outputs.today }}
           delete-branch: true
-          title: 'ci(chaos-bench): baseline ${{ steps.dates.outputs.today }} - passRate=${{ steps.metrics.outputs.passRate }}%, failed=${{ steps.metrics.outputs.failed }}'
+          title: 'ci(chaos-bench): baseline ${{ needs.bench-chaos-regress.outputs.today }} - passRate=${{ needs.bench-chaos-regress.outputs.metric_passRate }}%, failed=${{ needs.bench-chaos-regress.outputs.metric_failed }}'
           commit-message: |
-            ci(chaos-bench): baseline ${{ steps.dates.outputs.today }}
+            ci(chaos-bench): baseline ${{ needs.bench-chaos-regress.outputs.today }}
 
             Auto-generated by .github/workflows/chaos-bench.yml. Provides yesterday's
             Chaos Engineering benchmark v2 baseline for the next day's regress gate.
 
-            passRate:    ${{ steps.metrics.outputs.passRate }}%
-            failed:      ${{ steps.metrics.outputs.failed }}
-            totalCases:  ${{ steps.metrics.outputs.totalCases }}
-            overallScore: ${{ steps.metrics.outputs.overallScore }}
+            passRate:    ${{ needs.bench-chaos-regress.outputs.metric_passRate }}%
+            failed:      ${{ needs.bench-chaos-regress.outputs.metric_failed }}
+            totalCases:  ${{ needs.bench-chaos-regress.outputs.metric_totalCases }}
+            overallScore: ${{ needs.bench-chaos-regress.outputs.metric_overallScore }}
           body: |
-            ## Chaos bench baseline - ${{ steps.dates.outputs.today }}
+            ## Chaos bench baseline - ${{ needs.bench-chaos-regress.outputs.today }}
 
             Auto-generated by [`.github/workflows/chaos-bench.yml`](../workflows/chaos-bench.yml).
             Triggered daily at `07:45 UTC` or via manual `workflow_dispatch`.
@@ -294,13 +294,13 @@ jobs:
 
             | Metric | Value |
             |---|---|
-            | passed | **${{ steps.metrics.outputs.passed }}** |
-            | failed | **${{ steps.metrics.outputs.failed }}** |
-            | totalCases | **${{ steps.metrics.outputs.totalCases }}** |
-            | passRate | **${{ steps.metrics.outputs.passRate }}%** |
-            | overallScore | **${{ steps.metrics.outputs.overallScore }}** |
-            | mttd_ms | **${{ steps.metrics.outputs.mttdMs }}** |
-            | mttr_ms | **${{ steps.metrics.outputs.mttrMs }}** |
+            | passed | **${{ needs.bench-chaos-regress.outputs.metric_passed }}** |
+            | failed | **${{ needs.bench-chaos-regress.outputs.metric_failed }}** |
+            | totalCases | **${{ needs.bench-chaos-regress.outputs.metric_totalCases }}** |
+            | passRate | **${{ needs.bench-chaos-regress.outputs.metric_passRate }}%** |
+            | overallScore | **${{ needs.bench-chaos-regress.outputs.metric_overallScore }}** |
+            | mttd_ms | **${{ needs.bench-chaos-regress.outputs.metric_mttdMs }}** |
+            | mttr_ms | **${{ needs.bench-chaos-regress.outputs.metric_mttrMs }}** |
 
             ### What this PR does
 
@@ -320,3 +320,5 @@ jobs:
           labels: |
             automated
             ci-bench
+permissions:
+  contents: read

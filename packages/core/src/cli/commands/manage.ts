@@ -16,6 +16,8 @@ import type { ApprovalMode } from '../../sandbox';
 import { getGlobalLogger } from '../../logging';
 import { createRuntime, $, section, kv, setTheme, listThemes } from './_shared';
 import { isSupportedNodeVersion } from '../nodeSupport';
+import { getDirname } from '../../esmCompat';
+const __dirname = getDirname(import.meta.url);
 
 export async function cmdStatus() {
   const provider = detectProvider();
@@ -72,9 +74,21 @@ export async function cmdStatus() {
       }
     }
 
-    // Shadow mode stats
+    // Shadow mode stats.
+    //
+    // `MetaLearner.selectShadowStrategy` / `recordShadowComparison` exist and are
+    // covered by tests, but no production code path calls the recorder — the
+    // orchestrator's post-execution shadow block was removed in 9f504252 — so
+    // this list is always empty. The previous `if (shadows.length > 0)` made that
+    // gap invisible: the doctor silently omitted a capability it is supposed to
+    // report on. Report the state explicitly instead of hiding it.
     const shadows = learner.getShadowComparisons(5);
-    if (shadows.length > 0) {
+    if (shadows.length === 0) {
+      kv(
+        'Shadow mode',
+        `${$.yellow}not wired${$.reset}${$.dim} (no comparison is ever recorded)${$.reset}`,
+      );
+    } else {
       section('SHADOW MODE');
       const lastShadow = shadows[shadows.length - 1];
       const betterStrategy =

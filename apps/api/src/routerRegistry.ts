@@ -20,6 +20,56 @@
 import type { Express, RequestHandler } from 'express';
 
 /**
+ * Mount prefixes recorded by `mountNestedRouter`, keyed by the mounted handler.
+ *
+ * Express 5 cannot be asked for this after the fact. `router@2.x`'s `Layer`
+ * constructor sets `this.path = undefined` and keeps only the *closures* built
+ * by `path-to-regexp` — the prefix string is discarded, and `layer.regexp` no
+ * longer exists either (both were verified against express@5.2.1 /
+ * router@2.2.0). A nested mount is therefore only reflectable if the prefix is
+ * recorded at the moment it is known. See `openApiGenerator.resolveNestedPrefix`.
+ *
+ * WeakMap so a router dropped by the app does not keep its prefix alive.
+ */
+const nestedMountPrefixes = new WeakMap<object, string>();
+
+/** Minimal structural view of an Express app/router — both expose `.use`. */
+interface MountTarget {
+  use(path: string, handler: RequestHandler): unknown;
+}
+
+/**
+ * Mount `child` at `prefix` on `parent`, recording the prefix so the OpenAPI
+ * generator can reflect the nested routes at their real paths.
+ *
+ * Prefer this over a bare `parent.use(prefix, child)`. A bare nested mount is
+ * invisible to the generator under Express 5, and the generator deliberately
+ * refuses to guess rather than emit a path that silently drops the prefix
+ * (which is how `/v1/actions/kill-switches` was previously published as
+ * `/v1/kill-switches`).
+ */
+export function mountNestedRouter(
+  parent: MountTarget,
+  prefix: string,
+  child: RequestHandler,
+): void {
+  if (child && (typeof child === 'object' || typeof child === 'function')) {
+    nestedMountPrefixes.set(child as unknown as object, prefix);
+  }
+  parent.use(prefix, child);
+}
+
+/**
+ * The prefix `handle` was mounted at via `mountNestedRouter`, if it was mounted
+ * that way. Returns `undefined` for a bare `parent.use(prefix, child)` mount,
+ * which the generator treats as unreflectable.
+ */
+export function nestedMountPrefixOf(handle: unknown): string | undefined {
+  if (!handle || (typeof handle !== 'object' && typeof handle !== 'function')) return undefined;
+  return nestedMountPrefixes.get(handle as object);
+}
+
+/**
  * OpenAPI metadata applied to all routes in a registration (WS3 §4.1).
  * The generator applies these as defaults to every route extracted from the
  * registration's factory router. Non-/v1 routes are automatically marked

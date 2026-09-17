@@ -2,8 +2,22 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { validateRunTransition } from '@commander/contracts';
 import type { KernelRepository } from '../repository.js';
-import type { NewKernelStep, ClaimStepRequest } from '../types.js';
+import type { NewKernelStep, ClaimStepRequest, KernelCompensationRequest } from '../types.js';
 import { SqliteKernelRepository } from '../sqlite.js';
+import {
+  canonicalCompensationHash,
+  sealGovernedCompensationAuthorization,
+} from '../ops/compensationAuthority.js';
+import {
+  governedCompensationAuthorizationInput,
+  type LegacyGovernedCompensationInput,
+} from '../ops/compensationPersistence.js';
+import {
+  KERNEL_COMPENSATION_TOPIC,
+  consumeCompensationBatch,
+  type CompensationOutboxPort,
+  type LegacyClaimedCompensationWork,
+} from '../ops/compensationConsumer.js';
 
 export interface RepositoryContractContext {
   name: string;
@@ -24,6 +38,12 @@ export interface RepositoryContractContext {
       identitySubject?: string;
     },
   ) => Promise<void>;
+  /** Durable adapter-ops worker used to claim governed compensation work. */
+  seedCompensationWorker?: (repo: KernelRepository) => Promise<{
+    workerId: string;
+    generation: number;
+    claimSecret: string;
+  }>;
 }
 
 const createRun = (steps: NewKernelStep[] = [{ id: 'step-a', kind: 'agent' }]) => ({
@@ -72,6 +92,160 @@ async function seedFreshOperationsDrains(
       lastHeartbeatAt: new Date(now.getTime() - 1_000),
     });
   }
+}
+
+/**
+ * Drive the producer-written compensation records up to a claimed work item:
+ * a completed forward effect, a durable authorization row, the compensation
+ * request/outbox pair and the compact outbox payload the producer writes.
+ */
+async function seedClaimedGovernedCompensation(
+  kernel: KernelRepository,
+  ctx: RepositoryContractContext,
+  suffix: string,
+): Promise<{
+  work: LegacyClaimedCompensationWork;
+  workerId: string;
+  request: KernelCompensationRequest;
+  /** Digest carried by the compact outbox payload, i.e. the durable row digest. */
+  durableActionDigest: string;
+}> {
+  const base = new Date();
+  await seedFreshOperationsDrains(kernel, ctx, suffix);
+  const runId = `run-forward-${suffix}`;
+  const stepId = `step-forward-${suffix}`;
+  const effectId = `effect-forward-${suffix}`;
+  await kernel.createRun(
+    {
+      id: runId,
+      tenantId: 'tenant-a',
+      intentHash: `intent-forward-${suffix}`,
+      workGraphHash: `graph-forward-${suffix}`,
+      workGraphVersion: 'v1',
+      policySnapshotId: 'policy-v1',
+      steps: [
+        {
+          id: stepId,
+          kind: 'agent',
+          maxAttempts: 1,
+          scheduledAt: new Date(base.getTime() - 1_000).toISOString(),
+        },
+      ],
+    },
+    'gateway',
+  );
+  const forwardWorker = await ctx.seedWorker?.(kernel);
+  const forwardActor = forwardWorker?.workerId ?? 'worker-1';
+  const forwardStep = await kernel.claimNextStep({
+    workerId: forwardActor,
+    workerGeneration: forwardWorker?.generation ?? 1,
+    leaseTtlMs: 60_000,
+    tenantId: 'tenant-a',
+    capabilities: ['agent', 'tool'],
+  });
+  assert.ok(forwardStep?.lease, `${ctx.name} must claim the forward step`);
+  const destination = `demo://ticket/${suffix}`;
+  const forwardResponse = { providerId: `INC-${suffix}` };
+  const forwardAdmitted = await kernel.admitEffect({
+    id: effectId,
+    runId,
+    stepId,
+    tenantId: 'tenant-a',
+    type: 'tool.ticket.create',
+    idempotencyKey: `effect-forward-${suffix}-key`,
+    request: { destination },
+    policyDecisionId: 'policy-decision-forward',
+    policySnapshotId: 'policy-v1',
+    actionDigest: 'a'.repeat(64),
+    lease: forwardStep.lease,
+    actor: forwardActor,
+  });
+  assert.equal(forwardAdmitted.admitted, true, JSON.stringify(forwardAdmitted));
+  assert.ok(
+    await kernel.completeEffect(
+      effectId,
+      'tenant-a',
+      forwardStep.lease,
+      forwardResponse,
+      forwardActor,
+    ),
+  );
+
+  const legacy: LegacyGovernedCompensationInput = {
+    tenantId: 'tenant-a',
+    originalRunId: runId,
+    originalEffectId: effectId,
+    forwardReceipt: forwardResponse,
+    adapterVersion: `demo-ticket/${suffix}/v1`,
+    compensationEffectType: 'compensate.demo.ticket.create',
+    compensationPatch: { status: 'cancelled' },
+    policyDecisionId: 'policy-decision-compensation',
+    policySnapshotId: 'policy-compensation-v1',
+    actionDigest: '',
+    decisionEffect: 'allow',
+    authorizationExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+    approvalBinding: null,
+    actor: 'api-user',
+  };
+  const sealed = sealGovernedCompensationAuthorization(
+    governedCompensationAuthorizationInput({
+      request: legacy,
+      originalRunStateAtRequest: 'RUNNING',
+      originalEffect: { request: { destination }, response: forwardResponse },
+    }),
+  );
+  const durableActionDigest = canonicalCompensationHash({
+    type: legacy.compensationEffectType,
+    originalEffectId: legacy.originalEffectId,
+    adapterVersion: legacy.adapterVersion,
+    destination,
+    forwardResponse,
+    compensationPatch: legacy.compensationPatch,
+  });
+  await kernel.createCompensationAuthorization({
+    id: sealed.authorizationId,
+    tenantId: 'tenant-a',
+    originalRunId: legacy.originalRunId,
+    originalEffectId: legacy.originalEffectId,
+    compensationEffectType: legacy.compensationEffectType,
+    adapterVersion: legacy.adapterVersion,
+    compensationPatch: legacy.compensationPatch,
+    forwardReceiptHash: sealed.forwardReceiptHash,
+    policyDecisionId: legacy.policyDecisionId,
+    policySnapshotId: legacy.policySnapshotId,
+    decision: legacy.decisionEffect,
+    actionDigest: durableActionDigest,
+    expiresAt: legacy.authorizationExpiresAt,
+  });
+  const requested = await kernel.requestCompensation({
+    tenantId: 'tenant-a',
+    authorizationId: sealed.authorizationId,
+    actor: 'api-user',
+  });
+  assert.equal(requested.accepted, true, JSON.stringify(requested));
+  if (!requested.accepted) throw new Error('compensation request rejected');
+
+  const compensationWorker = await ctx.seedCompensationWorker!(kernel);
+  const claimed = await kernel.claimCompensationWork({
+    workerId: compensationWorker.workerId,
+    workerGeneration: compensationWorker.generation,
+    claimSecret: compensationWorker.claimSecret,
+    topic: KERNEL_COMPENSATION_TOPIC,
+    limit: 10,
+  });
+  assert.equal(
+    claimed.length,
+    1,
+    'compact producer payload must resolve durable governed authority',
+  );
+  const work = claimed[0]!;
+  assert.ok('messageId' in work, 'expected the compact legacy claim shape');
+  return {
+    work,
+    workerId: compensationWorker.workerId,
+    request: requested.request,
+    durableActionDigest,
+  };
 }
 
 export function runKernelRepositoryContractTests(ctx: RepositoryContractContext): void {
@@ -835,6 +1009,270 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         await ctx.destroy(kernel);
       }
     });
+
+    it('claims and executes governed compensation published by requestCompensation', async () => {
+      const kernel = await ctx.create();
+      try {
+        if (!ctx.seedCompensationWorker) return;
+        const base = new Date();
+        await seedFreshOperationsDrains(kernel, ctx, 'roundtrip');
+        await kernel.createRun(
+          {
+            id: 'run-forward',
+            tenantId: 'tenant-a',
+            intentHash: 'intent-forward',
+            workGraphHash: 'graph-forward',
+            workGraphVersion: 'v1',
+            policySnapshotId: 'policy-v1',
+            steps: [
+              {
+                id: 'step-forward',
+                kind: 'agent',
+                maxAttempts: 1,
+                scheduledAt: new Date(base.getTime() - 1_000).toISOString(),
+              },
+            ],
+          },
+          'gateway',
+        );
+        const forwardWorker = await ctx.seedWorker?.(kernel);
+        const forwardActor = forwardWorker?.workerId ?? 'worker-1';
+        const forwardStep = await kernel.claimNextStep({
+          workerId: forwardActor,
+          workerGeneration: forwardWorker?.generation ?? 1,
+          leaseTtlMs: 60_000,
+          tenantId: 'tenant-a',
+          capabilities: ['agent', 'tool'],
+        });
+        assert.ok(forwardStep?.lease, `${ctx.name} must claim the forward step`);
+        const destination = 'demo://ticket/roundtrip';
+        const forwardResponse = { providerId: 'INC-roundtrip' };
+        const admitted = await kernel.admitEffect({
+          id: 'effect-forward',
+          runId: 'run-forward',
+          stepId: 'step-forward',
+          tenantId: 'tenant-a',
+          type: 'tool.ticket.create',
+          idempotencyKey: 'effect-forward-key',
+          request: { destination },
+          policyDecisionId: 'policy-decision-forward',
+          policySnapshotId: 'policy-v1',
+          actionDigest: 'a'.repeat(64),
+          lease: forwardStep.lease,
+          actor: forwardActor,
+        });
+        assert.equal(admitted.admitted, true, JSON.stringify(admitted));
+        assert.ok(
+          await kernel.completeEffect(
+            'effect-forward',
+            'tenant-a',
+            forwardStep.lease,
+            forwardResponse,
+            forwardActor,
+          ),
+        );
+
+        const legacy: LegacyGovernedCompensationInput = {
+          tenantId: 'tenant-a',
+          originalRunId: 'run-forward',
+          originalEffectId: 'effect-forward',
+          forwardReceipt: forwardResponse,
+          adapterVersion: 'demo-ticket/roundtrip/v1',
+          compensationEffectType: 'compensate.demo.ticket.create',
+          compensationPatch: { status: 'cancelled' },
+          policyDecisionId: 'policy-decision-compensation',
+          policySnapshotId: 'policy-compensation-v1',
+          actionDigest: '',
+          decisionEffect: 'allow',
+          authorizationExpiresAt: new Date(Date.now() + 300_000).toISOString(),
+          approvalBinding: null,
+          actor: 'api-user',
+        };
+        const sealed = sealGovernedCompensationAuthorization(
+          governedCompensationAuthorizationInput({
+            request: legacy,
+            originalRunStateAtRequest: 'RUNNING',
+            originalEffect: { request: { destination }, response: forwardResponse },
+          }),
+        );
+        // The durable authorization row stores the request/admission action digest,
+        // not the sealed governed digest the compact outbox payload carries.
+        const durableActionDigest = canonicalCompensationHash({
+          type: legacy.compensationEffectType,
+          originalEffectId: legacy.originalEffectId,
+          adapterVersion: legacy.adapterVersion,
+          destination,
+          forwardResponse,
+          compensationPatch: legacy.compensationPatch,
+        });
+        await kernel.createCompensationAuthorization({
+          id: sealed.authorizationId,
+          tenantId: 'tenant-a',
+          originalRunId: legacy.originalRunId,
+          originalEffectId: legacy.originalEffectId,
+          compensationEffectType: legacy.compensationEffectType,
+          adapterVersion: legacy.adapterVersion,
+          compensationPatch: legacy.compensationPatch,
+          forwardReceiptHash: sealed.forwardReceiptHash,
+          policyDecisionId: legacy.policyDecisionId,
+          policySnapshotId: legacy.policySnapshotId,
+          decision: legacy.decisionEffect,
+          actionDigest: durableActionDigest,
+          expiresAt: legacy.authorizationExpiresAt,
+        });
+        const requested = await kernel.requestCompensation({
+          tenantId: 'tenant-a',
+          authorizationId: sealed.authorizationId,
+          actor: 'api-user',
+        });
+        assert.equal(requested.accepted, true, JSON.stringify(requested));
+        if (!requested.accepted) return;
+
+        const compensationWorker = await ctx.seedCompensationWorker(kernel);
+        const port: CompensationOutboxPort = {
+          claimCompensationWork: (input) => kernel.claimCompensationWork(input),
+          completeCompensationWork: async () => ({
+            applied: true,
+            disposition: 'COMPLETED',
+            replayed: false,
+          }),
+          handoffCompensationUnknown: async () => ({
+            applied: true,
+            disposition: 'HANDOFF_UNKNOWN',
+            replayed: false,
+          }),
+          escalateCompensationWork: async () => ({
+            applied: true,
+            disposition: 'ESCALATED',
+            replayed: false,
+          }),
+          parkCompensationUnknown: async () => ({
+            applied: true,
+            disposition: 'COMPLETION_UNKNOWN',
+            replayed: false,
+          }),
+          finalizeCompensation: async (input) => ({
+            applied: true,
+            disposition: input.disposition,
+            replayed: false,
+          }),
+        };
+        let executions = 0;
+        let admittedRequest: Record<string, unknown> | undefined;
+        const result = await consumeCompensationBatch(
+          port,
+          {
+            admit: async (input) => {
+              admittedRequest = input.request;
+              return { admitted: true, effectId: input.effectId, replayed: false };
+            },
+            executeAdmitted: async (input) => {
+              executions += 1;
+              return { effectId: input.effectId, replayed: false, response: { ok: true } };
+            },
+          },
+          async () => 'compensation-capability-token',
+          {
+            workerId: compensationWorker.workerId,
+            workerGeneration: compensationWorker.generation,
+            claimSecret: compensationWorker.claimSecret,
+            topic: KERNEL_COMPENSATION_TOPIC,
+            limit: 10,
+            registry: {
+              resolve: () => ({ descriptor: { adapterVersion: legacy.adapterVersion } }),
+            },
+          },
+        );
+        assert.equal(
+          result.consumed,
+          1,
+          'compact producer payload must resolve durable governed authority',
+        );
+        assert.equal(result.succeeded, 1, JSON.stringify(result));
+        assert.equal(result.escalated, 0);
+        assert.equal(executions, 1);
+        assert.equal(admittedRequest?.originalEffectId, legacy.originalEffectId);
+        assert.equal(admittedRequest?.destination, destination);
+        assert.equal(
+          (await kernel.getRun(requested.request.compensationRunId, 'tenant-a'))?.state,
+          'RUNNING',
+        );
+        assert.equal(
+          (await kernel.getStep(requested.request.compensationStepId, 'tenant-a'))?.state,
+          'RUNNING',
+        );
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
+    it('admits a compensate.* effect through admitEffect from the compact producer payload', async () => {
+      const kernel = await ctx.create();
+      try {
+        if (!ctx.seedCompensationWorker) return;
+        const { work, workerId, request } = await seedClaimedGovernedCompensation(
+          kernel,
+          ctx,
+          'admit',
+        );
+        const admitted = await kernel.admitEffect({
+          id: request.compensationEffectId!,
+          runId: request.compensationRunId,
+          stepId: request.compensationStepId,
+          tenantId: 'tenant-a',
+          type: work.authorization.compensationEffectType,
+          idempotencyKey: work.authorization.idempotencyKey,
+          policyDecisionId: work.authorization.policyDecisionId,
+          policySnapshotId: work.authorization.policySnapshotId,
+          actionDigest: work.authorization.actionDigest,
+          request: work.authorization.compensationRequest,
+          lease: work.lease,
+          compensationBinding: {
+            requestId: request.id,
+            authorizationId: work.authorization.authorizationId,
+            claimToken: work.claimToken,
+          },
+          actor: workerId,
+        });
+        assert.equal(admitted.admitted, true, JSON.stringify(admitted));
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
+    it('refuses a compensate.* admitEffect whose actionDigest matches only the compact payload', async () => {
+      const kernel = await ctx.create();
+      try {
+        if (!ctx.seedCompensationWorker) return;
+        const { work, workerId, request, durableActionDigest } =
+          await seedClaimedGovernedCompensation(kernel, ctx, 'durable-digest');
+        const admitted = await kernel.admitEffect({
+          id: request.compensationEffectId!,
+          runId: request.compensationRunId,
+          stepId: request.compensationStepId,
+          tenantId: 'tenant-a',
+          type: work.authorization.compensationEffectType,
+          idempotencyKey: work.authorization.idempotencyKey,
+          policyDecisionId: work.authorization.policyDecisionId,
+          policySnapshotId: work.authorization.policySnapshotId,
+          actionDigest: durableActionDigest,
+          request: work.authorization.compensationRequest,
+          lease: work.lease,
+          compensationBinding: {
+            requestId: request.id,
+            authorizationId: work.authorization.authorizationId,
+            claimToken: work.claimToken,
+          },
+          actor: workerId,
+        });
+        assert.equal(admitted.admitted, false, JSON.stringify(admitted));
+        if (!admitted.admitted) {
+          assert.equal(admitted.reason, 'COMPENSATION_ADMISSION_UNAVAILABLE');
+        }
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
   });
 }
 
@@ -863,6 +1301,15 @@ if (isDirectTestEntry) {
     seedOperationsWorker: async (repo, input) => {
       (repo as InMemoryKernelRepository).seedTestWorker(input.id, input.tenantIds, 1, input);
     },
+    seedCompensationWorker: async (repo) => {
+      const claimSecret = (repo as InMemoryKernelRepository).seedTestWorker(
+        'compensation:contract',
+        ['tenant-a'],
+        1,
+        { capabilities: ['effect.compensate'], identitySubject: 'db:commander_adapter_ops' },
+      );
+      return { workerId: 'compensation:contract', generation: 1, claimSecret };
+    },
   });
 
   runKernelRepositoryContractTests({
@@ -887,6 +1334,15 @@ if (isDirectTestEntry) {
     },
     seedOperationsWorker: async (repo, input) => {
       (repo as SqliteKernelRepository).seedTestWorker(input.id, input.tenantIds, 1, input);
+    },
+    seedCompensationWorker: async (repo) => {
+      const claimSecret = (repo as SqliteKernelRepository).seedTestWorker(
+        'compensation:contract',
+        ['tenant-a'],
+        1,
+        { capabilities: ['effect.compensate'], identitySubject: 'db:commander_adapter_ops' },
+      );
+      return { workerId: 'compensation:contract', generation: 1, claimSecret };
     },
   });
 }

@@ -1,6 +1,13 @@
 # =============================================================================
 # Silo deployment for a single tenant.
 #
+# UNSUPPORTED LEGACY TEMPLATE — topology illustration only.
+# This template is not a maintained deployment path and does not start a
+# working production service on its own: it supplies neither the six required
+# API startup credentials nor a kernel/Postgres DSN nor database TLS material,
+# so the container exits during startup validation. For a supported deployment
+# use docs/deploy.md (staged Compose / Helm lifecycle).
+#
 # Usage (from repo root):
 #   export TENANT_ID=acme-corp
 #   envsubst < deploy/docker/silo.docker-compose.yml > /tmp/silo-${TENANT_ID}.yml
@@ -13,7 +20,8 @@ services:
   commander-silo-${TENANT_ID}:
     build:
       context: ../..
-      target: api
+      dockerfile: apps/api/Dockerfile
+      target: production
       args:
         - NODE_ENV=production
     image: ${COMMANDER_IMAGE:-commander-api:latest}
@@ -29,11 +37,13 @@ services:
       - COMMANDER_API_KEY=${COMMANDER_API_KEY:?COMMANDER_API_KEY is required}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Tenant API keys. Supplied through the environment rather than a bind
+      # mount: the runtime file is created on first use, so mounting a
+      # repository-relative path would fail on a fresh clone.
+      - TENANT_API_KEYS=${TENANT_API_KEYS:-}
     volumes:
       # Shared tenant registry (read-only at runtime)
       - ../../config/tenants.json:/app/config/tenants.json:ro
-      # Tenant API keys (read-only at runtime)
-      - ../../.commander/tenant-api-keys.json:/app/.commander/tenant-api-keys.json:ro
       # Dedicated tenant data volume
       - silo-data-${TENANT_ID}:/data/tenants/${TENANT_ID}
     ports:

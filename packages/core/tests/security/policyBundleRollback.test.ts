@@ -18,6 +18,7 @@
  */
 
 import assert from 'node:assert';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it, beforeEach, afterEach } from 'vitest';
 
 import {
@@ -277,7 +278,6 @@ describe('SignedPolicyBundle — rollback / downgrade attack defense', () => {
 
 describe('SignedPolicyBundle — Ed25519 asymmetric signing (MCP-13)', () => {
   function ed25519Pems(): { privateKeyPem: string; publicKeyPem: string } {
-    const { generateKeyPairSync } = require('node:crypto') as typeof import('node:crypto');
     const { privateKey, publicKey } = generateKeyPairSync('ed25519');
     return {
       privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),

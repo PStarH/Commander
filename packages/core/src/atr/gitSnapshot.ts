@@ -46,6 +46,9 @@ const store: GitSnapshotStore = {
 // restoreGitSnapshot() works across restarts.
 
 import { existsSync, mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 const PERSIST_PATH =
   typeof process !== 'undefined'
@@ -57,7 +60,7 @@ function persistSnapshots(): void {
   try {
     const dir = path.dirname(PERSIST_PATH);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });
-    const fs = require('node:fs');
+    const fs = nodeRequire('node:fs');
     const data = Object.fromEntries(store.snapshots);
     const tmp = PERSIST_PATH + '.tmp';
     fs.writeFileSync(tmp, JSON.stringify(data), { encoding: 'utf8', mode: 0o600 });
@@ -70,7 +73,7 @@ function persistSnapshots(): void {
 function loadSnapshots(): void {
   if (!PERSIST_PATH || !existsSync(PERSIST_PATH)) return;
   try {
-    const fs = require('node:fs');
+    const fs = nodeRequire('node:fs');
     const raw = fs.readFileSync(PERSIST_PATH, 'utf8');
     const data = JSON.parse(raw);
     for (const [runId, result] of Object.entries(data)) {

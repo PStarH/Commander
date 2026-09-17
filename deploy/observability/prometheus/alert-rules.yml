@@ -1,0 +1,53 @@
+groups:
+  - name: commander
+    interval: 15s
+    rules:
+      - alert: CommanderHighErrorRate
+        expr: sum(rate(commander_errors_total[5m])) > 0.5
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Commander error rate is high"
+          description: "The aggregate error rate across all error classes is {{ $value }} errors/sec over the last 5 minutes."
+
+      - alert: CommanderRunSuccessRateLow
+        expr: |
+          (
+            sum(rate(commander_runs_total{status=~"success|success_early_exit"}[5m]))
+            /
+            sum(rate(commander_runs_total[5m]))
+          ) < 0.95
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Commander run success rate is below 95%"
+          description: "Current run success rate is {{ $value | humanizePercentage }} over the last 5 minutes."
+
+      - alert: CommanderHighRunLatency
+        expr: histogram_quantile(0.95, sum by (le) (rate(commander_run_duration_ms_bucket[5m]))) > 10000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Commander P95 run latency is high"
+          description: "P95 run latency is {{ $value }} ms over the last 5 minutes."
+
+      - alert: CommanderCircuitBreakerOpen
+        expr: sum(commander_circuit_breaker_open) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Commander circuit breaker is open"
+          description: "One or more provider circuit breakers are currently open (value: {{ $value }})."
+
+      - alert: CommanderCostSpike
+        expr: sum(rate(commander_run_cost_usd_total[1h])) * 3600 > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Commander hourly cost is above threshold"
+          description: "Estimated hourly cost is ${{ $value | humanizeCurrency }} USD/hour."

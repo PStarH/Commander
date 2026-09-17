@@ -216,19 +216,22 @@ describe('AuthManager', () => {
   describe('Rate Limiting', () => {
     it('should rate limit after max failed attempts', () => {
       auth.createUser('alice');
-      auth.generateApiKey('alice');
+      const { rawKey } = auth.generateApiKey('alice');
 
-      // Exhaust rate limit
+      // Control: the key is valid before the limiter is engaged.
+      assert.ok(auth.authenticate(rawKey), 'valid key must authenticate before rate limiting');
+
+      // Exhaust the failed-attempt budget (MAX_FAILED_ATTEMPTS = 10).
       for (let i = 0; i < 10; i++) {
-        auth.authenticate('cmdr_wrong_key');
+        assert.equal(auth.authenticate('cmdr_wrong_key'), null);
       }
 
-      // Even a valid key should be rejected during rate limit window
-      const { rawKey } = auth.generateApiKey('alice', 'another');
-      const result = auth.authenticate(rawKey);
-      // Rate limiting may or may not block valid key depending on implementation
-      // The key test is that rate limiting is engaged
-      assert.ok(true); // Just verify no crash
+      // The same, still-valid key must now be rejected while the window is open.
+      assert.equal(
+        auth.authenticate(rawKey),
+        null,
+        'rate limit must reject a valid key while the window is open',
+      );
     });
   });
 

@@ -1,16 +1,59 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { after, before, describe, it, test } from 'node:test';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import { seedTenantAuthorityAllowedTenants } from './seedWorkerClaimSecret.js';
 
 const appUrl = process.env.COMMANDER_TASK1_APP_DATABASE_URL;
 const authorityUrl = process.env.COMMANDER_TASK1_AUTHORITY_DATABASE_URL;
+// The authority only issues a context for an allowlisted tenant, and only
+// commander_owner can write that allowlist, so this proof needs an owner DSN to
+// provision its own precondition. Accept the deploy-gate CI name too.
+const ownerUrl =
+  process.env.COMMANDER_TASK1_OWNER_DATABASE_URL ?? process.env.COMMANDER_OWNER_DATABASE_URL;
+
+// F-K1-12: this suite is the live proof of Task 1 tenant-context binding over
+// the real PostgreSQL protocol. Without the fixtures it cannot run — report the
+// missing prerequisites by name and FAIL the run (a silent skip would report
+// PASS for an unrun security proof).
+const missingUrls = [
+  !appUrl ? 'COMMANDER_TASK1_APP_DATABASE_URL' : null,
+  !authorityUrl ? 'COMMANDER_TASK1_AUTHORITY_DATABASE_URL' : null,
+  !ownerUrl ? 'COMMANDER_TASK1_OWNER_DATABASE_URL (or COMMANDER_OWNER_DATABASE_URL)' : null,
+].filter((v): v is string => v !== null);
+const livePostgresAvailable = missingUrls.length === 0;
+const LIVE_PG_SKIP_REASON =
+  `NOT VERIFIED: ${missingUrls.join(', ')} unset — Task 1 tenant context real ` +
+  'PostgreSQL protocol proof did not run';
+if (!livePostgresAvailable) {
+  process.stderr.write(`[kernel:live-postgres] ${LIVE_PG_SKIP_REASON}\n`);
+  test('live PostgreSQL fixture is configured (REQUIRED)', () => {
+    assert.fail(LIVE_PG_SKIP_REASON);
+  });
+}
 
 describe(
   'Task 1 tenant context real PostgreSQL protocol',
   {
-    skip: !appUrl || !authorityUrl,
+    skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON,
   },
   () => {
+    const tenantId = 'tenant-a';
+    const otherTenantId = 'tenant-b';
+    let ownerPool: ReturnType<typeof createVerifiedPostgresPool>;
+
+    // Provision the fixture's own precondition: enable tenant-a (and only
+    // tenant-a) in the authority allowlist, so the positive case proves the
+    // allowlist semantics rather than the operator's hand-seeded state. The row
+    // is idempotent on a clean database and is left in place on a shared one.
+    before(async () => {
+      ownerPool = createVerifiedPostgresPool({ connectionString: ownerUrl!, max: 1 });
+      await seedTenantAuthorityAllowedTenants(ownerPool, [tenantId]);
+    });
+
+    after(async () => {
+      await ownerPool?.end();
+    });
+
     it('binds exactly one tenant to the target app xid and closes it', async () => {
       const appPool = createVerifiedPostgresPool({ connectionString: appUrl!, max: 1 });
       const authorityPool = createVerifiedPostgresPool({ connectionString: authorityUrl!, max: 1 });
@@ -32,7 +75,7 @@ describe(
         const issued = await authorityPool.query<{ context_id: string }>(
           `SELECT context_id::text
            FROM public.issue_app_tenant_context($1::text, $2::oid, $3::integer, $4::xid8)`,
-          ['tenant-a', database_oid, backend_pid, xid],
+          [tenantId, database_oid, backend_pid, xid],
         );
         const contextId = issued.rows[0]!.context_id;
 
@@ -41,7 +84,7 @@ describe(
             authorityPool.query(
               `SELECT context_id::text
              FROM public.issue_app_tenant_context($1::text, $2::oid, $3::integer, $4::xid8)`,
-              ['tenant-b', database_oid, backend_pid, xid],
+              [otherTenantId, database_oid, backend_pid, xid],
             ),
           /TENANT_CONTEXT_INVALID/,
         );
@@ -50,19 +93,19 @@ describe(
           'SELECT tenant_id, replayed FROM public.bind_app_tenant_context($1::uuid)',
           [contextId],
         );
-        assert.deepEqual(first.rows, [{ tenant_id: 'tenant-a', replayed: false }]);
+        assert.deepEqual(first.rows, [{ tenant_id: tenantId, replayed: false }]);
         const replay = await app.query<{ tenant_id: string; replayed: boolean }>(
           'SELECT tenant_id, replayed FROM public.bind_app_tenant_context($1::uuid)',
           [contextId],
         );
-        assert.deepEqual(replay.rows, [{ tenant_id: 'tenant-a', replayed: true }]);
+        assert.deepEqual(replay.rows, [{ tenant_id: tenantId, replayed: true }]);
         assert.equal(
           (
             await app.query<{ tenant_id: string }>(
               'SELECT public.commander_authenticated_app_tenant() AS tenant_id',
             )
           ).rows[0]!.tenant_id,
-          'tenant-a',
+          tenantId,
         );
 
         await app.query('SELECT public.close_app_tenant_context($1::uuid)', [contextId]);

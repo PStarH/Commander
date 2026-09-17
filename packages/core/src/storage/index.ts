@@ -11,7 +11,7 @@
  * Plus the legacy DataRetentionJanitor (kept for SOC2 closure).
  */
 
-export {
+export type {
   ColumnSpec,
   ColumnType,
   DriverBackend,

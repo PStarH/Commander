@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
 import {
@@ -351,7 +351,11 @@ describe('createCapabilityAuthority', () => {
     await assert.rejects(() => processB.verifier.verify(token), /replayed/);
   });
 
-  it('restart with same PEM/JWKS verifies previously issued tokens (first consume)', async () => {
+  // F-K1-21: the old version built the "restarted" authority on a *fresh empty*
+  // repository, so it proved only that the PEM/JWKS reloaded — it could not
+  // detect a restart that forgot durable replay state. This uses the same
+  // durable repository across the restart and asserts both directions.
+  it('restart with same PEM/JWKS keeps durable replay state and verifies fresh tokens', async () => {
     const mat = ed25519Material('kid-restart');
     const env = {
       NODE_ENV: 'test',
@@ -359,22 +363,27 @@ describe('createCapabilityAuthority', () => {
       [CAPABILITY_KEY_ID_ENV]: mat.keyId,
       [CAPABILITY_JWKS_JSON_ENV]: mat.jwksJson,
     };
-    const repo = new InMemoryKernelRepository();
-    const before = createCapabilityAuthority(env, repo);
-    const token = before.issuer.issue(baseGrant({ jti: 'jti-r', nonce: 'n-r' }));
-    // Simulate restart: new authority instance, empty in-process state, same durable repo keys.
-    const after = createCapabilityAuthority(env, new InMemoryKernelRepository());
-    // Fresh repo → first verify succeeds (proves key material reload, not process-local map).
-    const grant = await after.verifier.verify(token);
-    assert.equal(grant.keyId, 'kid-restart');
-    // Same PEM still loads via createPrivateKey / createPublicKey.
-    assert.ok(createPrivateKey(mat.privateKeyPem));
-    const jwk = JSON.parse(mat.jwksJson).keys[0] as {
-      kty: string;
-      crv: string;
-      x: string;
-      kid: string;
-    };
-    assert.ok(createPublicKey({ key: jwk, format: 'jwk' }));
+    const durable = new InMemoryKernelRepository();
+    const before = createCapabilityAuthority(env, durable);
+    const consumed = before.issuer.issue(baseGrant({ jti: 'jti-r', nonce: 'n-r' }));
+    const firstGrant = await before.verifier.verify(consumed);
+    assert.equal(firstGrant.jti, 'jti-r');
+
+    // Simulate restart: new authority instance, empty in-process state, SAME
+    // durable repository (as PostgreSQL would be across a process restart).
+    const after = createCapabilityAuthority(env, durable);
+    await assert.rejects(
+      () => after.verifier.verify(consumed),
+      /replayed/,
+      'a token consumed before the restart must stay consumed after it',
+    );
+
+    // A token issued by the restarted authority must verify against the reloaded
+    // key material and be consumed durably for the next restart.
+    const fresh = after.issuer.issue(baseGrant({ jti: 'jti-r2', nonce: 'n-r2' }));
+    const freshGrant = await after.verifier.verify(fresh);
+    assert.equal(freshGrant.keyId, 'kid-restart');
+    const third = createCapabilityAuthority(env, durable);
+    await assert.rejects(() => third.verifier.verify(fresh), /replayed/);
   });
 });

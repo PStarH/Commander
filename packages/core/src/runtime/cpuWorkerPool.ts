@@ -15,6 +15,8 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { Worker, type WorkerOptions } from 'worker_threads';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { getDirname } from '../esmCompat';
+const __dirname = getDirname(import.meta.url);
 
 // ============================================================================
 // Types

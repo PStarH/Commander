@@ -73,6 +73,13 @@ function locateDist(): string | null {
   return null;
 }
 
+// Resolved once at collection time so the fork test can be *reported as skipped*
+// when the prebuilt artifact is absent. Reporting a skip is honest and visible;
+// the previous version asserted a tautology (`expect(true).toBe(true)`), which
+// made a missing build look like a passing atomicity check. Vitest has had
+// `it.skipIf` all along, so the "no runtime skip" premise was simply wrong.
+const checkpointDistPath = locateDist();
+
 // ── Tests ──────────────────────────────────────────────────────────────────
 
 describe('AtrCheckpointStore — kill9 recovery contract', () => {
@@ -169,21 +176,13 @@ describe('AtrCheckpointStore — kill9 recovery contract', () => {
    *   5. Assert: 2 <= rows.length <= 3 (the kill landed mid-step, and
    *      either 2 or 3 of 4 checkpoints survived).
    */
-  it(
+  it.skipIf(checkpointDistPath === null)(
     'after SIGKILL during step N, recovery reveals step N or N-1 (redo ≤ 1)',
     { timeout: 30000 },
     async () => {
-      const dist = locateDist();
-      if (!dist) {
-        // Skip if the dist is not available — but the in-process test above
-        // already covers the atomicity contract at the API layer. Mark skip
-        // with a clear reason rather than failing.
-        // Vitest does not have skip() at runtime; instead we assert a
-        // tautology to keep CI green when dist is absent.
-        console.warn('kill9 fork test: dist/atr/checkpointStore.js missing — fork branch skipped');
-        expect(true).toBe(true);
-        return;
-      }
+      // Guarded by `skipIf` above: absent dist ⇒ this test is reported as
+      // skipped (with the reason in the suite output), never as a pass.
+      const dist = checkpointDistPath as string;
 
       const runId = 'kill9-contract-run';
 

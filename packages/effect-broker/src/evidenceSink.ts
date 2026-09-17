@@ -4,7 +4,9 @@ import {
   verifyEvidenceBundle,
   type EvidenceBundle,
   type EvidenceSignature,
+  type VerifyEvidenceBundleOptions,
 } from './evidenceBundle.js';
+import type { EvidenceJwks } from './evidenceSigner.js';
 
 export const DEFAULT_EVIDENCE_MAX_BYTES = 256 * 1024;
 
@@ -25,9 +27,17 @@ export interface EvidenceRepositoryPort {
   appendEvidence(record: EvidenceRecord): Promise<{ inserted: boolean }>;
 }
 
+export interface EvidenceRecordValidationOptions {
+  maxBytes?: number;
+  /** Trusted verifier supplied by the evidence authority. */
+  verifySignature?: VerifyEvidenceBundleOptions['verifySignature'];
+  /** Trusted public keys supplied by the evidence authority. */
+  jwks?: EvidenceJwks;
+}
+
 export function assertEvidenceRecord(
   record: EvidenceRecord,
-  options: { maxBytes?: number } = {},
+  options: EvidenceRecordValidationOptions = {},
 ): void {
   const bytes = Buffer.byteLength(JSON.stringify(record), 'utf8');
   if (bytes > (options.maxBytes ?? DEFAULT_EVIDENCE_MAX_BYTES)) {
@@ -45,11 +55,26 @@ export function assertEvidenceRecord(
   if (canonicalEvidenceJson(record.signature) !== canonicalEvidenceJson(record.body.signature)) {
     throw new Error('EVIDENCE_SIGNATURE_REQUIRED');
   }
-  if (verifyEvidenceBundle(record.body).ok !== true) {
-    throw new Error('EVIDENCE_INTEGRITY_INVALID');
+  const verification = verifyEvidenceBundle(record.body, {
+    verifySignature: options.verifySignature,
+    jwks: options.jwks,
+    // Evidence records are an acceptance boundary. Structural self-consistency
+    // is not authenticity; without a trusted verifier, fail closed.
+    requireSignature: true,
+  });
+  if (verification.ok !== true) {
+    throw new Error(`EVIDENCE_INTEGRITY_INVALID: ${verification.reason ?? 'verification failed'}`);
   }
   assertTerminalEvidence(record.body);
-  if (Date.parse(record.retentionUntil) <= Date.parse(record.createdAt)) {
+  // `Date.parse` yields NaN for an unparseable timestamp, and `NaN <= x` is
+  // always false — so an invalid retentionUntil/createdAt pair would previously
+  // pass this guard. Require both to parse before comparing.
+  const retentionUntilMs = Date.parse(record.retentionUntil);
+  const createdAtMs = Date.parse(record.createdAt);
+  if (!Number.isFinite(retentionUntilMs) || !Number.isFinite(createdAtMs)) {
+    throw new Error('EVIDENCE_RETENTION_INVALID');
+  }
+  if (retentionUntilMs <= createdAtMs) {
     throw new Error('EVIDENCE_RETENTION_INVALID');
   }
 }
@@ -57,7 +82,7 @@ export function assertEvidenceRecord(
 export class EvidenceSink {
   constructor(
     private readonly repository: EvidenceRepositoryPort,
-    private readonly options: { maxBytes?: number } = {},
+    private readonly options: EvidenceRecordValidationOptions = {},
   ) {}
 
   async persist(record: EvidenceRecord): Promise<void> {

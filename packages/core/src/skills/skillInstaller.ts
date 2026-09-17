@@ -26,6 +26,38 @@ import { getGlobalLogger } from '../logging';
 const GLOBAL_SKILLS_DIR = path.join(os.homedir(), '.commander', 'skills');
 const PROJECT_SKILLS_DIR = path.join(process.cwd(), '.commander', 'skills');
 
+/**
+ * Resolve a skill directory under `root`, rejecting names that escape it.
+ *
+ * A skill name can originate from remote `SKILL.md` frontmatter
+ * (`metadata.name`), a git repo name, an npm package name, or a CLI argument.
+ * `path.join` silently collapses `..`, so an unvalidated name such as
+ * `../../.ssh` would point the install target — and the
+ * `rmSync(targetDir, { recursive: true })` that precedes the copy — outside the
+ * skills root, allowing an attacker-controlled skill to overwrite or delete
+ * arbitrary directories.
+ */
+function resolveSkillDir(root: string, name: string): string {
+  if (typeof name !== 'string' || name.length === 0) {
+    throw new Error('Skill name must be a non-empty string');
+  }
+  if (
+    name === '.' ||
+    name === '..' ||
+    name.includes('/') ||
+    name.includes('\\') ||
+    name.includes('\0')
+  ) {
+    throw new Error(`Invalid skill name "${name}": must be a single path segment`);
+  }
+  const resolvedRoot = path.resolve(root);
+  const resolved = path.resolve(resolvedRoot, name);
+  if (path.dirname(resolved) !== resolvedRoot) {
+    throw new Error(`Invalid skill name "${name}": resolves outside the skills directory`);
+  }
+  return resolved;
+}
+
 // ============================================================================
 // Skill Metadata (from SKILL.md frontmatter)
 // ============================================================================
@@ -251,8 +283,18 @@ export function discoverAllSkills(): InstalledSkill[] {
  * Find a skill by name across all directories.
  */
 export function findSkill(name: string): InstalledSkill | null {
+  // A malformed name (path separators, `..`) can never name an installed skill;
+  // treat it as "not found" rather than letting the resolver throw.
+  let projectPath: string;
+  let globalPath: string;
+  try {
+    projectPath = path.join(resolveSkillDir(PROJECT_SKILLS_DIR, name), 'SKILL.md');
+    globalPath = path.join(resolveSkillDir(GLOBAL_SKILLS_DIR, name), 'SKILL.md');
+  } catch {
+    return null;
+  }
+
   // Check project-local first
-  const projectPath = path.join(PROJECT_SKILLS_DIR, name, 'SKILL.md');
   if (fs.existsSync(projectPath)) {
     const skills = scanSkillDir(PROJECT_SKILLS_DIR, 'builtin');
     const found = skills.find((s) => s.name === name);
@@ -260,7 +302,6 @@ export function findSkill(name: string): InstalledSkill | null {
   }
 
   // Then check global
-  const globalPath = path.join(GLOBAL_SKILLS_DIR, name, 'SKILL.md');
   if (fs.existsSync(globalPath)) {
     const skills = scanSkillDir(GLOBAL_SKILLS_DIR, 'global');
     const found = skills.find((s) => s.name === name);
@@ -290,7 +331,7 @@ export async function installFromLocal(
   const parsed = parseFrontmatter(content);
   const name = targetName ?? (parsed?.metadata?.name as string) ?? path.basename(sourceDir);
 
-  const targetDir = path.join(GLOBAL_SKILLS_DIR, name);
+  const targetDir = resolveSkillDir(GLOBAL_SKILLS_DIR, name);
   if (!fs.existsSync(GLOBAL_SKILLS_DIR)) {
     fs.mkdirSync(GLOBAL_SKILLS_DIR, { recursive: true });
   }
@@ -413,7 +454,7 @@ export async function installFromNpm(
  * Uninstall a skill by name.
  */
 export function uninstallSkill(name: string): boolean {
-  const globalDir = path.join(GLOBAL_SKILLS_DIR, name);
+  const globalDir = resolveSkillDir(GLOBAL_SKILLS_DIR, name);
   if (fs.existsSync(globalDir)) {
     fs.rmSync(globalDir, { recursive: true, force: true });
     getGlobalLogger().info('SkillInstaller', `Uninstalled skill "${name}"`);

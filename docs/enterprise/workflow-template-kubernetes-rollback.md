@@ -1,6 +1,9 @@
 # Workflow Template: Kubernetes Deployment Rollback
 
-This is the first supported enterprise workflow. It is deliberately narrow:
+This is a gated live-write design reference, not the current customer pilot.
+Kubernetes rollback execution remains frozen. Start with
+[Shadow Pilot Phase A](../pilot/shadow/README.md) for historical evaluation only.
+The future live-write scope is deliberately narrow:
 one tenant, one allowlisted cluster/namespace, one Deployment, mandatory human
 approval, and a reversible rollback target.
 

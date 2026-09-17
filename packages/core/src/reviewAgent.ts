@@ -128,8 +128,18 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
     }
     case 'commit': {
       const sha = commitSha ?? 'HEAD';
+      // `-m --first-parent` is load-bearing for merge commits. `git show <merge>`
+      // prints no patch at all unless `-m`/`-c`/`--cc` is given, so a review of a
+      // merge commit produced an empty diff — which then took the
+      // `diff.files.length === 0` branch and reported "No changes to review."
+      // (with `passed: true` when `requireProvider` is false: a fail-open review
+      // gate). `--first-parent` keeps that to a single well-defined diff against
+      // the merged-into branch instead of one diff per parent. For a non-merge
+      // commit the pair is a no-op — verified byte-identical output.
       diffArgs = [
         'show',
+        '-m',
+        '--first-parent',
         '--no-ext-diff',
         '--no-textconv',
         '--no-color',
@@ -139,6 +149,8 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
       ];
       nameArgs = [
         'show',
+        '-m',
+        '--first-parent',
         '--no-ext-diff',
         '--no-textconv',
         '--no-color',
@@ -148,6 +160,8 @@ function getGitDiff(scope: ReviewScope, baseRef?: string, commitSha?: string): G
       ];
       statArgs = [
         'show',
+        '-m',
+        '--first-parent',
         '--no-ext-diff',
         '--no-textconv',
         '--no-color',

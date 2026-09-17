@@ -206,6 +206,64 @@ commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
 {{- end -}}
 {{- end -}}
 
+{{/*
+This chart has no web image and no web Deployment. Rendering the web Service
+with web.enabled=true would produce a Service selecting no pods, which reads as
+"web is deployed" while nothing serves it. Fail closed with the fix instead.
+*/}}
+{{- define "commander.requireWebDisabled" -}}
+{{- if .Values.web.enabled -}}
+{{- fail "web.enabled=true is unsupported: this chart ships no web image or web Deployment, so the web Service would have no backing pods. Set web.enabled=false; re-enable only after adding a supported web image/workload." -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+Non-demo tiers must supply every API startup secret the api Deployment mounts.
+tier=demo may use the chart-generated <release>-api-secrets. Partial individual
+refs are rejected too: a subset silently omits ADMIN_PASSWORD or the integrity /
+capability authority keys while still rendering.
+*/}}
+{{- define "commander.requireApiStartupSecrets" -}}
+{{- if ne (.Values.tier | toString) "demo" -}}
+{{- if not .Values.api.secrets.existingSecret -}}
+{{- $missing := list -}}
+{{- if not .Values.api.secrets.masterKeySecret -}}{{- $missing = append $missing "api.secrets.masterKeySecret" -}}{{- end -}}
+{{- if not .Values.api.secrets.jwtSecretSecret -}}{{- $missing = append $missing "api.secrets.jwtSecretSecret" -}}{{- end -}}
+{{- if not .Values.api.secrets.apiKeySecret -}}{{- $missing = append $missing "api.secrets.apiKeySecret" -}}{{- end -}}
+{{- if not .Values.api.secrets.capabilityTokenKeySecret -}}{{- $missing = append $missing "api.secrets.capabilityTokenKeySecret" -}}{{- end -}}
+{{- if not .Values.api.secrets.integrityKeySecret -}}{{- $missing = append $missing "api.secrets.integrityKeySecret" -}}{{- end -}}
+{{- if not .Values.api.secrets.adminPasswordSecret -}}{{- $missing = append $missing "api.secrets.adminPasswordSecret" -}}{{- end -}}
+{{- if gt (len $missing) 0 -}}
+{{- fail (printf "tier %s requires api.secrets.existingSecret or all API startup secret refs (COMMANDER_MASTER_KEY, JWT_SECRET, COMMANDER_API_KEY, COMMANDER_CAPABILITY_TOKEN_KEY, COMMANDER_INTEGRITY_KEY, ADMIN_PASSWORD); missing: %s" (.Values.tier | toString) (join ", " $missing)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The API refuses to start when NODE_ENV=production and no durable shared kernel
+DSN is reachable (apps/api/src/index.ts throws from startServer). A render that
+combines production with the sqlite backend therefore cannot boot, so fail at
+template time with the fix instead of shipping a Deployment that CrashLoops.
+Non-production renders (explicit local-first evaluation) are still allowed.
+*/}}
+{{- define "commander.requireDurableKernel" -}}
+{{- if and (eq (.Values.config.nodeEnv | toString) "production") (not (include "commander.postgresBackend" .)) -}}
+{{- fail (printf "config.nodeEnv=production requires the durable shared kernel, but database.enabled=%v and database.backend=%s render no kernel DSN; the API would refuse to start. Set database.enabled=true and database.backend=postgres (with the tenant-authority lifecycle values), or set config.nodeEnv to a non-production value for a local-first evaluation deployment." .Values.database.enabled .Values.database.backend) -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
+An enabled worker always mounts COMMANDER_WORKER_AUTH_TOKEN. Only tier=demo
+generates <release>-worker-token, so non-demo tiers must reference an
+operator-supplied Secret or the pod would start against a missing Secret.
+*/}}
+{{- define "commander.requireWorkerAuthRef" -}}
+{{- if and .Values.worker.enabled (ne (.Values.tier | toString) "demo") (not .Values.worker.authTokenSecret) -}}
+{{- fail (printf "tier %s requires worker.authTokenSecret when worker.enabled=true (the chart only generates %s-worker-token for tier=demo); set worker.authTokenSecret to an existing Secret name" (.Values.tier | toString) (include "commander.fullname" .)) -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "commander.apiSecretName" -}}
 {{- .Values.api.secrets.existingSecret | default (printf "%s-api-secrets" (include "commander.fullname" .)) -}}
 {{- end -}}

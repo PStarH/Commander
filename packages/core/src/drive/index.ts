@@ -1,9 +1,3 @@
 export { DriveOrchestrator } from './driveOrchestrator';
-export {
-  DriveConfig,
-  DEFAULT_DRIVE_CONFIG,
-  DriveStep,
-  DriveState,
-  DriveResult,
-  DriveStatus,
-} from './types';
+export { DEFAULT_DRIVE_CONFIG } from './types';
+export type { DriveConfig, DriveStep, DriveState, DriveResult, DriveStatus } from './types';

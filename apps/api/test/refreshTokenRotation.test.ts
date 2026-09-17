@@ -32,20 +32,14 @@ const {
   setRefreshTokenRepository,
   _resetRefreshTokenStoreForTests,
 } = await import('../src/refreshTokenStore');
-const {
-  createUser,
-  findUserByUsername,
-  setUserRepository,
-  _resetUserStoreForTests,
-} = await import('../src/userStore');
+const { createUser, findUserByUsername, setUserRepository, _resetUserStoreForTests } =
+  await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
-const { setAuthFailureStore, resetAuthFailureStoreForTesting } = await import('../src/authFailureStore');
+const { setAuthFailureStore, resetAuthFailureStoreForTesting } =
+  await import('../src/authFailureStore');
 const express = (await import('express')).default;
-const {
-  TestAuthFailureStore,
-  TestRefreshTokenRepository,
-  TestUserRepository,
-} = await import('./authRepositories');
+const { TestAuthFailureStore, TestRefreshTokenRepository, TestUserRepository } =
+  await import('./authRepositories');
 
 const testPassword = ['password', '123'].join('');
 
@@ -179,7 +173,7 @@ describe('auth refresh rotation', () => {
     const login = await request('/api/auth/login', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'refreshuser', password: testPassword }),
+      body: JSON.stringify({ username: 'refreshuser', password: testPassword }),
     });
     assert.equal(login.status, 200);
     const loginBody = (await login.json()) as {

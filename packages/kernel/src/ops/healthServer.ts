@@ -1,7 +1,17 @@
 /**
  * Minimal HTTP health surface for kernel-ops Deployments.
- * Does not touch the kernel state machine — only reports process liveness
- * and a cheap readiness check supplied by the caller.
+ *
+ * `/health` is process liveness only — it never inspects the kernel state machine.
+ * `/ready` is the K8s readiness gate for the work this process actually owns.
+ *
+ * Scope of "ready" here: process readiness, not whole-cell capability.
+ * kernel-ops owns reclaim, timer wakeup, outbox publishing, and a compensation
+ * *probe* loop (limit-0 claim + DLQ sweep) that proves the claim path is alive.
+ * It does not own EffectBroker-backed compensation drain — that belongs to
+ * adapter-ops (`packages/adapter-ops/src/wiring.ts` builds the real
+ * `CompensationDaemon` + `EffectBroker`). Gating `/ready` on a drain this
+ * process does not run produced a permanent 503 and stopped `helm --wait`
+ * from ever converging, so drain state is reported as detail, never as a gate.
  */
 import { createServer, type Server } from 'node:http';
 
@@ -11,15 +21,17 @@ export interface OpsHealthHandle {
 }
 
 /**
- * Default K8s httpGet readiness contract for kernel-ops.
- * Fail-closed: probe-only (compensationDraining false) never returns ready.
+ * K8s httpGet readiness contract for kernel-ops: the loops it owns plus DB.
+ *
+ * `loopsReady` is `KernelOpsRuntime.isReady()` (reclaim + timer + outbox +
+ * compensation probe). Compensation drain mode is deliberately NOT part of the
+ * predicate — it is owned by adapter-ops and surfaced only in `/ready` details.
  */
 export function isKernelOpsReadyForTraffic(parts: {
   loopsReady: boolean;
-  compensationDraining: boolean;
   databaseOk: boolean;
 }): boolean {
-  return parts.loopsReady && parts.compensationDraining && parts.databaseOk;
+  return parts.loopsReady && parts.databaseOk;
 }
 
 export async function startOpsHealthServer(options: {
@@ -27,7 +39,9 @@ export async function startOpsHealthServer(options: {
   isReady: () => boolean | Promise<boolean>;
   /**
    * Optional details merged into /ready JSON (e.g. compensationMode).
-   * Used so operators can tell probe-alive from true drain.
+   * Observability only — details never influence the status code, so operators
+   * can tell probe-alive from true drain without turning honesty fields into a
+   * gate on a capability this process does not own.
    */
   getReadyDetails?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
 }): Promise<OpsHealthHandle> {

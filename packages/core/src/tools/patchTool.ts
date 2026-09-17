@@ -2,6 +2,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
@@ -67,7 +68,14 @@ export class ApplyPatchTool implements Tool {
     if (!patchContent) return 'Error: No patch content provided.';
 
     const cwd = process.cwd();
-    const patchFile = path.join(cwd, `.tmp-patch-${Date.now()}.diff`);
+    // The patch file is scratch *input* for the `patch` CLI — it is never an
+    // artifact of the edit itself. Writing it into `process.cwd()` means any
+    // crash, kill, or aborted test run leaves `.tmp-patch-*.diff` behind inside
+    // the user's checkout; because the name is dot-prefixed but not gitignored,
+    // `git add -A` will happily commit it. A private directory under the OS
+    // temp root cannot pollute the repository no matter how the process exits.
+    const patchDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'commander-patch-'));
+    const patchFile = path.join(patchDir, 'change.diff');
 
     try {
       // Write patch to temp file (async — no event-loop blocking)
@@ -203,7 +211,7 @@ export class ApplyPatchTool implements Tool {
       return `Patch failed: ${msg.slice(0, 300)}`;
     } finally {
       try {
-        await fs.promises.unlink(patchFile);
+        await fs.promises.rm(patchDir, { recursive: true, force: true });
       } catch (e) {
         getGlobalLogger().warn('ApplyPatchTool', 'Temp patch cleanup failed', {
           error: (e as Error)?.message,

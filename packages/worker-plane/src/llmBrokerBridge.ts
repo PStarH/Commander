@@ -189,6 +189,10 @@ export function hashLlmCallContent(request: LLMRequest): string {
     responseFormat: request.responseFormat ?? null,
     reasoningConfig: request.reasoningConfig ?? null,
     safePrompt: request.safePrompt ?? null,
+    ...(request.cacheConfig === undefined ? {} : { cacheConfig: request.cacheConfig }),
+    ...(request.parallelToolCalls === undefined
+      ? {}
+      : { parallelToolCalls: request.parallelToolCalls }),
   } as Record<string, unknown>);
 }
 

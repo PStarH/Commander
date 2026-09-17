@@ -1,18 +1,50 @@
-import { describe, it, before, after } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
+import { fileURLToPath } from 'node:url';
+
+// Static ESM imports, not `require(...)`.
+//
+// This file previously loaded every module with a bare `require`, which does
+// not exist in an ES module: each test threw `ReferenceError: require is not
+// defined` and the whole file failed under `node --test`. vitest masks this
+// class (it supplies its own `require`), so the defect only surfaced on the
+// `node:test` side — see tests/architecture/esmRequire.test.ts and the
+// scan-bare-require gate.
+import { MetaLearner, resetMetaLearner } from '../src/selfEvolution/metaLearner';
+import { MultiAgentSynthesizer } from '../src/ultimate/synthesizer';
+import { SSEStream } from '../src/runtime/sseStream';
+import { getMessageBus } from '../src/runtime/messageBus';
+import { MCPRemoteRuntime } from '../src/runtime/mcpRemoteRuntime';
+import { deliberate } from '../src/ultimate/deliberation';
+import { classifyEffortLevel } from '../src/ultimate/effortScaler';
+import { InMemoryMemoryService, MemoryStoreFacade } from '../src/memory';
+import { ThreeLayerMemory } from '../src/threeLayerMemory';
+import { UltimateOrchestrator } from '../src/ultimate/orchestrator';
+import { TELOSOrchestrator } from '../src/telos/telosOrchestrator';
+import { AgentRuntime } from '../src/runtime/agentRuntime';
+import { DEFAULT_ULTIMATE_CONFIG } from '../src/ultimate/types';
+
+/** This file's directory — `__dirname` does not exist in an ES module. */
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 // ============================================================================
 // Test 1: MetaLearner Feedback Loop
 // ============================================================================
 describe('MetaLearner — Self-Optimization', () => {
   it('1.1 records experiences and generates suggestions', () => {
-    const { MetaLearner } = require('../src/selfEvolution/metaLearner');
-    const learner = new MetaLearner(100, 1);
+    const learner = new MetaLearner(1000, 1);
 
-    // Record diverse experiences
-    for (let i = 0; i < 10; i++) {
+    // Strategy tracking is gated behind `minRunsBeforeLearning` (50 by
+    // default): until that many experiences exist the sub-trackers are never
+    // fed, so a 10-experience sample legitimately reports 0 tracked
+    // strategies. Record past the gate, read from the config rather than
+    // hardcoding it, so this stays true if the default changes.
+    const gate = learner.getConfig().minRunsBeforeLearning;
+    const rounds = gate + 10;
+
+    for (let i = 0; i < rounds; i++) {
       learner.recordExperience({
         id: `exp-${i}`,
         runId: `run-${i}`,
@@ -20,7 +52,7 @@ describe('MetaLearner — Self-Optimization', () => {
         taskType: i % 2 === 0 ? 'SIMPLE' : 'COMPLEX',
         modelUsed: i % 2 === 0 ? 'claude-3-5-haiku' : 'claude-3-5-sonnet',
         strategyUsed: i % 2 === 0 ? 'SIMPLE_SINGLE' : 'COMPLEX_HIERARCHICAL',
-        success: i < 7, // 70% success rate
+        success: i < Math.floor(rounds * 0.7), // 70% success rate
         durationMs: 1000 + i * 100,
         tokenCost: 1000 + i * 500,
         lessons: i === 3 ? ['Quality gate hallucination failed'] : [],
@@ -30,6 +62,10 @@ describe('MetaLearner — Self-Optimization', () => {
 
     const stats = learner.getStats();
     assert.ok(stats.totalExperiences >= 10);
+    assert.ok(
+      stats.learningActive,
+      `learning should engage once ${gate} experiences are recorded, got ${stats.totalExperiences}`,
+    );
     assert.ok(stats.trackedStrategies >= 2);
 
     const suggestions = learner.getSuggestions();
@@ -38,7 +74,6 @@ describe('MetaLearner — Self-Optimization', () => {
   });
 
   it('1.2 Thompson Sampling selects strategies', () => {
-    const { MetaLearner } = require('../src/selfEvolution/metaLearner');
     const learner = new MetaLearner(100, 1);
 
     // Make PARALLEL more successful for RESEARCH tasks
@@ -64,9 +99,8 @@ describe('MetaLearner — Self-Optimization', () => {
     assert.ok(parallelScore, 'PARALLEL should be tracked');
   });
 
-  it('1.3 Persistence across sessions', () => {
-    const { MetaLearner, resetMetaLearner } = require('../src/selfEvolution/metaLearner');
-    const persistPath = path.join(__dirname, '.test-meta-learner.json');
+  it('1.3 Persistence across sessions', async () => {
+    const persistPath = path.join(here, '.test-meta-learner.json');
 
     // Clean up from previous runs
     try {
@@ -74,6 +108,10 @@ describe('MetaLearner — Self-Optimization', () => {
     } catch {}
 
     const learner = new MetaLearner(100, 1, persistPath);
+    // Hydration is asynchronous — recording before it finishes would be
+    // overwritten by the load. `ready()` is the public barrier for this.
+    await learner.ready();
+
     learner.recordExperience({
       id: 'exp-persist',
       runId: 'run-1',
@@ -87,11 +125,15 @@ describe('MetaLearner — Self-Optimization', () => {
       lessons: [],
       timestamp: new Date().toISOString(),
     });
+    // The disk write is deferred onto the same chain, so it must be awaited
+    // before the file can be observed.
+    await learner.ready();
 
     assert.ok(fs.existsSync(persistPath), 'Persistence file should exist');
 
     // Load into new instance
     const learner2 = new MetaLearner(100, 1, persistPath);
+    await learner2.ready();
     const stats2 = learner2.getStats();
     assert.ok(stats2.totalExperiences >= 1, 'Should load persisted experiences');
 
@@ -108,7 +150,6 @@ describe('MetaLearner — Self-Optimization', () => {
 // ============================================================================
 describe('Quality Gates — Auto-Fix', () => {
   it('2.1 hallucination detection flags suspicious content', async () => {
-    const { MultiAgentSynthesizer } = require('../src/ultimate/synthesizer');
     const synth = new MultiAgentSynthesizer();
 
     const tree = {
@@ -157,7 +198,6 @@ describe('Quality Gates — Auto-Fix', () => {
   });
 
   it('2.2 runQualityGatesStrict is accessible', () => {
-    const { MultiAgentSynthesizer } = require('../src/ultimate/synthesizer');
     const synth = new MultiAgentSynthesizer();
     assert.ok(typeof synth.runQualityGatesStrict === 'function');
   });
@@ -168,9 +208,6 @@ describe('Quality Gates — Auto-Fix', () => {
 // ============================================================================
 describe('SSE Stream', () => {
   it('3.1 subscribes to message bus and delivers events', () => {
-    const { SSEStream } = require('../src/runtime/sseStream');
-    const { getMessageBus } = require('../src/runtime/messageBus');
-
     const stream = new SSEStream(['agent.started']);
     const events: string[] = [];
 
@@ -188,7 +225,6 @@ describe('SSE Stream', () => {
   });
 
   it('3.2 closes cleanly without errors', () => {
-    const { SSEStream } = require('../src/runtime/sseStream');
     const stream = new SSEStream();
     stream.close();
     assert.ok(stream.isClosed);
@@ -200,7 +236,6 @@ describe('SSE Stream', () => {
 // ============================================================================
 describe('MCP Remote Runtime', () => {
   it('4.1 can be constructed with config', () => {
-    const { MCPRemoteRuntime } = require('../src/runtime/mcpRemoteRuntime');
     const rt = new MCPRemoteRuntime({
       serverName: 'test-worker',
       callTool: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
@@ -215,7 +250,6 @@ describe('MCP Remote Runtime', () => {
 describe('CLI Integration', () => {
   it('5.1 cmdPlan executes without errors', async () => {
     // Test that the deliberation module works (CLI's core logic)
-    const { deliberate } = require('../src/ultimate/deliberation');
     const plan = deliberate('What is the capital of France?');
     assert.strictEqual(plan.taskType, 'FACTUAL');
     assert.strictEqual(plan.recommendedTopology, 'SINGLE');
@@ -223,7 +257,6 @@ describe('CLI Integration', () => {
   });
 
   it('5.2 classifyEffortLevel returns correct levels', () => {
-    const { classifyEffortLevel } = require('../src/ultimate/effortScaler');
     assert.strictEqual(classifyEffortLevel('Hi'), 'SIMPLE');
     assert.strictEqual(
       classifyEffortLevel('A'.repeat(500) + 'Complex task analysis needed here'),
@@ -237,7 +270,6 @@ describe('CLI Integration', () => {
 // ============================================================================
 describe('Memory System', () => {
   it('6.1 in-memory MemoryService stores and retrieves', async () => {
-    const { InMemoryMemoryService, MemoryStoreFacade } = require('../src/memory');
     const store = new MemoryStoreFacade(new InMemoryMemoryService(), 'test-tenant');
 
     const item = await store.write({
@@ -256,7 +288,6 @@ describe('Memory System', () => {
   });
 
   it('6.2 semantic search with the in-memory service', async () => {
-    const { InMemoryMemoryService, MemoryStoreFacade } = require('../src/memory');
     const store = new MemoryStoreFacade(new InMemoryMemoryService(), 'test-tenant');
 
     await store.write({
@@ -279,7 +310,6 @@ describe('Memory System', () => {
   });
 
   it('6.3 ThreeLayerMemory stores with async embedding', () => {
-    const { ThreeLayerMemory } = require('../src/threeLayerMemory');
     const memory = new ThreeLayerMemory();
 
     const entry = memory.add('Test memory content', 'episodic', 'test-context', 0.7, ['test']);
@@ -294,10 +324,6 @@ describe('Memory System', () => {
 // ============================================================================
 describe('Orchestrator Auto-Optimization', () => {
   it('7.1 applyOptimizationSuggestions handles empty suggestions', () => {
-    const { UltimateOrchestrator } = require('../src/ultimate/orchestrator');
-    const { TELOSOrchestrator } = require('../src/telos/telosOrchestrator');
-    const { AgentRuntime } = require('../src/runtime/agentRuntime');
-
     const runtime = new AgentRuntime();
     const telos = new TELOSOrchestrator(runtime);
     const orch = new UltimateOrchestrator(telos, runtime);
@@ -309,7 +335,6 @@ describe('Orchestrator Auto-Optimization', () => {
   });
 
   it('7.2 config has valid defaults', () => {
-    const { DEFAULT_ULTIMATE_CONFIG } = require('../src/ultimate/types');
     assert.ok(DEFAULT_ULTIMATE_CONFIG.maxRecursiveDepth >= 1);
     assert.ok(DEFAULT_ULTIMATE_CONFIG.maxParallelSubAgents >= 1);
     assert.ok(DEFAULT_ULTIMATE_CONFIG.qualityGates.length >= 3);

@@ -19,7 +19,6 @@ import { reportSilentFailure } from '@commander/core';
 import { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';
-import { authenticateAccessToken } from './jwtMiddleware';
 import { hasRole } from './userStore';
 
 const DEFAULT_TOPICS: MessageBusTopic[] = [
@@ -87,65 +86,28 @@ export function createStreamRouter(options: CreateStreamRouterOptions = {}): Rou
   const router = Router();
 
   const handleStream = async (req: Request, res: Response): Promise<void> => {
-    // EventSource cannot set Authorization headers. Prefer a cookie
-    // (`commander_access_token`); fall back to ?access_token=. Always strip
-    // access_token from req.url so access/proxy logs do not retain the secret.
-    const redactAccessTokenFromUrl = (): void => {
-      if ('access_token' in req.query) {
-        delete (req.query as Record<string, unknown>).access_token;
-      }
+    // Authentication is composed at the application boundary. This router
+    // consumes the identity established by the normal Bearer/API-key middleware;
+    // it must not create a second cookie/query-token authority just because the
+    // native EventSource API cannot set headers. The web client uses the
+    // authenticated fetch-stream helper instead.
+    //
+    // Remove a legacy query token before any downstream access logging, but never
+    // use it as a credential. A token in a URL is a secret disclosure, not auth.
+    if ('access_token' in req.query) {
+      delete (req.query as Record<string, unknown>).access_token;
       const scrub = (u: string) =>
         u
           .replace(/([?&])access_token=[^&]*&?/g, '$1')
           .replace(/[?&]$/, '')
           .replace(/\?&/, '?');
-      if (req.url.includes('access_token=')) {
-        req.url = scrub(req.url);
-      }
-      if (typeof req.originalUrl === 'string' && req.originalUrl.includes('access_token=')) {
-        req.originalUrl = scrub(req.originalUrl);
-      }
-    };
-
-    if (!req.user) {
-      let token: string | undefined;
-
-      const cookieHeader = req.headers.cookie;
-      if (typeof cookieHeader === 'string') {
-        const match = cookieHeader.match(/(?:^|;\s*)commander_access_token=([^;]+)/);
-        if (match?.[1]) {
-          try {
-            token = decodeURIComponent(match[1]);
-          } catch {
-            token = match[1];
-          }
-        }
-      }
-
-      if (!token) {
-        const raw = req.query.access_token;
-        if (typeof raw === 'string') {
-          token = raw;
-        } else if (Array.isArray(raw) && typeof raw[0] === 'string') {
-          token = raw[0];
-        }
-      }
-
-      redactAccessTokenFromUrl();
-
-      if (typeof token === 'string' && token.length > 0) {
-        try {
-          req.user = await authenticateAccessToken(token);
-        } catch {
-          res.status(503).json({ error: { code: 'AUTHORITY_UNAVAILABLE' } });
-          return;
-        }
-      }
-    } else {
-      redactAccessTokenFromUrl();
+      req.url = scrub(req.url);
+      if (typeof req.originalUrl === 'string') req.originalUrl = scrub(req.originalUrl);
     }
 
-    // Require JWT user or API-key identity before opening an SSE stream.
+    // Require the identity produced by the normal Bearer/API-key middleware
+    // before opening an SSE stream.
+
     if (!req.user && !req.apiKeyId) {
       res.status(401).json({ error: 'Authentication required' });
       return;

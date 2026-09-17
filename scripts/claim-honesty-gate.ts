@@ -353,25 +353,6 @@ const RULES: Rule[] = [
       'readiness status is an internal contract and must not imply an enterprise certification',
   },
   {
-    file: 'commander-benchmark-report/commander-benchmark-report.html',
-    pattern: /外部安全 benchmark[^。\n]*(?:达到|均达到)\s*100% 拦截|通过率\s*55\.7%|全拦截/i,
-    reason:
-      'archival benchmark pages must qualify sample interception counts and omit unsupported historical chaos scores',
-  },
-  {
-    file: 'observability-reversibility-benchmark/observability-reversibility-benchmark.html',
-    pattern:
-      /行业第一对标|距离行业第一|领先行业第一|远超 Langfuse|满足 EU AI Act|防篡改|无等效机制/i,
-    reason:
-      'code-review comparisons must be labelled as reference estimates and tamper claims must remain tamper-evident/in-process',
-  },
-  {
-    file: 'external-benchmark-research/external-benchmark-research.html',
-    pattern: /4 个外部安全 benchmark 均达到 100% 拦截|所有信息均来自.*避免使用未经验证的数据/i,
-    reason:
-      'benchmark research must separate sourced benchmark facts from unverified Commander-specific historical results',
-  },
-  {
     file: 'packages/core/src/runtime/modelRouter.ts',
     pattern: /Covers 95% of use cases|SOC2\/compliance requirements with managed services/i,
     reason:

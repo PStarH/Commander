@@ -17,6 +17,12 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module. This helper is imported by test
+// files, so it must bind its own rather than rely on the runner supplying one.
+const __dirname = getDirname(import.meta.url);
+
 /** Directory where snapshots are stored */
 const SNAPSHOT_DIR = path.join(__dirname, '..', '__snapshots__');
 

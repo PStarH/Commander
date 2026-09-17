@@ -21,6 +21,24 @@ import {
   TenantIsolationError,
 } from '../runtime/tenantContext';
 
+/**
+ * Canonicalise a workspace root. `resolveSafePath()` compares the *realpath* of
+ * the candidate against the root (`:106-108`), so a root that is not itself
+ * canonicalised can never contain anything: on macOS `os.tmpdir()` is
+ * `/var/folders/...`, whose realpath is `/private/var/folders/...`, and the
+ * containment check then rejects every path inside the configured workspace.
+ * Fails closed to the lexical path when the directory does not exist yet (a
+ * workspace that has not been created cannot be resolved, and the containment
+ * check below still applies).
+ */
+function canonicalRoot(root: string): string {
+  try {
+    return fs.realpathSync(root);
+  } catch {
+    return root;
+  }
+}
+
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
 export function getSafeRoot(): string {
   // Multi-tenant isolation: when a tenant context is active and the tenant
@@ -32,7 +50,7 @@ export function getSafeRoot(): string {
     const provider = getGlobalTenantProvider();
     const tenantCfg = provider.getTenantConfig(tenantId);
     if (tenantCfg?.workspacePath) {
-      return path.resolve(tenantCfg.workspacePath);
+      return canonicalRoot(path.resolve(tenantCfg.workspacePath));
     }
     // AUDIT-CORE2: a tenant without a configured workspace must never fall
     // through to the shared global root — that hole let tenant A read and
@@ -50,7 +68,7 @@ export function getSafeRoot(): string {
       'File tools require a tenant context in multi-tenant mode; no tenant bound to this request.',
     );
   }
-  return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
+  return canonicalRoot(path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd()));
 }
 
 /** Check that a resolved path is within SAFE_ROOT (prevents prefix collision like workspace-evil). */

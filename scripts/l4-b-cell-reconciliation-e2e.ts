@@ -2,9 +2,11 @@
 
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { generateKeyPairSync } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createEvidenceSigner } from '@commander/effect-broker';
 import type { KernelRepository } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import {
@@ -35,6 +37,8 @@ function adaptReconciliationRepository(
   repository: KernelRepository,
 ): ReconciliationDaemonOptions['repository'] {
   return {
+    listEffectsForRun: (runId, tenantId) => repository.listEffectsForRun(runId, tenantId),
+    listEvents: (runId, tenantId) => repository.listEvents(runId, tenantId),
     claimReconcileEffects: (input) => repository.claimReconcileEffects(input),
     completeReconcileEffect: (input) => repository.completeReconcileEffect(input),
     confirmEffectNotApplied: (input) => repository.confirmEffectNotApplied(input),
@@ -137,6 +141,13 @@ export async function runAdapterOpsReconciliationMock(): Promise<ReconciliationM
     workerId: reconcileWorkerId,
     workerGeneration: 1,
     claimSecret: reconcileClaimSecret,
+    // Terminal reconcile evidence is fail-closed without a signer (EVIDENCE_SIGNING_KEY_REQUIRED).
+    evidenceSigner: createEvidenceSigner({
+      privateKeyPem: generateKeyPairSync('ed25519')
+        .privateKey.export({ format: 'pem', type: 'pkcs8' })
+        .toString(),
+      keyId: 'l4-b-reconciliation-evidence',
+    }),
   });
   const stats = await daemon.tick();
   assert.equal(stats.completed, 1);

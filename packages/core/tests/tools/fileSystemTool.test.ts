@@ -8,6 +8,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import * as fs from 'fs';
 import * as path from 'path';
+import * as os from 'os';
 import {
   FileReadTool,
   FileWriteTool,
@@ -55,8 +56,12 @@ describe('FileReadTool', () => {
 
   it('includes line numbers', async () => {
     const result = await tool.execute({ path: 'package.json' });
-    assert.ok(result.match(/^1:/m), 'Line 1 should be numbered');
-    assert.ok(result.match(/^2:/m), 'Line 2 should be numbered');
+    // The default read format is hash-anchored: `formatAnchoredOutput` renders
+    // each line as "  NNNN:<content>…  #<anchor>", i.e. the line number is
+    // right-aligned in a width-4 field. An earlier plain format emitted "N:"
+    // at column 0, so the old `/^1:/m` assertion can no longer match.
+    assert.ok(result.match(/^\s+1:/m), 'Line 1 should be numbered');
+    assert.ok(result.match(/^\s+2:/m), 'Line 2 should be numbered');
   });
 
   it('blocks path traversal', async () => {
@@ -82,10 +87,27 @@ describe('FileWriteTool', () => {
     assert.ok(result.includes('Error'));
   });
 
-  it('handles missing content', async () => {
-    // Tool may write empty string or return error
-    const result = await tool.execute({ path: 'test-empty.txt' });
-    assert.ok(typeof result === 'string');
+  it('writes an empty file when content is omitted', async () => {
+    // This case used to call `tool.execute({ path: 'test-empty.txt' })` against
+    // the process cwd and assert only `typeof result === 'string'` — a tautology
+    // that could not fail, while leaving `test-empty.txt` behind in the package
+    // root (untracked and unignored, so `git add -A` would commit it). Pin the
+    // real contract inside an owned temporary workspace instead.
+    const workspace = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-fswrite-'));
+    const previousWorkspace = process.env.COMMANDER_WORKSPACE;
+    process.env.COMMANDER_WORKSPACE = workspace;
+    try {
+      const result = await tool.execute({ path: 'test-empty.txt' });
+      assert.ok(!result.startsWith('Error'), `unexpected tool error: ${result}`);
+
+      const written = path.join(fs.realpathSync(workspace), 'test-empty.txt');
+      assert.ok(fs.existsSync(written), 'file_write must create the file');
+      assert.strictEqual(fs.readFileSync(written, 'utf-8'), '');
+    } finally {
+      if (previousWorkspace === undefined) delete process.env.COMMANDER_WORKSPACE;
+      else process.env.COMMANDER_WORKSPACE = previousWorkspace;
+      fs.rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it('blocks path traversal', async () => {

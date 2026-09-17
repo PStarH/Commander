@@ -3,10 +3,25 @@ import {
   runKernelMigrations,
   runTask1ClosureMigrations,
 } from '../packages/kernel/src/migrations.js';
+import { assertProvisionedCiInstance, formatAdmissionFailure } from './ci-database-scope.js';
+
+/**
+ * Apply kernel migrations to a CI instance that a provisioner created for this
+ * run. Migrations are a mutating, schema-level operation, so this refuses to run
+ * unless the provisioned-instance admission conditions hold. It is not part of
+ * the ordinary acceptance chain (`test:deploy-gates`) — see package.json.
+ */
 
 const connectionString = process.env.COMMANDER_OWNER_DATABASE_URL?.trim();
 if (!connectionString) {
-  throw new Error('COMMANDER_OWNER_DATABASE_URL_REQUIRED');
+  console.error('CI_DEPLOY_GATES_BOOTSTRAP_REFUSED: COMMANDER_OWNER_DATABASE_URL is not set');
+  process.exit(1);
+}
+
+const admissionFailures = assertProvisionedCiInstance(process.env, connectionString);
+if (admissionFailures.length > 0) {
+  console.error(formatAdmissionFailure(admissionFailures));
+  process.exit(1);
 }
 
 const pool = new Pool({ connectionString, max: 2 });

@@ -45,6 +45,16 @@ interface GateVerdict {
 
 const SHA256 = /^[a-f0-9]{64}$/i;
 const COMMIT = /^[a-f0-9]{40}$/i;
+/**
+ * A digest-pinned image reference: `<repository>@sha256:<64 hex>`.
+ *
+ * Deliberately anchored and complete. A substring test such as
+ * `digest.includes('@sha256:')` accepts `@sha256:`, `foo@sha256:` and
+ * `foo@sha256:nothex`, i.e. it accepts exactly the unpinned references the
+ * check exists to reject — and the tag it would then deploy is whatever the
+ * registry happens to serve.
+ */
+const IMAGE_DIGEST = /^[^\s@]+@sha256:[a-f0-9]{64}$/i;
 const SENSITIVE_PATTERNS: readonly [string, RegExp][] = [
   ['OPENAI_OR_PROVIDER_KEY', /(?:sk|key)-[A-Za-z0-9_-]{4,}/i],
   ['BEARER_TOKEN', /\bbearer\s+[A-Za-z0-9._~+/=-]{16,}/i],
@@ -184,7 +194,7 @@ export async function verifyLaunchBundle(input: {
       failure(failures, 'IMAGE_DIGESTS_MISSING');
     } else if (
       attestation.imageDigests.some(
-        (digest) => typeof digest !== 'string' || !digest.includes('@sha256:'),
+        (digest) => typeof digest !== 'string' || !IMAGE_DIGEST.test(digest),
       )
     ) {
       failure(failures, 'IMAGE_DIGEST_INVALID');

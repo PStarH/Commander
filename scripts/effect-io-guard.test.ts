@@ -80,6 +80,46 @@ describe('effect-io-guard', () => {
     }
   });
 
+  it('detects I/O loaded through the ESM require helpers, not just bare require', () => {
+    // Regression: 13 of 14 packages are "type": "module", so the codebase loads
+    // built-ins through nodeRequire/optionalRequire instead of the bare
+    // `require`. A case-sensitive `require\s*\(` never matches `nodeRequire(`,
+    // so migrating to the helper silently hid real subprocess/HTTP I/O from this
+    // guard (the exception went stale and the I/O stopped being reported).
+    const root = mkdtempSync(join(tmpdir(), 'effect-io-esm-require-'));
+    try {
+      for (const dir of ['config', 'packages/kernel/src', 'packages/core/src']) {
+        mkdirSync(join(root, dir), { recursive: true });
+      }
+      writeFileSync(
+        join(root, 'config/effect-io-exceptions.json'),
+        JSON.stringify({ baselineCount: 0, exceptions: [] }),
+      );
+      writeFileSync(join(root, 'config/effect-io-allowlist.json'), JSON.stringify({ paths: [] }));
+
+      writeFileSync(
+        join(root, 'packages/core/src/helper-subprocess.ts'),
+        'export function run() {\n  const { spawn } = nodeRequire("child_process");\n  return spawn("ls");\n}\n',
+      );
+      writeFileSync(
+        join(root, 'packages/kernel/src/helper-https.ts'),
+        'export function call() {\n  const https = optionalRequire("node:https");\n  return https.request("https://example.com");\n}\n',
+      );
+
+      const errors = scanEffectIo(root);
+      assert.ok(
+        errors.some((e) => e.includes('helper-subprocess.ts (child_process)')),
+        `nodeRequire("child_process") must be detected as external I/O, got: ${JSON.stringify(errors)}`,
+      );
+      assert.ok(
+        errors.some((e) => e.includes('helper-https.ts (node:https)')),
+        `optionalRequire("node:https") must be detected as external I/O, got: ${JSON.stringify(errors)}`,
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('distinguishes outbound sockets from pure net helpers and inbound servers', () => {
     const root = mkdtempSync(join(tmpdir(), 'effect-io-direction-'));
     try {

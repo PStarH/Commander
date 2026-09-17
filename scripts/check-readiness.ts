@@ -7,12 +7,22 @@
  * to be counted as ready. Now every baseline is parsed and its content is
  * validated with the strict baseline schema validator.
  *
- * Exit codes:
- *   0  all baselines pass readiness (or running with --non-strict)
- *   1  one or more baselines failed the gate in strict mode
+ * Second problem (fixed here): every slot was declared `recommended`, so the
+ * "required items all pass" predicate was vacuously true and `process.exit(1)`
+ * was unreachable — the gate could never fail. A slot is only `required` when
+ * an approved release profile names it. With no profile, or with a profile that
+ * names no slot, strict mode reports NOT_EVALUATED and exits non-zero: the
+ * absence of required evidence is not a pass.
+ *
+ * Exit codes (strict, the default):
+ *   0  every required slot passed with live, candidate-bound evidence
+ *   1  a required slot failed, or no required slot was evaluated
+ * Exit codes (--non-strict): always 0, output labelled DIAGNOSTIC_ONLY.
+ *   Non-strict mode never prints a readiness pass.
  */
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { resolve, basename } from 'node:path';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { resolve, basename, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import {
   validateBaseline,
@@ -30,11 +40,55 @@ export interface CheckResult {
   reason?: string;
 }
 
+export type ReadinessStatus = 'PASS' | 'FAIL' | 'NOT_EVALUATED';
+
+export interface ReadinessProfile {
+  schema: 'commander-readiness-profile/v1';
+  required: string[];
+}
+
+export interface ReadinessEvaluation {
+  status: ReadinessStatus;
+  requiredCount: number;
+  requiredPassed: number;
+  reasons: string[];
+  results: CheckResult[];
+}
+
 export const STRICT = !process.argv.includes('--non-strict');
+
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+export const PROFILE_PATH = resolve(SCRIPT_DIR, 'readiness-profile.json');
+
+/**
+ * The full set of baseline slots this gate knows how to evaluate. Which of them
+ * are *required* is a product decision and comes from the approved profile —
+ * it is never inferred from this list.
+ */
+export const READINESS_SLOTS: ReadonlyArray<{
+  prefix: string;
+  declaredStatus: 'required' | 'recommended';
+}> = [
+  // Live-only path: simulated fixtures in docs/baselines/* are non-scoring and
+  // must not fill these slots. Without an approved profile they are diagnostic
+  // only; that is deliberately not the same thing as readiness.
+  { prefix: 'tenant-isolation.', declaredStatus: 'recommended' },
+  { prefix: 'tenant-concurrency.', declaredStatus: 'recommended' },
+  { prefix: 'slo-baseline.', declaredStatus: 'recommended' },
+  { prefix: 'failover-rto-live.', declaredStatus: 'recommended' },
+  { prefix: 'wal-baseline.', declaredStatus: 'recommended' },
+  { prefix: 'recovery-baseline.', declaredStatus: 'recommended' },
+  { prefix: 'replay-baseline.', declaredStatus: 'recommended' },
+  { prefix: 'e2e-latency.', declaredStatus: 'recommended' },
+  { prefix: 'cost-prediction.', declaredStatus: 'recommended' },
+  { prefix: 'redteam-baseline.', declaredStatus: 'recommended' },
+  { prefix: 'bench-v2-live.', declaredStatus: 'recommended' },
+  { prefix: 'benchmark-', declaredStatus: 'recommended' },
+];
 
 function runQuiet(args: string[]): string | undefined {
   try {
-    const result = spawnSync(args[0], args.slice(1), {
+    const result = spawnSync(args[0]!, args.slice(1), {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'ignore'],
     });
@@ -78,6 +132,45 @@ function loadJson<T>(filePath: string): T | undefined {
 function evidenceOf(doc: BaselineDocument): EvidenceLevel | undefined {
   if (doc.schemaVersion === 2 && doc.env?.evidence) return doc.env.evidence;
   return doc.evidenceLevel;
+}
+
+/**
+ * Load the approved release profile. A missing, unreadable, malformed, or
+ * unknown-slot profile is treated as "no approved profile" — never as an empty
+ * required set that would let the gate report a pass.
+ */
+export function loadReadinessProfile(profilePath: string = PROFILE_PATH): {
+  profile?: ReadinessProfile;
+  reason?: string;
+} {
+  if (!existsSync(profilePath)) {
+    return { reason: `no approved readiness profile at ${profilePath}` };
+  }
+  const raw = loadJson<Record<string, unknown>>(profilePath);
+  if (!raw) return { reason: `readiness profile at ${profilePath} is not valid JSON` };
+  if (raw.schema !== 'commander-readiness-profile/v1') {
+    return { reason: `readiness profile schema is not commander-readiness-profile/v1` };
+  }
+  const allowed = new Set(['schema', 'required']);
+  const unknown = Object.keys(raw).filter((key) => !allowed.has(key));
+  if (unknown.length > 0) {
+    return { reason: `readiness profile has unknown keys: ${unknown.join(', ')}` };
+  }
+  if (!Array.isArray(raw.required) || raw.required.length === 0) {
+    return { reason: 'readiness profile declares no required slots' };
+  }
+  const known = new Set(READINESS_SLOTS.map((slot) => slot.prefix));
+  const unknownSlots = raw.required.filter(
+    (entry): entry is string => typeof entry === 'string' && !known.has(entry),
+  );
+  if (unknownSlots.length > 0 || raw.required.some((entry) => typeof entry !== 'string')) {
+    return { reason: `readiness profile names unknown slots: ${unknownSlots.join(', ')}` };
+  }
+  const required = raw.required as string[];
+  if (new Set(required).size !== required.length) {
+    return { reason: 'readiness profile lists duplicate required slots' };
+  }
+  return { profile: { schema: 'commander-readiness-profile/v1', required } };
 }
 
 export function checkBaselineFile(
@@ -210,31 +303,58 @@ export function checkBaselineFile(
   };
 }
 
+/**
+ * Pure readiness decision. Never infers a required set: with no approved
+ * profile there is nothing to evaluate, and "nothing to evaluate" is
+ * NOT_EVALUATED — not a pass.
+ */
+export function evaluateReadiness(
+  results: CheckResult[],
+  profile: ReadinessProfile | undefined,
+  profileReason?: string,
+): ReadinessEvaluation {
+  const required = results.filter((r) => r.declaredStatus === 'required');
+  const reasons: string[] = [];
+
+  if (!profile) {
+    reasons.push(profileReason ?? 'no approved readiness profile');
+  }
+  if (required.length === 0) {
+    reasons.push('no required readiness slot was evaluated');
+  }
+  for (const r of required) {
+    if (!r.passed) reasons.push(`required slot ${r.id} not satisfied: ${r.reason ?? 'unknown'}`);
+  }
+
+  const requiredPassed = required.filter((r) => r.passed).length;
+  const status: ReadinessStatus =
+    required.length === 0 ? 'NOT_EVALUATED' : requiredPassed === required.length ? 'PASS' : 'FAIL';
+
+  return { status, requiredCount: required.length, requiredPassed, reasons, results };
+}
+
 export function main(strict: boolean = STRICT): CheckResult[] {
   const current = getCurrentBaseline();
   console.log(`Strict mode: ${strict} (use --non-strict for diagnostics only)`);
 
-  const prefixes: { prefix: string; declaredStatus: 'required' | 'recommended' }[] = [
-    // Live-only required path: simulated fixtures in docs/baselines/* are
-    // non-scoring and must not fill these slots. Until live baselines exist for
-    // a metric, keep it recommended so strict readiness stays honest.
-    { prefix: 'tenant-isolation.', declaredStatus: 'recommended' },
-    { prefix: 'tenant-concurrency.', declaredStatus: 'recommended' },
-    { prefix: 'slo-baseline.', declaredStatus: 'recommended' },
-    { prefix: 'failover-rto-live.', declaredStatus: 'recommended' },
-    { prefix: 'wal-baseline.', declaredStatus: 'recommended' },
-    { prefix: 'recovery-baseline.', declaredStatus: 'recommended' },
-    { prefix: 'replay-baseline.', declaredStatus: 'recommended' },
-    { prefix: 'e2e-latency.', declaredStatus: 'recommended' },
-    { prefix: 'cost-prediction.', declaredStatus: 'recommended' },
-    { prefix: 'redteam-baseline.', declaredStatus: 'recommended' },
-    { prefix: 'bench-v2-live.', declaredStatus: 'recommended' },
-    { prefix: 'benchmark-', declaredStatus: 'recommended' },
-  ];
+  const { profile, reason: profileReason } = loadReadinessProfile();
+  if (profile) {
+    console.log(`Profile: ${profile.required.length} required slot(s)`);
+  } else {
+    console.log(`Profile: none — ${profileReason}`);
+  }
 
+  const requiredPrefixes = new Set(profile?.required ?? []);
   const results: CheckResult[] = [];
-  for (const { prefix, declaredStatus } of prefixes) {
-    results.push(checkBaselineFile('docs/baselines', prefix, declaredStatus, current));
+  for (const { prefix, declaredStatus } of READINESS_SLOTS) {
+    results.push(
+      checkBaselineFile(
+        'docs/baselines',
+        prefix,
+        requiredPrefixes.has(prefix) ? 'required' : declaredStatus,
+        current,
+      ),
+    );
   }
 
   for (const r of results) {
@@ -244,33 +364,29 @@ export function main(strict: boolean = STRICT): CheckResult[] {
     console.log(`${icon} ${r.title}${pathInfo}${reasonInfo}`);
   }
 
-  const requiredPassed = results.every((r) => r.passed || r.declaredStatus === 'recommended');
-  const hasRecommendedFailures = results.some(
-    (r) => !r.passed && r.declaredStatus === 'recommended',
-  );
-  // residual→100 requires at least one required slot that passed with live evidence.
-  // An empty required set (all recommended / simulated non-scoring) must not be claimed as 100.
-  const requiredSlots = results.filter((r) => r.declaredStatus === 'required');
-  const residual100Claimable = requiredSlots.length > 0 && requiredSlots.every((r) => r.passed);
+  const evaluation = evaluateReadiness(results, profile, profileReason);
+  console.log(`Required slots passed: ${evaluation.requiredPassed}/${evaluation.requiredCount}`);
+  for (const reason of evaluation.reasons) {
+    console.log(`  - ${reason}`);
+  }
 
-  if (strict && !requiredPassed) {
-    console.log('❌ READINESS FAIL');
-    process.exit(1);
-  } else if (!strict && !requiredPassed) {
-    console.log('⚠️  Readiness would fail in strict mode (running with --non-strict)');
+  if (!strict) {
+    console.log('DIAGNOSTIC_ONLY — non-strict mode makes no readiness claim');
     process.exit(0);
-  } else if (!residual100Claimable) {
-    console.log(
-      '✅ READINESS PASS (no required live baselines — residual→100 NOT claimed; simulated is non-scoring)',
-    );
-    process.exit(0);
-  } else if (hasRecommendedFailures) {
-    console.log('✅ READINESS PASS (required items all pass; recommended items have warnings)');
-    process.exit(0);
-  } else {
+  } else if (evaluation.status === 'PASS') {
     console.log('✅ READINESS PASS');
     process.exit(0);
+  } else if (evaluation.status === 'NOT_EVALUATED') {
+    console.log(
+      '⛔ READINESS NOT_EVALUATED — no required evidence was evaluated; this is not a pass',
+    );
+    process.exit(1);
+  } else {
+    console.log('❌ READINESS FAIL');
+    process.exit(1);
   }
+
+  return results;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

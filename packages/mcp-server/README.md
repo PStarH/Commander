@@ -40,14 +40,24 @@ Options:
 ### Programmatic
 
 ```typescript
-import { createStdioMcpServer, startStdioServer } from '@commander/mcp-server';
+import { createStdioMcpServer } from '@commander/mcp-server';
 
 const { server, status } = createStdioMcpServer();
 console.log(`Exposing ${status.tools.length} tools`);
-
-// Or start reading from process.stdin automatically:
-const { stop } = startStdioServer({ modelRouterOnly: false });
 ```
+
+To start reading from `process.stdin` automatically, use the shipped binary — that
+is what an MCP client should launch:
+
+```bash
+commander-mcp-server
+```
+
+The exported package surface is `createStdioMcpServer`,
+`createFetchMcpActionGatewayExecutor`, `isLocalRuntimeEnabled`, and `run`
+(the CLI entry point). `startStdioServer` lives in the internal
+`stdioServer` module and is **not** re-exported from the package root, so do not
+import it from `@commander/mcp-server`.
 
 ### Wiring into an MCP client config
 

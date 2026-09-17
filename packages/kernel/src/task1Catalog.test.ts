@@ -175,7 +175,7 @@ class CatalogClient implements SqlClient {
   released = false;
   failMarker?: string;
 
-  constructor(private readonly overrides: Record<string, unknown[]> = {}) {}
+  constructor(private readonly overrides: Record<string, readonly unknown[]> = {}) {}
 
   async query<T = Record<string, unknown>>(
     sql: string,

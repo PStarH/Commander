@@ -20,7 +20,11 @@ before(async () => {
     next(new Error('boom'));
   });
   app.use((req, res) => {
-    res.status(404).json({ error: 'Not found', path: req.path, requestId: (req as Request & { requestId?: string }).requestId });
+    res.status(404).json({
+      error: 'Not found',
+      path: req.path,
+      requestId: (req as Request & { requestId?: string }).requestId,
+    });
   });
   app.use(errorHandler);
 

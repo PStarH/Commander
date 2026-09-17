@@ -257,10 +257,18 @@ Not for Jupyter/notebooks — use `CommanderClient` with `asyncio` there.
 
 ## Configuration
 
-| Env var             | Default                 | Description               |
-| ------------------- | ----------------------- | ------------------------- |
-| `COMMANDER_API_KEY` | —                       | API key for Bearer auth   |
-| —                   | `http://localhost:3001` | Commander server base URL |
+| Env var             | Used by                       | Default                 | Description                        |
+| ------------------- | ----------------------------- | ----------------------- | ---------------------------------- |
+| `COMMANDER_API_KEY` | both clients                  | —                       | API key sent as `Bearer` auth      |
+| `COMMANDER_API_URL` | `CommanderGatewayClient` only | `http://127.0.0.1:4000` | Commander server base URL          |
+| —                   | `CommanderClient` (legacy)    | `http://localhost:3001` | Legacy default; see the warning below |
+
+> **Warning — legacy default port.** `CommanderClient` and
+> `CommanderClientSync` do **not** read `COMMANDER_API_URL`; they default to port
+> `3001`, which is **not** a Commander API port (it belongs to Grafana in the
+> observability profile). Always pass an explicit `base_url` when using the
+> legacy client, or use `CommanderGatewayClient`, which is the current server
+> path and defaults to port `4000`.
 
 ## Architecture
 

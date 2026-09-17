@@ -115,49 +115,62 @@ const SOURCE_DESCRIPTIONS: Record<AuditSource, string> = {
 // ── Low-level file readers ───────────────────────────────────────────────
 
 /**
- * Read an ndjson/jsonl file, skipping malformed lines. Returns at most
- * MAX_LINES_PER_FILE parsed objects. Missing file → empty array (no throw).
+ * Read an ndjson/jsonl file, preserving the distinction between absent data and
+ * unreadable/corrupt data. Missing files are optional sources and yield `[]`;
+ * permission/I/O/parse failures throw so an audit endpoint cannot answer a
+ * partial, apparently successful report.
  */
 async function readNdjsonFile(filePath: string): Promise<unknown[]> {
+  let raw: string;
   try {
-    const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
-    if (!raw) return [];
-    const lines = raw.split('\n');
-    const out: unknown[] = [];
-    const cap = Math.min(lines.length, MAX_LINES_PER_FILE);
-    for (let i = 0; i < cap; i++) {
-      const line = lines[i]?.trim();
-      if (!line) continue;
-      try {
-        out.push(JSON.parse(line));
-      } catch {
-        /* skip malformed line */
-      }
+    raw = await fsp.readFile(filePath, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new Error(`AUDIT_SOURCE_UNAVAILABLE: ${path.basename(filePath)}`);
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const lines = trimmed.split('\n');
+  const out: unknown[] = [];
+  const cap = Math.min(lines.length, MAX_LINES_PER_FILE);
+  for (let i = 0; i < cap; i++) {
+    const line = lines[i]?.trim();
+    if (!line) continue;
+    try {
+      out.push(JSON.parse(line));
+    } catch {
+      throw new Error(`AUDIT_SOURCE_INVALID: malformed NDJSON in ${path.basename(filePath)}`);
     }
-    return out;
-  } catch {
-    return [];
   }
+  return out;
 }
 
-/** Read & parse a JSON file. Missing/unreadable → null (no throw). */
+/** Missing JSON is optional; unreadable or malformed JSON is a hard failure. */
 async function readJsonFile<T = unknown>(filePath: string): Promise<T | null> {
+  let raw: string;
   try {
-    const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
-    if (!raw) return null;
-    return JSON.parse(raw) as T;
+    raw = await fsp.readFile(filePath, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`AUDIT_SOURCE_UNAVAILABLE: ${path.basename(filePath)}`);
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    return JSON.parse(trimmed) as T;
   } catch {
-    return null;
+    throw new Error(`AUDIT_SOURCE_INVALID: malformed JSON in ${path.basename(filePath)}`);
   }
 }
 
-/** List files in a directory matching a predicate. Missing dir → []. */
+/** Missing directories are optional; other failures are not hidden. */
 async function listFiles(dir: string, predicate: (name: string) => boolean): Promise<string[]> {
   try {
     const entries = await fsp.readdir(dir);
     return entries.filter(predicate).map((f) => path.join(dir, f));
-  } catch {
-    return [];
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new Error(`AUDIT_SOURCE_UNAVAILABLE: ${path.basename(dir)}`);
   }
 }
 
@@ -210,6 +223,52 @@ interface RawSecurityEvent {
   message?: string;
   details?: Record<string, unknown>;
   context?: { userId?: string; agentId?: string; runId?: string; tenantId?: string };
+  // `config_change` records written by approvalConfigEndpoints use flat,
+  // top-level fields rather than a `context` object.
+  action?: string;
+  actor?: string;
+  tenantId?: string;
+  detail?: Record<string, unknown>;
+  ip?: string;
+}
+
+/**
+ * Map one raw security-log line onto the unified entry shape.
+ *
+ * LM-24 / AUDIT api-completion#API-C04: the configuration producer writes
+ * `type / action / actor / tenantId / detail` at the top level, but this reader
+ * only looked at `context.userId` / `context.tenantId`. Every config change was
+ * therefore read with `tenantId: undefined` and immediately dropped by the
+ * server-side tenant filter — the events were on disk but unqueryable.
+ *
+ * Records that carry two different tenant claims are quarantined (return null)
+ * rather than attributed to either tenant or to the caller's tenant.
+ */
+function toSecurityEntry(e: RawSecurityEvent, fallbackIdx: number): AuditLogEntry | null {
+  const ts = e.timestamp;
+  if (!ts) return null;
+
+  const contextTenant = e.context?.tenantId;
+  const topLevelTenant = e.tenantId;
+  if (contextTenant && topLevelTenant && contextTenant !== topLevelTenant) return null;
+
+  return {
+    id: e.id ?? `sec_${ts}_${fallbackIdx}`,
+    timestamp: ts,
+    source: 'security',
+    eventType: e.type ?? e.event ?? 'security_event',
+    severity: mapSecuritySeverity(e.severity),
+    userId: e.context?.userId ?? e.actor,
+    tenantId: contextTenant ?? topLevelTenant,
+    message: e.message ?? e.type ?? 'Security event',
+    details: {
+      ...e.details,
+      ...(e.context ? { context: e.context } : {}),
+      ...(e.source ? { emitter: e.source } : {}),
+      ...(typeof e.action === 'string' ? { action: e.action } : {}),
+      ...(e.detail ? { detail: e.detail } : {}),
+    },
+  };
 }
 
 async function readSecurityLogs(): Promise<AuditLogEntry[]> {
@@ -233,27 +292,11 @@ async function readSecurityLogs(): Promise<AuditLogEntry[]> {
   const seenIds = new Set<string>();
   for (const batch of batches) {
     for (const raw of batch) {
-      const e = raw as RawSecurityEvent;
-      const ts = e.timestamp;
-      if (!ts) continue;
-      const id = e.id ?? `sec_${ts}_${entries.length}`;
-      if (seenIds.has(id)) continue;
-      seenIds.add(id);
-      entries.push({
-        id,
-        timestamp: ts,
-        source: 'security',
-        eventType: e.type ?? e.event ?? 'security_event',
-        severity: mapSecuritySeverity(e.severity),
-        userId: e.context?.userId,
-        tenantId: e.context?.tenantId,
-        message: e.message ?? e.type ?? 'Security event',
-        details: {
-          ...e.details,
-          ...(e.context ? { context: e.context } : {}),
-          ...(e.source ? { emitter: e.source } : {}),
-        },
-      });
+      const entry = toSecurityEntry(raw as RawSecurityEvent, entries.length);
+      if (!entry) continue;
+      if (seenIds.has(entry.id)) continue;
+      seenIds.add(entry.id);
+      entries.push(entry);
       if (entries.length >= MAX_TOTAL_ENTRIES) return entries;
     }
   }
@@ -445,6 +488,17 @@ async function loadAllLogsCached(): Promise<AuditLogEntry[]> {
   return entries;
 }
 
+/**
+ * Drop the short-TTL read cache.
+ *
+ * LM-24: an audit producer that has just appended a record calls this so its own
+ * change is visible immediately instead of being hidden for up to CACHE_TTL_MS.
+ * The TTL remains the upper bound for changes made by other processes.
+ */
+export function invalidateAuditLogCache(): void {
+  cache = null;
+}
+
 // ── Filter + sort + paginate ─────────────────────────────────────────────
 
 function applyFilters(entries: AuditLogEntry[], q: AuditQuery): AuditLogEntry[] {
@@ -629,10 +683,16 @@ function parseUnifiedFilters(req: Request): AuditQueryFilters {
 
 export function createAuditLogRouter(): Router {
   const router = Router();
-  router.use(requireAuditReader);
+
+  // LM-24 / AUDIT api-completion#API-C05: this router is mounted at '/' ahead of
+  // onboarding/saga, so a root-level `router.use(requireAuditReader)` ran on
+  // EVERY request that reached the mount point and 403'd unrelated routes for
+  // non-auditors. The guard is now attached to each audit handler individually —
+  // an exact list, so a future handler added here must opt in explicitly (and
+  // the composition test asserts all eight are covered).
 
   // GET /api/audit/logs — unified query (filter + paginate)
-  router.get('/api/audit/logs', async (req: Request, res: Response) => {
+  router.get('/api/audit/logs', requireAuditReader, async (req: Request, res: Response) => {
     try {
       const q = parseQuery(req);
       if (isValidationError(q)) {
@@ -652,7 +712,7 @@ export function createAuditLogRouter(): Router {
   });
 
   // GET /api/audit/logs/export — JSON file download (same filters, no pagination)
-  router.get('/api/audit/logs/export', async (req: Request, res: Response) => {
+  router.get('/api/audit/logs/export', requireAuditReader, async (req: Request, res: Response) => {
     try {
       const q = parseQuery(req);
       if (isValidationError(q)) {
@@ -685,7 +745,7 @@ export function createAuditLogRouter(): Router {
   });
 
   // GET /api/audit/stats — aggregate counts
-  router.get('/api/audit/stats', async (req: Request, res: Response) => {
+  router.get('/api/audit/stats', requireAuditReader, async (req: Request, res: Response) => {
     try {
       const all = (await loadAllLogsCached()).filter((e) => e.tenantId === requestTenant(req));
       res.json(computeStats(all));
@@ -695,7 +755,7 @@ export function createAuditLogRouter(): Router {
   });
 
   // GET /api/audit/sources — per-source availability + recency
-  router.get('/api/audit/sources', async (req: Request, res: Response) => {
+  router.get('/api/audit/sources', requireAuditReader, async (req: Request, res: Response) => {
     try {
       const all = (await loadAllLogsCached()).filter((e) => e.tenantId === requestTenant(req));
       const sources: AuditSource[] = ['security', 'approval', 'action'];
@@ -730,17 +790,21 @@ export function createAuditLogRouter(): Router {
   const auditLog = getUnifiedAuditLog();
 
   // GET /api/audit-logs/categories — catalog for the frontend filter UI.
-  router.get('/api/audit-logs/categories', async (req: Request, res: Response) => {
-    try {
-      const catalog = await auditLog.getCatalog(requestTenant(req));
-      res.json(catalog);
-    } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
-    }
-  });
+  router.get(
+    '/api/audit-logs/categories',
+    requireAuditReader,
+    async (req: Request, res: Response) => {
+      try {
+        const catalog = await auditLog.getCatalog(requestTenant(req));
+        res.json(catalog);
+      } catch (error) {
+        res.status(500).json({ error: toErrorMessage(error) });
+      }
+    },
+  );
 
   // GET /api/audit-logs/stats — aggregate stats with timeline + top-N.
-  router.get('/api/audit-logs/stats', async (req: Request, res: Response) => {
+  router.get('/api/audit-logs/stats', requireAuditReader, async (req: Request, res: Response) => {
     try {
       const startTime = optionalString(req.query.startTime);
       const endTime = optionalString(req.query.endTime);
@@ -752,7 +816,7 @@ export function createAuditLogRouter(): Router {
   });
 
   // GET /api/audit-logs/export — file download (JSON or CSV).
-  router.get('/api/audit-logs/export', async (req: Request, res: Response) => {
+  router.get('/api/audit-logs/export', requireAuditReader, async (req: Request, res: Response) => {
     try {
       const filters = parseUnifiedFilters(req);
       const format: AuditExportFormat = req.query.format === 'csv' ? 'csv' : 'json';
@@ -772,7 +836,7 @@ export function createAuditLogRouter(): Router {
   });
 
   // GET /api/audit-logs — unified query (filter + paginate).
-  router.get('/api/audit-logs', async (req: Request, res: Response) => {
+  router.get('/api/audit-logs', requireAuditReader, async (req: Request, res: Response) => {
     try {
       const filters = parseUnifiedFilters(req);
       const entries = await auditLog.query(filters);

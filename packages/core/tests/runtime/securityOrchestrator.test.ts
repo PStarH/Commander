@@ -8,12 +8,13 @@
  * - Configuration: enable/disable individual modules
  * - Singleton lifecycle
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   SecurityOrchestrator,
   getSecurityOrchestrator,
   resetSecurityOrchestrator,
 } from '../../src/runtime/securityOrchestrator';
+import * as dpLayer from '../../src/security/differentialPrivacyLayer';
 
 describe('SecurityOrchestrator', () => {
   let orch: SecurityOrchestrator;
@@ -76,6 +77,34 @@ describe('SecurityOrchestrator', () => {
       expect(typeof result.hitlStrategy).toBe('string');
       // Unverified tool with high arg risk should trigger at least 'confirm'
       expect(['confirm', 'pause_and_review', 'escalate', 'deny']).toContain(result.hitlStrategy);
+    });
+
+    it('blocks a high-risk tool call that AdaptiveHITL marks "confirm" (fail closed)', async () => {
+      // Regression: only the 'deny' strategy used to flip `allowed`, so a
+      // 'confirm' verdict — "a human must approve this before it runs" — was
+      // treated as an allow and the tool executed unconfirmed. No confirmation
+      // round-trip is wired into this path, so it must fail closed.
+      const result = await orch.onBeforeToolCall(
+        'file_write',
+        {},
+        'agent-1',
+        'run-1',
+        {
+          toolRisk: {
+            argRiskLevel: 'high',
+            trustTier: 'untrusted',
+            isReadOnly: false,
+            hasNetworkAccess: false,
+            mutatesState: true,
+            toolName: 'file_write',
+          },
+        },
+        { approved: true, requestId: 'r1', approvedAt: new Date().toISOString() },
+      );
+
+      expect(result.hitlStrategy).toBe('confirm');
+      expect(result.allowed).toBe(false);
+      expect(result.blockReason).toContain('confirm');
     });
 
     it('should allow with auto strategy for low-risk tools', async () => {
@@ -258,6 +287,37 @@ describe('SecurityOrchestrator', () => {
   });
 
   // ── Reset ──────────────────────────────────────────────────────────
+
+  describe('SO-02: sanitizeMemoryShare fails closed when the DP layer throws', () => {
+    it('reports answerable:false and withholds entries instead of leaking them raw', () => {
+      const spy = vi.spyOn(dpLayer, 'getDifferentialPrivacyLayer').mockImplementation(() => {
+        throw new Error('DP layer unavailable');
+      });
+
+      const entries = [
+        { content: 'tenant-secret', importance: 0.9, accessCount: 3, decayScore: 1 },
+      ];
+      const outcome = orch.sanitizeMemoryShare(entries, 'agent-a');
+
+      // Returning `entries` here would hand unsanitized cross-agent memory to
+      // the caller while claiming the query succeeded.
+      expect(outcome.answerable).toBe(false);
+      expect(outcome.result).toBeUndefined();
+      if (outcome.answerable === false) {
+        expect(outcome.reason).toBe('sanitizer_unavailable');
+        expect(outcome.detail).toContain('DP layer unavailable');
+      }
+
+      spy.mockRestore();
+    });
+
+    it('still delegates to the DP layer on the happy path', () => {
+      const spy = vi.spyOn(dpLayer, 'getDifferentialPrivacyLayer');
+      orch.sanitizeMemoryShare([{ content: 'x', importance: 0.5 }], 'agent-a');
+      expect(spy).toHaveBeenCalled();
+      spy.mockRestore();
+    });
+  });
 
   describe('reset', () => {
     it('should clear pending events', () => {

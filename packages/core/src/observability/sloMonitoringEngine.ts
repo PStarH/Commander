@@ -359,6 +359,13 @@ export class SLOMonitoringEngine {
         getGlobalLogger().error('SLOMonitoringEngine', 'Evaluation failed', err as Error);
       }
     }, this.config.evaluationIntervalMs);
+    // Do not let continuous monitoring pin the event loop open. AgentRuntime
+    // starts this engine during construction, so an un-unref'd timer makes the
+    // process unable to exit — a CLI hangs after its work completes and
+    // `node --test` never returns. The interval still fires as long as the
+    // process is alive for other reasons. Same treatment as
+    // OpenTelemetryExporter.start().
+    this.evaluationTimer.unref();
   }
 
   /**

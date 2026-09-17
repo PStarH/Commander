@@ -10,9 +10,7 @@ import { test, describe } from 'node:test';
 import * as assert from 'node:assert/strict';
 import express from 'express';
 
-const { resolveTrustProxySetting, TrustProxyConfigError } = await import(
-  '../src/trustProxyConfig'
-);
+const { resolveTrustProxySetting, TrustProxyConfigError } = await import('../src/trustProxyConfig');
 
 describe('resolveTrustProxySetting (AUDIT-E2)', () => {
   test('unset TRUST_PROXY_HOPS trusts no proxy (fail closed)', () => {

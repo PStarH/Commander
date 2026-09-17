@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import type { NextFunction, Request, Response } from 'express';
-import type { MemoryIndexManager } from './memoryIndexManager';
+import { isEntryType, type MemoryIndexManager } from './memoryIndexManager';
 import { canAccessProject } from './projectEndpoints';
 import type { IWarRoomStore } from './store';
 
@@ -31,10 +31,23 @@ export function createMemoryIndexRouter(
       return undefined;
     }
 
-    const existing = projectManagers.get(projectId);
+    // Cache by the authoritative project tenant as well as project id. Project
+    // ids are client-controlled and are not a tenant identity; a plain
+    // projectId cache would let two tenants sharing an id reuse one manager's
+    // in-memory domain metadata.
+    const projectRecord = snapshot.project as { tenantId?: unknown };
+    const tenantId =
+      typeof projectRecord.tenantId === 'string'
+        ? projectRecord.tenantId
+        : (req.user?.tenantId ??
+          req.tenantId ??
+          process.env.COMMANDER_DEFAULT_TENANT_ID ??
+          'local');
+    const cacheKey = `${tenantId}:${projectId}`;
+    const existing = projectManagers.get(cacheKey);
     if (existing) return existing;
     const manager = memoryIndexManager.forProject(projectId);
-    projectManagers.set(projectId, manager);
+    projectManagers.set(cacheKey, manager);
     return manager;
   };
 
@@ -79,8 +92,13 @@ export function createMemoryIndexRouter(
     if (!type || !title?.trim() || !content?.trim()) {
       return res.status(400).json({ error: 'type, title, and content are required' });
     }
+    // Fail closed on an unknown type: casting it through produced a store record
+    // with `kind: undefined` and a forged `memory-index-type:` tag.
+    if (!isEntryType(type)) {
+      return res.status(400).json({ error: 'Unknown memory entry type' });
+    }
     const entry = await manager.writeEntry(req.params.domain, {
-      type: type as 'decision' | 'context' | 'pattern' | 'preference' | 'issue' | 'lesson',
+      type,
       title: title.trim(),
       content: content.trim(),
       tags: tags ?? [],

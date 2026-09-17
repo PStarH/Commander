@@ -58,4 +58,16 @@ describe('AdapterExecutionError', () => {
     assert.equal(serverError.commitState, 'UNKNOWN');
     assert.equal(serverError.retryMode, 'QUERY_FIRST');
   });
+
+  it('adapterErrorFromHttpStatus maps 3xx redirects to UNKNOWN QUERY_FIRST', () => {
+    // A redirect is not proof that the origin skipped the write (307/308 expect
+    // the caller to repeat), so it must not be reported as NOT_COMMITTED/NEVER.
+    for (const status of [301, 302, 303, 307, 308]) {
+      const error = adapterErrorFromHttpStatus(status, `redirect ${status}`);
+      assert.equal(error.commitState, 'UNKNOWN', `status ${status} commitState`);
+      assert.equal(error.retryMode, 'QUERY_FIRST', `status ${status} retryMode`);
+      assert.equal(error.details?.httpStatus, status);
+      assert.equal(error.retryable, false);
+    }
+  });
 });

@@ -1,14 +1,15 @@
 export * from './types';
-export { GapRegistry, type RecordGapInput, type ListFilter } from './registry';
-export { IssueAutoCreate, type IssueDraft, type CreateResult } from './issueAutoCreate';
-export { SlaEnforcer, type SlaEnforcerDeps } from './slaEnforcer';
-export { computeMetrics, type GapMetrics } from './metrics';
-export { loadGapConfig, type GapConfig } from './config';
+export { GapRegistry } from './registry';
+export type { RecordGapInput, ListFilter } from './registry';
+export { IssueAutoCreate } from './issueAutoCreate';
+export type { IssueDraft, CreateResult } from './issueAutoCreate';
+export { SlaEnforcer } from './slaEnforcer';
+export type { SlaEnforcerDeps } from './slaEnforcer';
+export { computeMetrics } from './metrics';
+export type { GapMetrics } from './metrics';
+export { loadGapConfig } from './config';
+export type { GapConfig } from './config';
 export { appendNdjson, readNdjson, ensureDir } from './storage';
-export {
-  runQuarterlyAudit,
-  saveAuditReport,
-  renderAuditMarkdown,
-  type AuditReport,
-} from './quarterlyAudit';
+export { runQuarterlyAudit, saveAuditReport, renderAuditMarkdown } from './quarterlyAudit';
+export type { AuditReport } from './quarterlyAudit';
 export { createGapPlugin } from './gapPlugin';

@@ -9,3 +9,33 @@
 coverage/
 coverage-core/
 .cache/
+
+# Test-run artifacts. The vitest / node:test suites write these into the package
+# directory on every run; without an ignore rule a plain `git add -A` would
+# commit per-run state (checkpoints, DLQ ndjson, audit blocks, posture snapshots).
+.commander/posture-snapshots.json
+# Approval mode is rewritten by the CLI and by suites that exercise the
+# approval flow, so it is per-run state like the rest of this block.
+.commander/approval-mode.json
+# Append-only erasure audit log, written at runtime by
+# src/security/unifiedAuditLog.ts and src/security/gdprCompliance.ts. One file
+# here (gdpr-erasures.ndjson) was captured by the baseline checkpoint commit and
+# is still tracked, so this rule alone does not untrack it.
+.commander/audit/
+.test-checkpoints/
+.test-dlq/
+.tmp-audit-persist-block/
+# Suites that write scratch state under a `.test_<name>` directory
+# (.test_dlq, .test_inboxes, .test_scc_inboxes, .test_dlq_empty, ...).
+.test_*/
+
+# Workspace-relative write scratch. `tests/tools/pathSecurity.test.ts` must
+# write *inside* the workspace to exercise the accept path, so it confines its
+# artifacts to one `_test_pathsec_*` directory per test and removes it
+# recursively. The ignore rule is defence in depth: a run killed before cleanup
+# must still not leave a committable file behind.
+_test_pathsec_*/
+
+# Pre-fix name used by ApplyPatchTool for its scratch diff. The tool now uses a
+# private directory under the OS temp root, so this only covers stale checkouts.
+.tmp-patch-*.diff

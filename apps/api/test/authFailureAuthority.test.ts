@@ -79,8 +79,7 @@ describe('authentication-failure authority', () => {
 
     assert.deepEqual(client.calls, [
       {
-        sql:
-          'DELETE FROM commander_auth_failures WHERE locked_until IS NULL AND last_failure_at < to_timestamp(($1 - $2) / 1000.0)',
+        sql: 'DELETE FROM commander_auth_failures WHERE locked_until IS NULL AND last_failure_at < to_timestamp(($1 - $2) / 1000.0)',
         values: [120_000, 60_000],
       },
     ]);

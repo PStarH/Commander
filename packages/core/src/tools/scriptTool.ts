@@ -7,6 +7,9 @@ import {
   SCRIPT_NESTED_SHELL_EQUIVALENT_TOOLS,
   isScriptVmFallbackAllowed,
 } from '../sandbox/execPolicy';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ── Security: Try to load isolated-vm for true V8 Isolate isolation ──────────
 // Per Node.js security docs: the `vm` module is NOT a security sandbox.
@@ -15,7 +18,7 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let isolatedVm: any = null;
 try {
-  isolatedVm = require('isolated-vm');
+  isolatedVm = nodeRequire('isolated-vm');
 } catch {
   // isolated-vm not installed — will fall back to vm module
 }

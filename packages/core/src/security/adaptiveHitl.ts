@@ -53,7 +53,7 @@ export type HITLStrategy =
   'auto' | 'suggest' | 'confirm' | 'pause_and_review' | 'escalate' | 'deny';
 
 /** Numeric severity for max() comparison. Higher = more restrictive. */
-const STRATEGY_SEVERITY: Record<HITLStrategy, number> = {
+export const STRATEGY_SEVERITY: Record<HITLStrategy, number> = {
   auto: 0,
   suggest: 1,
   confirm: 2,

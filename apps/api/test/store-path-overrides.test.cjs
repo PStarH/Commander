@@ -197,15 +197,68 @@ test('ActionRationaleStore reads/writes only at COMMANDER_ACTION_RATIONALE_FILE'
 });
 
 // ---------------------------------------------------------------------------
-// Asymmetric-config fail-fast: launched in a child Node process because the
-// store constants are captured at module-load time in the parent's process.
+// Asymmetric config (only SOME overrides set): launched in a child Node
+// process because the store constants are captured at module-load time.
+//
+// F-B-7: this section previously declared a dead `runChildProbe` helper under a
+// comment promising "Asymmetric-config fail-fast" tests that did not exist, and
+// the whole file was duplicated as `.test.js` (now deleted), running the same
+// suite twice against `dist/`. The probe below is real and executes once.
 // ---------------------------------------------------------------------------
 
-function runChildProbe(probeBody) {
+/**
+ * Run `body` in a child Node process with `env` applied, rooted at `dist/`.
+ * `body` is a function body string; it may use `require`, `process`, `path`,
+ * `assert` and must `process.exit(0)` implicitly on success (non-zero exits are
+ * surfaced by the caller via `result.status`).
+ */
+function runChildProbe({ env = {}, unset = [] }, body) {
   const distDir = path.resolve(__dirname, '..', 'dist');
-  const script = `
-    const path = require('node:path');
-    ${probeBody}
-  `;
-  return spawnSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: distDir });
+  const script = [
+    "const assert = require('node:assert/strict');",
+    "const path = require('node:path');",
+    'const fs = require("node:fs");',
+    body,
+  ].join('\n');
+  const childEnv = { ...process.env, ...env };
+  for (const key of unset) delete childEnv[key];
+  return spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    cwd: distDir,
+    env: childEnv,
+  });
 }
+
+test('asymmetric config: only the war-room store is redirected away from data/', () => {
+  const overrideDir = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-asym-'));
+  const dataDir = path.resolve(__dirname, '..', 'data');
+  const beforeFiles = fs.existsSync(dataDir) ? fs.readdirSync(dataDir).sort() : [];
+
+  const result = runChildProbe(
+    {
+      env: { COMMANDER_WARROOM_FILE: path.join(overrideDir, 'war-room.json') },
+      unset: ['COMMANDER_AGENT_STATE_FILE', 'COMMANDER_ACTION_RATIONALE_FILE'],
+    },
+    `
+      const { createWarRoomStore } = require('./store.js');
+      const store = createWarRoomStore();
+      assert.ok(store.listProjects().length > 0);
+      assert.ok(fs.existsSync(process.env.COMMANDER_WARROOM_FILE));
+      store.close();
+    `,
+  );
+
+  try {
+    assert.equal(result.status, 0, `child probe failed: ${result.stderr}`);
+    // The store honoured the override and did not materialise a phantom
+    // apps/api/data/war-room.json for a config that only redirected one store.
+    const afterFiles = fs.existsSync(dataDir) ? fs.readdirSync(dataDir).sort() : [];
+    assert.deepEqual(
+      afterFiles.filter((f) => f === 'war-room.json'),
+      beforeFiles.filter((f) => f === 'war-room.json'),
+      'the redirected store must not write the default data/war-room.json',
+    );
+  } finally {
+    fs.rmSync(overrideDir, { recursive: true, force: true });
+  }
+});

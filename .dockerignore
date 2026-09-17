@@ -38,6 +38,9 @@
 **/.venv
 
 # AI / tool artifacts
+**/.internal
+**/.worktrees
+**/.superpowers
 **/.claude
 **/.codex
 **/.omo

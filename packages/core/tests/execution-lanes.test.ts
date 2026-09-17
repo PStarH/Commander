@@ -251,9 +251,17 @@ describe('Slot acquisition and release', () => {
   });
 
   it('releaseSlot on unknown lane is a no-op', () => {
-    // Should not throw
+    const lanesBefore = lm.getLaneNames();
+    const defaultBefore = lm.getLane('default')!.totalCompleted;
+
+    // Must not throw …
     lm.releaseSlot('nonexistent');
-    assert.ok(true);
+
+    // … must not conjure a lane for the unknown name …
+    assert.strictEqual(lm.getLane('nonexistent'), undefined);
+    assert.deepStrictEqual(lm.getLaneNames(), lanesBefore);
+    // … and must not touch an unrelated lane's counters.
+    assert.strictEqual(lm.getLane('default')!.totalCompleted, defaultBefore);
   });
 
   it('tracks totalEnqueued and totalCompleted', async () => {

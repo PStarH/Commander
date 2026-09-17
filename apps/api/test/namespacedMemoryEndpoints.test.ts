@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
+import { after, before, beforeEach, describe, it } from 'node:test';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
 import { InMemoryMemoryService } from '../../../packages/core/src/memory/inMemoryMemoryService.ts';
@@ -38,6 +38,15 @@ describe('namespaced memory audit via queryAudit (WS6)', () => {
     );
   });
 
+  // F-A-17: reset the injected session before EVERY test so the suite is
+  // order-independent; the previous version restored inline and left
+  // `currentScopes` unset for later tests.
+  beforeEach(() => {
+    apiKeyId = 'key-1';
+    currentRole = 'developer';
+    currentScopes = undefined;
+  });
+
   it('rejects unauthenticated audit reads', async () => {
     apiKeyId = undefined;
     currentRole = undefined;
@@ -46,8 +55,6 @@ describe('namespaced memory audit via queryAudit (WS6)', () => {
     assert.equal(res.status, 403);
     const body = (await res.json()) as { error: string };
     assert.equal(body.error, 'Authentication required');
-    apiKeyId = 'key-1';
-    currentRole = 'developer';
   });
 
   it('returns store-backed audit when queryAudit is available', async () => {

@@ -8,6 +8,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
+import { tenantPathSegment } from './tenantContext';
 import type { TraceEvent } from './types';
 
 export interface TraceStore {
@@ -24,6 +25,83 @@ export function sanitizeRunId(runId: string): string {
   return runId.replace(/[^a-zA-Z0-9_.-]/g, '_').slice(0, 200);
 }
 
+// ── Trace base directory configuration (single owner) ─────────────────────
+//
+// Every trace *writer* (PersistentTraceStore) and every trace *reader*
+// (observability, lineage, hallucination, cost dashboard, tenant storage
+// accounting) MUST resolve the base directory through this one function.
+// Previously each call site had its own rule — the writer ignored the env
+// entirely while the observability reader honoured COMMANDER_TRACE_DIR and the
+// tenant storage accountant honoured COMMANDER_TRACES_DIR — so a deployment
+// that configured a trace directory silently wrote traces to one path and read
+// them from another (zero-cost dashboards, empty observability timelines).
+
+/**
+ * Environment aliases that may configure the trace base directory.
+ *
+ * `COMMANDER_TRACE_DIR` is the deployed spelling (see
+ * `deploy/helm/commander/templates/deployment.yaml`). `COMMANDER_TRACES_DIR` is
+ * a historical alias retained for compatibility; when both are set they must
+ * agree, otherwise resolution fails closed rather than picking one.
+ */
+export const TRACE_BASE_ENV_KEYS = ['COMMANDER_TRACE_DIR', 'COMMANDER_TRACES_DIR'] as const;
+
+/** Raised when the configured trace directory is ambiguous or unusable. */
+export class TraceConfigError extends Error {
+  readonly code = 'TRACE_CONFIG_CONFLICT';
+  constructor(message: string) {
+    super(message);
+    this.name = 'TraceConfigError';
+  }
+}
+
+/**
+ * Resolve the configured trace base directory.
+ *
+ * Contract:
+ *  - A blank/whitespace-only value is treated as *unset*, never as a path.
+ *  - When several aliases are set they must normalise to the same absolute
+ *    path; otherwise this throws {@link TraceConfigError} (fail closed) instead
+ *    of silently splitting writers and readers across two directories.
+ *  - With nothing configured the legacy default `<cwd>/.commander_traces` is
+ *    used, so existing single-process deployments are unaffected.
+ *
+ * Pure: creates no directory, constructs no recorder, reads no user file.
+ */
+export function resolveConfiguredTraceBase(
+  env: Record<string, string | undefined> = process.env,
+  cwd: string = process.cwd(),
+): string {
+  const configured = new Map<string, string>();
+  for (const key of TRACE_BASE_ENV_KEYS) {
+    const raw = env[key];
+    if (typeof raw !== 'string') continue;
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) continue;
+    configured.set(path.resolve(cwd, trimmed), key);
+  }
+  if (configured.size > 1) {
+    const keys = [...configured.values()].join(' and ');
+    throw new TraceConfigError(
+      `Conflicting trace directory configuration: ${keys} resolve to different absolute paths.`,
+    );
+  }
+  const only = configured.keys().next().value;
+  return only ?? path.join(cwd, '.commander_traces');
+}
+
+/**
+ * Compose a trace base directory with the canonical per-tenant segment.
+ *
+ * Uses the same `tenant_<sanitized-id>` convention as every other tenant-scoped
+ * store so a reader can never address a different tenant's directory than the
+ * writer created.
+ */
+export function resolveTraceDir(baseDir: string, tenantId?: string): string {
+  if (typeof tenantId !== 'string' || tenantId.length === 0) return baseDir;
+  return path.join(baseDir, tenantPathSegment(tenantId));
+}
+
 export class PersistentTraceStore implements TraceStore {
   private baseDir: string;
   private buffers: Map<string, string[]> = new Map();
@@ -34,8 +112,8 @@ export class PersistentTraceStore implements TraceStore {
 
   constructor(baseDir?: string, tenantId?: string) {
     this.tenantId = tenantId;
-    const base = baseDir ?? path.join(process.cwd(), '.commander_traces');
-    this.baseDir = tenantId ? path.join(base, `tenant_${tenantId}`) : base;
+    const base = baseDir ?? resolveConfiguredTraceBase();
+    this.baseDir = resolveTraceDir(base, tenantId);
     fs.mkdirSync(this.baseDir, { recursive: true, mode: 0o700 });
     try {
       fs.chmodSync(this.baseDir, 0o700);
@@ -224,19 +302,21 @@ export class PersistentTraceStore implements TraceStore {
         try {
           events.push(JSON.parse(line));
         } catch (e) {
-          getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line', {
+          getGlobalLogger().warn('TraceStore', 'Malformed trace data', {
             error: (e as Error)?.message,
             runId: key,
           });
+          throw new Error(`TRACE_DATA_INVALID: malformed trace line for ${key}`);
         }
       }
       return events;
     } catch (e) {
+      if (e instanceof Error && e.message.startsWith('TRACE_DATA_INVALID:')) throw e;
       getGlobalLogger().warn('TraceStore', 'Failed to read trace file', {
         error: (e as Error)?.message,
         runId: key,
       });
-      return [];
+      throw new Error(`TRACE_READ_FAILED: unable to read trace ${key}`);
     }
   }
 
@@ -257,7 +337,7 @@ export class PersistentTraceStore implements TraceStore {
         error: (err as Error)?.message,
         runId: key,
       });
-      return [];
+      throw new Error(`TRACE_READ_FAILED: unable to read trace ${key}`);
     }
     const trimmed = raw.trim();
     if (!trimmed) return [];
@@ -266,10 +346,11 @@ export class PersistentTraceStore implements TraceStore {
       try {
         events.push(JSON.parse(line));
       } catch (e) {
-        getGlobalLogger().warn('TraceStore', 'Skipped corrupt trace line (async)', {
+        getGlobalLogger().warn('TraceStore', 'Malformed trace data (async)', {
           error: (e as Error)?.message,
           runId: key,
         });
+        throw new Error(`TRACE_DATA_INVALID: malformed trace line for ${key}`);
       }
     }
     return events;

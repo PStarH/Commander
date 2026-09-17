@@ -489,7 +489,11 @@ export class ToolExecutionService {
       } catch (e) {
         if (e instanceof SideEffectGateError) {
           const durationMs = Date.now() - startTime;
-          const errorMsg = `SIDE_EFFECT_GATE: ${e.code}: ${e.message}`;
+          // Buyer-visible marker: policy denials carry GUARDIAN_BLOCKED so
+          // downstream assertions (and the demo-qa golden path) can detect
+          // interception uniformly across security layers.
+          const prefix = e.code === 'POLICY_DENIED' ? 'GUARDIAN_BLOCKED' : 'SIDE_EFFECT_GATE';
+          const errorMsg = `${prefix}: ${e.code}: ${e.message}`;
           bus.publish('tool.blocked', agentId, {
             runId,
             toolName: toolCall.name,
@@ -653,6 +657,11 @@ export class ToolExecutionService {
               : guardianResult.kind === 'guardian_error'
                 ? `GUARDIAN_ERROR: ${guardianResult.reason}`
                 : `SECURITY_GATEWAY_BLOCKED: ${guardianResult.reason}`;
+          if (guardianResult.kind === 'guardian_blocked') {
+            // Buyer-visible interception signal (asserted by demo-qa golden path).
+            // eslint-disable-next-line no-console
+            console.log(`[🔥 拦截成功] ${toolCall.name}: ${guardianResult.reason ?? 'policy'}`);
+          }
           const durationMs = Date.now() - startTime;
           bus.publish('tool.blocked', agentId, {
             runId,
@@ -987,7 +996,14 @@ export class ToolExecutionService {
       // Token-aware truncation: keep head (first ~60%) + tail (last ~40%) for maximum informational value.
       // The head preserves context/setup; the tail preserves results/errors.
       const maxSize = tool.maxOutputSize ?? this.runtime.config.observationMaskWindow * 1000;
-      if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
+      const truncated = typeof output === 'string' && output.length > maxSize && maxSize > 0;
+      if (truncated) {
+        getMetricsCollector().incrementCounter(
+          'tool_truncations_total',
+          'Tool outputs truncated by the result budget',
+          1,
+          [{ name: 'tool', value: toolCall.name }],
+        );
         // Security: Use SHA-256 instead of MD5 for cryptographic safety.
         const hash = crypto.createHash('sha256').update(output).digest('hex').slice(0, 8);
         const resultDir = path.join(process.cwd(), '.commander_results');

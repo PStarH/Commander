@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
-import { type EvidenceSigner } from '@commander/effect-broker';
+import {
+  canonicalEvidenceBody,
+  createEvidenceSigner,
+  verifyEvidenceSignature,
+  type EvidenceBundle,
+  type EvidenceSignature,
+} from '@commander/effect-broker';
 import { consumeCompensationBatch, type CompensationOutboxPort } from '@commander/kernel';
 import {
   sealGovernedCompensationAuthorization,
@@ -20,15 +27,18 @@ const RECONCILE_WORKER = {
   claimSecret: 'reconcile-timeout-secret',
 } as const;
 
-const TEST_EVIDENCE_SIGNER: EvidenceSigner = {
-  sign: async () => ({
-    algorithm: 'Ed25519',
-    keyId: 'timeout-chaos-key',
-    signedAt: '2026-07-29T00:00:01.000Z',
-    value: 'timeout-chaos-signature',
-  }),
-  verify: () => true,
-};
+/**
+ * Real Ed25519 signer. The previous `verify: () => true` double made the
+ * daemon's evidence acceptance check vacuous, and the assertion below compared
+ * the persisted signature to the value the stub itself had produced.
+ */
+const TEST_EVIDENCE_SIGNER = createEvidenceSigner({
+  privateKeyPem: generateKeyPairSync('ed25519').privateKey.export({
+    type: 'pkcs8',
+    format: 'pem',
+  }) as string,
+  keyId: 'timeout-chaos-key',
+});
 
 type ClaimedCompensationWork = Awaited<
   ReturnType<CompensationOutboxPort['claimCompensationWork']>
@@ -233,12 +243,31 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
       rescheduled: 0,
     });
     assert.equal(completedEffectId, authorization.compensationEffectId);
-    assert.deepEqual((completedEvidence as { signature?: unknown } | undefined)?.signature, {
-      algorithm: 'Ed25519',
-      keyId: 'timeout-chaos-key',
-      signedAt: '2026-07-29T00:00:01.000Z',
-      value: 'timeout-chaos-signature',
-    });
+    const evidence = completedEvidence as
+      { body?: unknown; signature?: EvidenceSignature } | undefined;
+    assert.ok(evidence?.body, 'the daemon must persist the signed evidence body');
+    assert.equal(evidence.signature?.algorithm, 'Ed25519');
+    assert.equal(evidence.signature?.keyId, 'timeout-chaos-key');
+    // Cryptographically verify the persisted terminal evidence, and prove the
+    // check can fail by tampering with the signed body.
+    assert.equal(
+      verifyEvidenceSignature(
+        canonicalEvidenceBody(evidence.body as EvidenceBundle),
+        evidence.signature!,
+        TEST_EVIDENCE_SIGNER.jwks,
+      ),
+      true,
+      'terminal evidence signature must verify against the signing key',
+    );
+    assert.equal(
+      verifyEvidenceSignature(
+        canonicalEvidenceBody({ ...(evidence.body as Record<string, unknown>) } as EvidenceBundle),
+        { ...evidence.signature!, value: 'AAAA' },
+        TEST_EVIDENCE_SIGNER.jwks,
+      ),
+      false,
+      'a forged signature must not verify',
+    );
     assert.equal(queryCalls, 1);
     assert.equal(compensateCalls, 1);
   });

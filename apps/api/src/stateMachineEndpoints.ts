@@ -195,6 +195,22 @@ router.post('/create', validateBody(stateMachineCreateBody), (req, res) => {
 });
 
 /**
+ * GET /api/state-machine/types
+ * Get available state machine types
+ *
+ * LM-23 / API-C03: this must be registered BEFORE the dynamic `/:taskId` route.
+ * When it sat after, `GET /types` matched `/:taskId` with `taskId === 'types'`,
+ * `getMachine()` found no such machine, and the catalogue was answered with a
+ * 404 "State machine not found" — the static route was unreachable.
+ */
+router.get('/types', (req, res) => {
+  res.json({
+    success: true,
+    types: StateMachineFactory.getAvailableTypes(),
+  });
+});
+
+/**
  * GET /api/state-machine/:taskId
  * Get current state of a state machine
  */
@@ -480,17 +496,6 @@ router.post('/:taskId/resume', validateBody(resumeFromCheckpointBody), (req, res
     );
     res.status(500).json({ error: 'Failed to resume from checkpoint' });
   }
-});
-
-/**
- * GET /api/state-machine/types
- * Get available state machine types
- */
-router.get('/types', (req, res) => {
-  res.json({
-    success: true,
-    types: StateMachineFactory.getAvailableTypes(),
-  });
 });
 
 /**

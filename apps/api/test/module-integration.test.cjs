@@ -19,7 +19,13 @@ test('HallucinationDetector - overconfidence detection', () => {
   const report = detector.analyze('What is X?', 'I am absolutely certain this is 100% correct.');
   assert.ok(report.riskScore > 0);
   assert.ok(report.signals.length > 0);
-  assert.ok(report.recommendation !== 'pass' || report.riskScore < 0.6);
+  // AUDIT F-A-21: the old third assertion was `recommendation !== 'pass' ||
+  // riskScore < 0.6`, true for essentially any output. Pin the documented
+  // score→recommendation contract from src/hallucinationDetector.ts instead.
+  const expected =
+    report.riskScore >= 0.5 ? 'reject' : report.riskScore >= 0.2 ? 'flag_for_review' : 'pass';
+  assert.equal(report.recommendation, expected);
+  assert.ok(report.riskScore <= 1, 'riskScore must stay clamped to 1.0');
 });
 
 test('HallucinationDetector - clean output passes', () => {
@@ -35,15 +41,34 @@ test('HallucinationDetector - clean output passes', () => {
 
 test('MemoryPoisoningDetector - assess credibility', async () => {
   const detector = new MemoryPoisoningDetector();
-  const result = await detector.assessCredibility({
+  // AUDIT F-A-21: `typeof score === 'number'` and `Array.isArray(factors)` are
+  // true for any implementation. Pin the actual credibility contract.
+  const trusted = await detector.assessCredibility({
     id: 'test-1',
-    content: 'The sky is blue.',
+    content: 'The sky is blue and water is wet.',
     timestamp: new Date(),
-    source: 'wikipedia.org',
+    source: 'https://wikipedia.org',
   });
-  assert.ok(typeof result.score === 'number');
-  assert.ok(result.score >= 0 && result.score <= 1);
-  assert.ok(Array.isArray(result.factors));
+  assert.equal(trusted.recommendation, 'accept');
+  assert.equal(trusted.score, 0.7733333333333334);
+  assert.equal(trusted.factors.length, 4);
+  assert.equal(
+    trusted.factors.find((f) => f.name === 'domain_reputation').score,
+    0.95,
+    'a trusted domain must score 0.95, not the unknown-domain fallback',
+  );
+
+  const unknown = await detector.assessCredibility({
+    id: 'test-2',
+    content: 'The sky is blue and water is wet.',
+    timestamp: new Date(),
+    source: 'https://unvetted-host.example',
+  });
+  assert.equal(unknown.recommendation, 'quarantine');
+  assert.ok(
+    unknown.score < trusted.score,
+    `unknown source (${unknown.score}) must score below trusted (${trusted.score})`,
+  );
 });
 
 test('MemoryPoisoningDetector - detect poisoning in batch', async () => {
@@ -52,7 +77,9 @@ test('MemoryPoisoningDetector - detect poisoning in batch', async () => {
     [{ id: 'new-1', content: 'test', timestamp: new Date(), source: 'unknown' }],
     [{ id: 'old-1', content: 'existing memory', timestamp: new Date(), source: 'trusted' }],
   );
-  assert.ok(Array.isArray(indicators));
+  // AUDIT F-A-21: `Array.isArray(indicators)` is tautological for a function
+  // declared to return an array. Pin the empty-batch result instead.
+  assert.deepEqual(indicators, []);
 });
 
 // ============================================================================
@@ -89,13 +116,20 @@ test('SelfAssessmentManager - different agents are independent', () => {
 
 test('calculatePassAtK computes correctly', () => {
   const results = [
-    { taskId: '1', trials: [{ passed: true }, { passed: false }, { passed: false }] },
+    // task 1 never passes in any trial; task 2 passes → 1 of 2 tasks resolved.
+    { taskId: '1', trials: [{ passed: false }, { passed: false }, { passed: false }] },
     { taskId: '2', trials: [{ passed: true }, { passed: true }, { passed: false }] },
   ];
   const passAtK = calculatePassAtK(results, 3);
-  assert.ok(passAtK);
-  assert.ok(typeof passAtK.passAt1 === 'number');
-  assert.ok(typeof passAtK.passAt3 === 'number');
+  // AUDIT F-A-21: `typeof x === 'number'` accepts NaN. Pin exact values.
+  assert.equal(passAtK.passAt1, 0.5);
+  assert.equal(passAtK.passAt3, 0.5);
+  assert.equal(passAtK.passAtK, 0.5);
+
+  // All-pass and all-fail controls pin the ratio, not just the type.
+  assert.equal(calculatePassAtK([{ taskId: 'a', trials: [{ passed: true }] }], 1).passAt1, 1);
+  assert.equal(calculatePassAtK([{ taskId: 'a', trials: [{ passed: false }] }], 1).passAt1, 0);
+  assert.equal(calculatePassAtK([], 1).passAt1, 0);
 });
 
 test('createCommanderHealthCheckBenchmark returns tasks', () => {

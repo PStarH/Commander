@@ -18,6 +18,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
+import { requireMimoApiKey, mimoBaseUrl } from './helpers/liveProviderCredentials';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const OUTPUT_DIR = path.join(process.cwd(), '.compare-capability-output');
@@ -245,8 +246,8 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
     const { MiMoProvider } = await import('../src/runtime/providers/mimoProvider');
 
     const provider = new MiMoProvider({
-      apiKey: 'tp-sgmq4chswvythfusfq43fbjnn9adnhzqzzf7v99b3a9kp9pz',
-      baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1',
+      apiKey: requireMimoApiKey(),
+      baseUrl: mimoBaseUrl('https://token-plan-sgp.xiaomimimo.com/v1'),
       defaultModel: 'mimo-v2.5',
     });
 

@@ -29,9 +29,13 @@ function makeRunCommand(tenantId: string) {
  * commander_app while reusing the owner connection string in test setups
  * where a dedicated app login has not been created.
  */
-function createAppPool(ownerUrl: string): SqlPool & { end(): Promise<void> } {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const pool: Pool = new (require('pg').Pool)({ connectionString: ownerUrl, max: 2 });
+async function createAppPool(ownerUrl: string): Promise<SqlPool & { end(): Promise<void> }> {
+  // Dynamic `import`, not `require`: the global `require` is undefined in an ES
+  // module, so the previous `require('pg').Pool` threw `ReferenceError` and took
+  // the whole RLS suite with it whenever a database was configured. The two
+  // other `pg` loads in this file already use `await import`.
+  const { Pool: PgPool } = await import('pg');
+  const pool: Pool = new PgPool({ connectionString: ownerUrl, max: 2 });
   return {
     connect: async () => {
       const client = await pool.connect();
@@ -71,7 +75,7 @@ describeIf('Postgres RLS tenant isolation', () => {
     const { Pool } = await import('pg');
     ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
     await runKernelMigrations(ownerPool);
-    appPool = createAppPool(databaseUrl!);
+    appPool = await createAppPool(databaseUrl!);
   });
 
   afterAll(async () => {

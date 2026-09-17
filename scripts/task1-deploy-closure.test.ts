@@ -138,7 +138,13 @@ describe('Task 1 deployment closure', () => {
       );
     }
     const migrationJob = read('deploy/helm/commander/templates/migration-job.yaml');
-    assert.match(migrationJob, /COMMANDER_ADAPTER_OPS_DATABASE_URL/);
+    assert.match(migrationJob, /"ADAPTER_OPS" \(include "commander\.databaseAdapterOpsSecretKey"/);
+    assert.match(migrationJob, /name: COMMANDER_\{\{ \$name \}\}_DATABASE_URL/);
+    assert.equal(
+      (migrationJob.match(/name: COMMANDER_\{\{ \$name \}\}_DATABASE_URL/g) ?? []).length,
+      1,
+      'the adapter-ops DSN must be emitted once by the role range, not duplicated',
+    );
     assert.match(migrationJob, /commander\.databaseAdapterOpsSecretKey/);
     assert.doesNotMatch(
       migrationJob,

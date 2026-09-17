@@ -152,13 +152,20 @@ describe('WS9 NET-3: Host network as fallback rejected; default blocked', () => 
       blocklist: ['evil.com'], // blocklist still active
     });
 
+    // Declared outside the `try` so the breach diagnostic below can read them.
+    // Previously they were `const` inside the `try`, so ANY failure reached the
+    // catch and died with `ReferenceError: privateIp is not defined` — the real
+    // assertion failure was never reported.
+    let privateIp: { allowed: boolean } | undefined;
+    let blocked: { allowed: boolean } | undefined;
+
     try {
       // Even with egress disabled, private IPs are blocked.
-      const privateIp = policy.check('http://10.0.0.1/internal');
+      privateIp = policy.check('http://10.0.0.1/internal');
       expect(privateIp.allowed).toBe(false);
 
       // Even with egress disabled, blocklisted domains are blocked.
-      const blocked = policy.check('https://evil.com/exfil');
+      blocked = policy.check('https://evil.com/exfil');
       expect(blocked.allowed).toBe(false);
 
       // A non-blocklisted public domain is allowed when egress is disabled

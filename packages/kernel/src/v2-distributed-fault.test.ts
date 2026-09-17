@@ -28,8 +28,6 @@ import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
 import type { KernelRepository } from './repository.js';
 import type { KernelStep } from './types.js';
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
 function createRunCommand(
   tenantId: string,
   steps: Array<{
@@ -38,6 +36,7 @@ function createRunCommand(
     dependencies?: string[];
     maxAttempts?: number;
     priority?: number;
+    initialState?: 'PENDING' | 'WAITING_FOR_HUMAN';
   }>,
 ) {
   const runId = `run_${randomUUID().slice(0, 8)}`;
@@ -48,6 +47,7 @@ function createRunCommand(
     dependencies: s.dependencies,
     maxAttempts: s.maxAttempts,
     priority: s.priority ?? 0,
+    initialState: s.initialState,
   }));
   return {
     id: runId,
@@ -72,19 +72,20 @@ describe('V2 Distributed Fault — Worker Kill & Lease Expiry', () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 3 }]);
     await kernel.createRun(cmd, 'gateway');
 
-    // Worker-1 claims with short lease, then "crashes"
+    // F-K2-25: drive the whole fault on one explicit clock instead of wall-clock
+    // sleeps, so the reclaim can never observe a still-live lease under load.
+    const t0 = Date.now();
     const claimed = await kernel.claimNextStep({
       workerId: 'w1',
       leaseTtlMs: 50,
       tenantIds: [],
       capabilities: [],
+      now: new Date(t0),
     });
     assert.ok(claimed);
     assert.equal(claimed!.attempt, 1);
 
-    await sleep(80); // lease expires
-
-    const reclaimed = await kernel.reclaimExpiredLeases(new Date(), 100);
+    const reclaimed = await kernel.reclaimExpiredLeases(new Date(t0 + 50), 100);
     assert.equal(reclaimed.length, 1);
     assert.equal(reclaimed[0].state, 'RETRY_WAIT');
 
@@ -94,6 +95,7 @@ describe('V2 Distributed Fault — Worker Kill & Lease Expiry', () => {
       leaseTtlMs: 30_000,
       tenantIds: [],
       capabilities: [],
+      now: new Date(t0 + 50),
     });
     assert.ok(reclaimed_step);
     assert.equal(reclaimed_step!.attempt, 2);
@@ -115,17 +117,19 @@ describe('V2 Distributed Fault — Worker Kill & Lease Expiry', () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent', maxAttempts: 5 }]);
     await kernel.createRun(cmd, 'gateway');
 
-    // Simulate 3 crashes followed by success
+    // Simulate 3 crashes followed by success. F-K2-25: one explicit clock.
+    let clock = Date.now();
     for (let crash = 0; crash < 3; crash++) {
       const claimed = await kernel.claimNextStep({
         workerId: `w-${crash}`,
         leaseTtlMs: 30,
         tenantIds: [],
         capabilities: [],
+        now: new Date(clock),
       });
       assert.ok(claimed, `crash ${crash}: should claim step`);
-      await sleep(40); // lease expires
-      await kernel.reclaimExpiredLeases(new Date(), 100);
+      clock += 30;
+      await kernel.reclaimExpiredLeases(new Date(clock), 100);
     }
 
     // 4th worker succeeds
@@ -134,6 +138,7 @@ describe('V2 Distributed Fault — Worker Kill & Lease Expiry', () => {
       leaseTtlMs: 30_000,
       tenantIds: [],
       capabilities: [],
+      now: new Date(clock),
     });
     assert.ok(claimed);
     assert.equal(claimed!.attempt, 4);
@@ -163,19 +168,20 @@ describe('V2 Distributed Fault — Fencing & Duplicate Delivery', () => {
     await kernel.createRun(cmd, 'gateway');
 
     // Worker-1 claims
+    const t0 = Date.now();
     const w1Step = await kernel.claimNextStep({
       workerId: 'w1',
       leaseTtlMs: 30,
       tenantIds: [],
       capabilities: [],
+      now: new Date(t0),
     });
     assert.ok(w1Step);
     const w1Lease = w1Step!.lease!;
     const w1Version = w1Step!.version;
 
-    // Lease expires, step is requeued
-    await sleep(40);
-    await kernel.reclaimExpiredLeases(new Date(), 100);
+    // Lease expires, step is requeued. F-K2-25: explicit clock, no sleep.
+    await kernel.reclaimExpiredLeases(new Date(t0 + 30), 100);
 
     // Worker-2 claims with new lease
     const w2Step = await kernel.claimNextStep({
@@ -183,6 +189,7 @@ describe('V2 Distributed Fault — Fencing & Duplicate Delivery', () => {
       leaseTtlMs: 30_000,
       tenantIds: [],
       capabilities: [],
+      now: new Date(t0 + 30),
     });
     assert.ok(w2Step);
     assert.notEqual(w2Step!.lease!.fencingEpoch, w1Lease.fencingEpoch, 'Fencing epoch must differ');
@@ -479,23 +486,24 @@ describe('V2 Distributed Fault — Outbox At-Least-Once', () => {
     const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
     await kernel.createRun(cmd, 'gateway');
 
-    // Simulate max attempts exceeded
+    // F-K2-2: replacing the old `movedToDlq >= 0` (always true) and the
+    // `if (dlqEntries.length > 0)` replay guard with unconditional assertions.
+    kernel.outboxMaxAttempts = 1;
+
     const messages = await kernel.claimOutbox(10);
-    for (const msg of messages) {
-      (msg as any).attempts = 11; // Exceed max_attempts
-    }
+    assert.equal(messages.length, 1, 'run creation must seed exactly one claimable outbox message');
 
-    // Sweep should move to DLQ
-    const result = await kernel.sweepOutboxDlq(new Date(), 50);
-    assert.ok(result.movedToDlq >= 0);
+    // Sweep past the claim lease so the sweep may touch the claimed row.
+    const result = await kernel.sweepOutboxDlq(new Date(Date.now() + 61_000), 50);
+    assert.equal(result.movedToDlq, 1, 'message at max attempts must be moved to the DLQ');
 
-    // List DLQ entries
     const dlqEntries = await kernel.listDlqEntries(100);
-    if (dlqEntries.length > 0) {
-      // Replay the first DLQ entry
-      const replayed = await kernel.replayDlqEntry(dlqEntries[0]!.id);
-      assert.equal(replayed, true, 'Should replay DLQ entry');
-    }
+    assert.equal(dlqEntries.length, 1);
+    assert.equal(dlqEntries[0]!.originalId, messages[0]!.id);
+
+    const replayed = await kernel.replayDlqEntry(dlqEntries[0]!.id);
+    assert.equal(replayed, true, 'Should replay DLQ entry');
+    assert.equal((await kernel.listDlqEntries(100)).length, 0, 'replay must retire the DLQ entry');
   });
 });
 
@@ -529,10 +537,9 @@ describe('V2 Distributed Fault — Timer & Interaction Recovery', () => {
     const before = await kernel.claimExpiredTimers(new Date(), 10);
     assert.equal(before.length, 0);
 
-    await sleep(60);
-
+    // F-K2-25: explicit expiry instant instead of a 60ms sleep.
     // Claim processing, then acknowledge durable completion.
-    const expired = await kernel.claimExpiredTimers(new Date(), 10);
+    const expired = await kernel.claimExpiredTimers(new Date(Date.now() + 61_000), 10);
     assert.equal(expired.length, 1);
     assert.equal(expired[0]!.state, 'PROCESSING');
     assert.equal(
@@ -542,7 +549,10 @@ describe('V2 Distributed Fault — Timer & Interaction Recovery', () => {
   });
 
   it('interaction lifecycle: create → answer → verify', async () => {
-    const cmd = createRunCommand(tenantId, [{ kind: 'agent' }]);
+    // answerInteraction releases the step (releaseStep defaults to true), which
+    // both the SQLite and PostgreSQL repositories only permit from
+    // WAITING_FOR_HUMAN; the step must therefore start in that state.
+    const cmd = createRunCommand(tenantId, [{ kind: 'agent', initialState: 'WAITING_FOR_HUMAN' }]);
     await kernel.createRun(cmd, 'gateway');
 
     const interaction = await kernel.createInteraction(
@@ -608,13 +618,27 @@ describe('V2 Distributed Fault — DB Failover Simulation', () => {
     // Verify events were journaled
     const events = await kernel.listEvents(cmd.id, tenantId);
     assert.ok(events.length > 0, 'Events should be journaled');
-
-    // Events should be immutable (same query returns same results)
-    const events2 = await kernel.listEvents(cmd.id, tenantId);
     assert.deepEqual(
-      events.map((e) => ({ eventId: e.eventId, type: e.type, sequence: e.sequence })),
-      events2.map((e) => ({ eventId: e.eventId, type: e.type, sequence: e.sequence })),
-      'Events must be immutable across reads',
+      events.map((event) => event.sequence),
+      [...events].sort((a, b) => a.sequence - b.sequence).map((event) => event.sequence),
+      'journal must be ordered by sequence',
+    );
+
+    // F-K2-19: immutability is proven by a mutation attempt that must not take
+    // effect, not by comparing two identical reads.
+    const snapshot = events.map((event) => ({ eventId: event.eventId, type: event.type }));
+    events[0]!.type = 'tampered.event.type';
+    events.push({ ...events[0]!, eventId: 'tampered-event' });
+    const reread = await kernel.listEvents(cmd.id, tenantId);
+    assert.deepEqual(
+      reread.map((event) => ({ eventId: event.eventId, type: event.type })),
+      snapshot,
+      'mutating a returned journal page must not mutate the durable journal',
+    );
+    assert.equal(
+      reread.some((event) => event.eventId === 'tampered-event'),
+      false,
+      'an appended fake event must not appear in the journal',
     );
   });
 
@@ -638,20 +662,28 @@ describe('V2 Distributed Fault — DB Failover Simulation', () => {
       actor: 'w1',
     });
 
-    // Simulate process restart: new kernel instance reads same state
+    // F-K2-1: the previous version constructed kernel2 and then read only the
+    // original instance. Restore the durable journal into kernel2 and read it.
     const kernel2 = new InMemoryKernelRepository();
-    // In a real system, kernel2 would read from the same PostgreSQL DB.
-    // In the InMemory test, we can't share state. But we can verify
-    // that the pattern works: the journal is the source of truth.
+    kernel2.loadSnapshot(kernel.snapshot());
 
-    // The real test is that PostgresKernelRepository would recover the
-    // exact same state because all mutations were journaled.
-    // Here we verify the journal exists and is complete.
+    const recoveredStep = await kernel2.getStep(claimed!.id, claimed!.tenantId);
+    assert.equal(recoveredStep?.state, 'SUCCEEDED', 'restarted kernel must recover the step state');
+    assert.equal(recoveredStep?.attempt, 1);
+    assert.deepEqual(
+      await kernel2.getRun(cmd.id, tenantId),
+      await kernel.getRun(cmd.id, tenantId),
+      'restarted kernel must recover the run record',
+    );
     const events = await kernel.listEvents(cmd.id, tenantId);
-    const eventTypes = events.map((e) => e.type);
+    assert.deepEqual(
+      (await kernel2.listEvents(cmd.id, tenantId)).map((event) => event.type),
+      events.map((event) => event.type),
+      'restarted kernel must recover the complete journal',
+    );
     assert.ok(
-      eventTypes.includes('run.created') || eventTypes.includes('step.scheduled'),
-      'Journal should contain run/step creation events',
+      events.map((event) => event.type).includes('step.succeeded'),
+      'journal must record the terminal step transition',
     );
   });
 

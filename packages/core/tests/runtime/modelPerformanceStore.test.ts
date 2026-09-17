@@ -2,6 +2,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as path from 'path';
 import { ModelPerformanceStore } from '../../src/runtime/modelPerformanceStore';
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 const TEST_DIR = path.join(__dirname, '../../.test_model_outcomes');
 

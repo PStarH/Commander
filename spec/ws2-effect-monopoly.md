@@ -15,7 +15,7 @@
 - `docs/architecture/005-policy-and-effect-broker.md`（ADR 005，Approved）——确立 `EffectBroker` 作为外部副作用唯一授权路径，PDP/PEP 分离，"无 policy decision id 不得执行外部写"。
 - `PRINCIPLES.md` §3「Single decision points」Policy decision point 行（`PRINCIPLES.md:109`）：明确"`@commander/effect-broker` PEP for external effects"为 canonical，并记录"当前无单一 authz choke point"为待收敛债务。
 - `PRINCIPLES.md:284-288`「effect admission force」iteration：worker 默认 deny-all，`COMMANDER_WORKER_EFFECT_POLICY=permit` 仅 dev 旁路。
-- `spec/ws7-sandbox-failclosed.md` + `docs/audit/2026-07-15-ws7-audit.md`——WS7 审计确立的 spec/audit 双段格式与本工作的范本。
+- `spec/ws7-sandbox-failclosed.md`——执行隔离的公开技术规格；历史内部审计不作为当前验收证据。
 - WS1 outbox 合约：`packages/kernel/src/schema.ts:130-146`（`commander_outbox` 表）、`packages/kernel/src/repository.ts:67-68`（`claimOutbox`/`markOutboxPublished`）、`packages/operations/src/outboxPublisherMain.ts`（发布主循环）。补偿事件作为 outbox 消息的 topic 之一，经 EffectBroker 执行。
 - WS0 基线：`packages/contracts`（类型契约零内部依赖，`PRINCIPLES.md` §1）与 `packages/kernel`（durable Postgres 权威，`PRINCIPLES.md` §2/§4）作为 EffectBroker 的承载平面。
 

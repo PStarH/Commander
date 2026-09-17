@@ -44,6 +44,10 @@ import {
   TENANT_A,
   TENANT_B,
 } from './_evidence';
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 

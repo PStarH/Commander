@@ -74,7 +74,26 @@ test('auth persistence schema grants DML only to commander_app', () => {
       'FROM PUBLIC, commander_scheduler, commander_worker, commander_adapter_ops',
     ),
   );
-  assert.ok(KERNEL_AUTH_PERSISTENCE_SQL.includes('GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE'));
+  // F-K1-15: the grant used to be asserted unqualified by table name, so it
+  // passed if the DML grant targeted any (including an unintended) table.
+  const grant = KERNEL_AUTH_PERSISTENCE_SQL.match(
+    /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE([\s\S]*?)TO commander_app;/,
+  );
+  assert.ok(grant, 'auth persistence schema must contain a qualified DML grant');
+  assert.deepEqual(
+    grant[1]!
+      .split(',')
+      .map((entry) => entry.trim().replace(/;$/, ''))
+      .filter((entry) => entry.length > 0),
+    [
+      'commander_auth_users',
+      'commander_auth_api_keys',
+      'commander_auth_refresh_tokens',
+      'commander_auth_failures',
+      'commander_auth_rate_limits',
+    ],
+    'DML must be granted on exactly the five auth tables',
+  );
   assert.ok(KERNEL_AUTH_PERSISTENCE_SQL.includes('TO commander_app;'));
 });
 

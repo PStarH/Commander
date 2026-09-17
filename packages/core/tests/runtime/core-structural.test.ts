@@ -342,43 +342,48 @@ describe('ThreeLayerMemory', () => {
     assert.strictEqual(mem.get('nonexistent-id'), undefined);
   });
 
-  it('query filters by layer', () => {
+  // `ThreeLayerMemory.query()` is async (it consults the optional semantic and
+  // episodic stores). `querySync()` is the synchronous variant. Calling
+  // `query()` without awaiting yields a Promise, so every assertion below used
+  // to throw `results.some is not a function` — the tests had never once
+  // executed successfully. Await the documented public API.
+  it('query filters by layer', async () => {
     const mem = new ThreeLayerMemory();
     mem.add('working entry', 'working');
     mem.add('episodic entry', 'episodic');
-    const working = mem.query({ layer: 'working', limit: 10 });
+    const working = await mem.query({ layer: 'working', limit: 10 });
     assert.ok(working.every((e) => e.layer === 'working'));
   });
 
-  it('query with keywords', () => {
+  it('query with keywords', async () => {
     const mem = new ThreeLayerMemory();
     mem.add('apple banana cherry', 'working');
     mem.add('dog elephant frog', 'episodic');
-    const results = mem.query({ keywords: ['apple'], limit: 10 });
+    const results = await mem.query({ keywords: ['apple'], limit: 10 });
     assert.ok(results.some((r) => r.content.includes('apple')));
   });
 
-  it('query with importance threshold', () => {
+  it('query with importance threshold', async () => {
     const mem = new ThreeLayerMemory();
     mem.add('low importance', 'working', '', 0.2);
     mem.add('high importance', 'working', '', 0.9);
-    const results = mem.query({ layer: 'working', importanceThreshold: 0.5, limit: 10 });
+    const results = await mem.query({ layer: 'working', importanceThreshold: 0.5, limit: 10 });
     assert.ok(results.every((r) => r.importance >= 0.5));
   });
 
-  it('query with context filter', () => {
+  it('query with context filter', async () => {
     const mem = new ThreeLayerMemory();
     mem.add('entry one', 'working', 'auth-context');
     mem.add('entry two', 'working', 'db-context');
-    const results = mem.query({ context: 'auth', limit: 10 });
+    const results = await mem.query({ context: 'auth', limit: 10 });
     assert.ok(results.every((r) => r.context.includes('auth')));
   });
 
-  it('query with since filter', () => {
+  it('query with since filter', async () => {
     const mem = new ThreeLayerMemory();
     mem.add('old entry', 'working');
     const futureDate = new Date(Date.now() + 86400000).toISOString();
-    const results = mem.query({ since: futureDate, limit: 10 });
+    const results = await mem.query({ since: futureDate, limit: 10 });
     assert.strictEqual(results.length, 0);
   });
 
@@ -394,15 +399,15 @@ describe('ThreeLayerMemory', () => {
     assert.ok(!mem.delete('nonexistent'));
   });
 
-  it('clearLayer removes all entries for a layer', () => {
+  it('clearLayer removes all entries for a layer', async () => {
     const mem = new ThreeLayerMemory();
     mem.add('w1', 'working');
     mem.add('w2', 'working');
     mem.add('e1', 'episodic');
     const cleared = mem.clearLayer('working');
     assert.strictEqual(cleared, 2);
-    assert.strictEqual(mem.query({ layer: 'working', limit: 100 }).length, 0);
-    assert.ok(mem.query({ layer: 'episodic', limit: 100 }).length > 0);
+    assert.strictEqual((await mem.query({ layer: 'working', limit: 100 })).length, 0);
+    assert.ok((await mem.query({ layer: 'episodic', limit: 100 })).length > 0);
   });
 
   it('promoteToLongTerm upgrades entry', () => {

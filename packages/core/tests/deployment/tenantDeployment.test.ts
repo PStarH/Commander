@@ -3,6 +3,10 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const CREATE_SCRIPT = path.join(REPO_ROOT, 'deploy/scripts/create-tenant.sh');

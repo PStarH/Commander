@@ -58,10 +58,25 @@ describe('DingTalk signature + freshness', () => {
 });
 
 describe('Feishu-style token compare', () => {
-  it('uses constant-time equal (not !==)', () => {
+  it('is functionally correct on equal / wrong / different-length tokens', () => {
     const secret = 'feishu-verification-token-xyz';
     assert.equal(timingSafeEqualString(secret, secret), true);
     assert.equal(timingSafeEqualString(secret, 'wrong'), false);
     assert.equal(timingSafeEqualString(secret, secret + 'x'), false);
+  });
+
+  it('is implemented with crypto.timingSafeEqual and a length-equality guard (not ===)', async () => {
+    // F-A-11: functional equality alone cannot distinguish a constant-time
+    // compare from `a === b`. Pin the implementation contract too.
+    const fs = await import('node:fs');
+    const path = await import('node:path');
+    const { fileURLToPath } = await import('node:url');
+    const src = fs.readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../src/webhookCrypto.ts'),
+      'utf-8',
+    );
+    assert.match(src, /crypto\.timingSafeEqual\(/);
+    assert.match(src, /writeUInt32BE\(/, 'lengths must be compared in constant time');
+    assert.doesNotMatch(src, /return a === b/);
   });
 });

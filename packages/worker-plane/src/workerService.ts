@@ -106,7 +106,8 @@ export class WorkerService {
   async start(): Promise<WorkerRecord> {
     if (this.worker) return this.worker;
     await this.config.sandboxReadiness?.assertReady();
-    if (Date.parse(this.identity.expiresAt) <= Date.now())
+    const expiresAt = Date.parse(this.identity.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now())
       throw new Error('Worker identity is expired');
     const authorization = await this.authenticator.authenticate(this.identity, this.definition);
     this.assertAuthorization(authorization);

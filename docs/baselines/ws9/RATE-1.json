@@ -5,6 +5,6 @@
   "breach": false,
   "details": "A's 10x burst did not affect B: B baseline p95=7ms / p99=7ms; during burst p95=3ms / p99=3ms. Per-tenant semaphore isolation held.",
   "artifacts": [],
-  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
-  "ranAt": "2026-08-10T02:38:52.978Z"
+  "gitSha": "0134054d8643a3bd582f79e1e06eeae595e3f3a0",
+  "ranAt": "2026-09-17T06:14:08.339Z"
 }

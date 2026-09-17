@@ -65,7 +65,6 @@ function getMetadata(toolName: string): CompensationMetadata {
     tags,
     idempotent:
       tags.includes('low_risk') || ['DELETE', 'delete', 'remove'].some((k) => toolName.includes(k)),
-    resourceKeyFields: inferResourceKeyFields(toolName),
   };
 }
 
@@ -77,57 +76,6 @@ function classifyRisk(toolName: string, tags: string[]): CompensationRisk {
   if (tags.includes('destructive')) return 'review';
   if (tags.includes('low_risk')) return 'safe';
   return 'review';
-}
-
-// ============================================================================
-// Resource Key Registry — declarative mapping of tool prefixes to their
-// resource identifier fields.  Plugin authors register their tools here
-// instead of adding to a growing if/else chain.
-// ============================================================================
-
-const RESOURCE_KEY_REGISTRY: Record<string, string[]> = {
-  stripe_charge: ['chargeId'],
-  stripe_payment_intent: ['paymentIntentId'],
-  stripe_subscription: ['subscriptionId'],
-  stripe_customer: ['customerId'],
-  stripe_transfer: ['transferId'],
-  github_pr: ['owner', 'repo', 'pullNumber'],
-  github_issue: ['owner', 'repo', 'issueNumber'],
-  github_branch: ['owner', 'repo', 'branch'],
-  github_tag: ['owner', 'repo', 'tag'],
-  slack_chat_postMessage: ['channel', 'ts'],
-  slack_reactions: ['channel', 'timestamp', 'name'],
-  slack_chat_scheduleMessage: ['channel', 'scheduledMessageId'],
-  slack_conversations_invite: ['channel', 'user'],
-  notion_page: ['pageId'],
-  notion_block: ['blockId'],
-  notion_database: ['databaseId'],
-  notion_comment: ['commentId'],
-  jira_issue: ['issueIdOrKey'],
-  linear_: ['id'],
-  file_: ['path'],
-  mkdir: ['path'],
-  rmdir: ['path'],
-  db_: ['connectionId', 'rows'],
-  sql_: ['connectionId', 'rows'],
-  pg_: ['connectionId', 'rows'],
-  mysql_: ['connectionId', 'rows'],
-};
-
-/**
- * Register resource key fields for a tool prefix.  Plugin authors call
- * this at startup instead of modifying the hardcoded if/else chain.
- */
-export function registerResourceKeys(prefix: string, fields: string[]): void {
-  RESOURCE_KEY_REGISTRY[prefix] = fields;
-}
-
-function inferResourceKeyFields(toolName: string): string[] {
-  // Exact prefix match first
-  for (const [prefix, fields] of Object.entries(RESOURCE_KEY_REGISTRY)) {
-    if (toolName.startsWith(prefix)) return fields;
-  }
-  return [];
 }
 
 // ============================================================================

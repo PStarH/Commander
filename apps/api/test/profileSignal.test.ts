@@ -2,11 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import { getCommanderProfile, isEnterpriseProfile } from '../src/profileSignal.js';
 
-const ENV_KEYS = [
-  'COMMANDER_PROFILE',
-  'NODE_ENV',
-  'COMMANDER_ENV',
-] as const;
+const ENV_KEYS = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_ENV'] as const;
 
 function snapshotEnv(): Record<string, string | undefined> {
   const snap: Record<string, string | undefined> = {};

@@ -16,7 +16,6 @@
     "src",
     "schemas",
     "fixtures",
-    "README.md",
     "LICENSE"
   ],
   "scripts": {

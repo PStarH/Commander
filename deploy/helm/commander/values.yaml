@@ -58,8 +58,11 @@ api:
     integrityKeySecret: ''
     adminPasswordSecret: ''
 
+# No web image or Deployment ships with this chart. Enabling this would render a
+# Service with no backing pods, so the chart rejects web.enabled=true (see
+# commander.requireWebDisabled). Enable only after a supported workload exists.
 web:
-  enabled: true
+  enabled: false
   replicas: 1
   port: 80
   resources:
@@ -154,7 +157,9 @@ adapterOps:
     pullPolicy: ''
   health:
     port: 8082
-    livenessPath: /health
+    # Liveness is process-only (/livez). /health and /ready stay dependency/loop
+    # gates so a stopped loop degrades traffic without a restart storm.
+    livenessPath: /livez
     readinessPath: /ready
     livenessInitialDelaySeconds: 10
     livenessPeriodSeconds: 15

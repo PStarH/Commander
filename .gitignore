@@ -66,6 +66,21 @@ temp/
 /.commander/*.db-wal
 /.commander/scheduler/
 /.commander/webhooks/
+# Tenant API key store written by deploy/scripts/create-tenant.sh
+# (TENANT_KEYS_PATH defaults to .commander/tenant-api-keys.json). This file holds
+# live per-tenant credentials and must never be committed.
+/.commander/tenant-api-keys.json
+/.commander/tenant-api-keys*.json
+# Local PostgreSQL data directories created by the QA / integration suites.
+# These contain database contents, role definitions and cluster config.
+/.commander/qa-pg/
+/.commander/pg-data/
+# Scratch markdown written into .commander/ by the d26/d29/d30 gate tests.
+/.commander/*-test-*.md
+
+# Assistant workspace (agent memory, skills, session state). Local tooling only —
+# never part of the product, and must not be published with the repository.
+.workbuddy-ai/
 
 # Generated files
 apps/api/data/
@@ -260,7 +275,7 @@ __pycache__/
 
 # Unrelated projects
 talktome/
-prometheus/
+/prometheus/
 
 # Stale demo directory (demos live in packages only)
 demos/
@@ -309,6 +324,7 @@ report.json
 # === ARCH-4/5: runtime-state dirs & debug scratch that leaked into tracking ===
 # (already-committed copies still need `git rm --cached`; these rules stop recurrence)
 .commander/audit/
+packages/core/.commander/audit/
 .commander/otel_queue/
 packages/core/.commander/otel_queue/
 .commander/otel-collector/
@@ -334,3 +350,24 @@ packages/core/.commander/otel_queue/
 /data/
 /tmp-*.head.ts
 /.tmp-*.head.ts
+
+# ---------------------------------------------------------------------------
+# Repo-hygiene pass (2026-09-16): committed runtime state / tooling artifacts
+# Untracked via `git rm --cached`; these rules stop recurrence.
+# ---------------------------------------------------------------------------
+# Zero-byte scratch files some toolchains drop at the repo root.
+/_tmp_*
+# Root-level agent memory (war-room persistence). Runtime state, not source —
+# `.dockerignore` already excludes it from images.
+/memory/
+# AI coding-tool skill lockfile (local tooling artifact, not part of the product)
+/skills-lock.json
+# Topology calibration output written by benchmark runs (runtime measurement data)
+/.commander/topology-calibration.json
+
+# apps/api is `"type": "module"`, so CommonJS tests must use the .cjs extension.
+# A `.js` file here is treated as ESM and its `require()` calls throw at runtime;
+# the working CommonJS copies live alongside as .cjs. Ignore stray .js twins.
+# (Depth-limited on purpose: apps/api/test/_helpers/spawnServer.js is a real,
+#  tracked CommonJS helper — that directory opts out via its own package.json.)
+apps/api/test/*.js

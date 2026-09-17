@@ -9,7 +9,6 @@ export type {
 } from './failureInjection';
 export {
   registerCompensationMetadata,
-  registerResourceKeys,
   generateRollbackPlan,
   executeRollbackPlan,
 } from './rollbackPlanner';

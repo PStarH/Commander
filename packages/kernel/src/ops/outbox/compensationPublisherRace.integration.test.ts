@@ -82,6 +82,7 @@ describe('compensationPublisherRace', () => {
     const deliveredCompensationTopics: string[] = [];
     let brokerAdmissions = 0;
     let brokerExecutions = 0;
+    let publishedTotal = 0;
     for (let round = 0; round < 100; round++) {
       const [pub] = await Promise.all([
         publisher.publish(5),
@@ -108,10 +109,28 @@ describe('compensationPublisherRace', () => {
           },
         ),
       ]);
-      assert.ok(pub.published + pub.duplicates + pub.retried + pub.failed >= 0);
+      // F-K1-5: the previous assertion was `published + duplicates + retried +
+      // failed >= 0`, true for any non-negative counters. Pin the real invariants.
+      assert.equal(pub.duplicates, 0, `round ${round}: no duplicate publications expected`);
+      assert.equal(pub.retried, 0, `round ${round}: no retries expected`);
+      assert.equal(pub.failed, 0, `round ${round}: no failed publications expected`);
+      assert.ok(pub.published <= 5, `round ${round}: publish limit must be respected`);
+      publishedTotal += pub.published;
     }
 
     const claimed = await delivery.claim('ws2', 500);
+    assert.equal(
+      claimed.length,
+      publishedTotal,
+      'every counted publication must correspond to a durably delivered message',
+    );
+    assert.ok(publishedTotal >= 20, 'all 20 generic noise rows must be published');
+    // Claim past the 60s claim lease: an un-acked (merely claimed) row would re-appear.
+    assert.deepEqual(
+      await repository.claimOutbox(500, new Date(Date.now() + 61_000)),
+      [],
+      'the generic publisher must publish AND ack every non-compensation outbox row',
+    );
     for (const msg of claimed) {
       if (msg.topic === KERNEL_COMPENSATION_TOPIC || msg.topic === LEGACY_COMPENSATION_TOPIC) {
         deliveredCompensationTopics.push(msg.topic);

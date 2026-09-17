@@ -683,7 +683,10 @@ describe('execution kernel semantics', () => {
     );
   });
 
-  it('refunds claim attempt on failStep so maxAttempts=1 can still requeue stop-during-claim', async () => {
+  // F-K1-22: the previous name claimed this test proved the refund path, but the
+  // body omits `refundAttempt` and asserts terminal FAILED. Renamed to the
+  // contrast case it actually is; the refund path is the next test.
+  it('fails terminally at maxAttempts=1 when failStep omits refundAttempt', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(createRun([{ id: 'step-a', kind: 'agent', maxAttempts: 1 }]), 'gateway');
     const claimed = await kernel.claimNextStep({ workerId: 'worker-1', leaseTtlMs: 60_000 });

@@ -14,9 +14,25 @@
  *   6. arguments.callee.caller / caller chain
  *   7. import() dynamic import escape
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, before, after, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { ExecuteScriptTool } from '../../src/tools/scriptTool';
+
+// The script tool is denied by default: `ExecuteScriptTool.execute()` returns
+// `Error: EXEC_SCRIPT_DENIED: ...` unless COMMANDER_ALLOW_EXEC_SCRIPT=1 (see
+// `denyExecScriptUnlessAllowed()` in src/sandbox/execPolicy.ts). Without that
+// gate open the script never runs, so every assertion in this file failed —
+// including the negative ones, which "passed" only in the sense that a blocked
+// script trivially never escapes. The suite therefore opts in for its duration
+// and restores the previous value, so it cannot leak into other files.
+const PREV_ALLOW_EXEC_SCRIPT = process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+before(() => {
+  process.env.COMMANDER_ALLOW_EXEC_SCRIPT = '1';
+});
+after(() => {
+  if (PREV_ALLOW_EXEC_SCRIPT === undefined) delete process.env.COMMANDER_ALLOW_EXEC_SCRIPT;
+  else process.env.COMMANDER_ALLOW_EXEC_SCRIPT = PREV_ALLOW_EXEC_SCRIPT;
+});
 
 function makeTool(): ExecuteScriptTool {
   const tool = new ExecuteScriptTool();

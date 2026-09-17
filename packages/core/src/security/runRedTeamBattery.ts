@@ -8,18 +8,49 @@
  *   npx tsx packages/core/src/security/runRedTeamBattery.ts --category=jailbreak # Single category
  *   npx tsx packages/core/src/security/runRedTeamBattery.ts --json              # JSON output for CI/CD
  *   npx tsx packages/core/src/security/runRedTeamBattery.ts --smoke             # Quick smoke test (top 5)
+ *
+ * Exit codes:
+ *   0  the gate passed — every scenario was evaluated and none was missed
+ *   1  the gate failed — see redTeamGate.ts for the fail-closed contract
+ *   2  the battery itself could not run
+ *
+ * The pass/fail decision and the exact stdout layout live in `redTeamGate.ts`;
+ * this file only parses arguments, runs the battery and delegates.
  */
 
-import {
-  RedTeamFramework,
-  createComprehensiveDefender,
-  generateSecurityReport,
-  generateSecurityReportJson,
-} from './redTeamFramework';
+import { RedTeamFramework, createComprehensiveDefender } from './redTeamFramework';
 import type { AttackCategory } from './redTeamFramework';
+import { evaluateRedTeamGate, renderRedTeamBatteryOutput } from './redTeamGate';
+
+const USAGE = `
+  Commander Red Team Security Battery
+
+  Usage:
+    runRedTeamBattery.ts [options]
+
+  Options:
+    --json                 Emit the machine-readable report (JSON) for CI/CD
+    --critical-only        Run critical-severity scenarios only
+    --category=<name>      Run a single attack category
+    --smoke                Quick smoke test (5 highest-CVSS scenarios)
+    --help, -h             Show this message
+
+  Categories:
+    prompt_injection, jailbreak, data_exfiltration, agent_jacking,
+    tool_abuse, memory_poisoning, denial_of_wallet, supply_chain
+
+  Exit codes:
+    0 = gate passed   1 = gate failed   2 = battery could not run
+`;
 
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
+
+  if (args.includes('--help') || args.includes('-h')) {
+    console.log(USAGE);
+    process.exit(0);
+  }
+
   const jsonMode = args.includes('--json');
   const criticalOnly = args.includes('--critical-only');
   const smokeMode = args.includes('--smoke');
@@ -62,24 +93,13 @@ async function main(): Promise<void> {
     report = await framework.runAll(defender);
   }
 
-  console.log('\n───────────────────────────────────────────────\n');
+  // The gate is a pure function of the report, so every mode above — including
+  // a `--category` filter that matched nothing — reaches the same contract.
+  const verdict = evaluateRedTeamGate(report);
 
-  if (jsonMode) {
-    console.log(generateSecurityReportJson(report));
-  } else {
-    console.log(generateSecurityReport(report));
-  }
+  console.log(renderRedTeamBatteryOutput(report, verdict, { jsonMode }));
 
-  // Exit with non-zero code if any critical attacks were missed
-  if (report.criticalFindings.length > 0) {
-    console.log(
-      `\n❌ FAILED: ${report.criticalFindings.length} critical attack(s) were not blocked.`,
-    );
-    process.exit(1);
-  }
-
-  console.log(`\n✅ Security score: ${report.securityScore}/100\n`);
-  process.exit(0);
+  process.exit(verdict.exitCode);
 }
 
 main().catch((err) => {

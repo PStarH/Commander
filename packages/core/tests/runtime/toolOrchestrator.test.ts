@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ToolOrchestrator } from '../../src/runtime/toolOrchestrator';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
 
 process.env.COMMANDER_ATR_MEMORY = '1';
 
@@ -766,6 +767,18 @@ describe('ToolOrchestrator timeout abort', () => {
 });
 
 describe('dual-path abort/timeout advice (TES + Orchestrator)', () => {
+  // LM-03: these cases drive ToolExecutionService with no ATR run handle to
+  // exercise abort/timeout *advice formatting*. They assert nothing about
+  // admission, so they install the explicit always-admit unit fixture instead
+  // of relying on the removed global stub. Not an admission proof.
+  let restoreGate: () => void;
+  beforeEach(() => {
+    restoreGate = installAlwaysAdmitGate();
+  });
+  afterEach(() => {
+    restoreGate();
+  });
+
   it('aligns TES StepTimeoutError text with formatError: no transient retry', async () => {
     const { formatAbortTimeoutAdviceLines, isAbortOrTimeoutToolError } =
       await import('../../src/runtime/toolResultShape');

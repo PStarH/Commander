@@ -900,6 +900,52 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
+  it('refuses a rejection that records no reason', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-reject-reason-required',
+      });
+      assert.equal(proposed.status, 202);
+      const runId = ((await proposed.json()) as { action: { runId: string } }).action.runId;
+      assert.ok(runId, 'a proposal must yield a run id');
+
+      // The published contract (`actionRejectionRequestSchema` in
+      // packages/contracts/src/schemas.ts) requires `reason`: a rejection is an
+      // operator decision recorded for audit, and a reason-less rejection
+      // carries no accountability. The API schema must not accept less than the
+      // contract promises.
+      const missing = await postJson(
+        baseUrl,
+        `/v1/actions/${runId}/reject`,
+        {},
+        'tenant-a',
+        'user-admin',
+      );
+      assert.equal(missing.status, 400);
+
+      const blank = await postJson(
+        baseUrl,
+        `/v1/actions/${runId}/reject`,
+        { reason: '' },
+        'tenant-a',
+        'user-admin',
+      );
+      assert.equal(blank.status, 400);
+
+      const accepted = await postJson(
+        baseUrl,
+        `/v1/actions/${runId}/reject`,
+        { reason: 'policy mismatch' },
+        'tenant-a',
+        'user-admin',
+      );
+      assert.equal(accepted.status, 200);
+    });
+  });
+
   it('simulates and durably proposes one allowed action as one tool step', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {

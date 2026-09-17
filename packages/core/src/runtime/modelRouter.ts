@@ -1495,8 +1495,19 @@ export class ModelRouter {
           ]
         : walkDown;
       for (const t of order) {
-        candidates = [...(this.tierIndex.get(t) ?? [])];
-        if (candidates.length > 0) break;
+        // Re-apply the registeredProviders filter on every tier of the walk.
+        // Without this, a single-provider deployment (e.g. only `agnes`
+        // registered) with an empty requested tier silently fell through to
+        // foreign-provider models, producing provider-side 503 model_not_found
+        // for models the caller cannot execute.
+        let tierCandidates = [...(this.tierIndex.get(t) ?? [])];
+        if (registeredProviders && registeredProviders.size > 0) {
+          tierCandidates = tierCandidates.filter((m) => registeredProviders.has(m.provider));
+        }
+        if (tierCandidates.length > 0) {
+          candidates = tierCandidates;
+          break;
+        }
       }
     }
 

@@ -9,8 +9,9 @@ Product and operator docs that ship with the repository.
 | Doc | Purpose |
 |-----|---------|
 | [getting-started.md](./getting-started.md) | Quick start |
-| [enterprise/quickstart.md](./enterprise/quickstart.md) | Dedicated enterprise pilot quickstart |
-| [enterprise/workflow-template-kubernetes-rollback.md](./enterprise/workflow-template-kubernetes-rollback.md) | Supported workflow mapping |
+| [pilot/shadow/README.md](./pilot/shadow/README.md) | Current enterprise historical evaluation; no external writes |
+| [enterprise/quickstart.md](./enterprise/quickstart.md) | Gated live-write acceptance reference; rollback frozen |
+| [enterprise/workflow-template-kubernetes-rollback.md](./enterprise/workflow-template-kubernetes-rollback.md) | Future live-write workflow mapping; rollback frozen |
 | [enterprise/support-runbook.md](./enterprise/support-runbook.md) | Pilot operations and incident handling |
 | [deploy.md](./deploy.md) | Deployment |
 | [v2-migration-guide.md](./v2-migration-guide.md) | Architecture V2 migration |

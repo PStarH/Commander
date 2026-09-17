@@ -5,6 +5,6 @@
   "breach": false,
   "details": "Wrong master key cannot decrypt: two vaults with different master keys are isolated. vault1.getSecret(CRYPTO_TEST)='plaintext-value', vault2.getSecret(CRYPTO_TEST)=null. AES-256-GCM auth tag ensures wrong key fails. evidenceLevel=ci-worm-sim (in-process; live Vault evidence requires real Vault).",
   "artifacts": [],
-  "gitSha": "85ff90f5f56efe160433b0df9e5c6a7205f78e9f",
-  "ranAt": "2026-08-10T02:36:12.036Z"
+  "gitSha": "0134054d8643a3bd582f79e1e06eeae595e3f3a0",
+  "ranAt": "2026-09-17T06:14:16.287Z"
 }

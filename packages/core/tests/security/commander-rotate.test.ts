@@ -23,6 +23,13 @@ import { tmpdir } from 'node:os';
 import { spawnSync } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module. vitest happens to supply it, which
+// is why this file passed anyway — but the binding is the runner's, not the
+// module's, so it is not available to `node --test` or to the built output.
+const __dirname = getDirname(import.meta.url);
+
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const PKG_DIR = path.join(REPO_ROOT, 'packages/core');
 const IS_WIN = process.platform === 'win32';

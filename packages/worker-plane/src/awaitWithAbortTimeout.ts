@@ -45,6 +45,7 @@ export async function awaitWithAbortTimeout<T>(
   options: AwaitWithAbortTimeoutOptions,
 ): Promise<T> {
   const { parentSignal, timeoutMs, abortGraceMs = 50 } = options;
+  if (parentSignal.aborted) throw options.abortError(false);
   const local = new AbortController();
 
   let timedOut = false;

@@ -51,6 +51,12 @@ async function main(): Promise<void> {
     process.once('SIGTERM', shutdown);
     process.once('SIGINT', shutdown);
     await service.start();
+    // Readiness means "able to claim work", not "start() returned". start() only
+    // authenticates and registers the worker; the claim path against the kernel
+    // authority (claim secret, generation, capability lease) has not been exercised
+    // yet. Probe it once before advertising readiness, so a worker whose claim path
+    // is broken fails loudly instead of sitting in the load balancer claiming nothing.
+    await service.pollOnce();
     ready = true;
     await service.run(controller.signal);
   } finally {

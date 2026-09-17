@@ -83,9 +83,14 @@ const approvalSchema = z
   })
   .strict();
 
+// The published contract (`actionRejectionRequestSchema` in
+// packages/contracts/src/schemas.ts) requires `reason`: a rejection is an
+// operator decision recorded for audit, and a reason-less rejection carries no
+// accountability. This schema mirrors it exactly, so the API cannot accept what
+// the contract says must not validate.
 const rejectionSchema = z
   .object({
-    reason: z.string().min(1).max(2_000).optional(),
+    reason: z.string().min(1).max(2_000),
   })
   .strict();
 

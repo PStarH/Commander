@@ -15,8 +15,15 @@ import type {
   ActionStateV1,
   GovernedActionV1,
 } from '@commander/contracts';
+import { resolveApiBase } from '../lib/apiOrigin';
 
-const DEFAULT_API_BASE = import.meta.env?.VITE_API_BASE_URL || 'http://localhost:4000';
+/**
+ * API base URL for the running bundle. The production image builds with an
+ * empty `VITE_API_BASE_URL` and is served same-origin by nginx, so an empty
+ * value resolves to the page's own origin rather than the development default
+ * — see src/lib/apiOrigin.ts.
+ */
+const DEFAULT_API_BASE = resolveApiBase(import.meta.env?.VITE_API_BASE_URL, globalThis.location);
 
 function storedAuthToken(): string | null {
   try {
@@ -164,7 +171,7 @@ export class ActionGatewayClient {
 
   async rejectAction(
     runId: string,
-    reason: string | undefined,
+    reason: string,
     idempotencyKey: string,
   ): Promise<GovernedActionV1> {
     const result = await this.request<{ action: GovernedActionV1 }>(
@@ -172,7 +179,7 @@ export class ActionGatewayClient {
       {
         method: 'POST',
         headers: { 'idempotency-key': idempotencyKey },
-        body: JSON.stringify(reason ? { reason } : {}),
+        body: JSON.stringify({ reason }),
       },
     );
     return result.action;

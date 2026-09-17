@@ -25,6 +25,11 @@ before(async () => {
     );
     res.json({ ok: true });
   });
+  // F-A-9: the read-only tool's happy path must be a real 200 whose body comes
+  // from the gateway, not merely "some status other than 403".
+  gateway.get('/v1/actions/:id', (_req, res) => {
+    res.json({ runId: _req.params.id, status: 'simulated' });
+  });
 
   gwServer = gateway.listen(0, '127.0.0.1');
   await new Promise<void>((r) => gwServer!.once('listening', r));
@@ -43,7 +48,12 @@ before(async () => {
     req.user = { id: 'u-viewer', username: 'viewer', role: 'viewer' };
     next();
   });
-  app.use(createMCPRouter({ actionGatewayExecutor: executor, actionGatewayUrl: `http://127.0.0.1:${gwPort}` }));
+  app.use(
+    createMCPRouter({
+      actionGatewayExecutor: executor,
+      actionGatewayUrl: `http://127.0.0.1:${gwPort}`,
+    }),
+  );
 
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((r) => server.once('listening', r));
@@ -84,6 +94,14 @@ describe('AUDIT-C1: MCP tool authority', () => {
 
   test('read-only gateway tool stays reachable for the viewer', async () => {
     const res = await call('commander_action_get');
-    assert.notEqual(res.status, 403);
+    // F-A-9: previously only `!== 403`, which accepts 500/404/502.
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as {
+      result?: { content?: Array<{ text?: string }> };
+      error?: unknown;
+    };
+    assert.equal(body.error, undefined);
+    const text = body.result?.content?.[0]?.text ?? '';
+    assert.match(text, /"runId": "r-1"/, 'gateway response must be surfaced to the caller');
   });
 });

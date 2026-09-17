@@ -56,10 +56,9 @@
     "@commander/core": "^0.2.0"
   },
   "devDependencies": {
-    "@commander/contracts": "workspace:*",
     "@commander/core": "workspace:*",
     "@types/better-sqlite3": "^7.6.13",
-    "@types/node": "^25.9.3",
+    "@types/node": "^26.1.1",
     "tsx": "^4.8.1",
     "typescript": "^5.0.0"
   }

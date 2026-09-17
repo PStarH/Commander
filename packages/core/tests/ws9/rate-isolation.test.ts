@@ -28,10 +28,16 @@ import {
   writePass,
   writeBreach,
   writeFail,
+  toChildArtifact,
   WS9_BASELINE_DIR,
   TENANT_A,
   TENANT_B,
+  type ChildArtifact,
 } from './_evidence';
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -225,7 +231,7 @@ const REPO_ROOT = path.join(__dirname, '..', '..', '..', '..');
 
 describeIf(pgReady)('WS9 RATE-3: bench-tenant-concurrency on real kernel Postgres', () => {
   it('re-runs bench-tenant-concurrency against real PG; passed=true, errors=0', () => {
-    const artifacts: string[] = [];
+    const artifacts: Array<string | ChildArtifact> = [];
 
     // Smoke: commander_app can talk to the live PG used by the WS9 stack.
     const host = process.env.COMMANDER_DB_HOST!;
@@ -248,7 +254,6 @@ describeIf(pgReady)('WS9 RATE-3: bench-tenant-concurrency on real kernel Postgre
     const outDir = path.join(WS9_BASELINE_DIR, 'rate-3-run');
     if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
     const outFile = path.join(outDir, `bench-tenant-concurrency.${Date.now()}.json`);
-
     const res = spawnSync(
       'pnpm',
       [
@@ -272,7 +277,7 @@ describeIf(pgReady)('WS9 RATE-3: bench-tenant-concurrency on real kernel Postgre
       writeFail(
         'RATE-3',
         `bench-tenant-concurrency exited ${res.status}: ${(res.stderr ?? res.stdout ?? '').slice(0, 500)}`,
-        [...artifacts, outFile],
+        fs.existsSync(outFile) ? [...artifacts, toChildArtifact(outFile)] : artifacts,
         'live',
       );
       throw new Error(`bench-tenant-concurrency failed: exit ${res.status}`);
@@ -292,7 +297,8 @@ describeIf(pgReady)('WS9 RATE-3: bench-tenant-concurrency on real kernel Postgre
       summary?: { passed?: boolean; errors?: number; failed?: number; skipped?: number };
     };
     const summary = baseline.summary ?? {};
-    artifacts.push(outFile);
+    // Hash-bind the nested bench artifact to this run (run-root relative path).
+    artifacts.push(toChildArtifact(outFile));
 
     try {
       expect(summary.passed).toBe(true);

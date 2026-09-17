@@ -12,6 +12,9 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { ColumnSpec, ColumnType } from './types';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ── Filter predicate ────────────────────────────────────────────────
 
@@ -137,7 +140,7 @@ function canonicalize(value: unknown): unknown {
 export function nextId(tag: string): string {
   let suffix: string;
   try {
-    const crypto = require('crypto') as { randomUUID?: () => string };
+    const crypto = nodeRequire('crypto') as { randomUUID?: () => string };
     if (typeof crypto.randomUUID === 'function') {
       suffix = crypto.randomUUID();
     } else {

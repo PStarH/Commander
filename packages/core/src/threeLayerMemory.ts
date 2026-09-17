@@ -207,8 +207,8 @@ export class ThreeLayerMemory {
   save(): number {
     if (!this.persistPath) return 0;
     try {
-      const fs = require('fs');
-      const path = require('path');
+      const fs = nodeRequire('fs');
+      const path = nodeRequire('path');
       const dir = path.dirname(this.persistPath);
       fs.mkdirSync(dir, { recursive: true });
 
@@ -235,7 +235,7 @@ export class ThreeLayerMemory {
   load(): number {
     if (!this.persistPath) return 0;
     try {
-      const fs = require('fs');
+      const fs = nodeRequire('fs');
       if (!fs.existsSync(this.persistPath)) return 0;
 
       const raw = fs.readFileSync(this.persistPath, 'utf-8');
@@ -873,6 +873,12 @@ export class ThreeLayerMemory {
     const entry = this.memories.get(id);
     if (!entry) return false;
 
+    // ET-05 (batchE-core-top): delete is a *write* path, so it must enforce the
+    // same class-level tenant filter as every read path. Without it, a caller
+    // holding a foreign entry id could destroy another tenant's memory while
+    // `get()` on the same id correctly returned undefined.
+    if (this.filterByTenant([entry]).length === 0) return false;
+
     this.memories.delete(id);
     // GAP-18: Also clean up the embedding store to prevent orphaned entries
     this.embedStore.delete(id);
@@ -1034,7 +1040,9 @@ export class ThreeLayerMemory {
    * 获取统计信息
    */
   getStats(): MemoryStats {
-    const entries = Array.from(this.memories.values());
+    // ET-05: aggregate counts are a read path — an unfiltered walk leaks other
+    // tenants' entry counts, layer distribution and byte totals.
+    const entries = this.filterByTenant(Array.from(this.memories.values()));
 
     const byLayer: Record<MemoryLayer, number> = {
       working: 0,
@@ -1068,8 +1076,11 @@ export class ThreeLayerMemory {
    */
   searchRelated(content: string, limit: number = 5): MemoryEntry[] {
     if (!content || !content.trim()) {
-      // Empty query → return most recent important entries
-      return Array.from(this.memories.values())
+      // Empty query → return most recent important entries.
+      // ET-05: this early-return path walked the raw map and so returned every
+      // tenant's entries, unlike the keyword path below which inherits the
+      // querySync tenant filter.
+      return this.filterByTenant(Array.from(this.memories.values()))
         .sort((a, b) => b.importance - a.importance || b.createdAt.localeCompare(a.createdAt))
         .slice(0, limit);
     }
@@ -1127,7 +1138,11 @@ export class ThreeLayerMemory {
    * 清除特定层的所有记忆
    */
   clearLayer(layer: MemoryLayer): number {
-    const entries = Array.from(this.memories.values()).filter((m) => m.layer === layer);
+    // ET-05: the previous implementation deleted every entry of the layer
+    // regardless of tenant — one call could wipe another tenant's whole layer.
+    const entries = this.filterByTenant(
+      Array.from(this.memories.values()).filter((m) => m.layer === layer),
+    );
     for (const entry of entries) {
       this.delete(entry.id);
     }
@@ -1138,7 +1153,8 @@ export class ThreeLayerMemory {
    * 获取所有记忆 (调试用)
    */
   getAll(): MemoryEntry[] {
-    return Array.from(this.memories.values());
+    // ET-05: even a debug accessor must not expose other tenants' entries.
+    return this.filterByTenant(Array.from(this.memories.values()));
   }
 
   /**
@@ -1225,6 +1241,9 @@ export class ThreeLayerMemory {
 // ========================================
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory(), {});
 

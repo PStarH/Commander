@@ -76,7 +76,7 @@ export function SLOPage() {
             {error ?? 'No SLO data available'}
           </p>
           <p style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
-            Run <code>pnpm run bench:slo-baseline</code> to regenerate the baseline snapshot.
+            Run <code>pnpm run bench:slo</code> to regenerate the baseline snapshot.
           </p>
         </div>
       </div>

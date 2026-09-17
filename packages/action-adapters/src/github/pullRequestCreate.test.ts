@@ -31,12 +31,20 @@ interface MockState {
   }>;
   createCount: number;
   writeCount: number;
+  /** Error injection: force this HTTP status on the next create request. */
+  injectCreateStatus?: number;
 }
 
 function createMockFetch(state: MockState) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     const method = init?.method ?? 'GET';
+    // Error injection must be evaluated before the success handlers, otherwise
+    // the branch is unreachable (the previous `X-Mock-Status` check sat after the
+    // catch-all POST handler, and the adapter never sends that header anyway).
+    if (method === 'POST' && url.endsWith('/pulls') && state.injectCreateStatus !== undefined) {
+      return new Response('injected failure', { status: state.injectCreateStatus });
+    }
     if (method === 'GET' && url.includes('/pulls?')) {
       return new Response(JSON.stringify(state.pulls), { status: 200 });
     }
@@ -74,12 +82,6 @@ function createMockFetch(state: MockState) {
       const pull = state.pulls.find((entry) => entry.number === number);
       if (!pull) return new Response('not found', { status: 404 });
       return new Response(JSON.stringify(pull), { status: 200 });
-    }
-    if (method === 'POST' && url.endsWith('/pulls') && init?.headers) {
-      const statusHeader = (init.headers as Record<string, string>)['X-Mock-Status'];
-      if (statusHeader) {
-        return new Response('error', { status: Number(statusHeader) });
-      }
     }
     return new Response('unexpected', { status: 500 });
   };
@@ -295,6 +297,33 @@ describe('github.pullRequestCreate adapter', () => {
         return true;
       },
     );
+  });
+
+  it('does not record a write when the create request is rejected (mock error injection)', async () => {
+    const state: MockState = {
+      pulls: [],
+      createCount: 0,
+      writeCount: 0,
+      injectCreateStatus: 500,
+    };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+    await assert.rejects(
+      () => adapter.execute(baseInput()),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterExecutionError);
+        assert.equal(error.commitState, 'UNKNOWN');
+        assert.equal(error.retryMode, 'QUERY_FIRST');
+        return true;
+      },
+    );
+    // The injected failure must actually have been reached, and a failed create
+    // must never be counted as a remote write.
+    assert.equal(state.createCount, 0);
+    assert.equal(state.writeCount, 0);
+    assert.equal(state.pulls.length, 0);
   });
 
   it('queryOutcome returns UNKNOWN with MULTI_MARKER_MATCH when multiple PRs share marker', async () => {

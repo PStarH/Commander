@@ -10,7 +10,7 @@ Architecture V2 operational runbook for Commander kernel + control-plane data.
 | Evidence receipts and anchors | kernel evidence tables plus retained public JWKS | Terminal proof; restore and independently verify |
 | ATR RunLedger | `.commander/atr_ledger.db` (+ `-wal`/`-shm`) | Legacy local-only state; never enterprise authority |
 | State checkpoints | `.commander_state/` | Agent-loop snapshots |
-| Event sourcing WAL | configured OTel / event store path | Replay / audit |
+| Event sourcing WAL | `COMMANDER_EVENT_SOURCING_WAL` (default `.commander_state/event-sourcing.wal`) | Replay / audit; not the OTel exporter |
 | Memory stores | `.commander_memory/` or Postgres | Tenant-scoped |
 | Secrets vault | encrypted vault file | Never back up plaintext keys |
 | API store | sqlite/postgres per `API_STORE_BACKEND` | Non-authoritative presentation data |
@@ -18,7 +18,10 @@ Architecture V2 operational runbook for Commander kernel + control-plane data.
 ## Backup (SQLite)
 
 ```bash
-# Consistent online backup via SQLite backup API / .backup
+# Back up an existing ledger; do not accidentally create an empty database.
+test -f .commander/atr_ledger.db || { printf '%s\n' 'Ledger not found' >&2; exit 1; }
+mkdir -p .commander/backups
+# Consistent online backup via SQLite backup API / .backup (includes committed WAL data).
 sqlite3 .commander/atr_ledger.db ".backup '.commander/backups/atr_ledger-$(date -u +%Y%m%dT%H%M%SZ).db'"
 
 # Checkpoint directories (quiesce workers first for crash-consistent copy)
@@ -51,7 +54,7 @@ pg_basebackup -D /backup/commander-base -Fp -Xs -P
 
 ## Verification checklist
 
-- [ ] `GET /health` and `GET /readyz` green
+- [ ] `GET /health` and `GET /ready` green
 - [ ] Sample run resume from `waiting_for_human` succeeds
 - [ ] Cross-tenant fuzz / isolation smoke passes
 - [ ] OTel traces resume with prior `traceId` correlation where applicable

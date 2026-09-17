@@ -12,6 +12,7 @@ import {
   createCapabilityAuthority,
 } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import type { CompensationOutboxPort } from '@commander/kernel';
 import { EnvAdapterCredentialProvider } from '@commander/action-adapters';
 import {
   canonicalCompensationHash,
@@ -1238,5 +1239,97 @@ describe('adapter-ops egress fail-closed', () => {
     assert.doesNotThrow(() =>
       assertEgressUrlAllowed('https://api.github.com/repos/o/r', ['api.github.com']),
     );
+  });
+});
+
+/**
+ * AO-01: safeStop drained the worker registrations first and then stopped the daemons
+ * with `drain: false`, so the claim was released while a tick could still be executing.
+ * The registry drain must happen after the in-flight tick has settled.
+ */
+describe('adapter-ops safeStop ordering (AO-01)', () => {
+  it('waits for the in-flight tick before draining the worker registrations', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ops-safestop-'));
+    const dbPath = join(dir, 'kernel.sqlite');
+    const saved = {
+      COMMANDER_KERNEL_BACKEND: process.env.COMMANDER_KERNEL_BACKEND,
+      COMMANDER_KERNEL_SQLITE_PATH: process.env.COMMANDER_KERNEL_SQLITE_PATH,
+      ...snapshotDatabaseUrlEnv(),
+      COMMANDER_CELL_TENANT_ID: process.env.COMMANDER_CELL_TENANT_ID,
+      COMMANDER_WORKER_TENANTS: process.env.COMMANDER_WORKER_TENANTS,
+      COMMANDER_ADAPTER_OPS_INSTANCE_ID: process.env.COMMANDER_ADAPTER_OPS_INSTANCE_ID,
+      COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR: process.env.COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR,
+      NODE_ENV: process.env.NODE_ENV,
+      COMMANDER_ADAPTER_OPS_DEMO_OPEN: process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN,
+      ...snapshotCapabilityEnv(),
+    };
+    clearDatabaseUrlEnv();
+    process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
+    process.env.COMMANDER_KERNEL_SQLITE_PATH = dbPath;
+    process.env.COMMANDER_CELL_TENANT_ID = 'local';
+    process.env.COMMANDER_WORKER_TENANTS = 'tenant-a';
+    process.env.COMMANDER_ADAPTER_OPS_INSTANCE_ID = 'pod-a';
+    process.env.COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR = join(dir, 'claim-secrets');
+    delete process.env.NODE_ENV;
+    delete process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN;
+    clearCapabilityEnv();
+
+    const workerRegistry = new InMemoryAdapterOpsWorkerRegistry();
+    const events: string[] = [];
+    const originalDrain = workerRegistry.drain.bind(workerRegistry);
+    workerRegistry.drain = async (workerId: string) => {
+      events.push(`drain:${workerId}`);
+      return originalDrain(workerId);
+    };
+
+    let releaseClaim: () => void = () => {};
+    const claimGate = new Promise<void>((resolve) => {
+      releaseClaim = resolve;
+    });
+    const unused = async (): Promise<never> => {
+      throw new Error('unexpected compensation authority call');
+    };
+    const compensationAuthority: CompensationOutboxPort = {
+      claimCompensationWork: async () => {
+        events.push('tick:claim-started');
+        await claimGate;
+        events.push('tick:claim-finished');
+        return [];
+      },
+      completeCompensationWork: unused,
+      handoffCompensationUnknown: unused,
+      escalateCompensationWork: unused,
+      parkCompensationUnknown: unused,
+      finalizeCompensation: unused,
+    };
+
+    try {
+      const wiring = await createAdapterOpsWiring({ workerRegistry, compensationAuthority });
+      const tick = wiring.compensation.tick().catch(() => undefined);
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(events, ['tick:claim-started']);
+
+      const stopping = wiring.safeStop('ws6_ordering');
+      for (let i = 0; i < 5; i++) await new Promise((resolve) => setImmediate(resolve));
+      // The tick is still blocked in its claim: nothing may be drained yet.
+      assert.deepEqual(events, ['tick:claim-started']);
+
+      releaseClaim();
+      await stopping;
+      await tick;
+      assert.deepEqual(events, [
+        'tick:claim-started',
+        'tick:claim-finished',
+        'drain:reconcile:pod-a',
+        'drain:compensation:pod-a',
+      ]);
+      assert.deepEqual(workerRegistry.drains.sort(), ['compensation:pod-a', 'reconcile:pod-a']);
+      await wiring.close();
+    } finally {
+      // Never leave the gated claim hanging, even when an assertion above failed.
+      releaseClaim();
+      rmSync(dir, { recursive: true, force: true });
+      restoreEnv(saved);
+    }
   });
 });

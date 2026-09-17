@@ -75,7 +75,8 @@ export ANTHROPIC_API_KEY=sk-ant-...
 export DEEPSEEK_API_KEY=sk-...
 ```
 
-支持的完整列表见 `packages/core/src/providers/`。
+支持的完整列表见 `packages/core/src/runtime/providers/`（共 25 家 provider，
+注册表位于 `providerRegistry.ts`）。
 
 ---
 
@@ -97,8 +98,8 @@ pnpm exec tsx packages/core/src/cliEntry.ts review \
 ```
 
 该命令只读取指定 Git diff 和本地 review guidelines，最多发送 15,000 个 diff
-字符，并将 provider 输出限制为 4,000 tokens；provider 完成解析后，Commander 会拒绝
-超过 8 MiB 的响应正文会在 JSON 解析前被拒绝，120 秒后会中止 provider 传输。
+字符，并将 provider 输出限制为 4,000 tokens；超过 8 MiB 的响应正文会在 JSON 解析前
+被拒绝，120 秒后会中止 provider 传输。
 provider/model 不会收到任何执行工具，因此不能主动执行命令、修改文件、
 访问 Web 或写入目标系统。CLI 本身会运行固定的只读 `git diff` 子进程，并在系统临时
 目录更新跨进程限流状态。结果会标明 `source=real`、provider、model、endpoint
@@ -159,7 +160,9 @@ pnpm --filter @commander/core test:quick
    - Windows: Visual Studio Build Tools
    - Linux: `build-essential`
 
-如果仍失败，可设置 `COMMANDER_STORAGE=memory` 跳过 SQLite 持久化。
+如果仍失败，可设置 `API_STORE_BACKEND=memory` 跳过 SQLite 持久化（生产环境下
+还需要显式设置 `COMMANDER_ALLOW_MEMORY_STORE=1`，否则会 fail-closed 拒绝启动）。
+内存存储不持久化任何状态，仅用于开发。
 
 ### `npm install` 出现 UNMET DEPENDENCY
 

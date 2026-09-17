@@ -355,9 +355,16 @@ export class McpHarness extends BaseHarness {
           blocked = gate.blocked;
           blockError = gate.error;
         } catch (err) {
+          // Fail closed. The before-tool hook is the only pre-dispatch policy
+          // check on this path; if it cannot be evaluated we must not leave
+          // `blocked` at its initial false and fall through to tool.execute().
           getGlobalLogger().warn('McpHarness', 'fireBeforeToolCall failed', {
             error: (err as Error).message,
           });
+          blocked = true;
+          blockError = `Tool "${tc.name}" blocked: before-tool policy gate failed to evaluate (${
+            (err as Error).message
+          })`;
         }
 
         if (blocked) {

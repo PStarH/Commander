@@ -77,6 +77,9 @@ import { handleHealthRoutes } from './httpHealthRoutes';
 import { handleExecuteRoute } from './httpExecuteRoute';
 import { handleSecurityRoutes } from './httpSecurityRoutes';
 import { HttpRequestError, parseBody, sendJson } from './httpUtils';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export interface HttpServerConfig {
   port: number;
@@ -323,7 +326,7 @@ export class CommanderHttpServer {
     // Initialize OIDC auth plugin from env if enabled
     if (this.config.oidcEnabled !== false) {
       try {
-        const { createOIDCPluginFromEnv } = require('./oidcAuthPlugin');
+        const { createOIDCPluginFromEnv } = nodeRequire('./oidcAuthPlugin');
         const plugin = createOIDCPluginFromEnv();
         if (plugin) {
           this.registerAuthPlugin(plugin);
@@ -340,7 +343,7 @@ export class CommanderHttpServer {
 
     // Initialize SAML auth plugin from env if configured
     try {
-      const { createSAMLPluginFromEnv } = require('./samlAuthPlugin');
+      const { createSAMLPluginFromEnv } = nodeRequire('./samlAuthPlugin');
       const plugin = createSAMLPluginFromEnv();
       if (plugin) {
         this.registerAuthPlugin(plugin);
@@ -359,7 +362,7 @@ export class CommanderHttpServer {
       this.registerSIEMForwarder(this.config.siemForwarder);
     } else {
       try {
-        const { createSIEMForwarderFromEnv } = require('./siemForwarder');
+        const { createSIEMForwarderFromEnv } = nodeRequire('./siemForwarder');
         const forwarder = createSIEMForwarderFromEnv();
         if (forwarder) {
           this.registerSIEMForwarder(forwarder);

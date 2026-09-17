@@ -1,5 +1,9 @@
 name: Module A CI
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 on:
   workflow_dispatch:
   push:
@@ -57,14 +61,14 @@ jobs:
       NODE_ENV: test
       COMMANDER_CI_EVIDENCE_DIR: .internal/evidence/ci/module-a
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
         with:
           version: 9.15.4
           run_install: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: pnpm
@@ -77,7 +81,7 @@ jobs:
 
       - name: Upload Module A evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: module-a-evidence-${{ github.run_id }}
           path: .internal/evidence/ci/module-a/

@@ -23,8 +23,18 @@
  * ```
  */
 
+import { createRequire } from 'node:module';
+
 import { reportSilentFailure } from '@commander/core';
 import type { CommanderOptions } from '@commander/core';
+
+/**
+ * ESM-safe `require`. This package is `"type": "module"`, so the global
+ * `require` binding does not exist — calling it raises
+ * `ReferenceError: require is not defined`, which the surrounding `try`/`catch`
+ * in `queryMemory()` would mistake for "core not available" and swallow.
+ */
+const nodeRequire = createRequire(import.meta.url);
 
 import type {
   CommanderClientConfig,
@@ -378,7 +388,7 @@ export class CommanderClient {
   queryMemory(options: MemoryQueryOptions = {}): MemoryItem[] {
     try {
       // Synchronous access to global ThreeLayerMemory (already initialized by core)
-      const { getGlobalThreeLayerMemory } = require('@commander/core');
+      const { getGlobalThreeLayerMemory } = nodeRequire('@commander/core');
       const memory = getGlobalThreeLayerMemory();
       const entries = memory.querySync({
         keywords: options.keywords,

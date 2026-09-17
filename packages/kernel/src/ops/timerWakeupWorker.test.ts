@@ -19,7 +19,7 @@ describe('timer wakeup durability', () => {
       },
       'gateway',
     );
-    await repository.createTimer(
+    const timer = await repository.createTimer(
       {
         runId: 'run-a',
         stepId: 'step-a',
@@ -32,16 +32,45 @@ describe('timer wakeup durability', () => {
     repository.failStepByTimer = async () => {
       throw new Error('temporary database failure');
     };
+    // F-K1-25: the old assertion only re-claimed the timer and observed
+    // PROCESSING, which the claim itself produces — it could not distinguish
+    // "returned to PENDING" from "left claimed". Capture the claim the worker
+    // took and prove it was released.
+    const workerClaimTokens: string[] = [];
+    const claimExpiredTimers = repository.claimExpiredTimers.bind(repository);
+    repository.claimExpiredTimers = async (at?: Date, limit?: number) => {
+      const claimed = await claimExpiredTimers(at, limit);
+      for (const entry of claimed) if (entry.claimToken) workerClaimTokens.push(entry.claimToken);
+      return claimed;
+    };
     const worker = new TimerWakeupWorker(repository);
 
     await worker.tick();
 
+    const stats = worker.getStats();
+    assert.equal(stats.timersFired, 0, 'a failed lifecycle action must not be counted as fired');
+    assert.equal(stats.errors, 1);
+    assert.equal(
+      workerClaimTokens.length,
+      1,
+      'the worker must have claimed the timer exactly once',
+    );
+    assert.equal(
+      await repository.acknowledgeTimer(timer.id, 'tenant-a', workerClaimTokens[0]!),
+      false,
+      'the worker claim token must be fenced after the timer is returned to PENDING',
+    );
+
     const reclaimed = await repository.claimExpiredTimers(new Date(), 10);
     assert.equal(reclaimed.length, 1);
     assert.equal(reclaimed[0]?.state, 'PROCESSING');
+    assert.notEqual(
+      reclaimed[0]?.claimToken,
+      workerClaimTokens[0],
+      're-claiming a PENDING timer must issue a fresh claim token',
+    );
     assert.equal(worker.getStats().errors, 1);
   });
-
   it('is unhealthy before the first successful tick', async () => {
     const repository = new InMemoryKernelRepository();
     const worker = new TimerWakeupWorker(repository, { pollIntervalMs: 60_000 });

@@ -14,6 +14,9 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -277,7 +280,7 @@ export class NotificationManager {
 
     try {
       // Lazy import to avoid circular dependency at module load time
-      const { getMessageBus } = require('../runtime/messageBus');
+      const { getMessageBus } = nodeRequire('../runtime/messageBus');
       const bus = getMessageBus();
 
       bus.subscribe(

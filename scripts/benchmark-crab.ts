@@ -22,7 +22,20 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { withBenchmarkEnv } from './benchmarkEnv';
+import {
+  withBenchmarkEnv,
+  capabilityVerdict,
+  capabilityStrictFromEnv,
+  formatCapabilityVerdict,
+  type BenchmarkExecutionMode,
+} from './benchmarkEnv';
+
+/**
+ * This script ships no real executor: it drives the pipeline with stub/fixture
+ * results. Hardcoded rather than env-overridable so the scaffold cannot be
+ * relabelled as a live capability run by setting a variable.
+ */
+const SCAFFOLD_MODE: BenchmarkExecutionMode = 'scaffold';
 
 const CACHE_DIR = path.join(process.cwd(), 'packages/core/.cache/crab');
 const TASK_PATH = path.join(CACHE_DIR, 'tasks.json');
@@ -298,20 +311,34 @@ async function main(): Promise<void> {
     console.log(`Wrote report: ${outputPath}`);
   }
 
+  // A scaffold run validates plumbing; it cannot demonstrate capability. The
+  // verdict is therefore NOT_EVALUATED unless a real executor produced these
+  // numbers, and creating a reviewed baseline is an explicit, separate act.
   if (baseline === null) {
-    saveBaseline(accuracy);
-    console.log('Saved baseline from current fixture run.');
-    process.exit(0);
+    if (process.env.COMMANDER_BENCHMARK_SAVE_BASELINE === '1') {
+      saveBaseline(accuracy);
+      console.log(
+        'Wrote a NEW baseline from this scaffold run (COMMANDER_BENCHMARK_SAVE_BASELINE=1). ' +
+          'A scaffold baseline is not capability evidence — review it before relying on it.',
+      );
+    } else {
+      console.log(
+        'No reviewed baseline exists for this benchmark; nothing was written. ' +
+          'Set COMMANDER_BENCHMARK_SAVE_BASELINE=1 to create one deliberately.',
+      );
+    }
   }
 
-  const expectedAccuracy = baseline.accuracy;
-  if (accuracy < expectedAccuracy) {
-    console.log(`Capability regression: accuracy=${accuracy} < baseline=${expectedAccuracy}`);
-    process.exit(1);
-  }
-
-  console.log(`Capability check passed: accuracy=${accuracy} >= baseline=${expectedAccuracy}`);
-  process.exit(0);
+  const verdict = capabilityVerdict({
+    mode: SCAFFOLD_MODE,
+    accuracy,
+    baselineAccuracy: baseline?.accuracy ?? null,
+    strict: capabilityStrictFromEnv(),
+  });
+  console.log(
+    formatCapabilityVerdict(verdict, { accuracy, baselineAccuracy: baseline?.accuracy ?? null }),
+  );
+  process.exit(verdict.exitCode);
 }
 
 main().catch((e) => {

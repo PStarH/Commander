@@ -8,20 +8,30 @@
  */
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import type { IncomingMessage } from 'http';
-import * as path from 'path';
 import {
   handleObservabilityRequest,
   type ObservabilityDeps,
   OBSERVABILITY_HTTP_ROUTES,
 } from '@commander/core/observability';
 import { getTraceRecorder, PersistentTraceStore } from '@commander/core/runtime';
+import { resolveConfiguredTraceBase } from '@commander/core/runtime/traceStore';
 
+/**
+ * Resolve the trace base directory for this process.
+ *
+ * Delegates to the single owner of the trace-directory rule in
+ * `@commander/core/runtime/traceStore` so the observability reader can never
+ * disagree with the trace writer (or with the lineage/hallucination/cost
+ * readers) about where traces live.
+ */
 export function resolveTraceDirectory(
-  env: { COMMANDER_TRACE_DIR?: string | undefined } = process.env,
+  env: {
+    COMMANDER_TRACE_DIR?: string | undefined;
+    COMMANDER_TRACES_DIR?: string | undefined;
+  } = process.env,
   cwd: string = process.cwd(),
 ): string {
-  const configured = env.COMMANDER_TRACE_DIR?.trim();
-  return configured || path.join(cwd, '.commander_traces');
+  return resolveConfiguredTraceBase(env, cwd);
 }
 
 const tracesDir = resolveTraceDirectory();

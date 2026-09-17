@@ -61,6 +61,45 @@ export interface OutboundRequestLog {
   timestamp: string;
 }
 
+/** Options for the authorization-aware egress paths. */
+export interface OutboundAuthorizationOptions {
+  /**
+   * Tenant whose registered target authorization may cover a destination that
+   * is not on the domain allowlist. Omitting it never widens access.
+   */
+  tenantId?: string;
+}
+
+/**
+ * A server-side authorization for one outbound origin.
+ *
+ * Only `OutboundNetworkPolicy.authorizeTarget()` mints these — a caller can
+ * reference its own tenant's authorization but can never assert one for itself.
+ */
+export interface OutboundTargetAuthorization {
+  /** Canonical `scheme://host[:port]` origin. */
+  origin: string;
+  /** Tenant the authorization belongs to. */
+  tenantId: string;
+  /** Epoch ms after which the authorization is no longer valid. */
+  expiresAt?: number;
+}
+
+/**
+ * Canonical origin for an http(s) URL, or null when the URL is malformed or
+ * uses another scheme. Paths and queries are deliberately dropped: an
+ * authorization covers a destination host, never a single URL.
+ */
+function canonicalOrigin(rawUrl: string): string | null {
+  try {
+    const parsed = new URL(rawUrl);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build a URL that connects to a pinned IP while preserving the original Host
  * via headers (caller must set Host). Prevents DNS rebinding between check and connect.
@@ -174,14 +213,29 @@ export function pinnedHttpFetch(
               responseHeaders.set(k, v);
             }
           }
-          settled = true;
-          resolve(
-            new Response(Buffer.concat(chunks), {
+          // `Response` rejects a non-null body for statuses that forbid one
+          // (204/205/304) and for HEAD responses. Passing the accumulated Buffer
+          // would throw from inside this `end` callback — i.e. outside the promise
+          // executor and outside every caller's await/catch — so an ordinary empty
+          // response (e.g. a 204 webhook acknowledgement) would surface as an
+          // uncaught exception instead of a resolved request.
+          const bodyForbidden =
+            method === 'HEAD' || status === 204 || status === 205 || status === 304;
+          let response: Response;
+          try {
+            response = new Response(bodyForbidden ? null : Buffer.concat(chunks), {
               status,
               statusText: res.statusMessage,
               headers: responseHeaders,
-            }),
-          );
+            });
+          } catch (error) {
+            finishReject(error instanceof Error ? error : new Error(String(error)));
+            return;
+          }
+          // Mark settled only after construction succeeded, so a constructor
+          // failure can still reject the request rather than silently resolving it.
+          settled = true;
+          resolve(response);
         });
         res.on('error', finishReject);
       },
@@ -382,6 +436,105 @@ function isPrivateOrBlockedHost(hostname: string): boolean {
   return isNonGlobalAddress(h) || PRIVATE_IP_PATTERNS.some((pattern) => pattern.test(h));
 }
 
+/**
+ * True when `hostname` is a loopback / private / link-local / metadata / other
+ * non-globally-routable destination.
+ *
+ * This is deliberately a **rejection-direction predicate**, not a gate. It
+ * answers only "is this destination unsafe?", never "is it authorized?", so a
+ * caller can act on it in exactly one safe way: refuse. Returning `true` can
+ * only cause a caller to reject more traffic, never to permit more, which is
+ * why it is safe to export — unlike the `check(url) => { allowed }` shape that
+ * previously let callers mistake a passed SSRF check for authorization.
+ *
+ * Callers that need "may I reach this?" must go through
+ * `OutboundNetworkPolicy.check` / `checkTargetAsync` / `ssrfCheckedFetch`.
+ *
+ * Exported so that outbound clients which keep their own constructor-time URL
+ * guard (e.g. `A2AClient`) share one address-classification implementation
+ * instead of maintaining a parallel pattern list that can drift — the A2A
+ * copy had already lost `localhost`, `*.localhost`, IPv4-mapped IPv6 and the
+ * full non-global IPv6 ranges.
+ */
+export function isNonGlobalDestination(hostname: string): boolean {
+  return isPrivateOrBlockedHost(hostname);
+}
+
+/**
+ * Resolve `domain` and reject it when any answer is non-global, when it has no
+ * answers, or when the lookup fails. A successful result carries the resolved
+ * addresses for connection pinning (DNS rebinding defense).
+ */
+async function resolveAddresses(domain: string): Promise<OutboundCheckResult> {
+  // Literal IPs / blocked hostnames already handled in the sync check.
+  if (isPrivateOrBlockedHost(domain) || PRIVATE_IP_PATTERNS.some((p) => p.test(domain))) {
+    return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
+  }
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) {
+    return { allowed: true, domain, addresses: [domain] };
+  }
+  if (domain.includes(':')) {
+    return { allowed: true, domain, addresses: [domain] };
+  }
+
+  try {
+    const results = await dns.promises.lookup(domain, { all: true });
+    const addresses: string[] = [];
+    for (const { address } of results) {
+      if (isPrivateOrBlockedHost(address)) {
+        return {
+          allowed: false,
+          reason: `DNS resolved to private IP (SSRF defense): ${address}`,
+          domain,
+        };
+      }
+      addresses.push(address);
+    }
+    if (addresses.length === 0) {
+      return {
+        allowed: false,
+        reason: `DNS lookup returned no addresses for: ${domain}`,
+        domain,
+      };
+    }
+    return { allowed: true, domain, addresses };
+  } catch {
+    return { allowed: false, reason: `DNS lookup failed for: ${domain}`, domain };
+  }
+}
+
+/**
+ * SSRF-only check (private/loopback/metadata + DNS resolution).
+ *
+ * This answers "is this destination unsafe?", which is NOT the same question as
+ * "is this destination authorized?". It is deliberately module-private: an
+ * exported gate with this shape is the footgun that let every caller treat a
+ * passed SSRF check as authorization and reach arbitrary public hosts. Callers
+ * must go through {@link OutboundNetworkPolicy.checkTargetAsync} /
+ * {@link OutboundNetworkPolicy.ssrfCheckedFetch}, which additionally require
+ * the destination to be on the domain allowlist or to hold a registered,
+ * tenant-bound target authorization.
+ */
+async function checkSsrfAsync(url: string, blockPrivateIPs: boolean): Promise<OutboundCheckResult> {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { allowed: false, reason: 'malformed URL', domain: '' };
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { allowed: false, reason: 'unsupported protocol', domain: '' };
+  }
+  const domain = normalizeHostname(parsed.hostname);
+  if (blockPrivateIPs && isPrivateOrBlockedHost(domain)) {
+    return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
+  }
+  if (!blockPrivateIPs) {
+    return { allowed: true, domain };
+  }
+  return resolveAddresses(domain);
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // OutboundNetworkPolicy
 // ──────────────────────────────────────────────────────────────────────────
@@ -392,10 +545,20 @@ export class OutboundNetworkPolicy {
   private installed = false;
   private readonly auditLogs: OutboundRequestLog[] = [];
   private static readonly MAX_AUDIT_LOGS = 10_000;
+  /** Server-side, tenant-bound authorizations for non-allowlisted origins. */
+  private readonly targetAuthorizations = new Map<
+    string,
+    Map<string, OutboundTargetAuthorization>
+  >();
 
   constructor(config: Partial<OutboundNetworkPolicyConfig> = {}) {
     this.config = {
       enabled: config.enabled ?? true, // enabled by default — fail-closed (data exfiltration defense)
+      // An explicit `allowlist: []` means "no destination is allowed" (deny
+      // all), NOT "unrestricted". Only an omitted/undefined allowlist falls
+      // back to DEFAULT_ALLOWLIST. Silently reading an empty allowlist as
+      // "allow everything" would turn an explicit empty config into a
+      // fail-open state.
       allowlist: config.allowlist ?? [...DEFAULT_ALLOWLIST],
       blocklist: config.blocklist ?? [],
       auditLog: config.auditLog ?? true,
@@ -408,6 +571,12 @@ export class OutboundNetworkPolicy {
    * Check if a URL is allowed under the current policy (sync hostname checks).
    * Private/loopback/metadata hosts are always denied when blockPrivateIPs is on —
    * allowlist cannot bypass SSRF defense.
+   *
+   * `enabled: false` waives the ALLOWLIST and per-target authorization only. The
+   * blocklist and this synchronous private-address check stay enforced: disabling
+   * egress control must never silently disable metadata-endpoint protection
+   * (169.254.169.254 is a credential-theft vector). DNS resolution is skipped in
+   * that mode — see `checkAsync` / `checkTargetAsync`.
    */
   check(url: string): { allowed: boolean; reason?: string; domain: string } {
     return this.checkWithClassification(url, undefined);
@@ -418,42 +587,148 @@ export class OutboundNetworkPolicy {
    * On success, `addresses` contains public IPs suitable for connection pinning.
    */
   async checkAsync(url: string, classification?: DataClassification): Promise<OutboundCheckResult> {
+    if (!this.config.enabled) return this.checkWithClassification(url, classification);
     const sync = this.checkWithClassification(url, classification);
     if (!sync.allowed) return sync;
-    return this.resolveAddresses(url, sync.domain);
+    return resolveAddresses(sync.domain);
   }
 
   /**
-   * SSRF-only check (private/loopback/metadata + DNS). Does NOT enforce the
-   * domain allowlist — used by webhook delivery to arbitrary customer URLs.
+   * Authorization-aware egress check.
+   *
+   * A destination is allowed only when it is on the domain allowlist OR holds a
+   * registered, tenant-bound target authorization, AND it passes the
+   * SSRF/private-address + DNS check. Passing the SSRF check on its own is not
+   * authorization: a public host that is neither allowlisted nor authorized is
+   * denied.
    */
-  async checkSsrfAsync(url: string): Promise<OutboundCheckResult> {
-    let parsed: URL;
-    try {
-      parsed = new URL(url);
-    } catch {
-      return { allowed: false, reason: 'malformed URL', domain: '' };
+  async checkTargetAsync(
+    url: string,
+    options: OutboundAuthorizationOptions = {},
+  ): Promise<OutboundCheckResult> {
+    // `enabled: false` is the documented passthrough mode (`install()` returns
+    // without installing the fetch interceptor). It waives the ALLOWLIST and
+    // per-target authorization. The blocklist and the *synchronous*
+    // private/loopback/metadata check stay enforced — otherwise a direct check
+    // would deny `169.254.169.254` while the fetch path reached it, and the
+    // safer of the two behaviours must win (WS9 NET-3).
+    //
+    // DNS resolution is deliberately skipped here. It exists to (a) enforce the
+    // allowlist against resolved addresses and (b) pin the connection against
+    // DNS rebinding — both are allowlist machinery the operator just turned
+    // off. Running it anyway would make "passthrough" mode fail whenever the
+    // resolver is slow or unavailable, which is not a security property.
+    // Literal private/loopback/metadata destinations are still refused above.
+    if (!this.config.enabled) {
+      return this.checkWithClassification(url);
     }
-    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-      return { allowed: false, reason: 'unsupported protocol', domain: '' };
-    }
-    const domain = normalizeHostname(parsed.hostname);
-    if (this.config.blockPrivateIPs && isPrivateOrBlockedHost(domain)) {
-      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
-    }
-    if (!this.config.blockPrivateIPs) {
-      return { allowed: true, domain };
-    }
-    return this.resolveAddresses(url, domain);
+
+    // SSRF runs first so an unsafe destination is always reported as unsafe,
+    // even when it is also unauthorized.
+    const ssrf = await checkSsrfAsync(url, this.config.blockPrivateIPs);
+    if (!ssrf.allowed) return ssrf;
+
+    // Allowlist (blocklist + SSRF + global/per-classification allowlist).
+    const allowlisted = this.checkWithClassification(url);
+    if (allowlisted.allowed) return ssrf;
+
+    // Otherwise an explicit per-target authorization is required, and it must
+    // belong to the calling tenant.
+    if (this.isTargetAuthorized(url, options.tenantId)) return ssrf;
+
+    return {
+      allowed: false,
+      reason: allowlisted.reason ?? `domain not in allowlist: ${ssrf.domain}`,
+      domain: ssrf.domain,
+    };
   }
 
   /**
-   * Fetch after SSRF check + IP pin, bypassing the domain allowlist.
-   * Uses the pre-patch fetch so OutboundNetworkPolicy allowlist does not
-   * block legitimate webhook destinations.
+   * Register a server-side, tenant-bound authorization for one outbound origin.
+   *
+   * This is the only way to reach a destination that is not on the domain
+   * allowlist. The authorization lives in the policy (not in the caller), so a
+   * request cannot authorize itself.
    */
-  async ssrfCheckedFetch(input: string, init?: RequestInit): Promise<Response> {
-    const result = await this.checkSsrfAsync(input);
+  authorizeTarget(
+    rawUrl: string,
+    options: { tenantId: string; expiresAt?: number },
+  ): OutboundTargetAuthorization {
+    const origin = canonicalOrigin(rawUrl);
+    if (!origin) {
+      throw new TypeError(`authorizeTarget requires an http(s) URL, got: ${rawUrl}`);
+    }
+    const tenantId = typeof options.tenantId === 'string' ? options.tenantId.trim() : '';
+    if (!tenantId) {
+      throw new TypeError('authorizeTarget requires a non-empty tenantId');
+    }
+    if (options.expiresAt !== undefined && !Number.isFinite(options.expiresAt)) {
+      throw new TypeError('authorizeTarget requires a finite expiresAt when one is given');
+    }
+    const record: OutboundTargetAuthorization = { origin, tenantId, expiresAt: options.expiresAt };
+    let byTenant = this.targetAuthorizations.get(origin);
+    if (!byTenant) {
+      byTenant = new Map<string, OutboundTargetAuthorization>();
+      this.targetAuthorizations.set(origin, byTenant);
+    }
+    // Keep one independent registration per (origin, tenant). A tenant's
+    // webhook registration must never overwrite another tenant's authorization
+    // for the same shared origin.
+    byTenant.set(tenantId, record);
+    return record;
+  }
+
+  /** Remove a previously registered target authorization for this tenant. */
+  revokeTarget(rawUrl: string, tenantId: string): boolean {
+    const origin = canonicalOrigin(rawUrl);
+    if (!origin || !tenantId) return false;
+    const byTenant = this.targetAuthorizations.get(origin);
+    if (!byTenant || !byTenant.delete(tenantId)) return false;
+    if (byTenant.size === 0) this.targetAuthorizations.delete(origin);
+    return true;
+  }
+
+  /**
+   * True only when a non-expired authorization for `origin` was registered for
+   * exactly this tenant. A missing tenant, a missing record, a tenant mismatch
+   * and an expired record all deny — fail closed.
+   */
+  isTargetAuthorized(rawUrl: string, tenantId?: string, now: number = Date.now()): boolean {
+    if (!tenantId) return false;
+    const origin = canonicalOrigin(rawUrl);
+    if (!origin) return false;
+    const record = this.targetAuthorizations.get(origin)?.get(tenantId);
+    if (!record) return false;
+    if (record.expiresAt !== undefined && !(now < record.expiresAt)) return false;
+    return true;
+  }
+
+  /** Drop every registered target authorization (used by tests and shutdown). */
+  clearTargetAuthorizations(): void {
+    this.targetAuthorizations.clear();
+  }
+
+  /**
+   * Fetch after an authorization-aware egress check (allowlist or a registered
+   * tenant-bound target authorization) plus SSRF check and IP pin.
+   *
+   * Historically this method enforced SSRF only and skipped the allowlist, so
+   * every consumer could reach any public host no matter what the operator had
+   * configured. The `options.tenantId` argument references a server-side
+   * authorization; it never asserts one.
+   */
+  async ssrfCheckedFetch(
+    input: string,
+    init?: RequestInit,
+    options: OutboundAuthorizationOptions = {},
+  ): Promise<Response> {
+    // No `enabled` shortcut here. `checkTargetAsync` already waives only the
+    // allowlist/authorization when the policy is disabled, so routing through it
+    // unconditionally keeps the blocklist + SSRF defense in force on the fetch
+    // path as well. Previously this returned early and performed no check at all,
+    // so an operator who disabled the allowlist lost metadata-endpoint
+    // protection on every outbound request made through this helper.
+    const result = await this.checkTargetAsync(input, options);
     if (!result.allowed) {
       const err = new Error(`OUTBOUND_BLOCKED: ${result.reason}`);
       err.name = 'OutboundNetworkPolicyError';
@@ -469,44 +744,6 @@ export class OutboundNetworkPolicy {
     }
     const fetchFn = this.originalFetch ?? globalThis.fetch;
     return fetchFn.call(globalThis, input, init);
-  }
-
-  private async resolveAddresses(url: string, domain: string): Promise<OutboundCheckResult> {
-    // Literal IPs / blocked hostnames already handled in sync check.
-    if (isPrivateOrBlockedHost(domain) || PRIVATE_IP_PATTERNS.some((p) => p.test(domain))) {
-      return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
-    }
-    if (/^\d{1,3}(\.\d{1,3}){3}$/.test(domain)) {
-      return { allowed: true, domain, addresses: [domain] };
-    }
-    if (domain.includes(':')) {
-      return { allowed: true, domain, addresses: [domain] };
-    }
-
-    try {
-      const results = await dns.promises.lookup(domain, { all: true });
-      const addresses: string[] = [];
-      for (const { address } of results) {
-        if (isPrivateOrBlockedHost(address)) {
-          return {
-            allowed: false,
-            reason: `DNS resolved to private IP (SSRF defense): ${address}`,
-            domain,
-          };
-        }
-        addresses.push(address);
-      }
-      if (addresses.length === 0) {
-        return {
-          allowed: false,
-          reason: `DNS lookup returned no addresses for: ${domain}`,
-          domain,
-        };
-      }
-      return { allowed: true, domain, addresses };
-    } catch {
-      return { allowed: false, reason: `DNS lookup failed for: ${domain}`, domain };
-    }
   }
 
   /**
@@ -538,22 +775,32 @@ export class OutboundNetworkPolicy {
       return { allowed: false, reason: `private IP blocked (SSRF defense): ${domain}`, domain };
     }
 
-    // Check global allowlist (public domains only)
+    // Check global allowlist (public domains only).
+    //
+    // `enabled: false` waives the allowlist — and ONLY the allowlist. The
+    // blocklist and SSRF checks above have already run and are never waived, so a
+    // disabled policy is "any public host", never "any host at all".
     let globallyAllowed = false;
-    for (const allowed of this.config.allowlist) {
-      const a = allowed.toLowerCase();
-      if (domain === a || domain.endsWith('.' + a)) {
-        globallyAllowed = true;
-        break;
+    if (this.config.enabled) {
+      for (const allowed of this.config.allowlist) {
+        const a = allowed.toLowerCase();
+        if (domain === a || domain.endsWith('.' + a)) {
+          globallyAllowed = true;
+          break;
+        }
+      }
+
+      if (!globallyAllowed) {
+        return { allowed: false, reason: `domain not in allowlist: ${domain}`, domain };
       }
     }
 
-    if (!globallyAllowed) {
-      return { allowed: false, reason: `domain not in allowlist: ${domain}`, domain };
-    }
-
     // If classification is provided, check per-classification allowlist
-    if (classification && this.config.classificationAllowlist?.[classification]) {
+    if (
+      this.config.enabled &&
+      classification &&
+      this.config.classificationAllowlist?.[classification]
+    ) {
       const classAllowlist = this.config.classificationAllowlist[classification]!;
       let classAllowed = false;
       for (const allowed of classAllowlist) {

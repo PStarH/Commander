@@ -1,8 +1,8 @@
 export { SwarmOrchestrator } from './swarmOrchestrator';
 export { FusionEngine } from './fusionEngine';
-export {
+export { DEFAULT_SWARM_CONFIG } from './types';
+export type {
   SwarmConfig,
-  DEFAULT_SWARM_CONFIG,
   SwarmNode,
   SwarmManager,
   SwarmTopology,

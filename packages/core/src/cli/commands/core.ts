@@ -1,6 +1,7 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import { TELOSOrchestrator } from '../../telos/telosOrchestrator';
 import { UltimateOrchestrator } from '../../ultimate/orchestrator';
+import { assessGovernanceRiskLevel } from '../../ultimate/riskAssessor';
 import { SSEStream } from '../../runtime/sseStream';
 import { AgentRuntime } from '../../runtime/agentRuntime';
 import { getGlobalTenantProvider } from '../../runtime/tenantProvider';
@@ -26,6 +27,10 @@ import {
 import { t } from '../i18n';
 import { runShowcase } from '../../showcase/showcaseRunner';
 import { getMetaLearner } from '../../selfEvolution/metaLearner';
+import { getDirname, getRequire } from '../../esmCompat';
+
+const nodeRequire = getRequire(import.meta.url);
+const __dirname = getDirname(import.meta.url);
 
 // Routing-flag plumbing (audit P0-2 / P1-1 surface). Declared at top-of-file so it
 // hoists before the first reference (cmdRun / cmdRunInternal / cmdWatchInternal).
@@ -262,8 +267,8 @@ export async function cmdRun(task: string, flags: Record<string, string> = {}) {
   if ('tui' in flags) {
     // Fork TUI into a child process so the main execution continues.
     // The child subscribes to the message bus via IPC or shared state.
-    const { fork } = require('child_process');
-    const tuiPath = require('path').join(__dirname, '..', '..', 'tui', 'tuiProcess.js');
+    const { fork } = nodeRequire('child_process');
+    const tuiPath = nodeRequire('path').join(__dirname, '..', '..', 'tui', 'tuiProcess.js');
     // Try to spawn the TUI process — fall back to a warning if the module isn't built
     try {
       const child = fork(tuiPath, [], {
@@ -559,9 +564,12 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
   // contextData so agentRuntime.ts's late-stage override block lifts them
   // onto ctx.preferredModel / ctx.preferredModelTier / smartRouterActive
   // before the routing decision runs.
+  const availableTools = loadTools();
   const routingContextData: Record<string, unknown> = {
-    availableTools: loadTools(),
-    governanceProfile: { riskLevel: 'LOW' },
+    availableTools,
+    // ET-02: risk level is a measurement fed into the governance chain, not a
+    // constant. Hardcoding 'LOW' disabled the approval/escalation gates.
+    governanceProfile: { riskLevel: assessGovernanceRiskLevel(task, availableTools) },
   };
   if (routingFlags.model !== undefined) routingContextData.preferredModel = routingFlags.model;
   if (routingFlags.tier !== undefined) {
@@ -645,6 +653,15 @@ async function cmdRunInternal(task: string, routingFlags: RoutingFlags = {}) {
   await promptHumanFeedback(result.status === 'SUCCESS', task);
 
   console.log();
+
+  // One-shot CLI run: dispose the runtime so background services (retention
+  // janitor, OTel exporter timers, webhook dispatcher, supervisor) do not keep
+  // the event loop alive after the result has been printed. The crash-safety
+  // shutdown path has no force-exit, so also schedule an explicit exit once
+  // pending stdout writes have had a chance to flush.
+  rt.dispose();
+  process.exitCode = result.status === 'SUCCESS' ? 0 : 1;
+  setTimeout(() => process.exit(process.exitCode), 50).unref();
 }
 
 async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
@@ -790,9 +807,10 @@ async function cmdWatchInternal(task: string, routingFlags: RoutingFlags = {}) {
     // --tier from contextData onto ctx.preferredModel / preferredModelTier
     // / smartRouterActive before the routing decision runs. The module-
     // scope TIER_MAP is the single source of truth. (Audit P0-2 follow-up.)
+    const watchTools = loadTools();
     const watchContextData: Record<string, unknown> = {
-      availableTools: loadTools(),
-      governanceProfile: { riskLevel: 'LOW' },
+      availableTools: watchTools,
+      governanceProfile: { riskLevel: assessGovernanceRiskLevel(task, watchTools) },
     };
     if (routingFlags.model !== undefined) {
       watchContextData.preferredModel = routingFlags.model;

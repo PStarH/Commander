@@ -140,14 +140,14 @@ export interface DPQueryResult<T> {
   sensitivity: number;
 }
 
-/** A rejected query result (budget exhausted or too few items). */
+/** A rejected query result (budget exhausted, too few items, or DP unavailable). */
 export interface DPQueryRejection {
   result: undefined;
   epsilonUsed: 0;
   deltaUsed: 0;
   remainingBudget: number;
   answerable: false;
-  reason: 'budget_exhausted' | 'too_few_items' | 'invalid_bounds';
+  reason: 'budget_exhausted' | 'too_few_items' | 'invalid_bounds' | 'sanitizer_unavailable';
   detail: string;
 }
 

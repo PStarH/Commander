@@ -8,11 +8,17 @@ import {
   finalizeResult,
   mergeJwksJson,
   resolveOwnerDsn,
+  resolveProofRolePasswords,
   sha256Hex,
+  sourceSnapshotFailures,
   validateProofMetadata,
+  validateSourceProvenance,
   type AuthorityProofMetadata,
   type AuthorityProofFlags,
 } from './authority-closure-proof.js';
+
+/** A realistic full-length candidate commit — short strings are not commits. */
+const CANDIDATE_SHA = 'a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0';
 
 const allTrueFlags = (): AuthorityProofFlags => ({
   database: {
@@ -46,8 +52,8 @@ describe('authority-closure-proof helpers', () => {
   const completeMetadata = (): AuthorityProofMetadata => ({
     workflowId: 'commander-wave2-task1-authority-closure',
     source: {
-      commit: 'abc123',
-      dirty: true,
+      commit: CANDIDATE_SHA,
+      dirty: false,
       trackedDiffSha256: 'd'.repeat(64),
       untrackedFiles: [`packages/kernel/src/task1Authority.test.ts:sha256:${'e'.repeat(64)}`],
     },
@@ -90,18 +96,6 @@ describe('authority-closure-proof helpers', () => {
         'workflowId',
         (metadata) => {
           metadata.workflowId = '';
-        },
-      ],
-      [
-        'source.commit',
-        (metadata) => {
-          metadata.source.commit = '';
-        },
-      ],
-      [
-        'source.dirty',
-        (metadata) => {
-          delete (metadata.source as Partial<typeof metadata.source>).dirty;
         },
       ],
       [
@@ -269,6 +263,73 @@ describe('authority-closure-proof helpers', () => {
     assert.match(validateProofMetadata(metadata).join('\n'), /hashes\.logs/i);
   });
 
+  it('verifies source provenance semantically, not by field presence', () => {
+    // Baseline: a clean, candidate-bound source is accepted.
+    assert.deepEqual(validateSourceProvenance(completeMetadata().source, CANDIDATE_SHA), []);
+
+    // dirty === true is the failure this check exists for: `nonEmpty()` returns
+    // true for any boolean, so presence-only validation accepted it.
+    assert.deepEqual(
+      validateSourceProvenance({ ...completeMetadata().source, dirty: true }, CANDIDATE_SHA),
+      ['SOURCE_DIRTY: source.dirty is not exactly false'],
+    );
+
+    // Missing / non-boolean / stringly-typed values are all failures.
+    for (const dirty of [undefined, null, 'false', 0, 1]) {
+      const failures = validateSourceProvenance(
+        { ...completeMetadata().source, dirty: dirty as unknown as boolean },
+        CANDIDATE_SHA,
+      );
+      assert.deepEqual(
+        failures,
+        ['SOURCE_DIRTY: source.dirty is not exactly false'],
+        `dirty=${JSON.stringify(dirty)} must be rejected`,
+      );
+    }
+
+    // Commit must be a real full-length SHA, and must be THIS candidate.
+    assert.deepEqual(
+      validateSourceProvenance({ ...completeMetadata().source, commit: 'abc123' }, CANDIDATE_SHA),
+      ['SOURCE_COMMIT_INVALID: source.commit is not a full 40-64 hex commit'],
+    );
+    assert.deepEqual(
+      validateSourceProvenance(
+        { ...completeMetadata().source, commit: 'b'.repeat(40) },
+        CANDIDATE_SHA,
+      ),
+      ['SOURCE_COMMIT_MISMATCH: source.commit is not this candidate'],
+    );
+
+    // A failed git collection must not degrade into a clean-looking source.
+    assert.deepEqual(
+      validateSourceProvenance(
+        { commit: 'SOURCE_UNKNOWN', dirty: true, trackedDiffSha256: '', untrackedFiles: [] },
+        CANDIDATE_SHA,
+      ),
+      [
+        'SOURCE_COMMIT_INVALID: source.commit is not a full 40-64 hex commit',
+        'SOURCE_DIRTY: source.dirty is not exactly false',
+      ],
+    );
+  });
+
+  it('reports source drift detected mid-run instead of certifying the measured snapshot', () => {
+    const before = completeMetadata().source;
+    assert.deepEqual(sourceSnapshotFailures(before, { ...before }), []);
+
+    const driftCases: Array<[string, AuthorityProofMetadata['source']]> = [
+      ['commit', { ...before, commit: 'c'.repeat(40) }],
+      ['dirty', { ...before, dirty: true }],
+      ['trackedDiff', { ...before, trackedDiffSha256: 'f'.repeat(64) }],
+      ['untrackedFiles', { ...before, untrackedFiles: [] }],
+    ];
+    for (const [label, observed] of driftCases) {
+      const failures = sourceSnapshotFailures(before, observed);
+      assert.equal(failures.length, 1, `expected exactly one drift failure for ${label}`);
+      assert.match(failures[0]!, /^SOURCE_DRIFTED_DURING_PROOF/);
+    }
+  });
+
   it('rejects malformed tracked-diff and untracked-source hashes', () => {
     const metadata = completeMetadata();
     metadata.source.trackedDiffSha256 = 'not-a-hash';
@@ -298,9 +359,18 @@ describe('authority-closure-proof helpers', () => {
     const source = readFileSync(new URL('./authority-closure-proof.ts', import.meta.url), 'utf8');
     assert.match(
       source,
-      /metadata: buildProofMetadata\(\s*\{\s*gitSha,\s*startedAt,\s*endedAt,\s*flags,\s*failures,\s*tenants:\s*\[tenantA,\s*tenantB,\s*tenantCap\],\s*source,?\s*\}\s*\)/,
+      /metadata: buildProofMetadata\(\s*\{\s*gitSha,\s*startedAt,\s*endedAt,\s*flags,\s*failures,\s*tenants:\s*\[tenantA,\s*tenantB,\s*tenantCap\],\s*source:\s*observedSource,?\s*\}\s*\)/,
     );
     assert.match(source, /tenants: input\.tenants/);
+  });
+
+  it('re-captures the source snapshot at finalize time and fails on drift', () => {
+    const source = readFileSync(new URL('./authority-closure-proof.ts', import.meta.url), 'utf8');
+    assert.match(source, /const observedSource = captureWorkspaceSource\(gitSha\)/);
+    assert.match(
+      source,
+      /failures\.push\(\.\.\.sourceSnapshotFailures\(source, observedSource\)\)/,
+    );
   });
 
   it('retains a source manifest that binds the tracked diff and every untracked source path', () => {
@@ -331,7 +401,7 @@ describe('authority-closure-proof helpers', () => {
 
   it('retains complete metadata and fails closed when finalizeResult receives none', () => {
     const complete = finalizeResult({
-      gitSha: 'abc123',
+      gitSha: CANDIDATE_SHA,
       flags: allTrueFlags(),
       failures: [],
       metadata: completeMetadata(),
@@ -339,7 +409,7 @@ describe('authority-closure-proof helpers', () => {
     assert.deepEqual(complete.metadata, completeMetadata());
     assert.equal(complete.evidenceLevel, 'ENFORCED');
 
-    const missing = finalizeResult({ gitSha: 'abc123', flags: allTrueFlags(), failures: [] });
+    const missing = finalizeResult({ gitSha: CANDIDATE_SHA, flags: allTrueFlags(), failures: [] });
     assert.equal(missing.passed, false);
     assert.equal(missing.evidenceLevel, 'FAILED');
     assert.ok(missing.failures.some((failure) => /mandatory metadata/i.test(failure)));
@@ -363,7 +433,7 @@ describe('authority-closure-proof helpers', () => {
     );
   });
 
-  it('resolveOwnerDsn falls back to COMMANDER_KERNEL_DATABASE_URL then DATABASE_URL then default', () => {
+  it('resolveOwnerDsn falls back to COMMANDER_KERNEL_DATABASE_URL then DATABASE_URL', () => {
     assert.equal(
       resolveOwnerDsn({
         COMMANDER_KERNEL_DATABASE_URL: 'postgres://kernel:k@127.0.0.1:5433/commander',
@@ -375,7 +445,42 @@ describe('authority-closure-proof helpers', () => {
       resolveOwnerDsn({ DATABASE_URL: 'postgres://db:d@127.0.0.1:5433/commander' }),
       'postgres://db:d@127.0.0.1:5433/commander',
     );
-    assert.equal(resolveOwnerDsn({}), 'postgres://commander:commander@127.0.0.1:5433/commander');
+  });
+
+  it('resolveOwnerDsn has no public fallback DSN', () => {
+    // The historical default was postgres://commander:commander@127.0.0.1:5433/commander.
+    assert.equal(resolveOwnerDsn({}), undefined);
+    assert.equal(resolveOwnerDsn({ OWNER_DSN: '   ' }), undefined);
+  });
+
+  it('refuses to invent role passwords and rejects the public defaults', () => {
+    const missing = resolveProofRolePasswords({});
+    assert.equal(missing.passwords, undefined);
+    assert.equal(missing.failures.length, 5);
+    assert.ok(missing.failures.every((f) => f.startsWith('CI_ROLE_PASSWORD_REQUIRED')));
+
+    // The historical default is the role name itself.
+    const insecure = resolveProofRolePasswords({
+      COMMANDER_CI_PASSWORD_COMMANDER_APP: 'commander_app',
+    });
+    assert.equal(insecure.passwords, undefined);
+    assert.ok(
+      insecure.failures.some(
+        (f) =>
+          f.startsWith('CI_ROLE_PASSWORD_INSECURE') &&
+          f.includes('COMMANDER_CI_PASSWORD_COMMANDER_APP'),
+      ),
+    );
+
+    const complete = resolveProofRolePasswords({
+      COMMANDER_CI_PASSWORD_COMMANDER_APP: 'app-pw-0123456789abcdef',
+      COMMANDER_CI_PASSWORD_COMMANDER_TENANT_AUTHORITY: 'ta-pw-0123456789abcdef',
+      COMMANDER_CI_PASSWORD_COMMANDER_SCHEDULER: 'sch-pw-0123456789abcdef',
+      COMMANDER_CI_PASSWORD_COMMANDER_WORKER: 'wrk-pw-0123456789abcdef',
+      COMMANDER_CI_PASSWORD_COMMANDER_ADAPTER_OPS: 'ao-pw-0123456789abcdef',
+    });
+    assert.deepEqual(complete.failures, []);
+    assert.equal(complete.passwords?.app, 'app-pw-0123456789abcdef');
   });
 
   it('canonicalJson sorts object keys stably', () => {
@@ -389,9 +494,9 @@ describe('authority-closure-proof helpers', () => {
     );
   });
 
-  it('caps dirty single-process database proof at ENFORCED when every gate passes', () => {
+  it('caps a clean single-process database proof at ENFORCED when every gate passes', () => {
     const proven = finalizeResult({
-      gitSha: 'abc123',
+      gitSha: CANDIDATE_SHA,
       flags: allTrueFlags(),
       failures: [],
       metadata: completeMetadata(),
@@ -402,11 +507,54 @@ describe('authority-closure-proof helpers', () => {
     assert.deepEqual(proven.failures, []);
   });
 
+  it('refuses to certify a proof produced from a dirty worktree', () => {
+    const metadata = completeMetadata();
+    metadata.source.dirty = true;
+    const dirty = finalizeResult({
+      gitSha: CANDIDATE_SHA,
+      flags: allTrueFlags(),
+      failures: [],
+      metadata,
+    });
+    assert.equal(dirty.passed, false);
+    assert.equal(dirty.evidenceLevel, 'FAILED');
+    assert.ok(dirty.failures.some((f) => f.startsWith('SOURCE_DIRTY')));
+  });
+
+  it('refuses to certify a proof whose source is a different candidate', () => {
+    const metadata = completeMetadata();
+    metadata.source.commit = 'b'.repeat(40);
+    const other = finalizeResult({
+      gitSha: CANDIDATE_SHA,
+      flags: allTrueFlags(),
+      failures: [],
+      metadata,
+    });
+    assert.equal(other.passed, false);
+    assert.equal(other.evidenceLevel, 'FAILED');
+    assert.ok(other.failures.some((f) => f.startsWith('SOURCE_COMMIT_MISMATCH')));
+  });
+
+  it('refuses to certify a proof that recorded source drift mid-run', () => {
+    const drifted = finalizeResult({
+      gitSha: CANDIDATE_SHA,
+      flags: allTrueFlags(),
+      failures: sourceSnapshotFailures(completeMetadata().source, {
+        ...completeMetadata().source,
+        trackedDiffSha256: 'f'.repeat(64),
+      }),
+      metadata: completeMetadata(),
+    });
+    assert.equal(drifted.passed, false);
+    assert.equal(drifted.evidenceLevel, 'FAILED');
+    assert.ok(drifted.failures.some((f) => f.startsWith('SOURCE_DRIFTED_DURING_PROOF')));
+  });
+
   it('finalizeResult fail-closes on any false flag', () => {
     const flags = allTrueFlags();
     flags.effect.fenced = false;
     const failed = finalizeResult({
-      gitSha: 'abc123',
+      gitSha: CANDIDATE_SHA,
       flags,
       failures: [],
       metadata: completeMetadata(),
@@ -431,7 +579,7 @@ describe('authority-closure-proof helpers', () => {
 
   it('finalizeResult fail-closes when failures already present', () => {
     const failed = finalizeResult({
-      gitSha: 'abc123',
+      gitSha: CANDIDATE_SHA,
       flags: allTrueFlags(),
       failures: ['connect refused'],
       metadata: completeMetadata(),

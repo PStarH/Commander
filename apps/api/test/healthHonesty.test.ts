@@ -113,7 +113,7 @@ describe('WS3 §6 /ready — honesty invariants', () => {
       {
         database: async () => 'ok',
         kernel: () => null,
-        effectBroker: () => ({} as never),
+        effectBroker: () => ({}) as never,
       },
       async (base) => {
         const res = await fetch(`${base}/ready`);
@@ -131,8 +131,8 @@ describe('WS3 §6 /ready — honesty invariants', () => {
         database: async () => {
           throw new Error('ECONNREFUSED');
         },
-        kernel: () => ({} as never),
-        effectBroker: () => ({} as never),
+        kernel: () => ({}) as never,
+        effectBroker: () => ({}) as never,
       },
       async (base) => {
         const res = await fetch(`${base}/ready`);
@@ -148,7 +148,7 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     await withReadyApp(
       {
         database: async () => 'ok',
-        kernel: () => ({} as never),
+        kernel: () => ({}) as never,
         evidenceRepository: async () => {
           throw new Error('evidence unavailable');
         },
@@ -167,7 +167,7 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     await withReadyApp(
       {
         database: async () => 'ok',
-        kernel: () => ({} as never),
+        kernel: () => ({}) as never,
         // no effectBroker dep — API must not pretend to host the real broker
       },
       async (base) => {
@@ -184,7 +184,7 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     await withReadyApp(
       {
         database: async () => 'ok',
-        kernel: () => ({} as never),
+        kernel: () => ({}) as never,
         effectBroker: () => null,
       },
       async (base) => {
@@ -201,8 +201,8 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     await withReadyApp(
       {
         database: async () => 'ok',
-        kernel: () => ({} as never),
-        effectBroker: () => ({} as never),
+        kernel: () => ({}) as never,
+        effectBroker: () => ({}) as never,
         warRoomStore: () => true,
         memoryHeap: () => 0.5,
       },
@@ -221,8 +221,8 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     await withReadyApp(
       {
         database: undefined,
-        kernel: () => ({} as never),
-        effectBroker: () => ({} as never),
+        kernel: () => ({}) as never,
+        effectBroker: () => ({}) as never,
       },
       async (base) => {
         const res = await fetch(`${base}/ready`);
@@ -239,8 +239,8 @@ describe('WS3 §6 /ready — honesty invariants', () => {
     await withReadyApp(
       {
         database: async () => 'ok',
-        kernel: () => ({} as never),
-        effectBroker: () => ({} as never),
+        kernel: () => ({}) as never,
+        effectBroker: () => ({}) as never,
         warRoomStore: () => false,
       },
       async (base) => {
@@ -279,7 +279,7 @@ describe('WS3 §6 /v1/health — subtree-only deps', () => {
     await withReadyApp(
       {
         database: async () => 'ok',
-        kernel: () => ({} as never),
+        kernel: () => ({}) as never,
       },
       async (base) => {
         const res = await fetch(`${base}/v1/health`);

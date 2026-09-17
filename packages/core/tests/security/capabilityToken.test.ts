@@ -28,6 +28,7 @@
  */
 import { it, beforeAll, afterEach, describe } from 'vitest';
 import assert from 'node:assert/strict';
+import * as nodeCrypto from 'node:crypto';
 
 // Force a deterministic key for every test BEFORE importing the module.
 process.env.NODE_ENV = 'test';
@@ -952,7 +953,6 @@ it('Phase 2.1 — Resolution short-circuit: wrong typ header', () => {
     .replace(/=+$/g, '')
     .replace(/\+/g, '-')
     .replace(/\//g, '_');
-  const nodeCrypto = require('node:crypto');
   const sigB64 = nodeCrypto.createHmac('sha256', m).update(`${header}.${payloadB64}`).digest('hex');
   const sig = Buffer.from(sigB64, 'utf-8')
     .toString('base64')

@@ -83,6 +83,20 @@ import { score, type Verdict, type ScoreResult } from '../packages/core/src/obse
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { withBenchmarkEnv } from './benchmarkEnv';
+import {
+  capabilityStrictFromEnv,
+  capabilityVerdict,
+  formatCapabilityVerdict,
+  type BenchmarkExecutionMode,
+} from './benchmarkEnv';
+
+/**
+ * GAIA currently runs the fixture-backed scaffold: the dataset answer is
+ * echoed back as the agent output, so the pipeline is exercised but no
+ * executor produced the outputs that were scored. Only `live` can yield a
+ * capability PASS, so this run is reported as NOT_EVALUATED.
+ */
+const SCAFFOLD_MODE: BenchmarkExecutionMode = 'scaffold';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Scoring — 3-way verdict (CORRECT / INCORRECT / UNGRADED)
@@ -201,6 +215,20 @@ interface SyntheticTask {
   mockOutput: string;
   /** Ground truth from the dataset (may be empty to test the ungraded path). */
   expected: string;
+  /**
+   * True when `mockOutput` is the dataset's own answer echoed straight back.
+   *
+   * A task that feeds the ground truth in as the agent's output measures the
+   * harness, never the agent: it is a tautology that scores 100% regardless of
+   * model quality. The flag exists so the report can say so instead of
+   * publishing the number as a GAIA score.
+   */
+  oracleEcho: boolean;
+  /**
+   * False when the task cannot contribute to a capability score. Only an
+   * independent executor output can; an oracle echo never can.
+   */
+  scoringEligible: boolean;
 }
 
 const SPINE_TENANT = 'spine-dry-run';
@@ -239,6 +267,12 @@ function loadFixtureTasks(): SyntheticTask[] {
     input: t.question,
     mockOutput: t.answer,
     expected: t.answer,
+    // The fixture's answer is used as BOTH the mock agent output and the
+    // expected value, so every task is an oracle echo: it can validate the
+    // scoring/spine plumbing, but it cannot demonstrate capability. Labelling
+    // it keeps the 100% figure from being read as a GAIA result.
+    oracleEcho: true,
+    scoringEligible: false,
   }));
 }
 
@@ -681,7 +715,33 @@ async function main(): Promise<number> {
     console.error(`FAILED: ${failedReason}`);
     exitCode = 2;
   } else {
-    console.log('PASSED: spine healthy + scoring correct (UNGRADED preserved for empty expected).');
+    // Scope this claim explicitly to the spine. It is a plumbing verdict, not
+    // a capability result — the capability verdict is printed separately below
+    // and is NOT_EVALUATED for a scaffold run.
+    console.log(
+      'SPINE OK: spine healthy + scoring correct (UNGRADED preserved for empty expected). ' +
+        'This is a plumbing check, not a capability result.',
+    );
+  }
+
+  // LM-19 — capability verdict, deliberately separate from the spine verdict
+  // above. Every task in this run is an oracle echo (the fixture answer is fed
+  // back as the agent output), so no task is scoring-eligible and no reviewed
+  // baseline exists. The run is therefore NOT_EVALUATED: exit 0 for a normal
+  // diagnostic run, non-zero only when a required job sets
+  // COMMANDER_BENCHMARK_STRICT=1. The spine exit code above is never softened.
+  const capability = capabilityVerdict({
+    mode: SCAFFOLD_MODE,
+    accuracy: effectiveScore / 100,
+    baselineAccuracy: null,
+    strict: capabilityStrictFromEnv(),
+  });
+  console.log(
+    formatCapabilityVerdict(capability, { accuracy: effectiveScore / 100, baselineAccuracy: null }),
+  );
+  if (capability.exitCode !== 0 && exitCode === 0) {
+    exitCode = capability.exitCode;
+    failedReason = capability.reason;
   }
 
   // Phase D — JSON result emit (optional, cron-gate contract).
@@ -699,6 +759,13 @@ async function main(): Promise<number> {
           passed: exitCode === 0,
           exitCode,
           failedReason,
+          // LM-19 — provenance labels so a consumer cannot read this artifact
+          // as a capability result. `effectiveScore` is a harness number here:
+          // every task is an oracle echo, so nothing is scoring-eligible.
+          executionMode: SCAFFOLD_MODE,
+          capabilityStatus: capability.status,
+          scoringEligible: capability.scoringEligible,
+          oracleEcho: true,
           summary: {
             total,
             correct: summary.correct,

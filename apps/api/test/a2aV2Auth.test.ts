@@ -15,8 +15,7 @@ interface TestServer {
 async function startV2(authToken: string | null | undefined): Promise<TestServer> {
   const app: Application = express();
   app.use(express.json());
-  const opts =
-    authToken === undefined ? undefined : { authToken: authToken as string | null };
+  const opts = authToken === undefined ? undefined : { authToken: authToken as string | null };
   app.use('/a2a/v2', createA2AV2Router(opts));
   const server = app.listen(0);
   await new Promise<void>((resolve) => server.on('listening', resolve));
@@ -95,8 +94,19 @@ describe('A2A v2 bearer auth (hard rule)', () => {
           params: { message: { role: 'user', parts: [{ type: 'text', text: 'hi' }] } },
         }),
       });
-      assert.notEqual(res.status, 401);
-      assert.notEqual(res.status, 500);
+      // F-A-8: pin the JSON-RPC envelope instead of "not 401 and not 500",
+      // which also accepted 403/404/400/502.
+      assert.equal(res.status, 200);
+      const body = (await res.json()) as {
+        jsonrpc: string;
+        id: number;
+        result?: { task?: { id?: string } };
+        error?: { code: number };
+      };
+      assert.equal(body.jsonrpc, '2.0');
+      assert.equal(body.id, 1);
+      assert.equal(body.error, undefined);
+      assert.ok(body.result?.task?.id, 'expected a created task in the JSON-RPC result');
     } finally {
       await server.close();
     }

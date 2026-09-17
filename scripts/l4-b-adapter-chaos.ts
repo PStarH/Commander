@@ -11,14 +11,19 @@
  */
 
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
   EffectBroker,
   EffectBrokerError,
   canonicalRequestHash,
+  createEvidenceSigner,
 } from '@commander/effect-broker';
-import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import {
+  InMemoryKernelRepository,
+  seedFreshOperationsDrains,
+} from '@commander/kernel/testing/inMemoryRepository';
 import {
   ActionAdapterRegistry,
   createGitHubPullRequestCreateAdapter,
@@ -109,9 +114,27 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
   const registry = new ActionAdapterRegistry([adapter]);
   const executor = createActionAdapterEffectExecutor(registry);
   const kernel = new InMemoryKernelRepository();
+  // Kernel admission of Class A effects is fail-closed on operations readiness:
+  // without live reconcile/compensate drains it returns OPERATIONS_NOT_READY.
+  seedFreshOperationsDrains(kernel, tenantId);
   const claimSecret = kernel.seedTestWorker(workerId, [tenantId], workerGeneration, {
     capabilities: ['tool', 'effect.execute'],
   });
+  // Reconcile mutations are fail-closed on worker claim authz (WORKER_FENCED without it),
+  // so the daemon needs its own registered adapter-ops reconcile drain identity.
+  const reconcileWorkerId = `reconcile:${tenantId}:chaos`;
+  const reconcileWorkerGeneration = 1;
+  const reconcileClaimSecret = kernel.seedTestWorker(
+    reconcileWorkerId,
+    [tenantId],
+    reconcileWorkerGeneration,
+    {
+      capabilities: ['effect.reconcile'],
+      identitySubject: 'db:commander_adapter_ops',
+      registeredAt: new Date(Date.now() - 1_000),
+      lastHeartbeatAt: new Date(),
+    },
+  );
 
   await kernel.createRun(
     {
@@ -224,6 +247,16 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     actor: 'reconciliation-daemon',
     pollIntervalMs: 60_000,
     batchSize: 10,
+    workerId: reconcileWorkerId,
+    workerGeneration: reconcileWorkerGeneration,
+    claimSecret: reconcileClaimSecret,
+    // Terminal reconcile evidence is fail-closed without a signer (EVIDENCE_SIGNING_KEY_REQUIRED).
+    evidenceSigner: createEvidenceSigner({
+      privateKeyPem: generateKeyPairSync('ed25519')
+        .privateKey.export({ format: 'pem', type: 'pkcs8' })
+        .toString(),
+      keyId: 'l4-b-chaos-evidence',
+    }),
     brokerFactory: (querier) =>
       new EffectBroker(
         tokens,

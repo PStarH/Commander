@@ -102,6 +102,11 @@ describe('Token Governor — Long Session Stress', () => {
   });
 
   it('learning loop adjusts strategy effectiveness over time', () => {
+    // Drive the governor into the `tight` phase (70% of a 200k budget) so both
+    // strategies under test are actually part of the recommendation set.
+    governor.reportUsage(140_000);
+    assert.strictEqual(governor.getState().phase, 'tight');
+
     // Simulate 50 iterations where context_compaction is always effective
     for (let i = 0; i < 50; i++) {
       governor.recordOutcome('context_compaction', 10000, 8000);
@@ -112,8 +117,21 @@ describe('Token Governor — Long Session Stress', () => {
       governor.recordOutcome('verification_skip', 10000, 10000);
     }
 
-    // The governor should learn from these outcomes
-    assert.ok(true, 'learning loop should not crash with many outcomes');
+    const recs = governor.getRecommendations();
+    const compaction = recs.find((d) => d.strategy === 'context_compaction');
+    const skip = recs.find((d) => d.strategy === 'verification_skip');
+    assert.ok(compaction, 'tight phase must recommend context_compaction');
+    assert.ok(skip, 'tight phase must recommend verification_skip');
+
+    // Consistently ineffective (<30% effective) → demoted, never applied.
+    assert.strictEqual(skip!.apply, false, 'a never-effective strategy must be demoted');
+    assert.match(skip!.reason, /demoted: 0% effective/);
+    // Consistently effective (>80% effective) → retained and boosted.
+    assert.strictEqual(compaction!.apply, true, 'an effective strategy must stay applied');
+    assert.ok(
+      compaction!.intensity > 0.5,
+      `effective strategy intensity should be boosted, got ${compaction!.intensity}`,
+    );
   });
 
   it('handles 1000 rapid reportUsage calls without memory leaks', () => {
@@ -142,7 +160,7 @@ describe('Token Governor — Long Session Stress', () => {
 });
 
 // ── Context Compactor ────────────────────────────────────────────────────────
-import { ContextCompactor } from '../src/runtime/contextCompactor';
+import { ContextCompactor, scoreMessageImportance } from '../src/runtime/contextCompactor';
 import type { LLMMessage } from '../src/runtime/types';
 
 function makeMessages(
@@ -215,20 +233,40 @@ describe('Context Compactor — Progressive Compaction', () => {
   });
 
   it('preserves high-importance messages', () => {
+    // The compactor scores every message before dropping it; the preservation
+    // threshold applied by extractImportantMessages() is importance > 0.6.
+    const critical: LLMMessage = {
+      role: 'user',
+      content: 'CRITICAL: Always write output to report.md',
+    };
+    const mundane: LLMMessage = { role: 'assistant', content: 'Response 12' };
+
+    const criticalScore = scoreMessageImportance(critical, 0, 101);
+    const mundaneScore = scoreMessageImportance(mundane, 0, 101);
+    assert.ok(
+      criticalScore > 0.6,
+      `a CRITICAL instruction must clear the 0.6 preservation threshold (got ${criticalScore})`,
+    );
+    assert.ok(
+      mundaneScore < criticalScore,
+      `mundane turn (${mundaneScore}) must score below a CRITICAL instruction (${criticalScore})`,
+    );
+
+    // End-to-end: the context must actually be compacted, and the instruction
+    // must still be present afterwards.
     const messages: LLMMessage[] = [];
-    // Add 50 normal messages
     for (let i = 0; i < 50; i++) {
-      messages.push({ role: 'user', content: `Normal message ${i}` });
-      messages.push({ role: 'assistant', content: `Response ${i}` });
+      messages.push({ role: 'user', content: `Normal message ${i}${'x'.repeat(200)}` });
+      messages.push({ role: 'assistant', content: `Response ${i}${'y'.repeat(200)}` });
     }
-    // Add a critical instruction
-    messages.push({ role: 'user', content: 'CRITICAL: Always write output to report.md' });
+    messages.push(critical);
 
     const result = compactor.compact(messages);
-    // The critical instruction should survive compaction
-    const hasCritical = result.messages.some((m) => m.content.includes('CRITICAL'));
-    // This is best-effort — the compactor may or may not preserve it depending on position
-    assert.ok(true, 'compaction should complete without error');
+    assert.ok(result.action.droppedCount > 0, 'compaction must actually drop messages');
+    assert.ok(
+      result.messages.some((m) => m.content.includes('CRITICAL')),
+      'the CRITICAL instruction must survive compaction',
+    );
   });
 });
 
@@ -273,7 +311,7 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
     assert.ok(afterDecay.totalEntries > 0, 'should still have entries after decay');
   });
 
-  it('longterm layer stores and retrieves entries', () => {
+  it('longterm layer stores and retrieves entries', async () => {
     const entry = memory.add(
       'Important finding: TypeScript is great',
       'longterm',
@@ -282,7 +320,7 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
       ['typescript', 'finding'],
     );
 
-    const results = memory.query({ layer: 'longterm', keywords: ['TypeScript'] });
+    const results = await memory.query({ layer: 'longterm', keywords: ['TypeScript'] });
     assert.ok(results.length > 0, 'should find longterm entry');
     assert.ok(
       results.some((r) => r.id === entry.id),
@@ -290,30 +328,30 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
     );
   });
 
-  it('query with multiple filters works correctly', () => {
+  it('query with multiple filters works correctly', async () => {
     memory.add('Entry 1', 'working', 'context-a', 0.8, ['tag1']);
     memory.add('Entry 2', 'episodic', 'context-b', 0.3, ['tag2']);
     memory.add('Entry 3', 'longterm', 'context-a', 0.9, ['tag1', 'tag2']);
 
-    const results = memory.query({ keywords: ['Entry'], importanceThreshold: 0.5 });
+    const results = await memory.query({ keywords: ['Entry'], importanceThreshold: 0.5 });
     assert.ok(results.length >= 2, 'should find high-importance entries');
   });
 
-  it('promotion from working to longterm preserves content', () => {
+  it('promotion from working to longterm preserves content', async () => {
     const entry = memory.add('Promote me', 'working', 'test', 0.95, ['important']);
     memory.promoteToLongTerm(entry.id);
 
-    const results = memory.query({ layer: 'longterm', keywords: ['Promote'] });
+    const results = await memory.query({ layer: 'longterm', keywords: ['Promote'] });
     assert.ok(results.length > 0, 'should find promoted entry in longterm');
   });
 
-  it('handles 1000 rapid add/query cycles', () => {
+  it('handles 1000 rapid add/query cycles', async () => {
     const before = process.memoryUsage().heapUsed;
     for (let i = 0; i < 1000; i++) {
       memory.add(`Entry ${i}`, i % 3 === 0 ? 'working' : 'episodic', 'stress', Math.random(), [
         'stress',
       ]);
-      if (i % 10 === 0) memory.query({ keywords: ['Entry'], limit: 5 });
+      if (i % 10 === 0) await memory.query({ keywords: ['Entry'], limit: 5 });
     }
     const after = process.memoryUsage().heapUsed;
     assert.ok(after - before < 20 * 1024 * 1024, 'memory growth should be bounded');
@@ -550,7 +588,17 @@ describe('Circuit Breaker — Failure Recovery', () => {
       }
       cb.isAvailable(); // Should not crash
     }
-    assert.ok(true, 'should handle rapid state changes');
+
+    // Deterministic outcome: 15 successes (i % 7 === 0 for i in 0..99), the
+    // final iteration is a failure, and the breaker must have tripped at least
+    // once — 6 consecutive failures exceed the threshold of 5.
+    const stats = cb.getStats();
+    assert.strictEqual(stats.successCount, 15, 'every i % 7 === 0 iteration is a success');
+    assert.strictEqual(stats.failureCount, 1, 'the final iteration is a failure');
+    assert.ok(
+      stats.openCount >= 1,
+      `100 rapid failure/success cycles must trip the breaker (openCount=${stats.openCount})`,
+    );
   });
 });
 
@@ -770,7 +818,7 @@ describe('Simulated Long-Running Orchestration', () => {
     assert.ok(messages.length < 400, 'should have reduced message count');
   });
 
-  it('simulates multi-agent parallel execution with shared memory', () => {
+  it('simulates multi-agent parallel execution with shared memory', async () => {
     const memory = new ThreeLayerMemory();
     const governor = new TokenGovernor({ totalBudget: 300_000 });
 
@@ -813,7 +861,7 @@ describe('Simulated Long-Running Orchestration', () => {
     assert.ok(stats.byLayer.longterm >= agentCount, 'should have agent summaries in longterm');
 
     // Verify synthesis can query across agents
-    const summaries = memory.query({ layer: 'longterm', keywords: ['summary'] });
+    const summaries = await memory.query({ layer: 'longterm', keywords: ['summary'] });
     assert.ok(summaries.length >= agentCount, 'should find all agent summaries');
 
     // Verify governor tracked total usage

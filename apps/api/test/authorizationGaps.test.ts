@@ -125,18 +125,34 @@ describe('AUDIT-API1: onboarding run-first-task requires admin (LLM spend guard)
     app2.use(jwtMiddleware);
     app2.use(authMiddleware);
     app2.use(tenantContextMiddleware);
-    let providerCalled = false;
-    app2.use((_req: express.Request, res: express.Response, next: express.NextFunction) => {
-      // Instrument: if the handler reached resolveProvider it would fetch();
-      // the guard must reject before that. We detect via status alone.
-      next();
-    });
+
+    // F-A-5: the previous version declared `providerCalled` but never assigned
+    // it, so `assert.ok(!providerCalled)` was unconditionally true. Instrument
+    // the actual outbound call the handler would make by stubbing global fetch,
+    // and configure a provider so the unguarded path really does fetch.
+    const realFetch = globalThis.fetch;
+    let providerCalls = 0;
+    globalThis.fetch = (async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'hi' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const savedKey = process.env.OPENAI_API_KEY;
+    const savedBase = process.env.OPENAI_BASE_URL;
+    process.env.OPENAI_API_KEY = 'test-operator-key';
+    process.env.OPENAI_BASE_URL = 'http://127.0.0.1:1/v1';
+
     app2.use(createOnboardingRouter({}));
     const server2 = app2.listen(0, '127.0.0.1');
     await new Promise<void>((r) => server2.once('listening', r));
     const port2 = (server2.address() as { port: number }).port;
     try {
-      const res = await fetch(`http://127.0.0.1:${port2}/api/onboarding/run-first-task`, {
+      // NOTE: the harness's own HTTP call must use the captured real fetch, or
+      // the stub would answer the harness request and the test would be vacuous.
+      const res = await realFetch(`http://127.0.0.1:${port2}/api/onboarding/run-first-task`, {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -146,9 +162,62 @@ describe('AUDIT-API1: onboarding run-first-task requires admin (LLM spend guard)
       });
       // FAILING before the fix: 200 — the viewer spent the operator's key.
       assert.equal(res.status, 403, 'viewer must not trigger operator-funded LLM calls');
-      assert.ok(!providerCalled);
+      assert.equal(providerCalls, 0, 'guard must reject before any provider fetch');
     } finally {
       await new Promise<void>((r) => server2.close(() => r()));
+      globalThis.fetch = realFetch;
+      if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = savedKey;
+      if (savedBase === undefined) delete process.env.OPENAI_BASE_URL;
+      else process.env.OPENAI_BASE_URL = savedBase;
+    }
+  });
+
+  test('positive control: an admin does reach the provider call path', async () => {
+    const { createOnboardingRouter } = await import('../src/onboardingEndpoints');
+    const app3 = express();
+    app3.use(express.json());
+    app3.use(jwtMiddleware);
+    app3.use(authMiddleware);
+    app3.use(tenantContextMiddleware);
+
+    const realFetch = globalThis.fetch;
+    let providerCalls = 0;
+    globalThis.fetch = (async () => {
+      providerCalls += 1;
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'hi' } }] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+
+    const savedKey = process.env.OPENAI_API_KEY;
+    const savedBase = process.env.OPENAI_BASE_URL;
+    process.env.OPENAI_API_KEY = 'test-operator-key';
+    process.env.OPENAI_BASE_URL = 'http://127.0.0.1:1/v1';
+
+    app3.use(createOnboardingRouter({}));
+    const server3 = app3.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => server3.once('listening', r));
+    const port3 = (server3.address() as { port: number }).port;
+    try {
+      const res = await realFetch(`http://127.0.0.1:${port3}/api/onboarding/run-first-task`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${bearerToken('admin')}`,
+        },
+        body: JSON.stringify({ task: 'say hi' }),
+      });
+      assert.equal(res.status, 200);
+      assert.equal(providerCalls, 1, 'admin path must reach the provider fetch');
+    } finally {
+      await new Promise<void>((r) => server3.close(() => r()));
+      globalThis.fetch = realFetch;
+      if (savedKey === undefined) delete process.env.OPENAI_API_KEY;
+      else process.env.OPENAI_API_KEY = savedKey;
+      if (savedBase === undefined) delete process.env.OPENAI_BASE_URL;
+      else process.env.OPENAI_BASE_URL = savedBase;
     }
   });
 });

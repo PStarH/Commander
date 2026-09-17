@@ -8,7 +8,14 @@ import { verifyLaunchBundle } from './launch-verify.js';
 
 const GATES = ['G1', 'G2', 'G3', 'G4', 'G5', 'G6', 'G7'] as const;
 
-async function fixture(options: { missingGate?: string; secret?: boolean; dirty?: boolean } = {}) {
+async function fixture(
+  options: {
+    missingGate?: string;
+    secret?: boolean;
+    dirty?: boolean;
+    imageDigests?: unknown;
+  } = {},
+) {
   const root = await mkdtemp(join(tmpdir(), 'commander-launch-verify-'));
   await mkdir(join(root, 'g8'), { recursive: true });
   await writeFile(
@@ -17,7 +24,7 @@ async function fixture(options: { missingGate?: string; secret?: boolean; dirty?
       commit: 'a'.repeat(40),
       dirty: options.dirty ?? false,
       lockfileSha256: 'b'.repeat(64),
-      imageDigests: ['commander@sha256:' + 'c'.repeat(64)],
+      imageDigests: options.imageDigests ?? ['commander@sha256:' + 'c'.repeat(64)],
     }),
   );
   for (const gate of GATES) {
@@ -64,5 +71,36 @@ describe('launch evidence verification', () => {
     assert.equal(result.verdict, 'NOT_READY');
     assert.ok(result.failures.includes('SOURCE_DIRTY'));
     assert.ok(result.failures.some((failure) => failure.startsWith('SECRET_DETECTED:')));
+  });
+
+  it('rejects image references that are not digest-pinned', async () => {
+    // Each of these satisfies `includes('@sha256:')` — the check this test
+    // replaces — while pinning nothing. A tag-pinned image is mutable, so a
+    // bundle that passes on such a reference does not prove what shipped.
+    const weak = [
+      '@sha256:',
+      'commander@sha256:',
+      'commander@sha256:nothex',
+      'commander@sha256:' + 'c'.repeat(63),
+      'commander:latest',
+    ];
+    for (const digest of weak) {
+      const evidence = await fixture({ imageDigests: [digest] });
+      const result = await verifyLaunchBundle({ release: 'v0.2.0-test', evidence });
+      assert.equal(result.verdict, 'NOT_READY', `should reject ${digest}`);
+      assert.ok(
+        result.failures.includes('IMAGE_DIGEST_INVALID'),
+        `expected IMAGE_DIGEST_INVALID for ${digest}`,
+      );
+    }
+  });
+
+  it('accepts a properly digest-pinned image reference', async () => {
+    const evidence = await fixture({
+      imageDigests: ['ghcr.io/commander/api@sha256:' + 'c'.repeat(64)],
+    });
+    const result = await verifyLaunchBundle({ release: 'v0.2.0-test', evidence });
+    assert.equal(result.verdict, 'PROVEN');
+    assert.ok(!result.failures.includes('IMAGE_DIGEST_INVALID'));
   });
 });

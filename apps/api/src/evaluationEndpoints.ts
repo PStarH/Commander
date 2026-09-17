@@ -5,12 +5,79 @@
 
 import express, { Request, Response, Router } from 'express';
 import { LLMEvaluator, ScoreSmoother, EvaluationCriterion, EvaluationRequest } from './evaluation';
-import { resolveSecureApiKey } from '@commander/core/security';
 
 /** Hard cap on batch evaluate items to prevent LLM cost / connection exhaustion. */
 export const MAX_BATCH_ITEMS = 50;
 /** Max concurrent LLM judge calls within a single batch request. */
 export const MAX_BATCH_CONCURRENCY = 3;
+
+/**
+ * Stable error code returned when no governed judge is wired.
+ *
+ * LM-28: this module previously constructed its own provider client and called
+ * `fetch()` directly. That path had no deadline, no cost authority (no budget
+ * reservation, no UCA settlement) and echoed the provider response body into
+ * error messages. An ungoverned paid execution path must not be reachable from
+ * the production assembly, so the direct provider client has been removed.
+ */
+export const EVALUATION_NOT_AVAILABLE = 'EVALUATION_NOT_AVAILABLE';
+
+/** Stable error code for a judge call that ran but produced no usable answer. */
+export const EVALUATION_JUDGE_FAILED = 'EVALUATION_JUDGE_FAILED';
+
+/** Deadline applied to a single governed judge call. */
+export const DEFAULT_JUDGE_TIMEOUT_MS = 30_000;
+
+/**
+ * A judge adapter that routes through the project's provider + cost authority.
+ *
+ * The host is responsible for supplying one. This module deliberately does not
+ * provide a fallback: "unconfigured" must be a hard failure, never a silent
+ * mock or a direct provider call.
+ */
+export interface GovernedJudgeAdapter {
+  call(prompt: string, options: { signal: AbortSignal }): Promise<string>;
+}
+
+export interface GovernedJudgeOptions {
+  /** Per-call deadline in ms. Defaults to {@link DEFAULT_JUDGE_TIMEOUT_MS}. */
+  timeoutMs?: number;
+}
+
+/** Thrown when no governed judge is wired, or a judge call cannot be used. */
+export class EvaluationUnavailableError extends Error {
+  readonly code: string;
+  constructor(code: string, detail: string) {
+    super(`${code}: ${detail}`);
+    this.name = 'EvaluationUnavailableError';
+    this.code = code;
+  }
+}
+
+/**
+ * Normalise a caller-supplied deadline. `NaN`, non-positive and non-finite
+ * values fall back to the safe default rather than silently disabling the
+ * deadline (a `NaN` timeout would otherwise abort every call immediately, and
+ * `0`/negative is never a meaningful deadline).
+ */
+function normalizeTimeout(timeoutMs: number | undefined): number {
+  if (typeof timeoutMs !== 'number' || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return DEFAULT_JUDGE_TIMEOUT_MS;
+  }
+  return Math.floor(timeoutMs);
+}
+
+/**
+ * Map an evaluation failure to a non-2xx response without leaking upstream
+ * text. Provider bodies are never echoed back to the caller.
+ */
+function sendEvaluationError(res: Response, error: unknown): void {
+  if (error instanceof EvaluationUnavailableError) {
+    res.status(503).json({ error: error.code });
+    return;
+  }
+  res.status(500).json({ error: 'EVALUATION_FAILED' });
+}
 
 async function mapWithConcurrency<T, R>(
   items: T[],
@@ -73,7 +140,7 @@ export function createEvaluationRouter(
         aggregated: evaluator.getAggregatedScore(targetId),
       });
     } catch (error) {
-      res.status(500).json({ error: (error as Error).message });
+      sendEvaluationError(res, error);
     }
   });
 
@@ -117,7 +184,7 @@ export function createEvaluationRouter(
         };
       } catch (error) {
         allResults[item.targetId] = {
-          error: (error as Error).message,
+          error: error instanceof EvaluationUnavailableError ? error.code : 'EVALUATION_FAILED',
         };
       }
     });
@@ -265,7 +332,7 @@ export function createEvaluationRouter(
         recommendation: passed ? 'Output meets quality standards' : 'Output needs improvement',
       });
     } catch (error) {
-      res.status(500).json({ error: (error as Error).message });
+      sendEvaluationError(res, error);
     }
   });
 
@@ -285,87 +352,64 @@ export function createEvaluationRouter(
 }
 
 /**
- * Create a production LLM call for LLM-as-Judge evaluation.
+ * Build the judge call used by the evaluation router.
  *
- * Uses the real LLM provider when an API key is configured. Falls back to
- * mock only when COMMANDER_EVAL_MOCK=true is explicitly set.
+ * LM-28: this factory used to construct its own OpenAI/Anthropic client and
+ * call `fetch()` directly. That is an **ungoverned paid execution path**: no
+ * deadline, no cost reservation, no settlement through the project's cost
+ * authority, and provider response bodies were echoed into errors. It has been
+ * removed. Supplying a {@link GovernedJudgeAdapter} is now the only way to
+ * enable real scoring, and the host must wire one that routes through the
+ * project's provider + cost authority.
  *
- * Per project constraint: LLM-as-Judge evaluation must use a real provider.
- * Silent fake scores in production are a correctness and safety risk.
+ * With no adapter the returned call fails closed with
+ * {@link EVALUATION_NOT_AVAILABLE} and performs **zero** network I/O — the
+ * endpoints report the capability as unavailable instead of fabricating
+ * scores. `COMMANDER_EVAL_MOCK` is deliberately no longer consulted here: a
+ * mock judge is a test fixture (`createMockLLMCall`), not a production mode.
  */
-export function createProductionLLMCall(): (prompt: string) => Promise<string> {
-  const useMock = process.env.COMMANDER_EVAL_MOCK === 'true';
-
-  if (useMock) {
-    process.stderr.write(
-      '[Evaluation] WARNING: COMMANDER_EVAL_MOCK=true — using mock LLM judge (NOT for production)\n',
-    );
-    return createMockLLMCall();
-  }
-
-  // Resolve API key from EncryptedSecretsVault or environment variable
-  const apiKey = resolveSecureApiKey('OPENAI_API_KEY') ?? resolveSecureApiKey('ANTHROPIC_API_KEY');
-  const model = process.env.COMMANDER_EVAL_MODEL ?? 'gpt-4o-mini';
-  const isAnthropic =
-    !!resolveSecureApiKey('ANTHROPIC_API_KEY') && !resolveSecureApiKey('OPENAI_API_KEY');
-
-  if (!apiKey) {
-    // No provider configured — return a clear error instead of fake scores
-    return async (_prompt: string) => {
-      throw new Error(
-        'EVAL_LLM_NOT_CONFIGURED: No LLM API key found. Set OPENAI_API_KEY or ANTHROPIC_API_KEY, ' +
-          'or set COMMANDER_EVAL_MOCK=true for testing. Evaluation endpoints cannot return real scores without a provider.',
+export function createProductionLLMCall(
+  adapter?: GovernedJudgeAdapter,
+  options: GovernedJudgeOptions = {},
+): (prompt: string) => Promise<string> {
+  if (!adapter) {
+    return async () => {
+      throw new EvaluationUnavailableError(
+        EVALUATION_NOT_AVAILABLE,
+        'no governed judge adapter is configured',
       );
     };
   }
 
-  // Real LLM call via OpenAI-compatible Chat Completions API
+  const timeoutMs = normalizeTimeout(options.timeoutMs);
+
   return async (prompt: string): Promise<string> => {
-    const baseURL = process.env.COMMANDER_LLM_BASE_URL ?? 'https://api.openai.com/v1';
-
-    if (isAnthropic) {
-      // Anthropic Messages API
-      const response = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-        },
-        body: JSON.stringify({
-          model: process.env.COMMANDER_EVAL_MODEL ?? 'claude-3-5-sonnet-20241022',
-          max_tokens: 1024,
-          messages: [{ role: 'user', content: prompt }],
-        }),
-      });
-      if (!response.ok) {
-        throw new Error(`LLM judge call failed: ${response.status} ${await response.text()}`);
+    const signal = AbortSignal.timeout(timeoutMs);
+    let raw: string;
+    try {
+      raw = await adapter.call(prompt, { signal });
+    } catch (err) {
+      // Never forward the adapter's message verbatim — it may carry provider
+      // response text. A timeout is the absence of a decision, not a score.
+      if (signal.aborted) {
+        throw new EvaluationUnavailableError(
+          EVALUATION_JUDGE_FAILED,
+          `judge call exceeded its ${timeoutMs}ms deadline`,
+        );
       }
-      const data = (await response.json()) as { content: Array<{ text: string }> };
-      return data.content[0]?.text ?? '';
+      const name = err instanceof Error && err.name ? err.name : 'Error';
+      throw new EvaluationUnavailableError(EVALUATION_JUDGE_FAILED, `judge call failed (${name})`);
     }
 
-    // OpenAI-compatible Chat Completions
-    const response = await fetch(`${baseURL}/chat/completions`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: 1024,
-        temperature: 0,
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`LLM judge call failed: ${response.status} ${await response.text()}`);
+    const text = typeof raw === 'string' ? raw.trim() : '';
+    if (text.length === 0) {
+      // Fail rather than fabricate a score from an unusable judge response.
+      throw new EvaluationUnavailableError(
+        EVALUATION_JUDGE_FAILED,
+        'judge returned an empty response',
+      );
     }
-    const data = (await response.json()) as {
-      choices: Array<{ message: { content: string } }>;
-    };
-    return data.choices[0]?.message?.content ?? '';
+    return text;
   };
 }
 

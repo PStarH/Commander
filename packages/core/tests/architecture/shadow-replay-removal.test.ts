@@ -3,7 +3,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, it } from 'vitest';
-import { readShadowDependencyClosure, validateShadowDependencyClosure } from '../../../../scripts/shadow-dependency-guard';
+import {
+  readShadowDependencyClosure,
+  validateShadowDependencyClosure,
+} from '../../../../scripts/shadow-dependency-guard';
 
 const ROOT = fileURLToPath(new URL('../../../../', import.meta.url));
 

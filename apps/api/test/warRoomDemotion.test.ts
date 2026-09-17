@@ -60,6 +60,7 @@ async function withApp(
 ): Promise<void> {
   const tmpDir = mkdtempSync(path.join(tmpdir(), 'ws3-warroom-'));
   const oldFile = process.env.COMMANDER_WARROOM_FILE;
+  const oldProfile = process.env.COMMANDER_PROFILE;
   process.env.COMMANDER_WARROOM_FILE = path.join(tmpDir, 'war-room.json');
   process.env.COMMANDER_PROFILE = profile;
   try {
@@ -100,7 +101,10 @@ async function withApp(
       );
     }
   } finally {
-    process.env.COMMANDER_PROFILE = undefined;
+    // F-B-6: assigning `undefined` coerces to the string "undefined", leaving
+    // COMMANDER_PROFILE DEFINED for every later test in the process.
+    if (oldProfile === undefined) delete process.env.COMMANDER_PROFILE;
+    else process.env.COMMANDER_PROFILE = oldProfile;
     if (oldFile !== undefined) process.env.COMMANDER_WARROOM_FILE = oldFile;
     else delete process.env.COMMANDER_WARROOM_FILE;
     rmSync(tmpDir, { recursive: true, force: true });

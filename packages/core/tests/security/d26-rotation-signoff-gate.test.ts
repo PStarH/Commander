@@ -117,6 +117,10 @@ import {
   verifyShaAsync,
   VerifyResult,
 } from '../../src/security/rotationSignoffVerifier';
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const REAL_DOC = path.join(REPO_ROOT, 'docs/security/keys-rotation.md');

@@ -267,7 +267,10 @@ describe('ExecutionRouter', () => {
     }
   });
 
-  it('proceeds with cloud routing when privacy check fails', async () => {
+  it('cancels when the privacy check throws (fail closed)', async () => {
+    // RT1-02: the privacy check is a security gate. A throw means the decision
+    // is UNKNOWN, and an unknown decision must never be converted into
+    // "proceed with cloud routing" — the run must be cancelled instead.
     const privacy = makePrivacyMock({ throw: true });
     deps = makeDeps({ getPrivacyRouter: () => privacy });
     router = new ExecutionRouter(deps);
@@ -279,7 +282,11 @@ describe('ExecutionRouter', () => {
       tracer: makeTracer(),
     });
 
-    expect(result.status).toBe('proceed');
+    expect(result.status).toBe('cancelled');
+    if (result.status === 'cancelled') {
+      expect(result.summary).toContain('PRIVACY_CHECK_FAILED');
+      expect(result.summary).toContain('privacy service unavailable');
+    }
   });
 
   it('computes batch routing when eligible', async () => {

@@ -25,6 +25,9 @@ import { getSecurityMonitor } from './securityMonitor';
 import { getGlobalLogger } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import * as crypto from 'node:crypto';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -844,7 +847,7 @@ export class EuAiActComplianceReporter {
   private getCurrentSecurityScore(): number {
     try {
       // Try to get from RedTeamFramework
-      const { getRedTeamFramework } = require('./redTeamFramework');
+      const { getRedTeamFramework } = nodeRequire('./redTeamFramework');
       const rf = getRedTeamFramework();
       const lastRun = rf.getLastRunReport();
       if (lastRun) {

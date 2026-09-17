@@ -12,6 +12,9 @@
 
 import { reportSilentFailure } from '../../packages/core/src/silentFailureReporter';
 import { spawn, ChildProcess } from 'child_process';
+import { createHash, randomBytes } from 'crypto';
+import { readFileSync } from 'fs';
+import { X509Certificate } from 'crypto';
 import { setTimeout as sleep } from 'timers/promises';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -20,6 +23,39 @@ const ROOT = path.resolve(__dirname, '../..');
 const API_LOG = path.join(ROOT, '.commander', 'qa-api.log');
 const DEMO_LOG = path.join(ROOT, '.commander', 'qa-demo.log');
 const UNHANDLED_RE = /UnhandledPromiseRejection|unhandled.*rejection|Unhandled exception/i;
+
+// Throwaway QA Postgres TLS material (see demo-qa README / session notes).
+const TLS_CA_FILE = path.join(ROOT, '.commander', 'qa-pg', 'tls', 'server.crt');
+const TLS_SPKI = createHash('sha256')
+  .update(
+    new X509Certificate(readFileSync(TLS_CA_FILE)).publicKey.export({
+      format: 'der',
+      type: 'spki',
+    }) as Buffer,
+  )
+  .digest('hex');
+
+// The API fail-closes at boot without strong secrets. Generate fresh random
+// values per run so the demo never depends on committed credentials or
+// predictable placeholders.
+const DEV_SECRETS = {
+  JWT_SECRET: randomBytes(32).toString('hex'),
+  COMMANDER_MASTER_KEY: randomBytes(32).toString('hex'),
+  COMMANDER_API_KEY: `qa-${randomBytes(24).toString('hex')}`,
+  COMMANDER_CAPABILITY_TOKEN_KEY: randomBytes(32).toString('hex'),
+  COMMANDER_INTEGRITY_KEY: randomBytes(32).toString('hex'),
+  ADMIN_PASSWORD: `qa-${randomBytes(24).toString('hex')}`,
+  // Auth repositories fail closed without a Postgres DSN authenticated as
+  // `commander_app`. Default to the throwaway QA cluster (port 5433) so the
+  // demo never touches a real database; override with DATABASE_URL.
+  DATABASE_URL:
+    process.env.DATABASE_URL ??
+    'postgres://commander_app:commander_app@127.0.0.1:5433/commander?sslmode=verify-full',
+  // postgres-runtime fails closed without a trusted CA + SPKI pin.
+  COMMANDER_DATABASE_TLS_CA_FILE: process.env.COMMANDER_DATABASE_TLS_CA_FILE ?? TLS_CA_FILE,
+  COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:
+    process.env.COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256 ?? TLS_SPKI,
+};
 
 interface RunResult {
   code: number | null;
@@ -129,7 +165,7 @@ async function main() {
 
   // 1. Start the API server.
   const api = await runCommand('npx', ['tsx', 'apps/api/src/index.ts'], {
-    env: { PORT: '4000', WEB_PORT: '5173' },
+    env: { PORT: '4000', WEB_PORT: '5173', ...DEV_SECRETS },
     logFile: API_LOG,
   });
 

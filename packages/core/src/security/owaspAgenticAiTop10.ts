@@ -45,6 +45,9 @@ import {
 } from './securityAuditLogger';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import type { BusMessage } from '../runtime/types/messageBus';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Public types
@@ -349,7 +352,7 @@ export class OwaspAgenticAiTop10 {
       // Lazy require avoids hard-cyclic dependency in test environments where
       // the bus singleton has not been constructed.
 
-      const { getMessageBus } = require('../runtime/messageBus');
+      const { getMessageBus } = nodeRequire('../runtime/messageBus');
       const bus = getMessageBus();
       this.busUnsub = bus.subscribe('security.event', (msg: BusMessage) => {
         const event = msg?.payload as SecurityEvent | undefined;

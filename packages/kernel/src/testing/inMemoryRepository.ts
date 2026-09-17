@@ -57,13 +57,14 @@ import { findMatchingKillSwitchWithLookup } from '../killSwitchMatching.js';
 import {
   KERNEL_COMPENSATION_TOPIC,
   LEGACY_COMPENSATION_TOPIC,
-  normalizeCompensationPayload,
   type ClaimedCompensationWork,
   type CompensationClaimAuth,
   type CompensationWorkDispositionResult,
 } from '../ops/compensationConsumer.js';
 import {
   canonicalCompensationHash,
+  sealGovernedCompensationAuthorization,
+  validateGovernedCompensationAuthorization,
   type GovernedCompensationAuthorization,
 } from '../ops/compensationAuthority.js';
 import { durableCompensationMetadataAuthorization } from '../ops/compensationPersistence.js';
@@ -1016,37 +1017,71 @@ export class InMemoryKernelRepository implements KernelRepository {
       return { admitted: false, reason: 'LEASE_LOST' };
     }
     if (isCompensation && !canonicalCompensationAdmission) {
-      const run = this.runs.get(request.runId);
-      const authorization = run ? this.compensationAuthorization(run) : null;
-      const stepAuthorization = (step.input as { authorization?: unknown }).authorization;
       const binding = request.compensationBinding;
+      const run = this.runs.get(request.runId);
+      const evidence = run ? this.compensationAuthorization(run) : null;
+      const stepAuthorization = (step.input as { authorization?: unknown }).authorization;
       const worker = this.workers.get(request.lease.workerId);
-      const outboxMessage = authorization
+      // The compact producer payload is located by its outbox claim token; it
+      // is only a cross-check against the durable rows resolved below.
+      const outboxMessage = binding
         ? [...this.outbox.values()].find(
             (message) =>
               !message.publishedAt &&
               message.topic === KERNEL_COMPENSATION_TOPIC &&
-              message.payload.authorizationId === authorization.authorizationId,
+              this.outboxClaims.get(message.id)?.token === binding.claimToken,
           )
         : undefined;
-      const outboxClaim = outboxMessage ? this.outboxClaims.get(outboxMessage.id) : undefined;
+      const payload = outboxMessage?.payload;
+      const payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId : null;
+      const payloadAuthorizationId =
+        typeof payload?.authorizationId === 'string' ? payload.authorizationId : null;
+      const payloadTenantId = typeof payload?.tenantId === 'string' ? payload.tenantId : null;
+      const payloadActionDigest =
+        typeof payload?.actionDigest === 'string' ? payload.actionDigest : null;
+      // Mirror claimCompensationWork: the durable compensation request is the
+      // resolution root, then its authorization record, then the completed
+      // forward effect.
+      const durableRequest = payloadRequestId
+        ? this.compensationRequests.get(payloadRequestId)
+        : undefined;
+      const durableAuthorization = durableRequest
+        ? this.compensationAuthorizations.get(durableRequest.authorizationId)
+        : undefined;
+      const originalEffect = durableRequest
+        ? this.effects.get(durableRequest.originalEffectId)
+        : undefined;
+      const governed =
+        durableRequest && durableAuthorization && originalEffect?.state === 'COMPLETED' && evidence
+          ? this.governedCompensationAuthorizationFromDurableEvidence({
+              evidence,
+              request: durableRequest,
+              durableAuthorization,
+              originalEffect,
+            })
+          : null;
       if (
-        !authorization ||
-        canonical(stepAuthorization) !== canonical(authorization) ||
+        !governed ||
         !binding ||
-        binding.authorizationId !== authorization.authorizationId ||
-        binding.requestId !== authorization.requestId ||
+        canonical(stepAuthorization) !== canonical(evidence) ||
+        payloadTenantId !== request.tenantId ||
+        payloadRequestId !== durableRequest?.id ||
+        payloadAuthorizationId !== durableAuthorization?.id ||
+        payloadActionDigest !== durableAuthorization?.actionDigest ||
+        durableRequest?.tenantId !== request.tenantId ||
+        durableRequest?.authorizationId !== durableAuthorization?.id ||
+        binding.authorizationId !== governed.authorizationId ||
+        binding.requestId !== governed.requestId ||
         binding.claimToken !== request.lease.token ||
-        authorization.compensationEffectId !== request.id ||
-        authorization.compensationEffectType !== request.type ||
-        authorization.compensationRunId !== request.runId ||
-        authorization.compensationStepId !== request.stepId ||
-        authorization.idempotencyKey !== request.idempotencyKey ||
-        authorization.policyDecisionId !== request.policyDecisionId ||
-        authorization.policySnapshotId !== request.policySnapshotId ||
-        authorization.actionDigest !== request.actionDigest ||
-        canonical(authorization.compensationRequest) !== canonical(request.request) ||
-        outboxClaim?.token !== binding.claimToken ||
+        governed.compensationEffectId !== request.id ||
+        governed.compensationEffectType !== request.type ||
+        governed.compensationRunId !== request.runId ||
+        governed.compensationStepId !== request.stepId ||
+        governed.idempotencyKey !== request.idempotencyKey ||
+        governed.policyDecisionId !== request.policyDecisionId ||
+        governed.policySnapshotId !== request.policySnapshotId ||
+        governed.actionDigest !== request.actionDigest ||
+        canonical(governed.compensationRequest) !== canonical(request.request) ||
         worker?.identitySubject !== 'db:commander_adapter_ops' ||
         worker.generation !== request.lease.workerGeneration ||
         worker.status !== 'ACTIVE' ||
@@ -2259,7 +2294,13 @@ export class InMemoryKernelRepository implements KernelRepository {
           authorizationId: authorization.id,
           compensation: { authorization: metadataAuthorization, disposition: 'PENDING' },
         },
-        steps: [{ id: compensationStepId, kind: 'tool', input: { requestId } }],
+        steps: [
+          {
+            id: compensationStepId,
+            kind: 'tool',
+            input: { requestId, authorization: metadataAuthorization },
+          },
+        ],
       },
       input.actor,
     );
@@ -2845,6 +2886,88 @@ export class InMemoryKernelRepository implements KernelRepository {
     );
   }
 
+  /**
+   * Rebuild the sealed governed authorization from the durable records the
+   * producer wrote — the compensation request, its authorization record, the
+   * completed forward effect and the run-metadata evidence copy. The compact
+   * outbox payload is only a cross-check; it is never authoritative.
+   */
+  private governedCompensationAuthorizationFromDurableEvidence(input: {
+    evidence: GovernedCompensationAuthorization;
+    request: KernelCompensationRequest;
+    durableAuthorization: CompensationAuthorizationRecord;
+    originalEffect: KernelEffect;
+  }): GovernedCompensationAuthorization | null {
+    const evidence = input.evidence as unknown as Record<string, unknown>;
+    const { request, durableAuthorization } = input;
+    const forwardResponse = (input.originalEffect.response ?? {}) as Record<string, unknown>;
+    const compensationRequest = {
+      originalEffectId: request.originalEffectId,
+      destination: input.originalEffect.request.destination,
+      forwardResponse,
+      compensationPatch: durableAuthorization.compensationPatch,
+    };
+    if (
+      evidence.schema !== 'commander.compensation/v1' ||
+      typeof evidence.originalRunStateAtRequest !== 'string' ||
+      evidence.originalRunStateAtRequest.length === 0 ||
+      typeof evidence.compensationEffectId !== 'string' ||
+      evidence.compensationEffectId.length === 0 ||
+      evidence.authorizationId !== durableAuthorization.id ||
+      evidence.requestId !== request.id ||
+      evidence.tenantId !== request.tenantId ||
+      evidence.originalRunId !== request.originalRunId ||
+      evidence.originalEffectId !== request.originalEffectId ||
+      evidence.compensationRunId !== request.compensationRunId ||
+      evidence.compensationStepId !== request.compensationStepId ||
+      evidence.compensationEffectType !== durableAuthorization.compensationEffectType ||
+      evidence.adapterVersion !== durableAuthorization.adapterVersion ||
+      evidence.policyDecisionId !== durableAuthorization.policyDecisionId ||
+      evidence.policySnapshotId !== durableAuthorization.policySnapshotId ||
+      evidence.decisionEffect !== durableAuthorization.decision ||
+      evidence.authorizationExpiresAt !== durableAuthorization.expiresAt ||
+      evidence.forwardReceiptHash !== durableAuthorization.forwardReceiptHash ||
+      evidence.actionDigest !== durableAuthorization.actionDigest ||
+      canonical(evidence.compensationRequest) !== canonical(compensationRequest) ||
+      canonical(evidence.forwardReceipt ?? null) !== canonical(forwardResponse) ||
+      canonical(evidence.approvalBinding ?? null) !==
+        canonical(durableAuthorization.approvalBinding ?? null) ||
+      durableAuthorization.originalRunId !== request.originalRunId ||
+      durableAuthorization.originalEffectId !== request.originalEffectId ||
+      durableAuthorization.compensationEffectType !== request.compensationEffectType ||
+      durableAuthorization.adapterVersion !== request.adapterVersion ||
+      durableAuthorization.forwardReceiptHash !== request.forwardReceiptHash ||
+      canonical(durableAuthorization.compensationPatch) !== canonical(request.compensationPatch) ||
+      canonicalCompensationHash(forwardResponse) !== durableAuthorization.forwardReceiptHash
+    ) {
+      return null;
+    }
+    const sealed = sealGovernedCompensationAuthorization({
+      schema: 'commander.compensation/v1',
+      authorizationId: durableAuthorization.id,
+      requestId: request.id,
+      tenantId: request.tenantId,
+      originalRunId: request.originalRunId,
+      originalEffectId: request.originalEffectId,
+      originalRunStateAtRequest: evidence.originalRunStateAtRequest,
+      compensationRunId: request.compensationRunId,
+      compensationStepId: request.compensationStepId,
+      compensationEffectId: evidence.compensationEffectId,
+      compensationEffectType: durableAuthorization.compensationEffectType,
+      compensationRequest,
+      idempotencyKey: `cmp:${request.originalEffectId}:${durableAuthorization.adapterVersion}`,
+      forwardReceipt: forwardResponse,
+      adapterVersion: durableAuthorization.adapterVersion,
+      policyDecisionId: durableAuthorization.policyDecisionId,
+      policySnapshotId: durableAuthorization.policySnapshotId,
+      decisionEffect: durableAuthorization.decision,
+      authorizationExpiresAt: durableAuthorization.expiresAt,
+      approvalBinding: durableAuthorization.approvalBinding ?? null,
+    });
+    const validation = validateGovernedCompensationAuthorization(sealed);
+    return validation.valid ? validation.authorization : null;
+  }
+
   async claimCompensationWork(
     input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
   ): Promise<ClaimedCompensationWork[]> {
@@ -2859,9 +2982,59 @@ export class InMemoryKernelRepository implements KernelRepository {
     const messages = await this.claimOutboxByTopic(input.topic, input.limit, new Date(), input);
     const claimed: ClaimedCompensationWork[] = [];
     for (const message of messages) {
-      const authorization = normalizeCompensationPayload(message.payload);
       const claimToken = message.claimToken ?? '';
-      if (!authorization || authorization.tenantId !== message.tenantId || !claimToken) {
+      const payload = message.payload;
+      const payloadRequestId = typeof payload.requestId === 'string' ? payload.requestId : null;
+      const payloadAuthorizationId =
+        typeof payload.authorizationId === 'string' ? payload.authorizationId : null;
+      const payloadTenantId = typeof payload.tenantId === 'string' ? payload.tenantId : null;
+      const payloadActionDigest =
+        typeof payload.actionDigest === 'string' ? payload.actionDigest : null;
+      // Mirror claim_compensation_request_v2: the durable request is the
+      // resolution root, then its sealed authorization record. The compact
+      // outbox payload only cross-checks those durable rows.
+      const request = payloadRequestId
+        ? this.compensationRequests.get(payloadRequestId)
+        : undefined;
+      const durableAuthorization = request
+        ? this.compensationAuthorizations.get(request.authorizationId)
+        : undefined;
+      const run = request ? this.runs.get(request.compensationRunId) : undefined;
+      const step = request ? this.steps.get(request.compensationStepId) : undefined;
+      const originalEffect = request ? this.effects.get(request.originalEffectId) : undefined;
+      const runAuthorization = run ? this.compensationAuthorization(run) : null;
+      const stepAuthorization = step
+        ? (step.input as { authorization?: unknown }).authorization
+        : undefined;
+      const authorization =
+        request && durableAuthorization && originalEffect && runAuthorization
+          ? this.governedCompensationAuthorizationFromDurableEvidence({
+              evidence: runAuthorization,
+              request,
+              durableAuthorization,
+              originalEffect,
+            })
+          : null;
+      if (
+        !request ||
+        !durableAuthorization ||
+        !originalEffect ||
+        !authorization ||
+        payloadTenantId !== message.tenantId ||
+        payloadRequestId !== request.id ||
+        payloadAuthorizationId !== durableAuthorization.id ||
+        payloadActionDigest !== durableAuthorization.actionDigest ||
+        request.tenantId !== message.tenantId ||
+        request.authorizationId !== durableAuthorization.id ||
+        !run ||
+        !step ||
+        run.state !== 'PENDING' ||
+        step.state !== 'PENDING' ||
+        !runAuthorization ||
+        !stepAuthorization ||
+        canonical(runAuthorization) !== canonical(stepAuthorization) ||
+        !claimToken
+      ) {
         await this.markOutboxPublished(message.id, claimToken, message.tenantId);
         this.event(
           'effect',
@@ -2874,23 +3047,6 @@ export class InMemoryKernelRepository implements KernelRepository {
           input.workerId,
           { reason: 'COMPENSATION_AUTHORIZATION_REQUIRED', messageId: message.id },
         );
-        continue;
-      }
-      const step = this.steps.get(authorization.compensationStepId);
-      const run = this.runs.get(authorization.compensationRunId);
-      const persistedAuthorization = run ? this.compensationAuthorization(run) : null;
-      if (
-        !step ||
-        !run ||
-        step.tenantId !== message.tenantId ||
-        run.tenantId !== message.tenantId ||
-        step.state !== 'PENDING' ||
-        run.state !== 'PENDING' ||
-        canonical(persistedAuthorization) !== canonical(authorization) ||
-        canonical((step.input as { authorization?: unknown }).authorization) !==
-          canonical(authorization)
-      ) {
-        await this.markOutboxPublished(message.id, claimToken, message.tenantId);
         continue;
       }
       const fencingEpoch =

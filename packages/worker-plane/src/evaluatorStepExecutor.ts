@@ -12,6 +12,11 @@
  * 1. Use a lightweight rule-based checker (no LLM call)
  * 2. Use an LLM-based evaluator (via AgentRuntime)
  * 3. Use a custom evaluation function
+ *
+ * Fail-closed contract: an evaluation that cannot be measured is an error, never a
+ * pass. A missing rule set, an unimplemented custom evaluator, an unknown method and
+ * a malformed rule weight all throw (`EVALUATION_UNMEASURED` / `INVALID_INPUT`) rather
+ * than reporting an invented score.
  */
 
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
@@ -83,37 +88,41 @@ export class EvaluatorStepExecutor implements StepExecutor {
 
     const method = input.method ?? 'rules';
     const minScore = input.minScore ?? 0.7;
+    if (!Number.isFinite(minScore) || minScore < 0 || minScore > 1) {
+      throw new WorkerExecutionError(
+        `Step ${step.id} evaluator minScore must be a number between 0 and 1`,
+        { code: 'INVALID_INPUT', retryable: false },
+      );
+    }
+    const rules = input.criteria.rules ?? [];
+    // Fail closed: an evaluation that cannot be measured must never be reported as a
+    // pass. The previous code invented `score: 0.5` for an unimplemented custom
+    // evaluator and `score: 1.0, passed: true` when no rules were supplied — a
+    // fabricated pass on the quality gate.
+    if (method === 'custom') {
+      throw new WorkerExecutionError(
+        `Step ${step.id} evaluator method 'custom' is not implemented; refusing to report a fabricated score`,
+        { code: 'EVALUATION_UNMEASURED', retryable: false },
+      );
+    }
+    if (rules.length === 0) {
+      throw new WorkerExecutionError(
+        `Step ${step.id} evaluator has no rules to measure (method '${method}'); an unmeasured evaluation must not pass`,
+        { code: 'EVALUATION_UNMEASURED', retryable: false },
+      );
+    }
     const started = Date.now();
 
     let result: EvaluatorStepOutput;
 
     switch (method) {
       case 'rules':
-        result = this.evaluateWithRules(
-          input.subject,
-          input.criteria.rules ?? [],
-          minScore,
-          started,
-        );
+        result = this.evaluateWithRules(input.subject, rules, minScore, started);
         break;
       case 'llm':
         // LLM-based evaluation requires an AgentRuntime — for now, fall back to rules
         // In production, this would call AgentRuntime with a specialized evaluation prompt
-        result = this.evaluateWithRules(
-          input.subject,
-          input.criteria.rules ?? [],
-          minScore,
-          started,
-        );
-        break;
-      case 'custom':
-        // Custom evaluators would be registered and looked up by name
-        result = {
-          score: 0.5,
-          passed: 0.5 >= minScore,
-          summary: 'Custom evaluator not yet implemented',
-          durationMs: Date.now() - started,
-        };
+        result = this.evaluateWithRules(input.subject, rules, minScore, started);
         break;
       default:
         throw new WorkerExecutionError(`Unknown evaluation method: ${method}`, {
@@ -131,21 +140,20 @@ export class EvaluatorStepExecutor implements StepExecutor {
     minScore: number,
     started: number,
   ): EvaluatorStepOutput {
-    if (rules.length === 0) {
-      return {
-        score: 1.0,
-        passed: true,
-        summary: 'No rules defined; evaluation passed by default',
-        durationMs: Date.now() - started,
-      };
-    }
-
     const results: Array<{ name: string; passed: boolean; actual?: unknown }> = [];
     let totalWeight = 0;
     let passedWeight = 0;
 
     for (const rule of rules) {
       const weight = rule.weight ?? 1;
+      // A zero/NaN/negative weight silently disabled the rule's contribution while
+      // still counting it in the result set; reject it instead of scoring it away.
+      if (!Number.isFinite(weight) || weight <= 0) {
+        throw new WorkerExecutionError(
+          `Evaluator rule '${rule.name}' has an invalid weight; expected a positive number`,
+          { code: 'INVALID_INPUT', retryable: false },
+        );
+      }
       totalWeight += weight;
       const value = this.getPath(subject, rule.path);
       let passed = false;
@@ -181,7 +189,9 @@ export class EvaluatorStepExecutor implements StepExecutor {
       results.push({ name: rule.name, passed, actual: value });
     }
 
-    const score = totalWeight > 0 ? passedWeight / totalWeight : 1.0;
+    // Every rule above contributed a positive weight, so totalWeight > 0 here: an
+    // unweighted evaluation is rejected before it can be scored as a pass.
+    const score = passedWeight / totalWeight;
     const passed = score >= minScore;
     const failedRules = results.filter((r) => !r.passed).map((r) => r.name);
 

@@ -24,6 +24,7 @@ import {
 } from './effectGate.js';
 import { MapToolEffectCatalog } from './toolEffectCatalog.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
+import { runWithStepWorkloadIdentity } from './stepWorkloadIdentity.js';
 import { WorkerExecutionError } from './types.js';
 import type { ClaimedStep, WorkerRecord } from './types.js';
 
@@ -219,7 +220,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
     });
   });
 
-  it('2. Prod omits hasExternalEffects → still routes via broker; handler never called', async () => {
+  it('2. COMMANDER_REQUIRE_EFFECT_BROKER=1 omits hasExternalEffects → still routes via broker; handler never called', async () => {
     let handlerInvoked = false;
     let brokerInvoked = false;
     const stubBroker = {
@@ -229,6 +230,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
       },
     };
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
+      const { issuer } = makeTokenPair();
       const executor = new ToolStepExecutor(
         {
           get: () => ({
@@ -239,6 +241,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
           }),
         },
         stubBroker,
+        issuer,
       );
       const step = createMockStep({
         input: {
@@ -249,17 +252,20 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
           capabilityToken: 'tok',
         },
       });
-      const result = await executor.execute(step, {
-        signal: ac.signal,
-        worker: createMockWorker(),
-      });
+      const worker = createMockWorker();
+      const result = await runWithStepWorkloadIdentity(step, worker, () =>
+        executor.execute(step, {
+          signal: ac.signal,
+          worker,
+        }),
+      );
       assert.equal(handlerInvoked, false);
       assert.equal(brokerInvoked, true);
       assert.deepEqual((result as { result: unknown }).result, { via: 'broker' });
     });
   });
 
-  it('3. Prod catalog-authorized localOnly echo may use registry without broker fields', async () => {
+  it('3. require-broker flag + catalog-authorized localOnly echo may use registry without broker fields', async () => {
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const catalog = new MapToolEffectCatalog(new Set(['echo']), new Set());
       const stubBroker = {
@@ -446,7 +452,7 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
     });
   });
 
-  it('7b. Prod omits hasExternalEffects → broker path; registry unused', async () => {
+  it('7b. COMMANDER_REQUIRE_EFFECT_BROKER=1 omits hasExternalEffects → broker path; registry unused', async () => {
     let registryHit = false;
     let brokerHit = false;
     const stubBroker = {
@@ -492,7 +498,7 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
     });
   });
 
-  it('7c. Prod catalog-authorized localOnly connector may use registry', async () => {
+  it('7c. require-broker flag + catalog-authorized localOnly connector may use registry', async () => {
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
       const catalog = new MapToolEffectCatalog(new Set(), new Set(['memory']));
       const executor = new ConnectorStepExecutor(
@@ -534,11 +540,26 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
 });
 
 describe('L3-03a static: executors have no direct external IO', () => {
-  it('8. tool/connector executors contain no fetch/execSync/spawn/child_process', () => {
-    const files = ['toolStepExecutor.ts', 'connectorStepExecutor.ts', 'effectGate.ts'];
-    const forbidden = /\b(fetch|execSync|spawn|child_process)\b/;
+  it('8. every step executor contains no fetch/execSync/spawn/child_process', () => {
+    // Covers every step-execution unit, not just the tool/connector pair: a new
+    // executor added to the worker plane must not silently gain direct egress.
+    const files = [
+      'toolStepExecutor.ts',
+      'connectorStepExecutor.ts',
+      'evaluatorStepExecutor.ts',
+      'actionAdapterExecutor.ts',
+      'workerRuntimeAdapter.ts',
+      'llmBrokerBridge.ts',
+      'ticketAdapter.ts',
+      'effectGate.ts',
+    ];
+    const forbidden = /\b(fetch|execSync|execFile|execFileSync|spawn|spawnSync|child_process)\b/;
     for (const file of files) {
-      const src = readFileSync(join(__dirname, file), 'utf8');
+      // Strip comments first: a comment mentioning `spawn` must not fail the
+      // guard, and code must not hide behind a commented-out import.
+      const src = readFileSync(join(__dirname, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/(^|[^:])\/\/.*$/gm, '$1');
       assert.equal(
         forbidden.test(src),
         false,

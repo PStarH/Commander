@@ -82,8 +82,8 @@ async function createRuntime() {
   const M = await loadModules();
 
   const provider = new M.MiMoProvider({
-    apiKey: 'tp-sfcjofksj8sn63244lzc1hxzzb8mz03hty5afetx0aafsetx',
-    baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1',
+    apiKey: requireMimoApiKey(),
+    baseUrl: mimoBaseUrl('https://token-plan-sgp.xiaomimimo.com/v1'),
     defaultModel: 'mimo-v2.5-pro',
   });
 
@@ -188,6 +188,7 @@ import express from 'express';
 import { exec } from 'child_process';
 import * as fs from 'fs';
 import mysql from 'mysql2/promise';
+import { requireMimoApiKey, mimoBaseUrl } from './helpers/liveProviderCredentials';
 
 const app = express();
 app.use(express.json());

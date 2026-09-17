@@ -16,6 +16,7 @@ import { AgentRuntime } from '../../src/runtime/agentRuntime';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import { ModelRouter, resetModelRouter } from '../../src/runtime/modelRouter';
 import { resetMessageBus } from '../../src/runtime/messageBus';
+import { getDirname } from '../../src/esmCompat';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import { resetGlobalThreeLayerMemory } from '../../src/threeLayerMemory';
 import { ServiceContainer, resetServiceContainer } from '../../src/runtime/serviceContainer';
@@ -49,6 +50,9 @@ function makeContext(overrides?: Partial<AgentExecutionContext>): AgentExecution
     ...overrides,
   };
 }
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 const CHECKPOINT_BASE = path.join(__dirname, '..', '..', '.test-checkpoints');
 

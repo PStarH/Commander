@@ -65,22 +65,52 @@ export function assertEgressAllowlistBeforeDaemonStart(
 }
 
 /**
- * 传输层闸门：对实际 HTTP(S) URL 的 hostname 做允许列表匹配。
- * 条目为 hostname（或后缀域）；CIDR 条目无法在无 DNS 解析时匹配，交由 NetworkPolicy。
+ * 传输层闸门：对实际 HTTP(S) URL 的 scheme 与 hostname 做允许列表匹配。
+ *
+ * 契约（fail-closed）：
+ * - 空允许列表 = 拒绝一切出站（“未配置”不等于“放行”）。demo/hollow cell 需要空列表
+ *   放行时必须由调用方显式传 `allowEmptyAllowlist: true`，不允许从 env 猜测。
+ * - scheme：默认只允许 `https:`；`http:` 仅对 loopback 主机（127.0.0.1 / ::1 /
+ *   localhost）放行；其余 scheme 一律拒绝。
+ * - 条目为精确 hostname，或以 `*.` 前缀显式声明的后缀域。裸条目不再隐式匹配子域
+ *   （原 `host.endsWith('.' + entry)` 会让任何子域随父域一起被放行）。
+ * - 纯 CIDR 列表无法在无 DNS 时裁决主机名 → 拒绝（daemon 启动闸门另要求至少一个
+ *   hostname 条目）。
  */
-export function assertEgressUrlAllowed(url: RequestInfo | URL, allowlist: readonly string[]): void {
-  if (allowlist.length === 0) return;
+export interface EgressUrlGateOptions {
+  /**
+   * 显式声明“允许空允许列表”（demo/hollow cell）。除 demo 外任何调用点都不得传 true。
+   */
+  allowEmptyAllowlist?: boolean;
+}
+
+export function assertEgressUrlAllowed(
+  url: RequestInfo | URL,
+  allowlist: readonly string[],
+  options: EgressUrlGateOptions = {},
+): void {
+  if (allowlist.length === 0) {
+    if (options.allowEmptyAllowlist === true) return;
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_DENIED: COMMANDER_ADAPTER_EGRESS_ALLOWLIST is empty; refusing outbound request',
+    );
+  }
   const href = typeof url === 'string' ? url : url instanceof URL ? url.href : String(url);
-  let host: string;
+  let target: URL;
   try {
-    host = new URL(href).hostname.toLowerCase();
+    target = new URL(href);
   } catch {
     throw new Error('ADAPTER_OPS_EGRESS_DENIED: unparseable URL ' + href.slice(0, 120));
   }
+  // `URL.hostname` keeps the brackets of an IPv6 literal; entries are written bare.
+  const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  assertEgressSchemeAllowed(target);
   const hostEntries = allowlist.filter((entry) => !looksLikeCidr(entry));
   if (hostEntries.length === 0) {
-    // 仅有 CIDR 时应用层无法裁决主机名；daemon 启动闸门已要求非空 allowlist。
-    return;
+    // 仅有 CIDR 时应用层无法裁决主机名 → 拒绝，而不是放行。
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_DENIED: allowlist has no hostname entry to adjudicate host ' + host,
+    );
   }
   const allowed = hostEntries.some((entry) => hostMatches(host, entry.toLowerCase()));
   if (!allowed) {
@@ -90,12 +120,32 @@ export function assertEgressUrlAllowed(url: RequestInfo | URL, allowlist: readon
   }
 }
 
+/** `https:` always; `http:` only for loopback targets; everything else is denied. */
+function assertEgressSchemeAllowed(target: URL): void {
+  const protocol = target.protocol.toLowerCase();
+  if (protocol === 'https:') return;
+  if (protocol === 'http:' && isLoopbackHost(target.hostname)) return;
+  throw new Error(
+    'ADAPTER_OPS_EGRESS_DENIED: scheme ' +
+      protocol +
+      ' is not permitted for host ' +
+      target.hostname.toLowerCase() +
+      ' (https only; http is limited to loopback)',
+  );
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+}
+
 export function createEgressGatedFetch(
   allowlist: readonly string[],
   fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+  options: EgressUrlGateOptions = {},
 ): typeof fetch {
   return ((input: RequestInfo | URL, init?: RequestInit) => {
-    assertEgressUrlAllowed(input, allowlist);
+    assertEgressUrlAllowed(input, allowlist, options);
     return fetchImpl(input, init);
   }) as typeof fetch;
 }
@@ -107,8 +157,17 @@ function looksLikeCidr(entry: string): boolean {
 }
 
 function hostMatches(host: string, entry: string): boolean {
-  if (host === entry) return true;
-  if (entry.startsWith('*.') && host.endsWith(entry.slice(1))) return true;
-  if (!entry.includes('*') && host.endsWith('.' + entry)) return true;
-  return false;
+  if (entry.startsWith('*.')) {
+    const suffix = entry.slice(1);
+    return host.length > suffix.length && host.endsWith(suffix);
+  }
+  if (entry.includes('*')) {
+    // A wildcard that is not the documented leading `*.` form would silently never
+    // match; treat the configuration as invalid instead of fail-open.
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_ALLOWLIST_INVALID: wildcard entries must use the leading "*." form: ' +
+        entry,
+    );
+  }
+  return host === entry;
 }

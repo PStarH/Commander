@@ -10,6 +10,13 @@ import { TopologyRouter } from '../src/ultimate/topologyRouter';
 import { ContextWindowManager, estimateTotalTokens } from '../src/runtime/contextWindow';
 import { estimateMessageTokens } from '../src/runtime/contextWindow';
 import type { LLMMessage } from '../src/runtime/types';
+// Static imports, not `require(...)`: the global `require` is undefined in this
+// ES module, so the multimodal cases below threw `ReferenceError` instead of
+// exercising the tools.
+import { tmpdir } from 'node:os';
+import { PdfExtractTool } from '../src/tools/multimodal/pdfTool';
+import { VisionAnalyzeTool } from '../src/tools/multimodal/visionTool';
+import { ScreenshotCaptureTool } from '../src/tools/multimodal/screenshotTool';
 
 // ============================================================================
 // 1.1 TOOL CALLING EDGE CASES
@@ -280,11 +287,10 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-2: PDF tool handles non-PDF input gracefully', async () => {
-    const { PdfExtractTool } = require('../src/tools/multimodal/pdfTool');
     const tool = new PdfExtractTool();
     const fs = await import('fs');
     const path = await import('path');
-    const tmpFile = path.join(require('os').tmpdir(), 'not-a-pdf.txt');
+    const tmpFile = path.join(tmpdir(), 'not-a-pdf.txt');
     fs.writeFileSync(tmpFile, 'This is not a PDF file.', 'utf-8');
     const result = await tool.execute({ path: tmpFile });
     fs.unlinkSync(tmpFile);
@@ -295,7 +301,6 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-3: Vision tool handles non-existent file path', async () => {
-    const { VisionAnalyzeTool } = require('../src/tools/multimodal/visionTool');
     const tool = new VisionAnalyzeTool();
     const result = await tool.execute({ source: '/tmp/nonexistent-image-xyz.png' });
     assert.ok(
@@ -305,7 +310,6 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-4: Screenshot tool validates parameter schema', () => {
-    const { ScreenshotCaptureTool } = require('../src/tools/multimodal/screenshotTool');
     const tool = new ScreenshotCaptureTool();
     const def = tool.definition;
     assert.ok(def.name === 'screenshot_capture', 'Tool name is correct');
@@ -317,7 +321,6 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-5: Vision tool handles extreme detail levels', () => {
-    const { VisionAnalyzeTool } = require('../src/tools/multimodal/visionTool');
     const tool = new VisionAnalyzeTool();
     const def = tool.definition;
     const detailEnum = def.inputSchema.properties?.detail?.enum;

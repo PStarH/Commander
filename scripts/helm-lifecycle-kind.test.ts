@@ -2761,7 +2761,10 @@ describe('helm-lifecycle-kind helpers', () => {
     const uploadStep = workflow.match(/- name: Upload sanitized evidence\n[\s\S]*$/)?.[0];
 
     assert.ok(uploadStep, 'the Kind lifecycle workflow must upload sanitized evidence');
-    assert.match(uploadStep, /uses: actions\/upload-artifact@v4/);
+    // Supply chain: remote actions are pinned to an immutable 40-hex commit SHA
+    // with the human-readable ref kept as a trailing comment. The assertion may
+    // not require the tag form, or it fails the pinning hardening.
+    assert.match(uploadStep, /uses: actions\/upload-artifact@(?:[0-9a-f]{40} # v4|v4)\b/);
     assert.match(uploadStep, /if: always\(\)/);
     assert.match(uploadStep, /name: kind-lifecycle-evidence/);
     assert.match(uploadStep, /path: kind-lifecycle-evidence\.json/);
@@ -2773,7 +2776,7 @@ describe('helm-lifecycle-kind helpers', () => {
     const workflow = readFileSync(resolve('.github/workflows/helm-lifecycle.yml'), 'utf8');
     const runtimeBuild = workflow.indexOf('Build Kind lifecycle runtime packages');
     const seed = workflow.indexOf('Seed Kind bootstrap evidence');
-    const kind = workflow.indexOf('uses: helm/kind-action@v1');
+    const kind = workflow.search(/uses: helm\/kind-action@(?:[0-9a-f]{40} # v1|v1)\b/);
     const provisionFailure = workflow.indexOf('Record Kind provisioning failure');
     const harnessSeed = workflow.indexOf('Seed Kind harness evidence');
     const harness = workflow.indexOf('pnpm exec tsx scripts/helm-lifecycle-kind.ts run');
@@ -2792,7 +2795,10 @@ describe('helm-lifecycle-kind helpers', () => {
       workflow,
       /name: Seed Kind bootstrap evidence\n        run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts bootstrap-evidence/,
     );
-    assert.match(workflow, /id: provision-kind\n        uses: helm\/kind-action@v1/);
+    assert.match(
+      workflow,
+      /id: provision-kind\n        uses: helm\/kind-action@(?:[0-9a-f]{40} # v1|v1)\b/,
+    );
     assert.match(
       workflow,
       /name: Record Kind provisioning failure\n        if: \$\{\{ always\(\) && steps\.provision-kind\.outcome == 'failure' \}\}\n        run: pnpm exec tsx scripts\/helm-lifecycle-kind\.ts bootstrap-evidence kind-provisioning/,

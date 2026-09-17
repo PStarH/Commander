@@ -24,6 +24,9 @@
 import { getGlobalLogger } from '../logging';
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { ISandbox, ISandboxConfig, ISandboxResult, SandboxTier } from '../contracts/pillarIII';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // isolated-vm type declarations (minimal — full types in @types/isolated-vm)
@@ -87,7 +90,7 @@ function loadIsolatedVm(): IsolatedVmModule | null {
   loadAttempted = true;
 
   try {
-    isolatedVm = require('isolated-vm');
+    isolatedVm = nodeRequire('isolated-vm');
     getGlobalLogger().info('V8IsolateSandbox', 'isolated-vm loaded successfully');
   } catch (err) {
     reportSilentFailure(err, 'v8IsolateSandbox:load');

@@ -36,6 +36,9 @@ import * as fsp from 'node:fs/promises';
 import * as path from 'node:path';
 import * as crypto from 'node:crypto';
 import { getCurrentTenantId } from '../runtime/tenantContext';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // GOV-15: GDPR Art.17 read-time masking.
@@ -438,7 +441,7 @@ export class UnifiedAuditLog {
     // Record audit_events_total counter (lazy require to avoid pulling runtime
     // deps into this deliberately-lightweight security module).
     try {
-      const { getMetricsCollector } = require('../runtime/metricsCollector');
+      const { getMetricsCollector } = nodeRequire('../runtime/metricsCollector');
       getMetricsCollector().recordAuditEvent(full.category, full.tenantId);
     } catch {
       /* metrics must never break audit recording */

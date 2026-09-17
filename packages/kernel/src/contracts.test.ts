@@ -1,6 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { CONTRACT_SCHEMAS, KERNEL_ERROR_CODES } from '@commander/contracts';
 import type { KernelErrorDetails, KernelEvent } from './index.js';
+
+// F-K1-1: this file previously constructed the event/error literals and then
+// asserted on those same literals — a tautology that survived deleting every
+// contract in `@commander/contracts`. It now checks the literals against the
+// canonical runtime schemas, so canonical contract drift fails the test.
 
 const event: KernelEvent = {
   eventId: 'event-1',
@@ -17,12 +23,72 @@ const event: KernelEvent = {
 };
 
 const error: KernelErrorDetails = {
-  code: 'KERNEL_TEST_ERROR',
+  code: 'RUN_NOT_FOUND',
   message: 'test error',
   retryable: false,
 };
 
-test('kernel reuses the canonical event and error contracts', () => {
-  assert.equal(event.eventId, 'event-1');
-  assert.equal(error.code, 'KERNEL_TEST_ERROR');
+interface JsonSchemaFragment {
+  $id: string;
+  required: readonly string[];
+  properties: Record<string, { type?: string; enum?: readonly unknown[] }>;
+  additionalProperties: boolean;
+}
+
+const kernelEventSchema = CONTRACT_SCHEMAS.kernelEvent as unknown as JsonSchemaFragment;
+const kernelErrorSchema = CONTRACT_SCHEMAS.kernelError as unknown as JsonSchemaFragment;
+
+const jsonType = (value: unknown): string =>
+  Array.isArray(value) ? 'array' : value === null ? 'null' : typeof value;
+
+test('kernel event literal conforms to the canonical kernel-event contract', () => {
+  assert.deepEqual(
+    Object.keys(event).sort(),
+    [...kernelEventSchema.required].sort(),
+    'kernel event fields must be exactly the canonical required envelope fields',
+  );
+  for (const [field, schema] of Object.entries(kernelEventSchema.properties)) {
+    if (!(field in event)) continue;
+    const value = (event as unknown as Record<string, unknown>)[field];
+    if (schema.type) {
+      const expected = schema.type === 'integer' ? 'number' : schema.type;
+      assert.equal(
+        jsonType(value),
+        expected,
+        `kernel event field ${field} must be ${schema.type} per the canonical schema`,
+      );
+      if (schema.type === 'integer') {
+        assert.ok(Number.isInteger(value), `kernel event field ${field} must be an integer`);
+      }
+    }
+    if (schema.enum) {
+      assert.ok(
+        schema.enum.includes(value),
+        `kernel event field ${field} value ${String(value)} is outside the canonical enum`,
+      );
+    }
+  }
+  assert.equal(
+    kernelEventSchema.additionalProperties,
+    false,
+    'canonical kernel-event envelope must stay closed',
+  );
+});
+
+test('kernel error literal uses the canonical error-code vocabulary', () => {
+  assert.ok(KERNEL_ERROR_CODES.length > 0, 'canonical error vocabulary must not be empty');
+  assert.equal(
+    (kernelErrorSchema.properties.code?.enum ?? []).length,
+    KERNEL_ERROR_CODES.length,
+    'canonical error schema must enumerate the canonical codes',
+  );
+  assert.ok(
+    KERNEL_ERROR_CODES.includes(error.code as (typeof KERNEL_ERROR_CODES)[number]),
+    `kernel error code ${error.code} is not part of the canonical vocabulary`,
+  );
+  assert.deepEqual(
+    Object.keys(error).sort(),
+    [...kernelErrorSchema.required].sort(),
+    'kernel error fields must be exactly the canonical required fields',
+  );
 });

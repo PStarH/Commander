@@ -58,6 +58,20 @@ export function adapterErrorFromHttpStatus(
       details: { httpStatus: status },
     });
   }
+  // A 3xx means the origin answered with a redirect instead of a definitive
+  // result. With `redirect: 'manual'` (see adapterFetch) we cannot tell whether
+  // the origin applied the write before redirecting — 307/308 explicitly expect
+  // the caller to repeat the request. Claiming NOT_COMMITTED/NEVER here would
+  // assert "no side effect happened" without evidence, so treat it as ambiguous
+  // and require a read-back before any retry.
+  if (status >= 300 && status < 400) {
+    return new AdapterExecutionError(message, {
+      code,
+      commitState: 'UNKNOWN',
+      retryMode: 'QUERY_FIRST',
+      details: { httpStatus: status },
+    });
+  }
   return new AdapterExecutionError(message, {
     code,
     commitState: 'NOT_COMMITTED',

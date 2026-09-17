@@ -61,6 +61,13 @@ const allowedDependencies = {
   '@commander/sdk': ['@commander/contracts', '@commander/core'],
   '@commander/mcp-server': ['@commander/core'],
   '@commander/web': ['@commander/contracts'],
+  // Shadow pilot (docs/pilot/shadow, `scripts/shadow-phase-a-gate.ts`). It was
+  // added without an entry here, so the guard's fail-closed
+  // "No dependency policy exists" check fired for it. Its internal surface is
+  // exactly these two, and its transitive closure is separately validated by
+  // `scripts/shadow-dependency-guard.ts` — this entry records reality, it does
+  // not widen anything.
+  '@commander/shadow-plane': ['@commander/contracts', '@commander/postgres-runtime'],
 };
 
 function exists(file) {

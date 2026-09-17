@@ -21,41 +21,36 @@ async function freePort(): Promise<number> {
 }
 
 describe('ops healthServer', () => {
-  it('fail-closes traffic readiness when compensation is probe-only', () => {
+  // kernel-ops readiness covers process readiness, not whole-cell capability:
+  // it owns reclaim / timer / outbox / compensation-probe loops + DB health.
+  // EffectBroker compensation drain belongs to adapter-ops and is detail-only.
+  it('fails traffic readiness when an owned loop is not healthy', () => {
     assert.equal(
       isKernelOpsReadyForTraffic({
-        loopsReady: true,
-        compensationDraining: false,
+        loopsReady: false,
         databaseOk: true,
       }),
       false,
     );
   });
 
-  it('allows traffic readiness only when drain + loops + db are all ok', () => {
+  it('fails traffic readiness when the database probe fails', () => {
     assert.equal(
       isKernelOpsReadyForTraffic({
         loopsReady: true,
-        compensationDraining: true,
-        databaseOk: true,
-      }),
-      true,
-    );
-    assert.equal(
-      isKernelOpsReadyForTraffic({
-        loopsReady: false,
-        compensationDraining: true,
-        databaseOk: true,
-      }),
-      false,
-    );
-    assert.equal(
-      isKernelOpsReadyForTraffic({
-        loopsReady: true,
-        compensationDraining: true,
         databaseOk: false,
       }),
       false,
+    );
+  });
+
+  it('allows traffic readiness when owned loops and db are ok (probe-only compensation)', () => {
+    assert.equal(
+      isKernelOpsReadyForTraffic({
+        loopsReady: true,
+        databaseOk: true,
+      }),
+      true,
     );
   });
 
@@ -99,16 +94,56 @@ describe('ops healthServer', () => {
     }
   });
 
-  it('default probe-only fails /ready with 503 while honesty fields stay accurate', async () => {
-    // Mirrors main.ts: probe → compensationDraining false → isKernelOpsReadyForTraffic false → 503.
-    // K8s httpGet only sees the status code; JSON alone must not green the probe.
+  it('keeps /ready 503 while /health stays 200 — /ready is a real gate, not an alias', async () => {
+    // Guards against pointing /ready at the unconditional liveness handler.
+    const port = await freePort();
+    const health = await startOpsHealthServer({
+      port,
+      isReady: () =>
+        isKernelOpsReadyForTraffic({
+          loopsReady: false,
+          databaseOk: true,
+        }),
+    });
+    try {
+      const ready = await fetch('http://127.0.0.1:' + port + '/ready');
+      assert.equal(ready.status, 503);
+      assert.equal((await ready.json()).status, 'not_ready');
+      const live = await fetch('http://127.0.0.1:' + port + '/health');
+      assert.equal(live.status, 200);
+      assert.deepEqual(await live.json(), { status: 'ok' });
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('stays 503 on DB failure even when owned loops are ready', async () => {
     const port = await freePort();
     const health = await startOpsHealthServer({
       port,
       isReady: () =>
         isKernelOpsReadyForTraffic({
           loopsReady: true,
-          compensationDraining: false,
+          databaseOk: false,
+        }),
+    });
+    try {
+      const res = await fetch('http://127.0.0.1:' + port + '/ready');
+      assert.equal(res.status, 503);
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('probe-only compensation is ready once owned loops are ready; drain stays explicit detail', async () => {
+    // Mirrors main.ts: owned loops + DB ok → 200 even though compensation mode is
+    // `probe` (drain is adapter-ops). Detail fields must not gate the status code.
+    const port = await freePort();
+    const health = await startOpsHealthServer({
+      port,
+      isReady: () =>
+        isKernelOpsReadyForTraffic({
+          loopsReady: true,
           databaseOk: true,
         }),
       getReadyDetails: () => ({
@@ -118,9 +153,9 @@ describe('ops healthServer', () => {
     });
     try {
       const res = await fetch('http://127.0.0.1:' + port + '/ready');
-      assert.equal(res.status, 503);
+      assert.equal(res.status, 200);
       assert.deepEqual(await res.json(), {
-        status: 'not_ready',
+        status: 'ready',
         compensationMode: 'probe',
         compensationDraining: false,
       });
@@ -129,14 +164,13 @@ describe('ops healthServer', () => {
     }
   });
 
-  it('returns 200 from /ready when drain mode is wired and loops are healthy', async () => {
+  it('returns 200 from /ready when owned loops are ready and drain mode is wired', async () => {
     const port = await freePort();
     const health = await startOpsHealthServer({
       port,
       isReady: () =>
         isKernelOpsReadyForTraffic({
           loopsReady: true,
-          compensationDraining: true,
           databaseOk: true,
         }),
       getReadyDetails: () => ({

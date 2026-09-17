@@ -16,6 +16,9 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { EventEmitter } from 'node:events';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -189,7 +192,7 @@ export class BackgroundTaskManager extends EventEmitter {
   private notifyCompletion(job: BackgroundJob): void {
     // Try to send notification via system notification
     try {
-      const { execFile } = require('child_process');
+      const { execFile } = nodeRequire('child_process');
       const status = job.status === 'completed' ? '✅' : '❌';
       const title = `Commander: ${status} ${job.task.slice(0, 50)}`;
       const body =

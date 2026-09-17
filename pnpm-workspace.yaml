@@ -2,3 +2,6 @@ packages:
   - 'apps/*'
   - 'integrations/*'
   - 'packages/*'
+  # packages/python-sdk is a Python project (pyproject.toml, no package.json).
+  # It is not a Node workspace and must not be scanned by pnpm.
+  - '!packages/python-sdk'

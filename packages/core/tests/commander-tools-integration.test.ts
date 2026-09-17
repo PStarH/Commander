@@ -80,23 +80,31 @@ describe('Commander Tools Integration', () => {
     console.log(`  [file_list] ${result.split('\n').length} entries`);
   });
 
-  it('python_execute runs code', async () => {
+  it('python_execute is refused by ExecPolicy before the interpreter starts', async () => {
+    // `PythonExecuteTool` hardcodes `backend: 'local'` and runs `python3 <tmpfile>`.
+    // LocalBackend applies the ExecPolicy gate to that command *before* it runs,
+    // and `python3` matches the built-in `prompt-dev-execution` rule
+    // ("Development tools can execute project-controlled code and require
+    // approval"). LocalBackend treats `prompt` as a denial because there is no
+    // interactive approval channel on that hot path.
+    //
+    // The denial is not overridable: that rule sits at
+    // `IMMUTABLE_RESTRICTIVE_FLOOR` (50) while repo/home-supplied rules are
+    // clamped to `MAX_USER_RULE_PRIORITY` (49) — the SBX-3 guard that stops a
+    // checked-in `.commander/execpolicy.json` from allow-listing arbitrary code
+    // execution. This test therefore pins the contract that actually holds. It
+    // used to assert the script computed 5050, which no configuration can
+    // satisfy; see the report for the open product question this raises.
     const tool = new PythonExecuteTool();
-    try {
-      const result = await tool.execute({ code: 'print(sum(range(1,101)))' });
-      if (result.includes('sandbox-exec') || result.includes('unbound variable')) {
-        console.log(`  [python_execute] sandbox unavailable on this platform, skipping assertion`);
-        return;
-      }
-      assert.ok(result.includes('5050'), 'Should compute 1+...+100 = 5050');
-      console.log(`  [python_execute] ${result.slice(0, 100)}`);
-    } catch (err: any) {
-      if (String(err).includes('sandbox') || String(err).includes('unbound')) {
-        console.log(`  [python_execute] sandbox unavailable, skipping`);
-        return;
-      }
-      throw err;
-    }
+    const result = await tool.execute({ code: 'print(sum(range(1,101)))' });
+
+    assert.ok(
+      result.includes('Rejected by ExecPolicy'),
+      `expected an ExecPolicy rejection, got: ${result.slice(0, 200)}`,
+    );
+    assert.ok(result.includes('prompt'), 'the matched rule decision is `prompt`');
+    assert.ok(!result.includes('5050'), 'the script must not have been executed');
+    console.log(`  [python_execute] refused by policy as expected`);
   });
 
   it('shell_execute runs command', async () => {

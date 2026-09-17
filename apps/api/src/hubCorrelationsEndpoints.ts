@@ -217,13 +217,35 @@ export function createHubCorrelationsRouter(): Router {
   // REST summary with optional filtering.
   router.get('/', (req: Request, res: Response) => {
     const { runId, topic, toolName, since, until, limit, cursor } = req.query;
-    let timeline = readRingChronological();
+
+    // LM-25 / AUDIT api-remaining#L14: read the ring exactly once. Filtering and
+    // cursor resolution must operate on the same snapshot — re-reading the ring
+    // after resolving the cursor let a concurrent append shift positions and
+    // skip or duplicate rows.
+    const snapshot = readRingChronological();
+
+    // The cursor is a position in this snapshot, and is resolved before any
+    // filter is applied, so a cursor that does not itself match the filters is
+    // still a valid time position.
+    let timeline = snapshot;
+    const hasCursor = typeof cursor === 'string' && cursor.length > 0;
+    if (hasCursor) {
+      const cursorIdx = snapshot.findIndex((e) => e.busId === cursor);
+      if (cursorIdx === -1) {
+        res.status(400).json({ error: 'Invalid cursor', detail: 'busId not found in ring' });
+        return;
+      }
+      timeline = snapshot.slice(cursorIdx + 1);
+    }
 
     if (typeof runId === 'string' && runId.length > 0) {
       timeline = timeline.filter((e) => e.payload?.runId === runId);
     }
-    if (toolName === 'string' && (toolName as string).length > 0) {
-      const needle = toolName as string;
+    // AUDIT: this compared the query value against the literal string 'string',
+    // so the toolName filter never applied. Keep the existing `includes`
+    // semantics (substring match), only the type guard changes.
+    if (typeof toolName === 'string' && toolName.length > 0) {
+      const needle = toolName;
       timeline = timeline.filter((e) => {
         const tn = (e.payload as { toolName?: string }).toolName;
         return typeof tn === 'string' && tn.includes(needle);
@@ -249,21 +271,14 @@ export function createHubCorrelationsRouter(): Router {
       const cutoff = Date.parse(untilIso);
       timeline = timeline.filter((e) => Date.parse(e.receivedAt) <= cutoff);
     }
-    if (typeof cursor === 'string' && cursor.length > 0) {
-      const cidx = ring.findIndex((e) => e.busId === cursor);
-      if (cidx === -1) {
-        res.status(400).json({ error: 'Invalid cursor', detail: 'busId not found in ring' });
-        return;
-      }
-      // Resume strictly AFTER the cursor's position in the chronological view.
-      timeline = readRingChronological();
-      const chronoAtIdx = timeline.findIndex((e) => e.busId === cursor);
-      timeline = chronoAtIdx >= 0 ? timeline.slice(chronoAtIdx + 1) : [];
-    }
 
     const limitN = asPositiveInt(limit, DEFAULT_REST_LIMIT, MAX_REST_LIMIT);
-    const start = timeline.length > limitN ? timeline.length - limitN : 0;
-    const visible = timeline.slice(start);
+    // Page direction depends on whether this is a first read or a continuation:
+    //   - no cursor: the most recent N matching events (admin "tail" view);
+    //   - with cursor: the OLDEST N matching events after the cursor, so paging
+    //     consumes the stream in order instead of re-reading the newest window
+    //     and skipping everything in between.
+    const visible = hasCursor ? timeline.slice(0, limitN) : timeline.slice(-limitN);
     const nextCursor = visible.length > 0 ? visible[visible.length - 1]!.busId : undefined;
 
     res.json({

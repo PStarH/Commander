@@ -48,14 +48,25 @@ test('HallucinationDetector - detects fabricated references', () => {
 
 test('MemoryPoisoningDetector - assessCredibility', async () => {
   const detector = new MemoryPoisoningDetector();
-  const result = await detector.assessCredibility({
+  // AUDIT F-B-8: a range check plus a 3-way enum check is satisfied by any
+  // implementation. Pin the actual scores.
+  const trusted = await detector.assessCredibility({
     id: 'test-1',
     content: 'The sky is blue.',
     timestamp: new Date(),
-    source: 'wikipedia.org',
+    source: 'https://wikipedia.org',
   });
-  assert.ok(result.score >= 0 && result.score <= 1);
-  assert.ok(['accept', 'quarantine', 'reject'].includes(result.recommendation));
+  assert.equal(trusted.recommendation, 'accept');
+  assert.equal(trusted.score, 0.7733333333333334);
+
+  const unknown = await detector.assessCredibility({
+    id: 'test-2',
+    content: 'The sky is blue.',
+    timestamp: new Date(),
+    source: 'https://unvetted-host.example',
+  });
+  assert.equal(unknown.recommendation, 'quarantine');
+  assert.ok(unknown.score < trusted.score);
 });
 
 test('MemoryPoisoningDetector - detectPoisoning', async () => {
@@ -64,7 +75,7 @@ test('MemoryPoisoningDetector - detectPoisoning', async () => {
     [{ id: 'new-1', content: 'test', timestamp: new Date(), source: 'unknown' }],
     [{ id: 'old-1', content: 'existing', timestamp: new Date(), source: 'system' }],
   );
-  assert.ok(Array.isArray(indicators));
+  assert.deepEqual(indicators, []);
 });
 
 // ============================================================================
@@ -78,9 +89,13 @@ test('AgentSelfAssessment - assess returns confidence', () => {
     requiredSkills: ['typescript'],
     complexity: 0.5,
   });
-  assert.ok(result.confidence >= 0 && result.confidence <= 1);
-  assert.ok(Array.isArray(result.gaps));
-  assert.ok(typeof result.canHandle === 'boolean');
+  // AUDIT F-B-8: range/type checks are tautological here; pin the outcome.
+  assert.equal(result.canHandle, true, 'the agent declares the required skill');
+  assert.ok(
+    result.confidence >= 0.5,
+    `an agent owning the required skill must be confident, got ${result.confidence}`,
+  );
+  assert.deepEqual(result.gaps, []);
 });
 
 test('SelfAssessmentManager - getOrCreate and assess', () => {
@@ -112,9 +127,11 @@ test('calculatePassAtK computes correctly', () => {
     { taskId: 'c', trials: [{ passed: false, output: '', latencyMs: 10 }] },
   ];
   const passAtK = calculatePassAtK(results);
-  assert.ok(passAtK);
-  assert.ok(passAtK.passAt1 !== undefined);
+  // AUDIT F-B-8: `assert.ok(passAtK)` on a freshly constructed object is
+  // always true; the exact ratio is the assertion that matters.
   assert.equal(passAtK.passAt1, 2 / 3);
+  assert.equal(passAtK.passAt3, 2 / 3);
+  assert.equal(passAtK.passAtK, 2 / 3);
 });
 
 // ============================================================================

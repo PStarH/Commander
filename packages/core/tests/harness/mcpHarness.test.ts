@@ -355,19 +355,79 @@ describe('McpHarness', () => {
       // There should be tool_result steps (from the blocked tool)
       const toolResultSteps = result.steps.filter((s) => s.type === 'tool_result');
       assert.ok(toolResultSteps.length > 0, 'Should have tool_result steps for blocked tool');
-      // The content should mention the block
+      // The content must mention the block: mcpHarness copies toolResult.error
+      // into both the tool message and the tool_result step.
       const blockedSteps = result.steps.filter(
         (s) =>
           s.type === 'tool_result' &&
           (s.content?.includes('blocked') || s.content?.includes('Blocked')),
       );
-      // If the blocked content is present, verify it; otherwise just verify the tool wasn't executed
-      if (blockedSteps.length > 0) {
-        assert.ok(true, 'Block reason found in step content');
-      } else {
-        // The tool result step exists but may have different content format
-        assert.ok(toolResultSteps.length > 0, 'Tool result step should exist');
-      }
+      assert.ok(
+        blockedSteps.length > 0,
+        'Block reason should be present in the tool_result step content',
+      );
+    });
+
+    it('fails closed when the before-tool gate throws (tool must not execute)', async () => {
+      let toolExecuted = false;
+      const mockTool: Tool = {
+        name: 'shell_execute',
+        description: 'Run shell command',
+        parameters: { type: 'object', properties: {} },
+        execute: mockFn(async () => {
+          toolExecuted = true;
+          return 'should not reach here';
+        }),
+      } as any;
+      const provider = createMockProvider();
+      let callCount = 0;
+      (provider.call as any)._impl = async () => {
+        callCount++;
+        if (callCount === 1) {
+          return {
+            content: 'Using tool',
+            toolCalls: [{ id: 'tc1', name: 'shell_execute', arguments: { cmd: 'id' } }],
+            usage: { promptTokens: 50, completionTokens: 20, totalTokens: 70 },
+            finishReason: 'tool_use',
+            model: 'test',
+            provider: 'test',
+          };
+        }
+        return {
+          content: 'Done',
+          toolCalls: [],
+          usage: { promptTokens: 30, completionTokens: 10, totalTokens: 40 },
+          finishReason: 'stop',
+          model: 'test',
+          provider: 'test',
+        };
+      };
+      const services = createMockServices(provider);
+      (services.getTool as any)._impl = () => mockTool;
+      // The gate itself cannot be evaluated. It is the only pre-dispatch policy
+      // check on this path, so a throw must fail closed — not silently allow.
+      (services.fireBeforeToolCall as any)._impl = async () => {
+        throw new Error('policy engine unavailable');
+      };
+
+      const params = createRunParams({ services, maxSteps: 5 });
+      const result = await harness.runAttempt(params);
+
+      assert.strictEqual(
+        toolExecuted,
+        false,
+        'Tool must NOT execute when the before-tool gate throws',
+      );
+      const blockedSteps = result.steps.filter(
+        (s) => s.type === 'tool_result' && /blocked/i.test(s.content ?? ''),
+      );
+      assert.ok(blockedSteps.length > 0, 'Expected a blocked tool_result step');
+      assert.ok(
+        blockedSteps.some((s) =>
+          /policy engine unavailable|failed to evaluate/i.test(s.content ?? ''),
+        ),
+        'Block reason should record the gate failure',
+      );
     });
 
     it('handles tool execution errors', async () => {

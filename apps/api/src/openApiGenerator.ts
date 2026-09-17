@@ -28,7 +28,13 @@
  */
 
 import type { RequestHandler } from 'express';
-import { listRegisteredRouters, type OpenApiMeta, type RouterRegistration } from './routerRegistry';
+import { OPENAPI_V1_SPEC } from '@commander/contracts';
+import {
+  listRegisteredRouters,
+  nestedMountPrefixOf,
+  type OpenApiMeta,
+  type RouterRegistration,
+} from './routerRegistry';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -45,9 +51,16 @@ export interface OpenApiDocument {
   tags: Array<{ name: string; description: string }>;
   paths: Record<string, Record<string, OpenApiOperation>>;
   components?: {
+    schemas?: Record<string, unknown>;
     securitySchemes?: Record<string, unknown>;
   };
   security?: Array<Record<string, string[]>>;
+  /**
+   * Mounts the reflector could not resolve, so their routes are omitted rather
+   * than published at a wrong path. Present only when non-empty. An OpenAPI
+   * extension (`x-`) so a strict consumer still validates the document.
+   */
+  'x-reflection-warnings'?: string[];
 }
 
 export interface OpenApiOperation {
@@ -80,6 +93,34 @@ interface GenerateOptions {
 // ── Route extraction ────────────────────────────────────────────────────────
 
 /**
+ * Resolves the prefix a sub-router was mounted at.
+ *
+ * Express 4 stored the mount path on the layer, so `layer.path` is authoritative
+ * there (`'/'` means a root mount, which contributes nothing).
+ *
+ * Express 5 does NOT: `router@2.x` sets `this.path = undefined` and keeps only
+ * the `path-to-regexp` closures, so `layer.path` and `layer.regexp` are both
+ * unusable (verified against express@5.2.1 / router@2.2.0). The only reliable
+ * source is the prefix recorded by `mountNestedRouter` at mount time.
+ *
+ * Returns `undefined` when the prefix is genuinely unknown. Callers must treat
+ * that as "omit the subtree" — guessing `''` is what silently published
+ * `/v1/actions/kill-switches` as `/v1/kill-switches`.
+ */
+function resolveNestedPrefix(layer: { path?: unknown; handle?: unknown }): string | undefined {
+  const normalize = (prefix: string): string => (prefix === '/' ? '' : prefix.replace(/\/+$/, ''));
+
+  if (typeof layer.path === 'string') {
+    return normalize(layer.path);
+  }
+  const recorded = nestedMountPrefixOf(layer.handle);
+  if (recorded !== undefined) {
+    return normalize(recorded);
+  }
+  return undefined;
+}
+
+/**
  * Walks an Express Router's `stack` to extract { path, method } pairs.
  *
  * Express Router internals are not part of the public API, but the `stack`
@@ -90,12 +131,16 @@ interface GenerateOptions {
  *  - Express 5: layers may carry `.path` and `.method` directly on the layer.
  *
  * Sub-routers (mounted via `router.use('/prefix', subRouter)`) are walked
- * recursively with the prefix prepended. Middleware-only layers (no route,
- * no method, no sub-router) are skipped — they are not HTTP routes.
+ * recursively with the prefix prepended. A sub-router whose prefix cannot be
+ * resolved is SKIPPED and reported through `warnings` — never walked with an
+ * assumed-empty prefix, because that emits paths that look plausible but point
+ * at the wrong URL. Middleware-only layers (no route, no method, no sub-router)
+ * are skipped — they are not HTTP routes.
  */
 function extractRoutesFromRouter(
   handler: RequestHandler | any,
   prefix: string,
+  warnings: string[] = [],
 ): Array<{ rawPath: string; method: string }> {
   const routes: Array<{ rawPath: string; method: string }> = [];
 
@@ -109,8 +154,18 @@ function extractRoutesFromRouter(
 
   for (const layer of handler.stack) {
     // Express 4: layer.route is a Route with .path and .methods
-    if (layer.route && layer.route.path && layer.route.methods) {
+    if (layer.route && layer.route.methods) {
       const routePath = layer.route.path;
+      if (typeof routePath !== 'string') {
+        // `router.all(/regex/)` (and path arrays) have no literal URL, so there
+        // is no honest OpenAPI path to publish. Coercing the RegExp produced
+        // `/api/v1/observability/.*/` — a "path" no client can ever call.
+        warnings.push(
+          `omitted a route whose path is ${routePath instanceof RegExp ? 'a RegExp' : typeof routePath} ` +
+            `rather than a string (under '${prefix || '/'}')`,
+        );
+        continue;
+      }
       const methods = layer.route.methods as Record<string, boolean>;
       for (const method of Object.keys(methods)) {
         if (methods[method]) {
@@ -121,15 +176,25 @@ function extractRoutesFromRouter(
     }
 
     // Express 5: layer may carry .path and .method directly
-    if (layer.method && layer.path) {
+    if (layer.method && typeof layer.path === 'string') {
       routes.push({ rawPath: prefix + layer.path, method: layer.method });
       continue;
     }
 
     // Sub-router: layer.handle is another Router with its own .stack
     if (layer.handle && Array.isArray(layer.handle.stack)) {
-      const subPrefix = layer.path || '';
-      const subRoutes = extractRoutesFromRouter(layer.handle, prefix + subPrefix);
+      const subPrefix = resolveNestedPrefix(layer);
+      if (subPrefix === undefined) {
+        // Fail closed. Express 5 discarded the mount path, so the real prefix is
+        // unknowable; recursing with '' would publish every nested route at a
+        // URL that does not exist. Omit the subtree and say so instead.
+        warnings.push(
+          `omitted a sub-router mounted at an unreflectable prefix (under '${prefix || '/'}'); ` +
+            'mount it with mountNestedRouter() so its prefix is recorded',
+        );
+        continue;
+      }
+      const subRoutes = extractRoutesFromRouter(layer.handle, prefix + subPrefix, warnings);
       routes.push(...subRoutes);
       continue;
     }
@@ -153,12 +218,16 @@ function toOpenApiPath(expressPath: string): string {
  *   - mountPath '/' + route '/projects' → '/projects' (not '//projects')
  *   - mountPath '/v1' + route '/runs' → '/v1/runs'
  *   - mountPath '/v1' + route '' → '/v1'
+ *   - mountPath '/v1' + route '/actions/' → '/v1/actions' (a trailing slash is
+ *     never significant: Express 5 defaults to non-strict routing, so `/x` and
+ *     `/x/` are the same route, and the canonical contract spells it `/x`).
  */
 function joinPaths(mountPath: string, routePath: string): string {
   const mount = mountPath === '/' ? '' : mountPath.replace(/\/$/, '');
   const route = routePath === '/' ? '' : routePath;
   const joined = mount + route;
-  return joined === '' ? '/' : joined;
+  if (joined === '') return '/';
+  return joined.length > 1 ? joined.replace(/\/+$/, '') : joined;
 }
 
 // ── Metadata defaults ───────────────────────────────────────────────────────
@@ -197,6 +266,7 @@ function isV1ProductPath(path: string): boolean {
 export function generateOpenApiSpec(options: GenerateOptions): OpenApiDocument {
   const registrations = listRegisteredRouters();
   const paths: Record<string, Record<string, OpenApiOperation>> = {};
+  const warnings: string[] = [];
 
   // ── Auto-injected metadata paths ──────────────────────────────────────────
   // /v1/openapi.json — self-describing
@@ -235,7 +305,7 @@ export function generateOpenApiSpec(options: GenerateOptions): OpenApiDocument {
 
   // ── Routes from registered routers ────────────────────────────────────────
   for (const reg of registrations) {
-    const extracted = extractRoutesFromRegistration(reg);
+    const extracted = extractRoutesFromRegistration(reg, warnings);
     for (const route of extracted) {
       const pathKey = route.openApiPath;
       if (!paths[pathKey]) {
@@ -257,7 +327,7 @@ export function generateOpenApiSpec(options: GenerateOptions): OpenApiDocument {
   // ── Assemble document ─────────────────────────────────────────────────────
   const serverUrl = options.serverUrl ?? `http://localhost:${process.env.PORT ?? '4000'}`;
 
-  return {
+  const document: OpenApiDocument = {
     openapi: '3.1.0',
     info: {
       title: options.title,
@@ -270,6 +340,16 @@ export function generateOpenApiSpec(options: GenerateOptions): OpenApiDocument {
     tags: collectTags(paths),
     paths,
     components: {
+      // Component schemas are published from the canonical contract
+      // (`@commander/contracts` OPENAPI_V1_SPEC), NOT reflected from route code:
+      // the route factories carry no schema metadata, so reflection can only
+      // ever produce paths. Without these, a client generated from this
+      // document cannot resolve any `#/components/schemas/...` reference.
+      //
+      // Known residual gap: the reflected operations do not yet reference these
+      // schemas, so they are reachable but not wired to individual operations.
+      // That gap is pinned by openApiContractConsistency.test.ts.
+      schemas: { ...canonicalComponentSchemas() },
       securitySchemes: {
         bearerAuth: {
           type: 'http',
@@ -283,13 +363,33 @@ export function generateOpenApiSpec(options: GenerateOptions): OpenApiDocument {
     },
     security: [{ bearerAuth: [] }],
   };
+
+  if (warnings.length > 0) {
+    document['x-reflection-warnings'] = [...new Set(warnings)].sort();
+  }
+
+  return document;
+}
+
+/**
+ * Component schemas declared by the canonical contract, used to populate the
+ * served document's `components.schemas`. Returns an empty object if the
+ * contract ever stops declaring schemas, so the document stays valid.
+ */
+function canonicalComponentSchemas(): Record<string, unknown> {
+  const components = (OPENAPI_V1_SPEC as { components?: { schemas?: Record<string, unknown> } })
+    .components;
+  return components?.schemas ?? {};
 }
 
 /**
  * Extracts routes from a single registration, returning OpenAPI-formatted
  * paths with metadata applied.
  */
-function extractRoutesFromRegistration(reg: RouterRegistration): ExtractedRoute[] {
+function extractRoutesFromRegistration(
+  reg: RouterRegistration,
+  warnings: string[],
+): ExtractedRoute[] {
   let handler: RequestHandler;
   try {
     handler = reg.factory();
@@ -298,7 +398,7 @@ function extractRoutesFromRegistration(reg: RouterRegistration): ExtractedRoute[
     return [];
   }
 
-  const rawRoutes = extractRoutesFromRouter(handler, '');
+  const rawRoutes = extractRoutesFromRouter(handler, '', warnings);
   const routes: ExtractedRoute[] = [];
 
   for (const raw of rawRoutes) {

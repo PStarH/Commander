@@ -46,15 +46,105 @@ interface PendingEntry {
 
 const DEFAULT_TIMEOUT_MS = 5 * 60 * 1000;
 const APPROVAL_ID_PREFIX = 'appr_';
+/**
+ * `setTimeout` stores its delay in a signed 32-bit int. A larger value silently
+ * overflows and the timer fires on the next tick, so an oversized
+ * `gate.timeoutMs` would resolve the approval *immediately* instead of never.
+ * Clamp to the largest delay Node actually honours.
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
+/** Approver identities the manager itself mints; callers must not forge them. */
+const SYSTEM_APPROVER_PREFIX = 'system:';
+
+const VALID_DECISIONS: readonly ApprovalDecision[] = ['approve', 'reject', 'modify'];
+
+export interface ApprovalAuthenticatorInput {
+  approvalId: string;
+  approverId: string;
+  request: ApprovalRequest;
+}
+
+/**
+ * Host-supplied authentication boundary for human responses.
+ *
+ * A display name is not an identity proof. The core manager deliberately does
+ * not know how the API's JWT/OIDC/mTLS layer authenticates a human, so a
+ * production host must inject that decision. An absent authenticator is a
+ * hard deny rather than an implicit allow.
+ */
+export type ApprovalAuthenticator = (input: ApprovalAuthenticatorInput) => boolean;
+
+export interface HumanApprovalManagerOptions {
+  authenticateApprover?: ApprovalAuthenticator;
+}
 
 function generateApprovalId(): string {
   return `${APPROVAL_ID_PREFIX}${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+/**
+ * Approval-on-timeout is only honoured when an operator enables it out of band.
+ *
+ * `gate.onTimeout` arrives inside the plan/sub-agent node — i.e. it is supplied
+ * by the very work being gated. Honouring it as a grant means a plan can approve
+ * itself by declaring `{ timeoutMs: 1, onTimeout: 'approve' }`. The project's
+ * failure semantics are explicit: a timeout is the *absence* of a human decision
+ * and must never be converted into success. The `approve` value is therefore
+ * ignored unconditionally; there is no environment-variable escape hatch for
+ * turning a timeout into a grant.
+ */
+
+/**
+ * Coerce a caller-supplied timeout into a delay `setTimeout` will honour.
+ * A missing, non-finite, zero or negative value falls back to the default;
+ * an oversized value is clamped rather than allowed to overflow.
+ */
+function normalizeTimeoutMs(raw: number | undefined): number {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_TIMEOUT_MS;
+  }
+  return Math.min(raw, MAX_TIMEOUT_MS);
+}
+
+/**
+ * Decide what a timeout means. A timeout is never a human grant, even when a
+ * plan supplies `onTimeout: 'approve'`.
+ */
+function resolveTimeoutDecision(
+  configured: HumanApprovalGate['onTimeout'],
+  ctx: { approvalId: string; runId: string; nodeId: string },
+): ApprovalDecision {
+  if (configured === 'approve') {
+    getGlobalLogger().warn(
+      'HumanApprovalManager',
+      "gate.onTimeout 'approve' ignored — a timeout cannot constitute human approval (failing closed)",
+      ctx,
+    );
+    return 'reject';
+  }
+  // 'modify' is treated as "not granted" by every consumer of the resolution
+  // (subAgentExecutor skips on both 'reject' and 'modify'), so it is safe.
+  return configured === 'modify' ? 'modify' : 'reject';
 }
 
 export class HumanApprovalManager {
   private pending = new Map<string, PendingEntry>();
   private responses = new Map<string, ApprovalResolution>();
   private readonly DEFAULT_DECISION_ON_TIMEOUT: ApprovalDecision = 'reject';
+  private authenticateApprover?: ApprovalAuthenticator;
+
+  constructor(options: HumanApprovalManagerOptions = {}) {
+    this.authenticateApprover = options.authenticateApprover;
+  }
+
+  /**
+   * Install the host's authenticated-approver verifier during trusted
+   * application bootstrap. Passing `undefined` restores the fail-closed state.
+   */
+  configureApproverAuthenticator(authenticator?: ApprovalAuthenticator): void {
+    this.authenticateApprover = authenticator;
+  }
 
   request(request: Omit<ApprovalRequest, 'approvalId' | 'requestedAt'>): ApprovalRequest {
     const approvalId = generateApprovalId();
@@ -64,8 +154,12 @@ export class HumanApprovalManager {
       requestedAt: new Date().toISOString(),
     };
 
-    const timeoutMs = fullRequest.gate.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-    const onTimeout = fullRequest.gate.onTimeout ?? this.DEFAULT_DECISION_ON_TIMEOUT;
+    const timeoutMs = normalizeTimeoutMs(fullRequest.gate.timeoutMs);
+    const onTimeout = resolveTimeoutDecision(fullRequest.gate.onTimeout, {
+      approvalId,
+      runId: fullRequest.runId,
+      nodeId: fullRequest.nodeId,
+    });
 
     const entry: PendingEntry = {
       request: fullRequest,
@@ -154,6 +248,16 @@ export class HumanApprovalManager {
   /**
    * Record a human response. The first response wins; subsequent
    * responses for the same approvalId are ignored.
+   *
+   * The caller identity is not self-asserting: this method validates it before
+   * it can grant anything. Two things are enforced, because the alternative is
+   * that the gate can be resolved by whoever is being gated:
+   *   - separation of duties — the requester may not approve its own request;
+   *   - no forged system principals — `system:*` ids are minted internally
+   *     (timeout / cancel / unknown-approval) and are never accepted from a
+   *     caller.
+   * A rejected attempt throws rather than returning `null`, so it cannot be
+   * mistaken for "already resolved".
    */
   respond(
     approvalId: string,
@@ -163,6 +267,33 @@ export class HumanApprovalManager {
   ): ApprovalResolution | null {
     const entry = this.pending.get(approvalId);
     if (!entry || entry.completed) return null;
+
+    if (typeof approverId !== 'string' || approverId.trim().length === 0) {
+      throw new Error('HumanApprovalManager.respond: approverId must be a non-empty string');
+    }
+    if (approverId.startsWith(SYSTEM_APPROVER_PREFIX)) {
+      throw new Error(
+        `HumanApprovalManager.respond: "${approverId}" is a reserved system identity and cannot resolve an approval`,
+      );
+    }
+    if (approverId === entry.request.requesterId) {
+      throw new Error(
+        `HumanApprovalManager.respond: approval ${approvalId} cannot be resolved by its own requester ("${approverId}") — separation of duties required`,
+      );
+    }
+    if (!VALID_DECISIONS.includes(decision)) {
+      throw new Error(
+        `HumanApprovalManager.respond: invalid decision "${String(decision)}" (expected one of ${VALID_DECISIONS.join(', ')})`,
+      );
+    }
+    if (
+      !this.authenticateApprover ||
+      !this.authenticateApprover({ approvalId, approverId, request: entry.request })
+    ) {
+      throw new Error(
+        `HumanApprovalManager.respond: authenticated approver context is required for approval ${approvalId}`,
+      );
+    }
 
     entry.completed = true;
     if (entry.timer) clearTimeout(entry.timer);
@@ -247,6 +378,14 @@ const approvalManagerSingleton = createTenantAwareSingleton(() => new HumanAppro
 
 export function getHumanApprovalManager(): HumanApprovalManager {
   return approvalManagerSingleton.get();
+}
+
+export function configureHumanApprovalManager(
+  authenticator?: ApprovalAuthenticator,
+): HumanApprovalManager {
+  const manager = approvalManagerSingleton.get();
+  manager.configureApproverAuthenticator(authenticator);
+  return manager;
 }
 
 export function resetHumanApprovalManager(): void {

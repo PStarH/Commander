@@ -675,7 +675,9 @@ export const actionCompensationApprovalRequestSchema = {
 export const actionRejectionRequestSchema = {
   $id: `${ACTION_BASE}/action-rejection-request.json`,
   type: 'object',
-  required: [],
+  // A rejection is an operator decision recorded for audit: an anonymous
+  // reason-less rejection carries no accountability, so it must not validate.
+  required: ['reason'],
   properties: {
     reason: { type: 'string', minLength: 1, maxLength: 2_000 },
   },

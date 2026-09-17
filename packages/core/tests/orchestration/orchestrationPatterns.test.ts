@@ -393,6 +393,35 @@ describe('SwarmRouter', () => {
     expect(run.status).toBe('COMPLETED');
   });
 
+  it('runSwarmRouter 的 sequential 分支不执行任何步骤，因此不得报 COMPLETED', async () => {
+    let calls = 0;
+    const executor = makeMockExecutor((s) => {
+      calls += 1;
+      return `out-${s.id}`;
+    });
+    const run = await runSwarmRouter({
+      projectId: 'p1',
+      executor,
+      taskProfile: {
+        dependencyType: 'linear',
+        stepCount: 2,
+        qualityRequirement: 'standard',
+        costSensitivity: 'standard',
+      },
+      steps: { steps: [step('a'), step('b', ['a'])] },
+    });
+
+    expect(run.routerDecision.pattern).toBe('sequential');
+    // 路由器只做拓扑判定并委派，本身不执行步骤
+    expect(calls).toBe(0);
+    expect(run.stepResults).toEqual([]);
+    // 未执行不等于成功：不得把「尚未运行」报告成 COMPLETED
+    expect(run.status).toBe('PENDING');
+    expect(run.status).not.toBe('COMPLETED');
+    expect(run.completedAt).toBeUndefined();
+    expect((run.finalOutput as { hint?: string }).hint).toBe('delegate_to_sequential');
+  });
+
   it('forcePattern 跳过路由', async () => {
     const executor = makeMockExecutor((s) => `out-${s.id}`);
     const run = await runSwarmRouter({

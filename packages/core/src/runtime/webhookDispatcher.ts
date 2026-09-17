@@ -106,6 +106,17 @@ function normalizeWebhookHostname(hostname: string): string {
   return h;
 }
 
+/** Canonical origin of a webhook URL, or null when it cannot be parsed. */
+function webhookOrigin(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+    return parsed.origin;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Validate a webhook URL to prevent SSRF attacks.
  * Aligned with apps/api outgoingWebhookEndpoints.isSafeOutgoingWebhookUrl.
@@ -141,6 +152,11 @@ export class WebhookDispatcher {
   private maxDeliveryLog = 1000;
   private readonly tenantId: string;
   private readonly storageFile: string;
+  /**
+   * Origins this dispatcher has registered as authorized egress targets for its
+   * tenant. Kept so a deregistered/filtered webhook also loses its grant.
+   */
+  private authorizedOrigins = new Set<string>();
 
   constructor(tenantId?: string) {
     // AUDIT-CORE3: fail closed in multi-tenant mode when no tenant is bound.
@@ -217,6 +233,7 @@ export class WebhookDispatcher {
       createdAt: new Date().toISOString(),
     };
     this.webhooks.set(id, webhook);
+    this.syncTargetAuthorizations();
     this.save();
     getGlobalLogger().info('WebhookDispatcher', 'Registered webhook', {
       id,
@@ -229,10 +246,39 @@ export class WebhookDispatcher {
   deregisterWebhook(id: string): boolean {
     const existed = this.webhooks.delete(id);
     if (existed) {
+      this.syncTargetAuthorizations();
       this.save();
       getGlobalLogger().info('WebhookDispatcher', 'Deregistered webhook', { id });
     }
     return existed;
+  }
+
+  /**
+   * Keep the policy's per-target egress authorizations in step with the
+   * server-side webhook registry.
+   *
+   * A webhook destination is a legitimate public URL that is generally not on
+   * the domain allowlist, so it needs its own authorization. The authorization
+   * is derived from this tenant-scoped registry — never from the request or the
+   * model — and is dropped again as soon as the last webhook using that origin
+   * is removed.
+   */
+  private syncTargetAuthorizations(): void {
+    const policy = getOutboundNetworkPolicy();
+    const origins = new Set<string>();
+    for (const webhook of this.webhooks.values()) {
+      const origin = webhookOrigin(webhook.url);
+      if (origin) origins.add(origin);
+    }
+    for (const origin of origins) {
+      policy.authorizeTarget(origin, { tenantId: this.tenantId });
+    }
+    for (const origin of this.authorizedOrigins) {
+      if (!origins.has(origin)) {
+        policy.revokeTarget(origin, this.tenantId);
+      }
+    }
+    this.authorizedOrigins = origins;
   }
 
   getWebhook(id: string): WebhookConfig | undefined {
@@ -312,15 +358,20 @@ export class WebhookDispatcher {
       ...(wh.headers ?? {}),
     };
 
-    // Use OutboundNetworkPolicy.ssrfCheckedFetch: DNS/private-IP SSRF check +
-    // IP pin (no allowlist — webhooks target arbitrary customer URLs).
+    // Authorization-aware egress: the URL must be allowlisted or, as is normal
+    // for customer webhooks, hold the per-target authorization this dispatcher
+    // registered for its tenant. SSRF/private-IP check + IP pin still apply.
     const sendResult = await ResourceGovernor.govern(
       async () => {
-        const res = await getOutboundNetworkPolicy().ssrfCheckedFetch(wh.url, {
-          method: 'POST',
-          headers,
-          body,
-        });
+        const res = await getOutboundNetworkPolicy().ssrfCheckedFetch(
+          wh.url,
+          {
+            method: 'POST',
+            headers,
+            body,
+          },
+          { tenantId: this.tenantId },
+        );
         const statusCode = res.status;
         const success = statusCode >= 200 && statusCode < 300;
         // Drain body so the socket can be reused / closed promptly.
@@ -409,7 +460,10 @@ export class WebhookDispatcher {
         removed++;
       }
     }
-    if (removed > 0) this.save();
+    if (removed > 0) {
+      this.syncTargetAuthorizations();
+      this.save();
+    }
     return removed;
   }
 
@@ -462,6 +516,10 @@ export class WebhookDispatcher {
           this.deliveryLog = persistedDeliveries.slice(-this.maxDeliveryLog) as WebhookDelivery[];
         }
       }
+      // Persisted webhooks were registered through registerWebhook(), but the
+      // policy singleton may be newer than the stored registry — re-establish
+      // the per-target authorizations they need to be deliverable.
+      this.syncTargetAuthorizations();
     } catch (err) {
       getGlobalLogger().error('WebhookDispatcher', 'Failed to load webhooks', err as Error);
     }

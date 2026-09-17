@@ -117,10 +117,14 @@ describe('CMD-SAGA-CONTROL-001 owner authorization', () => {
       headers: headers('alice', 'tenant-a'),
     });
     assert.equal(list.status, 200);
-    assert.deepEqual(
-      ((await list.json()) as { runs: Array<{ runId: string }> }).runs.map((run) => run.runId),
-      ['run-admin', 'run-alice', 'run-fork', 'run-operator'],
+    // AUDIT F-B-25: compare as a SET — the previous assertion hard-coded the
+    // store's incidental alphabetical ordering into a security expectation.
+    const visible = ((await list.json()) as { runs: Array<{ runId: string }> }).runs.map(
+      (run) => run.runId,
     );
+    assert.equal(visible.length, 4);
+    assert.deepEqual([...visible].sort(), ['run-admin', 'run-alice', 'run-fork', 'run-operator']);
+    assert.ok(!visible.includes('run-foreign'), 'a foreign tenant run must not be listed');
     assert.equal(
       (
         await fetch(`${server.baseUrl}/api/saga/runs/run-alice`, {

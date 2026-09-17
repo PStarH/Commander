@@ -93,7 +93,7 @@ describe('V2 WP5 Attack Drills', () => {
       assert.equal(resultA.ok, true, 'Token should work for its own tenant');
     });
 
-    it('rejects wildcard token in production mode', () => {
+    it('rejects wildcard-audience token for a concrete tenant (CAP-02)', () => {
       const token = issuer.issue({
         sub: 'agent-1',
         aud: '*', // Wildcard tenant
@@ -101,7 +101,12 @@ describe('V2 WP5 Attack Drills', () => {
         ttlSeconds: 60,
       });
 
-      // Wildcard tokens should work for any tenant audience
+      // CAP-02: a tenant-scoped verifier must reject a wildcard-audience token.
+      // The previous version of this test asserted nothing about the property in
+      // its own name: the only assertion sat inside `if (result.ok)`, and the
+      // verifier rejects here, so the branch was never entered and the test
+      // passed unconditionally. The old title also claimed "production mode",
+      // but CAP-02 is not gated on NODE_ENV — it applies to any tenant verifier.
       const verifierB = new CapabilityTokenVerifier({
         masterKey: MASTER_KEY,
         expectedAud: TENANT_B,
@@ -110,16 +115,11 @@ describe('V2 WP5 Attack Drills', () => {
         tool: 'file_read',
         args: {},
       });
-      // aud='*' means global; verify with specific aud should still work
+
       if (result.ok) {
-        // If wildcard is allowed, it's fine — but verify that the token
-        // cannot access tools outside its scope
-        const scopedResult = verifierB.verify(token, {
-          tool: 'file_delete',
-          args: {},
-        });
-        assert.equal(scopedResult.ok, false, 'Wildcard token must still respect tool scope');
+        assert.fail('wildcard-audience token must not be accepted by a tenant-scoped verifier');
       }
+      assert.equal(result.reason, 'aud_mismatch');
     });
   });
 

@@ -12,6 +12,9 @@ import { reportSilentFailure } from '../../silentFailureReporter';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { $, section, kv, parseFlags } from './_shared';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Feedback storage
@@ -64,7 +67,7 @@ function generateId(): string {
 }
 
 function getContext(): FeedbackEntry['context'] {
-  const { detectProvider, getEffectiveModel } = require('../../config/commanderConfig');
+  const { detectProvider, getEffectiveModel } = nodeRequire('../../config/commanderConfig');
   const provider = detectProvider();
   return {
     provider: provider?.type,

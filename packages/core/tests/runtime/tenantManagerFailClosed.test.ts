@@ -6,6 +6,7 @@ import { test, describe, beforeEach, afterEach } from 'vitest';
 import * as assert from 'node:assert/strict';
 import { setMultiTenantEnabled, runWithTenant } from '../../src/runtime/tenantContext.js';
 import { TenantManager } from '../../src/runtime/tenantManager.js';
+import { SimpleTenantProvider } from '../../src/runtime/tenantProvider.js';
 import { ThreeLayerMemory } from '../../src/threeLayerMemory.js';
 
 const emptyStores = {
@@ -59,5 +60,37 @@ describe('ThreeLayerMemory cross-tenant guards (AUDIT-CORE5)', () => {
     // effective (ALS) tenant, not the never-set currentTenantId field.
     const promoted = runWithTenant('tenant-a', () => mem.promoteToLongTerm(entry.id));
     assert.equal(promoted, false, 'cross-tenant promotion must be denied');
+  });
+});
+
+describe('SimpleTenantProvider workspace boundary fails closed (ET-03)', () => {
+  const provider = () =>
+    new SimpleTenantProvider([{ tenantId: 'alpha', workspacePath: '/srv/alpha' } as never]);
+
+  test('an unknown tenant is denied every path', () => {
+    // Baseline: `if (!config?.workspacePath) return true` allowed any tenant
+    // any path, so an unconfigured enterprise runtime was wide open.
+    assert.equal(provider().validateWorkspacePath('alpha', '/srv/alpha/file.txt'), true);
+    assert.equal(provider().validateWorkspacePath('ghost', '/srv/alpha/file.txt'), false);
+    assert.equal(provider().validateWorkspacePath('ghost', '/etc/passwd'), false);
+  });
+
+  test('a known tenant without a configured workspace is denied', () => {
+    const p = new SimpleTenantProvider([{ tenantId: 'beta' } as never]);
+    assert.equal(p.validateWorkspacePath('beta', '/srv/beta/file.txt'), false);
+  });
+
+  test('a configured tenant stays scoped to its own workspace', () => {
+    const p = provider();
+    assert.equal(p.validateWorkspacePath('alpha', '/srv/alpha'), true);
+    assert.equal(p.validateWorkspacePath('alpha', '/srv/alpha/nested/file.txt'), true);
+    assert.equal(p.validateWorkspacePath('alpha', '/srv/alphabet/file.txt'), false);
+    assert.equal(p.validateWorkspacePath('alpha', '/srv/beta/file.txt'), false);
+  });
+
+  test('an empty provider denies everything (the enterprise wiring installs [])', () => {
+    const p = new SimpleTenantProvider();
+    assert.equal(p.validateWorkspacePath('any', '/anywhere'), false);
+    assert.deepEqual(p.getKnownTenants(), []);
   });
 });

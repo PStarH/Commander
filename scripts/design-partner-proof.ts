@@ -412,6 +412,32 @@ export async function runDesignPartnerTechnicalProof(
     };
   }
 
+  // These three flags are *observations*, not assertions.
+  //
+  // They used to be hardcoded `true`, which made the corresponding checks in
+  // `deriveTechnicalVerdict` (FAULT_MATRIX_INCOMPLETE, FAULT_POINTS_INCOMPLETE,
+  // CAMPAIGN_ARTIFACTS_UNVERIFIED) unreachable: a flag that is always true
+  // makes its gate dead, and a gate that cannot fail is not a gate. Deriving
+  // them from the campaign observation keeps those four checks live and keeps
+  // the attestation truthful if the early-return guard above ever changes.
+  const faultPointCounts = new Map<string, number>();
+  for (const point of campaign.observation.faultPoints) {
+    faultPointCounts.set(point, (faultPointCounts.get(point) ?? 0) + 1);
+  }
+  const scenarioIdCounts = new Map<string, number>();
+  for (const { id } of campaign.observation.scenarios) {
+    scenarioIdCounts.set(id, (scenarioIdCounts.get(id) ?? 0) + 1);
+  }
+  const matrixComplete =
+    DESIGN_PARTNER_FAULT_POINTS.every((point) => faultPointCounts.get(point) === 1) &&
+    DESIGN_PARTNER_SCENARIOS.every((scenario) => scenarioIdCounts.get(scenario.id) === 1);
+  const allFaultPointsObserved = DESIGN_PARTNER_FAULT_POINTS.every(
+    (point) => (faultPointCounts.get(point) ?? 0) >= 1,
+  );
+  const artifactsVerified =
+    REQUIRED_DRIVER_ARTIFACTS.every((name) => typeof campaign.artifacts[name] === 'string') &&
+    Object.entries(artifacts).every(([name, body]) => retainedArtifactSafe(name, body));
+
   const attestation: TechnicalProofAttestation = {
     tenantId: config.tenantId,
     source,
@@ -419,10 +445,10 @@ export async function runDesignPartnerTechnicalProof(
     topology: campaign.observation.topology,
     campaign: {
       driverBoundary: campaign.observation.driver.boundary,
-      matrixComplete: true,
-      allFaultPointsObserved: true,
+      matrixComplete,
+      allFaultPointsObserved,
       invariantsPassed: failures.length === 0,
-      artifactsVerified: true,
+      artifactsVerified,
     },
     gates: { disasterRecovery, signingRotation },
   };

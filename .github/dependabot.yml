@@ -3,9 +3,14 @@
 
 version: 2
 updates:
-  # Core package dependencies
+  # Single pnpm workspace: one lockfile (pnpm-lock.yaml) lives at the repository
+  # root and covers every workspace package (apps/*, integrations/*, packages/*).
+  # A single root entry therefore updates all of them. Per-directory npm entries
+  # (previously /packages/core, /apps/api, /apps/web) have no lockfile of their
+  # own and only produced duplicate/competing PRs against the shared root
+  # lockfile, so they have been consolidated here.
   - package-ecosystem: 'npm'
-    directory: '/packages/core'
+    directory: '/'
     schedule:
       interval: 'weekly'
       day: 'monday'
@@ -28,50 +33,6 @@ updates:
         patterns:
           - 'vitest'
           - '@vitest/*'
-
-  # API package dependencies
-  - package-ecosystem: 'npm'
-    directory: '/apps/api'
-    schedule:
-      interval: 'weekly'
-      day: 'monday'
-    open-pull-requests-limit: 5
-    labels:
-      - 'dependencies'
-      - 'npm'
-    commit-message:
-      prefix: 'chore'
-      prefix-development: 'chore'
-      include: 'scope'
-
-  # Web GUI dependencies
-  - package-ecosystem: 'npm'
-    directory: '/apps/web'
-    schedule:
-      interval: 'weekly'
-      day: 'monday'
-    open-pull-requests-limit: 5
-    labels:
-      - 'dependencies'
-      - 'npm'
-    commit-message:
-      prefix: 'chore'
-      prefix-development: 'chore'
-      include: 'scope'
-
-  # Root monorepo dependencies
-  - package-ecosystem: 'npm'
-    directory: '/'
-    schedule:
-      interval: 'weekly'
-      day: 'monday'
-    open-pull-requests-limit: 5
-    labels:
-      - 'dependencies'
-      - 'npm'
-    commit-message:
-      prefix: 'chore'
-      include: 'scope'
 
   # Docker dependency updates
   - package-ecosystem: 'docker'

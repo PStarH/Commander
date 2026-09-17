@@ -12,6 +12,8 @@
 import { describe, it, beforeEach, afterEach } from 'vitest';
 import assert from 'node:assert';
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import { ZeroTrustValidator } from '../src/security/zeroTrustValidator';
 import { BillExplosionGuard } from '../src/security/billExplosionGuard';
@@ -389,6 +391,39 @@ describe('DataLossPrevention', () => {
     assert.strictEqual(result.riskLevel, 'critical');
   });
 
+  it('does not mask a millisecond timestamp as a credit card', () => {
+    // `1758000000002` is a 13-digit Unix-millisecond timestamp that happens to
+    // pass the Luhn check, which is true of roughly one arbitrary 13-digit run
+    // in ten. Luhn alone therefore masked legitimate timestamps: an API response
+    // field carrying epoch milliseconds came back as `****-****-****-0002`, and
+    // whether it happened depended on the timestamp's value. Card numbers never
+    // begin with 1, and Visa is the only 13-digit brand.
+    const result = dlp.scan('{"selfAssessmentTimestamp":1758000000002}', 'api_response');
+    assert.strictEqual(result.isClean, true, 'a timestamp must not be classified as PII');
+    assert.deepStrictEqual(
+      result.matches.filter((match) => match.type === 'credit_card'),
+      [],
+    );
+  });
+
+  it('still detects real card numbers of every common brand', () => {
+    const cases: Array<[string, string]> = [
+      ['Visa 16', '4111111111111111'],
+      ['Visa 13', '4222222222222'],
+      ['Mastercard', '5555555555554444'],
+      ['Amex', '378282246310005'],
+      ['Discover', '6011111111111117'],
+      ['Diners', '30569309025904'],
+    ];
+    for (const [brand, card] of cases) {
+      const result = dlp.scan(`card ${card}`, 'api_response');
+      assert.ok(
+        result.matches.some((match) => match.type === 'credit_card'),
+        `${brand} (${card}) must still be detected`,
+      );
+    }
+  });
+
   it('should detect AWS access keys', () => {
     const content = `AWS_KEY=${awsAccessKeyFixture}`;
     const result = dlp.scan(content, 'log_output');
@@ -703,8 +738,6 @@ describe('Auth Middleware timing safety', () => {
   it('should use SHA-256 hashing for API keys (not plaintext storage)', () => {
     // API keys are hashed before the PostgreSQL-authoritative lookup. The raw
     // credential is never stored or compared against an in-process key map.
-    const fs = require('node:fs');
-    const path = require('node:path');
     const authPath = path.resolve(
       process.cwd(),
       process.cwd().endsWith(`${path.sep}packages${path.sep}core`)

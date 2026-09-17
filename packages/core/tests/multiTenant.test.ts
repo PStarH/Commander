@@ -299,7 +299,7 @@ describe('MetricsCollector tenant labels', () => {
 // ============================================================================
 
 describe('AgentRuntime tenant quotas', () => {
-  it('rate limit exceeded returns clear error', async () => {
+  it('rate limit exceeded returns clear error', async (t) => {
     const tenantProvider = new SimpleTenantProvider([
       {
         tenantId: 'rate-limited',
@@ -310,6 +310,11 @@ describe('AgentRuntime tenant quotas', () => {
       },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tenantProvider);
+    // AgentRuntime owns the OTel exporter, agent inbox, reliability engine and
+    // trace store. Without dispose() those handles keep the event loop alive,
+    // so this file never exits and `node --test` reports it as failed in any
+    // multi-file run even though every assertion passed.
+    t.after(() => runtime.dispose());
 
     const execCtx: AgentExecutionContext = {
       agentId: 'test',
@@ -335,7 +340,7 @@ describe('AgentRuntime tenant quotas', () => {
     );
   });
 
-  it('undefined tenantId bypasses all quotas', async () => {
+  it('undefined tenantId bypasses all quotas', async (t) => {
     const tenantProvider = new SimpleTenantProvider([
       {
         tenantId: 'limited',
@@ -346,6 +351,7 @@ describe('AgentRuntime tenant quotas', () => {
       },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tenantProvider);
+    t.after(() => runtime.dispose());
 
     const execCtx: AgentExecutionContext = {
       agentId: 'test',
@@ -369,7 +375,7 @@ describe('AgentRuntime tenant quotas', () => {
     }
   });
 
-  it('tenant with enabled:false has no quotas', async () => {
+  it('tenant with enabled:false has no quotas', async (t) => {
     const tenantProvider = new SimpleTenantProvider([
       {
         tenantId: 'unlimited',
@@ -380,6 +386,7 @@ describe('AgentRuntime tenant quotas', () => {
       },
     ]);
     const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tenantProvider);
+    t.after(() => runtime.dispose());
 
     const execCtx: AgentExecutionContext = {
       agentId: 'test',
@@ -409,14 +416,19 @@ describe('AgentRuntime tenant quotas', () => {
 
 describe('AgentRuntime tenant storage isolation', () => {
   it('different tenants get different storage instances', () => {
-    const tenantProvider = new SimpleTenantProvider([
-      { tenantId: 'ta', tokenBudget: 0, maxConcurrency: 5, maxRunsPerMinute: 100, enabled: true },
-      { tenantId: 'tb', tokenBudget: 0, maxConcurrency: 5, maxRunsPerMinute: 100, enabled: true },
-    ]);
-    const runtime = new AgentRuntime({ maxConcurrency: 10 }, undefined, tenantProvider);
+    // Tenant-scoped storage isolation is provided by ThreeLayerMemoryRegistry.
+    // Isolation means: distinct tenants never share an instance, a single
+    // tenant's instance is stable across lookups, and no tenant instance
+    // collides with the shared (no-tenant) default.
+    const registry = getGlobalMemoryRegistry();
+    const a1 = registry.getOrCreate('ta');
+    const b1 = registry.getOrCreate('tb');
+    const a2 = registry.getOrCreate('ta');
+    const shared = registry.getOrCreate();
 
-    // Access tenant storage properties via runtime internals
-    // We create run context and verify the runtime uses tenant-scoped instances
-    assert.ok(true, 'storage isolation initialized without error');
+    assert.notStrictEqual(a1, b1, 'ta and tb must not share a storage instance');
+    assert.strictEqual(a1, a2, 'a tenant must get a stable instance across lookups');
+    assert.notStrictEqual(shared, a1, 'the shared default must not be a tenant instance');
+    assert.ok(registry.getTenantCount() >= 2, 'both tenants should be registered');
   });
 });

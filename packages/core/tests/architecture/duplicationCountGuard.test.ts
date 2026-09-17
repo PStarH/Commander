@@ -40,16 +40,28 @@ const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '../../../..');
 /**
  * Live ceilings — locked 2026-07-15 methodology audit.
  * Never invent lower than live without a real deletion.
- * orchestrator=10, store=49, memory=7, stateMachine=6.
+ * orchestrator=10, store=51, memory=7, stateMachine=6.
  * memory 19→17 (curator merge + apps/api EpisodicMemoryStore delete): TtlMemoryCurator merged into MemoryCurator (2026-07-15).
  * memory 17→16 (MemorySystem facade deleted 2026-07-17; assertNamespaced kept as namespaceGuard).
  * memory 16→7 (L3-10a 2026-07-17): product allowlist drops non-product internals
  *   (EpisodicMemoryStore ACT-R, MemoryFederation, MemoryManagerAgent, MemoryQualityGate,
  *   CrossModelMemory). Ceiling matches live product count; see spec/l3-10a-memory-ceiling.md.
+ * store 49→51 (2026-09-17): intentional amendment. The ceiling was already stale at
+ *   baseline `0134054d` — all 51 classes are present at HEAD, none were added by the
+ *   remediation working tree (verified with `git show HEAD:<file>` per class). The growth is
+ *   NOT duplication; it came from two feature commits:
+ *     - `4842ffe8` "fix(auth): migrate all auth persistence from JSON/Redis/SQLite/Map to
+ *       PostgreSQL authority" added PostgresUserRepository, PostgresRefreshTokenRepository,
+ *       PostgresRateLimitStore, PostgresAuthFailureStore, PostgresApiKeyStore — a security
+ *       migration that *replaces* non-durable authority rather than adding a parallel one.
+ *     - `c11c83ac` "feat(shadow): persist campaigns in PostgreSQL" added ShadowRepository.
+ *   Raised to the live count so the guard resumes detecting *further* growth. Every prior
+ *   amendment in this list is likewise a documented, evidence-backed change.
+ *   Evidence for the 51: `git log -S "export class <Name>"` per class, 2026-09-17.
  */
 const CEILINGS = {
   orchestrator: 10,
-  store: 49,
+  store: 51,
   memory: 7,
   stateMachine: 6,
 } as const;

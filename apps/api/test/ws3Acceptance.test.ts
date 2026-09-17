@@ -57,7 +57,8 @@ function withEnv(profile: 'enterprise' | 'standard', fn: () => Promise<void>): P
       else delete process.env.JWT_SECRET;
       if (oldFile !== undefined) process.env.COMMANDER_WARROOM_FILE = oldFile;
       else delete process.env.COMMANDER_WARROOM_FILE;
-      if (oldDefaultTenant !== undefined) process.env.COMMANDER_DEFAULT_TENANT_ID = oldDefaultTenant;
+      if (oldDefaultTenant !== undefined)
+        process.env.COMMANDER_DEFAULT_TENANT_ID = oldDefaultTenant;
       else delete process.env.COMMANDER_DEFAULT_TENANT_ID;
       rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -70,7 +71,9 @@ async function withApp(
 ): Promise<void> {
   await withEnv(profile, async () => {
     const store = createWarRoomStore();
-    const memoryStore = new ProjectMemoryStoreAdapter(new MemoryStoreFacade(new InMemoryMemoryService(), 'tenant-ws3-audit'));
+    const memoryStore = new ProjectMemoryStoreAdapter(
+      new MemoryStoreFacade(new InMemoryMemoryService(), 'tenant-ws3-audit'),
+    );
     const agentStateStore = new AgentStateStore();
 
     const app = express();
@@ -199,8 +202,8 @@ describe('WS3 Phase 3 §11 — acceptance checklist', () => {
 
     it('never reports ok for an unprobed dependency', async () => {
       const result = await probeReadiness({
-        kernel: () => ({} as never),
-        effectBroker: () => ({} as never),
+        kernel: () => ({}) as never,
+        effectBroker: () => ({}) as never,
         // database, warRoomStore, memoryHeap all undefined → unknown
       });
       assert.equal(result.checks.database, 'unknown');

@@ -36,10 +36,39 @@ function requireRole(requiredRole: UserRole = 'admin') {
   };
 }
 
+/** Settings contain process-wide credentials; hierarchy-based admin access is
+ * intentionally not sufficient for changing them. */
+function requireSuperAdmin(req: Request, res: Response, next: NextFunction): void {
+  if (!req.user || req.user.role !== 'super_admin') {
+    res.status(403).json({ error: 'Super-admin privileges required' });
+    return;
+  }
+  next();
+}
+
+export const REDACTED_SETTING_VALUE = '[REDACTED]';
+
+export function redactSettings(settings: AppSettings): AppSettings {
+  return {
+    ...settings,
+    ...(settings.notifications
+      ? {
+          notifications: {
+            ...settings.notifications,
+            ...(settings.notifications.webhookUrl ? { webhookUrl: REDACTED_SETTING_VALUE } : {}),
+            ...(settings.notifications.slackWebhook
+              ? { slackWebhook: REDACTED_SETTING_VALUE }
+              : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 function isValidUrl(value: string): boolean {
   try {
-    new URL(value);
-    return true;
+    const parsed = new URL(value);
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:';
   } catch {
     return false;
   }
@@ -50,7 +79,7 @@ function isValidEmail(value: string): boolean {
   return /^[^\s@]+@[^\s@\.]+\.[^\s@]+$/.test(value);
 }
 
-function validateSettings(body: unknown): { settings: AppSettings } | { error: string } {
+export function validateSettings(body: unknown): { settings: AppSettings } | { error: string } {
   if (!body || typeof body !== 'object') {
     return { error: 'Request body must be an object' };
   }
@@ -105,15 +134,25 @@ function validateSettings(body: unknown): { settings: AppSettings } | { error: s
       if (n.webhookUrl !== undefined) {
         if (typeof n.webhookUrl !== 'string')
           return { error: 'notifications.webhookUrl must be a string' };
+        if (n.webhookUrl === REDACTED_SETTING_VALUE) {
+          return {
+            error: 'notifications.webhookUrl is redacted; omit it to keep the existing secret',
+          };
+        }
         if (n.webhookUrl && !isValidUrl(n.webhookUrl))
-          return { error: 'notifications.webhookUrl is not a valid URL' };
+          return { error: 'notifications.webhookUrl is not a valid HTTP(S) URL' };
         notifications.webhookUrl = n.webhookUrl || undefined;
       }
       if (n.slackWebhook !== undefined) {
         if (typeof n.slackWebhook !== 'string')
           return { error: 'notifications.slackWebhook must be a string' };
+        if (n.slackWebhook === REDACTED_SETTING_VALUE) {
+          return {
+            error: 'notifications.slackWebhook is redacted; omit it to keep the existing secret',
+          };
+        }
         if (n.slackWebhook && !isValidUrl(n.slackWebhook)) {
-          return { error: 'notifications.slackWebhook is not a valid URL' };
+          return { error: 'notifications.slackWebhook is not a valid HTTP(S) URL' };
         }
         notifications.slackWebhook = n.slackWebhook || undefined;
       }
@@ -131,14 +170,14 @@ export function createSettingsRouter(): Router {
   // GET /api/settings — read current global settings
   router.get('/api/settings', requireAuth, (_req: Request, res: Response) => {
     try {
-      res.json({ settings: loadSettings() });
+      res.json({ settings: redactSettings(loadSettings()) });
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
   });
 
   // PUT /api/settings — update global settings (admin only)
-  router.put('/api/settings', requireAuth, requireRole(), (req: Request, res: Response) => {
+  router.put('/api/settings', requireAuth, requireSuperAdmin, (req: Request, res: Response) => {
     const validation = validateSettings(req.body);
     if ('error' in validation) {
       res.status(400).json({ error: validation.error });
@@ -147,7 +186,7 @@ export function createSettingsRouter(): Router {
 
     try {
       const settings = updateSettings(validation.settings);
-      res.json({ settings });
+      res.json({ settings: redactSettings(settings) });
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }

@@ -10,6 +10,19 @@ import { ModelRouter } from '../../src/runtime/modelRouter';
 import { MockLLMProvider } from '../../src/runtime/mockLLMProvider';
 import { CompensationEventSubscriber } from '../../src/runtime/compensationEventSubscriber';
 import { PersistentTraceStore } from '../../src/runtime/traceStore';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file drives AgentRuntime tool loops end to end and asserts nothing
+// about SideEffectGate admission, so it explicitly opts in to the always-admit
+// unit fixture. The global default is now the real, fail-closed gate.
+// This is a unit convenience, NOT an admission proof.
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 // ============================================================================
 // Helpers

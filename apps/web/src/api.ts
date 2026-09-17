@@ -1,3 +1,4 @@
+import { apiRequestTargetsOrigin, resolveApiBase } from './lib/apiOrigin';
 import { reportSilentFailure } from './lib/silentFailure';
 import type {
   WarRoomSnapshot,
@@ -20,9 +21,19 @@ import type {
   SLOStatus,
 } from './types';
 
-export const API_BASE =
-  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_API_BASE_URL ||
-  'http://localhost:4000';
+/**
+ * API base URL for the running bundle.
+ *
+ * The production image builds with `VITE_API_BASE_URL=""` and is served
+ * same-origin by nginx, so an empty value resolves to the page's own origin —
+ * see src/lib/apiOrigin.ts. Falling back to the development API origin here
+ * would point a deployed browser at the end user's own machine, off the
+ * production `connect-src 'self'` CSP.
+ */
+export const API_BASE = resolveApiBase(
+  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_API_BASE_URL,
+  globalThis.location,
+);
 export const PROJECT_ID = 'project-war-room';
 
 // ============================================================================
@@ -88,21 +99,8 @@ export function clearAuthToken(): void {
  * receive the session bearer token.
  */
 export function isCommanderApiRequest(input: RequestInfo | URL): boolean {
-  try {
-    const base = globalThis.location?.href ?? globalThis.location?.origin;
-    const url =
-      typeof input === 'string'
-        ? new URL(input, base)
-        : input instanceof URL
-          ? input
-          : new URL(input.url, base);
-    const selfOrigin = globalThis.location?.origin;
-    if (selfOrigin && url.origin === selfOrigin) return true;
-    return url.origin === new URL(API_BASE).origin;
-  } catch {
-    // Unresolvable destination — do not attach the token.
-    return false;
-  }
+  const target = typeof input === 'string' || input instanceof URL ? input : input.url;
+  return apiRequestTargetsOrigin(API_BASE, target, globalThis.location);
 }
 
 let _interceptorInstalled = false;

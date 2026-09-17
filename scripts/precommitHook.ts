@@ -119,9 +119,13 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
       name,
       content,
       tools: [],
-      // The hook scans repository source, not user-provided skill content.
-      // Malware signatures remain enabled for every staged file.
-      skipPreScanHeuristics: true,
+      // Pre-scan heuristics must stay enabled. They are the only producer of
+      // the high-severity findings the HEAD baseline in precommitScannerPolicy
+      // exists to compare against; skipping them left enumerateHighWarnings
+      // with no input at all, so a staged process-execution call was admitted.
+      // scanSkillContent already drops its skill-markdown-only backtick
+      // pattern for .ts/.tsx/.js/.cjs/.mjs filenames, which is the narrow
+      // source-file carve-out.
     });
     const blocked = r.warnings.some(
       (w) =>

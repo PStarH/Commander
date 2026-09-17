@@ -59,7 +59,12 @@ import {
   type CompensationWorkDispositionResult,
 } from './ops/compensationConsumer.js';
 import { createReconcilePolicy, nextReconcileAfter } from './reconcilePolicy.js';
-import { canonicalCompensationHash } from './ops/compensationAuthority.js';
+import {
+  canonicalCompensationHash,
+  sealGovernedCompensationAuthorization,
+  validateGovernedCompensationAuthorization,
+  type GovernedCompensationAuthorization,
+} from './ops/compensationAuthority.js';
 import { durableCompensationMetadataAuthorization } from './ops/compensationPersistence.js';
 import {
   reqString,
@@ -1146,7 +1151,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             compensationRunId,
             input.tenantId,
             [],
-            { requestId },
+            { requestId, authorization: metadataAuthorization },
             new Date(Date.now() - 1_000).toISOString(),
           ],
         );
@@ -1304,22 +1309,72 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         const worker = workerResult.rows[0];
         const outbox = outboxResult.rows[0];
         const metadata = run ? (parseJsonValue(run.metadata) as Record<string, unknown>) : null;
-        const authorization = (metadata?.compensation as Record<string, unknown> | undefined)
+        const evidence = (metadata?.compensation as Record<string, unknown> | undefined)
           ?.authorization;
         const stepInput = step ? (parseJsonValue(step.input) as Record<string, unknown>) : null;
         const workerTenants = worker ? (parseJsonValue(worker.tenant_ids) as unknown) : null;
+        const rawPayload = outbox ? parseJsonValue(outbox.payload) : null;
+        const payload =
+          rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
+            ? (rawPayload as Record<string, unknown>)
+            : null;
+        const payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId : null;
+        const payloadAuthorizationId =
+          typeof payload?.authorizationId === 'string' ? payload.authorizationId : null;
+        const payloadTenantId = typeof payload?.tenantId === 'string' ? payload.tenantId : null;
+        const payloadActionDigest =
+          typeof payload?.actionDigest === 'string' ? payload.actionDigest : null;
+        // Mirror claimCompensationWork / admit_compensation_effect: the durable
+        // compensation request is the resolution root, then its authorization
+        // row, then the completed forward effect. The compact outbox payload is
+        // only a cross-check; it is never authoritative.
+        const requestResult = payloadRequestId
+          ? await client.query<Record<string, unknown>>(
+              `SELECT * FROM commander_compensation_requests WHERE id=? AND tenant_id=?`,
+              [payloadRequestId, request.tenantId],
+            )
+          : { rows: [] as Record<string, unknown>[] };
+        const durableRequest = requestResult.rows[0]
+          ? this.compensationRequestFromRow(requestResult.rows[0])
+          : null;
+        const authorizationResult = durableRequest
+          ? await client.query<Record<string, unknown>>(
+              `SELECT * FROM commander_compensation_authorizations WHERE id=? AND tenant_id=?`,
+              [durableRequest.authorizationId, request.tenantId],
+            )
+          : { rows: [] as Record<string, unknown>[] };
+        const durableAuthorization = authorizationResult.rows[0]
+          ? this.compensationAuthorizationFromRow(authorizationResult.rows[0])
+          : null;
+        const originalEffectResult = durableRequest
+          ? await client.query<Record<string, unknown>>(
+              `SELECT * FROM commander_effects WHERE id=? AND tenant_id=? AND state='COMPLETED'`,
+              [durableRequest.originalEffectId, request.tenantId],
+            )
+          : { rows: [] as Record<string, unknown>[] };
+        const originalEffect = originalEffectResult.rows[0];
         if (
           !step ||
           !run ||
           !worker ||
           !outbox ||
+          !payload ||
+          !durableRequest ||
+          !durableAuthorization ||
+          !originalEffect ||
+          !evidence ||
           run.state !== 'RUNNING' ||
           step.state !== 'RUNNING' ||
           !this.workerHasExactCapability(request.lease.workerId, 'effect.compensate') ||
           !Array.isArray(workerTenants) ||
           !workerTenants.includes(request.tenantId) ||
-          canonicalJson(stepInput?.authorization) !== canonicalJson(authorization) ||
-          canonicalJson(parseJsonValue(outbox.payload)) !== canonicalJson(authorization) ||
+          canonicalJson(stepInput?.authorization) !== canonicalJson(evidence) ||
+          payloadTenantId !== request.tenantId ||
+          payloadRequestId !== durableRequest.id ||
+          payloadAuthorizationId !== durableAuthorization.id ||
+          payloadActionDigest !== durableAuthorization.actionDigest ||
+          durableRequest.tenantId !== request.tenantId ||
+          durableRequest.authorizationId !== durableAuthorization.id ||
           step.lease_worker_id !== request.lease.workerId ||
           Number(step.lease_worker_generation) !== request.lease.workerGeneration ||
           step.lease_token !== request.lease.token ||
@@ -1329,7 +1384,12 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         ) {
           return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
         }
-        const governed = normalizeCompensationPayload(authorization as Record<string, unknown>);
+        const governed = this.governedCompensationAuthorizationFromDurableEvidence({
+          evidence,
+          request: durableRequest,
+          durableAuthorization,
+          originalEffect,
+        });
         if (
           !governed ||
           binding.authorizationId !== governed.authorizationId ||
@@ -1760,6 +1820,100 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     }, scope.tenantIds);
   }
 
+  /**
+   * Rebuild the sealed governed authorization from the durable records the
+   * producer wrote — the compensation request row, its authorization row, the
+   * completed forward effect and the run-metadata evidence copy. Every compact
+   * outbox field is cross-checked against those rows; the outbox payload is
+   * never authoritative. The durable row stores the action digest used by the
+   * request/admission path, so the governed authorization is re-sealed from the
+   * durable content instead of trusting a caller-supplied digest.
+   */
+  private governedCompensationAuthorizationFromDurableEvidence(input: {
+    evidence: unknown;
+    request: KernelCompensationRequest;
+    durableAuthorization: CompensationAuthorizationRecord;
+    originalEffect: Record<string, unknown>;
+  }): GovernedCompensationAuthorization | null {
+    const evidence =
+      input.evidence && typeof input.evidence === 'object' && !Array.isArray(input.evidence)
+        ? (input.evidence as Record<string, unknown>)
+        : null;
+    if (!evidence) return null;
+    const { request, durableAuthorization } = input;
+    const originalRequest = reqJsonObject('commander_effects', input.originalEffect, 'request');
+    const forwardResponse = (parseJsonValue(input.originalEffect.response) ?? {}) as Record<
+      string,
+      unknown
+    >;
+    const compensationRequest = {
+      originalEffectId: request.originalEffectId,
+      destination: originalRequest.destination,
+      forwardResponse,
+      compensationPatch: durableAuthorization.compensationPatch,
+    };
+    if (
+      evidence.schema !== 'commander.compensation/v1' ||
+      typeof evidence.originalRunStateAtRequest !== 'string' ||
+      evidence.originalRunStateAtRequest.length === 0 ||
+      typeof evidence.compensationEffectId !== 'string' ||
+      evidence.compensationEffectId.length === 0 ||
+      evidence.authorizationId !== durableAuthorization.id ||
+      evidence.requestId !== request.id ||
+      evidence.tenantId !== request.tenantId ||
+      evidence.originalRunId !== request.originalRunId ||
+      evidence.originalEffectId !== request.originalEffectId ||
+      evidence.compensationRunId !== request.compensationRunId ||
+      evidence.compensationStepId !== request.compensationStepId ||
+      evidence.compensationEffectType !== durableAuthorization.compensationEffectType ||
+      evidence.adapterVersion !== durableAuthorization.adapterVersion ||
+      evidence.policyDecisionId !== durableAuthorization.policyDecisionId ||
+      evidence.policySnapshotId !== durableAuthorization.policySnapshotId ||
+      evidence.decisionEffect !== durableAuthorization.decision ||
+      evidence.authorizationExpiresAt !== durableAuthorization.expiresAt ||
+      evidence.forwardReceiptHash !== durableAuthorization.forwardReceiptHash ||
+      evidence.actionDigest !== durableAuthorization.actionDigest ||
+      canonicalJson(evidence.compensationRequest) !== canonicalJson(compensationRequest) ||
+      canonicalJson(evidence.forwardReceipt ?? null) !== canonicalJson(forwardResponse) ||
+      canonicalJson(evidence.approvalBinding ?? null) !==
+        canonicalJson(durableAuthorization.approvalBinding ?? null) ||
+      durableAuthorization.originalRunId !== request.originalRunId ||
+      durableAuthorization.originalEffectId !== request.originalEffectId ||
+      durableAuthorization.compensationEffectType !== request.compensationEffectType ||
+      durableAuthorization.adapterVersion !== request.adapterVersion ||
+      durableAuthorization.forwardReceiptHash !== request.forwardReceiptHash ||
+      canonicalJson(durableAuthorization.compensationPatch) !==
+        canonicalJson(parseJsonValue(request.compensationPatch)) ||
+      canonicalCompensationHash(forwardResponse) !== durableAuthorization.forwardReceiptHash
+    ) {
+      return null;
+    }
+    const sealed = sealGovernedCompensationAuthorization({
+      schema: 'commander.compensation/v1',
+      authorizationId: durableAuthorization.id,
+      requestId: request.id,
+      tenantId: request.tenantId,
+      originalRunId: request.originalRunId,
+      originalEffectId: request.originalEffectId,
+      originalRunStateAtRequest: evidence.originalRunStateAtRequest,
+      compensationRunId: request.compensationRunId,
+      compensationStepId: request.compensationStepId,
+      compensationEffectId: evidence.compensationEffectId,
+      compensationEffectType: durableAuthorization.compensationEffectType,
+      compensationRequest,
+      idempotencyKey: `cmp:${request.originalEffectId}:${durableAuthorization.adapterVersion}`,
+      forwardReceipt: forwardResponse,
+      adapterVersion: durableAuthorization.adapterVersion,
+      policyDecisionId: durableAuthorization.policyDecisionId,
+      policySnapshotId: durableAuthorization.policySnapshotId,
+      decisionEffect: durableAuthorization.decision,
+      authorizationExpiresAt: durableAuthorization.expiresAt,
+      approvalBinding: durableAuthorization.approvalBinding ?? null,
+    });
+    const validation = validateGovernedCompensationAuthorization(sealed);
+    return validation.valid ? validation.authorization : null;
+  }
+
   override async claimCompensationWork(
     input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
   ): Promise<ClaimedCompensationWork[]> {
@@ -1792,28 +1946,57 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       const claimed: ClaimedCompensationWork[] = [];
       for (const message of candidates.rows) {
         const rawPayload = parseJsonValue(message.payload);
-        const authorization =
+        const payload =
           rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
-            ? normalizeCompensationPayload(rawPayload as Record<string, unknown>)
+            ? (rawPayload as Record<string, unknown>)
             : null;
-        const runResult = authorization
+        const payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId : null;
+        const payloadAuthorizationId =
+          typeof payload?.authorizationId === 'string' ? payload.authorizationId : null;
+        const payloadTenantId = typeof payload?.tenantId === 'string' ? payload.tenantId : null;
+        const payloadActionDigest =
+          typeof payload?.actionDigest === 'string' ? payload.actionDigest : null;
+        // Mirror claim_compensation_request_v2: resolve from the durable
+        // compensation request, then its sealed authorization row, then the
+        // forward effect. The compact outbox payload is only a cross-check.
+        const requestResult = payloadRequestId
+          ? await client.query<Record<string, unknown>>(
+              `SELECT * FROM commander_compensation_requests WHERE id=? AND tenant_id=?`,
+              [payloadRequestId, message.tenant_id],
+            )
+          : { rows: [] as Record<string, unknown>[] };
+        const requestRow = requestResult.rows[0];
+        const request = requestRow ? this.compensationRequestFromRow(requestRow) : null;
+        const authorizationResult = request
+          ? await client.query<Record<string, unknown>>(
+              `SELECT * FROM commander_compensation_authorizations WHERE id=? AND tenant_id=?`,
+              [request.authorizationId, message.tenant_id],
+            )
+          : { rows: [] as Record<string, unknown>[] };
+        const durableAuthorization = authorizationResult.rows[0]
+          ? this.compensationAuthorizationFromRow(authorizationResult.rows[0])
+          : null;
+        const runResult = request
           ? await client.query<Record<string, unknown>>(
               `SELECT * FROM commander_runs WHERE id=? AND tenant_id=?`,
-              [authorization.compensationRunId, message.tenant_id],
+              [request.compensationRunId, message.tenant_id],
             )
-          : { rows: [] };
-        const stepResult = authorization
+          : { rows: [] as Record<string, unknown>[] };
+        const stepResult = request
           ? await client.query<Record<string, unknown>>(
               `SELECT * FROM commander_steps WHERE id=? AND run_id=? AND tenant_id=?`,
-              [
-                authorization.compensationStepId,
-                authorization.compensationRunId,
-                message.tenant_id,
-              ],
+              [request.compensationStepId, request.compensationRunId, message.tenant_id],
             )
-          : { rows: [] };
+          : { rows: [] as Record<string, unknown>[] };
+        const effectResult = request
+          ? await client.query<Record<string, unknown>>(
+              `SELECT * FROM commander_effects WHERE id=? AND tenant_id=? AND state='COMPLETED'`,
+              [request.originalEffectId, message.tenant_id],
+            )
+          : { rows: [] as Record<string, unknown>[] };
         const run = runResult.rows[0];
         const step = stepResult.rows[0];
+        const originalEffect = effectResult.rows[0];
         const runAuthorization = run
           ? (
               (parseJsonValue(run.metadata) as Record<string, unknown>).compensation as
@@ -1823,15 +2006,33 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         const stepAuthorization = step
           ? (parseJsonValue(step.input) as Record<string, unknown>).authorization
           : null;
+        const authorization =
+          request && durableAuthorization && originalEffect && runAuthorization
+            ? this.governedCompensationAuthorizationFromDurableEvidence({
+                evidence: runAuthorization,
+                request,
+                durableAuthorization,
+                originalEffect,
+              })
+            : null;
         if (
+          !payload ||
+          !request ||
+          !durableAuthorization ||
           !authorization ||
-          authorization.tenantId !== message.tenant_id ||
+          payloadTenantId !== message.tenant_id ||
+          payloadRequestId !== request.id ||
+          payloadAuthorizationId !== durableAuthorization.id ||
+          payloadActionDigest !== durableAuthorization.actionDigest ||
+          request.tenantId !== message.tenant_id ||
+          request.authorizationId !== durableAuthorization.id ||
           !run ||
           !step ||
           run.state !== 'PENDING' ||
           step.state !== 'PENDING' ||
-          canonicalJson(runAuthorization) !== canonicalJson(authorization) ||
-          canonicalJson(stepAuthorization) !== canonicalJson(authorization)
+          !runAuthorization ||
+          !stepAuthorization ||
+          canonicalJson(runAuthorization) !== canonicalJson(stepAuthorization)
         ) {
           await client.query(
             `UPDATE commander_outbox

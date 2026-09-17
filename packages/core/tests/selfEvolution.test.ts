@@ -633,7 +633,7 @@ describe('EvolverAgent', () => {
     );
   });
 
-  it('runCycle stores mutations as canary deployment', () => {
+  it('runCycle applies mutations directly, guarded by CAS + idempotence + revert', () => {
     const evolver = new EvolverAgent();
     const config = structuredClone(DEFAULT_ULTIMATE_CONFIG);
     const insights = [makeInsight({ failureCategory: 'hallucination' })];
@@ -650,14 +650,72 @@ describe('EvolverAgent', () => {
       timestamp: new Date().toISOString(),
     };
     const cycle = evolver.runCycle(insights, config, exp, ['general']);
-    assert.ok(cycle.mutations.length > 0);
-    // Mutations are stored as canary (not applied globally) — applied always 0
-    assert.strictEqual(cycle.applied, 0);
+    assert.ok(cycle.mutations.length > 0, 'a failure insight must produce mutations');
     assert.ok(cycle.cycleId.startsWith('evolve_'));
-    // Verify canary is active
-    const status = evolver.getCanaryStatus();
-    assert.ok(status.active);
-    assert.ok(status.mutations > 0);
+
+    // The canary config deployment was removed in 9f504252 — mutations are now
+    // applied straight to the config object. The safety that the canary used to
+    // provide is carried by the guards exercised below instead: a bounded rule
+    // table, an optimistic compare-and-swap on `oldValue`, idempotence, and a
+    // revert path.
+    assert.ok(cycle.applied > 0, 'mutations must be applied to the passed config');
+
+    // Idempotence: replaying the same mutation set is a no-op. Because
+    // `applyMutations` only skips a mutation when the target already holds
+    // `newValue`, this also proves every applied mutation really landed.
+    assert.strictEqual(
+      evolver.applyMutations(config, cycle.mutations),
+      0,
+      're-applying an already-applied mutation must change nothing',
+    );
+
+    // Revert restores the pre-cycle values, guarded by the same CAS.
+    assert.strictEqual(
+      evolver.revertMutations(config, cycle.mutations),
+      cycle.applied,
+      'every applied mutation must be revertible',
+    );
+
+    // The restoration is exact: once reverted, the identical mutations apply
+    // cleanly again. Path-agnostic, so it does not duplicate `resolvePath`'s
+    // qualityGates-by-name lookup.
+    assert.strictEqual(
+      evolver.applyMutations(config, cycle.mutations),
+      cycle.applied,
+      'after a revert the same mutations must apply cleanly again',
+    );
+  });
+
+  it('applyMutations refuses when the config drifted from the recorded oldValue', () => {
+    // The optimistic CAS is the property that replaced the canary: if something
+    // else has already changed the target path, the mutation must be dropped
+    // rather than clobbering the newer value.
+    const evolver = new EvolverAgent();
+    const config = structuredClone(DEFAULT_ULTIMATE_CONFIG);
+    const mutation = {
+      id: 'drift-1',
+      domain: 'orchestration' as const,
+      description: 'drift guard probe',
+      triggeredBy: 'hallucination' as const,
+      confidence: 0.9,
+      configPath: 'maxParallelSubAgents',
+      oldValue: (config as any).maxParallelSubAgents,
+      newValue: (config as any).maxParallelSubAgents + 1,
+    };
+
+    // Simulate an external writer winning the race.
+    (config as any).maxParallelSubAgents = mutation.newValue + 100;
+
+    assert.strictEqual(
+      evolver.applyMutations(config, [mutation]),
+      0,
+      'a mutation whose oldValue no longer matches must be skipped',
+    );
+    assert.strictEqual(
+      (config as any).maxParallelSubAgents,
+      mutation.newValue + 100,
+      'the external value must not be clobbered',
+    );
   });
 
   it('getEvolverAgent returns a singleton', () => {

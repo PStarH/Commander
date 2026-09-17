@@ -86,44 +86,56 @@ function mountApiRunsGone(app: express.Express): void {
   });
 }
 
+/** F-A-16: save/restore COMMANDER_PROFILE in finally (the sibling tests already do this). */
+async function withProfile<T>(profile: string, body: () => Promise<T>): Promise<T> {
+  const previous = process.env.COMMANDER_PROFILE;
+  process.env.COMMANDER_PROFILE = profile;
+  try {
+    return await body();
+  } finally {
+    if (previous === undefined) delete process.env.COMMANDER_PROFILE;
+    else process.env.COMMANDER_PROFILE = previous;
+  }
+}
+
 describe('L3-06 residual gateway enforcement', () => {
   describe('/api/openapi.json pre-freeze mount hole', () => {
     it('returns 410 + x-legacy in enterprise profile', async () => {
-      process.env.COMMANDER_PROFILE = 'enterprise';
-      await withApp(
-        (app) => {
-          mountApiOpenApiAlias(app);
-          app.use(enterpriseRouteFreeze());
-        },
-        async (base) => {
-          const res = await request(base, '/api/openapi.json');
-          assert.equal(res.status, 410);
-          assert.equal(res.headers.get('x-legacy'), 'true');
-          assert.equal(res.headers.get('deprecation'), 'true');
-          const body = (await res.json()) as { error: { code: string } };
-          assert.equal(body.error.code, 'GONE');
-        },
-      );
-      delete process.env.COMMANDER_PROFILE;
+      await withProfile('enterprise', async () => {
+        await withApp(
+          (app) => {
+            mountApiOpenApiAlias(app);
+            app.use(enterpriseRouteFreeze());
+          },
+          async (base) => {
+            const res = await request(base, '/api/openapi.json');
+            assert.equal(res.status, 410);
+            assert.equal(res.headers.get('x-legacy'), 'true');
+            assert.equal(res.headers.get('deprecation'), 'true');
+            const body = (await res.json()) as { error: { code: string } };
+            assert.equal(body.error.code, 'GONE');
+          },
+        );
+      });
     });
 
     it('serves spec with x-legacy in standard profile', async () => {
-      process.env.COMMANDER_PROFILE = 'standard';
-      await withApp(
-        (app) => {
-          mountApiOpenApiAlias(app);
-          app.use(enterpriseRouteFreeze());
-        },
-        async (base) => {
-          const res = await request(base, '/api/openapi.json');
-          assert.equal(res.status, 200);
-          assert.equal(res.headers.get('x-legacy'), 'true');
-          assert.equal(res.headers.get('deprecation'), 'true');
-          const body = (await res.json()) as { openapi: string };
-          assert.equal(body.openapi, '3.1.0');
-        },
-      );
-      delete process.env.COMMANDER_PROFILE;
+      await withProfile('standard', async () => {
+        await withApp(
+          (app) => {
+            mountApiOpenApiAlias(app);
+            app.use(enterpriseRouteFreeze());
+          },
+          async (base) => {
+            const res = await request(base, '/api/openapi.json');
+            assert.equal(res.status, 200);
+            assert.equal(res.headers.get('x-legacy'), 'true');
+            assert.equal(res.headers.get('deprecation'), 'true');
+            const body = (await res.json()) as { openapi: string };
+            assert.equal(body.openapi, '3.1.0');
+          },
+        );
+      });
     });
   });
 

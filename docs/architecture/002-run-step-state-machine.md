@@ -21,8 +21,13 @@ Use a single canonical state machine defined in `packages/contracts`.
 
 ### Step States
 
+All nine states: `PENDING`, `RUNNING`, `WAITING_FOR_HUMAN`,
+`WAITING_FOR_RECONCILIATION`, `RETRY_WAIT`, `SUCCEEDED`, `FAILED`, `CANCELLED`,
+`SKIPPED`.
+
 `PENDING` → `RUNNING` → (`SUCCEEDED` | `FAILED` | `CANCELLED` | `SKIPPED`)
 `RUNNING` → `WAITING_FOR_HUMAN` → `RUNNING`
+`RUNNING` → `WAITING_FOR_RECONCILIATION` → `RUNNING`
 `RUNNING` → `RETRY_WAIT` → `RUNNING`
 
 ### Rules

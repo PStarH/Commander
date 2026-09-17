@@ -19,6 +19,7 @@ import {
   KERNEL_MIGRATIONS,
   KERNEL_TASK1_BASELINE_MIGRATIONS,
   KERNEL_TASK1_CLOSURE_MIGRATIONS,
+  runKernelMigrations,
 } from './migrations.js';
 import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 import type { Task1RolloutProofReceipt } from './task1RolloutProof.js';
@@ -407,6 +408,7 @@ describe('kernel owner migration entrypoint', () => {
       (error: unknown) => {
         const failure = error as Error & {
           migrationId?: string;
+          ownerStage?: string;
           phase?: string;
           sqlstate?: string;
         };
@@ -563,6 +565,53 @@ describe('kernel owner migration entrypoint', () => {
     assert.equal(isTask1OwnerCommandMode('tenant-cutover-prove'), true);
     assert.equal(isTask1OwnerCommandMode('tenant-cutover-restore'), true);
     assert.equal(isTask1OwnerCommandMode('migration'), false);
+  });
+
+  /**
+   * Root cause of the deployment-breaking Compose defect: until the canonical
+   * enforce closure is recorded, runKernelMigrations applies only
+   * KERNEL_TASK1_BASELINE_MIGRATIONS. The auth-persistence schema the API
+   * queries at first boot lives exclusively in the post-closure forward set, so
+   * a migration entrypoint invoked without the `tenant-cutover-migrate` action
+   * leaves the Gateway unable to start. Any caller that runs migrations as a
+   * long-lived service (Compose `kernel-migrate`) must therefore pass the
+   * action and phase, exactly as the Helm owner Job and the production Compose
+   * driver do.
+   */
+  it('requires the enforce closure before the auth-persistence schema can exist', () => {
+    const authIds = (migrations: readonly { id: string }[]): string[] =>
+      migrations.filter((migration) => migration.id.includes('auth_persistence')).map((m) => m.id);
+
+    assert.equal(
+      authIds(KERNEL_TASK1_BASELINE_MIGRATIONS).length,
+      0,
+      'the pre-closure baseline must not carry the auth-persistence schema; the API would then be unable to boot without the closure action',
+    );
+    assert.ok(
+      authIds(KERNEL_MIGRATIONS).length > 0,
+      'the forward set must carry the auth-persistence schema',
+    );
+
+    const forwardIds = new Set(KERNEL_MIGRATIONS.map(({ id }) => id));
+    const baselineOnly = KERNEL_TASK1_BASELINE_MIGRATIONS.filter(
+      ({ id }) => !forwardIds.has(id),
+    ).map(({ id }) => id);
+    assert.deepEqual(
+      baselineOnly,
+      [],
+      'every baseline descriptor must also appear in the forward set, otherwise the closure pass would strand it',
+    );
+    assert.ok(
+      KERNEL_MIGRATIONS.length > KERNEL_TASK1_BASELINE_MIGRATIONS.length,
+      'the forward set must be strictly larger than the baseline (post-closure descriptors exist)',
+    );
+
+    assert.ok(
+      KERNEL_TASK1_CLOSURE_MIGRATIONS.some(
+        ({ id }) => id === '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
+      ),
+      'the enforce closure descriptor gates the post-closure forward set',
+    );
   });
 
   it('reads owner requests only from stdin or the fixed in-cluster request mount', async () => {
@@ -964,5 +1013,70 @@ describe('kernel owner migration entrypoint', () => {
     const mixedResult = await currentTask1Operation(mixedPool as never);
     assert.equal(mixedResult.proven, true);
     assert.equal(mixedResult.restoreEvidence, undefined);
+  });
+});
+
+// F-K2-6: `assertSafeSqlIdentifier` (the AUDIT-K5 guard) was dead code — the
+// `ALTER ROLE "<rolname>" BYPASSRLS` site interpolated a pg_roles value without
+// calling it. This drives the real migration entrypoint with a hostile owner
+// role name and requires the guard to fail closed before any DDL is emitted.
+class HostileOwnerRoleClient implements SqlClient {
+  readonly queries: string[] = [];
+
+  constructor(private readonly rolname: string) {}
+
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    _values: readonly unknown[] = [],
+  ): Promise<SqlQueryResult<T>> {
+    const normalized = sql.replace(/\s+/g, ' ').trim();
+    this.queries.push(normalized);
+    if (normalized === 'BEGIN' || normalized === 'COMMIT' || normalized === 'ROLLBACK') {
+      return sqlResult<T>([]);
+    }
+    if (normalized === 'SELECT current_user, session_user') {
+      return sqlResult([{ current_user: 'commander_owner', session_user: 'commander_owner' } as T]);
+    }
+    if (normalized.includes('pg_tables')) {
+      return sqlResult([{ owns: true, exists: false } as T]);
+    }
+    if (normalized === 'SELECT rolbypassrls, rolname FROM pg_roles WHERE rolname = current_user') {
+      return sqlResult([{ rolbypassrls: false, rolname: this.rolname } as T]);
+    }
+    return sqlResult<T>([]);
+  }
+
+  release(): void {}
+}
+
+describe('kernel migration owner role interpolation', () => {
+  const runWithOwnerRole = async (rolname: string): Promise<HostileOwnerRoleClient> => {
+    const client = new HostileOwnerRoleClient(rolname);
+    const pool: SqlPool = { connect: async () => client };
+    await runKernelMigrations(pool);
+    return client;
+  };
+
+  it('applies BYPASSRLS for a safe owner role name', async () => {
+    const client = await runWithOwnerRole('commander_owner');
+    assert.ok(
+      client.queries.includes('ALTER ROLE "commander_owner" BYPASSRLS'),
+      'a safe owner role name must still be granted BYPASSRLS',
+    );
+  });
+
+  it('refuses to interpolate a hostile owner role name instead of emitting DDL', async () => {
+    const hostile = 'evil"; DROP TABLE commander_runs; --';
+    await assert.rejects(
+      () => runWithOwnerRole(hostile),
+      /migration owner rolname must match .*refusing to interpolate into DDL/,
+    );
+    const client = new HostileOwnerRoleClient(hostile);
+    await assert.rejects(() => runKernelMigrations({ connect: async () => client }));
+    assert.equal(
+      client.queries.some((sql) => sql.startsWith('ALTER ROLE') && sql.includes(hostile)),
+      false,
+      'the hostile role name must never reach an ALTER ROLE statement',
+    );
   });
 });

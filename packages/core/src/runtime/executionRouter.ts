@@ -238,9 +238,31 @@ export class ExecutionRouter {
         }
       }
     } catch (e) {
-      getGlobalLogger().warn('AgentRuntime', 'Privacy check failed', {
-        error: (e as Error)?.message,
+      // Fail closed. A throw here means the privacy decision is UNKNOWN — the
+      // service is unavailable, not "no sensitive content". Falling through
+      // would proceed with whatever model the router picked, which may be a
+      // cloud provider the privacy check exists to avoid. An unknown decision
+      // must never become "proceed with cloud routing".
+      const detail = (e as Error)?.message ?? 'unknown error';
+      const summary = `PRIVACY_CHECK_FAILED: privacy service unavailable (${detail})`;
+      getGlobalLogger().warn('AgentRuntime', 'Privacy check failed', { error: detail });
+      tracer.recordDecision(runId, summary, 0);
+      bus.publish('agent.failed', ctx.agentId, {
+        runId,
+        projectId: ctx.projectId,
+        error: summary,
       });
+      try {
+        getMetricsCollector().incrementCounter(
+          'privacy_check_failures_total',
+          'Privacy check failures (fail closed)',
+          1,
+          [],
+        );
+      } catch (metricErr) {
+        reportSilentFailure(metricErr, 'agentRuntime:privacyCheckFailed');
+      }
+      return { status: 'cancelled', summary };
     }
 
     // Pre-run cost estimation
