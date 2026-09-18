@@ -81,8 +81,12 @@ COPY packages/worker-plane ./packages/worker-plane
 # fix-esm-imports adds the `.js` extensions that Node.js ESM requires.
 RUN cd packages/contracts && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/plugin-sdk && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
-RUN cd packages/core && pnpm exec tsc --noEmit && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+# `packages/core` typechecks against @commander/postgres-runtime declarations,
+# so that package must emit its dist first. apps/api/Dockerfile already ordered
+# it this way; having it after core made `pnpm exec tsc --noEmit` fail with
+# TS2307 "Cannot find module '@commander/postgres-runtime'".
 RUN cd packages/postgres-runtime && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
+RUN cd packages/core && pnpm exec tsc --noEmit && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/effect-broker && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/kernel && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/action-adapters && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
