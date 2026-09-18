@@ -4,7 +4,7 @@
     {
       "path": "apps/api/src/approvalConfigEndpoints.ts",
       "sourceSha256": "0411fde9805a9691a4ba4c9cc587467ca3226b66aa5ed8b2fb2d2f4e32980da0",
-      "callersSha256": "0f8fdfdaeb113c00a59ac088e21698abbcfa599cc8beae20542a432fb0b2098e",
+      "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy approval configuration mutation pending authority split",
       "expiresAt": "2026-10-31",
@@ -24,7 +24,7 @@
     {
       "path": "apps/api/src/governanceEndpoints.ts",
       "sourceSha256": "0a95509f9da5336190687396733bf1a22d9f7a583c1d7fab0da237c52c08e54b",
-      "callersSha256": "0f8fdfdaeb113c00a59ac088e21698abbcfa599cc8beae20542a432fb0b2098e",
+      "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy governance evidence mutation pending kernel evidence API",
       "expiresAt": "2026-10-31",
@@ -34,7 +34,7 @@
     {
       "path": "apps/api/src/memoryIndexEndpoints.ts",
       "sourceSha256": "5fb9d4a22c7db10bb0701254816e57d1b4c4234dd79ef3497f6b7f0b6372915c",
-      "callersSha256": "0f8fdfdaeb113c00a59ac088e21698abbcfa599cc8beae20542a432fb0b2098e",
+      "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy memory reconcile mutation pending canonical effect admission",
       "expiresAt": "2026-10-31",
@@ -44,7 +44,7 @@
     {
       "path": "apps/api/src/orchestratorEndpoints.ts",
       "sourceSha256": "4111ed5a3eaefa7c6b769a67e91865345abe8c3c614c37cf6b45f07cc5931fb8",
-      "callersSha256": "0f8fdfdaeb113c00a59ac088e21698abbcfa599cc8beae20542a432fb0b2098e",
+      "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy in-process orchestrator pending gateway migration",
       "expiresAt": "2026-10-31",
@@ -64,7 +64,7 @@
     {
       "path": "apps/api/src/pipelineEndpoints.ts",
       "sourceSha256": "684ac4fc0a4ccc82dc97d5e7639d4b25e5ce953610951c8d9901c2726de849f2",
-      "callersSha256": "0f8fdfdaeb113c00a59ac088e21698abbcfa599cc8beae20542a432fb0b2098e",
+      "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy pipeline route executes the sequential runtime pending Action Gateway migration",
       "expiresAt": "2026-10-31",
@@ -74,7 +74,7 @@
     {
       "path": "apps/api/src/projectEndpoints.ts",
       "sourceSha256": "76c20f59ddf9dae6b5f7734d682aa8c9c55de888c6ceb87a4917ef7e3f040bf1",
-      "callersSha256": "5e843917d0af65e34ed4a6673d205064194ed1363fbf6cea60c3e1db0dca8c63",
+      "callersSha256": "d57e207faebbab7359d07caa88e1cf6ab39d472bc8f38573910e1f9d51f6e9e5",
       "owner": "@commander/api",
       "reason": "Legacy mission and approval store mutations pending kernel migration",
       "expiresAt": "2026-10-31",
@@ -84,7 +84,7 @@
     {
       "path": "apps/api/src/sagaEndpoints.ts",
       "sourceSha256": "04c6cc951da33522201fc39345e87741588b515b5b484440b1eb448dfcf78749",
-      "callersSha256": "0f8fdfdaeb113c00a59ac088e21698abbcfa599cc8beae20542a432fb0b2098e",
+      "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy saga run controls pending gateway migration",
       "expiresAt": "2026-10-31",
@@ -104,7 +104,7 @@
     {
       "path": "apps/api/src/store.ts",
       "sourceSha256": "297d4494c758e9b77747fe8ef4c8c1e1439a4dc5217c237c0856b6aeec984e47",
-      "callersSha256": "b3e61098a56191435a500a93964d4a980101290bb5007f5ab449af331a86483d",
+      "callersSha256": "9c75e930ce0dcc9b5c93505e4a626ae8b252c9c9e222c571e01a99ecddc34c4f",
       "owner": "@commander/api",
       "reason": "Legacy WarRoom write store pending kernel projection migration",
       "expiresAt": "2026-10-31",
@@ -114,7 +114,7 @@
     {
       "path": "apps/api/src/v2/v2BenchEndpoints.ts",
       "sourceSha256": "d3eb5d2cd8dabb08c6710f76a940c73c5c1c6b8dc3aff305290e772b69091661",
-      "callersSha256": "0f8fdfdaeb113c00a59ac088e21698abbcfa599cc8beae20542a432fb0b2098e",
+      "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy benchmark run batch route pending gateway migration",
       "expiresAt": "2026-10-31",
@@ -164,7 +164,7 @@
     {
       "path": "packages/core/src/cli/commands/_shared.ts",
       "sourceSha256": "122d18a2c35284d7a973a9c49412146cc45e1e1e9f83b223a38b8ffb90145554",
-      "callersSha256": "c537addfdcbf36ed5404e243bb02ea43d2f2617310faa0ce54619f153d262e70",
+      "callersSha256": "568339dc6d68e7e4e0f5d5749b8630cf6fe63745fe8621e9686aef57035c303c",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime factory pending gateway client migration",
       "expiresAt": "2026-10-31",
@@ -173,7 +173,7 @@
     },
     {
       "path": "packages/core/src/cli/commands/core.ts",
-      "sourceSha256": "746dd0e91c114aa920a726701b4cae702f26323e9f40cdc70b60558701e95b52",
+      "sourceSha256": "cf6a16fb8a7720906547dfea7fd1a6a1f028cfaabfbdcc577e306d030a7e154f",
       "callersSha256": "7c86a09c11a8f402fbee5e32d19423d6fb5cb091c5f06d11eab42e182c3e247d",
       "owner": "@commander/core",
       "reason": "Legacy local CLI orchestration pending gateway client migration",
@@ -254,7 +254,7 @@
     {
       "path": "packages/core/src/runtime/sideEffectGate.ts",
       "sourceSha256": "7442c3607e118daf0bf044e864c69fd0195bfbb43365363af64f60f2d54e0a60",
-      "callersSha256": "d3504937d4c787fc59ece75b2fa80c88ff7e3f159b60ae4ae69dd42d4b14b441",
+      "callersSha256": "13a5164b40ef79e39d8db181951f4df9e7dbfddcc998b9309281fc0279bcb407",
       "owner": "@commander/core",
       "reason": "Legacy side-effect approval mutation pending effect broker migration",
       "expiresAt": "2026-10-31",
@@ -284,7 +284,7 @@
     {
       "path": "packages/core/src/telos/telosOrchestrator.ts",
       "sourceSha256": "75c15e209a90dd36cd868b0a148f6ae59f862df090021d3a294ccfeaaa3c3735",
-      "callersSha256": "76b7632447406a7699ae1f1df2877c02587e4723e85bd65640ba1d15947b3b3b",
+      "callersSha256": "182b23789905ce2a3ad3a037156ec946e59af751d767e4363631d79193a05901",
       "owner": "@commander/core",
       "reason": "Legacy orchestrator runtime construction pending worker migration",
       "expiresAt": "2026-10-31",
@@ -363,7 +363,7 @@
     },
     {
       "path": "scripts/demo-qa/test-guardian-block.ts",
-      "sourceSha256": "d3e51cdf2cdc5e06006c39566afafd81cacbeb2ec658b7e98b463e3f2da62865",
+      "sourceSha256": "1bc58794a15d28eda47c31f8d8391fda6ec09388ac818d6e74f4b412bce8123f",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-demos",
       "reason": "Non-production QA script constructs the legacy local runtime",
@@ -420,6 +420,16 @@
       "expiresAt": "2026-10-31",
       "canonicalReplacement": "Action Gateway external acceptance harness",
       "disposition": "remove"
+    },
+    {
+      "path": "scripts/l4-b-cell-compensation-e2e.ts",
+      "sourceSha256": "f5d97228555d45fe5c688af7a99a50a2622c30723eeb7f40077b56348055c415",
+      "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+      "owner": "repository-operations",
+      "reason": "Non-production cell compose e2e fixture drives the legacy local HTTP surface",
+      "expiresAt": "2026-10-31",
+      "canonicalReplacement": "ActionGatewayClient cell compose harness",
+      "disposition": "migrate-and-delete"
     }
   ]
 }
