@@ -192,6 +192,22 @@ function checkDockerfileClosure(): void {
   for (const df of dockerfiles) {
     const text = read(df);
 
+    // 2e. an image that copies the kernel's emitted dist must also carry the
+    // kernel JSON manifests. The kernel reads them at RUNTIME from its `src`
+    // directory (not `dist`), so a dist-only copy yields
+    // "ENOENT ... packages/kernel/src/authorityClassifierManifest.v1.json" and a
+    // crash-looping worker/adapter-ops. apps/api had this right while
+    // worker-plane and adapter-ops did not, and nothing checked it.
+    if (
+      /COPY\s+\S*\s*\/app\/packages\/kernel\/dist\s/.test(text) &&
+      !/COPY\s+\S*\s*\/app\/packages\/kernel\/src\/\*\.json\s/.test(text)
+    ) {
+      fail(
+        'dockerfile-kernel-manifest',
+        `${df}: copies packages/kernel/dist but not packages/kernel/src/*.json — the kernel loads those manifests from src at runtime`,
+      );
+    }
+
     // Scoped package names contain a slash (e.g. @commander/contracts).
     const filters = [...text.matchAll(/--filter\s+(@?[A-Za-z0-9_./-]+)/g)].map((m) => m[1]);
     const copiedManifests = new Set(
