@@ -133,8 +133,7 @@ export const CELL_COMPOSE_ENV: Record<string, string> = {
   DOCKER_GID: resolveDockerGid(),
 };
 
-export const COMPOSE_CMD =
-  `docker compose -f docker-compose.yml -f docker-compose.cell.yml -f ${KERNEL_TLS_COMPOSE_FILE} --profile cell`;
+export const COMPOSE_CMD = `docker compose -f docker-compose.yml -f docker-compose.cell.yml -f ${KERNEL_TLS_COMPOSE_FILE} --profile cell`;
 
 function composeExec(script: string, service: string): boolean {
   try {
