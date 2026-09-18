@@ -1008,6 +1008,18 @@ jobs:
       - name: Cell up assert (compose profile)
         run: pnpm cell:up-assert
 
+      # `cell:up-assert` reports which services are unhealthy but the reason is in
+      # the containers. Without this, an unhealthy api/worker/adapter-ops is
+      # undiagnosable from CI output.
+      - name: Cell container logs (on failure)
+        if: failure()
+        run: |
+          for svc in api worker kernel-ops adapter-ops kernel-migrate postgres; do
+            echo "===== $svc ====="
+            docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+              -f docker-compose.kernel-tls.yml --profile cell logs --no-color --tail 60 "$svc" || true
+          done
+
       - name: Cell compensation E2E compose (C3)
         run: pnpm cell:compensation-e2e -- --mode compose --up
 
