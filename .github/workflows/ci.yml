@@ -1009,7 +1009,16 @@ jobs:
             echo 'CAP_EOF'
           } >> "$GITHUB_ENV"
           echo "COMMANDER_CAPABILITY_KEY_ID=cell-ci-r1" >> "$GITHUB_ENV"
-          echo 'COMMANDER_CAPABILITY_JWKS_JSON={"keys":[]}' >> "$GITHUB_ENV"
+          # Real JWKS derived from the private key above. The worker rejects an
+          # empty `keys` array with CAPABILITY_AUTHORITY_REQUIRED, so a `{"keys":[]}`
+          # placeholder keeps it crash-looping.
+          jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/cap.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-r1' }] }));
+          ")
+          echo "COMMANDER_CAPABILITY_JWKS_JSON=$jwks" >> "$GITHUB_ENV"
           openssl genpkey -algorithm ed25519 -out "$key_dir/ev.pem"
           {
             echo 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM<<EV_EOF'
