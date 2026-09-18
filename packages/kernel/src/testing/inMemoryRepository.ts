@@ -2427,8 +2427,34 @@ export class InMemoryKernelRepository implements KernelRepository {
       input.claimSecret,
     );
     const worker = this.workers.get(input.workerId);
-    const request = this.compensationRequests.get(input.requestId);
-    const message = this.outbox.get(input.outboxMessageId);
+    // `claim_compensation_request` accepts an empty request id and/or outbox
+    // message id and then picks the oldest claimable pair for the worker's tenant
+    // scope; the daemon relies on that scan form. A live claim held by another
+    // worker is never re-claimed (the SQL predicate says the same).
+    const scanNow = (input.now ?? new Date()).getTime();
+    const requestId =
+      input.requestId.trim() !== ''
+        ? input.requestId
+        : [...this.compensationRequests.values()].find(
+            (candidate) =>
+              scope?.tenantIds.includes(candidate.tenantId) &&
+              (candidate.state === 'AUTHORIZED' ||
+                (candidate.state === 'CLAIMED' &&
+                  candidate.claimExpiresAt !== undefined &&
+                  Date.parse(candidate.claimExpiresAt) <= scanNow)),
+          )?.id;
+    const request = requestId ? this.compensationRequests.get(requestId) : undefined;
+    const outboxMessageId =
+      input.outboxMessageId.trim() !== ''
+        ? input.outboxMessageId
+        : [...this.outbox.entries()].find(
+            ([, candidate]) =>
+              !candidate.publishedAt &&
+              candidate.topic === KERNEL_COMPENSATION_TOPIC &&
+              candidate.payload.requestId === request?.id &&
+              candidate.payload.authorizationId === request?.authorizationId,
+          )?.[0];
+    const message = outboxMessageId ? this.outbox.get(outboxMessageId) : undefined;
     if (
       !scope ||
       !worker ||
@@ -2441,7 +2467,8 @@ export class InMemoryKernelRepository implements KernelRepository {
       message.topic !== KERNEL_COMPENSATION_TOPIC ||
       message.publishedAt ||
       message.payload.requestId !== request.id ||
-      message.payload.authorizationId !== request.authorizationId
+      message.payload.authorizationId !== request.authorizationId ||
+      message.payload.tenantId !== request.tenantId
     ) {
       return null;
     }
@@ -2968,114 +2995,79 @@ export class InMemoryKernelRepository implements KernelRepository {
     return validation.valid ? validation.authorization : null;
   }
 
+  /**
+   * Daemon-facing claim. Delegates to the durable `claim_compensation_request`
+   * state machine, exactly as `postgres.ts` does, so every repository returns the
+   * same `ClaimedCompensationRequest` shape.
+   *
+   * The previous implementation resolved the durable rows itself but returned a
+   * compact `{messageId, claimToken, authorization}` payload and never persisted
+   * `CLAIMED` / the claim token, so `admitCompensationEffect` — the canonical
+   * governed admission — could never accept its output.
+   */
   async claimCompensationWork(
     input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
   ): Promise<ClaimedCompensationWork[]> {
-    const worker = this.workers.get(input.workerId);
-    if (
-      worker?.identitySubject !== 'db:commander_adapter_ops' ||
-      worker.capabilities.length !== 1 ||
-      worker.capabilities[0] !== 'effect.compensate'
-    ) {
-      return [];
-    }
-    const messages = await this.claimOutboxByTopic(input.topic, input.limit, new Date(), input);
+    if (input.topic !== KERNEL_COMPENSATION_TOPIC) return [];
     const claimed: ClaimedCompensationWork[] = [];
-    for (const message of messages) {
-      const claimToken = message.claimToken ?? '';
-      const payload = message.payload;
-      const payloadRequestId = typeof payload.requestId === 'string' ? payload.requestId : null;
-      const payloadAuthorizationId =
-        typeof payload.authorizationId === 'string' ? payload.authorizationId : null;
-      const payloadTenantId = typeof payload.tenantId === 'string' ? payload.tenantId : null;
-      const payloadActionDigest =
-        typeof payload.actionDigest === 'string' ? payload.actionDigest : null;
-      // Mirror claim_compensation_request_v2: the durable request is the
-      // resolution root, then its sealed authorization record. The compact
-      // outbox payload only cross-checks those durable rows.
-      const request = payloadRequestId
-        ? this.compensationRequests.get(payloadRequestId)
-        : undefined;
-      const durableAuthorization = request
-        ? this.compensationAuthorizations.get(request.authorizationId)
-        : undefined;
-      const run = request ? this.runs.get(request.compensationRunId) : undefined;
-      const step = request ? this.steps.get(request.compensationStepId) : undefined;
-      const originalEffect = request ? this.effects.get(request.originalEffectId) : undefined;
-      const runAuthorization = run ? this.compensationAuthorization(run) : null;
-      const stepAuthorization = step
-        ? (step.input as { authorization?: unknown }).authorization
-        : undefined;
-      const authorization =
-        request && durableAuthorization && originalEffect && runAuthorization
-          ? this.governedCompensationAuthorizationFromDurableEvidence({
-              evidence: runAuthorization,
-              request,
-              durableAuthorization,
-              originalEffect,
-            })
-          : null;
-      if (
-        !request ||
-        !durableAuthorization ||
-        !originalEffect ||
-        !authorization ||
-        payloadTenantId !== message.tenantId ||
-        payloadRequestId !== request.id ||
-        payloadAuthorizationId !== durableAuthorization.id ||
-        payloadActionDigest !== durableAuthorization.actionDigest ||
-        request.tenantId !== message.tenantId ||
-        request.authorizationId !== durableAuthorization.id ||
-        !run ||
-        !step ||
-        run.state !== 'PENDING' ||
-        step.state !== 'PENDING' ||
-        !runAuthorization ||
-        !stepAuthorization ||
-        canonical(runAuthorization) !== canonical(stepAuthorization) ||
-        !claimToken
-      ) {
-        await this.markOutboxPublished(message.id, claimToken, message.tenantId);
-        this.event(
-          'effect',
-          `compensation:${message.id}`,
-          1,
-          'compensation.authorization_required',
-          message.tenantId,
-          String(message.payload.runId ?? `compensation:${message.id}`),
-          typeof message.payload.stepId === 'string' ? message.payload.stepId : undefined,
-          input.workerId,
-          { reason: 'COMPENSATION_AUTHORIZATION_REQUIRED', messageId: message.id },
-        );
-        continue;
-      }
-      const fencingEpoch =
-        (this.lastFencingEpoch.get(step.id) ?? step.lease?.fencingEpoch ?? 0) + 1;
-      if (run.state === 'PENDING') run.state = 'RUNNING';
-      step.state = 'RUNNING';
-      step.version += 1;
-      step.lease = {
+    for (let index = 0; index < input.limit; index += 1) {
+      const result = await this.claimCompensationRequest({
+        requestId: '',
+        outboxMessageId: '',
         workerId: input.workerId,
         workerGeneration: input.workerGeneration,
-        token: claimToken,
-        fencingEpoch,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
-      };
-      step.updatedAt = now();
-      claimed.push({
-        messageId: message.id,
-        tenantId: message.tenantId,
-        claimToken,
-        authorization,
-        lease: {
-          workerId: input.workerId,
-          workerGeneration: input.workerGeneration,
-          token: claimToken,
-          fencingEpoch,
-        },
+        claimSecret: input.claimSecret,
       });
+      if (!result) break;
+      claimed.push(result);
     }
+    await this.drainUnresolvedCompensationOutbox(input);
     return claimed;
+  }
+
+  /**
+   * Pre-Task-3 producers wrote compensation outbox rows with no durable request.
+   * The durable claim cannot see them and the generic publisher deny-lists the
+   * topic, so without this they would sit in the outbox unpublished forever.
+   * Rows that DO resolve to a durable request are left alone: ineligible-but-live
+   * requests must stay claimable for a later tick, never be acknowledged here.
+   */
+  private async drainUnresolvedCompensationOutbox(
+    input: CompensationClaimAuth & { limit: number },
+  ): Promise<void> {
+    const messages = await this.claimOutboxByTopic(
+      KERNEL_COMPENSATION_TOPIC,
+      input.limit,
+      new Date(),
+      input,
+    );
+    for (const message of messages) {
+      // A payload that carries a request identity is deliberately NOT drained: a
+      // legacy `request_governed_compensation_v1` row (sealed authorization, no
+      // durable request) is untrusted recovery work that must stay pending for an
+      // authorised path — `postgres.ops.integration.test.ts` pins that. Only a row
+      // with no resolvable identity at all can never be executed by anything.
+      const payloadRequestId =
+        typeof message.payload.requestId === 'string' ? message.payload.requestId.trim() : '';
+      if (payloadRequestId !== '') continue;
+      const claimToken = message.claimToken ?? '';
+      await this.markOutboxPublished(message.id, claimToken, message.tenantId);
+      const runId =
+        typeof message.payload.runId === 'string'
+          ? message.payload.runId
+          : `compensation:${message.id}`;
+      this.event(
+        'effect',
+        `compensation:${message.id}`,
+        1,
+        'compensation.authorization_required',
+        message.tenantId,
+        runId,
+        typeof message.payload.stepId === 'string' ? message.payload.stepId : undefined,
+        input.workerId,
+        { reason: 'COMPENSATION_AUTHORIZATION_REQUIRED', messageId: message.id },
+      );
+    }
   }
 
   private compensationContext(

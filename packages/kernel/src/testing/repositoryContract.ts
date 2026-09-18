@@ -2,7 +2,12 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { validateRunTransition } from '@commander/contracts';
 import type { KernelRepository } from '../repository.js';
-import type { NewKernelStep, ClaimStepRequest, KernelCompensationRequest } from '../types.js';
+import type {
+  NewKernelStep,
+  ClaimStepRequest,
+  ClaimedCompensationRequest,
+  KernelCompensationRequest,
+} from '../types.js';
 import { SqliteKernelRepository } from '../sqlite.js';
 import {
   canonicalCompensationHash,
@@ -16,7 +21,6 @@ import {
   KERNEL_COMPENSATION_TOPIC,
   consumeCompensationBatch,
   type CompensationOutboxPort,
-  type LegacyClaimedCompensationWork,
 } from '../ops/compensationConsumer.js';
 
 export interface RepositoryContractContext {
@@ -104,8 +108,10 @@ async function seedClaimedGovernedCompensation(
   ctx: RepositoryContractContext,
   suffix: string,
 ): Promise<{
-  work: LegacyClaimedCompensationWork;
+  work: ClaimedCompensationRequest;
   workerId: string;
+  workerGeneration: number;
+  claimSecret: string;
   request: KernelCompensationRequest;
   /** Digest carried by the compact outbox payload, i.e. the durable row digest. */
   durableActionDigest: string;
@@ -239,12 +245,72 @@ async function seedClaimedGovernedCompensation(
     'compact producer payload must resolve durable governed authority',
   );
   const work = claimed[0]!;
-  assert.ok('messageId' in work, 'expected the compact legacy claim shape');
+  // Every repository claims through the durable `claim_compensation_request`
+  // state machine (postgres always did; memory and SQLite were migrated to
+  // match), so the claim is a ClaimedCompensationRequest. The legacy compact
+  // `{messageId, claimToken, authorization}` shape is no longer produced by any
+  // implementation — this guard previously encoded the two doubles' old return
+  // structure and was never exercised against postgres, which does not provide
+  // `seedCompensationWorker`.
+  if (!('request' in work)) {
+    throw new Error('claimCompensationWork must return a durable request');
+  }
+  if ('messageId' in work) {
+    throw new Error('the legacy compact claim shape must be gone');
+  }
+  assert.equal(work.request.state, 'CLAIMED', 'the durable claim persists CLAIMED');
+  assert.ok(work.request.claimToken, 'the durable claim persists its claim token');
+  assert.equal(work.request.claimToken, work.outboxClaimToken);
   return {
     work,
     workerId: compensationWorker.workerId,
+    workerGeneration: compensationWorker.generation,
+    claimSecret: compensationWorker.claimSecret,
     request: requested.request,
     durableActionDigest,
+  };
+}
+
+/**
+ * Canonical governed admission input for a durable claim.
+ *
+ * `admitEffect` is deliberately fail-closed for compensation in the bare
+ * repositories (`canonicalCompensationAdmission === false`); production reaches
+ * the governed branch by wiring `compensationBinding` to
+ * `admitCompensationEffect` (packages/adapter-ops/src/wiring.ts). The contract
+ * therefore exercises `admitCompensationEffect` directly.
+ */
+function compensationAdmissionInput(work: ClaimedCompensationRequest) {
+  const { request, authorization } = work;
+  return {
+    id: request.compensationEffectId!,
+    runId: request.compensationRunId,
+    stepId: request.compensationStepId,
+    tenantId: request.tenantId,
+    type: authorization.compensationEffectType,
+    idempotencyKey: `cmp:${request.originalEffectId}:${request.adapterVersion}`,
+    policyDecisionId: authorization.policyDecisionId,
+    policySnapshotId: authorization.policySnapshotId,
+    actionDigest: authorization.actionDigest,
+    request: {
+      originalEffectId: request.originalEffectId,
+      destination: request.destination,
+      forwardResponse: work.forwardResponse,
+      compensationPatch: authorization.compensationPatch,
+    },
+    lease: work.lease,
+    requestId: request.id,
+    requestClaimToken: request.claimToken!,
+    outboxMessageId: work.outboxMessageId,
+    outboxClaimToken: work.outboxClaimToken,
+    // SQLite routes through its `admitEffect` override, which requires the
+    // binding; the in-memory and SQL repositories accept it but do not need it.
+    compensationBinding: {
+      authorizationId: authorization.id,
+      requestId: request.id,
+      claimToken: request.claimToken!,
+    },
+    actor: 'compensation-worker',
   };
 }
 
@@ -1193,9 +1259,11 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         assert.equal(executions, 1);
         assert.equal(admittedRequest?.originalEffectId, legacy.originalEffectId);
         assert.equal(admittedRequest?.destination, destination);
+        // The durable claim moves the compensation run to COMPENSATING, exactly
+        // as the SQL state machine does; the legacy in-memory path left RUNNING.
         assert.equal(
           (await kernel.getRun(requested.request.compensationRunId, 'tenant-a'))?.state,
-          'RUNNING',
+          'COMPENSATING',
         );
         assert.equal(
           (await kernel.getStep(requested.request.compensationStepId, 'tenant-a'))?.state,
@@ -1206,69 +1274,125 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       }
     });
 
-    it('admits a compensate.* effect through admitEffect from the compact producer payload', async () => {
+    it('admits a compensate.* effect through the canonical governed entry point', async () => {
       const kernel = await ctx.create();
       try {
         if (!ctx.seedCompensationWorker) return;
-        const { work, workerId, request } = await seedClaimedGovernedCompensation(
-          kernel,
-          ctx,
-          'admit',
-        );
-        const admitted = await kernel.admitEffect({
-          id: request.compensationEffectId!,
-          runId: request.compensationRunId,
-          stepId: request.compensationStepId,
-          tenantId: 'tenant-a',
-          type: work.authorization.compensationEffectType,
-          idempotencyKey: work.authorization.idempotencyKey,
-          policyDecisionId: work.authorization.policyDecisionId,
-          policySnapshotId: work.authorization.policySnapshotId,
-          actionDigest: work.authorization.actionDigest,
-          request: work.authorization.compensationRequest,
-          lease: work.lease,
-          compensationBinding: {
-            requestId: request.id,
-            authorizationId: work.authorization.authorizationId,
-            claimToken: work.claimToken,
-          },
-          actor: workerId,
-        });
+        const { work } = await seedClaimedGovernedCompensation(kernel, ctx, 'admit');
+        const admitted = await kernel.admitCompensationEffect(compensationAdmissionInput(work));
         assert.equal(admitted.admitted, true, JSON.stringify(admitted));
       } finally {
         await ctx.destroy(kernel);
       }
     });
 
-    it('refuses a compensate.* admitEffect whose actionDigest matches only the compact payload', async () => {
+    it('refuses a governed admission whose claim token is substituted', async () => {
       const kernel = await ctx.create();
       try {
         if (!ctx.seedCompensationWorker) return;
-        const { work, workerId, request, durableActionDigest } =
-          await seedClaimedGovernedCompensation(kernel, ctx, 'durable-digest');
-        const admitted = await kernel.admitEffect({
-          id: request.compensationEffectId!,
-          runId: request.compensationRunId,
-          stepId: request.compensationStepId,
-          tenantId: 'tenant-a',
-          type: work.authorization.compensationEffectType,
-          idempotencyKey: work.authorization.idempotencyKey,
-          policyDecisionId: work.authorization.policyDecisionId,
-          policySnapshotId: work.authorization.policySnapshotId,
-          actionDigest: durableActionDigest,
-          request: work.authorization.compensationRequest,
-          lease: work.lease,
-          compensationBinding: {
-            requestId: request.id,
-            authorizationId: work.authorization.authorizationId,
-            claimToken: work.claimToken,
-          },
-          actor: workerId,
+        const { work } = await seedClaimedGovernedCompensation(kernel, ctx, 'claim-token');
+
+        // Baseline: the untampered admission is accepted.
+        await kernel.admitCompensationEffect(compensationAdmissionInput(work));
+
+        // `admit_compensation_effect` binds admission to the outbox claim token,
+        // so a substituted token must be refused fail-closed.
+        const tampered = await kernel.admitCompensationEffect({
+          ...compensationAdmissionInput(work),
+          outboxClaimToken: 'substituted-claim-token',
         });
-        assert.equal(admitted.admitted, false, JSON.stringify(admitted));
-        if (!admitted.admitted) {
-          assert.equal(admitted.reason, 'COMPENSATION_ADMISSION_UNAVAILABLE');
-        }
+        assert.equal(tampered.admitted, false, JSON.stringify(tampered));
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
+    it('does not let a live governed compensation claim be claimed twice', async () => {
+      const kernel = await ctx.create();
+      try {
+        if (!ctx.seedCompensationWorker) return;
+        const { workerId, workerGeneration, claimSecret } = await seedClaimedGovernedCompensation(
+          kernel,
+          ctx,
+          'live-claim',
+        );
+
+        // The durable predicate selects only AUTHORIZED rows or CLAIMED rows whose
+        // lease has elapsed, so a live claim is invisible to both the single and
+        // the batch claim form. Re-claiming it would execute the compensation twice.
+        assert.equal(
+          await kernel.claimCompensationRequest({
+            requestId: '',
+            outboxMessageId: '',
+            workerId,
+            workerGeneration,
+            claimSecret,
+          }),
+          null,
+        );
+        assert.deepEqual(
+          await kernel.claimCompensationWork({
+            workerId,
+            workerGeneration,
+            claimSecret,
+            topic: KERNEL_COMPENSATION_TOPIC,
+            limit: 10,
+          }),
+          [],
+        );
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
+    it('re-claims only after the lease elapses and refuses the rotated-out token', async () => {
+      const kernel = await ctx.create();
+      try {
+        if (!ctx.seedCompensationWorker) return;
+        // PostgreSQL owns the claim clock (p_now defaults to clock_timestamp()), so
+        // the injected clock this case needs cannot drive the authoritative
+        // implementation; it covers the memory and SQLite repositories.
+        if (ctx.reconcileClaimUsesDatabaseClock) return;
+        const { work, workerId, workerGeneration, claimSecret } =
+          await seedClaimedGovernedCompensation(kernel, ctx, 'reclaim');
+        const staleToken = work.request.claimToken!;
+        const expiry = Date.parse(work.request.claimExpiresAt!);
+
+        assert.equal(
+          await kernel.claimCompensationRequest({
+            requestId: '',
+            outboxMessageId: '',
+            workerId,
+            workerGeneration,
+            claimSecret,
+            now: new Date(expiry - 1_000),
+          }),
+          null,
+          'a claim whose lease has not elapsed must not be re-claimed',
+        );
+
+        const reclaimed = await kernel.claimCompensationRequest({
+          requestId: '',
+          outboxMessageId: '',
+          workerId,
+          workerGeneration,
+          claimSecret,
+          now: new Date(expiry + 1_000),
+        });
+        assert.ok(reclaimed, 'an elapsed claim must be re-claimable');
+        assert.notEqual(reclaimed.request.claimToken, staleToken);
+
+        // The rotated-out token must no longer admit the effect, even though every
+        // other field of the admission still matches the durable rows.
+        const stale = await kernel.admitCompensationEffect({
+          ...compensationAdmissionInput(work),
+          requestClaimToken: staleToken,
+          outboxClaimToken: staleToken,
+        });
+        assert.equal(stale.admitted, false, JSON.stringify(stale));
+
+        const fresh = await kernel.admitCompensationEffect(compensationAdmissionInput(reclaimed));
+        assert.equal(fresh.admitted, true, JSON.stringify(fresh));
       } finally {
         await ctx.destroy(kernel);
       }

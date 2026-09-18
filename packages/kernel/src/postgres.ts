@@ -2830,7 +2830,64 @@ export class PostgresKernelRepository implements KernelRepository {
       if (!result) break;
       claimed.push(result);
     }
+    await this.drainUnresolvedCompensationOutbox(input);
     return claimed;
+  }
+
+  /**
+   * Pre-Task-3 producers wrote compensation outbox rows carrying no request
+   * identity. The durable claim cannot see them and `claimOutbox` deny-lists the
+   * topic, so without this they would sit in the outbox unpublished forever with
+   * no audit trail.
+   *
+   * A payload that DOES carry a `requestId` is deliberately left alone: a legacy
+   * `request_governed_compensation_v1` row (sealed authorization with no durable
+   * request) is untrusted recovery work that must stay pending for an authorised
+   * path, and `postgres.ops.integration.test.ts` pins `published_at IS NULL` for
+   * it. Only rows with no resolvable identity can never be executed by anything.
+   */
+  protected async drainUnresolvedCompensationOutbox(
+    input: CompensationClaimAuth & { limit: number },
+  ): Promise<void> {
+    const messages = await this.claimOutboxByTopic(
+      KERNEL_COMPENSATION_TOPIC,
+      input.limit,
+      new Date(),
+      input,
+    );
+    for (const message of messages) {
+      if (
+        typeof message.payload.requestId === 'string' &&
+        message.payload.requestId.trim() !== ''
+      ) {
+        continue;
+      }
+      const runId =
+        typeof message.payload.runId === 'string'
+          ? message.payload.runId
+          : `compensation:${message.id}`;
+      await this.withTransaction(
+        async (client) => {
+          await client.query(
+            `UPDATE commander_outbox SET published_at=now(), claim_token=NULL, claimed_at=NULL
+             WHERE id=$1 AND claim_token=$2 AND published_at IS NULL`,
+            [message.id, message.claimToken],
+          );
+          await this.appendEvent(client, {
+            aggregateType: 'effect',
+            aggregateId: `compensation:${message.id}`,
+            sequence: 1,
+            type: 'compensation.authorization_required',
+            tenantId: message.tenantId,
+            runId,
+            stepId: typeof message.payload.stepId === 'string' ? message.payload.stepId : undefined,
+            actor: input.workerId,
+            payload: { reason: 'COMPENSATION_AUTHORIZATION_REQUIRED', messageId: message.id },
+          });
+        },
+        [message.tenantId],
+      );
+    }
   }
 
   async completeCompensationWork(

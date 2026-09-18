@@ -10,6 +10,7 @@ import type {
 } from './types.js';
 import type { KernelEvidenceRecord } from './evidenceRepository.js';
 import { canonicalCompensationHash } from './ops/compensationAuthority.js';
+import { KERNEL_COMPENSATION_TOPIC } from './ops/compensationConsumer.js';
 import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
 import { SqliteKernelRepository } from './sqlite.js';
 import {
@@ -800,6 +801,75 @@ for (const kind of ['memory', 'sqlite'] as const) {
             )
           ).length,
           0,
+        );
+      } finally {
+        harness.close();
+      }
+    });
+
+    it('audits and acknowledges compensation outbox rows with no durable request', async () => {
+      const harness = await createHarness(kind);
+      try {
+        const claimSecret = harness.seedWorker('compensation-worker', [TENANT], 1, {
+          claimSecret: 'compensation-secret',
+          capabilities: ['effect.compensate'],
+          identitySubject: 'db:commander_adapter_ops',
+        });
+        // A pre-Task-3 producer row: compensation topic, no durable request behind it.
+        if (kind === 'sqlite') {
+          (harness.repository as SqliteKernelRepository).seedTestOutboxMessage({
+            topic: KERNEL_COMPENSATION_TOPIC,
+            tenantId: TENANT,
+            key: `${TENANT}/legacy-run/effect-legacy`,
+            payload: {
+              type: 'kernel.compensation.requested',
+              tenantId: TENANT,
+              runId: 'legacy-run',
+              stepId: 'legacy-step',
+              idempotencyKey: 'cmp:effect-legacy:1.0.0',
+            },
+          });
+        } else {
+          (harness.repository as InMemoryKernelRepository).seedOutboxMessage({
+            topic: KERNEL_COMPENSATION_TOPIC,
+            tenantId: TENANT,
+            key: `${TENANT}/legacy-run/effect-legacy`,
+            payload: {
+              type: 'kernel.compensation.requested',
+              tenantId: TENANT,
+              runId: 'legacy-run',
+              stepId: 'legacy-step',
+              idempotencyKey: 'cmp:effect-legacy:1.0.0',
+            },
+          });
+        }
+
+        assert.deepEqual(
+          await harness.repository.claimCompensationWork({
+            workerId: 'compensation-worker',
+            workerGeneration: 1,
+            claimSecret,
+            topic: KERNEL_COMPENSATION_TOPIC,
+            limit: 10,
+          }),
+          [],
+          'a row with no durable request is never claimed as governed work',
+        );
+        assert.deepEqual(
+          await harness.repository.claimOutboxByTopic(
+            KERNEL_COMPENSATION_TOPIC,
+            10,
+            new Date(Date.now() + 61_000),
+            { workerId: 'compensation-worker', workerGeneration: 1, claimSecret },
+          ),
+          [],
+          'the undeliverable row must be acknowledged, not left in the outbox',
+        );
+        assert.ok(
+          (await harness.repository.listEvents('legacy-run', TENANT)).some(
+            (event) => event.type === 'compensation.authorization_required',
+          ),
+          'acknowledging must leave an audit event',
         );
       } finally {
         harness.close();

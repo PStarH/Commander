@@ -503,6 +503,54 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     return claimSecret;
   }
 
+  /** Seed an unpublished outbox row (mirrors the in-memory `seedOutboxMessage`). */
+  seedTestOutboxMessage(input: {
+    topic: string;
+    tenantId?: string;
+    key?: string;
+    payload?: Record<string, unknown>;
+  }): string {
+    const id = randomUUID();
+    const eventId = randomUUID();
+    const tenantId = input.tenantId ?? 'tenant-a';
+    const createdAt = new Date().toISOString();
+    // `commander_outbox.event_id` is a foreign key, so the backing event row is
+    // required — exactly as the producer writes them.
+    this.db
+      .prepare(
+        `INSERT INTO commander_events(id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,actor,schema_version,payload,occurred_at)
+         VALUES(?,?,?,?,?,?,?,?,'v2',?,?)`,
+      )
+      .run(
+        eventId,
+        'effect',
+        `seed:${id}`,
+        1,
+        input.topic,
+        tenantId,
+        `seed:${id}`,
+        'test',
+        JSON.stringify(input.payload ?? {}),
+        createdAt,
+      );
+    this.db
+      .prepare(
+        `INSERT INTO commander_outbox(id,event_id,tenant_id,topic,key,payload,created_at,available_at)
+         VALUES(?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        id,
+        eventId,
+        tenantId,
+        input.topic,
+        input.key ?? 'key',
+        JSON.stringify(input.payload ?? {}),
+        createdAt,
+        createdAt,
+      );
+    return id;
+  }
+
   override async getOperationsReadiness(
     tenantId: string,
     at = new Date(),
@@ -964,17 +1012,24 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     tenantId: string,
   ): Promise<CompensationAuthorizationRecord | null> {
     return this.withTransaction(
-      async (client) => {
-        const result = await client.query<Record<string, unknown>>(
-          'SELECT * FROM commander_compensation_authorizations WHERE id=? AND tenant_id=?',
-          [authorizationId, tenantId],
-        );
-        const row = result.rows[0];
-        if (!row) return null;
-        return this.compensationAuthorizationFromRow(row);
-      },
+      (client) => this.getCompensationAuthorizationInner(authorizationId, tenantId, client),
       [tenantId],
     );
+  }
+
+  /** Transaction-free body; callers inside an open transaction must use this. */
+  private async getCompensationAuthorizationInner(
+    authorizationId: string,
+    tenantId: string,
+    client: SqlClient,
+  ): Promise<CompensationAuthorizationRecord | null> {
+    const result = await client.query<Record<string, unknown>>(
+      'SELECT * FROM commander_compensation_authorizations WHERE id=? AND tenant_id=?',
+      [authorizationId, tenantId],
+    );
+    const row = result.rows[0];
+    if (!row) return null;
+    return this.compensationAuthorizationFromRow(row);
   }
 
   private compensationAuthorizationFromRow(
@@ -1363,7 +1418,6 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           !durableAuthorization ||
           !originalEffect ||
           !evidence ||
-          run.state !== 'RUNNING' ||
           step.state !== 'RUNNING' ||
           !this.workerHasExactCapability(request.lease.workerId, 'effect.compensate') ||
           !Array.isArray(workerTenants) ||
@@ -1402,7 +1456,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           request.idempotencyKey !== governed.idempotencyKey ||
           request.policyDecisionId !== governed.policyDecisionId ||
           request.policySnapshotId !== governed.policySnapshotId ||
-          request.actionDigest !== governed.actionDigest ||
+          request.actionDigest !== durableAuthorization.actionDigest ||
           canonicalJson(request.request) !== canonicalJson(governed.compensationRequest)
         ) {
           return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
@@ -1465,18 +1519,71 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       input.claimSecret,
     );
     if (!scope || !this.workerHasExactCapability(input.workerId, 'effect.compensate')) return null;
-    return this.withTransaction(async (client) => {
+    // The batch entry owns the tenant scope for its whole loop; this single claim
+    // must carry it too, or `withTransaction` refuses the write
+    // ("Kernel write must explicitly carry tenant scope").
+    return this.withTransaction(
+      (client) => this.claimCompensationRequestInner(input, client),
+      scope.tenantIds,
+    );
+  }
+
+  /** Transaction-free claim body; callers own the transaction. */
+  private async claimCompensationRequestInner(
+    input: ClaimCompensationRequestInput,
+    client: SqlClient,
+  ): Promise<ClaimedCompensationRequest | null> {
+    const scope = this.resolveDurableWorkerTenantScope(
+      input.workerId,
+      input.workerGeneration,
+      input.claimSecret,
+    );
+    if (!scope || !this.workerHasExactCapability(input.workerId, 'effect.compensate')) return null;
+    // `claim_compensation_request` scans when the request id is empty: the oldest
+    // AUTHORIZED request, or a CLAIMED one whose claim has elapsed. A live claim
+    // is never re-claimed (the SQL predicate says the same).
+    const at = input.now ?? new Date();
+    const requestId =
+      input.requestId.trim() !== ''
+        ? input.requestId
+        : ((
+            await client.query<Record<string, unknown>>(
+              `SELECT * FROM commander_compensation_requests
+               WHERE tenant_id IN (${scope.tenantIds.map(() => '?').join(',')})
+                 AND (state='AUTHORIZED' OR (state='CLAIMED' AND claim_expires_at IS NOT NULL AND claim_expires_at<=?))
+               ORDER BY created_at LIMIT 1`,
+              [...scope.tenantIds, at.toISOString()],
+            )
+          ).rows[0]?.id as string | undefined);
+    if (!requestId) return null;
+    {
       const result = await client.query<Record<string, unknown>>(
         'SELECT * FROM commander_compensation_requests WHERE id=?',
-        [input.requestId],
+        [requestId],
       );
       const row = result.rows[0];
       if (!row || !scope.tenantIds.includes(String(row.tenant_id))) return null;
       const request = this.compensationRequestFromRow(row);
+      // `claim_compensation_request` accepts an empty outbox message id and then
+      // binds the request's own unpublished outbox row (the batch claim passes
+      // ''). A supplied id is honoured, but the payload must still bind it to
+      // this request and authorization — a foreign or substituted message is
+      // never claimed.
       const messageResult = await client.query<Record<string, unknown>>(
-        `SELECT * FROM commander_outbox WHERE id=? AND tenant_id=?
-         AND topic=? AND published_at IS NULL`,
-        [input.outboxMessageId, request.tenantId, KERNEL_COMPENSATION_TOPIC],
+        `SELECT * FROM commander_outbox
+         WHERE (NULLIF(?,'') IS NULL OR id=?)
+           AND tenant_id=? AND topic=? AND published_at IS NULL
+           AND json_extract(payload,'$.requestId')=?
+           AND json_extract(payload,'$.authorizationId')=?
+         ORDER BY created_at LIMIT 1`,
+        [
+          input.outboxMessageId,
+          input.outboxMessageId,
+          request.tenantId,
+          KERNEL_COMPENSATION_TOPIC,
+          request.id,
+          request.authorizationId,
+        ],
       );
       const message = messageResult.rows[0];
       const authorizationResult = await client.query<Record<string, unknown>>(
@@ -1502,13 +1609,13 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         !authorization ||
         !originalEffect ||
         payload?.requestId !== request.id ||
-        payload.authorizationId !== authorization.id ||
+        payload?.authorizationId !== authorization.id ||
+        payload?.tenantId !== request.tenantId ||
         payload.actionDigest !== authorization.actionDigest ||
         canonicalCompensationHash(originalEffect.response ?? {}) !==
           authorization.forwardReceiptHash
       )
         return null;
-      const at = input.now ?? new Date();
       if (
         request.state === 'CLAIMED' &&
         request.claimExpiresAt &&
@@ -1562,7 +1669,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       );
       await client.query(
         `UPDATE commander_outbox SET claimed_at=?,claim_token=?,attempts=attempts+1 WHERE id=?`,
-        [at.toISOString(), claimToken, input.outboxMessageId],
+        [at.toISOString(), claimToken, message.id],
       );
       request.state = 'CLAIMED';
       request.claimWorkerId = input.workerId;
@@ -1581,65 +1688,50 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           fencingEpoch,
           expiresAt,
         },
-        outboxMessageId: input.outboxMessageId,
+        outboxMessageId: String(message.id),
         outboxClaimToken: claimToken,
       };
-    }, scope.tenantIds);
+    }
   }
 
   override async admitCompensationEffect(
     input: AdmitEffectRequest & {
       requestId: string;
+      requestClaimToken: string;
       outboxMessageId: string;
       outboxClaimToken: string;
     },
   ): Promise<AdmitEffectResult> {
-    return this.withTransaction(
-      async (client) => {
-        const requestResult = await client.query<Record<string, unknown>>(
-          'SELECT * FROM commander_compensation_requests WHERE id=?',
-          [input.requestId],
-        );
-        const row = requestResult.rows[0];
-        if (!row) return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' } as const;
-        const request = this.compensationRequestFromRow(row);
-        const authorization = await this.getCompensationAuthorization(
-          request.authorizationId,
-          request.tenantId,
-        );
-        const effectResult = await client.query<Record<string, unknown>>(
-          'SELECT request,response FROM commander_effects WHERE id=? AND tenant_id=?',
-          [request.originalEffectId, request.tenantId],
-        );
-        const originalEffect = effectResult.rows[0];
-        const originalRequest = originalEffect
-          ? reqJsonObject('commander_effects', originalEffect, 'request')
-          : undefined;
-        request.destination =
-          typeof originalRequest?.destination === 'string' ? originalRequest.destination : '';
-        const forwardResponse = originalEffect?.response;
-        if (
-          !authorization ||
-          request.state !== 'CLAIMED' ||
-          request.compensationEffectId !== input.id ||
-          request.claimToken !== input.outboxClaimToken ||
-          input.type !== authorization.compensationEffectType ||
-          input.actionDigest !== authorization.actionDigest ||
-          input.policyDecisionId !== authorization.policyDecisionId ||
-          input.policySnapshotId !== authorization.policySnapshotId ||
-          JSON.stringify(input.request) !==
-            JSON.stringify({
-              originalEffectId: request.originalEffectId,
-              destination: originalRequest?.destination,
-              forwardResponse,
-              compensationPatch: authorization.compensationPatch,
-            })
-        )
-          return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' } as const;
-        return super.admitEffect(input);
-      },
-      [input.tenantId],
-    );
+    // `admit_compensation_effect` binds the admission to the durable request and
+    // its claimed outbox row before the governed admission runs. These reads stay
+    // outside a transaction: `admitEffect` (the compensation override) owns the
+    // single write transaction and SQLite refuses nested ones.
+    const row = this.db
+      .prepare('SELECT * FROM commander_compensation_requests WHERE id=?')
+      .get(input.requestId) as Record<string, unknown> | undefined;
+    const request = row ? this.compensationRequestFromRow(row) : null;
+    const outbox = request
+      ? (this.db
+          .prepare(
+            `SELECT * FROM commander_outbox WHERE id=? AND tenant_id=?
+             AND topic=? AND published_at IS NULL`,
+          )
+          .get(input.outboxMessageId, request.tenantId, KERNEL_COMPENSATION_TOPIC) as
+          Record<string, unknown> | undefined)
+      : undefined;
+    if (
+      !request ||
+      request.tenantId !== input.tenantId ||
+      request.state !== 'CLAIMED' ||
+      request.compensationEffectId !== input.id ||
+      request.claimToken !== input.requestClaimToken ||
+      request.claimToken !== input.outboxClaimToken ||
+      !outbox ||
+      outbox.claim_token !== input.outboxClaimToken
+    ) {
+      return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
+    }
+    return this.admitEffect(input);
   }
 
   override async parkCompensationUnknown(
@@ -1918,207 +2010,90 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
   ): Promise<ClaimedCompensationWork[]> {
     if (input.topic !== KERNEL_COMPENSATION_TOPIC) return [];
+    // Delegates to the durable claim, exactly as `postgres.ts` does, so every
+    // repository returns ClaimedCompensationRequest. SQLite refuses nested
+    // transactions, so the batch owns one transaction and drives the
+    // transaction-free inner body. The worker's durable tenant scope is the
+    // batch's write scope; `schedulerMode` never grants it implicitly.
     const scope = this.resolveDurableWorkerTenantScope(
       input.workerId,
       input.workerGeneration,
       input.claimSecret,
     );
-    if (
-      !scope ||
-      !this.workerHasExactCapability(input.workerId, 'effect.compensate') ||
-      input.limit <= 0
-    ) {
-      return [];
-    }
-    return this.withTransaction(async (client) => {
-      const at = new Date();
-      const atIso = at.toISOString();
-      const staleBefore = new Date(at.getTime() - 60_000).toISOString();
-      const candidates = await client.query<Record<string, unknown>>(
-        `SELECT * FROM commander_outbox
-         WHERE topic=? AND published_at IS NULL AND moved_to_dlq_at IS NULL
-           AND attempts < max_attempts AND available_at <= ?
-           AND (claimed_at IS NULL OR claimed_at <= ?)
-           AND tenant_id IN (${scope.tenantIds.map(() => '?').join(',')})
-         ORDER BY created_at,id LIMIT ?`,
-        [input.topic, atIso, staleBefore, ...scope.tenantIds, input.limit],
-      );
-      const claimed: ClaimedCompensationWork[] = [];
-      for (const message of candidates.rows) {
-        const rawPayload = parseJsonValue(message.payload);
-        const payload =
-          rawPayload && typeof rawPayload === 'object' && !Array.isArray(rawPayload)
-            ? (rawPayload as Record<string, unknown>)
-            : null;
-        const payloadRequestId = typeof payload?.requestId === 'string' ? payload.requestId : null;
-        const payloadAuthorizationId =
-          typeof payload?.authorizationId === 'string' ? payload.authorizationId : null;
-        const payloadTenantId = typeof payload?.tenantId === 'string' ? payload.tenantId : null;
-        const payloadActionDigest =
-          typeof payload?.actionDigest === 'string' ? payload.actionDigest : null;
-        // Mirror claim_compensation_request_v2: resolve from the durable
-        // compensation request, then its sealed authorization row, then the
-        // forward effect. The compact outbox payload is only a cross-check.
-        const requestResult = payloadRequestId
-          ? await client.query<Record<string, unknown>>(
-              `SELECT * FROM commander_compensation_requests WHERE id=? AND tenant_id=?`,
-              [payloadRequestId, message.tenant_id],
-            )
-          : { rows: [] as Record<string, unknown>[] };
-        const requestRow = requestResult.rows[0];
-        const request = requestRow ? this.compensationRequestFromRow(requestRow) : null;
-        const authorizationResult = request
-          ? await client.query<Record<string, unknown>>(
-              `SELECT * FROM commander_compensation_authorizations WHERE id=? AND tenant_id=?`,
-              [request.authorizationId, message.tenant_id],
-            )
-          : { rows: [] as Record<string, unknown>[] };
-        const durableAuthorization = authorizationResult.rows[0]
-          ? this.compensationAuthorizationFromRow(authorizationResult.rows[0])
-          : null;
-        const runResult = request
-          ? await client.query<Record<string, unknown>>(
-              `SELECT * FROM commander_runs WHERE id=? AND tenant_id=?`,
-              [request.compensationRunId, message.tenant_id],
-            )
-          : { rows: [] as Record<string, unknown>[] };
-        const stepResult = request
-          ? await client.query<Record<string, unknown>>(
-              `SELECT * FROM commander_steps WHERE id=? AND run_id=? AND tenant_id=?`,
-              [request.compensationStepId, request.compensationRunId, message.tenant_id],
-            )
-          : { rows: [] as Record<string, unknown>[] };
-        const effectResult = request
-          ? await client.query<Record<string, unknown>>(
-              `SELECT * FROM commander_effects WHERE id=? AND tenant_id=? AND state='COMPLETED'`,
-              [request.originalEffectId, message.tenant_id],
-            )
-          : { rows: [] as Record<string, unknown>[] };
-        const run = runResult.rows[0];
-        const step = stepResult.rows[0];
-        const originalEffect = effectResult.rows[0];
-        const runAuthorization = run
-          ? (
-              (parseJsonValue(run.metadata) as Record<string, unknown>).compensation as
-                Record<string, unknown> | undefined
-            )?.authorization
-          : null;
-        const stepAuthorization = step
-          ? (parseJsonValue(step.input) as Record<string, unknown>).authorization
-          : null;
-        const authorization =
-          request && durableAuthorization && originalEffect && runAuthorization
-            ? this.governedCompensationAuthorizationFromDurableEvidence({
-                evidence: runAuthorization,
-                request,
-                durableAuthorization,
-                originalEffect,
-              })
-            : null;
-        if (
-          !payload ||
-          !request ||
-          !durableAuthorization ||
-          !authorization ||
-          payloadTenantId !== message.tenant_id ||
-          payloadRequestId !== request.id ||
-          payloadAuthorizationId !== durableAuthorization.id ||
-          payloadActionDigest !== durableAuthorization.actionDigest ||
-          request.tenantId !== message.tenant_id ||
-          request.authorizationId !== durableAuthorization.id ||
-          !run ||
-          !step ||
-          run.state !== 'PENDING' ||
-          step.state !== 'PENDING' ||
-          !runAuthorization ||
-          !stepAuthorization ||
-          canonicalJson(runAuthorization) !== canonicalJson(stepAuthorization)
-        ) {
-          await client.query(
-            `UPDATE commander_outbox
-             SET published_at=?,claimed_at=NULL,claim_token=NULL WHERE id=?`,
-            [atIso, message.id],
-          );
-          if (run) {
-            const metadata = parseJsonValue(run.metadata) as Record<string, unknown>;
-            const compensation = (metadata.compensation ?? {}) as Record<string, unknown>;
-            compensation.disposition = 'ESCALATED';
-            compensation.escalationReason = 'COMPENSATION_AUTHORIZATION_REQUIRED';
-            metadata.compensation = compensation;
-            await client.query(
-              `UPDATE commander_runs SET state='FAILED',version=version+1,metadata=?,
-                 updated_at=?,terminal_at=? WHERE id=? AND tenant_id=? AND state IN ('PENDING','RUNNING')`,
-              [metadata, atIso, atIso, run.id, message.tenant_id],
-            );
-          }
-          if (step) {
-            await client.query(
-              `UPDATE commander_steps SET state='FAILED',version=version+1,error=?,updated_at=?
-               WHERE id=? AND tenant_id=? AND state NOT IN ('SUCCEEDED','FAILED','CANCELLED','SKIPPED')`,
-              [
-                {
-                  code: 'COMPENSATION_AUTHORIZATION_REQUIRED',
-                  message: 'Governed compensation authorization is missing or stale',
-                  retryable: false,
-                },
-                atIso,
-                step.id,
-                message.tenant_id,
-              ],
-            );
-          }
-          continue;
-        }
-        const claimToken = randomUUID();
-        const fencingEpoch = Number(step.fencing_epoch ?? 0) + 1;
-        const expiresAt = new Date(
-          Math.min(at.getTime() + 60_000, Date.parse(authorization.authorizationExpiresAt)),
-        ).toISOString();
-        await client.query(
-          `UPDATE commander_outbox SET claimed_at=?,claim_token=?,attempts=attempts+1 WHERE id=?`,
-          [atIso, claimToken, message.id],
-        );
-        await client.query(
-          `UPDATE commander_runs SET state='RUNNING',version=version+1,updated_at=?
-           WHERE id=? AND tenant_id=? AND state='PENDING'`,
-          [atIso, run.id, message.tenant_id],
-        );
-        await client.query(
-          `UPDATE commander_steps SET state='RUNNING',version=version+1,attempt=attempt+1,
-             lease_worker_id=?,lease_worker_generation=?,lease_token=?,fencing_epoch=?,
-             lease_expires_at=?,updated_at=?
-           WHERE id=? AND tenant_id=? AND state='PENDING'`,
-          [
-            input.workerId,
-            input.workerGeneration,
-            claimToken,
-            fencingEpoch,
-            expiresAt,
-            atIso,
-            step.id,
-            message.tenant_id,
-          ],
-        );
-        await client.query(
-          `UPDATE commander_tenant_execution_usage
-           SET running_steps=running_steps+1,updated_at=? WHERE tenant_id=?`,
-          [atIso, message.tenant_id],
-        );
-        claimed.push({
-          messageId: String(message.id),
-          tenantId: String(message.tenant_id),
-          claimToken,
-          authorization,
-          lease: {
+    if (!scope || !this.workerHasExactCapability(input.workerId, 'effect.compensate')) return [];
+    const claimed = await this.withTransaction(async (client) => {
+      const batch: ClaimedCompensationWork[] = [];
+      for (let index = 0; index < input.limit; index += 1) {
+        const result = await this.claimCompensationRequestInner(
+          {
+            requestId: '',
+            outboxMessageId: '',
             workerId: input.workerId,
             workerGeneration: input.workerGeneration,
-            token: claimToken,
-            fencingEpoch,
+            claimSecret: input.claimSecret,
           },
-        });
+          client,
+        );
+        if (!result) break;
+        batch.push(result);
       }
-      return claimed;
+      return batch;
     }, scope.tenantIds);
+    await this.drainUnresolvedCompensationOutbox(input);
+    return claimed;
+  }
+
+  /**
+   * Pre-Task-3 producers wrote compensation outbox rows with no durable request.
+   * The durable claim cannot see them and the generic publisher deny-lists the
+   * topic, so without this they would sit in the outbox unpublished forever.
+   * Rows that DO resolve to a durable request are left alone: ineligible-but-live
+   * requests must stay claimable for a later tick, never be acknowledged here.
+   */
+  protected override async drainUnresolvedCompensationOutbox(
+    input: CompensationClaimAuth & { limit: number },
+  ): Promise<void> {
+    const messages = await this.claimOutboxByTopic(
+      KERNEL_COMPENSATION_TOPIC,
+      input.limit,
+      new Date(),
+      input,
+    );
+    for (const message of messages) {
+      // A payload that carries a request identity is deliberately NOT drained: a
+      // legacy `request_governed_compensation_v1` row (sealed authorization, no
+      // durable request) is untrusted recovery work that must stay pending for an
+      // authorised path — `postgres.ops.integration.test.ts` pins that. Only a row
+      // with no resolvable identity at all can never be executed by anything.
+      const payloadRequestId =
+        typeof message.payload.requestId === 'string' ? message.payload.requestId.trim() : '';
+      if (payloadRequestId !== '') continue;
+      const runId =
+        typeof message.payload.runId === 'string'
+          ? message.payload.runId
+          : `compensation:${message.id}`;
+      await this.withTransaction(
+        async (client) => {
+          await client.query(
+            `UPDATE commander_outbox SET published_at=?,claim_token=NULL,claimed_at=NULL
+             WHERE id=? AND claim_token=? AND published_at IS NULL`,
+            [new Date().toISOString(), message.id, message.claimToken],
+          );
+          await this.appendEvent(client, {
+            aggregateType: 'effect',
+            aggregateId: `compensation:${message.id}`,
+            sequence: 1,
+            type: 'compensation.authorization_required',
+            tenantId: message.tenantId,
+            runId,
+            stepId: typeof message.payload.stepId === 'string' ? message.payload.stepId : undefined,
+            actor: input.workerId,
+            payload: { reason: 'COMPENSATION_AUTHORIZATION_REQUIRED', messageId: message.id },
+          });
+        },
+        [message.tenantId],
+      );
+    }
   }
 
   override async completeCompensationWork(

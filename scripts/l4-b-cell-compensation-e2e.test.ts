@@ -22,6 +22,9 @@ describe('l4-b-cell-compensation-e2e', () => {
     assert.equal(evidence.succeeded, 1, 'daemon must complete the governed compensation');
     assert.equal(evidence.escalated, 0, 'a valid authorization must not be escalated');
     assert.equal(evidence.executions, 1, 'compensation effect must execute exactly once');
+    assert.equal(evidence.tamperRefused, true, 'a substituted claim token must be refused');
+    assert.equal(evidence.replayTickConsumed, 0, 'a drained outbox must not be re-consumed');
+    assert.equal(evidence.replayExecutions, 1, 'replay must not re-execute the compensation');
     assert.equal(evidence.compensationEffectState, 'COMPLETED');
     assert.deepEqual(evidence.compensationEffectResponse, { state: 'closed' });
     assert.equal(evidence.compensationRunState, 'SUCCEEDED');

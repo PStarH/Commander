@@ -244,6 +244,24 @@ describe('compensationPublisherRace (postgres)', () => {
             payload: { type: 'kernel.effect.completed', effectId: `noise-${i}` },
           });
         }
+        // Pre-Task-3 rows on the governed topic carrying no request identity: the
+        // durable claim cannot see them, so the adapter-ops consumer must audit and
+        // acknowledge them instead of letting the outbox accumulate them.
+        const identitylessSeeded = 12;
+        for (let i = 0; i < identitylessSeeded; i++) {
+          await seedOutboxRow(pool, {
+            tenantId,
+            topic: KERNEL_COMPENSATION_TOPIC,
+            key: `${tenantId}/run-race/identityless-${i}`,
+            payload: {
+              type: 'kernel.compensation.requested',
+              tenantId,
+              runId,
+              stepId: 'step-race',
+              idempotencyKey: `cmp:identityless-${i}:1.0.0`,
+            },
+          });
+        }
 
         const deliveredCompensationTopics: string[] = [];
         let brokerAdmissions = 0;
@@ -334,7 +352,17 @@ describe('compensationPublisherRace (postgres)', () => {
         assert.equal(
           Number(outstanding.rows[0]?.governed ?? 0),
           0,
-          'all governed compensation rows should be finalized by the adapter-ops consumer',
+          'every governed-topic row — finalized governed work and acknowledged identity-less rows — must leave published_at set',
+        );
+        const authorizationRequired = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM commander_events
+           WHERE tenant_id=$1 AND type='compensation.authorization_required'`,
+          [tenantId],
+        );
+        assert.equal(
+          Number(authorizationRequired.rows[0]?.count ?? 0),
+          identitylessSeeded,
+          'a compensation row with no resolvable identity must be audited before it is acknowledged',
         );
       } finally {
         await pool.query('DELETE FROM commander_outbox_deliveries WHERE tenant_id=$1', [tenantId]);
