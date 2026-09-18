@@ -10,8 +10,15 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
-import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import {
+  KERNEL_COMPENSATION_TOPIC,
+  type CompensationAuthorizationRecord,
+  type KernelEvidenceRecord,
+} from '@commander/kernel';
+import {
+  InMemoryKernelRepository,
+  seedFreshOperationsDrains,
+} from '@commander/kernel/testing/inMemoryRepository';
 // Root package.json does not declare @commander/action-adapters, so the bare
 // specifier cannot resolve from scripts/; import the workspace source directly.
 import {
@@ -19,7 +26,7 @@ import {
   createGitHubPullRequestCreateAdapter,
 } from '../packages/action-adapters/src/index.js';
 import { CompensationDaemon } from '../packages/adapter-ops/src/compensationDaemon.js';
-import { sealGovernedCompensationAuthorization } from '../packages/kernel/src/ops/compensationAuthority.js';
+import { canonicalCompensationHash } from '../packages/kernel/src/ops/compensationAuthority.js';
 import {
   assertComposeCellHealth,
   CELL_COMPOSE_ENV,
@@ -83,6 +90,12 @@ export interface AdapterOpsCompensationMockEvidence {
   escalated: number;
   replayed: number;
   executions: number;
+  /** Second tick over the drained outbox: nothing may be re-consumed. */
+  replayTickConsumed: number;
+  /** Execution count after the replay tick — must not have grown. */
+  replayExecutions: number;
+  /** A live claim presented with a substituted outbox claim token was refused. */
+  tamperRefused: boolean;
   genericClaimTopics: string[];
   remainingCompensationOutbox: number;
   compensationEffectId: string;
@@ -100,9 +113,52 @@ export function adapterOpsCompensationMockPassed(
     evidence.succeeded === 1 &&
     evidence.escalated === 0 &&
     evidence.executions === 1 &&
+    evidence.replayTickConsumed === 0 &&
+    evidence.replayExecutions === evidence.executions &&
+    evidence.tamperRefused &&
     evidence.compensationEffectState === 'COMPLETED' &&
     evidence.remainingCompensationOutbox === 0
   );
+}
+
+/** Terminal evidence bound to a COMPLETED compensation effect (mirrors the
+ *  persistence suite's fixture: `bundleId` must be `evidence_<effectId>`). */
+function compensationEvidenceFor(effect: {
+  id: string;
+  tenantId: string;
+  runId: string;
+  actionDigest: string;
+}): KernelEvidenceRecord {
+  const bundleId = `evidence_${effect.id}`;
+  const contentHash = 'e'.repeat(64);
+  const signature = {
+    algorithm: 'Ed25519' as const,
+    keyId: 'compensation-e2e-key',
+    signedAt: '2026-08-05T00:00:00.000Z',
+    value: 'compensation-e2e-signature',
+  };
+  return {
+    tenantId: effect.tenantId,
+    runId: effect.runId,
+    bundleId,
+    actionDigest: effect.actionDigest,
+    body: {
+      bodyVersion: 'commander.evidence-body/v1',
+      bundleId,
+      actionDigest: effect.actionDigest,
+      contentHash,
+      terminalDisposition: 'SUCCEEDED',
+      scope: { tenantId: effect.tenantId, runId: effect.runId, effectId: effect.id },
+      effects: [{ effectId: effect.id, state: 'COMPLETED' }],
+      auditEvents: [{ type: 'effect.completed' }],
+      signature,
+    },
+    contentHash,
+    signature,
+    createdAt: '2026-08-05T00:00:00.000Z',
+    anchoredAt: '2026-08-05T00:00:01.000Z',
+    retentionUntil: '2027-08-05T00:00:00.000Z',
+  };
 }
 
 export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompensationMockEvidence> {
@@ -121,6 +177,7 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
   const tenantId = 'adapter-ops-mock-tenant';
   const workerId = 'adapter-ops-mock';
   const workerGeneration = 1;
+  const destination = 'github://octo/repo/pulls';
   // In-memory compensation claims are fail-closed on the durable adapter-ops
   // identity: exactly one `effect.compensate` capability on `db:commander_adapter_ops`.
   const claimSecret = kernel.seedTestWorker(workerId, [tenantId], workerGeneration, {
@@ -129,70 +186,110 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
     registeredAt: new Date(Date.now() - 1_000),
     lastHeartbeatAt: new Date(),
   });
-
-  // Sealed by the public fixture builder so the consumer's hash/digest checks run.
-  const authorization = sealGovernedCompensationAuthorization({
-    schema: 'commander.compensation/v1',
-    authorizationId: 'authorization-adapter-ops-mock',
-    requestId: 'request-adapter-ops-mock',
-    tenantId,
-    originalRunId: 'run-cmp-forward',
-    originalEffectId: 'effect-forward',
-    originalRunStateAtRequest: 'COMPENSATING',
-    compensationRunId: 'run-cmp',
-    compensationStepId: 'step-cmp',
-    compensationEffectId: 'effect-cmp',
-    compensationEffectType: adapter.descriptor.compensationEffectType,
-    compensationRequest: {
-      originalEffectId: 'effect-forward',
-      destination: 'github://octo/repo/pulls',
-      forwardResponse: { prNumber: 1 },
-      compensationPatch: { state: 'closed' },
-    },
-    idempotencyKey: 'cmp:effect-forward:1.0.0',
-    forwardReceipt: { prNumber: 1 },
-    adapterVersion: adapter.descriptor.adapterVersion,
-    policyDecisionId: 'decision-adapter-ops-mock',
-    policySnapshotId: 'policy-adapter-ops-mock',
-    decisionEffect: 'allow',
-    authorizationExpiresAt: '2099-07-29T11:00:00.000Z',
-    approvalBinding: null,
+  const executionSecret = kernel.seedTestWorker('forward-executor', [tenantId], 1, {
+    capabilities: ['agent', 'tool'],
+    registeredAt: new Date(Date.now() - 1_000),
+    lastHeartbeatAt: new Date(),
   });
+  // `demo.ticket.create` is a Class A effect, so admission is fail-closed until
+  // both operations drains (reconcile + compensation) are fresh.
+  seedFreshOperationsDrains(kernel, tenantId);
 
-  // The claim guard requires the compensation run/step to be PENDING and to
-  // persist the exact authorization carried by the outbox payload.
+  // Forward side: a completed effect the producer is allowed to compensate. The
+  // production entry point resolves everything from this durable evidence — the
+  // hand-seeded sealed authorization the previous fixture wrote is not a shape any
+  // producer emits.
+  const originalRunId = 'run-cmp-forward';
+  const originalStepId = 'step-forward';
+  const originalEffectId = 'effect-forward';
+  const forwardResponse = { prNumber: 1 };
+  const forwardPolicySnapshotId = 'policy-adapter-ops-mock';
   await kernel.createRun(
     {
-      id: authorization.compensationRunId,
-      tenantId,
-      intentHash: 'intent-adapter-ops-mock',
-      workGraphHash: 'graph-adapter-ops-mock',
-      workGraphVersion: 'action-gateway-compensation/v2',
-      policySnapshotId: authorization.policySnapshotId,
-      metadata: { compensation: { authorization, disposition: 'PENDING' } },
-      steps: [{ id: authorization.compensationStepId, kind: 'tool', input: { authorization } }],
-    },
-    workerId,
-  );
-  await kernel.createRun(
-    {
-      id: authorization.originalRunId,
+      id: originalRunId,
       tenantId,
       intentHash: 'intent-adapter-ops-forward',
       workGraphHash: 'graph-adapter-ops-forward',
       workGraphVersion: 'v1',
-      policySnapshotId: authorization.policySnapshotId,
-      steps: [{ id: 'step-forward', kind: 'tool' }],
+      policySnapshotId: forwardPolicySnapshotId,
+      steps: [{ id: originalStepId, kind: 'tool' }],
     },
     workerId,
   );
-
-  kernel.seedOutboxMessage({
-    topic: KERNEL_COMPENSATION_TOPIC,
+  const forwardStep = await kernel.claimNextStep({
     tenantId,
-    key: `${tenantId}/${authorization.compensationRunId}/${authorization.originalEffectId}`,
-    payload: authorization as unknown as Record<string, unknown>,
+    workerId: 'forward-executor',
+    workerGeneration: 1,
+    claimSecret: executionSecret,
+    capabilities: ['agent', 'tool'],
+    leaseTtlMs: 60_000,
   });
+  assert.ok(forwardStep?.lease, 'forward step must be claimable');
+  const forwardAdmitted = await kernel.admitEffect({
+    id: originalEffectId,
+    runId: originalRunId,
+    stepId: originalStepId,
+    tenantId,
+    type: 'demo.ticket.create',
+    idempotencyKey: 'forward-adapter-ops-mock',
+    policyDecisionId: 'decision-forward-adapter-ops-mock',
+    policySnapshotId: forwardPolicySnapshotId,
+    actionDigest: 'f'.repeat(64),
+    request: { destination, title: 'Cell compensation E2E' },
+    lease: forwardStep.lease,
+    actor: 'forward-executor',
+  });
+  assert.equal(
+    forwardAdmitted.admitted,
+    true,
+    `forward effect must be admitted: ${JSON.stringify(forwardAdmitted)}`,
+  );
+  assert.ok(
+    await kernel.completeEffect(
+      originalEffectId,
+      tenantId,
+      forwardStep.lease,
+      forwardResponse,
+      'forward-executor',
+    ),
+    'forward effect must complete',
+  );
+
+  // Production producer: persist the 6-field authorization digest, then request.
+  const compensationPatch = { state: 'closed' };
+  const authorization: CompensationAuthorizationRecord = {
+    id: 'authorization-adapter-ops-mock',
+    tenantId,
+    originalRunId,
+    originalEffectId,
+    compensationEffectType: adapter.descriptor.compensationEffectType,
+    adapterVersion: adapter.descriptor.adapterVersion,
+    compensationPatch,
+    forwardReceiptHash: canonicalCompensationHash(forwardResponse),
+    policyDecisionId: 'decision-adapter-ops-mock',
+    policySnapshotId: 'policy-adapter-ops-mock',
+    decision: 'allow',
+    actionDigest: canonicalCompensationHash({
+      type: adapter.descriptor.compensationEffectType,
+      originalEffectId,
+      adapterVersion: adapter.descriptor.adapterVersion,
+      destination,
+      forwardResponse,
+      compensationPatch,
+    }),
+    expiresAt: '2099-07-29T11:00:00.000Z',
+  };
+  await kernel.createCompensationAuthorization(authorization);
+  const requested = await kernel.requestCompensation({
+    tenantId,
+    authorizationId: authorization.id,
+    actor: workerId,
+  });
+  assert.equal(requested.accepted, true, JSON.stringify(requested));
+  if (!requested.accepted) throw new Error('compensation request rejected');
+  const compensationRunId = requested.request.compensationRunId;
+  const compensationStepId = requested.request.compensationStepId;
+
   kernel.seedOutboxMessage({
     topic: 'commander.run.created',
     tenantId,
@@ -209,6 +306,7 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
   );
 
   let executions = 0;
+  let tamperRefused = false;
   let admittedLease: {
     workerId: string;
     workerGeneration?: number;
@@ -218,6 +316,8 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
 
   const daemon = new CompensationDaemon({
     repository: kernel,
+    // A COMPLETED finalize must already carry the effect's terminal evidence.
+    evidenceRepository: kernel,
     registry,
     broker: {
       admit: async (input: {
@@ -226,12 +326,24 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
         request: Record<string, unknown>;
         idempotencyKey: string;
         lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
+        compensationClaim?: {
+          requestId: string;
+          requestClaimToken: string;
+          outboxMessageId: string;
+          outboxClaimToken: string;
+        };
       }) => {
+        if (!input.compensationClaim) {
+          throw new Error('durable compensation claim identifiers are required');
+        }
         admittedLease = input.lease;
-        const admission = await kernel.admitEffect({
+        // Canonical governed admission: `admit_compensation_effect` binds the
+        // admission to the durable request, its claim token and the claimed outbox
+        // row. It is the only compensation entry point production wires.
+        const admissionBase = {
           id: input.effectId,
-          runId: authorization.compensationRunId,
-          stepId: authorization.compensationStepId,
+          runId: compensationRunId,
+          stepId: compensationStepId,
           tenantId,
           type: input.type,
           idempotencyKey: input.idempotencyKey,
@@ -243,12 +355,20 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
             ...input.lease,
             workerGeneration: input.lease.workerGeneration ?? workerGeneration,
           },
-          compensationBinding: {
-            authorizationId: authorization.authorizationId,
-            requestId: authorization.requestId,
-            claimToken: input.lease.token,
-          },
           actor: workerId,
+        };
+        // The claim is live right now, so a substituted outbox claim token must be
+        // refused fail-closed before the legitimate admission is attempted.
+        const tampered = await kernel.admitCompensationEffect({
+          ...admissionBase,
+          ...input.compensationClaim,
+          outboxClaimToken: 'substituted-claim-token',
+        });
+        if (tampered.admitted) throw new Error('a substituted claim token must be refused');
+        tamperRefused = true;
+        const admission = await kernel.admitCompensationEffect({
+          ...admissionBase,
+          ...input.compensationClaim,
         });
         return admission.admitted
           ? { admitted: true, effectId: admission.effect.id, replayed: admission.replayed }
@@ -264,7 +384,9 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
           throw new Error('compensation effect was not admitted before execution');
         }
         executions += 1;
-        const completed = await kernel.completeEffect(
+        const admittedEffect = await kernel.getEffect(input.effectId, tenantId);
+        if (!admittedEffect) throw new Error('compensation effect was not persisted');
+        const completed = await kernel.completeEffectWithEvidence(
           input.effectId,
           tenantId,
           {
@@ -275,6 +397,7 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
           },
           { state: 'closed' },
           workerId,
+          compensationEvidenceFor(admittedEffect),
         );
         if (!completed) throw new Error('compensation effect completion was rejected');
         return { effectId: completed.id, replayed: false, response: { state: 'closed' } };
@@ -288,8 +411,13 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
   });
 
   const tick = await daemon.tick();
-  const effect = await kernel.getEffect(authorization.compensationEffectId, tenantId);
-  const run = await kernel.getRun(authorization.compensationRunId, tenantId);
+  // Replay tick: the claim is terminal and the outbox is drained, so a second
+  // tick must not re-consume the request nor re-execute the compensation.
+  const replayTick = await daemon.tick();
+  const compensationEffectId = requested.request.compensationEffectId;
+  if (!compensationEffectId) throw new Error('compensation request carries no effect id');
+  const effect = await kernel.getEffect(compensationEffectId, tenantId);
+  const run = await kernel.getRun(compensationRunId, tenantId);
   const remaining = await kernel.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10);
   return {
     consumed: tick.consumed,
@@ -297,9 +425,12 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
     escalated: tick.escalated,
     replayed: tick.replayed,
     executions,
+    replayTickConsumed: replayTick.consumed,
+    replayExecutions: executions,
+    tamperRefused,
     genericClaimTopics,
     remainingCompensationOutbox: remaining.length,
-    compensationEffectId: authorization.compensationEffectId,
+    compensationEffectId,
     compensationEffectState: effect?.state ?? null,
     compensationEffectResponse: effect?.response ?? null,
     compensationRunState: run?.state ?? null,
