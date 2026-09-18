@@ -82,8 +82,8 @@ ARM64 runner 使用 `kindest/node:v1.33.2@sha256:2206121406df04dd321ea04919c7a1a
 `docs/security/keys-rotation.md` §6.3 当前绑定的 key 指纹为：
 
 ```text
-full:  C489A6C6865F81B690408C5B12AA1940B17D9448
-short:                         12AA1940B17D9448
+full:  09D0DB9C03667BEE
+short:               09D0DB9C03667BEE
 ```
 
 公钥不在仓库中，CI owner 必须通过受保护的 secret/artifact 提供 ASCII-armored
@@ -93,7 +93,7 @@ short:                         12AA1940B17D9448
 ```bash
 printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
 gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
-gpg --batch --fingerprint C489A6C6865F81B690408C5B12AA1940B17D9448
+gpg --batch --fingerprint 09D0DB9C03667BEE
 pnpm rotate:verify
 ```
 
