@@ -124,6 +124,11 @@ COPY --from=build /app/packages/plugin-sdk/dist ./packages/plugin-sdk/dist
 COPY --from=build /app/packages/core/dist ./packages/core/dist
 COPY --from=build /app/packages/postgres-runtime/dist ./packages/postgres-runtime/dist
 COPY --from=build /app/packages/kernel/dist ./packages/kernel/dist
+# The kernel reads these JSON manifests at RUNTIME from its src directory (not
+# from dist), so a dist-only copy leaves the worker crash-looping with
+# "fatal: ENOENT ... packages/kernel/src/authorityClassifierManifest.v1.json".
+# apps/api/Dockerfile already copies them; worker-plane did not.
+COPY --from=build /app/packages/kernel/src/*.json ./packages/kernel/src/
 COPY --from=build /app/packages/effect-broker/dist ./packages/effect-broker/dist
 COPY --from=build /app/packages/action-adapters/dist ./packages/action-adapters/dist
 COPY --from=build /app/packages/worker-plane/dist ./packages/worker-plane/dist
