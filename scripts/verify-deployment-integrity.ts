@@ -248,6 +248,38 @@ function checkDockerfileClosure(): void {
         );
       }
     }
+
+    // 2d. workspace packages must be BUILT in dependency order.
+    //
+    // tsc resolves a sibling workspace package through its emitted `dist`
+    // declarations, so a `RUN cd packages/X && tsc --noEmit` that runs before
+    // `X`'s workspace dependency has emitted fails with
+    // TS2307 "Cannot find module '@commander/<dep>'". Only the `--filter` set and
+    // the manifests were checked before, so packages/worker-plane/Dockerfile
+    // built packages/core before packages/postgres-runtime and every image build
+    // died — while this gate stayed green.
+    //
+    // Anchored at column 0 with `cd` directly under RUN so a later `RUN cd` inside
+    // a heredoc or a shell loop cannot be mistaken for the build order.
+    const buildOrder = [...text.matchAll(/^RUN cd (\S+?)\s*&&/gm)].map((m) => m[1]);
+    const positionOf = new Map(buildOrder.map((dir, index) => [dir, index]));
+    for (const [dir, index] of positionOf) {
+      const pkg = dirToName.get(dir);
+      if (!pkg) continue;
+      const pkgJsonPath = path.join(dir, 'package.json');
+      if (!exists(pkgJsonPath)) continue;
+      for (const dep of workspaceDepsOf(dir)) {
+        const depDir = nameToDir.get(dep);
+        if (!depDir) continue;
+        const depIndex = positionOf.get(depDir);
+        if (depIndex === undefined || depIndex > index) {
+          fail(
+            'dockerfile-build-order',
+            `${df}: builds ${dir} (position ${index + 1}) before its workspace dependency ${dep} (${depDir}${depIndex === undefined ? ', never built' : `, position ${depIndex + 1}`}) — tsc cannot resolve ${dep} from dist`,
+          );
+        }
+      }
+    }
   }
 }
 
