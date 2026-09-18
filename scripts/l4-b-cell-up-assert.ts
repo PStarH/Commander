@@ -17,9 +17,9 @@ import {
   COMPOSE_CMD,
   ensureCellSandboxImage,
   generateCellCapabilityMaterials,
-  generateCellDatabaseTlsMaterials,
   generateCellEvidenceSigningMaterials,
 } from './l4-b-cell-compose.js';
+import { generateCellDatabaseTlsMaterials } from './kernel-database-tls.js';
 
 export const CELL_UP_ASSERT_SERVICES = [
   'api',

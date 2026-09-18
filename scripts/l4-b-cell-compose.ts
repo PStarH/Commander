@@ -3,52 +3,52 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { createHash, generateKeyPairSync, X509Certificate } from 'node:crypto';
-import { execFileSync, execSync } from 'node:child_process';
-import { mkdtempSync, readFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { generateKeyPairSync } from 'node:crypto';
+import { execSync } from 'node:child_process';
+import {
+  generateCellDatabaseTlsMaterials,
+  KERNEL_TLS_COMPOSE_FILE,
+} from './kernel-database-tls.js';
 
 export const CELL_E2E_TENANT = 'cell-smoke-tenant';
 
-/** Repo root, derived from this file rather than cwd. */
-const REPO_ROOT = resolve(import.meta.dirname, '..');
-
-/**
- * Pinned database TLS material for the kernel-on cell profile.
- *
- * Every cell service that builds a pool does so through
- * `createVerifiedPostgresPool`, which verifies the CA, the DSN hostname and a
- * pinned server SPKI — and refuses `sslmode` other than `verify-full`. The cell
- * compose stack therefore cannot start without this material, so the CI helpers
- * generate it rather than assuming a pre-provisioned directory.
- *
- * The server certificate's SAN must cover `postgres` (the in-network DSN host),
- * which is why this reuses the deployment generator instead of the
- * `deploy/testing/postgres-tls` fixture (that one is pinned to `localhost`).
- *
- * Cached: the generator shells out to openssl.
- */
-let cellDatabaseTlsMaterials: Record<string, string> | undefined;
-
-export function generateCellDatabaseTlsMaterials(): Record<string, string> {
-  if (cellDatabaseTlsMaterials) return cellDatabaseTlsMaterials;
-  const directory = mkdtempSync(join(tmpdir(), 'commander-cell-db-tls-'));
-  execFileSync(
-    'sh',
-    [join(REPO_ROOT, 'deploy/docker/kernel-tls/generate-certificates.sh'), directory, 'postgres'],
-    {
-      stdio: 'pipe',
-    },
-  );
-  const certificate = new X509Certificate(readFileSync(join(directory, 'server.crt')));
-  cellDatabaseTlsMaterials = {
-    COMMANDER_DATABASE_TLS_HOST_DIR: directory,
-    COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: createHash('sha256')
-      .update(certificate.publicKey.export({ format: 'der', type: 'spki' }))
-      .digest('hex'),
-  };
-  return cellDatabaseTlsMaterials;
+/** GID of docker.sock as seen inside a container (Colima often uses 991). */
+export function resolveDockerGid(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    execute?: (command: string) => string;
+  } = {},
+): string {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const execute =
+    options.execute ??
+    ((command: string) =>
+      execSync(command, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim());
+  if (env.DOCKER_GID && /^\d+$/.test(env.DOCKER_GID)) {
+    return env.DOCKER_GID;
+  }
+  try {
+    const out = execute(
+      'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock',
+    ).trim();
+    if (/^\d+$/.test(out)) return out;
+  } catch {
+    /* fall through */
+  }
+  const statCommand =
+    platform === 'darwin' ? 'stat -f %g /var/run/docker.sock' : 'stat -c %g /var/run/docker.sock';
+  try {
+    const out = execute(statCommand).trim();
+    if (/^\d+$/.test(out)) return out;
+  } catch {
+    /* fall through */
+  }
+  return '0';
 }
 
 /** Ephemeral Ed25519 materials for cell worker/adapter authority (fail-closed compose). */
@@ -105,45 +105,6 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   ...CELL_DATABASE_TLS_MATERIALS,
 };
 
-/** GID of docker.sock as seen inside a container (Colima often uses 991). */
-export function resolveDockerGid(
-  options: {
-    env?: NodeJS.ProcessEnv;
-    platform?: NodeJS.Platform;
-    execute?: (command: string) => string;
-  } = {},
-): string {
-  const env = options.env ?? process.env;
-  const platform = options.platform ?? process.platform;
-  const execute =
-    options.execute ??
-    ((command: string) =>
-      execSync(command, {
-        encoding: 'utf-8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      }).trim());
-  if (env.DOCKER_GID && /^\d+$/.test(env.DOCKER_GID)) {
-    return env.DOCKER_GID;
-  }
-  try {
-    const out = execute(
-      'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock',
-    ).trim();
-    if (/^\d+$/.test(out)) return out;
-  } catch {
-    /* fall through */
-  }
-  const statCommand =
-    platform === 'darwin' ? 'stat -f %g /var/run/docker.sock' : 'stat -c %g /var/run/docker.sock';
-  try {
-    const out = execute(statCommand).trim();
-    if (/^\d+$/.test(out)) return out;
-  } catch {
-    /* fall through */
-  }
-  return '0';
-}
-
 /**
  * In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG).
  *
@@ -173,7 +134,7 @@ export const CELL_COMPOSE_ENV: Record<string, string> = {
 };
 
 export const COMPOSE_CMD =
-  'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell';
+  `docker compose -f docker-compose.yml -f docker-compose.cell.yml -f ${KERNEL_TLS_COMPOSE_FILE} --profile cell`;
 
 function composeExec(script: string, service: string): boolean {
   try {

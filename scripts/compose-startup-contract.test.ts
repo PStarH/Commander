@@ -46,6 +46,10 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const BASE_FILE = 'docker-compose.yml';
 const V2_FILE = 'docker-compose.v2.yml';
 const CELL_FILE = 'docker-compose.cell.yml';
+// The v2/cell profiles are kernel-on, so they are always invoked with this third
+// fragment: it carries the pinned database TLS material AND the sslmode=verify-full
+// role DSNs. `include:` is not used because `docker compose up` rejects the merge.
+const KERNEL_TLS_FILE = 'docker-compose.kernel-tls.yml';
 const KERNEL_OPS_DOCKERFILE = 'packages/kernel/Dockerfile.ops';
 
 const ED25519_KEYS = [
@@ -562,7 +566,10 @@ describe('actual process startup configuration', () => {
       ['v2', V2_FILE, v2],
       ['cell', CELL_FILE, cell],
     ] as const) {
-      const env = resolveEnv(mergedEnv([BASE_FILE, 'api'], [overrideFile, 'api']), HOST_ENV);
+      const env = resolveEnv(
+        mergedEnv([BASE_FILE, 'api'], [overrideFile, 'api'], [KERNEL_TLS_FILE, 'api']),
+        HOST_ENV,
+      );
 
       assert.equal(env.NODE_ENV, 'production', `${label} api must be production`);
       assert.equal(env.COMMANDER_KERNEL_ENABLED, '1', `${label} api must set the kernel on`);

@@ -1,8 +1,8 @@
 # Kernel-on services construct verified PostgreSQL pools, so they need the
-# pinned-TLS material this file wires in. Generate it first — see the header of
-# docker-compose.kernel-tls.yml.
-include:
-  - docker-compose.kernel-tls.yml
+# pinned-TLS material. Pass it as an explicit third file on the command line
+# (docker compose -f docker-compose.yml -f <this> -f docker-compose.kernel-tls.yml);
+# `include:` is not used because `docker compose up` rejects the resulting
+# service redefinition with "services.<name> conflicts with imported resource".
 
 # =============================================================================
 # Commander — Cell profile override (L4-07)
