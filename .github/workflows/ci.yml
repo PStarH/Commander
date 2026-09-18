@@ -998,6 +998,23 @@ jobs:
           echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          # Ed25519 authority + pinned database TLS. `cell:up-assert` generates
+          # these when unset, but they must ALSO be in $GITHUB_ENV so a later
+          # diagnostic step can interpolate the compose files at all.
+          key_dir="$(mktemp -d)"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/cap.pem"
+          {
+            echo 'COMMANDER_CAPABILITY_PRIVATE_KEY_PEM<<CAP_EOF'
+            cat "$key_dir/cap.pem"
+            echo 'CAP_EOF'
+          } >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_KEY_ID=cell-ci-r1" >> "$GITHUB_ENV"
+          echo 'COMMANDER_CAPABILITY_JWKS_JSON={"keys":[]}' >> "$GITHUB_ENV"
+          sh deploy/docker/kernel-tls/generate-certificates.sh "$key_dir/db-tls" postgres
+          echo "COMMANDER_DATABASE_TLS_HOST_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          spki=$(openssl x509 -in "$key_dir/db-tls/server.crt" -pubkey -noout \
+            | openssl pkey -pubin -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)
+          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$spki" >> "$GITHUB_ENV"
 
       - name: Docker build worker image (--no-cache)
         run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
@@ -1006,7 +1023,9 @@ jobs:
         run: pnpm cell:image-boot-smoke -- --image-tag commander-worker-ci --skip-build
 
       - name: Cell up assert (compose profile)
-        run: pnpm cell:up-assert
+        # --keep: do not tear the stack down on failure, so the diagnostic step
+        # below can actually read the containers' logs.
+        run: pnpm cell:up-assert --keep
 
       # `cell:up-assert` reports which services are unhealthy but the reason is in
       # the containers. Without this, an unhealthy api/worker/adapter-ops is
@@ -1017,8 +1036,12 @@ jobs:
           for svc in api worker kernel-ops adapter-ops kernel-migrate postgres; do
             echo "===== $svc ====="
             docker compose -f docker-compose.yml -f docker-compose.cell.yml \
-              -f docker-compose.kernel-tls.yml --profile cell logs --no-color --tail 60 "$svc" || true
+              -f docker-compose.kernel-tls.yml --profile cell ps "$svc" || true
+            docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+              -f docker-compose.kernel-tls.yml --profile cell logs --no-color --tail 80 "$svc" || true
           done
+          docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+            -f docker-compose.kernel-tls.yml --profile cell down -v --remove-orphans || true
 
       - name: Cell compensation E2E compose (C3)
         run: pnpm cell:compensation-e2e -- --mode compose --up
