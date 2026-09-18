@@ -1010,6 +1010,13 @@ jobs:
           } >> "$GITHUB_ENV"
           echo "COMMANDER_CAPABILITY_KEY_ID=cell-ci-r1" >> "$GITHUB_ENV"
           echo 'COMMANDER_CAPABILITY_JWKS_JSON={"keys":[]}' >> "$GITHUB_ENV"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/ev.pem"
+          {
+            echo 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM<<EV_EOF'
+            cat "$key_dir/ev.pem"
+            echo 'EV_EOF'
+          } >> "$GITHUB_ENV"
+          echo "COMMANDER_EVIDENCE_SIGNING_KEY_ID=cell-ci-ev-r1" >> "$GITHUB_ENV"
           sh deploy/docker/kernel-tls/generate-certificates.sh "$key_dir/db-tls" postgres
           echo "COMMANDER_DATABASE_TLS_HOST_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
           spki=$(openssl x509 -in "$key_dir/db-tls/server.crt" -pubkey -noout \
