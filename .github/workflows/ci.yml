@@ -388,6 +388,22 @@ jobs:
             pnpm --filter @commander/core test
           fi
 
+      # The `node:test` half of the core suite (197 files) was executed by NO
+      # workflow: `test` above is the vitest allowlist, and the only other
+      # node:test invocation in this file is the single `test:node:pathsec` file.
+      # That is how ~111 files stayed unrunnable in CI — including the ones whose
+      # first execution this pass found to be failing (a suite that could not load,
+      # a benchmark reporting two passes that asserted nothing, a self-skipping
+      # security gate). It is a separate step because the two halves have separate
+      # runners and separate discovery, and a green vitest run says nothing about
+      # the node:test half.
+      - name: Run core node:test suite
+        shell: bash
+        env:
+          # Dev/test bypass only — CI runners lack real sandbox runtimes.
+          COMMANDER_ALLOW_NO_SANDBOX: true
+        run: pnpm --filter @commander/core test:node
+
       - name: Run SLO measurements
         if: matrix.canonical
         shell: bash
@@ -752,7 +768,7 @@ jobs:
           install -d -m 700 "$GNUPGHOME"
           printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
           gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
-          gpg --batch --fingerprint C489A6C6865F81B690408C5B12AA1940B17D9448
+          gpg --batch --fingerprint 09D0DB9C03667BEE
           printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
 
       - name: PostgreSQL Task 2 and compensation authority suites
@@ -893,7 +909,7 @@ jobs:
           install -d -m 700 "$GNUPGHOME"
           printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
           gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
-          gpg --batch --fingerprint C489A6C6865F81B690408C5B12AA1940B17D9448
+          gpg --batch --fingerprint 09D0DB9C03667BEE
           printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
 
       - name: Run G4 rotation and DR proof
