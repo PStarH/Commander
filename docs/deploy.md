@@ -44,17 +44,20 @@ sh deploy/docker/kernel-tls/generate-certificates.sh ./.commander/db-tls
 export COMMANDER_DATABASE_TLS_HOST_DIR="$PWD/.commander/db-tls"
 export COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=<printed by the generator>
 
-docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+docker compose -f docker-compose.yml -f docker-compose.v2.yml -f docker-compose.kernel-tls.yml --profile v2 up -d --build
 ```
 
 `createVerifiedPostgresPool` (`packages/postgres-runtime`) is the only sanctioned
 pool factory, and it verifies the CA, the DSN hostname, and a pinned server
 public key. The `api`, `worker`, `kernel-ops` and `kernel-migrate` services each
 build one, so with no material they exit during startup with
-`COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED`. `docker-compose.kernel-tls.yml` wires
-the material into both profiles; it is not a separate stack, and running `v2` or
-`cell` without exporting those two variables fails compose interpolation before
-anything starts.
+`COMMANDER_DATABASE_TLS_CA_FILE_REQUIRED`. `docker-compose.kernel-tls.yml` carries
+that material and MUST be passed as the third `-f` file for both profiles; it is
+not a separate stack. Running `v2` or `cell` without exporting the two variables
+fails compose interpolation before anything starts. (`include:` is deliberately
+not used: `docker compose up` rejects the merged service definitions with
+`services.<name> conflicts with imported resource`, even though `docker compose
+config` accepts them.)
 
 `docker compose up` with no profile starts:
 
@@ -80,7 +83,7 @@ For a production-shaped stack (Postgres + kernel + worker plane) use the `v2`
 profile rather than combining the local base with the worker profile:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+docker compose -f docker-compose.yml -f docker-compose.v2.yml -f docker-compose.kernel-tls.yml --profile v2 up -d --build
 ```
 
 The `v2` and `cell` overrides set `NODE_ENV=production`, enable the shared kernel,
@@ -155,7 +158,7 @@ docker compose --profile distributed --profile observability --profile tracing u
 
 # Durable V2 stack (adds Postgres + worker plane; needs the pinned TLS material
 # exported first — see the quick start)
-docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+docker compose -f docker-compose.yml -f docker-compose.v2.yml -f docker-compose.kernel-tls.yml --profile v2 up -d --build
 ```
 
 The root `package.json` wraps only three combinations: `pnpm docker:up` (api),

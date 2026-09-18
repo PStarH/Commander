@@ -350,11 +350,15 @@ function checkEnvContract(): void {
   // values (image digests, host TLS paths, externally managed DSNs) are supplied by
   // runbooks and secret managers and must NOT be seeded into .env.example.
   //
-  // Compose `include:`d fragments are part of the profile they are included from,
-  // so their required variables are in scope too. Reading only the three entry
-  // files would let a fragment add a `${VAR:?}` requirement that nobody
-  // documents and nobody enforces.
-  const inScope = ['docker-compose.yml', 'docker-compose.v2.yml', 'docker-compose.cell.yml'];
+  // `docker-compose.kernel-tls.yml` is listed explicitly: the v2/cell profiles
+  // reference it as a third `-f` file (not via `include:`), so it is part of the
+  // documented path and its required variables must be documented too.
+  const inScope = [
+    'docker-compose.yml',
+    'docker-compose.v2.yml',
+    'docker-compose.cell.yml',
+    'docker-compose.kernel-tls.yml',
+  ];
   const required = new Map<string, string>();
   const visited = new Set<string>();
   const queue = [...inScope];
@@ -366,8 +370,16 @@ function checkEnvContract(): void {
     for (const m of text.matchAll(/\$\{([A-Z][A-Z0-9_]*):\?/g)) {
       if (!required.has(m[1])) required.set(m[1], file);
     }
-    // `include:` entries are plain YAML list items; a longer dash indent inside a
-    // service block is not one, so match only the top-level 2-space form.
+    // Compose `include:` is rejected by `docker compose up` for these profiles
+    // ("services.<name> conflicts with imported resource") even though `config`
+    // accepts it, so keep it out of the kernel-on fragments entirely.
+    if (/^include:/m.test(text)) {
+      fail(
+        'compose-include',
+        `${file} uses compose \`include:\`, which \`docker compose up\` rejects with "services.<name> conflicts with imported resource" — pass the fragment as an explicit third -f file instead`,
+      );
+    }
+    // Defensive: follow includes anyway if one is ever reintroduced.
     for (const m of text.matchAll(/^ {2}-\s+(\S+\.ya?ml)\s*$/gm)) {
       const included = path
         .relative(ROOT, path.resolve(ROOT, path.dirname(file), m[1].replace(/^\.\//, '')))

@@ -15,6 +15,7 @@ import {
   COMPOSE_CONFIG_ENV,
   tryComposeCellUp,
 } from './l4-b-cell-compose.js';
+import { KERNEL_TLS_COMPOSE_FILE } from './kernel-database-tls.js';
 
 export type CellSmokeMode = 'compose' | 'helm' | 'kind' | 'mock';
 
@@ -253,7 +254,7 @@ export async function runOptionalChaosStep(
 
 function assertComposeKernelBackend(): boolean {
   const json = execSync(
-    'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell config --format json',
+    `docker compose -f docker-compose.yml -f docker-compose.cell.yml -f ${KERNEL_TLS_COMPOSE_FILE} --profile cell config --format json`,
     { encoding: 'utf-8', cwd: process.cwd(), env: { ...process.env, ...COMPOSE_CONFIG_ENV } },
   );
   const config = JSON.parse(json) as {
