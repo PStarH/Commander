@@ -826,7 +826,8 @@ describe('EB-02 evidence bundle signature verification', () => {
   it('rejects a tampered signature value and a signature from another key', async () => {
     const bundle = await signedBundle();
     const tampered = structuredClone(bundle);
-    tampered.signature!.value = 'A' + tampered.signature!.value.slice(1);
+    const first = tampered.signature!.value[0];
+    tampered.signature!.value = (first === 'A' ? 'B' : 'A') + tampered.signature!.value.slice(1);
     assert.equal(verifyEvidenceBundle(tampered, { jwks: signer.jwks }).ok, false);
 
     assert.equal(verifyEvidenceBundle(bundle, { jwks: otherSigner.jwks }).ok, false);
