@@ -10,7 +10,10 @@ import { safePath } from './fileSystemTool';
 import { pathExists } from './_utils/pathExists';
 
 /** Reject paths containing shell metacharacters that could enable injection. */
-const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
+// Paths are passed to execFileSync as argv, never through a shell. Windows
+// separators and drive-letter colons are therefore safe; reject only actual
+// shell metacharacters/control bytes that should never be part of a filename.
+const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\x00-\x1f]/;
 
 function assertShellSafePath(filePath: string, label: string): void {
   if (SHELL_UNSAFE_RE.test(filePath)) {

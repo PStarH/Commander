@@ -50,7 +50,7 @@ export function getSafeRoot(): string {
     const provider = getGlobalTenantProvider();
     const tenantCfg = provider.getTenantConfig(tenantId);
     if (tenantCfg?.workspacePath) {
-      return canonicalRoot(path.resolve(tenantCfg.workspacePath));
+      return path.resolve(tenantCfg.workspacePath);
     }
     // AUDIT-CORE2: a tenant without a configured workspace must never fall
     // through to the shared global root — that hole let tenant A read and
@@ -68,7 +68,7 @@ export function getSafeRoot(): string {
       'File tools require a tenant context in multi-tenant mode; no tenant bound to this request.',
     );
   }
-  return canonicalRoot(path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd()));
+  return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }
 
 /** Check that a resolved path is within SAFE_ROOT (prevents prefix collision like workspace-evil). */
@@ -110,7 +110,11 @@ async function statIfExists(p: string): Promise<import('node:fs').Stats | undefi
 }
 
 export async function safePath(target: string): Promise<string> {
-  const resolved = path.resolve(getSafeRoot(), target);
+  const safeRoot = getSafeRoot();
+  // Keep getSafeRoot() lexical for callers (and Windows 8.3 spelling), while
+  // using the filesystem's canonical spelling for containment checks.
+  const containmentRoot = canonicalRoot(safeRoot);
+  const resolved = path.resolve(safeRoot, target);
   // Resolve symlinks for the resolved path (e.g., /tmp -> /private/tmp on macOS)
   let resolvedReal: string;
   try {
@@ -129,30 +133,30 @@ export async function safePath(target: string): Promise<string> {
       resolvedReal = resolved;
     }
   }
-  if (!isWithinRoot(resolvedReal, getSafeRoot())) {
+  if (!isWithinRoot(resolvedReal, containmentRoot)) {
     throw new Error(`Access denied: path "${target}" is outside workspace`);
   }
   // GAP-15: Resolve symlinks to prevent traversal bypass.
   try {
     const real = await fs.promises.realpath(resolved);
-    if (!isWithinRoot(real, getSafeRoot())) {
+    if (!isWithinRoot(real, containmentRoot)) {
       throw new Error(`Access denied: symlink "${target}" points outside workspace`);
     }
     return real;
   } catch (err: unknown) {
     if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
       let ancestor = path.dirname(resolved);
-      while (ancestor !== getSafeRoot() && (await statIfExists(ancestor)) === undefined) {
+      while (ancestor !== safeRoot && (await statIfExists(ancestor)) === undefined) {
         ancestor = path.dirname(ancestor);
       }
       try {
         const realAncestor = await fs.promises.realpath(ancestor);
-        if (!isWithinRoot(realAncestor, getSafeRoot())) {
+        if (!isWithinRoot(realAncestor, containmentRoot)) {
           throw new Error(`Access denied: ancestor of "${target}" is outside workspace`);
         }
       } catch (e) {
         if (e instanceof Error && e.message.startsWith('Access denied')) throw e;
-        if (!isWithinRoot(resolved, getSafeRoot()))
+        if (!isWithinRoot(resolved, containmentRoot))
           throw new Error(`Access denied: path "${target}" is outside workspace`);
       }
       return resolved;
