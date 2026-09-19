@@ -86,6 +86,23 @@ async function main(): Promise<void> {
     // migration set again so post-closure schemas (including API auth
     // persistence) are installed before the production API starts.
     await runKernelMigrations(pool);
+    // Production API-key authentication is PostgreSQL-authoritative. Seed the
+    // harness key explicitly; API_KEYS is intentionally not a legacy bypass.
+    await pool.query(
+      `INSERT INTO commander_auth_api_keys
+         (id, name, prefix, key_hash, scopes, tenant_id, enabled, revoked_at)
+       VALUES ($1, $2, $3, $4, $5, $6, true, NULL)
+       ON CONFLICT (key_hash) DO UPDATE
+         SET enabled = true, revoked_at = NULL, tenant_id = EXCLUDED.tenant_id`,
+      [
+        'ak_p0_full_loop',
+        'p0-full-loop',
+        API_KEY.slice(0, 8),
+        createHash('sha256').update(API_KEY).digest('hex'),
+        ['read', 'write'],
+        TENANT,
+      ],
+    );
     await seedWorkerAllowedTenants(pool, [TENANT]);
     await seedTenantAuthorityAllowedTenants(pool, [TENANT]);
     await pool.query(`ALTER ROLE commander_app WITH LOGIN PASSWORD '${appPassword}'`);
