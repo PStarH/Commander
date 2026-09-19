@@ -6,6 +6,7 @@
  */
 import { test, describe, beforeEach, afterEach } from 'vitest';
 import * as assert from 'node:assert/strict';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { runWithTenant, setMultiTenantEnabled } from '../../src/runtime/tenantContext.js';
 import {
@@ -45,7 +46,15 @@ describe('getSafeRoot multi-tenant fail-closed (AUDIT-CORE2)', () => {
 
   test('configured tenant stays scoped to its workspace', () => {
     const root = runWithTenant('tenant-configured', () => getSafeRoot());
-    assert.equal(root, path.resolve('/tmp/workspaces/tenant-configured'));
+    const lexical = path.resolve('/tmp/workspaces/tenant-configured');
+    let expected = lexical;
+    try {
+      expected = fs.realpathSync.native(lexical);
+    } catch {
+      // The fixture path is intentionally not created; production falls back
+      // to the lexical path until the workspace exists.
+    }
+    assert.equal(root, expected);
   });
 
   test('known tenant WITHOUT workspacePath refuses instead of shared root (baseline hole)', () => {
