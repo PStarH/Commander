@@ -215,6 +215,7 @@ export class JsonDriver implements PersistentDriver {
       rows,
       filePath,
       closed: false,
+      dirty: new Set<string>(),
     };
     this.tables.set(name, state as JsonTableState<{ id: string }>);
     // Persist schema on first touch so a fresh open sees the same shape.
@@ -225,13 +226,17 @@ export class JsonDriver implements PersistentDriver {
   async transaction<T>(fn: () => T | Promise<T>): Promise<T> {
     if (this.closed) throw new Error('JsonDriver: already closed');
     const namesBeforeTransaction = new Set(this.tables.keys());
-    const snapshot: Array<{ name: string; rows: Map<string, unknown> }> = [];
+    const snapshot: Array<{
+      name: string;
+      rows: Map<string, unknown>;
+      dirty: Set<string>;
+    }> = [];
     for (const [name, state] of this.tables.entries()) {
       const clone = new Map<string, unknown>();
       for (const [k, v] of (state.rows as Map<string, unknown>).entries()) {
         clone.set(k, cloneRow(v));
       }
-      snapshot.push({ name, rows: clone });
+      snapshot.push({ name, rows: clone, dirty: new Set(state.dirty) });
     }
     this.transactionDepth++;
     let result: T;
@@ -245,6 +250,8 @@ export class JsonDriver implements PersistentDriver {
           for (const [k, v] of snap.rows.entries()) {
             (state.rows as Map<string, unknown>).set(k, v);
           }
+          state.dirty.clear();
+          for (const id of snap.dirty) state.dirty.add(id);
         }
       }
       // Tables first opened inside the callback were not snapshotted, so their
@@ -287,9 +294,17 @@ export class JsonDriver implements PersistentDriver {
    *  Suppressed during transactions to allow proper rollback. */
   flushTable<T extends { id: string }>(state: JsonTableState<T>): void {
     if (this.transactionDepth > 0) return;
+    const persistedOnDisk = loadPersisted<T>(state.filePath);
+    const mergedRows = new Map<string, T>();
+    for (const row of persistedOnDisk?.rows ?? []) mergedRows.set(row.id, row);
+    for (const id of state.dirty) {
+      const row = state.rows.get(id);
+      if (row) mergedRows.set(id, cloneRow(row));
+      else mergedRows.delete(id);
+    }
     const persisted: PersistedFile<T> = {
       schema: state.schema,
-      rows: Array.from(state.rows.values()),
+      rows: Array.from(mergedRows.values()),
     };
     const tmpPath = `${state.filePath}.tmp`;
     const payload = JSON.stringify(persisted, null, 2);
@@ -297,6 +312,7 @@ export class JsonDriver implements PersistentDriver {
     chmodSafe(tmpPath, 0o600);
     fs.renameSync(tmpPath, state.filePath);
     chmodSafe(state.filePath, 0o600);
+    state.dirty.clear();
   }
 }
 
