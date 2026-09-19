@@ -81,6 +81,11 @@ async function main(): Promise<void> {
   try {
     await runKernelMigrations(pool);
     await runTask1ClosureMigrations(pool, 'enforce');
+    // The first kernel pass intentionally stops at the pre-closure baseline.
+    // Once the authenticated tenant closure is recorded, run the canonical
+    // migration set again so post-closure schemas (including API auth
+    // persistence) are installed before the production API starts.
+    await runKernelMigrations(pool);
     await seedWorkerAllowedTenants(pool, [TENANT]);
     await seedTenantAuthorityAllowedTenants(pool, [TENANT]);
     await pool.query(`ALTER ROLE commander_app WITH LOGIN PASSWORD '${appPassword}'`);
