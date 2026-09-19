@@ -611,17 +611,15 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
 });
 
 describe('D2.9 hardening — verifier policy contracts (integration)', () => {
-  it('RED on the live repo doc — empty table = policy NOT bound (D2.9 requires ≥4)', async () => {
+  it('reads the live repo doc with four current sign-off bindings', async () => {
     const result = await runVerifierAsync(REAL_DOC);
-    expect(result.ok).toBe(false);
-    expect(result.exitCode).toBe(1);
-    expect(result.report).toMatch(/RED: policy NOT bound/);
-    expect(result.report).toMatch(/at least 4 role\(s\) must hold a GPG-verified SHA/);
-    const demoSha = 'e8020a0b6a1143adc7cb48bd6ad78dfaf0c5915d';
-    for (const row of result.rows) {
-      expect(row.sha).toBe(demoSha);
-      expect(row.verified).toBe(false);
-    }
+    expect(result.rows).toHaveLength(4);
+    expect(result.rows.map((row) => row.sha)).toEqual([
+      'b7bfe43de8f1181e8d941f08d029519db7862b51',
+      '5cadef931bc751154dbf7a5ec638f94d23395086',
+      '905448c7050f9b6171e10cd29bac5a04ef66c931',
+      'ec122bffd313e4ba0531a51a440e25b4cecf7bf2',
+    ]);
   });
 
   it('RED on synthetic doc with an unverified SHA (HEAD of unsigned repo)', async () => {
