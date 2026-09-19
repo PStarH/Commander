@@ -50,6 +50,17 @@ function resolveWorkerScript(explicit?: string): string {
   return path.join(dir, 'cpuWorker.js');
 }
 
+function workerExecArgv(): string[] {
+  // run-node-tests launches Node with a file URL to tsx's loader. That loader
+  // is not reliably applied to worker threads on Node 20; use tsx's supported
+  // package entry point for workers instead. Built production processes have
+  // no tsx arguments and keep their normal execArgv unchanged.
+  if (process.execArgv.some((arg) => arg.includes('tsx'))) {
+    return ['--import', 'tsx/esm'];
+  }
+  return process.execArgv;
+}
+
 // ============================================================================
 // CPU Worker Pool
 // ============================================================================
@@ -89,7 +100,7 @@ export class CPUWorkerPool {
       // When the parent is running from TypeScript (tsx in the node:test
       // runner), workers need the same loader to execute cpuWorker.ts.
       // Production builds resolve cpuWorker.js and process.execArgv is empty.
-      execArgv: process.execArgv,
+      execArgv: workerExecArgv(),
     } as WorkerOptions);
 
     worker.on('message', (msg: { id: string; result?: unknown; error?: string }) => {
