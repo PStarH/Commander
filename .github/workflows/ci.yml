@@ -271,7 +271,7 @@ jobs:
       - name: Claim honesty gate
         run: pnpm claim:gate:test
 
-      - name: TypeScript check (all packages, source and tests)
+      - name: TypeScript check (core and all packages, source and tests)
         run: |
           # tsc --noEmit resolves @commander/plugin-sdk types from dist; clean CI has none
           pnpm --filter @commander/contracts build
@@ -291,6 +291,8 @@ jobs:
           # (measured 2026-09-18: ~1k pre-existing errors in test fixtures that
           # vitest transpiles without typechecking). Run it explicitly with
           # `pnpm --dir packages/core run typecheck:test` until that backlog is cleared.
+          pnpm --dir packages/core exec tsc --noEmit
+          pnpm --dir packages/kernel exec tsc --noEmit
           pnpm run typecheck
 
       - name: TypeScript check (SDK)

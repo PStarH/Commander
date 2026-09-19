@@ -17,7 +17,7 @@
  * Exit: 0 terminal success, 2 config, 3 timeout/non-success, 1 error
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolve } from 'node:path';
 import {
@@ -104,16 +104,15 @@ async function main(): Promise<void> {
     API_KEYS: API_KEY,
     TENANT_API_KEYS: `${TENANT}:${API_KEY}`,
     COMMANDER_API_KEY: API_KEY,
-    COMMANDER_MASTER_KEY:
-      process.env.COMMANDER_MASTER_KEY ?? 'dev-master-key-change-me-in-production',
-    JWT_SECRET: process.env.JWT_SECRET ?? 'dev-jwt-secret-change-me-in-production',
+    COMMANDER_MASTER_KEY: process.env.COMMANDER_MASTER_KEY ?? randomBytes(32).toString('hex'),
+    JWT_SECRET: process.env.JWT_SECRET ?? randomBytes(32).toString('hex'),
     COMMANDER_CAPABILITY_TOKEN_KEY:
-      process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? 'dev-capability-token-key-32bytes-min',
-    COMMANDER_INTEGRITY_KEY:
-      process.env.COMMANDER_INTEGRITY_KEY ?? 'dev-integrity-key-32-bytes-minimum!!',
+      process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? randomBytes(32).toString('hex'),
+    COMMANDER_INTEGRITY_KEY: process.env.COMMANDER_INTEGRITY_KEY ?? randomBytes(32).toString('hex'),
     // Harness-local audit-chain key: this env is NODE_ENV=production, where the
     // ledger refuses the public dev key, so generate one per run instead.
-    COMMANDER_AUDIT_CHAIN_KEY: process.env.COMMANDER_AUDIT_CHAIN_KEY ?? randomUUID(),
+    COMMANDER_AUDIT_CHAIN_KEY:
+      process.env.COMMANDER_AUDIT_CHAIN_KEY ?? randomBytes(32).toString('hex'),
     COMMANDER_KERNEL_ENABLED: '1',
     DATABASE_URL: runtimeDatabaseUrls.app,
     COMMANDER_KERNEL_DATABASE_URL: runtimeDatabaseUrls.app,
