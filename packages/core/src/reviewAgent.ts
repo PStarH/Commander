@@ -480,6 +480,13 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
     baseRef: config.baseRef,
   });
 
+  // Normalize submitted guidelines before the empty-diff fast path so callers
+  // receive an honest report even when there is nothing to review.
+  const submittedGuidelines = getSubmittedGuidelines(
+    config.guidelines ?? [],
+    config.guidelineSources ?? [],
+  );
+
   // 1. Get git diff
   const diff = getGitDiff(config.scope, config.baseRef, config.commitSha);
 
@@ -500,9 +507,9 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
       linesRemoved: 0,
       scope: config.scope,
       baseRef: config.baseRef,
-      guidelinesUsed: [],
-      guidelineSources: [],
-      guidelinesTruncated: false,
+      guidelinesUsed: submittedGuidelines.guidelines,
+      guidelineSources: submittedGuidelines.sources,
+      guidelinesTruncated: submittedGuidelines.truncated,
       durationMs: Date.now() - startTime,
       source: 'not-run',
       inputBytes: 0,
@@ -518,10 +525,6 @@ export async function executeReview(config: ReviewConfig): Promise<ReviewReport>
   const coverage = getReviewCoverage(diff);
 
   // 2. Build review prompt
-  const submittedGuidelines = getSubmittedGuidelines(
-    config.guidelines ?? [],
-    config.guidelineSources ?? [],
-  );
   const prompt = buildReviewPrompt(diff, submittedGuidelines.guidelines);
 
   // 3. Call LLM for review
