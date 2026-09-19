@@ -133,8 +133,8 @@
     },
     {
       "path": "packages/core/src/atr/runLedger.ts",
-      "sourceSha256": "7d3e3d6834af36f28242754b642ffcea2be931ceacb7fc5b4a0301e75fcaabf3",
-      "callersSha256": "2eb4d5bad9e0d9dc57962158f052674657a040c37bfff9ff0f2fffad1b128c72",
+      "sourceSha256": "6f6b4902e478bab67d13a2e509be4a311c507d5fc12a984aa288e5d0cedbec33",
+      "callersSha256": "00de01d17e383c1eb452c78c3ae7e1159d50a948672e44288bf7f219a6b44d72",
       "owner": "@commander/core",
       "reason": "Legacy local run ledger pending kernel repository migration",
       "expiresAt": "2026-10-31",
@@ -164,7 +164,7 @@
     {
       "path": "packages/core/src/cli/commands/_shared.ts",
       "sourceSha256": "122d18a2c35284d7a973a9c49412146cc45e1e1e9f83b223a38b8ffb90145554",
-      "callersSha256": "568339dc6d68e7e4e0f5d5749b8630cf6fe63745fe8621e9686aef57035c303c",
+      "callersSha256": "a9fd95f3ee3cdd57ff4fc71ad32ecd8d70e33d359c68d0cd104be556ef0aca4c",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime factory pending gateway client migration",
       "expiresAt": "2026-10-31",
@@ -174,7 +174,7 @@
     {
       "path": "packages/core/src/cli/commands/core.ts",
       "sourceSha256": "cf6a16fb8a7720906547dfea7fd1a6a1f028cfaabfbdcc577e306d030a7e154f",
-      "callersSha256": "7c86a09c11a8f402fbee5e32d19423d6fb5cb091c5f06d11eab42e182c3e247d",
+      "callersSha256": "8dd00bc099998ff35e412f3f8fcb07303d30d45934312967322da826ed94e259",
       "owner": "@commander/core",
       "reason": "Legacy local CLI orchestration pending gateway client migration",
       "expiresAt": "2026-10-31",
@@ -183,7 +183,7 @@
     },
     {
       "path": "packages/core/src/cli/commands/small-features.ts",
-      "sourceSha256": "bcefaf511ca2e8c5a449ded5626c31745bd16e4774c31efdb4f248e025c86b7c",
+      "sourceSha256": "449324b2c9331d826fe82bfb3005ca25fbdfe9983d4a61bfe6c43364fec1ee08",
       "callersSha256": "c7ed60b8797ffa17dbfd0185601e7b2a7d253e5c07fa995ae0e6b08ca5c90b90",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime commands pending gateway client migration",
@@ -193,7 +193,7 @@
     },
     {
       "path": "packages/core/src/cli/commands/up.ts",
-      "sourceSha256": "ee71baaf1490b79b123a7cb71617b67b96a1fca07c33d0a801ceb29309eb072c",
+      "sourceSha256": "5ebae160054f4742658cda64c6aca44920c0019e2bec19e4407be97fbf82affc",
       "callersSha256": "c7ed60b8797ffa17dbfd0185601e7b2a7d253e5c07fa995ae0e6b08ca5c90b90",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime startup pending gateway client migration",
@@ -224,7 +224,7 @@
     {
       "path": "packages/core/src/runtime/finallyCleanupHandler.ts",
       "sourceSha256": "ce568dc4cee9bb6a5bb06d9b7b200b9d741bd02ea5bb6c749063332037bf9bd3",
-      "callersSha256": "dc91bf7f3d3fc4190cb0f6c2fec421b6b5bc60a10258fc5da314a00eeaf3f9c7",
+      "callersSha256": "07453ed151885c79373119beccc92e36bbb435044aff644e3142cd8668ff6398",
       "owner": "@commander/core",
       "reason": "Legacy runtime cleanup mutation pending kernel lifecycle migration",
       "expiresAt": "2026-10-31",
@@ -233,7 +233,7 @@
     },
     {
       "path": "packages/core/src/runtime/httpServer.ts",
-      "sourceSha256": "373f0c38e3c9d2be394d3688056d0cba07cb3c56049bd009b86f9bfacb2f34fb",
+      "sourceSha256": "4db6295c984b2ca9d0247f98827e6a89484904e469a448cee20f7fe254bbc353",
       "callersSha256": "405e110bc4394180182865e762697cf17264cf45a1de60e3e2bc1096b57762e2",
       "owner": "@commander/core",
       "reason": "Legacy local runtime HTTP server retained for compatibility",
@@ -293,7 +293,7 @@
     },
     {
       "path": "packages/python-sdk/src/commander/_client.py",
-      "sourceSha256": "1e81dd8bbad0412e0b8f3be29c35d370cdd818e107fdc6d7a60bda2b668223c8",
+      "sourceSha256": "92c365628a61c068b9019e4c2f439a05393a809de6720ac547cb2df90fc554d5",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "@commander/python-sdk",
       "reason": "Python SDK still exposes legacy write clients pending generated Action Gateway conformance",
@@ -393,7 +393,7 @@
     },
     {
       "path": "scripts/l4-a-golden-demo.ts",
-      "sourceSha256": "5905d692b201fd227fd904b777ae19697794a50e7b3ce031de57abdf336a23fd",
+      "sourceSha256": "470a5957f542bea480604e417c7492466efa8092fd633daa4179eaed647c7383",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-demos",
       "reason": "Live L4-A demo intentionally seeds canonical kernel work",
@@ -403,7 +403,7 @@
     },
     {
       "path": "scripts/l4-b-compensation-dual-process-race.ts",
-      "sourceSha256": "cd8761620ded74f7e39a106f9339fe9495efadd5935ed10881bc0bf0b69d435e",
+      "sourceSha256": "3b16ee5e5e9d6508ef9b2c4fe6302b302f50283da9a9aa953dc0ccd207cbc6d4",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-operations",
       "reason": "Live compensation race fixture directly seeds and cleans canonical kernel rows",
@@ -423,7 +423,7 @@
     },
     {
       "path": "scripts/l4-b-cell-compensation-e2e.ts",
-      "sourceSha256": "f5d97228555d45fe5c688af7a99a50a2622c30723eeb7f40077b56348055c415",
+      "sourceSha256": "344fcd645994460d5416ce3d6eb4c13e950b2c829f6aa66924fde7bcee0c44a3",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-operations",
       "reason": "Non-production cell compose e2e fixture drives the legacy local HTTP surface",
