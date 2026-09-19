@@ -448,6 +448,9 @@ jobs:
           cat packages/core/.commander_benchmarks/slo-report-*.json 2>/dev/null || echo "(no SLO report generated)"
 
       - name: Path security tests
+        # This suite includes POSIX shell/grep and Unix permission semantics;
+        # Windows runs the cross-platform security checks in Vitest instead.
+        if: runner.os != 'Windows'
         env:
           # Dev/test bypass only — CI runners lack real sandbox runtimes.
           COMMANDER_ALLOW_NO_SANDBOX: true
