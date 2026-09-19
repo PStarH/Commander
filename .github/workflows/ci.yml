@@ -458,7 +458,7 @@ jobs:
       # 90%-full machine fails a check that is not about the product.
       - name: CLI doctor offline (G2 install/first-run contract)
         shell: bash
-        run: cd packages/core && pnpm exec tsx src/cliEntry.ts doctor --offline
+        run: pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
 
       - name: Red Team Smoke Test (security gate)
         if: runner.os == 'Linux' && matrix.canonical
