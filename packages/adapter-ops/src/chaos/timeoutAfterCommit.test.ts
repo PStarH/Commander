@@ -10,6 +10,7 @@ import {
 } from '@commander/effect-broker';
 import { consumeCompensationBatch, type CompensationOutboxPort } from '@commander/kernel';
 import {
+  canonicalCompensationHash,
   sealGovernedCompensationAuthorization,
   type GovernedCompensationAuthorizationInput,
 } from '../../../kernel/src/ops/compensationAuthority.js';
@@ -74,45 +75,89 @@ function authorityInput(): GovernedCompensationAuthorizationInput {
   };
 }
 
+function authorizationRecord(input: GovernedCompensationAuthorizationInput) {
+  const sealed = sealGovernedCompensationAuthorization(input);
+  return {
+    id: sealed.authorizationId,
+    tenantId: sealed.tenantId,
+    originalRunId: sealed.originalRunId,
+    originalEffectId: sealed.originalEffectId,
+    compensationEffectType: sealed.compensationEffectType,
+    adapterVersion: sealed.adapterVersion,
+    compensationPatch: sealed.compensationRequest.compensationPatch as Record<string, unknown>,
+    forwardReceiptHash: sealed.forwardReceiptHash,
+    policyDecisionId: sealed.policyDecisionId,
+    policySnapshotId: sealed.policySnapshotId,
+    decision: sealed.decisionEffect,
+    actionDigest: canonicalCompensationHash({
+      type: sealed.compensationEffectType,
+      originalEffectId: sealed.originalEffectId,
+      adapterVersion: sealed.adapterVersion,
+      destination: sealed.compensationRequest.destination,
+      forwardResponse: sealed.forwardReceipt,
+      compensationPatch: sealed.compensationRequest.compensationPatch,
+    }),
+    expiresAt: sealed.authorizationExpiresAt,
+  } as const;
+}
+
 describe('L4-02 operations chaos - compensation timeout after commit', () => {
   it('atomically hands off the same effect and reconciles without a second compensate', async () => {
-    const authorization = sealGovernedCompensationAuthorization(authorityInput());
+    const governed = sealGovernedCompensationAuthorization(authorityInput());
+    const authorization = authorizationRecord(authorityInput());
     const work: ClaimedCompensationWork = {
-      messageId: 'outbox-timeout',
-      tenantId: authorization.tenantId,
-      claimToken: 'outbox-timeout-claim',
+      request: {
+        id: authorization.id,
+        tenantId: authorization.tenantId,
+        originalRunId: authorization.originalRunId,
+        originalEffectId: authorization.originalEffectId,
+        compensationRunId: governed.compensationRunId,
+        compensationStepId: governed.compensationStepId,
+        adapterVersion: authorization.adapterVersion,
+        compensationEffectType: authorization.compensationEffectType,
+        destination: String(governed.compensationRequest.destination),
+        compensationPatch: authorization.compensationPatch,
+        forwardReceiptHash: authorization.forwardReceiptHash,
+        authorizationId: authorization.id,
+        reconcilePolicy: {
+          maxAttempts: 3,
+          initialDelayMs: 1_000,
+          maxDelayMs: 5_000,
+          deadlineAt: authorization.expiresAt,
+        },
+        state: 'CLAIMED',
+        claimWorkerId: COMPENSATION_WORKER.workerId,
+        claimWorkerGeneration: COMPENSATION_WORKER.workerGeneration,
+        claimToken: 'outbox-timeout-claim',
+        claimExpiresAt: authorization.expiresAt,
+        compensationEffectId: governed.compensationEffectId,
+      },
+      forwardResponse: governed.forwardReceipt,
+      outboxMessageId: 'outbox-timeout',
+      outboxClaimToken: 'outbox-timeout-claim',
       authorization,
       lease: {
         workerId: COMPENSATION_WORKER.workerId,
         workerGeneration: COMPENSATION_WORKER.workerGeneration,
         token: 'compensation-step-lease',
         fencingEpoch: 9,
+        expiresAt: authorization.expiresAt,
       },
     };
     let claimServed = false;
-    let handoffInput:
-      Parameters<CompensationOutboxPort['handoffCompensationUnknown']>[0] | undefined;
+    let handoffInput: Parameters<CompensationOutboxPort['parkCompensationUnknown']>[0] | undefined;
     const outbox: CompensationOutboxPort = {
       async claimCompensationWork() {
         if (claimServed) return [];
         claimServed = true;
         return [work];
       },
-      async completeCompensationWork() {
-        throw new Error('uncertain completion must not be marked complete');
-      },
-      async handoffCompensationUnknown(input) {
+      async parkCompensationUnknown(input) {
         handoffInput = input;
-        return { applied: true, disposition: 'HANDOFF_UNKNOWN' };
-      },
-      async escalateCompensationWork() {
-        throw new Error('valid governed compensation must not be escalated');
-      },
-      async parkCompensationUnknown() {
-        throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
+        return { applied: true, disposition: 'COMPLETION_UNKNOWN', replayed: false };
       },
       async finalizeCompensation() {
-        throw new Error('finalizeCompensation is not exercised by legacy-path fixtures');
+        throw new Error('uncertain completion must not be finalized');
       },
     };
 
@@ -137,8 +182,8 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
         ...COMPENSATION_WORKER,
         registry: {
           resolve: (effectType) =>
-            effectType === authorization.compensationEffectType
-              ? { descriptor: { adapterVersion: authorization.adapterVersion } }
+            effectType === governed.compensationEffectType
+              ? { descriptor: { adapterVersion: governed.adapterVersion } }
               : null,
         },
       },
@@ -154,9 +199,11 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
     assert.deepEqual(handoffInput, {
       ...COMPENSATION_WORKER,
       tenantId: authorization.tenantId,
-      messageId: work.messageId,
-      outboxClaimToken: work.claimToken,
-      compensationEffectId: authorization.compensationEffectId,
+      requestId: authorization.id,
+      actor: COMPENSATION_WORKER.workerId,
+      outboxMessageId: work.outboxMessageId,
+      outboxClaimToken: work.outboxClaimToken,
+      effectId: governed.compensationEffectId,
       error: {
         code: 'COMPLETION_UNCONFIRMED',
         message: 'Compensation completion is uncertain',
@@ -164,13 +211,13 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
     });
 
     const effect = {
-      id: authorization.compensationEffectId,
-      runId: authorization.compensationRunId,
-      stepId: authorization.compensationStepId,
+      id: governed.compensationEffectId,
+      runId: governed.compensationRunId,
+      stepId: governed.compensationStepId,
       tenantId: authorization.tenantId,
-      type: authorization.compensationEffectType,
-      idempotencyKey: authorization.idempotencyKey,
-      request: authorization.compensationRequest,
+      type: governed.compensationEffectType,
+      idempotencyKey: governed.idempotencyKey,
+      request: governed.compensationRequest,
       response: undefined,
       state: 'COMPLETION_UNKNOWN',
       actionDigest: 'b'.repeat(64),
@@ -214,13 +261,13 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
         },
       },
       registry: {
-        resolve: (effectType) => (effectType === authorization.compensationEffectType ? {} : null),
+        resolve: (effectType) => (effectType === governed.compensationEffectType ? {} : null),
         outcomeQuerierFor: (effectType) =>
-          effectType === authorization.compensationEffectType
+          effectType === governed.compensationEffectType
             ? {
                 queryOutcome: async (input) => {
                   queryCalls += 1;
-                  assert.equal(input.effectId, authorization.compensationEffectId);
+                  assert.equal(input.effectId, governed.compensationEffectId);
                   assert.equal(remoteApplied, true);
                   return {
                     status: 'APPLIED' as const,
@@ -249,7 +296,7 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
       escalated: 0,
       rescheduled: 0,
     });
-    assert.equal(completedEffectId, authorization.compensationEffectId);
+    assert.equal(completedEffectId, governed.compensationEffectId);
     const evidence = completedEvidence as
       { body?: unknown; signature?: EvidenceSignature } | undefined;
     assert.ok(evidence?.body, 'the daemon must persist the signed evidence body');

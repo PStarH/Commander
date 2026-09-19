@@ -278,6 +278,9 @@ jobs:
           pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/core build
           # `typecheck` chains the core and kernel source builds plus every other
           # package's `typecheck:test` (tsconfig.test.json), which typechecks the
           # in-src `*.test.ts` files the package builds exclude. Those configs

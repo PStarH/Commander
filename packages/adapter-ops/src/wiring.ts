@@ -850,9 +850,6 @@ export function requireAdapterOpsCompensationTerminalEvidenceAuthority(
 
 const COMPENSATION_AUTHORITY_METHODS = [
   'claimCompensationWork',
-  'completeCompensationWork',
-  'handoffCompensationUnknown',
-  'escalateCompensationWork',
   'parkCompensationUnknown',
   'finalizeCompensation',
 ] as const;
