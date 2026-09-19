@@ -122,6 +122,12 @@ describe('extractOutputFilePath', () => {
     const result = extractOutputFilePath('The output is at /var/log/output.md.');
     expect(result).toBe('/var/log/output.md');
   });
+
+  it('extracts a Windows drive-qualified path', () => {
+    expect(extractOutputFilePath(String.raw`Write the report to C:\tmp\report.md`)).toBe(
+      String.raw`C:\tmp\report.md`,
+    );
+  });
 });
 
 describe('writeSynthesisOutput', () => {
