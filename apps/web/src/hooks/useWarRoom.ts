@@ -15,6 +15,7 @@ import {
   PROJECT_ID,
   getAuthToken,
 } from '../api';
+import { WAR_ROOM_REFRESH_TOPICS, createRefreshBatcher } from '../realtime';
 
 export function useWarRoom() {
   const [snapshot, setSnapshot] = useState<WarRoomSnapshot | null>(null);
@@ -66,6 +67,10 @@ export function useWarRoom() {
   useEffect(() => {
     loadAll();
 
+    const refresh = createRefreshBatcher(() => {
+      void loadAllRef.current?.();
+    });
+
     let eventStream: ReturnType<typeof openAuthenticatedEventStream> | null = null;
     try {
       eventStream = openAuthenticatedEventStream(
@@ -74,7 +79,9 @@ export function useWarRoom() {
         {
           onOpen: () => setConnectionStatus('connected'),
           onEvent: (eventName) => {
-            if (eventName === 'snapshot') loadAllRef.current?.();
+            if ((WAR_ROOM_REFRESH_TOPICS as readonly string[]).includes(eventName)) {
+              refresh.schedule();
+            }
           },
           onError: (err) => {
             reportSilentFailure(err, 'useWarRoom:82');
@@ -94,6 +101,7 @@ export function useWarRoom() {
 
     return () => {
       window.clearInterval(timer);
+      refresh.cancel();
       eventStream?.close();
     };
   }, [loadAll]);
