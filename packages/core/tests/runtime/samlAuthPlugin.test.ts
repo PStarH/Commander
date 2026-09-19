@@ -47,21 +47,24 @@ function approximateC14n(xml: string): string {
     .replace(/>\s+</g, '><')
     .replace(/\s+/g, ' ')
     .replace(/\s*\/\s*>/g, '/>')
-    .replace(/<(\/?)([\w:]+)([^>]*)>/g, (_full, slash, name, attrs) => {
-      const trimmed = attrs.trim();
-      if (!trimmed) return `<${slash}${name}>`;
-      const attrList = trimmed
-        .split(/(\w+(?::\w+)?="[^"]*")/g)
-        .filter((s: string) => s.trim() && s.includes('='))
-        .map((s: string) => s.trim());
-      const unique = Array.from(new Set(attrList));
-      unique.sort((a, b) => {
-        const nameA = a.split('=')[0].toLowerCase();
-        const nameB = b.split('=')[0].toLowerCase();
-        return nameA.localeCompare(nameB);
-      });
-      return `<${slash}${name} ${unique.join(' ')}>`;
-    });
+    .replace(
+      /<(\/?)([\w:]+)([^>]*)>/g,
+      (_full: string, slash: string, name: string, attrs: string) => {
+        const trimmed = attrs.trim();
+        if (!trimmed) return `<${slash}${name}>`;
+        const attrList = trimmed
+          .split(/(\w+(?::\w+)?="[^"]*")/g)
+          .filter((s: string) => s.trim() && s.includes('='))
+          .map((s: string) => s.trim());
+        const unique = Array.from(new Set(attrList));
+        unique.sort((a, b) => {
+          const nameA = a.split('=')[0].toLowerCase();
+          const nameB = b.split('=')[0].toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+        return `<${slash}${name} ${unique.join(' ')}>`;
+      },
+    );
 }
 
 interface SamlResponseOptions {

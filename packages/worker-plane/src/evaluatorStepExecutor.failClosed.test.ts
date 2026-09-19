@@ -65,7 +65,7 @@ describe('EvaluatorStepExecutor fail-closed contract (WP-06)', () => {
           }),
           ctx,
         ),
-      isCode('EVALUATION_UNMEASURED'),
+      isCode('EVALUATION_METHOD_UNSUPPORTED'),
     );
   });
 
@@ -77,7 +77,29 @@ describe('EvaluatorStepExecutor fail-closed contract (WP-06)', () => {
           step({ subject: {}, method: 'llm', criteria: { promptTemplate: 'score this' } }),
           ctx,
         ),
-      isCode('EVALUATION_UNMEASURED'),
+      isCode('EVALUATION_METHOD_UNSUPPORTED'),
+    );
+  });
+
+  it('refuses an llm evaluation even when rules are present, instead of silently scoring them', async () => {
+    // WP-06: `method: 'llm'` is still unimplemented — it fell through to the rules
+    // engine, so an LLM evaluation nobody performed reported a concrete score/pass.
+    const executor = new EvaluatorStepExecutor();
+    await assert.rejects(
+      () =>
+        executor.execute(
+          step({
+            subject: { name: 'x' },
+            method: 'llm',
+            minScore: 0.5,
+            criteria: {
+              promptTemplate: 'score this',
+              rules: [{ name: 'has-name', path: 'name', check: 'exists' }],
+            },
+          }),
+          ctx,
+        ),
+      isCode('EVALUATION_METHOD_UNSUPPORTED'),
     );
   });
 

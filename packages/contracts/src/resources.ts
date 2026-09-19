@@ -129,6 +129,7 @@ export type EffectStatus =
   | 'ADMITTED'
   | 'EXECUTING'
   | 'COMPLETION_UNKNOWN'
+  | 'CONFIRMED_NOT_APPLIED'
   | 'COMPLETED'
   | 'FAILED'
   | 'COMPENSATED'

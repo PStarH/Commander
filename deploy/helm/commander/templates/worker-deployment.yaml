@@ -50,6 +50,11 @@ spec:
               value: "1"
             - name: COMMANDER_WORKER_HEALTH_PORT
               value: {{ .Values.worker.health.port | quote }}
+            # F-P1-18: the kubelet httpGet liveness/readiness probes below target the
+            # pod IP, while the worker health listener defaults to loopback. Bind the
+            # pod interface here so every probe is not refused (worker crash loop).
+            - name: COMMANDER_WORKER_HEALTH_HOST
+              value: "0.0.0.0"
             {{- if include "commander.postgresBackend" . }}
             - name: DATABASE_URL
               valueFrom:

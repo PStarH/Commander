@@ -102,13 +102,31 @@ export function resolveTraceDir(baseDir: string, tenantId?: string): string {
   return path.join(baseDir, tenantPathSegment(tenantId));
 }
 
+/**
+ * Surface the failures collected by a multi-buffer drain. A single failure is
+ * re-thrown unchanged so callers can still match on its `code`; several are
+ * aggregated rather than silently reduced to the first one.
+ */
+function throwCollected(errors: unknown[], what: string): void {
+  if (errors.length === 0) return;
+  if (errors.length === 1) throw errors[0];
+  throw new AggregateError(errors, `TraceStore: ${errors.length} ${what} failed to flush`);
+}
+
 export class PersistentTraceStore implements TraceStore {
   private baseDir: string;
   private buffers: Map<string, string[]> = new Map();
   private bufferTimestamps: Map<string, number> = new Map();
   private static readonly BUFFER_TTL_MS = 5 * 60_000; // 5 minutes
+  private static readonly STALE_FLUSH_INTERVAL_MS = 60_000;
   private tenantId?: string;
   private staleFlushTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * In-flight async drains, per run. Guarantees a single writer per ndjson
+   * file so a concurrent sync flush or a second `flushAsync` cannot append the
+   * same batch twice.
+   */
+  private asyncFlushes: Map<string, Promise<void>> = new Map();
 
   constructor(baseDir?: string, tenantId?: string) {
     this.tenantId = tenantId;
@@ -134,17 +152,45 @@ export class PersistentTraceStore implements TraceStore {
     }
 
     if (buffer && buffer.length >= 10) {
-      this.flush(key);
+      try {
+        this.flush(key);
+      } catch (e) {
+        // The batch stays buffered — flush discards only committed events —
+        // and the stale-flush timer keeps retrying it. A background append
+        // must not turn a transient write error into a caller-visible
+        // exception, but the failure is never treated as persisted either.
+        getGlobalLogger().warn('TraceStore', 'Trace flush failed; events retained in buffer', {
+          error: (e as Error)?.message,
+          runId: key,
+        });
+      }
     }
 
     // Flush stale buffers periodically (not on every append to avoid O(n) scan)
-    if (!this.staleFlushTimer) {
-      this.staleFlushTimer = setTimeout(() => {
-        this.staleFlushTimer = null;
-        this.flushStaleBuffers();
-      }, 60_000);
-      if (this.staleFlushTimer?.unref) this.staleFlushTimer.unref();
-    }
+    this.scheduleStaleFlush();
+  }
+
+  /**
+   * Arm the periodic stale-buffer sweep. Re-armed after every sweep for as
+   * long as anything is buffered, so a low-traffic buffer is still drained
+   * once it passes {@link PersistentTraceStore.BUFFER_TTL_MS} instead of
+   * waiting for the next append to install a fresh one-shot timer.
+   */
+  private scheduleStaleFlush(): void {
+    if (this.staleFlushTimer) return;
+    const timer = setTimeout(() => {
+      if (this.staleFlushTimer === timer) this.staleFlushTimer = null;
+      this.flushStaleBuffers();
+      if (this.buffers.size > 0) this.scheduleStaleFlush();
+    }, PersistentTraceStore.STALE_FLUSH_INTERVAL_MS);
+    if (timer.unref) timer.unref();
+    this.staleFlushTimer = timer;
+  }
+
+  private clearStaleFlushTimer(): void {
+    if (!this.staleFlushTimer) return;
+    clearTimeout(this.staleFlushTimer);
+    this.staleFlushTimer = null;
   }
 
   /**
@@ -198,10 +244,27 @@ export class PersistentTraceStore implements TraceStore {
 
   private flushStaleBuffers(): void {
     const now = Date.now();
-    for (const [key, timestamp] of this.bufferTimestamps) {
-      if (now - timestamp > PersistentTraceStore.BUFFER_TTL_MS) {
+    for (const [key, timestamp] of Array.from(this.bufferTimestamps)) {
+      if (now - timestamp <= PersistentTraceStore.BUFFER_TTL_MS) continue;
+      try {
         this.flush(key);
+      } catch (e) {
+        // Retained for the next sweep: a failed write is never treated as
+        // persisted, and a timer callback must not throw.
+        getGlobalLogger().warn('TraceStore', 'Stale trace flush failed; will retry', {
+          error: (e as Error)?.message,
+          runId: key,
+        });
       }
+    }
+  }
+
+  /** Drop exactly the events that were committed; anything newer stays buffered. */
+  private commit(key: string, buffer: string[], count: number): void {
+    buffer.splice(0, Math.min(count, buffer.length));
+    if (buffer.length === 0) {
+      this.buffers.delete(key);
+      this.bufferTimestamps.delete(key);
     }
   }
 
@@ -209,85 +272,133 @@ export class PersistentTraceStore implements TraceStore {
     const key = sanitizeRunId(runId);
     const buffer = this.buffers.get(key);
     if (!buffer || buffer.length === 0) return;
+    // An async drain already owns this file — joining it is impossible
+    // synchronously, and writing the same batch concurrently would duplicate
+    // lines. The events stay buffered for the next drain.
+    if (this.asyncFlushes.has(key)) return;
 
     const filePath = path.join(this.baseDir, `${key}.ndjson`);
+    const batch = buffer.slice();
     try {
       if (!fs.existsSync(filePath)) {
         const tmpPath = `${filePath}.tmp`;
-        fs.writeFileSync(tmpPath, buffer.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 });
+        fs.writeFileSync(tmpPath, batch.join('\n') + '\n', { encoding: 'utf-8', mode: 0o600 });
         fs.renameSync(tmpPath, filePath);
       } else {
-        fs.appendFileSync(filePath, buffer.join('\n') + '\n', 'utf-8');
+        fs.appendFileSync(filePath, batch.join('\n') + '\n', 'utf-8');
       }
     } catch (e) {
       getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer', {
         error: (e as Error)?.message,
         runId: key,
       });
+      // Retain the batch (and its timestamp, so the sweep retries it) and
+      // surface the failure instead of reporting a write that never happened.
+      throw e;
     }
-    this.buffers.delete(key);
-    this.bufferTimestamps.delete(key);
+    this.commit(key, buffer, batch.length);
   }
 
   /**
    * Async variant of flush() — unblocks the event loop when draining many
    * run buffers concurrently (e.g. graceful shutdown of N parallel runs).
    * Tolerates the same ENOENT / EACCES semantics as the sync version.
+   *
+   * Rejects when the batch could not be written; the batch stays buffered so
+   * that a later flush retries it.
    */
   async flushAsync(runId: string): Promise<void> {
     const key = sanitizeRunId(runId);
+
+    // Join the current owner for this run rather than starting a second
+    // writer; its failure is surfaced to this caller as well.
+    const inFlight = this.asyncFlushes.get(key);
+    if (inFlight) await inFlight;
+
     const buffer = this.buffers.get(key);
     if (!buffer || buffer.length === 0) return;
 
     const filePath = path.join(this.baseDir, `${key}.ndjson`);
-    try {
-      // Probe for existing file via fsp.access — faster than stat since
-      // we only need the boolean, and cheaper than an extra existsSync.
+    // Snapshot before the first await: events appended while this write is in
+    // flight must not be deleted by this drain's commit.
+    const batch = buffer.slice();
+
+    const drain = (async () => {
       try {
-        await fs.promises.access(filePath);
-        await fs.promises.appendFile(filePath, buffer.join('\n') + '\n', 'utf-8');
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-        const tmpPath = `${filePath}.tmp`;
-        await fs.promises.writeFile(tmpPath, buffer.join('\n') + '\n', {
-          encoding: 'utf-8',
-          mode: 0o600,
+        // Probe for existing file via fsp.access — faster than stat since
+        // we only need the boolean, and cheaper than an extra existsSync.
+        try {
+          await fs.promises.access(filePath);
+          await fs.promises.appendFile(filePath, batch.join('\n') + '\n', 'utf-8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
+          const tmpPath = `${filePath}.tmp`;
+          await fs.promises.writeFile(tmpPath, batch.join('\n') + '\n', {
+            encoding: 'utf-8',
+            mode: 0o600,
+          });
+          await fs.promises.rename(tmpPath, filePath);
+        }
+      } catch (e) {
+        getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer (async)', {
+          error: (e as Error)?.message,
+          runId: key,
         });
-        await fs.promises.rename(tmpPath, filePath);
+        throw e;
       }
-    } catch (e) {
-      getGlobalLogger().warn('TraceStore', 'Failed to flush trace buffer (async)', {
-        error: (e as Error)?.message,
-        runId: key,
-      });
+      this.commit(key, buffer, batch.length);
+    })();
+
+    this.asyncFlushes.set(key, drain);
+    try {
+      await drain;
+    } finally {
+      if (this.asyncFlushes.get(key) === drain) this.asyncFlushes.delete(key);
     }
-    this.buffers.delete(key);
-    this.bufferTimestamps.delete(key);
   }
 
   flushAll(): void {
-    for (const key of this.buffers.keys()) {
-      this.flush(key);
+    const errors: unknown[] = [];
+    for (const key of Array.from(this.buffers.keys())) {
+      try {
+        this.flush(key);
+      } catch (e) {
+        errors.push(e);
+      }
     }
+    throwCollected(errors, 'trace buffers');
   }
 
   /** Async variant of flushAll — drains all buffered runs in parallel. */
   async flushAllAsync(): Promise<void> {
-    await Promise.all(Array.from(this.buffers.keys()).map((k) => this.flushAsync(k)));
+    const keys = Array.from(this.buffers.keys());
+    const results = await Promise.allSettled(keys.map((k) => this.flushAsync(k)));
+    const errors: unknown[] = [];
+    for (const result of results) {
+      if (result.status === 'rejected') errors.push(result.reason);
+    }
+    throwCollected(errors, 'trace buffers');
   }
 
-  // GAP-04: Graceful shutdown — flush all buffers and clear maps
+  // GAP-04: Graceful shutdown — flush all buffers and release the sweep timer.
+  // A buffer that failed to flush is retained, never discarded as committed.
   shutdown(): void {
-    this.flushAll();
-    this.buffers.clear();
-    this.bufferTimestamps.clear();
+    this.clearStaleFlushTimer();
+    try {
+      this.flushAll();
+    } finally {
+      this.clearStaleFlushTimer();
+    }
   }
 
   /** Async graceful shutdown — drains in parallel. */
   async shutdownAsync(): Promise<void> {
-    await this.flushAllAsync();
-    this.buffers.clear();
-    this.bufferTimestamps.clear();
+    this.clearStaleFlushTimer();
+    try {
+      await this.flushAllAsync();
+    } finally {
+      this.clearStaleFlushTimer();
+    }
   }
 
   readTrace(runId: string): TraceEvent[] {

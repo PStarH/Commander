@@ -43,7 +43,7 @@ describe('migration gate', () => {
         COMMANDER_KERNEL_DATABASE_URL: 'postgres://runtime',
         COMMANDER_PREFLIGHT_OWNER_DATABASE_URL: 'postgres://owner',
       }),
-      [{ name: 'RUNTIME', connectionString: 'postgres://runtime' }],
+      [{ name: 'RUNTIME', connectionString: 'postgres://runtime', verifyDescriptors: true }],
     );
   });
 
@@ -84,17 +84,102 @@ describe('migration gate', () => {
     assert.deepEqual(calls.sort(), [...roles].sort());
   });
 
-  it('does not read the owner-only migration ledger from a runtime role', async () => {
+  it('fails closed when the runtime role cannot read the applied descriptor state', async () => {
+    const queries: string[] = [];
+    await assert.rejects(
+      () =>
+        probeMigrationGateTarget(
+          { name: 'RUNTIME', connectionString: 'postgres://runtime', verifyDescriptors: true },
+          { 'migration.1': 'a'.repeat(64) },
+          () => ({
+            async query(sql: string) {
+              queries.push(sql);
+              if (/commander_applied_migration_descriptors/.test(sql)) {
+                throw new Error(
+                  'permission denied for function commander_applied_migration_descriptors',
+                );
+              }
+              return { rows: [] };
+            },
+            async end() {},
+          }),
+        ),
+      /MIGRATION_GATE_DESCRIPTOR_STATE_MISSING/,
+    );
+    assert.equal(queries[0], 'SELECT 1');
+    assert.match(queries[1]!, /^SELECT id::text AS id, checksum::text AS checksum FROM /);
+  });
+
+  it('accepts an applied descriptor set that matches the release descriptors', async () => {
+    const checksum = 'a'.repeat(64);
     const queries: string[] = [];
     await probeMigrationGateTarget(
-      { name: 'RUNTIME', connectionString: 'postgres://runtime' },
+      { name: 'RUNTIME', connectionString: 'postgres://runtime', verifyDescriptors: true },
+      { 'migration.1': checksum },
+      () => ({
+        async query<T>(sql: string) {
+          queries.push(sql);
+          if (/commander_applied_migration_descriptors/.test(sql)) {
+            return { rows: [{ id: 'migration.1', checksum }] as T[] };
+          }
+          return { rows: [] as T[] };
+        },
+        async end() {},
+      }),
+    );
+    assert.equal(queries.length, 2);
+    assert.equal(queries[0], 'SELECT 1');
+    assert.match(queries[1]!, /commander_applied_migration_descriptors\(\)/);
+  });
+
+  it('rejects an expected descriptor that is missing from the applied ledger', async () => {
+    await assert.rejects(
+      () =>
+        probeMigrationGateTarget(
+          { name: 'RUNTIME', connectionString: 'postgres://runtime', verifyDescriptors: true },
+          { 'migration.1': 'a'.repeat(64), 'migration.2': 'b'.repeat(64) },
+          () => ({
+            async query<T>(sql: string) {
+              if (/commander_applied_migration_descriptors/.test(sql)) {
+                return { rows: [{ id: 'migration.1', checksum: 'a'.repeat(64) }] as T[] };
+              }
+              return { rows: [] as T[] };
+            },
+            async end() {},
+          }),
+        ),
+      /MIGRATION_GATE_DESCRIPTORS_MISMATCH/,
+    );
+  });
+
+  it('rejects an applied descriptor whose checksum is not the published checksum', async () => {
+    await assert.rejects(
+      () =>
+        probeMigrationGateTarget(
+          { name: 'RUNTIME', connectionString: 'postgres://runtime', verifyDescriptors: true },
+          { 'migration.1': 'a'.repeat(64) },
+          () => ({
+            async query<T>(sql: string) {
+              if (/commander_applied_migration_descriptors/.test(sql)) {
+                return { rows: [{ id: 'migration.1', checksum: 'c'.repeat(64) }] as T[] };
+              }
+              return { rows: [] as T[] };
+            },
+            async end() {},
+          }),
+        ),
+      /MIGRATION_GATE_DESCRIPTORS_MISMATCH/,
+    );
+  });
+
+  it('keeps the pre-migration preflight to connectivity only', async () => {
+    const queries: string[] = [];
+    await probeMigrationGateTarget(
+      { name: 'APP', connectionString: 'postgres://app', verifyDescriptors: false },
       { 'migration.1': 'a'.repeat(64) },
       () => ({
         async query(sql: string) {
           queries.push(sql);
-          if (/commander_kernel_migrations/.test(sql)) {
-            throw new Error('permission denied for table commander_kernel_migrations');
-          }
           return { rows: [] };
         },
         async end() {},

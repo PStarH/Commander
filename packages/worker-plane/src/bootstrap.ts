@@ -232,7 +232,15 @@ export function productionCapabilityBrokerOptions(
   };
 }
 
-export async function createWorkerService(): Promise<WorkerService> {
+/** WP-05: hooks the entrypoint supplies to the worker it loads. */
+export interface WorkerBootstrapOptions {
+  /** Claim-loop liveness signal (readiness) forwarded to WorkerService. */
+  onClaimLoopHealth?: (healthy: boolean) => void;
+}
+
+export async function createWorkerService(
+  options: WorkerBootstrapOptions = {},
+): Promise<WorkerService> {
   // Fail-closed BEFORE sandbox readiness, DB connect, registration, or polling:
   // a worker without an explicit tenant scope must not start.
   const { tenantIds, schedulerMode } = resolveWorkerTenantScope(process.env);
@@ -289,76 +297,87 @@ export async function createWorkerService(): Promise<WorkerService> {
     max: maxConcurrency + 5,
   });
 
-  // Post-connect owner-role gate (current_user) before kernel/broker/poll.
-  {
-    const client = await pool.connect();
-    try {
-      const identityRows = (await client.query('SELECT current_user::text AS role_name')) as {
-        rows: Array<{ role_name?: string }>;
-      };
-      assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
-    } finally {
-      client.release();
-    }
-  }
-
-  // ── Create kernel repository adapter ──
-  // Lazy dynamic import to avoid circular dependency at module load time.
-  // Workers always connect with schedulerMode:false (commander_worker role, no
-  // BYPASSRLS) and carry an explicit tenant scope on every write. Tenant
-  // configuration never grants database authority; scheduler mode is reserved
-  // for the kernel-ops entrypoint.
-  const { PostgresKernelRepository } = (await import('@commander/kernel')) as unknown as {
-    PostgresKernelRepository: new (pool: any, options?: { schedulerMode?: boolean }) => any;
-  };
-  const kernel = new PostgresKernelRepository(pool, { schedulerMode });
-
-  // ── Create registry ──
-  const registry = new PostgresWorkerRegistry(pool);
-
-  // ── Create authenticator ──
-  const authenticator = new ApiKeyWorkerAuthenticator({
-    validTokens: new Set([authToken]),
-    defaultTenantIds: tenantIds,
-    defaultCapabilities: capabilities,
-  });
-
-  // ── Create shared Effect Broker for external side effects ──
-  // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
-  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(
-    kernel,
-    workerId,
-    process.env,
-    evidenceSigner,
-  );
-
-  // ── Create step executor based on worker kind ──
-  const executor = await createExecutorForKind(
-    workerKind,
-    capabilities,
-    effectBroker,
-    capabilityIssuer,
-  );
-
-  // ── Build worker service ──
-  const service = new WorkerService(
-    definition,
-    identity,
-    authenticator,
-    registry,
-    kernel,
-    executor,
+  try {
+    // Post-connect owner-role gate (current_user) before kernel/broker/poll.
     {
-      leaseTtlMs: parseInt(process.env.COMMANDER_WORKER_LEASE_TTL_MS ?? '30000', 10),
-      workerHeartbeatMs: parseInt(process.env.COMMANDER_WORKER_HEARTBEAT_MS ?? '10000', 10),
-      pollIntervalMs: parseInt(process.env.COMMANDER_WORKER_POLL_MS ?? '250', 10),
-      sandboxReadiness: createProductionWorkerSandboxReadiness(),
-      // Generation is only known after registry.register — bind into broker affinity.
-      onRegistered: (worker) => effectBroker.bindLocalWorkerGeneration(worker.generation),
-    },
-  );
+      const client = await pool.connect();
+      try {
+        const identityRows = (await client.query('SELECT current_user::text AS role_name')) as {
+          rows: Array<{ role_name?: string }>;
+        };
+        assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
+      } finally {
+        client.release();
+      }
+    }
 
-  return service;
+    // ── Create kernel repository adapter ──
+    // Lazy dynamic import to avoid circular dependency at module load time.
+    // Workers always connect with schedulerMode:false (commander_worker role, no
+    // BYPASSRLS) and carry an explicit tenant scope on every write. Tenant
+    // configuration never grants database authority; scheduler mode is reserved
+    // for the kernel-ops entrypoint.
+    const { PostgresKernelRepository } = (await import('@commander/kernel')) as unknown as {
+      PostgresKernelRepository: new (pool: any, options?: { schedulerMode?: boolean }) => any;
+    };
+    const kernel = new PostgresKernelRepository(pool, { schedulerMode });
+
+    // ── Create registry ──
+    const registry = new PostgresWorkerRegistry(pool);
+
+    // ── Create authenticator ──
+    const authenticator = new ApiKeyWorkerAuthenticator({
+      validTokens: new Set([authToken]),
+      defaultTenantIds: tenantIds,
+      defaultCapabilities: capabilities,
+    });
+
+    // ── Create shared Effect Broker for external side effects ──
+    // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
+    const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(
+      kernel,
+      workerId,
+      process.env,
+      evidenceSigner,
+    );
+
+    // ── Create step executor based on worker kind ──
+    const executor = await createExecutorForKind(
+      workerKind,
+      capabilities,
+      effectBroker,
+      capabilityIssuer,
+    );
+
+    // ── Build worker service ──
+    const service = new WorkerService(
+      definition,
+      identity,
+      authenticator,
+      registry,
+      kernel,
+      executor,
+      {
+        leaseTtlMs: parseInt(process.env.COMMANDER_WORKER_LEASE_TTL_MS ?? '30000', 10),
+        workerHeartbeatMs: parseInt(process.env.COMMANDER_WORKER_HEARTBEAT_MS ?? '10000', 10),
+        pollIntervalMs: parseInt(process.env.COMMANDER_WORKER_POLL_MS ?? '250', 10),
+        sandboxReadiness: createProductionWorkerSandboxReadiness(),
+        // WP-05: readiness follows the claim loop, not a one-shot startup latch.
+        onClaimLoopHealth: options.onClaimLoopHealth,
+        // WP-11: the verified pool belongs to the service lifecycle; stop() releases it.
+        onDispose: () => pool.end(),
+        // Generation is only known after registry.register — bind into broker affinity.
+        onRegistered: (worker) => effectBroker.bindLocalWorkerGeneration(worker.generation),
+      },
+    );
+
+    return service;
+  } catch (error) {
+    // WP-11: a failure after the pool was created must not leak its connections —
+    // the service never exists to dispose them.
+    await pool.end();
+    throw error;
+  }
 }
 
 /**
@@ -842,6 +861,7 @@ export function createEffectBroker(
   const broker = new EffectBroker(capability.verifier, policy, effectKernel, executor, audit, {
     ...brokerOptions,
     ...evidenceOptions,
+    idempotencyKeyPolicy: 'derive',
   });
   return { broker, issuer: capability.issuer, capability };
 }

@@ -421,24 +421,3 @@ describe('Production Chaos — 10. Memory Pressure', () => {
     assert.ok(msgs.length < 100, `Messages should stay bounded, got ${msgs.length}`);
   });
 });
-
-describe('Production Chaos — Summary', () => {
-  it('all chaos tests completed', () => {
-    console.log('\n═══════════════════════════════════════════════════════════════');
-    console.log('  PRODUCTION CHAOS TEST SUITE — COMPLETE');
-    console.log('═══════════════════════════════════════════════════════════════');
-    console.log('  Modules tested:');
-    console.log('    1. Agent Runtime Concurrent Stress');
-    console.log('    2. State Checkpoint Crash Recovery');
-    console.log('    3. Circuit Breaker Chaos');
-    console.log('    4. Dead Letter Queue Persistence');
-    console.log('    5. Multi-Tenant Isolation Stress');
-    console.log('    6. Token Budget Enforcement');
-    console.log('    7. Error Classification Chaos');
-    console.log('    8. Metrics Collector Stress');
-    console.log('    9. Provider Fallback Chain Chaos');
-    console.log('    10. Memory Pressure');
-    console.log('═══════════════════════════════════════════════════════════════\n');
-    assert.ok(true);
-  });
-});

@@ -3,7 +3,7 @@ import { generateKeyPairSync, sign } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { actionGatewayPolicySnapshot } from '@commander/contracts';
 import { canonicalBytes, sha256Hex } from './canonical.js';
-import { parseShadowObservation } from './contracts.js';
+import { parseShadowManifest, parseShadowObservation } from './contracts.js';
 import { observationDigest } from './evaluator.js';
 import type { ShadowCampaignReportData } from './repository.js';
 import { buildSignedShadowReport, verifyShadowReport } from './report.js';
@@ -28,6 +28,29 @@ function resignReport(bundle: ReturnType<typeof buildSignedShadowReport>) {
   bundle.hashes.recordsSha256 = sha256Hex(canonicalBytes(bundle.records));
   const { signature: _signature, ...body } = bundle;
   bundle.signature = sign(null, canonicalBytes(body), pair.privateKey).toString('base64url');
+}
+
+function signManifest(unsigned: Record<string, unknown>): Record<string, unknown> {
+  return {
+    ...unsigned,
+    signature: sign(null, canonicalBytes(unsigned), manifestPair.privateKey).toString('base64url'),
+  };
+}
+
+// Re-signs one embedded manifest with the trusted manifest key, so a mutation is
+// as authoritative as the original material and only semantics can reject it.
+function replaceBundleManifest(
+  bundle: ReturnType<typeof buildSignedShadowReport>,
+  position: number,
+  mutate: (manifest: Record<string, unknown>) => void,
+): void {
+  const { signature: _signature, ...unsigned } = bundle.manifests[position]! as unknown as Record<
+    string,
+    unknown
+  >;
+  mutate(unsigned);
+  bundle.manifests[position] = parseShadowManifest(signManifest(unsigned));
+  bundle.hashes.manifestsSha256 = sha256Hex(canonicalBytes(bundle.manifests));
 }
 
 function reportData(): ShadowCampaignReportData {
@@ -120,6 +143,75 @@ function reportData(): ShadowCampaignReportData {
         manifest,
       },
     ],
+    records,
+  };
+}
+
+function singleRecordReportData(
+  batches: Array<{ batchId: string; tenantId: string; producerId: string }>,
+): ShadowCampaignReportData {
+  const records: Record<string, unknown>[] = [];
+  const manifestBatches: Record<string, unknown>[] = [];
+  for (const batch of batches) {
+    const observation = parseShadowObservation({
+      schema: 'commander.shadow-observation/v1',
+      campaignId: 'campaign-100',
+      tenantId: batch.tenantId,
+      producerId: batch.producerId,
+      batchId: batch.batchId,
+      index: 0,
+      observationId: `${batch.batchId}-observation-0`,
+      occurredAt: '2026-09-01T00:00:00.000Z',
+      workflow: 'kubernetes.deployment.rollback',
+      effectType: 'connector.kubernetes.deployment.rollback',
+      tool: 'kubernetes.deployment.rollback',
+      destination: 'k8s://cluster/namespace/deployments/api',
+      productionDecision: 'require_approval',
+      productionReasonCode: 'REGISTERED_ADAPTER_POLICY',
+    });
+    const digest = observationDigest(observation);
+    const unsigned = {
+      schema: 'commander.shadow-manifest/v1',
+      campaignId: 'campaign-100',
+      tenantId: batch.tenantId,
+      producerId: batch.producerId,
+      policyId: snapshot.policyId,
+      policyDigest: snapshot.descriptorDigest,
+      batchId: batch.batchId,
+      closesAt: '2026-09-02T00:00:00.000Z',
+      records: [{ index: 0, observationId: observation.observationId, digest }],
+      keyId: 'manifest-key-1',
+    };
+    const manifest = signManifest(unsigned);
+    manifestBatches.push({
+      batch_id: batch.batchId,
+      state: 'closed',
+      manifest_digest: sha256Hex(canonicalBytes(manifest)),
+      manifest,
+    });
+    records.push({
+      batch_id: batch.batchId,
+      record_index: 0,
+      observation_id: observation.observationId,
+      digest,
+      status: 'compared',
+      canonical_observation: observation,
+      hypothetical_decision: 'require_approval',
+      hypothetical_decision_id: 'action-gateway-manifest-require_approval',
+      hypothetical_reason_code: 'REGISTERED_ADAPTER_POLICY',
+      production_decision: 'require_approval',
+      production_reason_code: 'REGISTERED_ADAPTER_POLICY',
+      comparison: 'match',
+    });
+  }
+  return {
+    campaign: {
+      campaign_id: 'campaign-100',
+      policy_id: snapshot.policyId,
+      policy_digest: snapshot.descriptorDigest,
+      state: 'open',
+    },
+    batches: manifestBatches,
     records,
   };
 }
@@ -429,5 +521,84 @@ describe('signed historical evaluation report', () => {
       valid: false,
       code: 'SHADOW_REPORT_MANIFEST_SIGNATURE_INVALID',
     });
+  });
+
+  const reportOptions = {
+    keyId: 'report-key-1',
+    privateKey: pair.privateKey,
+    generatedAt: '2026-09-03T00:00:00.000Z',
+    sourceRevision: 'abc123',
+    manifestTrust: trustedManifests,
+  };
+  const reportTrust = {
+    algorithm: 'Ed25519' as const,
+    keyId: 'report-key-1',
+    status: 'active' as const,
+    publicKey: pair.publicKey,
+  };
+
+  it('refuses to sign facts that contradict their signed manifest tenant or producer', () => {
+    for (const [field, value] of [
+      ['tenantId', 'other-tenant'],
+      ['producerId', 'other-producer'],
+    ] as const) {
+      const data = reportData();
+      const batch = data.batches[0]!;
+      const { signature: _signature, ...unsigned } = batch.manifest as Record<string, unknown>;
+      const resigned = signManifest({ ...unsigned, [field]: value });
+      batch.manifest = resigned;
+      batch.manifest_digest = sha256Hex(canonicalBytes(resigned));
+      assert.throws(
+        () => buildSignedShadowReport(data, reportOptions),
+        /SHADOW_REPORT_MANIFEST_RECORD_MISMATCH/,
+        field,
+      );
+    }
+  });
+
+  it('rejects a re-signed report whose manifest tenant or producer contradicts its facts', () => {
+    for (const [field, value] of [
+      ['tenantId', 'other-tenant'],
+      ['producerId', 'other-producer'],
+    ] as const) {
+      const bundle = buildSignedShadowReport(reportData(), reportOptions);
+      replaceBundleManifest(bundle, 0, (manifest) => {
+        manifest[field] = value;
+      });
+      resignReport(bundle);
+      assert.deepEqual(verifyShadowReport(bundle, reportTrust, trustedManifests), {
+        valid: false,
+        code: 'SHADOW_REPORT_MANIFEST_RECORD_MISMATCH',
+      });
+    }
+  });
+
+  it('binds tenant and producer across the whole campaign, not just within one batch', () => {
+    const consistent = singleRecordReportData([
+      { batchId: 'batch-100', tenantId: 'tenant-1', producerId: 'producer-1' },
+      { batchId: 'batch-101', tenantId: 'tenant-1', producerId: 'producer-1' },
+    ]);
+    assert.deepEqual(
+      verifyShadowReport(
+        buildSignedShadowReport(consistent, reportOptions),
+        reportTrust,
+        trustedManifests,
+      ),
+      { valid: true, code: 'SHADOW_REPORT_VALID' },
+    );
+    for (const second of [
+      { batchId: 'batch-101', tenantId: 'tenant-2', producerId: 'producer-1' },
+      { batchId: 'batch-101', tenantId: 'tenant-1', producerId: 'producer-2' },
+    ]) {
+      const data = singleRecordReportData([
+        { batchId: 'batch-100', tenantId: 'tenant-1', producerId: 'producer-1' },
+        second,
+      ]);
+      assert.throws(
+        () => buildSignedShadowReport(data, reportOptions),
+        /SHADOW_REPORT_MANIFEST_RECORD_MISMATCH/,
+        JSON.stringify(second),
+      );
+    }
   });
 });

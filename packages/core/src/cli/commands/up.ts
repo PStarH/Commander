@@ -19,6 +19,65 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
 };
 
+/** The unauthenticated UI/metrics server must never leave the loopback interface. */
+const LOOPBACK_HOST = '127.0.0.1';
+/** Ports probed above the requested one before giving up on EADDRINUSE. */
+const MAX_PORT_RETRIES = 10;
+
+/**
+ * Resolve a request URL inside the static web root, or return null when it
+ * escapes. A string-prefix check is not containment: a sibling directory such
+ * as `<webDist>-private/x` shares the `<webDist` prefix and would be served.
+ */
+export function resolveStaticFilePath(webDist: string, url: string): string | null {
+  const candidate = path.normalize(path.join(webDist, url === '/' ? 'index.html' : url));
+  const rel = path.relative(path.resolve(webDist), path.resolve(candidate));
+  if (rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
+  return candidate;
+}
+
+/**
+ * Bind `server` to the loopback interface, retrying on EADDRINUSE at the next
+ * port. Every attempt pins the host (a retry without one binds `::`/`0.0.0.0`)
+ * and the retry count is bounded so an unavailable port range cannot loop.
+ */
+export function bindLoopbackWithRetry(
+  server: http.Server,
+  initialPort: number,
+  maxRetries = MAX_PORT_RETRIES,
+): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    let port = initialPort;
+    let attempts = 0;
+    let settled = false;
+
+    const onListening = () => {
+      if (settled) return;
+      settled = true;
+      resolve(port);
+    };
+
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (settled) return;
+      if (err.code !== 'EADDRINUSE') {
+        settled = true;
+        reject(err);
+        return;
+      }
+      if (attempts >= maxRetries) {
+        settled = true;
+        reject(new Error(`no free port after ${maxRetries} retries from ${initialPort}`));
+        return;
+      }
+      attempts++;
+      port++;
+      server.listen(port, LOOPBACK_HOST, onListening);
+    });
+
+    server.listen(port, LOOPBACK_HOST, onListening);
+  });
+}
+
 export async function cmdUp(args: string[], flags: Record<string, string>): Promise<void> {
   const resumeMode = !!flags['resume'];
   const noOpen = !!flags['no-open'];
@@ -93,9 +152,8 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
       res.end(JSON.stringify({ status: 'ok', service: 'commander-up' }));
       return;
     }
-    let filePath = path.join(webDist, url === '/' ? 'index.html' : url);
-    filePath = path.normalize(filePath);
-    if (!filePath.startsWith(webDist)) {
+    const filePath = resolveStaticFilePath(webDist, url);
+    if (!filePath) {
       res.writeHead(403);
       res.end('Forbidden');
       return;
@@ -120,18 +178,7 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
     });
   });
 
-  let serverPort = port;
-  await new Promise<void>((resolve, reject) => {
-    server.on('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        serverPort++;
-        server.listen(serverPort);
-      } else {
-        reject(err);
-      }
-    });
-    server.listen(serverPort, '127.0.0.1', () => resolve());
-  });
+  const serverPort = await bindLoopbackWithRetry(server, port);
 
   const tuiUrl = `http://localhost:${serverPort}`;
   if (hasWebDist) {

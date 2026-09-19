@@ -15,6 +15,7 @@ import {
 } from './ops/compensationAuthority.js';
 import { KERNEL_COMPENSATION_TOPIC } from './ops/compensationConsumer.js';
 import { buildTerminalEvidenceRecordFromKernel } from '@commander/effect-broker';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 
 const adminUrl = process.env.COMMANDER_COMPENSATION_PG_URL;
 
@@ -25,6 +26,32 @@ const adminUrl = process.env.COMMANDER_COMPENSATION_PG_URL;
 const LIVE_PG_SKIP_REASON =
   'NOT VERIFIED: COMMANDER_COMPENSATION_PG_URL is unset — governed compensation ' +
   'PostgreSQL authority / RLS proof did not run';
+
+function compensationIdempotencyKey(claim: {
+  request: {
+    tenantId: string;
+    compensationRunId: string;
+    compensationStepId: string;
+    compensationEffectId?: string;
+    originalEffectId: string;
+    destination: string;
+    compensationPatch: Record<string, unknown>;
+  };
+  forwardResponse: Record<string, unknown>;
+}): string {
+  return deriveEffectIdempotencyKey({
+    tenantId: claim.request.tenantId,
+    runId: claim.request.compensationRunId,
+    stepId: claim.request.compensationStepId,
+    effectId: claim.request.compensationEffectId!,
+    request: {
+      originalEffectId: claim.request.originalEffectId,
+      destination: claim.request.destination,
+      forwardResponse: claim.forwardResponse,
+      compensationPatch: claim.request.compensationPatch,
+    },
+  });
+}
 if (!adminUrl) {
   process.stderr.write(`[kernel:live-postgres] ${LIVE_PG_SKIP_REASON}\n`);
 }
@@ -149,11 +176,14 @@ describe(
       if (admin) {
         await admin.query(`DROP DATABASE IF EXISTS "${databaseName}"`);
         await admin.query(
-          `ALTER ROLE commander_owner NOLOGIN NOCREATEROLE;
-         ALTER ROLE commander_worker NOLOGIN;
-         ALTER ROLE commander_adapter_ops NOLOGIN;
-         ALTER ROLE commander_app NOLOGIN;
-         ALTER ROLE commander_tenant_authority NOLOGIN`,
+          // Restore the documented steady state; see the note in
+          // task2.postgres-live.test.ts. Revoking LOGIN on cluster-global roles here
+          // deadlocks the next suite, which must connect as one of them to bootstrap.
+          `ALTER ROLE commander_owner LOGIN CREATEROLE BYPASSRLS;
+         ALTER ROLE commander_worker LOGIN;
+         ALTER ROLE commander_adapter_ops LOGIN;
+         ALTER ROLE commander_app LOGIN;
+         ALTER ROLE commander_tenant_authority LOGIN`,
         );
         await admin.end();
       }
@@ -301,7 +331,7 @@ describe(
         stepId: claim.request.compensationStepId,
         tenantId: tenantA,
         type: claim.authorization.compensationEffectType,
-        idempotencyKey: `cmp:${claim.request.originalEffectId}:${claim.request.adapterVersion}`,
+        idempotencyKey: compensationIdempotencyKey(claim),
         policyDecisionId: claim.authorization.policyDecisionId,
         policySnapshotId: claim.authorization.policySnapshotId,
         actionDigest: claim.authorization.actionDigest,
@@ -482,7 +512,7 @@ describe(
         stepId: claim.request.compensationStepId,
         tenantId: tenantA,
         type: claim.authorization.compensationEffectType,
-        idempotencyKey: `cmp:${claim.request.originalEffectId}:${claim.request.adapterVersion}`,
+        idempotencyKey: compensationIdempotencyKey(claim),
         policyDecisionId: claim.authorization.policyDecisionId,
         policySnapshotId: claim.authorization.policySnapshotId,
         actionDigest: claim.authorization.actionDigest,
@@ -777,7 +807,7 @@ describe(
       // dedicated `admitCompensationEffect` RPC does.
       const { claim, compensationEffectId } =
         await claimGovernedCompensation('admit-effect-router');
-      const idempotencyKey = `cmp:${claim.request.originalEffectId}:${claim.request.adapterVersion}`;
+      const idempotencyKey = compensationIdempotencyKey(claim);
       const admitted = await adapterRepository.admitEffect({
         id: compensationEffectId,
         runId: claim.request.compensationRunId,

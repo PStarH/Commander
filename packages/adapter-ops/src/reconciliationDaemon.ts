@@ -14,7 +14,14 @@ export interface OpsLoopHealth {
   lastFailedAt?: string;
   lastErrorCode?: string;
   claimed: number;
+  /** Terminal successes only. An undetermined `COMPLETION_UNKNOWN` handoff is NOT a completion. */
   completed: number;
+  /**
+   * AO-03: compensation handoffs whose outcome is undetermined
+   * (`parkCompensationUnknown`/`handoffCompensationUnknown`). Reported as its
+   * own bucket so an unresolved remote effect can never be read as success.
+   */
+  handedOff: number;
   escalated: number;
   rescheduled: number;
   skippedOverlappingTicks: number;
@@ -121,6 +128,20 @@ const EMPTY_RECONCILIATION_STATS: ReconciliationTickStats = {
   rescheduled: 0,
 };
 
+/**
+ * AO-06: the kernel's worker-path `claim_reconcile_effects` RPC leases every
+ * claim for a fixed 60s (packages/kernel/src/evidenceSchema.ts) and it takes no
+ * TTL argument, so adapter-ops cannot extend the lease. The daemon must
+ * therefore bound its own per-effect outcome query below that lease: a query
+ * that outlives the lease is fenced on mutation (`CLAIM_EXPIRED`, so attempts
+ * do not advance) and the same effect is re-driven forever.
+ */
+export const DURABLE_RECONCILE_CLAIM_LEASE_MS = 60_000;
+
+export const DEFAULT_RECONCILE_QUERY_TIMEOUT_MS = 30_000;
+
+export const RECONCILE_QUERY_TIMEOUT = 'RECONCILE_QUERY_TIMEOUT';
+
 const RECOGNIZED_ERROR_NAMES = new Set([
   'Error',
   'TypeError',
@@ -204,6 +225,11 @@ export interface ReconciliationDaemonOptions {
   heartbeat?: () => Promise<void>;
   drain?: () => Promise<void>;
   telemetry?: (event: OpsLoopTelemetryEvent) => void;
+  /**
+   * Per-effect outcome-query budget. Must be a positive integer strictly below
+   * the durable claim lease (AO-06). Defaults to 30s.
+   */
+  queryTimeoutMs?: number;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -275,12 +301,28 @@ export class ReconciliationDaemon {
     inFlight: false,
     claimed: 0,
     completed: 0,
+    handedOff: 0,
     escalated: 0,
     rescheduled: 0,
     skippedOverlappingTicks: 0,
   };
 
-  constructor(private readonly options: ReconciliationDaemonOptions) {}
+  private readonly queryTimeoutMs: number;
+
+  constructor(private readonly options: ReconciliationDaemonOptions) {
+    const queryTimeoutMs = options.queryTimeoutMs ?? DEFAULT_RECONCILE_QUERY_TIMEOUT_MS;
+    if (
+      !Number.isSafeInteger(queryTimeoutMs) ||
+      queryTimeoutMs <= 0 ||
+      queryTimeoutMs >= DURABLE_RECONCILE_CLAIM_LEASE_MS
+    ) {
+      throw new Error(
+        `RECONCILE_QUERY_TIMEOUT_INVALID: queryTimeoutMs must be a positive integer below the ` +
+          `durable reconcile claim lease (${DURABLE_RECONCILE_CLAIM_LEASE_MS}ms)`,
+      );
+    }
+    this.queryTimeoutMs = queryTimeoutMs;
+  }
 
   start(): void {
     if (this.healthState.running) return;
@@ -454,15 +496,7 @@ export class ReconciliationDaemon {
     }
 
     const broker = this.options.brokerFactory(querier);
-    let outcome: ReconciliationOutcome;
-    try {
-      outcome = normalizeOutcome(await broker.reconcileUnknown({ effect, querier }), effect.type);
-    } catch (error) {
-      outcome = {
-        status: 'UNKNOWN',
-        error: reconcileQueryThrownError(error, effect.type),
-      };
-    }
+    const outcome = await this.queryOutcomeWithinBudget(broker, effect, querier);
 
     if (outcome.status === 'APPLIED') {
       const evidence = await this.buildEvidence(
@@ -523,6 +557,55 @@ export class ReconciliationDaemon {
     );
     if (result.disposition === 'ESCALATED') stats.escalated += 1;
     else stats.rescheduled += 1;
+  }
+
+  /**
+   * AO-06: an outcome query that outlives its budget is the *absence* of a
+   * decision, never an approval. It becomes `UNKNOWN`, which takes the existing
+   * reschedule path (so `reconcile_attempts`/backoff/deadline advance) instead
+   * of blocking the tick until the 60s claim lease expires and the mutation is
+   * fenced — the loop that used to re-drive a slow effect forever.
+   */
+  private async queryOutcomeWithinBudget(
+    broker: ReconciliationBroker,
+    effect: KernelEffect,
+    querier: EffectOutcomeQuerier,
+  ): Promise<ReconciliationOutcome> {
+    let timer: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        Promise.resolve(broker.reconcileUnknown({ effect, querier })).then((value) =>
+          normalizeOutcome(value, effect.type),
+        ),
+        new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            reject(
+              Object.assign(new Error('reconciliation outcome query exceeded its budget'), {
+                code: RECONCILE_QUERY_TIMEOUT,
+              }),
+            );
+          }, this.queryTimeoutMs);
+          timer.unref();
+        }),
+      ]);
+    } catch (error) {
+      if (opsLoopErrorCode(error) === RECONCILE_QUERY_TIMEOUT) {
+        return {
+          status: 'UNKNOWN',
+          error: {
+            code: RECONCILE_QUERY_TIMEOUT,
+            message: firstCodePoints(
+              `Outcome query exceeded ${this.queryTimeoutMs}ms budget for effect type ` +
+                normalizedEffectType(effect.type),
+              512,
+            ),
+          },
+        };
+      }
+      return { status: 'UNKNOWN', error: reconcileQueryThrownError(error, effect.type) };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private async buildEvidence(

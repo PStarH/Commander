@@ -2,18 +2,31 @@
  * JsonDriver — file-backed PersistentDriver implementation using one JSON file
  * per table inside a configured directory.
  *
- * Atomicity strategy:
- *   - insert/update/delete trigger an immediate synchronous flushNow() —
+ * Durability strategy:
+ *   - insert/update/delete trigger an immediate synchronous flushTable() —
  *     this is the same contract kill9.test.ts:122 expects: after `save()`,
  *     a freshly opened backend on the same path sees the row.
- *   - flushNow() writes to <file>.tmp then atomically renames over the
- *     target file. POSIX rename(2) is atomic within the same filesystem.
+ *   - flushTable() performs a read-modify-write: it re-reads the file and
+ *     re-applies only this instance's dirty rows on top, so an acknowledged
+ *     write made by another instance on the same path is never discarded by a
+ *     blind whole-file overwrite (see jsonDriver.test.ts "does not discard an
+ *     acknowledged write made by a second instance (S6)").
+ *   - flushTable() holds a per-path in-process write lock for the whole
+ *     read-modify-write. Because flushTable() is synchronous the lock is never
+ *     contended in normal operation; it exists so the serialization claim is
+ *     enforced rather than assumed, and a re-entrant flush throws instead of
+ *     silently interleaving.
+ *   - The payload is written to a per-write unique temp file and atomically
+ *     renamed over the target. POSIX rename(2) is atomic within one filesystem,
+ *     so a reader never observes a torn file.
  *   - chmod 0o600 on the data file and 0o700 on the parent directory to
  *     match filePermissions.test.ts:310-384 invariant.
  *
- * Concurrency: a single in-process mutex serializes file writes. Cross-process
- * safety relies on atomic rename semantics; concurrent readers may see stale
- * snapshots for a few milliseconds during a flush.
+ * Scope of the guarantee (deliberate, not implied): both the lock and the
+ * read-modify-write are per-process. This backend is single-writer per process;
+ * two *processes* writing the same directory are not serialized and can still
+ * lose updates. Atomic rename prevents torn files, not cross-process lost
+ * updates.
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
@@ -34,6 +47,10 @@ interface JsonTableState<T extends { id: string }> {
   rows: Map<string, T>;
   filePath: string;
   closed: boolean;
+  /** Ids mutated by this instance since the last flush. flushTable() re-reads
+   *  the file and re-applies exactly these on top of the on-disk rows, so
+   *  another instance's acknowledged rows survive and its deletes propagate. */
+  dirty: Set<string>;
 }
 
 class JsonTable<T extends { id: string }> implements PersistentTable<T> {
@@ -59,8 +76,10 @@ class JsonTable<T extends { id: string }> implements PersistentTable<T> {
     }
     const clone = cloneRow(row);
     this.state.rows.set(row.id, clone);
+    this.state.dirty.add(row.id);
     this.driver.flushTable(this.state);
-    return clone;
+    // Return a copy: the stored object must not be mutable through the result.
+    return cloneRow(clone);
   }
 
   insertOrReplace(row: T): T {
@@ -70,8 +89,9 @@ class JsonTable<T extends { id: string }> implements PersistentTable<T> {
     }
     const clone = cloneRow(row);
     this.state.rows.set(row.id, clone);
+    this.state.dirty.add(row.id);
     this.driver.flushTable(this.state);
-    return clone;
+    return cloneRow(clone);
   }
 
   get(id: string): T | null {
@@ -86,6 +106,7 @@ class JsonTable<T extends { id: string }> implements PersistentTable<T> {
     if (!existing) return false;
     const merged: T = { ...existing, ...patch, id };
     this.state.rows.set(id, merged);
+    this.state.dirty.add(id);
     this.driver.flushTable(this.state);
     return true;
   }
@@ -97,6 +118,7 @@ class JsonTable<T extends { id: string }> implements PersistentTable<T> {
     if (!matchesFilter(existing as Record<string, unknown>, where)) return null;
     const merged: T = { ...existing, ...patch, id };
     this.state.rows.set(id, merged);
+    this.state.dirty.add(id);
     this.driver.flushTable(this.state);
     return cloneRow(merged);
   }
@@ -104,7 +126,10 @@ class JsonTable<T extends { id: string }> implements PersistentTable<T> {
   delete(id: string): boolean {
     this.assertOpen();
     const removed = this.state.rows.delete(id);
-    if (removed) this.driver.flushTable(this.state);
+    if (removed) {
+      this.state.dirty.add(id);
+      this.driver.flushTable(this.state);
+    }
     return removed;
   }
 
@@ -199,6 +224,7 @@ export class JsonDriver implements PersistentDriver {
 
   async transaction<T>(fn: () => T | Promise<T>): Promise<T> {
     if (this.closed) throw new Error('JsonDriver: already closed');
+    const namesBeforeTransaction = new Set(this.tables.keys());
     const snapshot: Array<{ name: string; rows: Map<string, unknown> }> = [];
     for (const [name, state] of this.tables.entries()) {
       const clone = new Map<string, unknown>();
@@ -208,13 +234,10 @@ export class JsonDriver implements PersistentDriver {
       snapshot.push({ name, rows: clone });
     }
     this.transactionDepth++;
+    let result: T;
     try {
-      const result = await fn();
-      this.transactionDepth--;
-      for (const state of this.tables.values()) this.flushTable(state);
-      return result;
+      result = await fn();
     } catch (err) {
-      this.transactionDepth--;
       for (const snap of snapshot) {
         const state = this.tables.get(snap.name) as JsonTableState<{ id: string }> | undefined;
         if (state) {
@@ -224,8 +247,25 @@ export class JsonDriver implements PersistentDriver {
           }
         }
       }
+      // Tables first opened inside the callback were not snapshotted, so their
+      // rows would otherwise survive the rollback. Drop them instead.
+      for (const name of Array.from(this.tables.keys())) {
+        if (!namesBeforeTransaction.has(name)) {
+          const created = this.tables.get(name) as JsonTableState<{ id: string }> | undefined;
+          if (created) (created.rows as Map<string, unknown>).clear();
+          this.tables.delete(name);
+        }
+      }
       throw err;
+    } finally {
+      // Restore the depth exactly once, on every path. The old code decremented
+      // in both the success and catch branches, so a flush failure left the
+      // depth at -1 and every later transaction wrote straight through without
+      // rollback protection.
+      this.transactionDepth--;
     }
+    for (const state of this.tables.values()) this.flushTable(state);
+    return result;
   }
 
   close(): void {

@@ -187,7 +187,7 @@ commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
 {{- define "commander.requireEnterpriseSecrets" -}}
 {{- if eq .Values.tier "enterprise" -}}
 {{- if not .Values.database.postgres.existingSecret -}}{{- fail "enterprise tier requires database.postgres.existingSecret" -}}{{- end -}}
-{{- if and (not .Values.api.secrets.existingSecret) (or (not .Values.api.secrets.masterKeySecret) (not .Values.api.secrets.jwtSecretSecret) (not .Values.api.secrets.apiKeySecret) (not .Values.api.secrets.capabilityTokenKeySecret) (not .Values.api.secrets.integrityKeySecret) (not .Values.api.secrets.adminPasswordSecret)) -}}{{- fail "enterprise tier requires api.secrets.existingSecret or all API secret refs, including adminPasswordSecret" -}}{{- end -}}
+{{- if and (not .Values.api.secrets.existingSecret) (or (not .Values.api.secrets.masterKeySecret) (not .Values.api.secrets.jwtSecretSecret) (not .Values.api.secrets.apiKeySecret) (not .Values.api.secrets.capabilityTokenKeySecret) (not .Values.api.secrets.integrityKeySecret) (not .Values.api.secrets.auditChainKeySecret) (not .Values.api.secrets.adminPasswordSecret)) -}}{{- fail "enterprise tier requires api.secrets.existingSecret or all API secret refs, including adminPasswordSecret and auditChainKeySecret" -}}{{- end -}}
 {{- if not .Values.worker.authTokenSecret -}}{{- fail "enterprise tier requires worker.authTokenSecret" -}}{{- end -}}
 {{- if not .Values.adapterOps.secrets.existingSecret -}}{{- fail "enterprise tier requires adapterOps.secrets.existingSecret" -}}{{- end -}}
 {{- if not .Values.capability.existingSecret -}}{{- fail "enterprise tier requires capability.existingSecret" -}}{{- end -}}
@@ -232,9 +232,10 @@ capability authority keys while still rendering.
 {{- if not .Values.api.secrets.apiKeySecret -}}{{- $missing = append $missing "api.secrets.apiKeySecret" -}}{{- end -}}
 {{- if not .Values.api.secrets.capabilityTokenKeySecret -}}{{- $missing = append $missing "api.secrets.capabilityTokenKeySecret" -}}{{- end -}}
 {{- if not .Values.api.secrets.integrityKeySecret -}}{{- $missing = append $missing "api.secrets.integrityKeySecret" -}}{{- end -}}
+{{- if not .Values.api.secrets.auditChainKeySecret -}}{{- $missing = append $missing "api.secrets.auditChainKeySecret" -}}{{- end -}}
 {{- if not .Values.api.secrets.adminPasswordSecret -}}{{- $missing = append $missing "api.secrets.adminPasswordSecret" -}}{{- end -}}
 {{- if gt (len $missing) 0 -}}
-{{- fail (printf "tier %s requires api.secrets.existingSecret or all API startup secret refs (COMMANDER_MASTER_KEY, JWT_SECRET, COMMANDER_API_KEY, COMMANDER_CAPABILITY_TOKEN_KEY, COMMANDER_INTEGRITY_KEY, ADMIN_PASSWORD); missing: %s" (.Values.tier | toString) (join ", " $missing)) -}}
+{{- fail (printf "tier %s requires api.secrets.existingSecret or all API startup secret refs (COMMANDER_MASTER_KEY, JWT_SECRET, COMMANDER_API_KEY, COMMANDER_CAPABILITY_TOKEN_KEY, COMMANDER_INTEGRITY_KEY, COMMANDER_AUDIT_CHAIN_KEY, ADMIN_PASSWORD); missing: %s" (.Values.tier | toString) (join ", " $missing)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

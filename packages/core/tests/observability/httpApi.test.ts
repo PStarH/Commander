@@ -14,10 +14,41 @@ import { PersistentTraceStore } from '../../src/runtime/traceStore';
 import { resetTraceRecorder } from '../../src/runtime/executionTrace';
 import type { LiveReplayContext } from '../../src/observability/replay';
 
+/** Shape of the JSON payloads this test asserts on, across all observability endpoints. */
+interface ReplayedNode {
+  type: string;
+  spanId: string;
+  model?: string;
+  reasoning?: string;
+  cost?: { totalCostUsd: number };
+  tokens?: { total: number };
+  toolOutputPreview?: string;
+}
+
+interface HttpJson {
+  count: number;
+  runId: string;
+  runs: Array<{ runId: string }>;
+  nodes: Array<{ type: string }>;
+  total: { totalCostUsd: number };
+  byModel: unknown[];
+  decisions: Array<{ toolName: string }>;
+  diff: {
+    changedSpans: number;
+    newSpans: number;
+    costDeltaUsd: number;
+    tokenDelta: number;
+  };
+  mode?: string;
+  reExecutedSpans: string[];
+  replayedNodes: ReplayedNode[];
+  originalSummary: { totalTokens: { total: number } };
+}
+
 class MockRes extends Writable {
   statusCode = 200;
   headers: Record<string, string> = {};
-  body: unknown = '';
+  body = '';
   _write(chunk: Buffer, _enc: string, cb: () => void): void {
     this.body += chunk.toString('utf-8');
     cb();
@@ -27,12 +58,16 @@ class MockRes extends Writable {
     this.headers = headers;
     return this;
   }
-  end(chunk?: string | Buffer): this {
-    if (chunk) this.body += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+  end(chunk?: unknown, encoding?: unknown, cb?: () => void): this {
+    if (typeof chunk === 'string' || Buffer.isBuffer(chunk)) {
+      this.body += typeof chunk === 'string' ? chunk : chunk.toString('utf-8');
+    }
+    if (typeof encoding === 'function') encoding();
+    else if (cb) cb();
     return this;
   }
-  json(): Record<string, unknown> {
-    return JSON.parse(this.body || '{}');
+  json(): HttpJson {
+    return JSON.parse(this.body || '{}') as HttpJson;
   }
 }
 
@@ -51,7 +86,7 @@ function makeReq(method: string, body?: unknown): IncomingMessage {
 function makeDeps(tmpDir: string, tenantId: string | undefined): ObservabilityDeps {
   resetTraceRecorder();
   const store = new PersistentTraceStore(tmpDir, tenantId);
-  const recorder = new ExecutionTraceRecorder(store);
+  const recorder = new ExecutionTraceRecorder(500, store);
   return {
     recorder,
     traceStore: store,
@@ -127,7 +162,7 @@ describe('handleObservabilityRequest', () => {
       type: 'llm_call',
       durationMs: 100,
       data: {
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       },
     });
@@ -146,7 +181,7 @@ describe('handleObservabilityRequest', () => {
       type: 'llm_call',
       durationMs: 100,
       data: {
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 1000, completionTokens: 500, totalTokens: 1500 },
       },
     });
@@ -165,7 +200,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: { content: 'I will use web_search' },
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
       },
     });
     deps.recorder.recordEvent('r1', {
@@ -255,7 +290,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'I will read the config file',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 200, completionTokens: 50, totalTokens: 250 },
       },
     });
@@ -270,7 +305,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'Config loaded, writing implementation',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 150, completionTokens: 60, totalTokens: 210 },
       },
     });
@@ -285,7 +320,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'Implementation complete',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 100, completionTokens: 30, totalTokens: 130 },
       },
     });
@@ -377,7 +412,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'hello',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       },
     });
@@ -425,7 +460,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'hi',
-        modelInfo: { provider: 'openai', model: 'gpt-3.5-turbo' },
+        modelInfo: { provider: 'openai', model: 'gpt-3.5-turbo', tier: 'standard' },
         tokenUsage: { promptTokens: 50, completionTokens: 10, totalTokens: 60 },
       },
     });
@@ -497,7 +532,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'first',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       },
     });
@@ -506,7 +541,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'second',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       },
     });
@@ -515,7 +550,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'third',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       },
     });
@@ -565,7 +600,7 @@ describe('handleObservabilityRequest', () => {
       durationMs: 100,
       data: {
         output: 'original reasoning',
-        modelInfo: { provider: 'openai', model: 'gpt-4o' },
+        modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
         tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       },
     });

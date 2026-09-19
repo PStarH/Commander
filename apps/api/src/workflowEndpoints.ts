@@ -51,12 +51,10 @@ function loadFromDisk(): WorkflowDefinition[] {
 }
 
 function saveToDisk(workflows: WorkflowDefinition[]): void {
-  try {
-    // REL-3: atomic write so a crash mid-write cannot truncate workflows.
-    atomicWriteFileSync(WORKFLOWS_FILE, JSON.stringify(workflows, null, 2));
-  } catch (err) {
-    process.stderr.write(`[workflowStore] Failed to write workflows.json: ${err}\n`);
-  }
+  // REL-3: atomic write so a crash mid-write cannot truncate workflows.
+  // A failed write must propagate: swallowed here, the caller would acknowledge
+  // data that a restart silently loses.
+  atomicWriteFileSync(WORKFLOWS_FILE, JSON.stringify(workflows, null, 2));
 }
 
 function getWorkflows(): WorkflowDefinition[] {
@@ -67,8 +65,9 @@ function getWorkflows(): WorkflowDefinition[] {
 }
 
 function persist(workflows: WorkflowDefinition[]): void {
-  cache = workflows;
+  // Persist before publishing: only a durable state may become the served cache.
   saveToDisk(workflows);
+  cache = workflows;
 }
 
 // ── Validation schemas ──────────────────────────────────────────────────────
@@ -242,8 +241,9 @@ export function createWorkflowRouter(): Router {
       ownerId: principalId(req),
     };
 
-    const workflows = getWorkflows();
-    workflows.push(workflow);
+    // Build the next state as a new array: never mutate the published cache
+    // before the write succeeds.
+    const workflows = [...getWorkflows(), workflow];
     persist(workflows);
     res.status(201).json({ workflow });
   });
@@ -275,13 +275,14 @@ export function createWorkflowRouter(): Router {
       return;
     }
 
-    workflows[index] = {
+    const updated: WorkflowDefinition = {
       ...workflows[index],
       ...parsed.data,
       updatedAt: new Date().toISOString(),
     };
-    persist(workflows);
-    res.json({ workflow: workflows[index] });
+    const next = workflows.map((w, i) => (i === index ? updated : w));
+    persist(next);
+    res.json({ workflow: updated });
   });
 
   // DELETE /api/workflows/:id
@@ -292,8 +293,8 @@ export function createWorkflowRouter(): Router {
       res.status(404).json({ error: 'Workflow not found' });
       return;
     }
-    workflows.splice(index, 1);
-    persist(workflows);
+    const next = workflows.filter((_, i) => i !== index);
+    persist(next);
     res.json({ success: true });
   });
 

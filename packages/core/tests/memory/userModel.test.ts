@@ -94,7 +94,7 @@ describe('UserModelManager', () => {
       // Should detect authentication and typescript topics
       const hasAuth = profile.topicInterests.has('authentication');
       const hasTS = profile.topicInterests.has('typescript');
-      assert.ok(hasAuth || hasTS, 'Should detect at least one topic');
+      assert.ok(hasAuth && hasTS, 'Should detect both authentication and typescript topics');
     });
 
     it('updates domain expertise', () => {

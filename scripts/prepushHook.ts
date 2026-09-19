@@ -32,6 +32,9 @@
 
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import * as nodePath from 'node:path';
+import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 
 // ── Configuration ────────────────────────────────────────────────────────
 
@@ -64,41 +67,100 @@ interface PrettierResult {
 }
 
 /**
- * Run pnpm exec prettier --check <paths...>. Captures stdout/stderr/exit
- * code without throwing on non-zero exit — prettier's failure messages
- * are the warning the user needs to see, so we capture and forward them.
+ * Run prettier --check <paths...>. Captures stdout/stderr/exit code without
+ * throwing on non-zero exit — prettier's failure messages are the warning the
+ * user needs to see, so we capture and forward them.
  *
- * The shell-level escape hatch handles shell metacharacters inside the
- * path args; since these are repo-relative literal strings (no globs at
- * the shell level — prettier handles glob expansion), we can use
- * { shell: false } for safety.
+ * Preferred invocation is `pnpm exec prettier` for the reasons in the file
+ * header (same resolver as the root `format:check` script, no version pinned in
+ * TS, the .githooks PATH export carries over). `pnpm` is nevertheless **not**
+ * guaranteed to be on PATH, and `execFileSync` then throws `ENOENT` — which
+ * this function used to report as a formatting failure, conflating "the
+ * formatter found problems" with "the package manager is not installed". The
+ * gate must never claim a style violation it did not observe, so when `pnpm`
+ * cannot be executed we fall back to resolving the workspace's own prettier
+ * binary directly and running it with `process.execPath`. Same prettier, same
+ * version from pnpm-lock.yaml — just resolved without the pnpm shim.
+ *
+ * The shell-level escape hatch handles shell metacharacters inside the path
+ * args; since these are repo-relative literal strings (no globs at the shell
+ * level — prettier handles glob expansion), we can use { shell: false } for
+ * safety.
  */
 function runPrettierCheck(targetPaths: readonly string[]): PrettierResult {
-  const cmdArgs = ['exec', 'prettier', '--check', ...targetPaths];
+  const execOptions = {
+    cwd: REPO_ROOT,
+    encoding: 'utf-8' as const,
+    stdio: ['ignore', 'pipe', 'pipe'] as ['ignore', 'pipe', 'pipe'],
+    shell: false,
+    maxBuffer: 16 * 1024 * 1024,
+  };
+
+  const invocations: Array<{ command: string; args: readonly string[] }> = [
+    { command: 'pnpm', args: ['exec', 'prettier', '--check', ...targetPaths] },
+  ];
+  const fallback = resolveWorkspacePrettierCli();
+  if (fallback) {
+    invocations.push({ command: process.execPath, args: [fallback, '--check', ...targetPaths] });
+  }
+
+  let lastError: unknown;
+  for (const invocation of invocations) {
+    try {
+      const out = execFileSync(invocation.command, invocation.args as string[], execOptions);
+      return { ok: true, stdout: out, stderr: '', exitCode: 0 };
+    } catch (err: unknown) {
+      const e = err as { code?: string; status?: number };
+      // ENOENT means the command could not be executed at all — try the next
+      // resolution strategy. Anything else is a real prettier verdict.
+      if (e.code === 'ENOENT' && invocation !== invocations[invocations.length - 1]) {
+        lastError = err;
+        continue;
+      }
+      // execFileSync only throws on non-zero exit. err has stdout/stderr/
+      // status properties populated; treat undefined as "not provided".
+      const detail = err as {
+        stdout?: Buffer | string;
+        stderr?: Buffer | string;
+        status?: number;
+        message?: string;
+      };
+      return {
+        ok: false,
+        stdout: detail.stdout?.toString?.() ?? '',
+        stderr:
+          detail.stderr?.toString?.() ?? 'prettier exited: ' + (detail.message ?? 'unknown error'),
+        exitCode: detail.status ?? null,
+      };
+    }
+  }
+
+  return {
+    ok: false,
+    stdout: '',
+    stderr:
+      'prettier could not be executed: ' +
+      (lastError instanceof Error ? lastError.message : String(lastError)),
+    exitCode: null,
+  };
+}
+
+/**
+ * Absolute path to the workspace's prettier CLI, or null when it cannot be
+ * resolved. Resolved from the repo root so it is the same install the
+ * `format:check` script uses.
+ */
+function resolveWorkspacePrettierCli(): string | null {
   try {
-    const out = execFileSync('pnpm', cmdArgs, {
-      cwd: REPO_ROOT,
-      encoding: 'utf-8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
-      maxBuffer: 16 * 1024 * 1024,
-    });
-    return { ok: true, stdout: out, stderr: '', exitCode: 0 };
-  } catch (err: unknown) {
-    // execFileSync only throws on non-zero exit. err has stdout/stderr/
-    // status properties populated; treat undefined as "not provided".
-    const e = err as {
-      stdout?: Buffer | string;
-      stderr?: Buffer | string;
-      status?: number;
-      message?: string;
-    };
-    return {
-      ok: false,
-      stdout: e.stdout?.toString?.() ?? '',
-      stderr: e.stderr?.toString?.() ?? 'prettier exited: ' + (e.message ?? 'unknown error'),
-      exitCode: e.status ?? null,
-    };
+    const repoRequire = createRequire(nodePath.join(REPO_ROOT, 'package.json'));
+    return nodePath.join(
+      nodePath.dirname(repoRequire.resolve('prettier/package.json')),
+      'bin',
+      'prettier.cjs',
+    );
+  } catch (err) {
+    reportSilentFailure(err, 'prepushHook:prettier-resolve');
+    return null;
   }
 }
 

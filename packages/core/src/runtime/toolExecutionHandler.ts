@@ -364,10 +364,11 @@ export class ToolExecutionHandler {
     let retryLoopDetected = false;
     void 0;
     let cycleDetected = false;
-    // Last security denial observed this run (hook/policy). Preserved so a
-    // subsequent retry-loop crash reports the *root cause* instead of the
-    // generic "Retry loop detected" string.
-    let lastSecurityDenial: string | null = null;
+    // Security denial observed for a specific call, keyed by the tool call's
+    // own identity. A denial recorded for one call must never be surfaced as
+    // the error of another call, so the retry-loop branch below can only ever
+    // read back the denial that belongs to *its* call.
+    const securityDenialByCallId = new Map<string, string>();
     let interruptData: { reason: string; value: unknown; humanInputRequired?: boolean } | null =
       null;
     let operatorPaused = false;
@@ -535,7 +536,10 @@ export class ToolExecutionHandler {
                 console.warn(`[SERIAL] GATE BLOCKED ${tc.name} kind=${gate.kind}`);
                 if (gate.kind === 'retry') {
                   retryLoopDetected = true;
-                  return toolErrorRow(tc, lastSecurityDenial ?? `Retry loop detected: ${tc.name}`);
+                  return toolErrorRow(
+                    tc,
+                    securityDenialByCallId.get(tc.id) ?? `Retry loop detected: ${tc.name}`,
+                  );
                 }
                 if (gate.kind === 'cycle') {
                   cycleDetected = true;
@@ -559,7 +563,6 @@ export class ToolExecutionHandler {
                   return toolErrorRow(tc, `Cycle detected: ${gate.description}`);
                 }
                 if (gate.kind === 'hooked') {
-                  lastSecurityDenial = `GUARDIAN_BLOCKED: ${gate.errorMsg || 'denied by policy'}`;
                   bus.publish('tool.blocked', ctx.agentId, {
                     runId,
                     toolName: tc.name,
@@ -590,10 +593,11 @@ export class ToolExecutionHandler {
                     reportSilentFailure(err, 'agentRuntime:2430');
                     /* best-effort */
                   }
-                  // Buyer-visible marker: policy/hook denials surface as
-                  // GUARDIAN_BLOCKED so downstream assertions (and the
-                  // demo-qa golden path) can detect interception uniformly.
-                  const hookBlockedMsg = `GUARDIAN_BLOCKED: ${gate.errorMsg || 'denied by policy'}`;
+                  // Hook denials keep their own marker: this is a plugin
+                  // HookManager decision, not a Guardian decision, so it must
+                  // not be relabelled GUARDIAN_BLOCKED.
+                  const hookBlockedMsg = `HOOK_DENIED: ${gate.errorMsg || 'denied by policy'}`;
+                  securityDenialByCallId.set(tc.id, hookBlockedMsg);
                   return toolErrorRow(tc, hookBlockedMsg);
                 }
                 // gate.kind === 'siblingAbort'
@@ -722,24 +726,26 @@ export class ToolExecutionHandler {
             let blockingRow: SyntheticErrorRow | null = null;
             let shouldBreak = false;
             switch (gate.kind) {
-              case 'hooked':
+              case 'hooked': {
                 bus.publish('tool.blocked', ctx.agentId, {
                   runId,
                   toolName: tc.name,
                   reason: 'hook_denied',
                   detail: gate.errorMsg,
                 });
-                // Buyer-visible marker: policy/hook denials surface as
-                // GUARDIAN_BLOCKED so downstream assertions (and the demo-qa
-                // golden path) can detect interception uniformly.
-                lastSecurityDenial = `GUARDIAN_BLOCKED: ${gate.errorMsg || 'denied by policy'}`;
-                blockingRow = toolErrorRow(tc, lastSecurityDenial);
+                // Hook denials keep their own marker: this is a plugin
+                // HookManager decision, not a Guardian decision, so it must
+                // not be relabelled GUARDIAN_BLOCKED.
+                const hookDeniedMsg = `HOOK_DENIED: ${gate.errorMsg || 'denied by policy'}`;
+                securityDenialByCallId.set(tc.id, hookDeniedMsg);
+                blockingRow = toolErrorRow(tc, hookDeniedMsg);
                 break;
+              }
               case 'retry':
                 retryLoopDetected = true;
                 blockingRow = toolErrorRow(
                   tc,
-                  lastSecurityDenial ?? `Retry loop detected: ${tc.name}`,
+                  securityDenialByCallId.get(tc.id) ?? `Retry loop detected: ${tc.name}`,
                 );
                 shouldBreak = true;
                 break;
@@ -854,10 +860,10 @@ export class ToolExecutionHandler {
             this.deps.getCacheManager().getToolCache().set(tc, toolResult, tenantId);
             this.deps.invalidateMutationCache(tc.name);
             trackExecutedMutation(executedMutations, tc, this.deps.getTools().get(tc.name));
-          } else if (toolResult.error.startsWith('GUARDIAN_BLOCKED')) {
-            // Preserve the security root cause so a retry-loop crash reports
-            // the denial instead of the generic loop message.
-            lastSecurityDenial = toolResult.error;
+          } else if (/^(?:RUNTIME_)?GUARDIAN_BLOCKED|^POLICY_DENIED/.test(toolResult.error)) {
+            // Record the security denial against *this* call's identity so it
+            // can never be read back for a different call.
+            securityDenialByCallId.set(tc.id, toolResult.error);
           }
           // Capture file_write content for artifact propagation
           if (tc.name === 'file_write' && !toolResult.error) {

@@ -1135,6 +1135,35 @@ export class ThreeLayerMemory {
   }
 
   /**
+   * Remove only the entries explicitly attributed to one data subject
+   * (`metadata.subjectId === subjectId`), across the layers the caller names.
+   *
+   * GDPR Art.17 erasure must not clear a whole layer: entries with no subject
+   * attribution cannot be proven to belong to the erased subject, so deleting
+   * them would destroy another subject's memory in the same tenant. The caller
+   * receives the untouched count and must report it instead of claiming a
+   * complete erasure.
+   */
+  deleteBySubject(
+    subjectId: string,
+    layers: MemoryLayer[],
+  ): { deleted: number; unattributed: number } {
+    let deleted = 0;
+    let unattributed = 0;
+    for (const layer of layers) {
+      const entries = this.getByLayer(layer);
+      for (const entry of entries) {
+        if (entry.metadata?.subjectId === subjectId) {
+          if (this.delete(entry.id)) deleted += 1;
+        } else {
+          unattributed += 1;
+        }
+      }
+    }
+    return { deleted, unattributed };
+  }
+
+  /**
    * 清除特定层的所有记忆
    */
   clearLayer(layer: MemoryLayer): number {

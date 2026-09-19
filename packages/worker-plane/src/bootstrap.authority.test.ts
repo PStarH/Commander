@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { generateKeyPairSync } from 'node:crypto';
+import { generateKeyPairSync, X509Certificate, createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { rootCertificates } from 'node:tls';
 import { describe, it } from 'node:test';
 import {
   CAPABILITY_AUTHORITY_REQUIRED,
@@ -8,6 +12,7 @@ import {
   CAPABILITY_PRIVATE_KEY_PEM_ENV,
 } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import { Pool } from 'pg';
 import {
   assertDurableCapabilityStores,
   assertNonOwnerDatabaseRole,
@@ -15,6 +20,7 @@ import {
   CAPABILITY_DURABLE_STORES_REQUIRED,
   createWorkerEvidenceSigner,
   createEffectBroker,
+  createWorkerService,
   EVIDENCE_REPOSITORY_REQUIRED,
   EVIDENCE_SIGNING_KEY_ID_ENV,
   EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV,
@@ -290,5 +296,66 @@ describe('worker-plane authority startup gates', () => {
     assert.equal(opts.requireOperationsReadiness, true);
     assert.equal(opts.requireRequestBinding, true);
     assert.equal(opts.localWorkerId, 'worker-1');
+  });
+});
+
+describe('createWorkerService pool lifecycle (WP-11)', () => {
+  it('releases the verified pool when assembly fails after the pool is created', async () => {
+    // The pool must be a real verified pool so the failure lands *after* it exists:
+    // a valid TLS fixture lets pool construction succeed, then the owner-role probe
+    // fails against a refused port — exactly the path that used to leak the pool.
+    const pem = rootCertificates[0];
+    assert.ok(pem, 'Node must provide at least one trusted root certificate');
+    const directory = mkdtempSync(join(tmpdir(), 'commander-worker-plane-'));
+    const caFile = join(directory, 'ca.pem');
+    writeFileSync(caFile, pem, { mode: 0o600 });
+    const spki = new X509Certificate(pem).publicKey.export({ format: 'der', type: 'spki' });
+    const spkiSha256 = createHash('sha256').update(spki).digest('hex');
+
+    const ended: Pool[] = [];
+    const originalEnd = Pool.prototype.end as unknown as (...args: unknown[]) => unknown;
+    Pool.prototype.end = function patchedEnd(this: Pool, ...args: unknown[]) {
+      ended.push(this);
+      return originalEnd.apply(this, args);
+    } as unknown as typeof Pool.prototype.end;
+
+    const keys = [
+      'DATABASE_URL',
+      'COMMANDER_WORKER_TENANTS',
+      'COMMANDER_WORKER_AUTH_TOKEN',
+      'COMMANDER_DATABASE_TLS_CA_FILE',
+      'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256',
+      'NODE_ENV',
+      'COMMANDER_PROFILE',
+      'COMMANDER_REQUIRE_EFFECT_BROKER',
+      'COMMANDER_REQUIRE_WORKLOAD_BINDING',
+    ] as const;
+    const previous = new Map<string, string | undefined>(
+      keys.map((key) => [key, process.env[key]]),
+    );
+    process.env.DATABASE_URL =
+      'postgres://commander_worker:pw@127.0.0.1:1/commander?sslmode=verify-full';
+    process.env.COMMANDER_WORKER_TENANTS = 'tenant-a';
+    process.env.COMMANDER_WORKER_AUTH_TOKEN = 'test-token';
+    process.env.COMMANDER_DATABASE_TLS_CA_FILE = caFile;
+    process.env.COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256 = spkiSha256;
+    process.env.NODE_ENV = 'test';
+    delete process.env.COMMANDER_PROFILE;
+    delete process.env.COMMANDER_REQUIRE_EFFECT_BROKER;
+    delete process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING;
+
+    try {
+      await assert.rejects(createWorkerService(), /ECONNREFUSED|EADDRNOTAVAIL|connect/i);
+    } finally {
+      Pool.prototype.end = originalEnd as unknown as typeof Pool.prototype.end;
+      for (const [key, value] of previous) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      rmSync(directory, { recursive: true, force: true });
+    }
+
+    assert.equal(ended.length, 1, 'the verified pool must be ended on the failure path');
+    assert.ok(ended[0] instanceof Pool, 'the ended pool must be the worker verified pool');
   });
 });

@@ -197,10 +197,20 @@ describe(
       if (adminPool) {
         await adminPool.query(`DROP DATABASE IF EXISTS ${databaseIdentifier(databaseName)}`);
         await adminPool.query(
-          `ALTER ROLE commander_owner NOLOGIN NOCREATEROLE;
-         ALTER ROLE commander_worker NOLOGIN;
-         ALTER ROLE commander_adapter_ops NOLOGIN;
-         ALTER ROLE commander_app NOLOGIN`,
+          // Restore the documented steady state, do NOT revoke it.
+          //
+          // These roles are CLUSTER-global: `DROP DATABASE` has already removed
+          // everything this suite owned, so revoking LOGIN afterwards protects
+          // nothing and instead breaks every suite that runs next and connects as
+          // one of these roles -- whose own `before` hook needs that connection to
+          // grant itself LOGIN, an unrecoverable deadlock. Observed as
+          // 'role "commander_owner" is not permitted to log in' cancelling all 12
+          // cases of postgres.rls-live-fire when it followed this file. This mirrors
+          // the CI step "Restore deploy-gate role authority after live suites".
+          `ALTER ROLE commander_owner LOGIN CREATEROLE BYPASSRLS;
+         ALTER ROLE commander_worker LOGIN;
+         ALTER ROLE commander_adapter_ops LOGIN;
+         ALTER ROLE commander_app LOGIN`,
         );
         await adminPool.end();
       }

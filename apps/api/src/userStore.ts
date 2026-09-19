@@ -7,6 +7,7 @@ import {
   createAuthPool,
   withClient,
   withTenantScopedClient,
+  withTransaction,
   type VerifiedPoolFactory,
 } from './authDb';
 
@@ -131,6 +132,46 @@ export interface CreateUserArgs {
   oidcSubject?: string;
 }
 
+/**
+ * AUTH-04: outcome of a role change. `last_admin` is a distinct result (not a
+ * null/"not found") because the invariant must be enforced inside the same
+ * membership-locked transaction that performs the write.
+ */
+export type RoleChangeOutcome =
+  { outcome: 'updated'; user: SafeUser } | { outcome: 'not_found' } | { outcome: 'last_admin' };
+
+/** AUTH-04: the admin-level roles the "at least one admin" invariant protects. */
+export function isAdminLevelRole(role: UserRole): boolean {
+  return hasRole(role, 'admin');
+}
+
+/**
+ * AUTH-04: serialize every membership read-modify-write on one transaction
+ * advisory lock. Locking the target row alone is not enough: two concurrent
+ * deletions of two different admins each hold their own row and both observe
+ * "2 admins", so both proceed and the system is left with none.
+ */
+const MEMBERSHIP_LOCK_SQL =
+  "SELECT pg_advisory_xact_lock(hashtext('commander_auth_users.membership'))";
+
+/**
+ * AUTH-04: the guarded role UPDATE. It refuses to remove the last admin-level
+ * account and covers `super_admin` as well as `admin` — the old endpoint check
+ * only matched `role === 'admin'`, so the only super_admin could be demoted.
+ */
+const GUARDED_ROLE_UPDATE_SQL = `UPDATE commander_auth_users
+ SET role = $2, auth_version = auth_version + 1
+ WHERE id = $1
+   AND NOT (
+     $2::text NOT IN ('admin', 'super_admin')
+     AND role IN ('admin', 'super_admin')
+     AND (SELECT COUNT(*) FROM commander_auth_users WHERE role IN ('admin', 'super_admin')) <= 1
+   )
+ RETURNING ${USER_COLUMNS}`;
+
+/** AUTH-04: stable error surfaced when a change would remove the last admin. */
+export const LAST_ADMIN_ERROR = 'Cannot demote the last admin account';
+
 export interface UserRepository {
   findUserById(id: string): Promise<User | undefined>;
   findUserByUsername(username: string): Promise<User | undefined>;
@@ -144,7 +185,7 @@ export interface UserRepository {
     subject: string,
   ): Promise<SafeUser | { error: string }>;
   updateLastLogin(userId: string): Promise<void>;
-  updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null>;
+  updateUserRole(userId: string, role: UserRole): Promise<RoleChangeOutcome>;
   updateUser(
     userId: string,
     updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
@@ -274,16 +315,23 @@ export class PostgresUserRepository implements UserRepository {
     });
   }
 
-  async updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null> {
-    const result = await withClient(this.pool, async (client) => {
-      return client.query<UserRow>(
-        `UPDATE commander_auth_users
-         SET role = $2, auth_version = auth_version + 1
-         WHERE id = $1 RETURNING ${USER_COLUMNS}`,
-        [userId, role],
+  async updateUserRole(userId: string, role: UserRole): Promise<RoleChangeOutcome> {
+    // AUTH-04: one membership lock before the read-modify-write, so a
+    // concurrent delete/demotion cannot also see "more than one admin" and
+    // proceed. The guarded UPDATE itself re-evaluates the count under the lock.
+    return withTransaction(this.pool, async (client) => {
+      await client.query(MEMBERSHIP_LOCK_SQL);
+      const result = await client.query<UserRow>(GUARDED_ROLE_UPDATE_SQL, [userId, role]);
+      if (result.rows[0]) {
+        return { outcome: 'updated', user: toSafeUser(fromRow(result.rows[0])) };
+      }
+      const existing = await client.query<{ role: UserRole }>(
+        'SELECT role FROM commander_auth_users WHERE id = $1',
+        [userId],
       );
+      if (!existing.rows[0]) return { outcome: 'not_found' };
+      return { outcome: 'last_admin' };
     });
-    return result.rows[0] ? toSafeUser(fromRow(result.rows[0])) : null;
   }
 
   async updateUser(
@@ -291,20 +339,33 @@ export class PostgresUserRepository implements UserRepository {
     updates: Partial<Pick<User, 'email' | 'role' | 'username'>>,
   ): Promise<SafeUser | { error: string }> {
     try {
-      const result = await withClient(this.pool, async (client) => {
-        return client.query<UserRow>(
+      // AUTH-04: PATCH can change the role too, so it must go through the same
+      // membership lock and last-admin guard as updateUserRole.
+      return await withTransaction(this.pool, async (client) => {
+        await client.query(MEMBERSHIP_LOCK_SQL);
+        const result = await client.query<UserRow>(
           `UPDATE commander_auth_users
            SET email = COALESCE($2, email),
                auth_version = CASE WHEN $3 IS NOT NULL AND role IS DISTINCT FROM $3 THEN auth_version + 1 ELSE auth_version END,
                role = COALESCE($3, role),
                username = COALESCE($4, username)
            WHERE id = $1
+             AND NOT (
+               $3::text IS NOT NULL
+               AND $3::text NOT IN ('admin', 'super_admin')
+               AND role IN ('admin', 'super_admin')
+               AND (SELECT COUNT(*) FROM commander_auth_users WHERE role IN ('admin', 'super_admin')) <= 1
+             )
            RETURNING ${USER_COLUMNS}`,
           [userId, updates.email ?? null, updates.role ?? null, updates.username ?? null],
         );
+        if (result.rows[0]) return toSafeUser(fromRow(result.rows[0]));
+        const existing = await client.query<{ id: string }>(
+          'SELECT id FROM commander_auth_users WHERE id = $1',
+          [userId],
+        );
+        return { error: existing.rows[0] ? LAST_ADMIN_ERROR : 'User not found' };
       });
-      if (!result.rows[0]) return { error: 'User not found' };
-      return toSafeUser(fromRow(result.rows[0]));
     } catch (error) {
       const conflict = uniqueViolation(error);
       if (conflict) return { error: conflict };
@@ -312,20 +373,40 @@ export class PostgresUserRepository implements UserRepository {
     }
   }
 
+  /**
+   * AUTH-03: bump the auth version and revoke every outstanding refresh token
+   * in one transaction. The old flow issued the version bump and the revoke as
+   * two separate statements, so a refresh that had already consumed its jti
+   * could mint (and persist) a brand-new refresh after the revoke had run —
+   * the new jti was invisible to `revokeAllForUser` and carried no version to
+   * fence it. Both paths now take the user row lock first (the UPDATE below
+   * locks it; rotation locks it with `SELECT … FOR UPDATE`), so a rotation and
+   * a reset serialize instead of interleaving.
+   */
   async resetUserPassword(userId: string, newPassword: string): Promise<SafeUser | null> {
-    const result = await withClient(this.pool, async (client) => {
-      return client.query<UserRow>(
+    return withTransaction(this.pool, async (client) => {
+      const result = await client.query<UserRow>(
         `UPDATE commander_auth_users
          SET password_hash = $2, auth_version = auth_version + 1
          WHERE id = $1 RETURNING ${USER_COLUMNS}`,
         [userId, hashSync(newPassword, 10)],
       );
+      if (!result.rows[0]) return null;
+      await client.query(
+        'UPDATE commander_auth_refresh_tokens SET revoked_at = COALESCE(revoked_at, clock_timestamp()) WHERE user_id = $1',
+        [userId],
+      );
+      return toSafeUser(fromRow(result.rows[0]));
     });
-    return result.rows[0] ? toSafeUser(fromRow(result.rows[0])) : null;
   }
 
   async deleteUser(userId: string): Promise<{ success: boolean; error?: string }> {
-    return withTenantScopedClient(this.pool, '', async (client) => {
+    return withTransaction(this.pool, async (client) => {
+      // AUTH-04: take the membership lock before reading the admin count. The
+      // row-level `FOR UPDATE` below only serializes deletions of the *same*
+      // user, so two concurrent deletions of two different admins each saw two
+      // admins and both succeeded.
+      await client.query(MEMBERSHIP_LOCK_SQL);
       const user = await client.query<UserRow>(
         `SELECT ${USER_COLUMNS} FROM commander_auth_users WHERE id = $1 FOR UPDATE`,
         [userId],
@@ -335,10 +416,7 @@ export class PostgresUserRepository implements UserRepository {
       const admins = await client.query<{ count: string }>(
         "SELECT COUNT(*)::text AS count FROM commander_auth_users WHERE role IN ('admin', 'super_admin')",
       );
-      if (
-        (user.rows[0].role === 'admin' || user.rows[0].role === 'super_admin') &&
-        Number(admins.rows[0]?.count ?? 0) <= 1
-      ) {
+      if (isAdminLevelRole(user.rows[0].role) && Number(admins.rows[0]?.count ?? 0) <= 1) {
         return { success: false, error: 'Cannot delete the last admin account' };
       }
 
@@ -448,7 +526,7 @@ export async function updateLastLogin(userId: string): Promise<void> {
   return getUserRepository().updateLastLogin(userId);
 }
 
-export async function updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null> {
+export async function updateUserRole(userId: string, role: UserRole): Promise<RoleChangeOutcome> {
   return getUserRepository().updateUserRole(userId, role);
 }
 

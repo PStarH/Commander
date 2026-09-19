@@ -1,4 +1,5 @@
 import type { EffectEnvelope } from '@commander/contracts';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 import {
   canonicalCompensationHash,
   validateGovernedCompensationAuthorization,
@@ -24,49 +25,14 @@ export interface CompensationClaimAuth {
   claimSecret: string;
 }
 
-export interface LegacyClaimedCompensationWork {
-  messageId: string;
-  tenantId: string;
-  claimToken: string;
-  authorization: GovernedCompensationAuthorization;
-  lease: {
-    workerId: string;
-    workerGeneration: number;
-    token: string;
-    fencingEpoch: number;
-  };
-}
+export type ClaimedCompensationWork = ClaimedCompensationRequest;
 
-export type ClaimedCompensationWork = LegacyClaimedCompensationWork | ClaimedCompensationRequest;
-
-export type CompensationWorkDispositionResult =
-  | {
-      applied: true;
-      disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'ESCALATED';
-      replayed?: boolean;
-    }
-  | { applied: false; reason: string };
-
-interface CompensationWorkMutationAuth extends CompensationClaimAuth {
-  tenantId: string;
-  messageId: string;
-  outboxClaimToken: string;
-  compensationEffectId: string;
-}
+export type CompensationWorkDispositionResult = CompensationMutationResult;
 
 export interface CompensationOutboxPort {
   claimCompensationWork(
     input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
   ): Promise<ClaimedCompensationWork[]>;
-  completeCompensationWork(
-    input: CompensationWorkMutationAuth & { response: Record<string, unknown> },
-  ): Promise<CompensationWorkDispositionResult>;
-  handoffCompensationUnknown(
-    input: CompensationWorkMutationAuth & { error: { code: string; message: string } },
-  ): Promise<CompensationWorkDispositionResult>;
-  escalateCompensationWork(
-    input: CompensationWorkMutationAuth & { reason: string },
-  ): Promise<CompensationWorkDispositionResult>;
   parkCompensationUnknown(input: ParkCompensationUnknownInput): Promise<CompensationMutationResult>;
   finalizeCompensation(input: FinalizeCompensationInput): Promise<CompensationMutationResult>;
 }
@@ -134,7 +100,7 @@ export interface CompensationConsumerOptions extends CompensationClaimAuth {
     runId: string;
     stepId: string;
     compensationAction: string;
-    messageId: string;
+    outboxMessageId: string;
   }) => Promise<void>;
 }
 
@@ -146,42 +112,35 @@ export interface CompensationConsumeResult {
   replayed: number;
 }
 
-function mutationAuth(
-  work: LegacyClaimedCompensationWork,
-  options: CompensationConsumerOptions,
-): CompensationWorkMutationAuth {
-  return {
-    workerId: options.workerId,
-    workerGeneration: options.workerGeneration,
-    claimSecret: options.claimSecret,
-    tenantId: work.tenantId,
-    messageId: work.messageId,
-    outboxClaimToken: work.claimToken,
-    compensationEffectId: work.authorization.compensationEffectId,
-  };
-}
-
-function isDurableClaim(work: ClaimedCompensationWork): work is ClaimedCompensationRequest {
-  return 'request' in work;
-}
-
 function durableExecution(work: ClaimedCompensationRequest) {
   const { authorization, request, forwardResponse } = work;
   const effectId = request.compensationEffectId;
   if (!effectId) throw mutationRejected('CLAIM_EFFECT_ID_MISSING');
   if (request.destination.length === 0) throw mutationRejected('DESTINATION_MISSING');
+  const requestPayload = {
+    originalEffectId: request.originalEffectId,
+    destination: request.destination,
+    forwardResponse,
+    compensationPatch: authorization.compensationPatch,
+  };
   return {
     authorization,
     effectId,
     runId: request.compensationRunId,
     stepId: request.compensationStepId,
-    requestPayload: {
-      originalEffectId: request.originalEffectId,
-      destination: request.destination,
-      forwardResponse,
-      compensationPatch: authorization.compensationPatch,
-    },
-    idempotencyKey: `cmp:${request.originalEffectId}:${request.adapterVersion}`,
+    requestPayload,
+    idempotencyKey: deriveEffectIdempotencyKey({
+      tenantId: request.tenantId,
+      runId: request.compensationRunId,
+      stepId: request.compensationStepId,
+      effectId,
+      request: {
+        originalEffectId: request.originalEffectId,
+        destination: request.destination,
+        forwardResponse,
+        compensationPatch: authorization.compensationPatch,
+      },
+    }),
   };
 }
 
@@ -216,7 +175,7 @@ function mutationRejected(reason: string): Error & { code: string } {
 
 function requireDisposition(
   result: CompensationWorkDispositionResult | CompensationMutationResult,
-  disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'COMPLETION_UNKNOWN' | 'ESCALATED',
+  disposition: 'COMPLETED' | 'COMPLETION_UNKNOWN' | 'ESCALATED',
 ): void {
   if (!result.applied) throw mutationRejected(result.reason);
   if (result.disposition !== disposition) {
@@ -237,11 +196,9 @@ function assertClaimBinding(
   work: ClaimedCompensationWork,
   options: CompensationConsumerOptions,
 ): void {
-  const tenantId = isDurableClaim(work) ? work.request.tenantId : work.tenantId;
-  const authorizationTenantId = isDurableClaim(work)
-    ? work.authorization.tenantId
-    : work.authorization.tenantId;
-  const claimToken = isDurableClaim(work) ? work.outboxClaimToken : work.claimToken;
+  const tenantId = work.request.tenantId;
+  const authorizationTenantId = work.authorization.tenantId;
+  const claimToken = work.outboxClaimToken;
   if (
     tenantId !== authorizationTenantId ||
     !claimToken ||
@@ -268,33 +225,22 @@ async function escalate(
     | 'COMPENSATION_TOKEN_REFUSED'
     | 'COMPENSATION_ADMIT_REJECTED',
 ): Promise<void> {
-  if (isDurableClaim(work)) {
-    const effectId = work.request.compensationEffectId;
-    if (!effectId) throw mutationRejected('CLAIM_EFFECT_ID_MISSING');
-    const response = { reason };
-    const finalized = await outbox.finalizeCompensation({
-      workerId: options.workerId,
-      workerGeneration: options.workerGeneration,
-      claimSecret: options.claimSecret,
-      tenantId: work.request.tenantId,
-      requestId: work.request.id,
-      effectId,
-      disposition: 'ESCALATED',
-      actor: options.workerId,
-      outboxMessageId: work.outboxMessageId,
-      outboxClaimToken: work.outboxClaimToken,
-      response,
-    });
-    if (!finalized.applied) throw mutationRejected(finalized.reason);
-    return;
-  }
-  requireDisposition(
-    await outbox.escalateCompensationWork({
-      ...mutationAuth(work, options),
-      reason,
-    }),
-    'ESCALATED',
-  );
+  const effectId = work.request.compensationEffectId;
+  if (!effectId) throw mutationRejected('CLAIM_EFFECT_ID_MISSING');
+  const finalized = await outbox.finalizeCompensation({
+    workerId: options.workerId,
+    workerGeneration: options.workerGeneration,
+    claimSecret: options.claimSecret,
+    tenantId: work.request.tenantId,
+    requestId: work.request.id,
+    effectId,
+    disposition: 'ESCALATED',
+    actor: options.workerId,
+    outboxMessageId: work.outboxMessageId,
+    outboxClaimToken: work.outboxClaimToken,
+    response: { reason },
+  });
+  requireDisposition(finalized, 'ESCALATED');
 }
 
 export async function consumeCompensationBatch(
@@ -326,33 +272,18 @@ export async function consumeCompensationBatch(
     let stepId: string;
     let requestPayload: Record<string, unknown>;
     let idempotencyKey: string;
-    if (isDurableClaim(work)) {
-      if (!validateDurableClaim(work)) {
-        await escalate(outbox, work, options, 'COMPENSATION_ACTION_DIGEST_MISMATCH');
-        result.escalated += 1;
-        continue;
-      }
-      const projected = durableExecution(work);
-      authorization = projected.authorization;
-      effectId = projected.effectId;
-      runId = projected.runId;
-      stepId = projected.stepId;
-      requestPayload = projected.requestPayload;
-      idempotencyKey = projected.idempotencyKey;
-    } else {
-      const validation = validateGovernedCompensationAuthorization(work.authorization);
-      if (!validation.valid) {
-        await escalate(outbox, work, options, validation.code);
-        result.escalated += 1;
-        continue;
-      }
-      authorization = validation.authorization;
-      effectId = authorization.compensationEffectId;
-      runId = authorization.compensationRunId;
-      stepId = authorization.compensationStepId;
-      requestPayload = authorization.compensationRequest;
-      idempotencyKey = authorization.idempotencyKey;
+    if (!validateDurableClaim(work)) {
+      await escalate(outbox, work, options, 'COMPENSATION_ACTION_DIGEST_MISMATCH');
+      result.escalated += 1;
+      continue;
     }
+    const projected = durableExecution(work);
+    authorization = projected.authorization;
+    effectId = projected.effectId;
+    runId = projected.runId;
+    stepId = projected.stepId;
+    requestPayload = projected.requestPayload;
+    idempotencyKey = projected.idempotencyKey;
     const adapter = options.registry.resolve(authorization.compensationEffectType);
     if (!adapter) {
       await options.onAdapterUnregistered?.({
@@ -360,7 +291,7 @@ export async function consumeCompensationBatch(
         runId,
         stepId,
         compensationAction: authorization.compensationEffectType,
-        messageId: isDurableClaim(work) ? work.outboxMessageId : work.messageId,
+        outboxMessageId: work.outboxMessageId,
       });
       await escalate(outbox, work, options, 'COMPENSATION_ADAPTER_UNREGISTERED');
       result.escalated += 1;
@@ -372,15 +303,11 @@ export async function consumeCompensationBatch(
       continue;
     }
 
-    const token = await tokenProvider(
-      isDurableClaim(work)
-        ? {
-            authorization: work.authorization,
-            request: work.request,
-            forwardResponse: work.forwardResponse,
-          }
-        : (authorization as GovernedCompensationAuthorization),
-    );
+    const token = await tokenProvider({
+      authorization: work.authorization,
+      request: work.request,
+      forwardResponse: work.forwardResponse,
+    });
     if (!token) {
       await escalate(outbox, work, options, 'COMPENSATION_TOKEN_REFUSED');
       result.escalated += 1;
@@ -400,16 +327,12 @@ export async function consumeCompensationBatch(
         stepId,
         workloadId: options.workerId,
       },
-      ...(isDurableClaim(work)
-        ? {
-            compensationClaim: {
-              requestId: work.request.id,
-              requestClaimToken: work.request.claimToken ?? '',
-              outboxMessageId: work.outboxMessageId,
-              outboxClaimToken: work.outboxClaimToken,
-            },
-          }
-        : {}),
+      compensationClaim: {
+        requestId: work.request.id,
+        requestClaimToken: work.request.claimToken ?? '',
+        outboxMessageId: work.outboxMessageId,
+        outboxClaimToken: work.outboxClaimToken,
+      },
     });
     if (!admission.admitted || admission.effectId !== effectId) {
       await escalate(outbox, work, options, 'COMPENSATION_ADMIT_REJECTED');
@@ -428,24 +351,19 @@ export async function consumeCompensationBatch(
       const code = uncertaintyCode(error);
       if (!code) throw error;
       requireDisposition(
-        isDurableClaim(work)
-          ? await outbox.parkCompensationUnknown({
-              workerId: options.workerId,
-              workerGeneration: options.workerGeneration,
-              claimSecret: options.claimSecret,
-              tenantId: work.request.tenantId,
-              requestId: work.request.id,
-              effectId,
-              actor: options.workerId,
-              outboxMessageId: work.outboxMessageId,
-              outboxClaimToken: work.outboxClaimToken,
-              error: { code, message: 'Compensation completion is uncertain' },
-            })
-          : await outbox.handoffCompensationUnknown({
-              ...mutationAuth(work, options),
-              error: { code, message: 'Compensation completion is uncertain' },
-            }),
-        isDurableClaim(work) ? 'COMPLETION_UNKNOWN' : 'HANDOFF_UNKNOWN',
+        await outbox.parkCompensationUnknown({
+          workerId: options.workerId,
+          workerGeneration: options.workerGeneration,
+          claimSecret: options.claimSecret,
+          tenantId: work.request.tenantId,
+          requestId: work.request.id,
+          effectId,
+          actor: options.workerId,
+          outboxMessageId: work.outboxMessageId,
+          outboxClaimToken: work.outboxClaimToken,
+          error: { code, message: 'Compensation completion is uncertain' },
+        }),
+        'COMPLETION_UNKNOWN',
       );
       result.handedOff += 1;
       continue;
@@ -458,34 +376,29 @@ export async function consumeCompensationBatch(
     }
     if (execution.replayed) result.replayed += 1;
     requireDisposition(
-      isDurableClaim(work)
-        ? await outbox.finalizeCompensation({
-            workerId: options.workerId,
-            workerGeneration: options.workerGeneration,
-            claimSecret: options.claimSecret,
-            tenantId: work.request.tenantId,
-            requestId: work.request.id,
-            effectId,
-            disposition: 'COMPLETED',
-            actor: options.workerId,
-            outboxMessageId: work.outboxMessageId,
-            outboxClaimToken: work.outboxClaimToken,
-            response: execution.response,
-            evidence: await options.terminalEvidence?.({
-              tenantId: work.request.tenantId,
-              runId: work.request.compensationRunId,
-              effectId,
-              projectedState: 'COMPLETED',
-              response: execution.response,
-              eventType: 'compensation.completed',
-              disposition: 'COMPLETED',
-              claimToken: work.outboxClaimToken,
-            }),
-          })
-        : await outbox.completeCompensationWork({
-            ...mutationAuth(work, options),
-            response: execution.response,
-          }),
+      await outbox.finalizeCompensation({
+        workerId: options.workerId,
+        workerGeneration: options.workerGeneration,
+        claimSecret: options.claimSecret,
+        tenantId: work.request.tenantId,
+        requestId: work.request.id,
+        effectId,
+        disposition: 'COMPLETED',
+        actor: options.workerId,
+        outboxMessageId: work.outboxMessageId,
+        outboxClaimToken: work.outboxClaimToken,
+        response: execution.response,
+        evidence: await options.terminalEvidence?.({
+          tenantId: work.request.tenantId,
+          runId: work.request.compensationRunId,
+          effectId,
+          projectedState: 'COMPLETED',
+          response: execution.response,
+          eventType: 'compensation.completed',
+          disposition: 'COMPLETED',
+          claimToken: work.outboxClaimToken,
+        }),
+      }),
       'COMPLETED',
     );
     result.succeeded += 1;

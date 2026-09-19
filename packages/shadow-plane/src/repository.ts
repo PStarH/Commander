@@ -510,17 +510,22 @@ export class ShadowRepository {
   async runRetention(tenantId: string): Promise<number> {
     requireTenant(tenantId);
     return transaction(this.pool, tenantId, async (client) => {
+      // Only withdrawn campaigns are deletable: an open campaign's shadow evidence
+      // must survive its retention deadline until the customer withdraws it.
       const expired = await client.query(
         `SELECT campaign_id FROM commander_shadow.campaigns
-          WHERE tenant_id=$1 AND retention_until <= clock_timestamp() ORDER BY campaign_id`,
+          WHERE tenant_id=$1 AND retention_until <= clock_timestamp()
+            AND state = 'withdrawn' ORDER BY campaign_id`,
         [tenantId],
       );
+      let deleted = 0;
       for (const row of expired.rows) {
         const campaignId = rowString(row, 'campaign_id');
         await lockCampaign(client, tenantId, campaignId);
         const locked = await client.query(
           `SELECT campaign_id FROM commander_shadow.campaigns
-            WHERE tenant_id=$1 AND campaign_id=$2 AND retention_until <= clock_timestamp() FOR UPDATE`,
+            WHERE tenant_id=$1 AND campaign_id=$2 AND retention_until <= clock_timestamp()
+              AND state = 'withdrawn' FOR UPDATE`,
           [tenantId, campaignId],
         );
         if (locked.rows.length === 0) continue;
@@ -529,10 +534,11 @@ export class ShadowRepository {
              (tenant_id_hash, campaign_id_hash, reason) VALUES ($1,$2,'retention')`,
           [campaignHash(tenantId), campaignHash(campaignId)],
         );
-        await client.query(
+        const removal = await client.query(
           `DELETE FROM commander_shadow.campaigns WHERE tenant_id=$1 AND campaign_id=$2`,
           [tenantId, campaignId],
         );
+        deleted += removal.rowCount ?? 0;
       }
       await client.query(
         `INSERT INTO commander_shadow.cleanup_state (tenant_id, last_completed_at)
@@ -540,7 +546,7 @@ export class ShadowRepository {
          DO UPDATE SET last_completed_at=EXCLUDED.last_completed_at`,
         [tenantId],
       );
-      return expired.rows.length;
+      return deleted;
     });
   }
 

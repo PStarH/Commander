@@ -64,7 +64,16 @@ const slackProvider: IMProvider = {
       },
       body: JSON.stringify({ channel: conversationId, text: reply.text }),
     });
-    if (!res.ok) throw new Error(`Slack API error: ${res.status}`);
+    // Slack answers API-level failures with HTTP 200 and `{ok:false, error}`,
+    // so the HTTP status alone cannot decide success: only `ok === true` means
+    // the message was accepted. Surface the platform error string when present.
+    const body = (await res.json().catch(() => null)) as { ok?: boolean; error?: string } | null;
+    if (!res.ok) {
+      throw new Error(`Slack API error: ${res.status}${body?.error ? ` (${body.error})` : ''}`);
+    }
+    if (body?.ok !== true) {
+      throw new Error(`Slack API error: ${body?.error ?? 'unknown error'}`);
+    }
   },
 };
 

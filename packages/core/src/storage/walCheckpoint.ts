@@ -60,11 +60,23 @@ export function walCheckpoint(
   if (!db) return -1;
   try {
     const result = db.pragma(`wal_checkpoint(${mode})`);
-    // result comes back as [number, number, number] — [journalPages, ckptPages, errCode]
+    // better-sqlite3 returns an ARRAY OF ROW OBJECTS for a pragma:
+    //   [{ busy, log, checkpointed }]
+    // The legacy three-number shape ([journalPages, ckptPages, errCode]) is
+    // still accepted for other handles. Reading only the numeric shape made a
+    // busy/failed checkpoint look like a successful zero-frame checkpoint.
+    const first = Array.isArray(result) ? result[0] : result;
+    if (first && typeof first === 'object') {
+      const row = first as { busy?: unknown; checkpointed?: unknown };
+      if (row.busy === undefined && row.checkpointed === undefined) return -1;
+      if (Number(row.busy) !== 0) return -1;
+      const checkpointed = Number(row.checkpointed);
+      return Number.isFinite(checkpointed) ? checkpointed : -1;
+    }
     if (Array.isArray(result) && result.length >= 3) {
       return (result[2] as number) === 0 ? (result[1] as number) : -1;
     }
-    return 0;
+    return -1;
   } catch {
     // Silently swallow — checkpoint is best-effort during close()
     return -1;

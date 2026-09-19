@@ -115,6 +115,41 @@ export interface ContentScanner {
 }
 
 /**
+ * Compile a caller/plugin-supplied rule pattern into a scan-safe RegExp.
+ *
+ * `scanHarmfulContent` walks a rule with `exec` until it returns null. That
+ * contract only terminates for patterns that (a) are global and (b) never
+ * produce a zero-width match at an unchanged `lastIndex`. Registration is the
+ * public boundary, so enforce both here instead of trusting every caller:
+ *
+ * - a non-global pattern would otherwise return the same match forever, and
+ * - a pattern that matches the empty string (`^`, `a*`, `\b`, …) never advances
+ *   `lastIndex`, so the scan loop spins and grows `threats` until OOM.
+ *
+ * A rejected pack must fail loudly: silently dropping the rule would make the
+ * scanner report "no harmful content" for content the operator asked it to
+ * check.
+ */
+function compileScanSafePattern(pattern: RegExp, context: string): RegExp {
+  // Sticky (`y`) matching is position-anchored and would stop a forward scan
+  // after the first non-match; drop it in favour of a global scan.
+  const flags = (pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`).replace(
+    /y/g,
+    '',
+  );
+  const compiled = new RegExp(pattern.source, flags);
+  compiled.lastIndex = 0;
+  const probe = compiled.exec('');
+  if (probe !== null && probe[0].length === 0) {
+    throw new Error(
+      `${context}: pattern /${pattern.source}/${pattern.flags} can match the empty string, ` +
+        'which makes the harmful-content scan loop non-terminating; the rule pack was rejected',
+    );
+  }
+  return compiled;
+}
+
+/**
  * ContentScanner 实现类
  */
 export class DefaultContentScanner implements ContentScanner {
@@ -623,11 +658,13 @@ export class DefaultContentScanner implements ContentScanner {
 
   // ── Harmful content detection: populated by registered rule packs ──
   static registerRulePack(name: string, rules: HarmfulContentRule[]): void {
-    // Clone RegExp instances so the pack cannot mutate scanner state from outside.
-    DefaultContentScanner.rulePacks.set(
-      name,
-      rules.map((r) => ({ ...r, pattern: new RegExp(r.pattern.source, r.pattern.flags) })),
-    );
+    // Compile/validate every pattern BEFORE mutating the registry so a rejected
+    // pack cannot leave a half-registered pack behind.
+    const compiled = rules.map((r) => ({
+      ...r,
+      pattern: compileScanSafePattern(r.pattern, `registerRulePack("${name}")`),
+    }));
+    DefaultContentScanner.rulePacks.set(name, compiled);
   }
 
   static unregisterRulePack(name: string): boolean {
@@ -653,6 +690,13 @@ export class DefaultContentScanner implements ContentScanner {
             location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
             remediation: this.getRemediation({ type: 'harmful_content' } as ContentThreat),
           });
+          // A zero-width match (e.g. a lookahead like `(?=x)`) leaves
+          // `lastIndex` untouched, so `exec` would return the same position
+          // forever: the synchronous scan loop never terminates and `threats`
+          // grows until the process runs out of memory. Force forward progress.
+          if (match[0].length === 0) {
+            pattern.lastIndex += 1;
+          }
         }
       }
     }

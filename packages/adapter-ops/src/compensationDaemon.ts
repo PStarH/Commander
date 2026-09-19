@@ -114,6 +114,7 @@ export class CompensationDaemon {
     inFlight: false,
     claimed: 0,
     completed: 0,
+    handedOff: 0,
     escalated: 0,
     rescheduled: 0,
     skippedOverlappingTicks: 0,
@@ -232,7 +233,11 @@ export class CompensationDaemon {
         replayed: result.replayed,
       };
       this.healthState.claimed += stats.consumed;
-      this.healthState.completed += stats.succeeded + stats.handedOff;
+      // AO-03: only a terminal success is `completed`. A COMPLETION_UNKNOWN
+      // handoff is an undetermined remote outcome, not a success — counting it
+      // as completed made an unresolved effect read as done on /health.
+      this.healthState.completed += stats.succeeded;
+      this.healthState.handedOff += stats.handedOff;
       this.healthState.escalated += stats.escalated;
       await this.options.heartbeat?.();
       this.healthState.lastSucceededAt = new Date().toISOString();

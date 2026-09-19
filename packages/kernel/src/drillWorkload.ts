@@ -19,14 +19,28 @@ export interface CreatedRun {
 export interface DrillTenantContextConfig {
   authorityDatabaseUrl?: string;
   runtimeDatabaseUrl?: string;
-  phase?: 'enforce';
+  /**
+   * KB-05: `enforce` runs with the six-role tenant-authority DSN;
+   * `without-tenant-context-authority` is an explicit, auditable opt-out. The
+   * caller (drill script) must treat that phase as NOT VERIFIED, never PASS.
+   */
+  phase?: 'enforce' | 'without-tenant-context-authority';
 }
 
 export function resolveDrillTenantContextConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): DrillTenantContextConfig {
   const raw = env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL?.trim();
-  if (!raw) return {};
+  if (!raw) {
+    // KB-05: a missing authority DSN used to degrade silently to a repository
+    // with no tenant-context authority, so a PITR/failover drill could print
+    // PASS while never exercising the enforced tenant path. Fail closed unless
+    // the operator explicitly declares the reduced scope.
+    if (env.COMMANDER_DRILL_WITHOUT_TENANT_AUTHORITY === '1') {
+      return { phase: 'without-tenant-context-authority' };
+    }
+    throw new Error('DRILL_TENANT_AUTHORITY_DATABASE_URL_REQUIRED');
+  }
   let url: URL;
   try {
     url = new URL(raw);
@@ -79,7 +93,8 @@ export async function createDrillRun(
       authorityPool
         ? {
             tenantContextAuthority: new PostgresTenantContextAuthority(authorityPool),
-            tenantContextPhase: tenantContext.phase ?? 'enforce',
+            // An authority pool only exists for the `enforce` phase.
+            tenantContextPhase: 'enforce' as const,
           }
         : undefined,
     );

@@ -247,6 +247,7 @@ describe('GitHub adapter', () => {
           idempotencyKey: 'k2',
           compensable: true,
         });
+        assert.ok(merge);
         stack.scheduler.recordResult({
           runId: h.runId,
           leaseToken: h.leaseToken,
@@ -283,6 +284,7 @@ describe('GitHub adapter', () => {
           idempotencyKey: 'k3',
           compensable: true,
         });
+        assert.ok(create);
         stack.scheduler.recordResult({
           runId: h.runId,
           leaseToken: h.leaseToken,
@@ -321,6 +323,7 @@ describe('GitHub adapter', () => {
           idempotencyKey: 'k4',
           compensable: true,
         });
+        assert.ok(create);
         stack.scheduler.recordResult({
           runId: h.runId,
           leaseToken: h.leaseToken,
@@ -360,6 +363,7 @@ describe('GitHub adapter', () => {
           idempotencyKey: 'shared-key',
           compensable: true,
         });
+        assert.ok(first);
         assert.strictEqual(first.replayed, false);
         stack.scheduler.recordResult({
           runId: h.runId,
@@ -379,6 +383,7 @@ describe('GitHub adapter', () => {
           idempotencyKey: 'shared-key',
           compensable: true,
         });
+        assert.ok(second);
         assert.strictEqual(second.replayed, true);
         assert.strictEqual(second.cachedResult, JSON.stringify({ number: 7, url: 'x' }));
       } finally {

@@ -1,13 +1,20 @@
 import { describe, it, expect } from 'vitest';
-import { MetaTool, getBuiltinMetaSpecs, findMatchingMetaSpec } from '../../src/tools/metaTool';
+import {
+  MetaTool,
+  getBuiltinMetaSpecs,
+  findMatchingMetaSpec,
+  type MetaToolSpec,
+} from '../../src/tools/metaTool';
+
+type SubTool = (args: Record<string, unknown>) => Promise<string>;
 
 describe('MetaTool', () => {
   it('creates a valid tool definition from a spec', () => {
-    const subToolMap = new Map();
+    const subToolMap = new Map<string, SubTool>();
     subToolMap.set('web_search', async (args) => `Search results for ${args.query}`);
     subToolMap.set('web_fetch', async (args) => `Content from ${args.url}`);
 
-    const spec = {
+    const spec: MetaToolSpec = {
       sequence: ['web_search', 'web_fetch'],
       name: 'research_topic',
       description: 'Search and fetch',
@@ -26,7 +33,7 @@ describe('MetaTool', () => {
 
   it('executes sub-tools in sequence', async () => {
     const executionLog: string[] = [];
-    const subToolMap = new Map();
+    const subToolMap = new Map<string, SubTool>();
     subToolMap.set('web_search', async (args) => {
       executionLog.push(`search:${args.query}`);
       return `Result URL: https://example.com`;
@@ -36,7 +43,7 @@ describe('MetaTool', () => {
       return `Page content`;
     });
 
-    const spec = {
+    const spec: MetaToolSpec = {
       sequence: ['web_search', 'web_fetch'],
       name: 'research_topic',
       description: '',
@@ -53,8 +60,8 @@ describe('MetaTool', () => {
   });
 
   it('handles missing sub-tools gracefully', async () => {
-    const subToolMap = new Map();
-    const spec = {
+    const subToolMap = new Map<string, SubTool>();
+    const spec: MetaToolSpec = {
       sequence: ['nonexistent_tool'],
       name: 'broken_meta',
       description: '',
@@ -67,11 +74,11 @@ describe('MetaTool', () => {
   });
 
   it('tracks usage count', async () => {
-    const subToolMap = new Map();
+    const subToolMap = new Map<string, SubTool>();
     subToolMap.set('web_search', async () => 'results');
     subToolMap.set('web_fetch', async () => 'content');
 
-    const spec = {
+    const spec: MetaToolSpec = {
       sequence: ['web_search', 'web_fetch'],
       name: 'counter_test',
       description: '',

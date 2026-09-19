@@ -19,7 +19,8 @@ import {
   createGitHubPullRequestCreateAdapter,
 } from '../packages/action-adapters/src/index.js';
 import { CompensationDaemon } from '../packages/adapter-ops/src/compensationDaemon.js';
-import { sealGovernedCompensationAuthorization } from '../packages/kernel/src/ops/compensationAuthority.js';
+import { canonicalCompensationHash } from '../packages/kernel/src/ops/compensationAuthority.js';
+import type { DurableCompensationMetadataAuthorization as GovernedCompensationMetadataAuthorization } from '../packages/kernel/src/ops/compensationPersistence.js';
 import {
   assertComposeCellHealth,
   CELL_COMPOSE_ENV,
@@ -130,69 +131,119 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
     lastHeartbeatAt: new Date(),
   });
 
-  // Sealed by the public fixture builder so the consumer's hash/digest checks run.
-  const authorization = sealGovernedCompensationAuthorization({
-    schema: 'commander.compensation/v1',
-    authorizationId: 'authorization-adapter-ops-mock',
-    requestId: 'request-adapter-ops-mock',
-    tenantId,
-    originalRunId: 'run-cmp-forward',
-    originalEffectId: 'effect-forward',
-    originalRunStateAtRequest: 'COMPENSATING',
-    compensationRunId: 'run-cmp',
-    compensationStepId: 'step-cmp',
-    compensationEffectId: 'effect-cmp',
-    compensationEffectType: adapter.descriptor.compensationEffectType,
-    compensationRequest: {
-      originalEffectId: 'effect-forward',
-      destination: 'github://octo/repo/pulls',
-      forwardResponse: { prNumber: 1 },
-      compensationPatch: { state: 'closed' },
-    },
-    idempotencyKey: 'cmp:effect-forward:1.0.0',
-    forwardReceipt: { prNumber: 1 },
-    adapterVersion: adapter.descriptor.adapterVersion,
-    policyDecisionId: 'decision-adapter-ops-mock',
-    policySnapshotId: 'policy-adapter-ops-mock',
-    decisionEffect: 'allow',
-    authorizationExpiresAt: '2099-07-29T11:00:00.000Z',
-    approvalBinding: null,
-  });
-
-  // The claim guard requires the compensation run/step to be PENDING and to
-  // persist the exact authorization carried by the outbox payload.
-  await kernel.createRun(
+  // ── Forward (original) run + COMPLETED forward effect. The durable compensation
+  // authorization binds to this effect, and `requestCompensation` re-derives the
+  // action digest from the effect's request.destination + response, so both must
+  // exist before the authorization is created.
+  const forwardWorkerId = 'forward-exec-mock';
+  const forwardWorkerGeneration = 1;
+  const forwardSecret = kernel.seedTestWorker(
+    forwardWorkerId,
+    [tenantId],
+    forwardWorkerGeneration,
     {
-      id: authorization.compensationRunId,
-      tenantId,
-      intentHash: 'intent-adapter-ops-mock',
-      workGraphHash: 'graph-adapter-ops-mock',
-      workGraphVersion: 'action-gateway-compensation/v2',
-      policySnapshotId: authorization.policySnapshotId,
-      metadata: { compensation: { authorization, disposition: 'PENDING' } },
-      steps: [{ id: authorization.compensationStepId, kind: 'tool', input: { authorization } }],
+      capabilities: ['agent', 'tool'],
     },
-    workerId,
   );
+  const forwardRequest = { destination: 'github://octo/repo/pulls' };
+  const forwardResponse = { prNumber: 1 };
   await kernel.createRun(
     {
-      id: authorization.originalRunId,
+      id: 'run-cmp-forward',
       tenantId,
       intentHash: 'intent-adapter-ops-forward',
       workGraphHash: 'graph-adapter-ops-forward',
       workGraphVersion: 'v1',
-      policySnapshotId: authorization.policySnapshotId,
+      policySnapshotId: 'policy-adapter-ops-mock',
       steps: [{ id: 'step-forward', kind: 'tool' }],
     },
-    workerId,
+    forwardWorkerId,
   );
-
-  kernel.seedOutboxMessage({
-    topic: KERNEL_COMPENSATION_TOPIC,
-    tenantId,
-    key: `${tenantId}/${authorization.compensationRunId}/${authorization.originalEffectId}`,
-    payload: authorization as unknown as Record<string, unknown>,
+  const forwardStep = await kernel.claimNextStep({
+    workerId: forwardWorkerId,
+    workerGeneration: forwardWorkerGeneration,
+    claimSecret: forwardSecret,
+    capabilities: ['tool'],
+    leaseTtlMs: 60_000,
   });
+  if (!forwardStep?.lease) throw new Error('forward step claim failed');
+  const forwardAdmitted = await kernel.admitEffect({
+    id: 'effect-forward',
+    runId: 'run-cmp-forward',
+    stepId: forwardStep.id,
+    tenantId,
+    // `read.*` is outside the Class A family, so a forward effect needs no
+    // operations readiness that the seeding below is not responsible for.
+    type: 'read.github.pull-request',
+    idempotencyKey: 'forward-adapter-ops-mock',
+    policyDecisionId: 'decision-adapter-ops-mock',
+    policySnapshotId: 'policy-adapter-ops-mock',
+    actionDigest: 'a'.repeat(64),
+    request: forwardRequest,
+    lease: forwardStep.lease,
+    actor: forwardWorkerId,
+  });
+  if (!forwardAdmitted.admitted) {
+    throw new Error(`forward effect admission failed: ${forwardAdmitted.reason}`);
+  }
+  const forwardCompleted = await kernel.completeEffect(
+    'effect-forward',
+    tenantId,
+    forwardStep.lease,
+    forwardResponse,
+    forwardWorkerId,
+  );
+  if (!forwardCompleted) throw new Error('forward effect completion failed');
+
+  // ── Durable authorization + durable request. `requestCompensation` is what
+  // publishes the governed compensation outbox row, so the fixture must never
+  // seed that row by hand: the claim guard resolves the durable request and its
+  // sealed authorization, and drops (marks published) any message it cannot
+  // resolve.
+  const compensationPatch = { state: 'closed' };
+  const authorizationRecord = {
+    id: 'authorization-adapter-ops-mock',
+    tenantId,
+    originalRunId: 'run-cmp-forward',
+    originalEffectId: 'effect-forward',
+    compensationEffectType: adapter.descriptor.compensationEffectType,
+    adapterVersion: adapter.descriptor.adapterVersion,
+    compensationPatch,
+    forwardReceiptHash: canonicalCompensationHash(forwardResponse),
+    policyDecisionId: 'decision-adapter-ops-mock',
+    policySnapshotId: 'policy-adapter-ops-mock',
+    decision: 'allow' as const,
+    actionDigest: canonicalCompensationHash({
+      type: adapter.descriptor.compensationEffectType,
+      originalEffectId: 'effect-forward',
+      adapterVersion: adapter.descriptor.adapterVersion,
+      destination: forwardRequest.destination,
+      forwardResponse,
+      compensationPatch,
+    }),
+    expiresAt: new Date(Date.now() + 300_000).toISOString(),
+  };
+  await kernel.createCompensationAuthorization(authorizationRecord);
+  const requested = await kernel.requestCompensation({
+    tenantId,
+    authorizationId: authorizationRecord.id,
+    actor: 'action-gateway',
+  });
+  if (!requested.accepted) {
+    throw new Error(`compensation request rejected: ${requested.reason}`);
+  }
+  const durableRequest = requested.request;
+  // `requestCompensation` creates the compensation run and step itself (with the
+  // durable authorization on the run metadata AND the step input), so the fixture
+  // must not create them: doing so collides with DUPLICATE_RUN. Read back exactly
+  // what the repository persisted instead of rebuilding it.
+  const compensationRun = await kernel.getRun(durableRequest.compensationRunId, tenantId);
+  const authorization = (
+    compensationRun?.metadata?.compensation as
+      { authorization: GovernedCompensationMetadataAuthorization } | undefined
+  )?.authorization;
+  if (!authorization) throw new Error('compensation run metadata authorization missing');
+
   kernel.seedOutboxMessage({
     topic: 'commander.run.created',
     tenantId,
@@ -264,23 +315,62 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
           throw new Error('compensation effect was not admitted before execution');
         }
         executions += 1;
-        const completed = await kernel.completeEffect(
+        const lease = {
+          workerId: admittedLease.workerId,
+          workerGeneration: admittedLease.workerGeneration ?? workerGeneration,
+          token: admittedLease.token,
+          fencingEpoch: admittedLease.fencingEpoch,
+        };
+        const admitted = await kernel.getEffect(input.effectId, tenantId);
+        if (!admitted) throw new Error('compensation effect not found before completion');
+        // Completion must carry terminal evidence: the daemon builds the
+        // compensation's own terminal evidence from it and fails closed with
+        // TERMINAL_EVIDENCE_REQUIRED when the completed effect has none.
+        const bundleId = `evidence_${admitted.id}`;
+        const contentHash = 'e'.repeat(64);
+        const signature = {
+          algorithm: 'Ed25519' as const,
+          keyId: 'adapter-ops-mock-key',
+          signedAt: '2026-08-05T00:00:00.000Z',
+          value: 'adapter-ops-mock-signature',
+        };
+        const completed = await kernel.completeEffectWithEvidence(
           input.effectId,
           tenantId,
-          {
-            workerId: admittedLease.workerId,
-            workerGeneration: admittedLease.workerGeneration ?? workerGeneration,
-            token: admittedLease.token,
-            fencingEpoch: admittedLease.fencingEpoch,
-          },
+          lease,
           { state: 'closed' },
           workerId,
+          {
+            tenantId,
+            runId: admitted.runId,
+            bundleId,
+            actionDigest: admitted.actionDigest,
+            body: {
+              bodyVersion: 'commander.evidence-body/v1',
+              bundleId,
+              actionDigest: admitted.actionDigest,
+              contentHash,
+              terminalDisposition: 'SUCCEEDED',
+              scope: { tenantId, runId: admitted.runId, effectId: admitted.id },
+              effects: [{ effectId: admitted.id, state: 'COMPLETED' }],
+              auditEvents: [{ type: 'compensation.completed' }],
+              signature,
+            },
+            contentHash,
+            signature,
+            createdAt: '2026-08-05T00:00:00.000Z',
+            anchoredAt: '2026-08-05T00:00:01.000Z',
+            retentionUntil: '2027-08-05T00:00:00.000Z',
+          },
         );
         if (!completed) throw new Error('compensation effect completion was rejected');
         return { effectId: completed.id, replayed: false, response: { state: 'closed' } };
       },
     },
     tokenProvider: async () => 'cmp-token',
+    // The daemon builds terminal evidence for the compensation effect; without
+    // this lifecycle repository it fails closed with TERMINAL_EVIDENCE_REQUIRED.
+    evidenceRepository: kernel,
     pollIntervalMs: 60_000,
     workerId,
     workerGeneration,

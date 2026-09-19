@@ -84,74 +84,88 @@ export const DECLARED_NOT_RUN = [
   {
     file: 'tests/benchmark/advancedPerformanceBenchmark.test.ts',
     category: 'requires-external-env',
-    reason: 'Latency-threshold benchmark; asserts wall-clock budgets that are not reproducible on a shared CI runner.',
+    reason:
+      'Latency-threshold benchmark; asserts wall-clock budgets that are not reproducible on a shared CI runner.',
   },
   {
     file: 'tests/benchmark/comparisonBenchmark.test.ts',
     category: 'requires-external-env',
-    reason: 'Latency-threshold benchmark; asserts wall-clock budgets that are not reproducible on a shared CI runner.',
+    reason:
+      'Latency-threshold benchmark; asserts wall-clock budgets that are not reproducible on a shared CI runner.',
   },
   {
     file: 'tests/benchmark/performanceBenchmark.test.ts',
     category: 'requires-external-env',
-    reason: 'Latency-threshold benchmark; asserts wall-clock budgets that are not reproducible on a shared CI runner.',
+    reason:
+      'Latency-threshold benchmark; asserts wall-clock budgets that are not reproducible on a shared CI runner.',
   },
   {
     file: 'tests/benchmark/loadBenchmark.test.ts',
     category: 'requires-external-env',
-    reason: 'Load benchmark with intermittent CI timeouts; needs a dedicated, resource-controlled job.',
+    reason:
+      'Load benchmark with intermittent CI timeouts; needs a dedicated, resource-controlled job.',
   },
   {
     file: 'tests/benchmark/realWorldBenchmark.test.ts',
     category: 'requires-external-env',
-    reason: 'Requires the external StepFun API and network egress; must not run in the offline unit suite.',
+    reason:
+      'Requires the external StepFun API and network egress; must not run in the offline unit suite.',
   },
   {
     file: 'tests/benchmark/multiAgentBenchmark.metrics.test.ts',
     category: 'known-red-tracked',
-    reason: 'Imports src/benchmark/multiAgentBenchmark, which does not exist on this branch — module is retired or not yet extracted.',
+    reason:
+      'Imports src/benchmark/multiAgentBenchmark, which does not exist on this branch — module is retired or not yet extracted.',
   },
   // ---- chaos: needs orchestrated fault injection ---------------------------
   {
     file: 'tests/chaos/l1Llm.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Chaos suite requiring orchestrated fault injection at the LLM layer; belongs in a dedicated chaos job.',
+    reason:
+      'Chaos suite requiring orchestrated fault injection at the LLM layer; belongs in a dedicated chaos job.',
   },
   {
     file: 'tests/chaos/l2Tool.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Chaos suite requiring orchestrated fault injection at the tool layer; belongs in a dedicated chaos job.',
+    reason:
+      'Chaos suite requiring orchestrated fault injection at the tool layer; belongs in a dedicated chaos job.',
   },
   {
     file: 'tests/chaos/l3System.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Chaos suite requiring orchestrated fault injection at the system layer; belongs in a dedicated chaos job.',
+    reason:
+      'Chaos suite requiring orchestrated fault injection at the system layer; belongs in a dedicated chaos job.',
   },
   {
     file: 'tests/chaos/l4Tenant.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Chaos suite requiring orchestrated fault injection at the tenant layer; belongs in a dedicated chaos job.',
+    reason:
+      'Chaos suite requiring orchestrated fault injection at the tenant layer; belongs in a dedicated chaos job.',
   },
   {
     file: 'tests/chaos/orchestrator.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Chaos orchestrator harness; requires the full fault-injection runtime rather than an offline unit run.',
+    reason:
+      'Chaos orchestrator harness; requires the full fault-injection runtime rather than an offline unit run.',
   },
   {
     file: 'tests/chaos/recoveryVerifier.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Chaos recovery verifier; requires the fault-injection runtime and a controlled crash surface.',
+    reason:
+      'Chaos recovery verifier; requires the fault-injection runtime and a controlled crash surface.',
   },
   // ---- crash / resume harnesses -------------------------------------------
   {
     file: 'tests/stress/resume.hammer.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Crash-resume hammer loop; drives repeated process restarts and needs an isolated recovery job.',
+    reason:
+      'Crash-resume hammer loop; drives repeated process restarts and needs an isolated recovery job.',
   },
   {
     file: 'tests/ultimate/resume.goal.test.ts',
     category: 'chaos-orchestration',
-    reason: 'Crash-resume harness for the Goal topology; needs an isolated recovery job, not the offline unit suite.',
+    reason:
+      'Crash-resume harness for the Goal topology; needs an isolated recovery job, not the offline unit suite.',
   },
   {
     file: 'tests/ultimate/resume.sequential.test.ts',
@@ -172,12 +186,14 @@ export const DECLARED_NOT_RUN = [
   {
     file: 'tests/e2e/real-api.test.ts',
     category: 'requires-external-env',
-    reason: 'Exercises a real provider API and needs live credentials; must be a separate, explicitly gated job.',
+    reason:
+      'Exercises a real provider API and needs live credentials; must be a separate, explicitly gated job.',
   },
   {
     file: 'tests/e2e/real-api-chaos.test.ts',
     category: 'requires-external-env',
-    reason: 'Real-provider chaos run; needs live credentials plus fault injection, so it cannot run offline.',
+    reason:
+      'Real-provider chaos run; needs live credentials plus fault injection, so it cannot run offline.',
   },
   // tests/deployment/tenantDeployment.test.ts is NOT declared here: it needs no
   // deployment target. It provisions its own temp config/data/keys root and runs
@@ -185,14 +201,10 @@ export const DECLARED_NOT_RUN = [
   // tests, ~3s), and deploy/README.md §8 documents running it directly.
   // ---- known-red: real defects tracked outside this workstream ------------
   {
-    file: 'tests/runtime/llmCaller.test.ts',
-    category: 'known-red-tracked',
-    reason: 'FallbackChainExhaustedError does not record a fallback_exhausted sample — a real defect in the LLMCaller phase-1 helper.',
-  },
-  {
     file: 'tests/ultimate/checkpoint.roundTrip.test.ts',
     category: 'known-red-tracked',
-    reason: 'Orchestrator checkpoint emission for the Goal and Swarm topologies is not wired into ReliabilityEngine persistence.',
+    reason:
+      'Orchestrator checkpoint emission for the Goal and Swarm topologies is not wired into ReliabilityEngine persistence.',
   },
   {
     file: 'tests/ultimate/coordinationPolicy.test.ts',
@@ -217,38 +229,39 @@ export const DECLARED_NOT_RUN = [
   {
     file: 'tests/plugins/observability/otelExporter.test.ts',
     category: 'known-red-tracked',
-    reason: 'Requires src/plugins/builtin/observability/otelExporter, which has not been extracted from core yet.',
+    reason:
+      'Requires src/plugins/builtin/observability/otelExporter, which has not been extracted from core yet.',
   },
   {
     file: 'tests/plugins/observability/retryRuleOnRealTraces.test.ts',
     category: 'known-red-tracked',
-    reason: 'Depends on the plugin otelExporter module, which has not been extracted from core yet.',
+    reason:
+      'Depends on the plugin otelExporter module, which has not been extracted from core yet.',
   },
   {
     file: 'tests/security/auditAggregatorBridge.test.ts',
     category: 'known-red-tracked',
-    reason: 'Fails in isolation (assertion "expected 0 to be greater than 0") against the current audit aggregator bridge.',
+    reason:
+      'Fails in isolation (assertion "expected 0 to be greater than 0") against the current audit aggregator bridge.',
   },
   {
     file: 'src/security/owaspAgenticAiTop10.test.ts',
     category: 'known-red-tracked',
-    reason: 'Fails in isolation: an empty detection window is reported as "No detections" instead of the expected GREEN grade.',
+    reason:
+      'Fails in isolation: an empty detection window is reported as "No detections" instead of the expected GREEN grade.',
   },
   // ---- verified unreachable, not yet triaged ------------------------------
   {
     file: 'tests/capability-token-debug.test.ts',
     category: 'unregistered-known-debt',
-    reason: 'Debug scratch test never registered with either runner; verified unreachable. Triage pending.',
-  },
-  {
-    file: 'tests/security/securityGuardianFacade.test.ts',
-    category: 'unregistered-known-debt',
-    reason: 'Never registered with either runner. Passes in isolation, so it is a candidate for registration after review.',
+    reason:
+      'Debug scratch test never registered with either runner; verified unreachable. Triage pending.',
   },
   {
     file: 'src/storage/dataRetention.test.ts',
     category: 'unregistered-known-debt',
-    reason: 'Never registered with either runner. Passes in isolation, so it is a candidate for registration after review.',
+    reason:
+      'Never registered with either runner. Passes in isolation, so it is a candidate for registration after review.',
   },
 ];
 
@@ -387,7 +400,10 @@ export function readVitestInclude(root = CORE_ROOT) {
   findTestObject(sourceFile);
 
   if (!testObject) {
-    return { status: 'CONFIG_UNRESOLVED', detail: 'no `test:` object literal found in vitest.config.ts' };
+    return {
+      status: 'CONFIG_UNRESOLVED',
+      detail: 'no `test:` object literal found in vitest.config.ts',
+    };
   }
 
   const includeProp = testObject.properties.find(
@@ -399,7 +415,8 @@ export function readVitestInclude(root = CORE_ROOT) {
   if (!ts.isArrayLiteralExpression(includeProp.initializer)) {
     return {
       status: 'CONFIG_UNRESOLVED',
-      detail: '`test.include` is not a static array literal, so the enabled set cannot be determined',
+      detail:
+        '`test.include` is not a static array literal, so the enabled set cannot be determined',
     };
   }
 
@@ -410,7 +427,8 @@ export function readVitestInclude(root = CORE_ROOT) {
     } else if (ts.isSpreadElement(element)) {
       return {
         status: 'CONFIG_UNRESOLVED',
-        detail: '`test.include` contains a spread element, so the enabled set cannot be determined statically',
+        detail:
+          '`test.include` contains a spread element, so the enabled set cannot be determined statically',
       };
     } else {
       return {

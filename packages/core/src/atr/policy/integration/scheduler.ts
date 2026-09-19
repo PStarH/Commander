@@ -1,11 +1,8 @@
 import { reportSilentFailure } from '../../../silentFailureReporter';
-import { createHash } from 'node:crypto';
 import type { ExecutionScheduler, RunHandle } from '../../scheduler';
 import type { PolicyInput, PolicyDecision, PolicyEngineOptions, PolicyEffect } from '../types';
 import { PolicyEngine } from '../engine';
-import { DecisionCache } from '../cache';
 import { parsePolicyPack } from '../loader';
-import { canonicalJson } from '../engine';
 import {
   DEFAULT_CODING_PACK,
   READ_ONLY_PACK,
@@ -14,7 +11,15 @@ import {
 } from '../packs/defaultCoding';
 import { getSecurityAuditLogger } from '../../../security/securityAuditLogger';
 
-export interface PolicyHookOptions extends PolicyEngineOptions {
+/**
+ * AP-02: the authorization-result cache was deleted. Caching a decision is only
+ * sound when its key covers the *complete* decision input (`tenant.config`,
+ * `metrics`, `time`, `run.fencingEpoch`, `isReadOnly`/`isIdempotent`, ...) and
+ * invalidation goes through explicit owner indexes. Here a sound key would have
+ * to include `input.time.now`, which changes on every call, so the cache could
+ * never hit; it was deleted outright rather than left inert.
+ */
+export type PolicyHookOptions = PolicyEngineOptions & {
   pack?:
     | 'default'
     | 'readonly'
@@ -22,11 +27,10 @@ export interface PolicyHookOptions extends PolicyEngineOptions {
     | 'legacyExec'
     | { source: string; name: string; version: number };
   enableAudit?: boolean;
-}
+};
 
 export class PolicyHook {
   private readonly engine: PolicyEngine;
-  private readonly cache = new DecisionCache();
   private readonly enableAudit: boolean;
   private readonly packName: string;
   private readonly packVersion: number;
@@ -79,20 +83,8 @@ export class PolicyHook {
   }
 
   evaluate(input: PolicyInput): PolicyDecision {
-    const cacheKey = this.cacheKey(input);
-    if (input.phase === 'tool') {
-      const hit = this.cache.get(cacheKey);
-      if (hit) {
-        if (this.enableAudit) this.auditDecision(hit, 'cache_hit');
-        this.emitBlockMarker(hit);
-        return hit;
-      }
-    }
     const decision = this.engine.evaluate(input);
-    if (input.phase === 'tool' && decision.cacheable) {
-      this.cache.set(cacheKey, decision);
-    }
-    if (this.enableAudit) this.auditDecision(decision, 'evaluated');
+    if (this.enableAudit) this.auditDecision(decision);
     this.emitBlockMarker(decision);
     return decision;
   }
@@ -108,24 +100,8 @@ export class PolicyHook {
     console.log(`[🔥 拦截成功] ${decision.matchedRule ?? 'policy'}: ${decision.reason}`);
   }
 
-  invalidateRun(runId: string): number {
-    return this.cache.invalidateByRun(runId);
-  }
-
-  invalidateTenant(tenantId: string | null): number {
-    return this.cache.invalidateByTenant(tenantId);
-  }
-
-  invalidatePack(): number {
-    return this.cache.invalidateByPackVersion(this.packVersion);
-  }
-
   getStats() {
-    return {
-      ...this.engine.getStats(),
-      cacheSize: this.cache.size(),
-      cacheHitRate: this.cache.hitRate(),
-    };
+    return this.engine.getStats();
   }
 
   getPackName(): string {
@@ -135,31 +111,14 @@ export class PolicyHook {
     return this.packVersion;
   }
 
-  private cacheKey(input: PolicyInput): string {
-    const obj = {
-      tenant: input.tenant.id,
-      run: input.run.id,
-      pack: this.packVersion,
-      phase: input.phase,
-      step: input.action.stepNumber,
-      tool: input.tool.name,
-      toolCat: input.tool.category,
-      args: input.action.args,
-      destructive: input.tool.destructive,
-      ext: input.tool.externalSystem,
-      leaseEpoch: input.action.fencingEpoch,
-    };
-    return createHash('sha256').update(canonicalJson(obj)).digest('hex');
-  }
-
-  private auditDecision(decision: PolicyDecision, source: 'evaluated' | 'cache_hit'): void {
+  private auditDecision(decision: PolicyDecision): void {
     try {
       const audit = getSecurityAuditLogger();
       audit.logEvent({
         type: 'policy_decision' as never,
         severity: this.severityFor(decision.effect),
         source: `PolicyEngine:${this.packName}@${this.packVersion}`,
-        message: `${decision.effect}: ${decision.reason} (${source})`,
+        message: `${decision.effect}: ${decision.reason} (evaluated)`,
         details: {
           decisionId: decision.decisionId,
           effect: decision.effect,
@@ -170,7 +129,7 @@ export class PolicyHook {
           riskScore: decision.riskScore,
           latencyMs: decision.latencyMs,
           cached: decision.cached,
-          source,
+          source: 'evaluated',
         },
         context: {
           runId: decision.runId,

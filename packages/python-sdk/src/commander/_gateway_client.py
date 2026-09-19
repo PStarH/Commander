@@ -369,7 +369,11 @@ class CommanderGatewayClient:
     def _build_headers(self) -> dict[str, str]:
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         if self._api_key:
-            headers["Authorization"] = f"Bearer {self._api_key}"
+            # AUDIT-D1①: a static Commander API key is sent as X-API-Key.
+            # Authorization: Bearer is reserved for JWT access tokens and is
+            # rejected by enterprise /v1 JWT middleware (401 INVALID_TOKEN)
+            # before API-key authentication can inspect it.
+            headers["X-API-Key"] = self._api_key
         return headers
 
     async def _request(self, method: str, path: str, **kwargs: Any) -> Any:

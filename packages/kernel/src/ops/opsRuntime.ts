@@ -7,8 +7,16 @@ export interface OpsLoopHealth {
   isHealthy(now?: number): boolean;
 }
 
+/** Delivery outcome reported by the outbox publisher for one drain tick. */
+export interface OutboxPublishResult {
+  published: number;
+  duplicates: number;
+  retried: number;
+  failed: number;
+}
+
 interface OutboxComponent {
-  publish(limit?: number, now?: Date): Promise<unknown>;
+  publish(limit?: number, now?: Date): Promise<OutboxPublishResult | void>;
 }
 
 export interface KernelOpsRuntimeDependencies {
@@ -20,6 +28,17 @@ export interface KernelOpsRuntimeDependencies {
   /** Compensation consumer loop — required for /ready to prove the loop is alive.
    *  Probe-only mode proves claimability, NOT that compensation messages are drained. */
   compensation: StartStopComponent & OpsLoopHealth;
+}
+
+/**
+ * True when a publish tick fully delivered every message it claimed. Messages
+ * that stay in the backlog (`retried`) are not delivery failures, but a tick that
+ * failed to deliver anything it claimed is: `/ready` must not report ready while
+ * the ops event stream is not actually being delivered.
+ */
+function publishDelivered(result: OutboxPublishResult | void): boolean {
+  if (result === undefined || result === null) return true;
+  return result.failed === 0 && !(result.published === 0 && result.retried > 0);
 }
 
 export class KernelOpsRuntime {
@@ -69,7 +88,11 @@ export class KernelOpsRuntime {
     return ['reclaim', 'timer', 'outbox', 'compensation'];
   }
 
-  /** True when all ops loops completed a successful tick recently. */
+  /**
+   * True when all ops loops completed a tick recently and the outbox actually
+   * delivered the messages that tick claimed. Liveness and delivery both gate
+   * readiness: a running loop that cannot publish must not report ready.
+   */
   isReady(now = Date.now()): boolean {
     if (!this.running) return false;
     if (!this.dependencies.reclaim.isHealthy(now)) return false;
@@ -91,8 +114,8 @@ export class KernelOpsRuntime {
     const epoch = this.outboxEpoch;
     this.outboxInFlight = this.dependencies.outbox
       .publish(this.dependencies.outboxBatchSize)
-      .then(() => {
-        if (this.running && this.outboxEpoch === epoch) {
+      .then((result) => {
+        if (this.running && this.outboxEpoch === epoch && publishDelivered(result)) {
           this.lastOutboxOkAt = Date.now();
         }
       })

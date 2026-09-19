@@ -463,6 +463,7 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
       },
     };
     await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_EFFECT_BROKER: '1' }, async () => {
+      const { issuer } = makeTokenPair();
       const executor = new ConnectorStepExecutor(
         {
           get: () => {
@@ -476,6 +477,7 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
           register: () => undefined,
         },
         stubBroker,
+        issuer,
       );
       const step = createMockStep({
         kind: 'connector',
@@ -488,10 +490,13 @@ describe('L3-03a ConnectorStepExecutor production monopoly', () => {
           capabilityToken: 'tok',
         },
       });
-      const result = await executor.execute(step, {
-        signal: ac.signal,
-        worker: createMockWorker(),
-      });
+      const worker = createMockWorker();
+      const result = await runWithStepWorkloadIdentity(step, worker, () =>
+        executor.execute(step, {
+          signal: ac.signal,
+          worker,
+        }),
+      );
       assert.equal(registryHit, false);
       assert.equal(brokerHit, true);
       assert.deepEqual((result as { result: unknown }).result, { rows: [] });

@@ -17,7 +17,7 @@ describe('Teams provider', () => {
     assert.equal(teamsProvider.verify(req, 'secret'), false);
   });
 
-  it('parses activity', () => {
+  it('parses activity', async () => {
     const req = {
       method: 'POST',
       query: {},
@@ -31,7 +31,7 @@ describe('Teams provider', () => {
       },
       headers: {},
     };
-    const msg = teamsProvider.parseMessage(req);
+    const msg = await teamsProvider.parseMessage(req);
     assert.equal(msg.text, 'hello teams');
     assert.equal(msg.conversationId, 'conv-1');
   });
@@ -45,22 +45,22 @@ describe('Teams provider', () => {
     assert.equal(teamsProvider.verify(req, 'secret'), false);
   });
 
-  it('parses activity with missing from/conversation fields', () => {
+  it('parses activity with missing from/conversation fields', async () => {
     const req = {
       method: 'POST',
       query: {},
       body: { id: 'a-1', type: 'message', text: 'hello' },
       headers: {},
     };
-    const msg = teamsProvider.parseMessage(req);
+    const msg = await teamsProvider.parseMessage(req);
     assert.equal(msg.text, 'hello');
     assert.equal(msg.senderId, 'unknown');
     assert.equal(msg.conversationId, 'unknown');
   });
 
-  it('parses activity with empty body', () => {
+  it('parses activity with empty body', async () => {
     const req = { method: 'POST', query: {}, body: null, headers: {} };
-    const msg = teamsProvider.parseMessage(req);
+    const msg = await teamsProvider.parseMessage(req);
     assert.equal(msg.text, '');
     assert.equal(msg.senderId, 'unknown');
   });
@@ -81,15 +81,16 @@ describe('Teams provider', () => {
   });
 
   it('sendMessage throws when endpoint is missing', async () => {
-    await assert.rejects(
-      () => teamsProvider.sendMessage('conv-1', { text: 'hello' }, {}),
-      /service URL missing/,
-    );
+    const sendMessage = teamsProvider.sendMessage;
+    assert.ok(sendMessage, 'teams provider must expose sendMessage');
+    await assert.rejects(() => sendMessage('conv-1', { text: 'hello' }, {}), /service URL missing/);
   });
 
   it('sendMessage throws when endpoint is undefined', async () => {
+    const sendMessage = teamsProvider.sendMessage;
+    assert.ok(sendMessage, 'teams provider must expose sendMessage');
     await assert.rejects(
-      () => teamsProvider.sendMessage('conv-1', { text: 'hello' }, { endpoint: undefined }),
+      () => sendMessage('conv-1', { text: 'hello' }, { endpoint: undefined }),
       /service URL missing/,
     );
   });

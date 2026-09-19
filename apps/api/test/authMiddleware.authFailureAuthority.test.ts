@@ -40,7 +40,7 @@ describe('auth middleware failure-authority boundary', () => {
       recordFailure: async () => {
         throw new Error('lockout authority unavailable');
       },
-      cleanup: async () => undefined,
+      cleanup: async () => 0,
     };
     setAuthFailureStore(unavailableStore);
     const { authMiddleware } = await import('../src/authMiddleware.js');
@@ -72,7 +72,7 @@ describe('auth middleware failure-authority boundary', () => {
         recordCalls += 1;
         throw new Error('lockout authority write unavailable');
       },
-      cleanup: async () => undefined,
+      cleanup: async () => 0,
     };
     setAuthFailureStore(unavailableStore);
     setApiKeyStore(noApiKeys);

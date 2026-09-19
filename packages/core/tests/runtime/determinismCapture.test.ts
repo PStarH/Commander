@@ -218,7 +218,7 @@ describe('RunRecovery Path A (event replay)', () => {
 
   beforeEach(() => {
     checkpointer = new StateCheckpointer(tmpDir);
-    leaseManager = new LeaseManager({ ttlMs: 60000, maxPerRun: 4 });
+    leaseManager = new LeaseManager({ defaultTtlSeconds: 60 });
     recovery = new RunRecovery(checkpointer, leaseManager);
   });
 
@@ -430,7 +430,7 @@ describe('Path A end-to-end replay correctness (chaos injection)', () => {
 
   it('recovered_via_replay result carries a usable replayContext', async () => {
     const checkpointer = new StateCheckpointer(tmpDir);
-    const leaseManager = new LeaseManager({ ttlMs: 60000, maxPerRun: 4 });
+    const leaseManager = new LeaseManager({ defaultTtlSeconds: 60 });
     const recovery = new RunRecovery(checkpointer, leaseManager);
 
     const capture = getGlobalDeterminismCapture();
@@ -558,7 +558,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
 
     // Process B's RunRecovery must activate Path A end-to-end
     const checkpointer = new StateCheckpointer(tmpDir);
-    const leaseManager = new LeaseManager({ ttlMs: 60000, maxPerRun: 4 });
+    const leaseManager = new LeaseManager({ defaultTtlSeconds: 60 });
     const recovery = new RunRecovery(checkpointer, leaseManager);
 
     const result = await recovery.attempt('run-xproc-2');

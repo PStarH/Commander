@@ -1,7 +1,6 @@
 import assert from 'node:assert';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import {
   CONTRACTS_VERSION,
@@ -82,6 +81,14 @@ describe('@commander/contracts state machine', () => {
 
   it('allows an answered human interaction to release its waiting step', () => {
     assert.equal(validateStepTransition('WAITING_FOR_HUMAN', 'RETRY_WAIT').ok, true);
+  });
+
+  it('allows cancelling a step parked awaiting reconciliation', () => {
+    // kernel `cancelRun` cancels every non-terminal step, including
+    // WAITING_FOR_RECONCILIATION; the transition table must permit it or the
+    // cancel path throws INVALID_TRANSITION before the UPDATE runs.
+    assert.equal(validateStepTransition('WAITING_FOR_RECONCILIATION', 'CANCELLED').ok, true);
+    assert.equal(isValidStepTransition('WAITING_FOR_RECONCILIATION', 'CANCELLED'), true);
   });
 
   it('allows deadlines to fail runs before execution or while paused', () => {
@@ -225,18 +232,36 @@ describe('@commander/contracts JSON schemas', () => {
     assert.deepStrictEqual(stateEnum, [...STEP_STATES]);
   });
 
-  it('effect schema has all 7 effect statuses', () => {
+  it('effect schema has all 8 effect statuses', () => {
     const effectSchema = CONTRACT_SCHEMAS.effect as any;
     const statuses = effectSchema.properties.status.enum;
     assert.deepStrictEqual(statuses, [
       'ADMITTED',
       'EXECUTING',
       'COMPLETION_UNKNOWN',
+      'CONFIRMED_NOT_APPLIED',
       'COMPLETED',
       'FAILED',
       'COMPENSATED',
       'REJECTED',
     ]);
+  });
+
+  it('effect schema accepts CONFIRMED_NOT_APPLIED, a real kernel terminal state', () => {
+    const result = validateResource('effect', {
+      id: 'effect-1',
+      runId: 'run-1',
+      stepId: 'step-1',
+      tenantId: 'tenant-1',
+      kind: 'http.post',
+      status: 'CONFIRMED_NOT_APPLIED',
+      idempotencyKey: 'idem-key-12345',
+      policyDecisionId: 'policy-1',
+      arguments: {},
+      fencingEpoch: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    });
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
   });
 
   it('connector schema has data classification enum', () => {
@@ -317,6 +342,15 @@ describe('@commander/contracts compatibility', () => {
     assert.equal(isCompatibleSchemaVersion('v3'), false);
   });
 
+  it('isCompatibleSchemaVersion accepts the canonical VersionedContract form', () => {
+    // versioned.ts publishes 'commander.run/v2' etc.; quoting the current
+    // contract version verbatim must not read as incompatible.
+    assert.equal(isCompatibleSchemaVersion('commander.run/v2'), true);
+    assert.equal(isCompatibleSchemaVersion('commander.effect/v2'), true);
+    assert.equal(isCompatibleSchemaVersion('commander.grant/v1'), false);
+    assert.equal(isCompatibleSchemaVersion(''), false);
+  });
+
   it('snapshotContracts returns all resources, states, and error codes', () => {
     const snap = snapshotContracts();
     assert.equal(snap.version, 'v2');
@@ -352,10 +386,7 @@ describe('@commander/contracts compatibility', () => {
   });
 
   it('committed baseline has no breaking drift from current snapshot', () => {
-    const baselinePath = join(
-      dirname(fileURLToPath(import.meta.url)),
-      '../snapshots/contract-snapshot.baseline.json',
-    );
+    const baselinePath = join(__dirname, '../snapshots/contract-snapshot.baseline.json');
     const baseline = JSON.parse(readFileSync(baselinePath, 'utf8')) as ReturnType<
       typeof snapshotContracts
     >;

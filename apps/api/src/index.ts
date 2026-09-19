@@ -56,7 +56,7 @@ import {
   closeRateLimitStore,
 } from './securityMiddleware';
 import { bootstrapDefaultAdminAccount } from './userStore';
-import { authMiddleware } from './authMiddleware';
+import { authMiddleware, apiKeyIdentityMiddleware } from './authMiddleware';
 import { initAuthFailureStore } from './authFailureStore';
 import { tenantContextMiddleware } from './tenantContextMiddleware';
 import { loadTenantProvider } from './tenantProviderLoader';
@@ -114,7 +114,7 @@ import {
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
 import { isProductionEnv } from './envSignal';
-import { resolveApiStartupConfig } from './startupConfig';
+import { resolveApiStartupConfig, assertRateLimitConfiguration } from './startupConfig';
 import { resolveTrustProxySetting, TrustProxyConfigError } from './trustProxyConfig';
 import { assertDurableStoreConfigured } from './storeBackendGate';
 import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
@@ -201,6 +201,9 @@ function validateEnvironment(): void {
 
 validateEnvironment();
 const apiStartupConfig = resolveApiStartupConfig(process.env);
+// AUTH-05: refuse to start on a mistyped quota / window / lockout instead of
+// letting NaN comparisons silently disable rate limiting and lockout.
+assertRateLimitConfiguration(process.env);
 
 // ── Shared state ────────────────────────────────────────────────────────────
 // Missions/UI store — not the /v1 run authority (kernel owns durable runs).
@@ -276,6 +279,13 @@ app.use((_req, res, next) => {
 // per-user / per-tenant buckets can be derived from the authenticated
 // identity. Public paths (health, login, register) are skipped.
 app.use(jwtMiddleware);
+
+// 4a. API-key rate-limit identity (AUTH-02). authMiddleware runs *after* the
+// limiter, so API-key callers previously had no key/tenant identity at
+// limiting time and got only the anonymous-IP bucket. This runs the canonical
+// API-key validation and publishes `req.rateLimitApiKey` only; authorization
+// identity stays unset until authMiddleware validates the key again.
+app.use(apiKeyIdentityMiddleware);
 
 // 5. Rate limiting — now aware of tenant → user → IP identity.
 app.use(rateLimitMiddleware);

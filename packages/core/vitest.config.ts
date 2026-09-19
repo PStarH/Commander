@@ -34,6 +34,14 @@ export default defineConfig({
     hookTimeout: 60000,
     // Prevent open handles from hanging CI after the suite finishes (seen on Ubuntu).
     forceExit: true,
+    // NOT free: a global retry converts a nondeterministic failure into a pass,
+    // so a test that is green here may be green *only* because it was retried.
+    // Vitest reports retried tests but still exits 0, which means the suite's
+    // verdict does not distinguish "passed" from "passed on the third attempt".
+    // Kept at 2 because the serial-execution reasons above (EADDRNOTAVAIL /
+    // EMFILE races) are infrastructure, not logic — but this is a deliberate,
+    // audit-visible tradeoff, not a default worth copying. Removing it requires
+    // a full-suite run to separate genuine flakes from genuine fixes.
     retry: 2,
     setupFiles: ['tests/setup.ts'],
     include: [
@@ -147,6 +155,7 @@ export default defineConfig({
       'tests/selfEvolution/trajectoryAnalyzer.test.ts',
       'tests/runtime/openTelemetryExporter.test.ts',
       'tests/runtime/promptCacheSavings.test.ts',
+      'tests/runtime/llmCaller.test.ts',
       'tests/runtime/providerFallbackChain.test.ts',
       'tests/runtime/reflexionInjector.test.ts',
       'tests/runtime/runRecovery.test.ts',
@@ -172,6 +181,10 @@ export default defineConfig({
       'tests/runtime/toolPlanner.test.ts',
       'tests/runtime/toolResultCache.test.ts',
       'tests/runtime/toolGateHelper.test.ts',
+      // RUN-02: denial provenance + cause bound to call identity (A denied /
+      // B retried must not cross-contaminate; hook/policy never relabelled
+      // GUARDIAN_BLOCKED). Zero tool execution in every case.
+      'tests/runtime/toolDenialProvenance.test.ts',
       'tests/runtime/resilience-integration.test.ts',
       'tests/runtime/toolRetriever.test.ts',
       'tests/runtime/vcrProvider.test.ts',
@@ -192,6 +205,10 @@ export default defineConfig({
       'tests/runtime/productionBoundaryComposition.test.ts',
       // V2 InMemoryCompensationQueue — test-friendly compensation queue core
       'src/atr/__tests__/inMemoryCompensationQueue.test.ts',
+      // AR-03 parity: ONE shared scenario table drives BOTH compensation queue
+      // implementations (better-sqlite3 CompensationQueue + the native-module-free
+      // double) and asserts identical observable outcomes — measured, not claimed.
+      'src/atr/__tests__/compensationQueueParity.test.ts',
       // async-I/O migration regression suite — guards the no-event-loop-blocking,
       // no-TOCTOU-probes, no-missed-visibility contract of the 5 hotspot files
       // (healthCheck/checkpoint, compensationService/mkdir, freezeDry/round-trip,
@@ -212,6 +229,7 @@ export default defineConfig({
       'tests/sandbox/teeEnclave.test.ts',
       'tests/sandbox/sshBackendExecPolicy.test.ts',
       'tests/sandbox/localBackendExecPolicy.test.ts',
+      'tests/sandbox/localBackendTimeout.test.ts',
       // --- tools ---
       // async-I/O regression tests added alongside the safePath/pathExists
       // async refactor; they guard the "no event-loop blocking, no TOCTOU
@@ -353,6 +371,7 @@ export default defineConfig({
       'tests/enterprise-security.test.ts',
       'tests/hallucinationDetector.test.ts',
       'tests/security/guardianAgent.test.ts',
+      'tests/security/securityGuardianFacade.test.ts',
       'tests/security/guardianDangerousToolCall.test.ts',
       'tests/security/capabilityToken.test.ts',
       'tests/security/biscuitCapabilityAdapter.test.ts',

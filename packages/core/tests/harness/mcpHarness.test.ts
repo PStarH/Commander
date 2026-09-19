@@ -168,20 +168,20 @@ describe('McpHarness', () => {
     it('returns true when mcp-server feature is present', () => {
       const ctx: HarnessSelectionContext = {
         model: 'gpt-4o',
-        tier: 'tier1',
+        tier: 'standard',
         provider: 'openai',
         features: ['mcp-server'],
-      } as HarnessSelectionContext;
+      };
       assert.strictEqual(harness.supports(ctx), true);
     });
 
     it('returns false when mcp-server feature is absent', () => {
       const ctx: HarnessSelectionContext = {
         model: 'gpt-4o',
-        tier: 'tier1',
+        tier: 'standard',
         provider: 'openai',
         features: [],
-      } as HarnessSelectionContext;
+      };
       assert.strictEqual(harness.supports(ctx), false);
     });
   });
@@ -551,17 +551,21 @@ describe('McpHarness', () => {
   describe('subscribe', () => {
     it('emits run_start and run_complete events', async () => {
       const events: HarnessEvent[] = [];
-      harness.subscribe((e) => events.push(e));
+      harness.subscribe((e) => {
+        events.push(e);
+      });
       const params = createRunParams();
       await harness.runAttempt(params);
       const types = events.map((e) => e.type);
       assert.ok(types.includes('run_start'));
-      assert.ok(types.includes('run_complete') || types.includes('llm_response'));
+      assert.ok(types.includes('run_complete'), `expected run_complete, got ${types.join(',')}`);
     });
 
     it('unsubscribe stops receiving events', async () => {
       const events: HarnessEvent[] = [];
-      const unsub = harness.subscribe((e) => events.push(e));
+      const unsub = harness.subscribe((e) => {
+        events.push(e);
+      });
       unsub();
       await harness.runAttempt(createRunParams());
       assert.strictEqual(events.length, 0);

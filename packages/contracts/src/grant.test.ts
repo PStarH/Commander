@@ -1,12 +1,10 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { join, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { GRANT_CONTRACT_VERSION, wrapGrantV1, type GrantV1 } from './grant.js';
 import { upcastLegacyGrantToV1 } from './upcasters/grant-legacy-to-v1.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURE_PATH = join(__dirname, '../fixtures/grant/v1/minimal.json');
 const SCHEMA_PATH = join(__dirname, '../schemas/commander.grant/v1.json');
 

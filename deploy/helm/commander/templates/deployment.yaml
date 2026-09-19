@@ -205,6 +205,11 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.api.secrets.existingSecret | quote }}
                   key: integrity-key
+            - name: COMMANDER_AUDIT_CHAIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.existingSecret | quote }}
+                  key: audit-chain-key
             - name: ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -236,6 +241,11 @@ spec:
                 secretKeyRef:
                   name: {{ include "commander.apiSecretName" . | quote }}
                   key: integrity-key
+            - name: COMMANDER_AUDIT_CHAIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "commander.apiSecretName" . | quote }}
+                  key: audit-chain-key
             - name: ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
@@ -276,6 +286,13 @@ spec:
                 secretKeyRef:
                   name: {{ .Values.api.secrets.integrityKeySecret | quote }}
                   key: integrity-key
+            {{- end }}
+            {{- if .Values.api.secrets.auditChainKeySecret }}
+            - name: COMMANDER_AUDIT_CHAIN_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.secrets.auditChainKeySecret | quote }}
+                  key: audit-chain-key
             {{- end }}
             {{- if .Values.api.secrets.adminPasswordSecret }}
             - name: ADMIN_PASSWORD

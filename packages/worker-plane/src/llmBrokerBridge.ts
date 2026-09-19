@@ -10,23 +10,14 @@
  * always fail REQUEST_HASH_MISMATCH under requireRequestBinding.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { randomUUID } from 'node:crypto';
 import type { EffectBroker } from '@commander/effect-broker';
-import { canonicalRequestHash, type CapabilityTokenIssuer } from '@commander/effect-broker';
-import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
 import {
-  getStepWorkloadBinding,
-  mintStepCapabilityToken,
-  requireStepWorkloadBinding,
-} from './stepWorkloadIdentity.js';
-
-function isProductionProfile(): boolean {
-  return (
-    process.env.NODE_ENV === 'production' ||
-    process.env.COMMANDER_PROFILE === 'enterprise' ||
-    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
-  );
-}
+  canonicalRequestHash,
+  deriveEffectIdempotencyKey,
+  type CapabilityTokenIssuer,
+} from '@commander/effect-broker';
+import type { LLMProvider, LLMRequest, LLMResponse } from '@commander/core';
+import { mintStepCapabilityToken, requireStepWorkloadBinding } from './stepWorkloadIdentity.js';
 
 type LlmInvokeKey = `${string}:${string}`;
 
@@ -101,74 +92,42 @@ export function getLlmEffectAuth(): LlmEffectAuth | undefined {
   return llmAuthStorage.getStore();
 }
 
-/** Resolve admit binding: verified step identity when ALS/prod; ambient only in non-prod without ALS. */
-function resolveAdmitWorkloadBinding(auth: LlmEffectAuth) {
-  if (getStepWorkloadBinding() || isProductionProfile()) {
-    return requireStepWorkloadBinding();
-  }
-  return {
-    tenantId: auth.tenantId,
-    runId: auth.runId,
-    stepId: auth.stepId,
-    workloadId: auth.workloadId,
-  };
+/**
+ * Resolve the admit binding: always the verified step workload identity.
+ * Deliberately no ambient fallback — a caller-supplied auth object must never
+ * fabricate the tenant/run/step/workload that admit() binds the effect to.
+ */
+function resolveAdmitWorkloadBinding() {
+  return requireStepWorkloadBinding();
 }
 
 /** Build ALS auth that mints per-call tokens via the worker's CapabilityTokenIssuer. */
 export function createLlmEffectAuth(input: {
-  tenantId: string;
-  runId: string;
-  stepId: string;
   actor: string;
   lease: LlmEffectAuth['lease'];
   issuer: CapabilityTokenIssuer;
   /** Token TTL in ms (default 5 minutes). */
   ttlMs?: number;
-  /** Step-scoped workload id from ControlPlane (preferred over ambient tenant). */
-  workloadId?: string;
 }): LlmEffectAuth {
   const ttlMs = input.ttlMs ?? 5 * 60_000;
-  // Prod / active step ALS: tenant comes from verified ControlPlane identity only.
-  const live =
-    getStepWorkloadBinding() || isProductionProfile() ? requireStepWorkloadBinding() : undefined;
-  const tenantId = live?.tenantId ?? input.tenantId;
-  const runId = live?.runId ?? input.runId;
-  const stepId = live?.stepId ?? input.stepId;
-  const workloadId =
-    (typeof live?.workloadId === 'string' && live.workloadId.trim()) ||
-    (typeof input.workloadId === 'string' && input.workloadId.trim()) ||
-    `llm:${runId}:${stepId}`;
+  // Identity comes from the live step-workload binding only. Callers that need
+  // to establish identity must run inside runWithStepWorkloadIdentity().
+  const binding = requireStepWorkloadBinding();
   return {
-    tenantId,
-    runId,
-    stepId,
-    workloadId,
+    tenantId: binding.tenantId,
+    runId: binding.runId,
+    stepId: binding.stepId,
+    workloadId: binding.workloadId,
     actor: input.actor,
     lease: input.lease,
     capabilityTtlMs: ttlMs,
     mintCapabilityToken: ({ effectType, request }) => {
       // Re-check ALS at mint time (not create-time snapshot) so expiry/revoke fail-close.
-      if (getStepWorkloadBinding() || isProductionProfile()) {
-        return mintStepCapabilityToken({
-          issuer: input.issuer,
-          effectType,
-          request,
-          ttlMs,
-        });
-      }
-      // Non-ALS (test/dev): stamp grant↔lease fence from the execute lease.
-      // Admit fail-closes when workerId/workerGeneration are missing or diverge.
-      return input.issuer.issue({
-        jti: randomUUID(),
-        tenantId,
-        runId,
-        stepId,
-        workloadId,
-        workerId: input.lease.workerId,
-        workerGeneration: input.lease.workerGeneration,
-        effectTypes: [effectType],
-        expiresAt: new Date(Date.now() + ttlMs).toISOString(),
-        requestHash: canonicalRequestHash(request),
+      return mintStepCapabilityToken({
+        issuer: input.issuer,
+        effectType,
+        request,
+        ttlMs,
       });
     },
   };
@@ -269,10 +228,9 @@ export function wrapProviderWithEffectBroker(
       // Freeze call payload so ledger hash and provider invoke stay atomic.
       const frozenRequest: LLMRequest = structuredClone(request);
       const contentHash = hashLlmCallContent(frozenRequest);
-      // Stable effect identity + idempotency key from contentHash (not random UUID)
-      // so crash/retry within the same step dedupes on the ledger.
+      // Stable effect identity from contentHash (not random UUID) so crash/retry
+      // within the same step dedupes on the ledger.
       const effectId = `llm:${auth.runId}:${auth.stepId}:${contentHash}`;
-      const idempotencyKey = effectId;
       const registryKey = invokeRegistryKey(auth.tenantId, effectId);
       // Ledger keeps metadata + contentHash (not raw prompt) for DLP-friendly binding.
       const requestBody: Record<string, unknown> = {
@@ -282,6 +240,15 @@ export function wrapProviderWithEffectBroker(
         messageCount: Array.isArray(frozenRequest.messages) ? frozenRequest.messages.length : 0,
         contentHash,
       };
+      // The idempotency key is derived from the broker request body (never the
+      // raw effectId) so it stays legal under the broker's 'derive' policy.
+      const idempotencyKey = deriveEffectIdempotencyKey({
+        tenantId: auth.tenantId,
+        runId: auth.runId,
+        stepId: auth.stepId,
+        effectId,
+        request: requestBody,
+      });
       const capabilityToken = auth.mintCapabilityToken({
         effectType,
         request: requestBody,
@@ -315,7 +282,7 @@ export function wrapProviderWithEffectBroker(
           idempotencyKey,
           lease: auth.lease,
           actor: auth.actor,
-          workloadBinding: resolveAdmitWorkloadBinding(auth),
+          workloadBinding: resolveAdmitWorkloadBinding(),
         });
         if (result.response == null) {
           throw new Error(

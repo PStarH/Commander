@@ -91,8 +91,12 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
     assert.deepEqual(await tickets.compensate(second), { ...second, status: 'closed' });
     assert.deepEqual(await tickets.create(first), first);
     const query = { effectId: 'query', type: 'demo.ticket.create', request: {} };
-    assert.equal((await tickets.queryOutcome({ ...query, ...first })).response?.status, 'open');
-    assert.equal((await tickets.queryOutcome({ ...query, ...second })).response?.status, 'closed');
+    const firstOutcome = await tickets.queryOutcome({ ...query, ...first });
+    assert.ok(firstOutcome.status === 'APPLIED', 'first tenant query must report APPLIED');
+    assert.equal(firstOutcome.response?.status, 'open');
+    const secondOutcome = await tickets.queryOutcome({ ...query, ...second });
+    assert.ok(secondOutcome.status === 'APPLIED', 'second tenant query must report APPLIED');
+    assert.equal(secondOutcome.response?.status, 'closed');
     assert.deepEqual(await tickets.compensate(first), { ...first, status: 'closed' });
   });
 

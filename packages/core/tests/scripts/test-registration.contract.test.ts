@@ -111,8 +111,12 @@ describe('readVitestInclude parses the config statically', () => {
     // These files exist on disk and appear only inside `//` comments in
     // vitest.config.ts. A regex-based reader reported them as enabled, which is
     // what hid them from the "missing include" report.
+    //
+    // `tests/runtime/llmCaller.test.ts` used to be in this list. It was then
+    // legitimately registered, which broke the fixture rather than the parser:
+    // a "this path is commented out" assertion cannot use a path that may later
+    // become real. It is now the positive control below.
     for (const commentedOut of [
-      'tests/runtime/llmCaller.test.ts',
       'tests/ultimate/checkpoint.roundTrip.test.ts',
       'tests/ultimate/coordinationPolicy.test.ts',
       'tests/plugins/observability/otelExporter.test.ts',
@@ -127,6 +131,16 @@ describe('readVitestInclude parses the config statically', () => {
         `${commentedOut} is commented out but was parsed as enabled`,
       );
     }
+  });
+
+  it('reports a genuinely enabled entry as enabled (fixture control)', () => {
+    // The negative case above is only meaningful next to a positive one: if the
+    // parser simply returned nothing, "not enabled" would pass vacuously.
+    const { include } = readVitestInclude(CORE_ROOT);
+    assert.ok(
+      include.includes('tests/runtime/llmCaller.test.ts'),
+      'a registered file must be reported as enabled',
+    );
   });
 
   it('does not pick up coverage.include', () => {

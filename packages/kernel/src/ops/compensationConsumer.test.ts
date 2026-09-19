@@ -4,7 +4,6 @@ import {
   consumeCompensationBatch,
   type ClaimedCompensationWork,
   type CompensationOutboxPort,
-  type LegacyClaimedCompensationWork,
 } from './compensationConsumer.js';
 import {
   canonicalCompensationHash,
@@ -13,6 +12,7 @@ import {
   type GovernedCompensationAuthorizationInput,
 } from './compensationAuthority.js';
 import type { ClaimedCompensationRequest, CompensationAuthorizationRecord } from '../types.js';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 
 const WORKER = {
   workerId: 'compensation:pod-a',
@@ -50,21 +50,68 @@ function authorityInput(): GovernedCompensationAuthorizationInput {
   };
 }
 
-function claimed(
-  authorization: GovernedCompensationAuthorization = sealGovernedCompensationAuthorization(
-    authorityInput(),
-  ),
-): LegacyClaimedCompensationWork {
-  return {
-    messageId: 'outbox-1',
-    tenantId: authorization.tenantId,
+function claimed(): ClaimedCompensationRequest {
+  const governed = sealGovernedCompensationAuthorization(authorityInput());
+  const requestPayload = governed.compensationRequest;
+  const authorization: CompensationAuthorizationRecord = {
+    id: governed.authorizationId,
+    tenantId: governed.tenantId,
+    originalRunId: governed.originalRunId,
+    originalEffectId: governed.originalEffectId,
+    compensationEffectType: governed.compensationEffectType,
+    adapterVersion: governed.adapterVersion,
+    compensationPatch: requestPayload.compensationPatch as Record<string, unknown>,
+    forwardReceiptHash: governed.forwardReceiptHash,
+    policyDecisionId: governed.policyDecisionId,
+    policySnapshotId: governed.policySnapshotId,
+    decision: governed.decisionEffect,
+    actionDigest: canonicalCompensationHash({
+      type: governed.compensationEffectType,
+      originalEffectId: governed.originalEffectId,
+      adapterVersion: governed.adapterVersion,
+      destination: requestPayload.destination,
+      forwardResponse: governed.forwardReceipt,
+      compensationPatch: requestPayload.compensationPatch,
+    }),
+    expiresAt: governed.authorizationExpiresAt,
+  };
+  const request: ClaimedCompensationRequest['request'] = {
+    id: governed.requestId,
+    tenantId: governed.tenantId,
+    originalRunId: governed.originalRunId,
+    originalEffectId: governed.originalEffectId,
+    compensationRunId: governed.compensationRunId,
+    compensationStepId: governed.compensationStepId,
+    adapterVersion: governed.adapterVersion,
+    compensationEffectType: governed.compensationEffectType,
+    destination: String(requestPayload.destination),
+    compensationPatch: requestPayload.compensationPatch as Record<string, unknown>,
+    forwardReceiptHash: governed.forwardReceiptHash,
+    authorizationId: governed.authorizationId,
+    reconcilePolicy: {
+      maxAttempts: 3,
+      initialDelayMs: 1_000,
+      maxDelayMs: 5_000,
+      deadlineAt: governed.authorizationExpiresAt,
+    },
+    state: 'CLAIMED',
+    claimWorkerId: WORKER.workerId,
+    claimWorkerGeneration: WORKER.workerGeneration,
     claimToken: 'outbox-claim-1',
+    compensationEffectId: governed.compensationEffectId,
+  };
+  return {
+    request,
+    forwardResponse: governed.forwardReceipt,
+    outboxMessageId: 'outbox-1',
+    outboxClaimToken: 'outbox-claim-1',
     authorization,
     lease: {
       workerId: WORKER.workerId,
       workerGeneration: WORKER.workerGeneration,
       token: 'step-lease-1',
       fencingEpoch: 12,
+      expiresAt: '2099-07-29T11:00:00.000Z',
     },
   };
 }
@@ -79,23 +126,13 @@ function makePort(items: ClaimedCompensationWork[] = [claimed()]) {
       served = true;
       return items;
     },
-    async completeCompensationWork(input) {
-      calls.push({ method: 'complete', input });
-      return { applied: true, disposition: 'COMPLETED' };
+    async parkCompensationUnknown(input) {
+      calls.push({ method: 'park', input });
+      return { applied: true, disposition: 'COMPLETION_UNKNOWN', replayed: false };
     },
-    async handoffCompensationUnknown(input) {
-      calls.push({ method: 'handoff', input });
-      return { applied: true, disposition: 'HANDOFF_UNKNOWN' };
-    },
-    async escalateCompensationWork(input) {
-      calls.push({ method: 'escalate', input });
-      return { applied: true, disposition: 'ESCALATED' };
-    },
-    async parkCompensationUnknown() {
-      throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
-    },
-    async finalizeCompensation() {
-      throw new Error('finalizeCompensation is not exercised by legacy-path fixtures');
+    async finalizeCompensation(input) {
+      calls.push({ method: 'finalize', input });
+      return { applied: true, disposition: input.disposition, replayed: false };
     },
   };
   return {
@@ -182,15 +219,6 @@ describe('governed compensation consumer', () => {
       async claimCompensationWork() {
         return [work];
       },
-      async completeCompensationWork() {
-        throw new Error('durable path must finalize through finalizeCompensation');
-      },
-      async handoffCompensationUnknown() {
-        throw new Error('unexpected uncertainty handoff');
-      },
-      async escalateCompensationWork() {
-        throw new Error('durable path must finalize through finalizeCompensation');
-      },
       async parkCompensationUnknown() {
         throw new Error('unexpected uncertainty park');
       },
@@ -199,11 +227,13 @@ describe('governed compensation consumer', () => {
       },
     };
     let admittedRequest: Record<string, unknown> | undefined;
+    let admittedIdempotencyKey: string | undefined;
     const result = await consumeCompensationBatch(
       port,
       {
         async admit(input) {
           admittedRequest = input.request;
+          admittedIdempotencyKey = input.idempotencyKey;
           return { admitted: true, effectId: request.compensationEffectId!, replayed: false };
         },
         async executeAdmitted() {
@@ -225,6 +255,16 @@ describe('governed compensation consumer', () => {
       forwardResponse,
       compensationPatch,
     });
+    assert.equal(
+      admittedIdempotencyKey,
+      deriveEffectIdempotencyKey({
+        tenantId: authorization.tenantId,
+        runId: request.compensationRunId,
+        stepId: request.compensationStepId,
+        effectId: request.compensationEffectId!,
+        request: admittedRequest!,
+      }),
+    );
   });
 
   it('uses persisted authorization, effect identity, and a real claimed step lease', async () => {
@@ -239,13 +279,13 @@ describe('governed compensation consumer', () => {
           admitInput = input;
           return {
             admitted: true,
-            effectId: work.authorization.compensationEffectId,
+            effectId: work.request.compensationEffectId!,
             replayed: false,
           };
         },
         async executeAdmitted() {
           return {
-            effectId: work.authorization.compensationEffectId,
+            effectId: work.request.compensationEffectId!,
             replayed: false,
             response: { status: 'rolled-back' },
           };
@@ -265,33 +305,63 @@ describe('governed compensation consumer', () => {
       escalated: 0,
       replayed: 0,
     });
-    assert.equal(tokenInput, work.authorization);
+    assert.deepEqual(tokenInput, {
+      authorization: work.authorization,
+      request: work.request,
+      forwardResponse: work.forwardResponse,
+    });
     assert.deepEqual(admitInput, {
-      effectId: work.authorization.compensationEffectId,
+      effectId: work.request.compensationEffectId!,
       token: 'governed-token',
       type: work.authorization.compensationEffectType,
-      request: work.authorization.compensationRequest,
-      idempotencyKey: work.authorization.idempotencyKey,
+      request: {
+        originalEffectId: work.request.originalEffectId,
+        destination: work.request.destination,
+        forwardResponse: work.forwardResponse,
+        compensationPatch: work.request.compensationPatch,
+      },
+      idempotencyKey: deriveEffectIdempotencyKey({
+        tenantId: work.request.tenantId,
+        runId: work.request.compensationRunId,
+        stepId: work.request.compensationStepId,
+        effectId: work.request.compensationEffectId!,
+        request: {
+          originalEffectId: work.request.originalEffectId,
+          destination: work.request.destination,
+          forwardResponse: work.forwardResponse,
+          compensationPatch: work.request.compensationPatch,
+        },
+      }),
       lease: work.lease,
       actor: WORKER.workerId,
       workloadBinding: {
         tenantId: work.authorization.tenantId,
-        runId: work.authorization.compensationRunId,
-        stepId: work.authorization.compensationStepId,
+        runId: work.request.compensationRunId,
+        stepId: work.request.compensationStepId,
         workloadId: WORKER.workerId,
+      },
+      compensationClaim: {
+        requestId: work.request.id,
+        requestClaimToken: work.request.claimToken,
+        outboxMessageId: work.outboxMessageId,
+        outboxClaimToken: work.outboxClaimToken,
       },
     });
     assert.deepEqual(
       calls.map((call) => call.method),
-      ['claim', 'complete'],
+      ['claim', 'finalize'],
     );
     assert.deepEqual(calls[1]?.input, {
       ...WORKER,
-      tenantId: work.tenantId,
-      messageId: work.messageId,
-      outboxClaimToken: work.claimToken,
-      compensationEffectId: work.authorization.compensationEffectId,
+      tenantId: work.request.tenantId,
+      requestId: work.request.id,
+      effectId: work.request.compensationEffectId!,
+      disposition: 'COMPLETED',
+      actor: WORKER.workerId,
+      outboxMessageId: work.outboxMessageId,
+      outboxClaimToken: work.outboxClaimToken,
       response: { status: 'rolled-back' },
+      evidence: undefined,
     });
   });
 
@@ -305,7 +375,7 @@ describe('governed compensation consumer', () => {
         async admit() {
           return {
             admitted: true,
-            effectId: work.authorization.compensationEffectId,
+            effectId: work.request.compensationEffectId!,
             replayed: false,
           };
         },
@@ -328,27 +398,29 @@ describe('governed compensation consumer', () => {
     });
     assert.deepEqual(
       calls.map((call) => call.method),
-      ['claim', 'handoff'],
+      ['claim', 'park'],
     );
     assert.deepEqual(calls[1]?.input, {
       ...WORKER,
-      tenantId: work.tenantId,
-      messageId: work.messageId,
-      outboxClaimToken: work.claimToken,
-      compensationEffectId: work.authorization.compensationEffectId,
+      tenantId: work.request.tenantId,
+      requestId: work.request.id,
+      effectId: work.request.compensationEffectId!,
+      actor: WORKER.workerId,
+      outboxMessageId: work.outboxMessageId,
+      outboxClaimToken: work.outboxClaimToken,
       error: { code: 'COMPLETION_UNKNOWN', message: 'Compensation completion is uncertain' },
     });
   });
 
   it('escalates mutated authorization before token issuance or adapter invocation', async () => {
     const valid = claimed();
-    const mutated = claimed({
-      ...valid.authorization,
-      compensationRequest: {
-        ...valid.authorization.compensationRequest,
+    const mutated = {
+      ...valid,
+      authorization: {
+        ...valid.authorization,
         compensationPatch: { targetRevision: '8', reason: 'caller mutation' },
       },
-    });
+    } satisfies ClaimedCompensationWork;
     const { port, calls } = makePort([mutated]);
     let tokenCalls = 0;
     let brokerCalls = 0;
@@ -376,11 +448,11 @@ describe('governed compensation consumer', () => {
     assert.equal(result.escalated, 1);
     assert.deepEqual(
       calls.map((call) => call.method),
-      ['claim', 'escalate'],
+      ['claim', 'finalize'],
     );
     assert.equal(
-      (calls[1]?.input as { reason: string }).reason,
-      'COMPENSATION_REQUEST_HASH_MISMATCH',
+      (calls[1]?.input as { response: { reason: string } }).response.reason,
+      'COMPENSATION_ACTION_DIGEST_MISMATCH',
     );
   });
 
@@ -417,10 +489,10 @@ describe('governed compensation consumer', () => {
     assert.equal(result.escalated, 1);
     assert.deepEqual(
       calls.map((call) => call.method),
-      ['claim', 'escalate'],
+      ['claim', 'finalize'],
     );
     assert.equal(
-      (calls[1]?.input as { reason: string }).reason,
+      (calls[1]?.input as { response: { reason: string } }).response.reason,
       'COMPENSATION_ADAPTER_VERSION_MISMATCH',
     );
   });
@@ -428,8 +500,8 @@ describe('governed compensation consumer', () => {
   it('fails the tick without a second mutation when atomic completion loses its claim', async () => {
     const work = claimed();
     const { port, calls } = makePort([work]);
-    port.completeCompensationWork = async (input) => {
-      calls.push({ method: 'complete', input });
+    port.finalizeCompensation = async (input) => {
+      calls.push({ method: 'finalize', input });
       return { applied: false, reason: 'CLAIM_NOT_OWNED' };
     };
 
@@ -441,13 +513,13 @@ describe('governed compensation consumer', () => {
             async admit() {
               return {
                 admitted: true,
-                effectId: work.authorization.compensationEffectId,
+                effectId: work.request.compensationEffectId!,
                 replayed: false,
               };
             },
             async executeAdmitted() {
               return {
-                effectId: work.authorization.compensationEffectId,
+                effectId: work.request.compensationEffectId!,
                 replayed: false,
                 response: {},
               };
@@ -460,7 +532,7 @@ describe('governed compensation consumer', () => {
     );
     assert.deepEqual(
       calls.map((call) => call.method),
-      ['claim', 'complete'],
+      ['claim', 'finalize'],
     );
   });
 
@@ -478,13 +550,13 @@ describe('governed compensation consumer', () => {
       async admit() {
         return {
           admitted: true,
-          effectId: work.authorization.compensationEffectId,
+          effectId: work.request.compensationEffectId!,
           replayed: false,
         };
       },
       async executeAdmitted() {
         executeCalls += 1;
-        return { effectId: work.authorization.compensationEffectId, replayed: false, response: {} };
+        return { effectId: work.request.compensationEffectId!, replayed: false, response: {} };
       },
     };
 
@@ -506,11 +578,11 @@ describe('governed compensation consumer', () => {
     const work = claimed();
     const { port, resetClaim } = makePort([work]);
     let finalizeCalls = 0;
-    port.completeCompensationWork = async () => {
+    port.finalizeCompensation = async () => {
       finalizeCalls += 1;
       if (finalizeCalls === 1)
         throw Object.assign(new Error('database disconnected'), { code: 'DB_LOST' });
-      return { applied: true, disposition: 'COMPLETED' };
+      return { applied: true, disposition: 'COMPLETED', replayed: false };
     };
     let remoteWrites = 0;
     let committed = false;
@@ -518,7 +590,7 @@ describe('governed compensation consumer', () => {
       async admit() {
         return {
           admitted: true,
-          effectId: work.authorization.compensationEffectId,
+          effectId: work.request.compensationEffectId!,
           replayed: committed,
         };
       },
@@ -528,7 +600,7 @@ describe('governed compensation consumer', () => {
           committed = true;
         }
         return {
-          effectId: work.authorization.compensationEffectId,
+          effectId: work.request.compensationEffectId!,
           replayed: committed,
           response: { status: 'rolled-back' },
         };

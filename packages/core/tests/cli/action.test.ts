@@ -25,7 +25,7 @@ describe('commander action kill CLI', () => {
   });
 
   it('lists kill switches via GET /v1/actions/kill-switches', async () => {
-    const fetchMock = vi.fn(
+    const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response(
           JSON.stringify({
@@ -54,7 +54,7 @@ describe('commander action kill CLI', () => {
   });
 
   it('enables a kill switch via PUT /v1/actions/kill-switches/:scope/:value', async () => {
-    const fetchMock = vi.fn(
+    const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response(
           JSON.stringify({
@@ -88,7 +88,7 @@ describe('commander action kill CLI', () => {
   });
 
   it('disables a kill switch via PUT with enabled=false', async () => {
-    const fetchMock = vi.fn(
+    const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response(
           JSON.stringify({
@@ -212,7 +212,7 @@ describe('commander action gateway CLI', () => {
     },
     { args: ['evidence', 'verify', 'run-1'], method: 'GET', path: '/v1/actions/run-1/evidence' },
   ])('routes $args through the action gateway', async ({ args, method, path }) => {
-    const fetchMock = vi.fn(
+    const fetchMock = vi.fn<typeof fetch>(
       async () =>
         new Response(JSON.stringify({ verification: { ok: true } }), {
           status: path.endsWith('/reconcile') ? 202 : 200,

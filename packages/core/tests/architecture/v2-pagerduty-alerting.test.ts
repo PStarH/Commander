@@ -394,9 +394,9 @@ describe('V2 PagerDuty Alerting', () => {
     // ── 14. Subscriber callback ───────────────────────────────────────────────
 
     it('should forward events to registered subscribers', async () => {
-      let receivedEvent: SLOViolationEvent | null = null;
+      const received: { event: SLOViolationEvent | null } = { event: null };
       bridge.subscribe((event) => {
-        receivedEvent = event;
+        received.event = event;
       });
 
       const testEvent: SLOViolationEvent = {
@@ -409,8 +409,8 @@ describe('V2 PagerDuty Alerting', () => {
 
       await bridge.handleSLOEvent(testEvent);
 
-      assert.ok(receivedEvent, 'Subscriber should receive the event');
-      assert.equal(receivedEvent!.metric, 'api_success_rate');
+      assert.ok(received.event, 'Subscriber should receive the event');
+      assert.equal(received.event.metric, 'api_success_rate');
     });
 
     // ── 15. Active metrics tracking ───────────────────────────────────────────

@@ -23,6 +23,9 @@ export default defineConfig({
     fileParallelism: false,
     testTimeout: 180000,
     hookTimeout: 60000,
+    // See vitest.config.ts — a global retry turns a nondeterministic failure
+    // into a pass without changing the exit code. Deliberate here (chaos suites
+    // are infra-sensitive), but it must stay visible as a tradeoff.
     retry: 2,
     forceExit: true,
   },

@@ -637,11 +637,42 @@ export class FileChangeTracker {
 }
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
+import { tenantBucketOrThrow } from './tenantContext';
 
-const fileChangeTrackerSingleton = createTenantAwareSingleton(() => new FileChangeTracker(), {});
+/**
+ * RCH-07 / IP-01: `createTenantAwareSingleton` partitions the *instances* per
+ * tenant, but a zero-argument factory cannot tell which tenant is being
+ * constructed. `FileChangeTracker` already knows how to lay out a tenant subtree
+ * (`tenant_<id>` under the base dir) — the accessor just never told it, so every
+ * tenant's tracker resolved to the same on-disk directory. That is a genuine
+ * cross-tenant read: the tracker persists `beforeContent` / `afterContent`
+ * snapshots, so one tenant's file contents were readable from another tenant's
+ * instance. Publish the tenant for the factory, mirroring
+ * `deadLetterQueueSingleton`.
+ *
+ * `__default__` is skipped so the implicit single-tenant bucket keeps the legacy
+ * `.commander_changes` layout.
+ */
+let constructingTenantId: string | undefined;
 
-export function getFileChangeTracker(): FileChangeTracker {
-  return fileChangeTrackerSingleton.get();
+/** The implicit single-tenant bucket must keep the legacy directory layout. */
+function storageTenantId(tenantId: string | undefined): string | undefined {
+  return !tenantId || tenantId === '__default__' ? undefined : tenantId;
+}
+
+const fileChangeTrackerSingleton = createTenantAwareSingleton(
+  () => new FileChangeTracker(undefined, storageTenantId(constructingTenantId)),
+  {},
+);
+
+export function getFileChangeTracker(tenantId?: string): FileChangeTracker {
+  const resolvedTenantId = tenantId || tenantBucketOrThrow();
+  constructingTenantId = resolvedTenantId;
+  try {
+    return fileChangeTrackerSingleton.getForTenant(resolvedTenantId);
+  } finally {
+    constructingTenantId = undefined;
+  }
 }
 
 export function resetFileChangeTracker(): void {

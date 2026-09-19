@@ -105,8 +105,11 @@ spec:
           port: {{ .Values.api.port }}
 
     {{- else }}
+    # Fail closed: with neither a web workload nor an ingress-controller
+    # namespace configured, admit only pods in this release's own namespace.
+    # An empty namespace selector would admit every pod in the cluster.
     - from:
-        - namespaceSelector: {}
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: {{ .Values.api.port }}

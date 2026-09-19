@@ -652,8 +652,9 @@ describe('AttackCampaignTracker', () => {
 
     it('应跟踪战役阶段', () => {
       // Send multiple events to progress the campaign
+      let campaign: ReturnType<typeof tracker.trackAttackEvent> = null;
       for (let i = 0; i < 5; i++) {
-        tracker.trackAttackEvent({
+        campaign = tracker.trackAttackEvent({
           eventId: `e-phase-${i}`,
           timestamp: new Date(Date.now() + i * 60000).toISOString(),
           attackType: 'prompt_injection',
@@ -668,9 +669,14 @@ describe('AttackCampaignTracker', () => {
           blocked: i < 3,
         });
       }
-      // The campaign should exist and have phase history
-      // We can't assert specific phase since detection logic varies,
-      // but the campaign should have tracked the progression
+      // The campaign must exist and must have recorded at least the initial phase.
+      // Previously this test called the tracker five times and asserted nothing,
+      // so a tracker that dropped every event still reported green.
+      assert.ok(campaign, 'tracking attack events must produce a campaign');
+      assert.ok(
+        campaign.phaseHistory.length >= 1,
+        'campaign must record phase history for the tracked events',
+      );
     });
   });
 

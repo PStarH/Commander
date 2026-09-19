@@ -714,7 +714,9 @@ if (process.argv.includes(CHILD_FLAG)) {
           /permission denied/i,
         );
         await assert.rejects(
-          adapterParentHandle.repository.getAdapterOpsEvidenceContext({
+          (
+            adapterParentHandle.repository as KernelRepository & AdapterOpsEvidenceContextAuthority
+          ).getAdapterOpsEvidenceContext({
             workerId: claim.registration.id,
             workerGeneration: claim.registration.generation,
             claimSecret: claim.registration.claimSecret,

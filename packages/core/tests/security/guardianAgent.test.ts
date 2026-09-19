@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import { GuardianAgent, resetGuardianAgent } from '../../src/security/guardianAgent';
 import { validateMcpCommand } from '../../src/mcp/client';
-import { MCPServer } from '../../src/mcp/server';
+import { MCPServer, ActionGatewayPolicyError } from '../../src/mcp/server';
+import type { Tool } from '../../src/runtime/types';
 import * as guardianMod from '../../src/security/guardianAgent';
 
 function makeAction(
@@ -316,6 +317,119 @@ describe('MCPServer security gate fail-closed (P0.2)', () => {
       error: expect.objectContaining({
         message: expect.stringMatching(/security gate/i),
       }),
+    });
+  });
+});
+
+describe('MCPServer tools/call error results carry isError (MCP-C02)', () => {
+  beforeEach(() => {
+    resetGuardianAgent();
+  });
+
+  function readOnlyTool(name: string, execute: () => Promise<string>): Tool {
+    return {
+      definition: { name, description: name, inputSchema: { type: 'object', properties: {} } },
+      isReadOnly: true,
+      execute,
+    };
+  }
+
+  function writeTool(name: string): Tool {
+    return {
+      definition: { name, description: name, inputSchema: { type: 'object', properties: {} } },
+      isReadOnly: false,
+      execute: async () => 'local',
+    };
+  }
+
+  it('marks a missing Action Gateway as an error result', async () => {
+    const server = new MCPServer('test-mcp', '1.0.0');
+    server.registerCommanderTools(
+      new Map([['demo_external_write', writeTool('demo_external_write')]]),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 10,
+      method: 'tools/call',
+      params: { name: 'demo_external_write', arguments: {} },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({ isError: true });
+    expect((response.result as { content: Array<{ text: string }> }).content[0].text).toContain(
+      'ACTION_GATEWAY_REQUIRED',
+    );
+  });
+
+  it('marks a throwing tool as an error result', async () => {
+    const server = new MCPServer('test-mcp', '1.0.0');
+    server.registerCommanderTools(
+      new Map([
+        [
+          'demo_read_tool',
+          readOnlyTool('demo_read_tool', async () => {
+            throw new Error('boom');
+          }),
+        ],
+      ]),
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 11,
+      method: 'tools/call',
+      params: { name: 'demo_read_tool', arguments: {} },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({ isError: true });
+    expect((response.result as { content: Array<{ text: string }> }).content[0].text).toContain(
+      'boom',
+    );
+  });
+
+  it('marks an Action Gateway policy denial as an error result', async () => {
+    const server = new MCPServer('test-mcp', '1.0.0');
+    server.registerCommanderTools(
+      new Map([['demo_external_write', writeTool('demo_external_write')]]),
+      undefined,
+      {
+        actionGatewayExecutor: {
+          proposeAction: async () => {
+            throw new ActionGatewayPolicyError('ACTION_POLICY_DENIED', 'denied by policy', {});
+          },
+        },
+      },
+    );
+
+    const response = await server.handleRequest({
+      jsonrpc: '2.0',
+      id: 12,
+      method: 'tools/call',
+      params: { name: 'demo_external_write', arguments: {} },
+    });
+
+    expect(response.error).toBeUndefined();
+    expect(response.result).toMatchObject({ isError: true });
+    expect((response.result as { content: Array<{ text: string }> }).content[0].text).toContain(
+      'ACTION_POLICY_DENIED',
+    );
+  });
+});
+
+describe('MCPServer malformed message handling (MCP-C01)', () => {
+  it('returns an invalid-request error for JSON null instead of throwing', async () => {
+    const server = new MCPServer('test-mcp', '1.0.0');
+
+    const response = await server.handleRequest(
+      null as unknown as Parameters<MCPServer['handleRequest']>[0],
+    );
+
+    expect(response).toMatchObject({
+      jsonrpc: '2.0',
+      id: null,
+      error: expect.objectContaining({ code: -32600 }),
     });
   });
 });

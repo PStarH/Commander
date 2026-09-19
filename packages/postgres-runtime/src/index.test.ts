@@ -100,10 +100,12 @@ describe('verified PostgreSQL pool configuration', () => {
     assert.equal(rendered.searchParams.has('sslmode'), false);
     assert.equal(rendered.searchParams.get('application_name'), 'api');
     assert.equal(config.max, 7);
-    assert.equal(typeof config.ssl, 'object');
-    assert.equal(config.ssl && config.ssl.rejectUnauthorized, true);
-    assert.equal(config.ssl && config.ssl.ca, rootCertificates[0]);
-    assert.equal(config.ssl && typeof config.ssl.checkServerIdentity, 'function');
+    const ssl = config.ssl;
+    assert.equal(typeof ssl, 'object');
+    assert.ok(ssl !== null && typeof ssl === 'object');
+    assert.equal(ssl.rejectUnauthorized, true);
+    assert.equal(ssl.ca, rootCertificates[0]);
+    assert.equal(typeof ssl.checkServerIdentity, 'function');
   });
 
   it('forces identity verification for literal IP hosts', () => {
@@ -116,7 +118,9 @@ describe('verified PostgreSQL pool configuration', () => {
       },
     );
 
-    assert.equal(config.ssl && config.ssl.servername, 'commander-ip-literal.invalid');
+    const ssl = config.ssl;
+    assert.ok(ssl !== null && typeof ssl === 'object');
+    assert.equal(ssl.servername, 'commander-ip-literal.invalid');
   });
 
   it('accepts the expected same-certificate SPKI and rejects a different pin', () => {

@@ -180,23 +180,10 @@ export class ApplyPatchTool implements Tool {
             outputLines.push(
               `❌ Verification failed:\n${stderr || stdout || 'Exit code ' + verifyResult.exitCode}`,
             );
-            // Auto-revert on failure
-            try {
-              const revertRes = await execSandboxed(`git checkout -- "${fileToPatch}"`, 10, cwd);
-              if (revertRes.exitCode === 0) {
-                outputLines.push('\n↩️  Patch reverted automatically.');
-              } else {
-                outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
-                getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert failed', {
-                  stderr: revertRes.stderr,
-                });
-              }
-            } catch (e) {
-              outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
-              getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert exception', {
-                error: (e as Error)?.message,
-              });
-            }
+            // No auto-revert: `git checkout -- <file>` restores the *index*
+            // version, which is not this patch's pre-image, so it silently
+            // discarded the user's pre-existing unstaged changes. The file is
+            // left exactly as the patch produced it.
           }
         } catch (err: unknown) {
           outputLines.push(

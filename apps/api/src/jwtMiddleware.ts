@@ -104,16 +104,33 @@ export function signAccessToken(user: AuthUser): string {
 }
 
 /**
- * Signs a long-lived refresh token (7d) used to obtain new access tokens.
- * Each token carries a unique `jti` that is persisted in PostgreSQL so it can
- * be rotated and revoked (see refreshTokenStore / /api/auth/refresh).
+ * A refresh token plus the jti/expiry that must be registered for it.
+ * AUTH-03: rotation must mint *without* persisting, so the caller can consume
+ * the old jti and insert the new one inside one version-fenced transaction.
  */
-export async function signRefreshToken(user: AuthUser): Promise<string> {
+export interface MintedRefreshToken {
+  token: string;
+  jti: string;
+  /** Unix expiry (seconds). */
+  exp: number;
+}
+
+/**
+ * Signs a long-lived refresh token (7d) used to obtain new access tokens.
+ * Each token carries a unique `jti` and the user's `auth_version`, so rotation
+ * can be fenced against a password reset or role change. This does NOT persist
+ * the jti — use `signRefreshToken` for a self-contained issue, or
+ * `rotate` in refreshTokenStore for the rotation path.
+ */
+export function mintRefreshToken(user: AuthUser): MintedRefreshToken {
   const jti = randomUUID();
   const payload: CommanderJwtPayload = {
     id: user.id,
     username: user.username,
     role: user.role,
+    // AUTH-03: the version fence. Without it a refresh token minted before a
+    // reset stayed exchangeable afterwards.
+    auth_version: user.authVersion,
     type: 'refresh',
     jti,
   };
@@ -129,8 +146,17 @@ export async function signRefreshToken(user: AuthUser): Promise<string> {
   const decoded = jwt.decode(token) as CommanderJwtPayload | null;
   const exp =
     typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
-  await persistRefreshJti(jti, user.id, exp);
-  return token;
+  return { token, jti, exp };
+}
+
+/**
+ * Signs a refresh token and persists its jti. Used for login/register/OIDC,
+ * where there is no existing jti to rotate.
+ */
+export async function signRefreshToken(user: AuthUser): Promise<string> {
+  const minted = mintRefreshToken(user);
+  await persistRefreshJti(minted.jti, user.id, minted.exp);
+  return minted.token;
 }
 
 /**

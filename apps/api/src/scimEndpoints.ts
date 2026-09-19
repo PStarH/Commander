@@ -97,16 +97,29 @@ function scimGroupFromBody(body: unknown, base: string, id?: string): ScimGroup 
 
 function toListResponse<T>(
   resources: T[],
+  totalResults: number,
   startIndex: number,
   itemsPerPage: number,
 ): ScimListResponse<T> {
   return {
     schemas: ['urn:ietf:params:scim:api:messages:2.0:ListResponse'],
-    totalResults: resources.length,
+    totalResults,
     startIndex,
     itemsPerPage,
     Resources: resources,
   };
+}
+
+/**
+ * SCIM pagination query params (RFC 7644 §3.4.2.4): `startIndex` defaults to 1,
+ * `count` defaults to 100. Non-finite / negative input must never reach the
+ * slice arithmetic (NaN silently yields an empty page); fall back to the spec
+ * default instead.
+ */
+function paginationParam(raw: unknown, fallback: number): number {
+  const parsed = Number.parseInt(typeof raw === 'string' ? raw : '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, parsed);
 }
 
 function scimError(detail: string, status: number): Record<string, unknown> {
@@ -160,10 +173,10 @@ export function createScimRouter(store?: ScimStore): Router {
   router.get('/Users', async (req: Request, res: Response) => {
     try {
       const all = await scimStore.listUsers(tenantId(), (req.query.filter as string) ?? undefined);
-      const startIndex = Math.max(1, parseInt((req.query.startIndex as string) ?? '1', 10));
-      const itemsPerPage = Math.max(1, parseInt((req.query.count as string) ?? '100', 10));
+      const startIndex = paginationParam(req.query.startIndex, 1);
+      const itemsPerPage = paginationParam(req.query.count, 100);
       const page = all.slice(startIndex - 1, startIndex - 1 + itemsPerPage);
-      res.json(toListResponse(page, startIndex, itemsPerPage));
+      res.json(toListResponse(page, all.length, startIndex, itemsPerPage));
     } catch (err) {
       handleError(res, err);
     }
@@ -246,10 +259,10 @@ export function createScimRouter(store?: ScimStore): Router {
   router.get('/Groups', async (req: Request, res: Response) => {
     try {
       const all = await scimStore.listGroups(tenantId(), (req.query.filter as string) ?? undefined);
-      const startIndex = Math.max(1, parseInt((req.query.startIndex as string) ?? '1', 10));
-      const itemsPerPage = Math.max(1, parseInt((req.query.count as string) ?? '100', 10));
+      const startIndex = paginationParam(req.query.startIndex, 1);
+      const itemsPerPage = paginationParam(req.query.count, 100);
       const page = all.slice(startIndex - 1, startIndex - 1 + itemsPerPage);
-      res.json(toListResponse(page, startIndex, itemsPerPage));
+      res.json(toListResponse(page, all.length, startIndex, itemsPerPage));
     } catch (err) {
       handleError(res, err);
     }

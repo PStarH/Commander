@@ -24,11 +24,13 @@ import {
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import {
   ApiKeyWorkerAuthenticator,
-  InMemoryWorkerRegistry,
   ToolStepExecutor,
   WorkerService,
   createWorkerPolicyEvaluator,
 } from '../packages/worker-plane/src/index.js';
+// WP-14: the in-memory registry is deliberately not exposed from the package
+// root; import it from its module, as the worker-plane suites do.
+import { InMemoryWorkerRegistry } from '../packages/worker-plane/src/registry.js';
 import { InMemoryTicketAdapter } from '../packages/worker-plane/src/ticketAdapter.js';
 import type { GatewayEvidenceRecord, V1KernelGateway } from '../apps/api/src/v1GatewayKernel.js';
 import { createV1GatewayRouter } from '../apps/api/src/v1GatewayEndpoints.js';

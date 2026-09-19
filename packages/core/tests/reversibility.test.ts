@@ -560,12 +560,10 @@ describe('M9: Tenant quota exceeded → TENANT_RATE_LIMIT or TENANT_CONCURRENCY_
     assert.strictEqual(tp.getTenantConfig('unknown'), undefined);
   });
 
-  it('regression: full concurrent storm covered by chaos-monkey.test.ts CM-T7', () => {
-    // CM-T7 in chaos-monkey.test.ts exercises the full runtime path with
-    // 8 concurrent tasks on a maxConcurrency=2 tenant. We delegate to that
-    // test rather than duplicating the slow path here.
-    assert.ok(true, 'See CM-T7 in tests/chaos-monkey.test.ts');
-  });
+  // The full concurrent storm is covered by CM-T7 in
+  // `tests/chaos-monkey.test.ts` (8 concurrent tasks against a
+  // maxConcurrency=2 tenant). A local placeholder here would assert nothing
+  // and could never fail, so the coverage lives in that one suite only.
 });
 
 describe('M10: Provider 429 → wait retryAfter → fallback if exhausted', () => {

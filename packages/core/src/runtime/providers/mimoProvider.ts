@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -46,6 +47,7 @@ export class MiMoProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://token-plan-sgp.xiaomimimo.com/v1';
     this.defaultModel = config.defaultModel ?? 'mimo-v2.5';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   private static readonly MAX_RETRIES = 4;

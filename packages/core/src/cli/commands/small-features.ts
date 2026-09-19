@@ -389,83 +389,99 @@ export async function cmdCompensation(
 
   try {
     const { getCompensationQueue } = await import('../../atr/compensationQueue');
+    const { runWithTenant } = await import('../../runtime/tenantContext');
+    const { getGlobalTenantProvider } = await import('../../runtime/tenantProvider');
     const queue = getCompensationQueue();
 
-    if (args.length === 0 || args[0] === 'status') {
-      const counts = queue.countByStatus();
-      console.log(`  ${$.bold}Queue Summary:${$.reset}`);
-      console.log(`    ${$.yellow}Pending:${$.reset}     ${counts.pending}`);
-      console.log(`    ${$.cyan}In Progress:${$.reset} ${counts.in_progress}`);
-      console.log(`    ${$.red}Escalated:${$.reset}   ${counts.escalated}`);
-      console.log(`
-  ${$.dim}Commands:${$.reset}`);
+    // AR-03: queue reads and writes are always scoped to one tenant, and
+    // `countByStatus`/`list` return nothing without a context — which would
+    // render as "no items in the queue". Require an explicit tenant instead.
+    const tenantScope = flags['tenant'] ?? getGlobalTenantProvider().getCurrentTenantId();
+    if (!tenantScope) {
       console.log(
-        `    ${$.cyan}commander compensation list${$.reset}         ${$.dim}View all queue items${$.reset}`,
+        `  ${$.red}No tenant context.${$.reset} The compensation queue is tenant-scoped;\n` +
+          `  pass ${$.cyan}--tenant <id>${$.reset} to address one tenant's queue.\n`,
       );
-      console.log(`    ${$.cyan}commander compensation retry <id>${$.reset}    ${$.dim}Retry an escalated item${$.reset}
-`);
       return;
     }
 
-    if (args[0] === 'list') {
-      const parsed = parseInt(flags['limit'] ?? '50', 10);
-      const limit = isNaN(parsed) ? 50 : parsed;
-      const status = flags['status'] as 'pending' | 'in_progress' | 'escalated' | undefined;
-      const items = queue.list({ limit, status });
-      if (items.length === 0) {
-        console.log(`  ${$.dim}No items in the compensation queue.${$.reset}
+    await runWithTenant(tenantScope, async () => {
+      if (args.length === 0 || args[0] === 'status') {
+        const counts = queue.countByStatus();
+        console.log(`  ${$.bold}Queue Summary:${$.reset}`);
+        console.log(`    ${$.yellow}Pending:${$.reset}     ${counts.pending}`);
+        console.log(`    ${$.cyan}In Progress:${$.reset} ${counts.in_progress}`);
+        console.log(`    ${$.red}Escalated:${$.reset}   ${counts.escalated}`);
+        console.log(`
+  ${$.dim}Commands:${$.reset}`);
+        console.log(
+          `    ${$.cyan}commander compensation list${$.reset}         ${$.dim}View all queue items${$.reset}`,
+        );
+        console.log(`    ${$.cyan}commander compensation retry <id>${$.reset}    ${$.dim}Retry an escalated item${$.reset}
 `);
         return;
       }
-      console.log(`  ${$.bold}Compensation Queue Items (${items.length}):${$.reset}
+
+      if (args[0] === 'list') {
+        const parsed = parseInt(flags['limit'] ?? '50', 10);
+        const limit = isNaN(parsed) ? 50 : parsed;
+        const status = flags['status'] as 'pending' | 'in_progress' | 'escalated' | undefined;
+        const items = queue.list({ limit, status });
+        if (items.length === 0) {
+          console.log(`  ${$.dim}No items in the compensation queue.${$.reset}
 `);
-      for (const item of items) {
-        const statusIcon =
-          item.status === 'escalated'
-            ? `${$.red}⬆${$.reset}`
-            : item.status === 'in_progress'
-              ? `${$.cyan}↻${$.reset}`
-              : `${$.yellow}○${$.reset}`;
-        const age = getAge(item.enqueuedAt);
-        console.log(`    ${statusIcon} ${$.cyan}${item.id}${$.reset}`);
-        console.log(
-          `      ${$.dim}Tool:${$.reset} ${item.toolName}  ${$.dim}Run:${$.reset} ${item.runId}`,
-        );
-        console.log(
-          `      ${$.dim}Attempts:${$.reset} ${item.attemptCount}/${item.maxAttempts}  ${$.dim}Age:${$.reset} ${age}  ${$.dim}Status:${$.reset} ${item.status}`,
-        );
-        if (item.lastError)
-          console.log(`      ${$.dim}Error:${$.reset} ${item.lastError.slice(0, 100)}`);
-        if (item.nextAttemptAt && item.status === 'pending')
-          console.log(`      ${$.dim}Next attempt:${$.reset} ${item.nextAttemptAt}`);
-        console.log('');
+          return;
+        }
+        console.log(`  ${$.bold}Compensation Queue Items (${items.length}):${$.reset}
+`);
+        for (const item of items) {
+          const statusIcon =
+            item.status === 'escalated'
+              ? `${$.red}⬆${$.reset}`
+              : item.status === 'in_progress'
+                ? `${$.cyan}↻${$.reset}`
+                : `${$.yellow}○${$.reset}`;
+          const age = getAge(item.enqueuedAt);
+          console.log(`    ${statusIcon} ${$.cyan}${item.id}${$.reset}`);
+          console.log(
+            `      ${$.dim}Tool:${$.reset} ${item.toolName}  ${$.dim}Run:${$.reset} ${item.runId}`,
+          );
+          console.log(
+            `      ${$.dim}Attempts:${$.reset} ${item.attemptCount}/${item.maxAttempts}  ${$.dim}Age:${$.reset} ${age}  ${$.dim}Status:${$.reset} ${item.status}`,
+          );
+          if (item.lastError)
+            console.log(`      ${$.dim}Error:${$.reset} ${item.lastError.slice(0, 100)}`);
+          if (item.nextAttemptAt && item.status === 'pending')
+            console.log(`      ${$.dim}Next attempt:${$.reset} ${item.nextAttemptAt}`);
+          console.log('');
+        }
+        return;
       }
-      return;
-    }
 
-    if (args[0] === 'retry' && !args[1]) {
-      console.log(
-        `  ${$.red}Missing item ID.${$.reset} Usage: ${$.cyan}commander compensation retry <id>${$.reset}\n`,
-      );
-      return;
-    }
-
-    if (args[0] === 'retry' && args[1]) {
-      const id = args[1];
-      const ok = queue.retry(id);
-      if (ok) {
-        console.log(`  ${$.green}✓${$.reset} Item ${$.cyan}${id}${$.reset} reset to pending for immediate retry.
-`);
-      } else {
-        console.log(`  ${$.red}✗${$.reset} Item ${$.cyan}${id}${$.reset} not found or not in escalated status.
-`);
+      if (args[0] === 'retry' && !args[1]) {
+        console.log(
+          `  ${$.red}Missing item ID.${$.reset} Usage: ${$.cyan}commander compensation retry <id>${$.reset}\n`,
+        );
+        return;
       }
-      return;
-    }
 
-    console.log(`  ${$.yellow}Unknown subcommand: ${args[0]}${$.reset}`);
-    console.log(`  ${$.dim}Usage: commander compensation [list|retry <id>|status]${$.reset}
+      if (args[0] === 'retry' && args[1]) {
+        const id = args[1];
+        const ok = queue.retry(id, tenantScope);
+        if (ok) {
+          console.log(`  ${$.green}✓${$.reset} Item ${$.cyan}${id}${$.reset} reset to pending for immediate retry.
 `);
+        } else {
+          console.log(`  ${$.red}✗${$.reset} Item ${$.cyan}${id}${$.reset} not found or not in escalated status.
+`);
+        }
+        return;
+      }
+
+      console.log(`  ${$.yellow}Unknown subcommand: ${args[0]}${$.reset}`);
+      console.log(`  ${$.dim}Usage: commander compensation [list|retry <id>|status]${$.reset}
+`);
+    });
   } catch (err) {
     console.log(`  ${$.red}Error: ${err instanceof Error ? err.message : String(err)}${$.reset}`);
     console.log(`  ${$.dim}Compensation queue requires better-sqlite3.${$.reset}

@@ -248,9 +248,18 @@ export class ReflexionLoop implements IReflexionLoop {
     const firstAvgTokens = this.computeAverageTokens(firstHalf);
     const secondAvgTokens = this.computeAverageTokens(secondHalf);
 
-    const successRateTrend = this.determineTrend(secondSuccessRate, firstSuccessRate);
-    const latencyTrend = this.determineTrend(firstAvgLatency, secondAvgLatency); // Lower is better
-    const tokenEfficiencyTrend = this.determineTrend(firstAvgTokens, secondAvgTokens); // Lower is better
+    // `determineTrend(first, second)` reports improving when `second > first`.
+    // Success rate is "higher is better", so the halves must be passed in
+    // chronological order; passing them reversed reported a *rising* success
+    // rate as 'declining' (latency/tokens below are already lower-is-better and
+    // keep their order).
+    const successRateTrend = this.determineTrend(firstSuccessRate, secondSuccessRate);
+    // Latency and token cost are "lower is better", so the halves are passed in
+    // reverse: a drop from the first half to the second half is an improvement.
+    // Passing them in chronological order reported every latency/token
+    // reduction as 'declining'.
+    const latencyTrend = this.determineTrend(secondAvgLatency, firstAvgLatency);
+    const tokenEfficiencyTrend = this.determineTrend(secondAvgTokens, firstAvgTokens);
 
     const trend: ImprovementTrend = {
       period: `last-${this.history.length}-executions`,

@@ -17,7 +17,7 @@ import {
 } from './toolEffectCatalog.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
 import { runWithStepWorkloadIdentity } from './stepWorkloadIdentity.js';
-import type { ClaimedStep, WorkerRecord } from './types.js';
+import type { ClaimedStep, StepExecutor, WorkerRecord } from './types.js';
 
 const ac = new AbortController();
 
@@ -67,7 +67,7 @@ function makeCapabilityIssuer(): CapabilityTokenIssuer {
 }
 
 async function executeWithWorkload(
-  executor: ToolStepExecutor,
+  executor: StepExecutor,
   step: ClaimedStep,
 ): Promise<Record<string, unknown> | undefined> {
   const worker = createMockWorker();
@@ -284,7 +284,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
             return { effectId: 'c1', replayed: false, response: { via: 'broker' } };
           },
         },
-        undefined,
+        makeCapabilityIssuer(),
         catalog,
       );
       const step = createMockStep({
@@ -299,7 +299,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
           capabilityToken: 'tok',
         },
       });
-      await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      await executeWithWorkload(executor, step);
       assert.equal(registryHit, false);
       assert.equal(brokerHit, true);
     });
@@ -330,7 +330,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
             return { effectId: 'c2', replayed: false, response: { gated: true } };
           },
         },
-        undefined,
+        makeCapabilityIssuer(),
         catalog,
       );
       const step = createMockStep({
@@ -346,7 +346,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
           capabilityToken: 'tok',
         },
       });
-      await executor.execute(step, { signal: ac.signal, worker: createMockWorker() });
+      await executeWithWorkload(executor, step);
       assert.equal(registryHit, false);
       assert.equal(brokerHit, true);
     });

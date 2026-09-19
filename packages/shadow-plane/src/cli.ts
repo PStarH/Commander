@@ -24,6 +24,11 @@ import { loadShadowStartupConfig, type ShadowDatabaseOperation } from './startup
 
 const MAX_NDJSON_LINE_BYTES = 16 * 1024;
 const MAX_IMPORT_RECORDS = 10_000;
+// The record cap only bounds the number of lines; without a byte cap a single
+// unterminated line (or a file far larger than the record cap can ever consume)
+// is read to EOF. Bound the stream itself to the largest payload the record cap
+// can legitimately carry.
+const MAX_IMPORT_BYTES = MAX_IMPORT_RECORDS * MAX_NDJSON_LINE_BYTES;
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024;
 const MAX_REPORT_BYTES = 192 * 1024 * 1024;
 const MAX_PUBLIC_KEY_BYTES = 64 * 1024;
@@ -77,6 +82,8 @@ const SAFE_ERROR_CODES = new Set([
   'COMMANDER_DATABASE_SERVER_CERTIFICATE_INVALID',
   'COMMANDER_DATABASE_SERVER_SPKI_MISMATCH',
   'SHADOW_INPUT_TOO_LARGE',
+  'SHADOW_INPUT_NOT_REGULAR',
+  'SHADOW_IMPORT_TOO_LARGE',
   'SHADOW_BATCH_NOT_DUE',
   'SHADOW_BATCH_NOT_FOUND',
   'SHADOW_BATCH_CLOSED',
@@ -96,6 +103,12 @@ const SAFE_ERROR_CODES = new Set([
   'SHADOW_REPORT_CAMPAIGN_NOT_FOUND',
   'SHADOW_REPORT_BATCH_OPEN',
   'SHADOW_REPORT_NOT_TERMINAL',
+  'SHADOW_EXPORT_PARENT_INVALID',
+  'SHADOW_EXPORT_SYMLINK_FORBIDDEN',
+  'SHADOW_REPORT_DATA_INVALID',
+  'SHADOW_REPORT_RECORD_INVALID',
+  'SHADOW_MANIFEST_DIGEST_MISMATCH',
+  'SHADOW_REPORT_MANIFEST_RECORD_MISMATCH',
 ]);
 
 export interface ShadowCliRepository {
@@ -215,7 +228,8 @@ async function readBoundedFile(path: string, maximumBytes: number): Promise<Buff
   const handle = await open(path, 'r');
   try {
     const stats = await handle.stat();
-    if (!stats.isFile() || stats.size > maximumBytes) throw new Error('SHADOW_INPUT_TOO_LARGE');
+    if (!stats.isFile()) throw new Error('SHADOW_INPUT_NOT_REGULAR');
+    if (stats.size > maximumBytes) throw new Error('SHADOW_INPUT_TOO_LARGE');
     const contents = await handle.readFile();
     if (contents.length > maximumBytes) throw new Error('SHADOW_INPUT_TOO_LARGE');
     return contents;
@@ -230,14 +244,22 @@ async function readJson(path: string, maximumBytes: number): Promise<unknown> {
 
 async function* ndjsonLines(
   path: string,
+  maximumBytes: number,
 ): AsyncGenerator<{ line?: Buffer; rejected: boolean }, void, undefined> {
   const stream = createReadStream(path);
   let pieces: Buffer[] = [];
   let pendingBytes = 0;
   let overflow = false;
+  let consumedBytes = 0;
 
   for await (const value of stream) {
     const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+    consumedBytes += chunk.length;
+    if (consumedBytes > maximumBytes) {
+      // Stop reading rather than draining an unbounded file to EOF. Throwing
+      // here also closes the read stream through the for-await protocol.
+      throw new Error('SHADOW_IMPORT_TOO_LARGE');
+    }
     let start = 0;
     for (let index = 0; index < chunk.length; index += 1) {
       if (chunk[index] !== 0x0a) continue;
@@ -342,11 +364,20 @@ async function importObservations(
   dependencies: ShadowCliDependencies,
 ): Promise<ShadowCliResult> {
   let imported = 0;
+  let existing = 0;
   let rejected = 0;
   let seen = 0;
-  for await (const item of ndjsonLines(file)) {
+  let truncated = false;
+  for await (const item of ndjsonLines(file, MAX_IMPORT_BYTES)) {
     seen += 1;
-    if (seen > MAX_IMPORT_RECORDS || item.rejected || !item.line || item.line.length === 0) {
+    if (seen > MAX_IMPORT_RECORDS) {
+      // The record cap is a bound on the work, not a per-line rejection: stop
+      // reading and report the truncation explicitly instead of counting the
+      // rest of an unbounded file as `rejected`.
+      truncated = true;
+      break;
+    }
+    if (item.rejected || !item.line || item.line.length === 0) {
       rejected += 1;
       continue;
     }
@@ -358,8 +389,14 @@ async function importObservations(
       continue;
     }
     try {
-      await dependencies.repository.importObservation(dependencies.tenantId, observation);
-      imported += 1;
+      const result = await dependencies.repository.importObservation(
+        dependencies.tenantId,
+        observation,
+      );
+      // An idempotent replay wrote nothing, so it must not be reported as a
+      // fresh import; operators use `imported` as evidence that rows landed.
+      if (result.idempotent) existing += 1;
+      else imported += 1;
     } catch (error) {
       const code = error instanceof Error ? error.message : '';
       if (
@@ -373,9 +410,14 @@ async function importObservations(
       throw error;
     }
   }
+  const counts = { imported, existing, rejected };
+  // A file with no lines at all (truncated export, unwritten file) is not a
+  // successful import of zero rows; it is an empty input that must fail closed.
+  if (seen === 0) return failure('SHADOW_IMPORT_EMPTY', counts);
+  if (truncated) return failure('SHADOW_IMPORT_TRUNCATED', counts);
   return rejected === 0
-    ? ok('SHADOW_IMPORT_COMPLETE', { imported, rejected })
-    : failure('SHADOW_IMPORT_PARTIAL', { imported, rejected });
+    ? ok('SHADOW_IMPORT_COMPLETE', counts)
+    : failure('SHADOW_IMPORT_PARTIAL', counts);
 }
 
 async function execute(command: ParsedCommand, dependencies: ShadowCliDependencies) {

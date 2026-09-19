@@ -32,17 +32,28 @@ function isTruthy(value: string | undefined): boolean {
   return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
 }
 
-function resolveEnvironment(value: string | undefined): SandboxEnvironment {
-  switch (value?.toLowerCase()) {
-    case 'production':
-      return 'production';
-    case 'staging':
-      return 'staging';
-    case 'test':
-      return 'test';
-    default:
-      return 'development';
+/**
+ * Production-grade signals, aligned with `apps/api/src/envSignal.ts` and
+ * `sandbox/execPolicy.ts:isProductionRuntimeEnv` (both accept COMMANDER_ENV)
+ * plus the enterprise profile signals the broker/kernel treat as production.
+ */
+const PRODUCTION_SIGNAL_VALUES = new Set(['production', 'prod', 'enterprise']);
+
+function normalizeSignal(value: string | undefined): string {
+  return value?.trim().toLowerCase() ?? '';
+}
+
+function resolveEnvironment(env: NodeJS.ProcessEnv): SandboxEnvironment {
+  const signals = [env.NODE_ENV, env.COMMANDER_ENV, env.COMMANDER_PROFILE, env.COMMANDER_CELL_TIER];
+  // Any production signal wins: a deployment that declares enterprise through
+  // COMMANDER_PROFILE/CELL_TIER while NODE_ENV is unset must not silently get
+  // the development sandbox.
+  if (signals.some((value) => PRODUCTION_SIGNAL_VALUES.has(normalizeSignal(value)))) {
+    return 'production';
   }
+  if (signals.some((value) => normalizeSignal(value) === 'staging')) return 'staging';
+  if (normalizeSignal(env.NODE_ENV) === 'test') return 'test';
+  return 'development';
 }
 
 function resolveIsolation(
@@ -63,7 +74,7 @@ function resolveIsolation(
 }
 
 export function resolveSandboxPolicy(env: NodeJS.ProcessEnv = process.env): SandboxPolicy {
-  const environment = resolveEnvironment(env.NODE_ENV);
+  const environment = resolveEnvironment(env);
   const policy: SandboxPolicy = {
     environment,
     isolation: resolveIsolation(env.COMMANDER_SANDBOX_ISOLATION, environment),

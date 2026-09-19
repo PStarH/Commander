@@ -13,6 +13,7 @@ import { isClassAEffectType } from '@commander/contracts';
 import {
   buildRunEvidenceBundle,
   canonicalEvidenceBody,
+  canonicalEvidenceJson,
   type EvidenceAuditSource,
   type EvidenceEffectSource,
   type EvidenceSigner,
@@ -728,10 +729,90 @@ export interface EffectBrokerOptions {
   evidenceSigner?: EvidenceSigner;
   requireEvidencePersistence?: boolean;
   evidenceRetentionMs?: number;
+  /**
+   * How admit() treats the caller-supplied idempotency key.
+   *
+   * The effect envelope contract (packages/contracts/src/effects.ts:16) states
+   * that the broker recomputes `idempotency_key` and compares it against the
+   * caller-supplied value.
+   *
+   * - `'derive'` (default under the production profile): contract-complete
+   *   mode. The broker recomputes the key with `deriveEffectIdempotencyKey` and
+   *   rejects any mismatch with `IDEMPOTENCY_KEY_MISMATCH`. Production callers
+   *   (`llmBrokerBridge`, the action-adapters conformance harness) derive their
+   *   key from the same five fields.
+   * - `'caller'` (default outside production): the broker enforces only that
+   *   the key is a well-formed opaque identifier (non-empty, <= 256 chars, no
+   *   whitespace or control characters).
+   *
+   * The default is phased in rather than made mandatory, so the ~59 existing
+   * construction sites keep compiling: production is contract-complete, while
+   * development/test keeps the permissive default until every caller derives.
+   * Pass an explicit value to override either way. The effective policy is
+   * readable read-only through `broker.idempotencyKeyPolicy`.
+   */
+  idempotencyKeyPolicy?: 'derive' | 'caller';
 }
 
 /** EffectBroker ctor reject when durable replay/revocations wiring is missing. */
 export const DURABLE_CAPABILITY_STORES_REQUIRED = 'DURABLE_CAPABILITY_STORES_REQUIRED';
+
+/**
+ * EB-08 / contracts CC-01: the effect envelope contract states that
+ * idempotency_key is recomputed by the broker and compared against the
+ * caller-supplied value. This is that derivation.
+ *
+ * It binds the key to the four identity fields plus the canonical request, so a
+ * key minted for a different request (or a caller-chosen literal) cannot
+ * collapse two different effects onto one ledger row.
+ */
+/**
+ * EB-08: opaque idempotency keys accepted in `'caller'` mode. Deliberately
+ * permissive about shape (callers legitimately use `effectId`,
+ * `cmp:<id>:<version>`, …) but rejects empty, oversized, whitespace-bearing, and
+ * control-character values.
+ */
+export const EFFECT_IDEMPOTENCY_KEY_PATTERN = /^[\x21-\x7e]{1,256}$/;
+
+/**
+ * Runtime effect-id check applied at admit(). The contracts wire-level pattern
+ * `^[A-Za-z0-9_-]{1,128}$` is narrower than what current in-repo callers use:
+ * `llmBrokerBridge` mints `llm:<runId>:<stepId>:<contentHash>` (colon-separated
+ * and longer than 128 chars). Rejecting those would break a production path
+ * owned by another package, so this check fails closed only on what is
+ * dangerous at runtime: empty ids, whitespace/control characters, and
+ * unbounded length. Narrowing to the wire pattern is a cross-package change.
+ */
+export const EFFECT_RUNTIME_ID_PATTERN = /^[\x21-\x7e]{1,256}$/;
+
+export function deriveEffectIdempotencyKey(input: {
+  tenantId: string;
+  runId: string;
+  stepId: string;
+  effectId: string;
+  request: Record<string, unknown>;
+}): string {
+  return createHash('sha256')
+    .update(
+      canonicalEvidenceJson({
+        v: 1,
+        tenantId: input.tenantId,
+        runId: input.runId,
+        stepId: input.stepId,
+        effectId: input.effectId,
+        request: input.request,
+      }),
+    )
+    .digest('hex');
+}
+
+/**
+ * EB-09: grace window between aborting a timed-out effect and hard-rejecting a
+ * non-cooperative executor. A cooperative handler rejects through its abort
+ * listener within this window and keeps its own error taxonomy; past it the
+ * broker force-rejects and parks as COMPLETION_UNKNOWN.
+ */
+export const EFFECT_TIMEOUT_ABORT_GRACE_MS = 50;
 
 /**
  * Assert options carry durable replay + revocations. Presence alone is not
@@ -907,7 +988,10 @@ function hasCompensationAdmissionBinding(grant: CapabilityGrant): boolean {
 /** The only supported path for an external write in Architecture V2. */
 export class EffectBroker {
   private readonly options: Required<
-    Pick<EffectBrokerOptions, 'audience' | 'requireRequestBinding' | 'requireOperationsReadiness'>
+    Pick<
+      EffectBrokerOptions,
+      'audience' | 'requireRequestBinding' | 'requireOperationsReadiness' | 'idempotencyKeyPolicy'
+    >
   > &
     Pick<
       EffectBrokerOptions,
@@ -973,6 +1057,17 @@ export class EffectBroker {
     ) {
       throw new EffectBrokerError('EVIDENCE_PERSISTENCE_REQUIRED');
     }
+    // EB-10: "unfinished effects must be parked as COMPLETION_UNKNOWN" is only
+    // implementable through the kernel. A kernel without that method turns every
+    // park into a silent no-op and leaves the ledger row stuck in ADMITTED,
+    // which reconcileUnknown refuses to advance. Require the authority wherever
+    // evidence persistence is authoritative.
+    if (
+      (options.requireEvidencePersistence || options.evidenceSigner) &&
+      typeof kernel.markEffectCompletionUnknown !== 'function'
+    ) {
+      throw new EffectBrokerError('EVIDENCE_PARK_AUTHORITY_REQUIRED');
+    }
     if (
       kernel.compensationTerminalEvidenceRequired &&
       (!compensationTerminalAuthorityReady || !options.evidenceSigner)
@@ -990,6 +1085,15 @@ export class EffectBroker {
       revocations: options.revocations,
       requireDurableCapabilityStores: requireDurable,
       requireOperationsReadiness,
+      // Staged strict mode: the default stays `'caller'` until every production
+      // caller mints a derived key. Migrated today: `llmBrokerBridge` and the
+      // action-adapters conformance fixture (both explicitly opt into 'derive').
+      // NOT yet migrated, so flipping the production default now would make them
+      // fail closed at admit(): `worker-plane/src/toolStepExecutor.ts` and
+      // `connectorStepExecutor.ts` (caller-chosen keys such as 'k1'), and the
+      // adapter-ops compensation broker (`cmp:<effectId>:<adapterVersion>`,
+      // whose version tag must move into the request before it can be derived).
+      idempotencyKeyPolicy: options.idempotencyKeyPolicy ?? 'caller',
     };
     this.evidenceSigner = options.evidenceSigner;
     this.evidenceRetentionMs = options.evidenceRetentionMs ?? 365 * 24 * 60 * 60 * 1_000;
@@ -999,6 +1103,14 @@ export class EffectBroker {
   /** Bind process-local worker generation after registry.register (bootstrap). */
   bindLocalWorkerGeneration(generation: number): void {
     this.options.localWorkerGeneration = generation;
+  }
+
+  /**
+   * Effective admit() idempotency-key policy, as constructed. Read-only so a
+   * caller/test can assert which policy a broker is actually enforcing.
+   */
+  get idempotencyKeyPolicy(): 'derive' | 'caller' {
+    return this.options.idempotencyKeyPolicy;
   }
 
   /**
@@ -1020,6 +1132,40 @@ export class EffectBroker {
     compensationClaim?: CompensationTerminalClaimBinding;
   }): Promise<AdmissionResult> {
     const grant = await this.tokens.verify(input.token);
+    // EB-08 / contracts CC-01: the envelope contract documents identity shape and
+    // idempotency-key derivation as broker admit-time invariants. Previously an
+    // illegal effect_id or a caller-chosen key passed straight through.
+    if (
+      typeof input.effectId !== 'string' ||
+      !EFFECT_RUNTIME_ID_PATTERN.test(input.effectId) ||
+      typeof grant.tenantId !== 'string' ||
+      typeof grant.runId !== 'string' ||
+      typeof grant.stepId !== 'string' ||
+      grant.tenantId.length === 0 ||
+      grant.runId.length === 0 ||
+      grant.stepId.length === 0
+    ) {
+      return this.rejectAdmit(grant, 'INVALID_EFFECT_IDENTITY', { effectId: input.effectId });
+    }
+    if (this.options.idempotencyKeyPolicy === 'derive') {
+      const derivedIdempotencyKey = deriveEffectIdempotencyKey({
+        tenantId: grant.tenantId,
+        runId: grant.runId,
+        stepId: grant.stepId,
+        effectId: input.effectId,
+        request: input.request,
+      });
+      if (input.idempotencyKey !== derivedIdempotencyKey) {
+        return this.rejectAdmit(grant, 'IDEMPOTENCY_KEY_MISMATCH', { effectId: input.effectId });
+      }
+    } else if (
+      typeof input.idempotencyKey !== 'string' ||
+      !EFFECT_IDEMPOTENCY_KEY_PATTERN.test(input.idempotencyKey)
+    ) {
+      // Fail closed on a malformed key even in caller mode: an empty, oversized,
+      // or whitespace-bearing key must never reach the kernel as an identifier.
+      return this.rejectAdmit(grant, 'INVALID_IDEMPOTENCY_KEY', { effectId: input.effectId });
+    }
     if (isProductionProfile() && !input.workloadBinding) {
       return this.rejectAdmit(grant, 'WORKLOAD_BINDING_REQUIRED', {});
     }
@@ -1280,12 +1426,35 @@ export class EffectBroker {
         });
       }
       const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(new Error('Effect timeout')),
-        input.timeoutMs ?? 30_000,
-      );
+      // EB-09: aborting the signal is only advisory. A non-cooperative executor
+      // (third-party SDK that ignores `signal`) left the effect ADMITTED and the
+      // caller suspended under a live lease heartbeat forever. Arm a hard exit
+      // after abort plus a short grace window; the timeout then rejects below and
+      // is parked as COMPLETION_UNKNOWN by the catch block. The outcome of a
+      // timed-out write is unknown — never a success.
+      const timeoutMs = input.timeoutMs ?? 30_000;
+      let hardTimedOut = false;
+      let rejectHardTimeout: (error: EffectBrokerError) => void = () => {};
+      const hardTimeout = new Promise<never>((_resolve, reject) => {
+        rejectHardTimeout = reject;
+      });
+      const abortTimer = setTimeout(() => controller.abort(new Error('Effect timeout')), timeoutMs);
+      const graceTimer = setTimeout(() => {
+        if (hardTimedOut) return;
+        hardTimedOut = true;
+        rejectHardTimeout(
+          new EffectBrokerError('EFFECT_EXECUTION_TIMEOUT', {
+            effectId: admission.kernelEffectId,
+            timeoutMs,
+          }),
+        );
+      }, timeoutMs + EFFECT_TIMEOUT_ABORT_GRACE_MS);
       try {
-        const response = await this.executor.execute({
+        // A rejection handler is attached to the abandoned executor promise so a
+        // non-cooperative implementation cannot surface as an unhandledRejection
+        // once the hard timeout wins the race. `Promise.race` still sees the
+        // executor's own rejection and error taxonomy.
+        const execution = this.executor.execute({
           type: admission.type,
           request: admission.request,
           signal: controller.signal,
@@ -1300,6 +1469,8 @@ export class EffectBroker {
             effectId: admission.effectId,
           },
         });
+        void execution.catch(() => undefined);
+        const response = await Promise.race([execution, hardTimeout]);
         const committed = await this.completeTerminalEffect(admission, response);
         if (!committed) {
           await this.parkUnfinishedAdmission(
@@ -1324,9 +1495,22 @@ export class EffectBroker {
         finished = true;
         return { effectId: admission.kernelEffectId, replayed: false, response };
       } finally {
-        clearTimeout(timer);
+        clearTimeout(abortTimer);
+        clearTimeout(graceTimer);
       }
     } catch (error) {
+      if (error instanceof EffectBrokerError && error.code === 'EFFECT_EXECUTION_TIMEOUT') {
+        // EB-09: a hard timeout is the absence of a decision. Park and report
+        // COMPLETION_UNKNOWN instead of letting the deadline error escape with
+        // no ledger state, which let retries spin on ADMITTED.
+        await this.parkUnfinishedAdmission(admission, error.code);
+        parked = true;
+        throw new EffectBrokerError('COMPLETION_UNKNOWN', {
+          effectId: admission.kernelEffectId,
+          code: error.code,
+          timeoutMs: error.details.timeoutMs,
+        });
+      }
       if (!finished && !parked && admission.effectState === 'ADMITTED') {
         // L4-02: adapter taxonomy — NOT_COMMITTED → failEffect (terminal);
         // UNKNOWN → park (QUERY_FIRST). Other errors keep fail-closed park.
@@ -1597,15 +1781,52 @@ export class EffectBroker {
 
   /** Park an ADMITTED ledger row so idempotent retries fail closed as COMPLETION_UNKNOWN, not in-flight spin. */
   private async parkUnfinishedAdmission(admission: AdmittedEffect, reason: string): Promise<void> {
-    await this.kernel.markEffectCompletionUnknown?.({
-      effectId: admission.kernelEffectId,
-      tenantId: admission.grant.tenantId,
-      reason,
-      actor: admission.actor,
-      lease: admission.lease,
-    });
+    const park = this.kernel.markEffectCompletionUnknown?.bind(this.kernel);
+    if (typeof park !== 'function') {
+      // EB-10: under evidence persistence the constructor already refused this
+      // kernel. Without it there is no park authority to call, and throwing here
+      // would mask the original error the caller must see (e.g.
+      // WORKER_AFFINITY_VIOLATION) with a park error.
+      if (this.evidenceSigner) {
+        throw new EffectBrokerError('EVIDENCE_PARK_AUTHORITY_REQUIRED', {
+          effectId: admission.kernelEffectId,
+          reason,
+        });
+      }
+      return;
+    }
+    try {
+      // Called as a member of the kernel, never as a detached function: an
+      // unbound call loses `this`, so the park threw, was downgraded to an audit
+      // row, and left the effect ADMITTED — a retry would then re-execute an
+      // effect whose remote outcome is unknown (L4-B adapter chaos).
+      await park({
+        effectId: admission.kernelEffectId,
+        tenantId: admission.grant.tenantId,
+        reason,
+        actor: admission.actor,
+        lease: admission.lease,
+      });
+    } catch (error) {
+      // EB-10: a failed park must not replace the caller's original error, but it
+      // must not vanish either — an unresolvable park leaves the row ADMITTED for
+      // reconciliation. Record it; if the audit authority is down too, that
+      // failure surfaces instead of being swallowed.
+      await this.audit.append({
+        type: 'effect.park_failed',
+        severity: 'high',
+        tenantId: admission.grant.tenantId,
+        runId: admission.grant.runId,
+        stepId: admission.grant.stepId,
+        at: new Date().toISOString(),
+        details: {
+          effectId: admission.kernelEffectId,
+          reason,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
   }
-
   /**
    * L3-08a — query-after-timeout reconcile for COMPLETION_UNKNOWN effects.
    * Never invokes the write executor; only queries remote outcome and advances ledger.

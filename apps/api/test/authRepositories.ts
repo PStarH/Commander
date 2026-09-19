@@ -1,7 +1,21 @@
 import { randomUUID } from 'node:crypto';
 import { hashSync } from 'bcryptjs';
-import type { CreateUserArgs, SafeUser, User, UserRepository, UserRole } from '../src/userStore.js';
-import type { RefreshTokenRecord, RefreshTokenRepository } from '../src/refreshTokenStore.js';
+import {
+  LAST_ADMIN_ERROR,
+  isAdminLevelRole,
+  type CreateUserArgs,
+  type RoleChangeOutcome,
+  type SafeUser,
+  type User,
+  type UserRepository,
+  type UserRole,
+} from '../src/userStore.js';
+import type {
+  RefreshTokenRecord,
+  RefreshTokenRepository,
+  RotateRefreshTokenInput,
+  RotateRefreshTokenResult,
+} from '../src/refreshTokenStore.js';
 import type { AuthFailureEntry, AuthFailureStore } from '../src/authFailureStore.js';
 
 function toSafeUser(user: User): SafeUser {
@@ -94,12 +108,20 @@ export class TestUserRepository implements UserRepository {
     if (user) user.lastLoginAt = new Date().toISOString();
   }
 
-  async updateUserRole(userId: string, role: UserRole): Promise<SafeUser | null> {
+  /** Mirrors the repository invariant: never leave zero admin-level accounts. */
+  private adminCount(): number {
+    return [...this.users.values()].filter((user) => isAdminLevelRole(user.role)).length;
+  }
+
+  async updateUserRole(userId: string, role: UserRole): Promise<RoleChangeOutcome> {
     const user = this.users.get(userId);
-    if (!user) return null;
+    if (!user) return { outcome: 'not_found' };
+    if (isAdminLevelRole(user.role) && !isAdminLevelRole(role) && this.adminCount() <= 1) {
+      return { outcome: 'last_admin' };
+    }
     user.role = role;
     user.authVersion += 1;
-    return toSafeUser(user);
+    return { outcome: 'updated', user: toSafeUser(user) };
   }
 
   async updateUser(
@@ -113,6 +135,14 @@ export class TestUserRepository implements UserRepository {
     }
     if (updates.email && (await this.findUserByEmail(updates.email))?.id !== userId) {
       return { error: 'Email already registered' };
+    }
+    if (
+      updates.role !== undefined &&
+      isAdminLevelRole(user.role) &&
+      !isAdminLevelRole(updates.role) &&
+      this.adminCount() <= 1
+    ) {
+      return { error: LAST_ADMIN_ERROR };
     }
     if (updates.role !== undefined && updates.role !== user.role) user.authVersion += 1;
     Object.assign(user, updates);
@@ -128,7 +158,12 @@ export class TestUserRepository implements UserRepository {
   }
 
   async deleteUser(userId: string): Promise<{ success: boolean; error?: string }> {
-    if (!this.users.delete(userId)) return { success: false, error: 'User not found' };
+    const user = this.users.get(userId);
+    if (!user) return { success: false, error: 'User not found' };
+    if (isAdminLevelRole(user.role) && this.adminCount() <= 1) {
+      return { success: false, error: 'Cannot delete the last admin account' };
+    }
+    this.users.delete(userId);
     return { success: true };
   }
 
@@ -182,6 +217,36 @@ export class TestRefreshTokenRepository implements RefreshTokenRepository {
       if (record.userId === userId) record.revoked = true;
     }
   }
+
+  /**
+   * AUTH-03: models the transactional, version-fenced rotation. `authVersion`
+   * is supplied by the owning test so the double can enforce the same fence the
+   * PostgreSQL repository enforces with `SELECT … FOR UPDATE`.
+   */
+  async rotate(input: RotateRefreshTokenInput): Promise<RotateRefreshTokenResult> {
+    if (this.authVersionProvider) {
+      const current = await this.authVersionProvider(input.userId);
+      if (current === undefined) return { status: 'rejected', reason: 'user_missing' };
+      if (current !== input.expectedAuthVersion) {
+        return { status: 'rejected', reason: 'auth_version_mismatch' };
+      }
+    }
+    const record = this.tokens.get(input.currentJti);
+    if (!record || record.revoked || record.exp <= Math.floor(Date.now() / 1000)) {
+      return { status: 'rejected', reason: 'jti_consumed' };
+    }
+    record.revoked = true;
+    this.tokens.set(input.nextJti, {
+      jti: input.nextJti,
+      userId: input.userId,
+      exp: input.nextExp,
+      revoked: false,
+    });
+    return { status: 'rotated' };
+  }
+
+  /** Optional owner lookup so rotation can enforce the auth-version fence. */
+  authVersionProvider?: (userId: string) => Promise<number | undefined>;
 }
 
 /** Explicit test double; production authentication failures always use PostgreSQL. */
@@ -212,11 +277,14 @@ export class TestAuthFailureStore implements AuthFailureStore {
     return entry;
   }
 
-  async cleanup(now: number, windowMs: number): Promise<void> {
+  async cleanup(now: number, windowMs: number): Promise<number> {
+    let reclaimed = 0;
     for (const [key, entry] of this.entries) {
       if (entry.lockedUntil <= now && entry.lastFailureAt < now - windowMs) {
         this.entries.delete(key);
+        reclaimed += 1;
       }
     }
+    return reclaimed;
   }
 }

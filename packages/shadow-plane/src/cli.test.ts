@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtempSync, readFileSync, writeFileSync, symlinkSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  truncateSync,
+  writeFileSync,
+  symlinkSync,
+} from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -401,6 +408,7 @@ describe('commander-shadow CLI', () => {
       status: 'error',
       code: 'SHADOW_IMPORT_PARTIAL',
       imported: 1,
+      existing: 0,
       rejected: 1,
     });
   });
@@ -413,7 +421,13 @@ describe('commander-shadow CLI', () => {
     const result = await runShadowCli(['import', '--file', file], dependencies(repository));
     assert.deepEqual(result, {
       exitCode: 1,
-      output: { status: 'error', code: 'SHADOW_IMPORT_PARTIAL', imported: 0, rejected: 1 },
+      output: {
+        status: 'error',
+        code: 'SHADOW_IMPORT_PARTIAL',
+        imported: 0,
+        existing: 0,
+        rejected: 1,
+      },
     });
     assert.equal(repository.imported.length, 1);
   });
@@ -430,7 +444,13 @@ describe('commander-shadow CLI', () => {
     };
     assert.deepEqual(await runShadowCli(['import', '--file', file], dependencies(repository)), {
       exitCode: 1,
-      output: { status: 'error', code: 'SHADOW_IMPORT_PARTIAL', imported: 1, rejected: 1 },
+      output: {
+        status: 'error',
+        code: 'SHADOW_IMPORT_PARTIAL',
+        imported: 1,
+        existing: 0,
+        rejected: 1,
+      },
     });
   });
 
@@ -456,6 +476,106 @@ describe('commander-shadow CLI', () => {
       output: { status: 'error', code: 'SHADOW_COMMAND_FAILED' },
     });
     assert.doesNotMatch(JSON.stringify(failed), /top-secret|postgres:/);
+  });
+
+  it('rejects an empty import file and reports idempotent replays separately', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
+    const empty = join(directory, 'empty.ndjson');
+    writeFileSync(empty, '');
+    assert.deepEqual(
+      await runShadowCli(['import', '--file', empty], dependencies(new FakeRepository())),
+      {
+        exitCode: 1,
+        output: {
+          status: 'error',
+          code: 'SHADOW_IMPORT_EMPTY',
+          imported: 0,
+          existing: 0,
+          rejected: 0,
+        },
+      },
+    );
+
+    const replay = join(directory, 'replay.ndjson');
+    writeFileSync(replay, `${JSON.stringify(observation())}\n`);
+    const repository = new FakeRepository();
+    repository.importObservation = async () => ({ idempotent: true });
+    assert.deepEqual(await runShadowCli(['import', '--file', replay], dependencies(repository)), {
+      exitCode: 0,
+      output: {
+        status: 'ok',
+        code: 'SHADOW_IMPORT_COMPLETE',
+        imported: 0,
+        existing: 1,
+        rejected: 0,
+      },
+    });
+  });
+
+  it('bounds the record count and reports truncation instead of counting the tail as rejected', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
+    const file = join(directory, 'truncated.ndjson');
+    writeFileSync(file, `${JSON.stringify(observation())}\n`.repeat(10_001));
+    const repository = new FakeRepository();
+    assert.deepEqual(await runShadowCli(['import', '--file', file], dependencies(repository)), {
+      exitCode: 1,
+      output: {
+        status: 'error',
+        code: 'SHADOW_IMPORT_TRUNCATED',
+        imported: 10_000,
+        existing: 0,
+        rejected: 0,
+      },
+    });
+    assert.equal(repository.imported.length, 10_000);
+  });
+
+  it('bounds the total import bytes without a single line terminator', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
+    const file = join(directory, 'unterminated.ndjson');
+    // A sparse file larger than the byte cap: without the cap the stream is read
+    // to EOF before the (per-line) bound can reject it.
+    writeFileSync(file, '');
+    truncateSync(file, 10_000 * 16 * 1024 + 1);
+    const result = await runShadowCli(
+      ['import', '--file', file],
+      dependencies(new FakeRepository()),
+    );
+    assert.deepEqual(result, {
+      exitCode: 1,
+      output: { status: 'error', code: 'SHADOW_IMPORT_TOO_LARGE' },
+    });
+  });
+
+  it('distinguishes a non-regular --file from an oversized one', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
+    const subdirectory = join(directory, 'subdirectory');
+    mkdirSync(subdirectory);
+    assert.deepEqual(
+      await runShadowCli(
+        ['manifest', 'register', '--file', subdirectory],
+        dependencies(new FakeRepository()),
+      ),
+      { exitCode: 1, output: { status: 'error', code: 'SHADOW_INPUT_NOT_REGULAR' } },
+    );
+  });
+
+  it('passes atomicExport failure codes through the CLI error boundary', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'commander-shadow-cli-'));
+    assert.deepEqual(
+      await runShadowCli(
+        [
+          'report',
+          'export',
+          '--campaign',
+          'campaign-1',
+          '--output',
+          join(directory, 'missing-parent', 'report.json'),
+        ],
+        dependencies(new FakeRepository()),
+      ),
+      { exitCode: 1, output: { status: 'error', code: 'SHADOW_EXPORT_PARENT_INVALID' } },
+    );
   });
 
   it('fails closed on operation readiness and lets retention recover overdue cleanup', async () => {

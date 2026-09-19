@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { servicenowCorrelationId } from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import { createServiceNowIncidentCreateAdapter } from './incidentCreate.js';
+import { ActionAdapterRegistry } from '../registry.js';
 import type { AdapterCredentialProvider } from '../types.js';
 import { parseServiceNowDestination } from '../types.js';
 
@@ -267,5 +268,65 @@ describe('servicenow.incidentCreate adapter', () => {
         return true;
       },
     );
+  });
+
+  it('classifies empty and non-object 2xx create bodies instead of throwing untyped errors', async () => {
+    for (const body of [
+      new Response('{}', { status: 201 }),
+      new Response('', { status: 201 }),
+      new Response('null', { status: 200 }),
+    ]) {
+      const adapter = createServiceNowIncidentCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: async (_input, init) =>
+          (init?.method ?? 'GET') === 'GET'
+            ? new Response(JSON.stringify({ result: [] }), { status: 200 })
+            : body,
+      });
+      await assert.rejects(
+        () => adapter.execute(baseInput()),
+        (error: unknown) => {
+          assert.ok(error instanceof AdapterExecutionError);
+          assert.equal(error.code, 'ADAPTER_RESPONSE_BODY_INVALID');
+          assert.equal(error.commitState, 'UNKNOWN');
+          assert.equal(error.retryMode, 'QUERY_FIRST');
+          return true;
+        },
+      );
+    }
+  });
+
+  it('reconciles a governed compensation through the registry using forwardResponse', async () => {
+    const fetchImpl = async (input: RequestInfo | URL): Promise<Response> => {
+      if (/\/incident\/sys-1$/.test(String(input))) {
+        return new Response(
+          JSON.stringify({ result: { sys_id: 'sys-1', number: 'INC1', state: '7' } }),
+          { status: 200 },
+        );
+      }
+      return new Response('unexpected', { status: 500 });
+    };
+    const adapter = createServiceNowIncidentCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: fetchImpl,
+    });
+    const registry = new ActionAdapterRegistry([adapter]);
+    const querier = registry.outcomeQuerierFor('compensate.servicenow.incident.create');
+    assert.ok(querier);
+    const outcome = await querier.queryOutcome({
+      effectId: 'eff-cmp-1',
+      idempotencyKey: 'cmp:eff-1:1.0.0',
+      type: 'compensate.servicenow.incident.create',
+      tenantId,
+      request: {
+        originalEffectId: 'eff-1',
+        destination,
+        // The kernel constructs exactly this shape for governed compensations.
+        forwardResponse: { sysId: 'sys-1', number: 'INC1', state: '1' },
+        compensationPatch: { state: '7' },
+      },
+    });
+    assert.equal(outcome.status, 'APPLIED');
+    assert.equal(outcome.response?.sysId, 'sys-1');
   });
 });

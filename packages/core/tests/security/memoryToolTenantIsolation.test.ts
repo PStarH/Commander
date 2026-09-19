@@ -6,7 +6,8 @@ import * as os from 'node:os';
 import type { AgentExecutionContext } from '../../src/runtime/types';
 import { runWithTenant, tenantPathSegment } from '../../src/runtime/tenantContext';
 import { MemoryListTool, MemoryRecallTool, MemoryStoreTool } from '../../src/tools/persistenceTool';
-import { MemoryResourceTool } from '../../src/tools/resourceTools';
+import { MemoryResourceTool, SystemResourceTool } from '../../src/tools/resourceTools';
+import { InterruptError } from '../../src/runtime/interruptError';
 
 const memoryDir = path.join(process.cwd(), '.commander_memory');
 const tenantIds: string[] = [];
@@ -208,5 +209,29 @@ describe('agent-facing memory tenant isolation', () => {
       ),
     ).rejects.toThrow(/hard link|unsafe memory path/i);
     expect(await fs.readFile(target, 'utf-8')).toContain('external-secret');
+  });
+});
+
+describe('system resource HITL signal propagation (TOOL-C05)', () => {
+  it('propagates InterruptError from human_input instead of returning a success string', async () => {
+    const tool = new SystemResourceTool();
+
+    await expect(
+      tool.execute(
+        { action: 'human_input', reason: 'Approve destructive action?' },
+        context('hitl'),
+      ),
+    ).rejects.toBeInstanceOf(InterruptError);
+  });
+
+  it('still returns the human value on the resume path', async () => {
+    const tool = new SystemResourceTool();
+
+    await expect(
+      tool.execute(
+        { action: 'human_input', reason: 'Approve destructive action?' },
+        { ...context('hitl'), resumeWith: 'approved' },
+      ),
+    ).resolves.toBe('approved');
   });
 });

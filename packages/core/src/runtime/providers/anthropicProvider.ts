@@ -194,28 +194,43 @@ export class AnthropicProvider implements LLMProvider {
 
   private buildMessages(request: LLMRequest): AnthropicMessage[] {
     const msgs: AnthropicMessage[] = [];
-    let currentRole: string | null = null;
+    let currentRole: 'user' | 'assistant' | null = null;
     let currentContent: AnthropicContent[] = [];
+
+    const flush = () => {
+      if (currentContent.length > 0 && currentRole) {
+        msgs.push({ role: currentRole, content: currentContent });
+      }
+      currentContent = [];
+    };
 
     for (const m of request.messages) {
       if (m.role === 'system') continue;
 
-      if (m.role !== currentRole && currentContent.length > 0) {
-        msgs.push({ role: currentRole as 'user' | 'assistant', content: currentContent });
-        currentContent = [];
+      // Anthropic has only `user` and `assistant` turns. Tool calls are
+      // `tool_use` blocks inside an `assistant` turn; tool results are
+      // `tool_result` blocks inside a `user` turn. Consecutive messages that map
+      // to the same wire role are coalesced into a single turn.
+      const wireRole: 'user' | 'assistant' = m.role === 'assistant' ? 'assistant' : 'user';
+      if (wireRole !== currentRole) {
+        flush();
+        currentRole = wireRole;
       }
-      currentRole = m.role;
 
-      if (m.role === 'tool') {
+      if (m.role === 'assistant') {
+        if (m.content) currentContent.push({ type: 'text', text: m.content });
+        for (const call of m.tool_calls ?? []) {
+          currentContent.push({
+            type: 'tool_use',
+            id: call.id,
+            name: call.function.name,
+            input: this.parseToolArguments(call.function.arguments),
+          });
+        }
+      } else if (m.role === 'tool' || m.tool_call_id) {
         currentContent.push({
           type: 'tool_result',
           tool_use_id: m.tool_call_id ?? '',
-          content: m.content,
-        });
-      } else if (m.tool_call_id) {
-        currentContent.push({
-          type: 'tool_result',
-          tool_use_id: m.tool_call_id,
           content: m.content,
         });
       } else {
@@ -223,11 +238,28 @@ export class AnthropicProvider implements LLMProvider {
       }
     }
 
-    if (currentContent.length > 0 && currentRole) {
-      msgs.push({ role: currentRole as 'user' | 'assistant', content: currentContent });
-    }
-
+    flush();
     return msgs;
+  }
+
+  /**
+   * OpenAI-format tool arguments arrive as a JSON string; Anthropic expects a
+   * `tool_use.input` object. An unparseable string degrades to `{}` rather than
+   * dropping the call — the id/name pairing must survive so the matching
+   * `tool_result` block still resolves.
+   */
+  private parseToolArguments(raw: string): Record<string, unknown> {
+    try {
+      const parsed = JSON.parse(raw || '{}');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch (e) {
+      getGlobalLogger().debug('AnthropicProvider', 'Malformed tool arguments degraded to {}', {
+        error: (e as Error)?.message,
+      });
+      return {};
+    }
   }
 
   private buildSystemWithCache(request: LLMRequest): AnthropicContent[] | undefined {
@@ -319,11 +351,14 @@ export class AnthropicProvider implements LLMProvider {
               currentToolBlock = null;
             }
             if (event.type === 'message_delta') {
-              if (event.usage) usage = event.usage;
+              // `message_delta.usage` is a PARTIAL update (typically output_tokens
+              // only). Replacing the accumulated usage here erased the
+              // input/cache counters captured from `message_start`.
+              if (event.usage) usage = this.mergeUsage(usage, event.usage);
               if (event.delta?.stop_reason) stopReason = event.delta.stop_reason;
             }
             if (event.type === 'message_start' && event.message?.usage) {
-              usage = event.message.usage;
+              usage = this.mergeUsage(usage, event.message.usage);
             }
           } catch (e) {
             getGlobalLogger().debug('AnthropicProvider', 'Skipping malformed stream event', {
@@ -360,6 +395,25 @@ export class AnthropicProvider implements LLMProvider {
               : 'error',
       toolCalls: normalToolCalls.length > 0 ? normalToolCalls : undefined,
       parsed,
+    };
+  }
+
+  /**
+   * Merge a PARTIAL Anthropic usage update into the accumulated counters.
+   * `message_start` carries the input/cache counters, while `message_delta`
+   * carries only the fields that changed (usually `output_tokens`). A plain
+   * assignment on the delta would erase the earlier counters.
+   */
+  private mergeUsage(
+    current: AnthropicUsage | null,
+    next: Partial<AnthropicUsage>,
+  ): AnthropicUsage {
+    return {
+      input_tokens: next.input_tokens ?? current?.input_tokens ?? 0,
+      output_tokens: next.output_tokens ?? current?.output_tokens ?? 0,
+      cache_creation_input_tokens:
+        next.cache_creation_input_tokens ?? current?.cache_creation_input_tokens,
+      cache_read_input_tokens: next.cache_read_input_tokens ?? current?.cache_read_input_tokens,
     };
   }
 

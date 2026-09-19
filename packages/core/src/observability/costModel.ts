@@ -357,9 +357,20 @@ export class CostModel {
     const stripped = this.stripTierSuffix(model);
     const exact = this.pricing.get(this.key(provider, stripped));
     if (exact) return exact;
-    const prefixMatch = Array.from(this.pricing.values()).find(
-      (p) => p.provider === provider && stripped.startsWith(p.model),
-    );
+    // Prefix fallback is for dated/versioned model ids (`gpt-4o-mini-2024-07-18`
+    // must resolve to `gpt-4o-mini`, not to whichever shorter prefix happens to
+    // be inserted first). Pick the LONGEST matching prefix so cost stays with
+    // the most specific known model.
+    let prefixMatch: ModelPricing | undefined;
+    let prefixLength = -1;
+    for (const candidate of this.pricing.values()) {
+      if (candidate.provider !== provider) continue;
+      if (!stripped.startsWith(candidate.model)) continue;
+      if (candidate.model.length > prefixLength) {
+        prefixMatch = candidate;
+        prefixLength = candidate.model.length;
+      }
+    }
     if (prefixMatch) return prefixMatch;
     // Try LiteLLM real-time pricing for unknown models
     const litellmPricing = this.tryLiteLLM(provider, stripped);

@@ -84,3 +84,56 @@ it('recordFailure fails closed when PostgreSQL returns no row', async () => {
     /AUTH_FAILURE_RECORD_MISSING/,
   );
 });
+
+/** A client whose DELETE reports a caller-chosen row count. */
+class DeleteStubClient extends StubClient {
+  constructor(private readonly deleted: number) {
+    super([]);
+  }
+  override async query<T = Record<string, unknown>>(
+    sql: string,
+    values?: readonly unknown[],
+  ): Promise<{ rows: T[]; rowCount: number }> {
+    this.calls.push({ sql, values });
+    return { rows: [] as T[], rowCount: this.deleted };
+  }
+}
+
+describe('AUTH-06: cleanup reclaims expired lockouts', () => {
+  it('deletes the intersection of the expiry window and an expired/absent lock', async () => {
+    const client = new DeleteStubClient(3);
+    const { PostgresAuthFailureStore } = await import('../src/authFailureStore.js');
+    const store = new PostgresAuthFailureStore({ connect: async () => client } as never);
+
+    await store.cleanup(1_700_000_000_000, 60_000);
+
+    const sql = client.calls[0]!.sql;
+    // Pre-fix this predicate was `locked_until IS NULL AND last_failure_at < …`,
+    // so a row whose lockout had expired (locked_until <= now) was never
+    // reclaimed and the table grew without bound.
+    assert.match(sql, /locked_until IS NULL OR locked_until <= to_timestamp/);
+    assert.match(sql, /last_failure_at < to_timestamp/);
+    assert.match(sql, /DELETE FROM commander_auth_failures/);
+  });
+
+  it('returns the number of rows actually reclaimed', async () => {
+    const client = new DeleteStubClient(4);
+    const { PostgresAuthFailureStore } = await import('../src/authFailureStore.js');
+    const store = new PostgresAuthFailureStore({ connect: async () => client } as never);
+
+    assert.equal(await store.cleanup(1_700_000_000_000, 60_000), 4);
+  });
+
+  it('surfaces a cleanup failure so callers can log it', async () => {
+    const failing = {
+      query: async () => {
+        throw new Error('ECONNREFUSED');
+      },
+      release: async () => {},
+    };
+    const { PostgresAuthFailureStore } = await import('../src/authFailureStore.js');
+    const store = new PostgresAuthFailureStore({ connect: async () => failing } as never);
+
+    await assert.rejects(() => store.cleanup(1_700_000_000_000, 60_000), /ECONNREFUSED/);
+  });
+});

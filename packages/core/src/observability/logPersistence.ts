@@ -15,6 +15,7 @@
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { mkdirSync, existsSync, unlinkSync, readdirSync } from 'node:fs';
+import { getGlobalLogger } from '../logging';
 
 const nodeRequire = createRequire(import.meta.url);
 
@@ -306,7 +307,7 @@ export class LogPersistence {
   }
 
   /**
-   * Stop persistence, flush remaining queue, close database.
+   * Stop persistence, drain the remaining queue, close database.
    */
   stop(): void {
     if (this.flushTimer) {
@@ -318,8 +319,33 @@ export class LogPersistence {
       this.cleanupTimer = null;
     }
 
-    // Final flush
-    this.flush();
+    // `flush()` commits at most 500 entries per call and re-queues a failed
+    // batch, so a single call silently abandoned everything past the first
+    // batch while the database was then closed. Keep flushing while the queue
+    // actually shrinks, and stop as soon as a flush makes no progress — a
+    // persistent write error must not spin shutdown forever.
+    let previousLength = this.queue.length;
+    while (this.started && this.db && this.queue.length > 0) {
+      this.flush();
+      if (this.queue.length >= previousLength) break;
+      previousLength = this.queue.length;
+    }
+
+    if (this.queue.length > 0) {
+      // Never claim entries were persisted when they were not.
+      const unwritten = this.queue.length;
+      this.totalDropped += unwritten;
+      this.queue.length = 0;
+      try {
+        getGlobalLogger().warn(
+          'LogPersistence',
+          `Stopping with ${unwritten} log entries unwritten after the final drain; they were dropped`,
+          { unwritten },
+        );
+      } catch {
+        // Logging is best-effort during shutdown.
+      }
+    }
 
     if (this.db) {
       try {

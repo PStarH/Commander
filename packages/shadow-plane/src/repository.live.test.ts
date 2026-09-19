@@ -131,8 +131,57 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     });
   }
 
+  // The roles this suite creates, and a cleanup that removes them completely.
+  //
+  // Teardown used to be a flat list of statements in one query, which made the
+  // whole run single-shot: PostgreSQL runs such a batch in one implicit
+  // transaction, so a single failing DROP ROLE rolled back every other DROP and
+  // left the roles behind. The next run then failed immediately with
+  // `role "commander_shadow_installer" already exists`, and the pilot's own
+  // acceptance gate could not be run twice against the same database -- only
+  // against a fresh CI container. `DROP OWNED BY` is required before `DROP ROLE`
+  // because it also revokes the database-level CONNECT/CREATE grants (that is
+  // what a role's ACL entries need), and the whole thing is guarded so it is safe
+  // to run when nothing exists yet.
+  const shadowRoles = [
+    'commander_shadow_tenant_live_ingestion',
+    'commander_shadow_tenant_live_reader',
+    'commander_shadow_tenant_live_retention',
+    'commander_shadow_tenant_other_ingestion',
+    'commander_shadow_ingestion',
+    'commander_shadow_reader',
+    'commander_shadow_retention',
+    'commander_shadow_installer',
+  ];
+
+  async function removeShadowState(): Promise<void> {
+    await admin.query(`
+      DROP SCHEMA IF EXISTS commander_shadow CASCADE;
+      DROP SCHEMA IF EXISTS shadow_other CASCADE;
+    `);
+    // One DO block, not one statement per role: a DO body cannot take bind
+    // parameters (a bare $1 is parsed as a dollar-quote), so the fixed role list
+    // is inlined as an array literal and iterated inside PL/pgSQL. The whole
+    // cleanup is a single statement, so it cannot partially apply.
+    await admin.query(`
+      DO $cleanup$
+      DECLARE r text;
+      BEGIN
+        FOREACH r IN ARRAY ARRAY[${shadowRoles.map((role) => `'${role}'`).join(', ')}]::text[] LOOP
+          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r) THEN
+            EXECUTE format('DROP OWNED BY %I CASCADE', r);
+            EXECUTE format('DROP ROLE %I', r);
+          END IF;
+        END LOOP;
+      END
+      $cleanup$;
+    `);
+  }
+
   before(async () => {
     admin = new Pool({ connectionString: adminUrl, max: 2 });
+    // Idempotent: a previous interrupted run must not poison this one.
+    await removeShadowState();
     await admin.query(`
       CREATE ROLE commander_shadow_installer LOGIN PASSWORD '${passwords.installer}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
       CREATE ROLE commander_shadow_ingestion NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
@@ -142,7 +191,23 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       CREATE ROLE commander_shadow_tenant_live_reader LOGIN PASSWORD '${passwords.reader}' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_reader;
       CREATE ROLE commander_shadow_tenant_live_retention LOGIN PASSWORD '${passwords.retention}' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_retention;
       CREATE ROLE commander_shadow_tenant_other_ingestion LOGIN PASSWORD '${passwords.ingestion}' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_ingestion;
-      GRANT CREATE ON DATABASE commander TO commander_shadow_installer;
+      -- The database name must not be hard-coded: this suite is the pilot's own
+      -- acceptance gate, and it had only ever run against a database literally
+      -- named "commander" (the CI service POSTGRES_DB). Against any other name --
+      -- including the "shadow_database" the pilot guide tells the customer DBA to
+      -- create -- the GRANT targeted a different database and the installer failed
+      -- with "permission denied for database". CONNECT is granted explicitly
+      -- because a hardened database revokes it from PUBLIC, which is exactly what
+      -- this repository's own development database does.
+      DO $$
+      BEGIN
+        EXECUTE format(
+          'GRANT CONNECT ON DATABASE %I TO commander_shadow_installer, commander_shadow_ingestion, commander_shadow_reader, commander_shadow_retention, commander_shadow_tenant_live_ingestion, commander_shadow_tenant_live_reader, commander_shadow_tenant_live_retention, commander_shadow_tenant_other_ingestion',
+          current_database()
+        );
+        EXECUTE format('GRANT CREATE ON DATABASE %I TO commander_shadow_installer', current_database());
+      END
+      $$;
       CREATE SCHEMA shadow_other;
       CREATE TABLE shadow_other.secret (value text);
       INSERT INTO shadow_other.secret VALUES ('not-visible');
@@ -180,19 +245,10 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
       otherIngestion?.end(),
     ]);
     if (admin) {
-      await admin.query(`
-        DROP SCHEMA IF EXISTS commander_shadow CASCADE;
-        DROP SCHEMA IF EXISTS shadow_other CASCADE;
-        REVOKE CREATE ON DATABASE commander FROM commander_shadow_installer;
-        DROP ROLE IF EXISTS commander_shadow_tenant_live_ingestion;
-        DROP ROLE IF EXISTS commander_shadow_tenant_live_reader;
-        DROP ROLE IF EXISTS commander_shadow_tenant_live_retention;
-        DROP ROLE IF EXISTS commander_shadow_tenant_other_ingestion;
-        DROP ROLE IF EXISTS commander_shadow_ingestion;
-        DROP ROLE IF EXISTS commander_shadow_reader;
-        DROP ROLE IF EXISTS commander_shadow_retention;
-        DROP ROLE IF EXISTS commander_shadow_installer;
-      `);
+      // No cluster-level residue: the previous flat batch could roll back and
+      // leave roles behind, and it also hard-coded the database name in its
+      // REVOKE. See removeShadowState().
+      await removeShadowState();
       await admin.end();
     }
   });
@@ -752,7 +808,7 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     assert.equal(report.records.length, 0);
   });
 
-  it('deletes expired campaign data and advances cleanup readiness', async () => {
+  it('keeps expired open campaigns and deletes them after withdrawal', async () => {
     const input = observation('campaign-expire', 'batch-expire', 0);
     await repo(ingestion).registerManifest(
       'tenant-live',
@@ -761,8 +817,78 @@ describe('shadow PostgreSQL authority', { skip: !adminUrl }, () => {
     await admin.query(
       "UPDATE commander_shadow.campaigns SET retention_until=clock_timestamp()-interval '1 minute' WHERE tenant_id='tenant-live' AND campaign_id='campaign-expire'",
     );
+    assert.equal(await repo(retention).runRetention('tenant-live'), 0);
+    assert.equal(
+      (await repo(reader).readReport('tenant-live', 'campaign-expire')).campaign?.state,
+      'open',
+    );
+    await repo(retention).withdrawCampaign('tenant-live', 'campaign-expire');
     assert.equal(await repo(retention).runRetention('tenant-live'), 1);
     assert.equal((await repo(reader).readReport('tenant-live', 'campaign-expire')).campaign, null);
     assert.equal((await repo(reader).readiness('tenant-live', 120, 'report-export')).ready, true);
+  });
+
+  it('accounts for the exact rows deleted when two retention workers race', async () => {
+    const campaignIds = ['campaign-expire-a', 'campaign-expire-b', 'campaign-expire-c'];
+    for (const [position, campaignId] of campaignIds.entries()) {
+      const input = observation(campaignId, `batch-expire-${position}`, 0);
+      await repo(ingestion).registerManifest(
+        'tenant-live',
+        manifest(
+          campaignId,
+          `batch-expire-${position}`,
+          [input],
+          new Date(now + 60_000).toISOString(),
+        ),
+      );
+      // Retention only removes withdrawn campaigns, so withdraw before the race
+      // makes the workers contend over rows that are actually deletable.
+      await repo(retention).withdrawCampaign('tenant-live', campaignId);
+    }
+    await admin.query(
+      `UPDATE commander_shadow.campaigns SET retention_until=clock_timestamp()-interval '1 minute'
+        WHERE tenant_id='tenant-live' AND campaign_id = ANY($1::text[])`,
+      [campaignIds],
+    );
+
+    // Hold the first campaign's advisory lock so both workers finish their
+    // candidate scan and then queue behind that same lock. That makes the race
+    // deterministic: without row-accurate accounting each worker reports the
+    // full candidate list even though only one of them deletes it.
+    const holder = await admin.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        'SELECT pg_advisory_xact_lock(hashtextextended(json_build_array($1::text,$2::text)::text,0))',
+        ['tenant-live', campaignIds[0]],
+      );
+      const workers = [
+        repo(retention).runRetention('tenant-live'),
+        repo(retention).runRetention('tenant-live'),
+      ];
+      let blocked = 0;
+      for (let attempt = 0; attempt < 200 && blocked < 2; attempt++) {
+        const result = await admin.query(
+          `SELECT count(*)::int AS count FROM pg_stat_activity
+            WHERE usename='commander_shadow_tenant_live_retention'
+              AND wait_event='advisory' AND cardinality(pg_blocking_pids(pid))>0`,
+        );
+        blocked = result.rows[0]?.count ?? 0;
+        if (blocked < 2) await new Promise((resolve) => setTimeout(resolve, 10));
+      }
+      assert.equal(blocked, 2, 'both retention workers must queue behind the held lock');
+      await holder.query('ROLLBACK');
+      const counts = await Promise.all(workers);
+      const remaining = await admin.query(
+        `SELECT count(*)::int AS count FROM commander_shadow.campaigns
+          WHERE tenant_id='tenant-live' AND campaign_id = ANY($1::text[])`,
+        [campaignIds],
+      );
+      assert.equal(remaining.rows[0]?.count, 0);
+      assert.equal(counts[0]! + counts[1]!, campaignIds.length);
+    } finally {
+      await holder.query('ROLLBACK').catch(() => undefined);
+      holder.release();
+    }
   });
 });

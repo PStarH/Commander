@@ -25,6 +25,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { execSync } from 'child_process';
 import * as os from 'os';
+import { requireMimoApiKey, mimoBaseUrl } from './helpers/liveProviderCredentials';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 const OUTPUT_DIR = path.join(process.cwd(), '.openclaw-comparison-output');

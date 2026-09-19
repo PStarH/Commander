@@ -12,7 +12,9 @@
   "files": [
     "dist",
     "src",
-    "LICENSE"
+    "LICENSE",
+    "!dist/smoke/attackPoCs.*",
+    "!src/smoke/attackPoCs.ts"
   ],
   "exports": {
     ".": {

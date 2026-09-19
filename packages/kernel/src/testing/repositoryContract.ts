@@ -1,8 +1,14 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { validateRunTransition } from '@commander/contracts';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 import type { KernelRepository } from '../repository.js';
-import type { NewKernelStep, ClaimStepRequest, KernelCompensationRequest } from '../types.js';
+import type {
+  NewKernelStep,
+  ClaimStepRequest,
+  KernelCompensationRequest,
+  ClaimedCompensationRequest,
+} from '../types.js';
 import { SqliteKernelRepository } from '../sqlite.js';
 import {
   canonicalCompensationHash,
@@ -16,7 +22,6 @@ import {
   KERNEL_COMPENSATION_TOPIC,
   consumeCompensationBatch,
   type CompensationOutboxPort,
-  type LegacyClaimedCompensationWork,
 } from '../ops/compensationConsumer.js';
 
 export interface RepositoryContractContext {
@@ -104,7 +109,7 @@ async function seedClaimedGovernedCompensation(
   ctx: RepositoryContractContext,
   suffix: string,
 ): Promise<{
-  work: LegacyClaimedCompensationWork;
+  work: ClaimedCompensationRequest;
   workerId: string;
   request: KernelCompensationRequest;
   /** Digest carried by the compact outbox payload, i.e. the durable row digest. */
@@ -239,11 +244,11 @@ async function seedClaimedGovernedCompensation(
     'compact producer payload must resolve durable governed authority',
   );
   const work = claimed[0]!;
-  assert.ok('messageId' in work, 'expected the compact legacy claim shape');
+  assert.ok('outboxMessageId' in work, 'expected the durable claim shape');
   return {
     work,
     workerId: compensationWorker.workerId,
-    request: requested.request,
+    request: work.request,
     durableActionDigest,
   };
 }
@@ -729,7 +734,7 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           idempotencyKey: 'blank-worker-key',
           policyDecisionId: 'decision-blank',
           policySnapshotId: 'policy-blank-v1',
-          actionDigest: 'f'.repeat(64),
+          actionDigest: 'e'.repeat(64),
           request: { target: 'blank' },
           lease: { ...lease, workerId: '   ' },
           actor: 'worker-1',
@@ -971,6 +976,43 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       }
     });
 
+    it('answerInteraction rejects an interaction past its expiry without releasing the step', async () => {
+      const kernel = await ctx.create();
+      try {
+        await kernel.createRun(
+          createRun([{ id: 'step-human', kind: 'tool', initialState: 'WAITING_FOR_HUMAN' }]),
+          'gateway',
+        );
+        const interaction = await kernel.createInteraction(
+          {
+            runId: 'run-1',
+            stepId: 'step-human',
+            tenantId: 'tenant-a',
+            prompt: 'Approve now?',
+            expiresAt: new Date(Date.now() - 60_000),
+          },
+          'gateway',
+        );
+        await assert.rejects(
+          () =>
+            kernel.answerInteraction({
+              interactionId: interaction.id,
+              runId: 'run-1',
+              tenantId: 'tenant-a',
+              response: { approved: true },
+              actor: 'human',
+            }),
+          (error: unknown) =>
+            (error as { code?: string }).code === 'INTERACTION_EXPIRED' &&
+            /expired/i.test((error as Error).message),
+        );
+        assert.equal((await kernel.getInteraction(interaction.id, 'tenant-a'))?.status, 'pending');
+        assert.equal((await kernel.getStep('step-human', 'tenant-a'))?.state, 'WAITING_FOR_HUMAN');
+      } finally {
+        await ctx.destroy(kernel);
+      }
+    });
+
     it('createTimer claimExpiredTimers acknowledgeTimer', async () => {
       const kernel = await ctx.create();
       try {
@@ -1131,21 +1173,6 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         const compensationWorker = await ctx.seedCompensationWorker(kernel);
         const port: CompensationOutboxPort = {
           claimCompensationWork: (input) => kernel.claimCompensationWork(input),
-          completeCompensationWork: async () => ({
-            applied: true,
-            disposition: 'COMPLETED',
-            replayed: false,
-          }),
-          handoffCompensationUnknown: async () => ({
-            applied: true,
-            disposition: 'HANDOFF_UNKNOWN',
-            replayed: false,
-          }),
-          escalateCompensationWork: async () => ({
-            applied: true,
-            disposition: 'ESCALATED',
-            replayed: false,
-          }),
           parkCompensationUnknown: async () => ({
             applied: true,
             disposition: 'COMPLETION_UNKNOWN',
@@ -1193,9 +1220,14 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
         assert.equal(executions, 1);
         assert.equal(admittedRequest?.originalEffectId, legacy.originalEffectId);
         assert.equal(admittedRequest?.destination, destination);
+        // A durable compensation claim moves the compensation run to
+        // COMPENSATING — the state claim_compensation_request (the SQL authority)
+        // writes and the state every settlement path requires before it will
+        // advance the run. Pinned here so an implementation cannot quietly leave
+        // the run in the generic RUNNING state, which no settlement matches.
         assert.equal(
           (await kernel.getRun(requested.request.compensationRunId, 'tenant-a'))?.state,
-          'RUNNING',
+          'COMPENSATING',
         );
         assert.equal(
           (await kernel.getStep(requested.request.compensationStepId, 'tenant-a'))?.state,
@@ -1221,16 +1253,32 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           stepId: request.compensationStepId,
           tenantId: 'tenant-a',
           type: work.authorization.compensationEffectType,
-          idempotencyKey: work.authorization.idempotencyKey,
+          idempotencyKey: deriveEffectIdempotencyKey({
+            tenantId: request.tenantId,
+            runId: request.compensationRunId,
+            stepId: request.compensationStepId,
+            effectId: request.compensationEffectId!,
+            request: {
+              originalEffectId: request.originalEffectId,
+              destination: request.destination,
+              forwardResponse: work.forwardResponse,
+              compensationPatch: request.compensationPatch,
+            },
+          }),
           policyDecisionId: work.authorization.policyDecisionId,
           policySnapshotId: work.authorization.policySnapshotId,
           actionDigest: work.authorization.actionDigest,
-          request: work.authorization.compensationRequest,
+          request: {
+            originalEffectId: request.originalEffectId,
+            destination: request.destination,
+            forwardResponse: work.forwardResponse,
+            compensationPatch: request.compensationPatch,
+          },
           lease: work.lease,
           compensationBinding: {
             requestId: request.id,
-            authorizationId: work.authorization.authorizationId,
-            claimToken: work.claimToken,
+            authorizationId: work.authorization.id,
+            claimToken: request.claimToken!,
           },
           actor: workerId,
         });
@@ -1252,16 +1300,32 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
           stepId: request.compensationStepId,
           tenantId: 'tenant-a',
           type: work.authorization.compensationEffectType,
-          idempotencyKey: work.authorization.idempotencyKey,
+          idempotencyKey: deriveEffectIdempotencyKey({
+            tenantId: request.tenantId,
+            runId: request.compensationRunId,
+            stepId: request.compensationStepId,
+            effectId: request.compensationEffectId!,
+            request: {
+              originalEffectId: request.originalEffectId,
+              destination: request.destination,
+              forwardResponse: work.forwardResponse,
+              compensationPatch: request.compensationPatch,
+            },
+          }),
           policyDecisionId: work.authorization.policyDecisionId,
           policySnapshotId: work.authorization.policySnapshotId,
-          actionDigest: durableActionDigest,
-          request: work.authorization.compensationRequest,
+          actionDigest: 'f'.repeat(64),
+          request: {
+            originalEffectId: request.originalEffectId,
+            destination: request.destination,
+            forwardResponse: work.forwardResponse,
+            compensationPatch: request.compensationPatch,
+          },
           lease: work.lease,
           compensationBinding: {
             requestId: request.id,
-            authorizationId: work.authorization.authorizationId,
-            claimToken: work.claimToken,
+            authorizationId: work.authorization.id,
+            claimToken: request.claimToken!,
           },
           actor: workerId,
         });

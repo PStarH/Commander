@@ -98,11 +98,12 @@ export class EvaluatorStepExecutor implements StepExecutor {
     // Fail closed: an evaluation that cannot be measured must never be reported as a
     // pass. The previous code invented `score: 0.5` for an unimplemented custom
     // evaluator and `score: 1.0, passed: true` when no rules were supplied — a
-    // fabricated pass on the quality gate.
-    if (method === 'custom') {
+    // fabricated pass on the quality gate. `llm` additionally fell through to the
+    // rules engine, so an LLM evaluation that nobody performed still produced a score.
+    if (method === 'llm' || method === 'custom') {
       throw new WorkerExecutionError(
-        `Step ${step.id} evaluator method 'custom' is not implemented; refusing to report a fabricated score`,
-        { code: 'EVALUATION_UNMEASURED', retryable: false },
+        `Step ${step.id} evaluator method '${method}' is not implemented; refusing to report an unperformed evaluation`,
+        { code: 'EVALUATION_METHOD_UNSUPPORTED', retryable: false },
       );
     }
     if (rules.length === 0) {
@@ -117,11 +118,6 @@ export class EvaluatorStepExecutor implements StepExecutor {
 
     switch (method) {
       case 'rules':
-        result = this.evaluateWithRules(input.subject, rules, minScore, started);
-        break;
-      case 'llm':
-        // LLM-based evaluation requires an AgentRuntime — for now, fall back to rules
-        // In production, this would call AgentRuntime with a specialized evaluation prompt
         result = this.evaluateWithRules(input.subject, rules, minScore, started);
         break;
       default:

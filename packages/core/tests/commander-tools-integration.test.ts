@@ -30,7 +30,7 @@ describe('Commander Tools Integration', () => {
     } else {
       console.log(`  [web_search] returned ${result.length} chars`);
     }
-    assert.ok(result.length >= 0); // non-destructive: just verify it executed
+    assert.ok(result.length > 0, 'web_search must return a non-empty string');
   });
 
   it('file_write and file_read roundtrip', async () => {

@@ -146,6 +146,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private memory: import('../threeLayerMemory').ThreeLayerMemory | null = null;
   private traceStore: PersistentTraceStore;
   private checkpointer: StateCheckpointer;
+  /** Startup zombie-run recovery scan; awaited before any run is admitted. */
+  private recoverySettled: Promise<import('./serviceInitializer').RecoverySettlement>;
   private dlq: DeadLetterQueue;
   private leaseManager: LeaseManager;
   private reflexionGenerator: ReflexionGenerator = new ReflexionGenerator();
@@ -276,6 +278,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
     // Promote all initialized services to instance fields (preserves the
     // existing AgentRuntimeInterface surface while shrinking the god object).
+    this.recoverySettled = services.recoverySettled;
     this.compactor = services.compactor;
     this.slidingWindow = services.slidingWindow;
     this.reliabilityEngine = services.reliabilityEngine;
@@ -830,6 +833,10 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Enforces maxConcurrency via semaphore (GAP-07).
    */
   async execute(ctx: AgentExecutionContext): Promise<AgentExecutionResult> {
+    // Fail closed: do not admit work until the startup recovery scan has
+    // settled. Admitting a run while leftover EXECUTING runs are still being
+    // fenced/compensated would let a reclaimed run race the scan.
+    await this.assertRecoverySettled();
     let tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? ctx.tenantId ?? undefined;
     let tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
 
@@ -1173,6 +1180,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
    *  Returns null if the checkpoint is not found or the lease was lost.
    */
   async resume(runId: string, tenantId?: string): Promise<RunRecoveryResult | null> {
+    // Same fail-closed gate as execute(): resuming is exactly the operation that
+    // must not race the startup zombie scan.
+    await this.assertRecoverySettled();
     const result = await this.checkpointingPhase.resume(runId, tenantId);
     if (result && result.status === 'recovered') {
       getGlobalLogger().info('AgentRuntime', 'Run recovered', {
@@ -1182,6 +1192,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
     }
     return result;
+  }
+
+  /**
+   * Await the startup recovery scan and fail closed if it did not succeed.
+   * A failed scan means leftover runs from a previous process are in an unknown
+   * state; admitting or resuming runs then risks double execution.
+   */
+  private async assertRecoverySettled(): Promise<void> {
+    const settlement = await this.recoverySettled;
+    if (!settlement.ok) {
+      throw new Error(
+        `Startup recovery scan failed; refusing to admit runs: ${settlement.error.message}`,
+      );
+    }
   }
 
   /** List all runs that have recoverable checkpoints (non-terminal phases). */

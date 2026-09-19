@@ -177,7 +177,6 @@ export function makeFlakyTool(
     opts,
   );
   return Object.assign(tool, {
-    callCount: 0,
     get callCount() {
       return callCount;
     },

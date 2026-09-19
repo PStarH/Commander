@@ -326,8 +326,12 @@ describe('RollbackPlanner', () => {
       const completed: string[] = [];
       await executeRollbackPlan(plan, {
         handlers: { file_write: async () => ({ success: true }) },
-        onStepStart: (step) => started.push(step.stepId),
-        onStepComplete: (step) => completed.push(step.stepId),
+        onStepStart: (step) => {
+          started.push(step.stepId);
+        },
+        onStepComplete: (step) => {
+          completed.push(step.stepId);
+        },
       });
       assert.strictEqual(started.length, 1);
       assert.strictEqual(completed.length, 1);

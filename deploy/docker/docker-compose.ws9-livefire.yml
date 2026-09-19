@@ -149,6 +149,11 @@ services:
       # (spec §3.1: HMAC key and log storage physically separated).
       COMMANDER_AUDIT_PERSIST_DIR: /var/lib/commander/audit
       COMMANDER_AUDIT_MANIFEST_DIR: /var/lib/commander/manifest
+      # Durable L2 signing identity. Without it the audit-chain install refuses
+      # to start (AUDIT_SIGNING_KEY_REQUIRED): an ephemeral in-memory signer
+      # makes every restarted chain head fail verification and raises a false
+      # kms_sig_invalid tamper alarm.
+      COMMANDER_AUDIT_SIGNING_KEY_FILE: /var/lib/commander/manifest/chain-signing-key.pem
       COMMANDER_AUDIT_CHAIN_KEY: ws9-livefire-audit-chain-key-32chars!!
       COMMANDER_MANIFEST_KEY: ws9-livefire-manifest-key-do-not-reuse
     ports:

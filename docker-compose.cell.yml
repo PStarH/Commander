@@ -14,6 +14,7 @@
 #   export COMMANDER_CAPABILITY_JWKS_JSON=…   # worker/adapter Ed25519 authority
 #   export COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM=… COMMANDER_EVIDENCE_SIGNING_KEY_ID=…
 #   export COMMANDER_INTEGRITY_KEY=… COMMANDER_WORKER_AUTH_TOKEN=…
+#   export COMMANDER_AUDIT_CHAIN_KEY="$(openssl rand -hex 32)"   # audit-chain HMAC
 #   # Optional: DOCKER_GID — worker entrypoint auto-aligns to docker.sock GID.
 #   # Override only if you need compose group_add without rebuilding the image:
 #   #   export DOCKER_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock)
@@ -79,6 +80,9 @@ services:
       # API legacy HMAC path (not worker/adapter authority).
       - COMMANDER_CAPABILITY_TOKEN_KEY=${COMMANDER_CAPABILITY_TOKEN_KEY:?set COMMANDER_CAPABILITY_TOKEN_KEY}
       - COMMANDER_INTEGRITY_KEY=${COMMANDER_INTEGRITY_KEY:?set COMMANDER_INTEGRITY_KEY}
+      # Audit-chain HMAC master key. NODE_ENV=production makes the ledger refuse
+      # to start without it, so the cell profile must inject a strong value.
+      - COMMANDER_AUDIT_CHAIN_KEY=${COMMANDER_AUDIT_CHAIN_KEY:?set COMMANDER_AUDIT_CHAIN_KEY}
     depends_on:
       kernel-migrate:
         condition: service_completed_successfully

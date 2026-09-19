@@ -223,6 +223,8 @@ See `.env.example` for the full list. Highlights:
 
 - `COMMANDER_API_KEY` — required, fail-fast if unset. Generate with `openssl rand -hex 32`.
 - `COMMANDER_MASTER_KEY`, `JWT_SECRET`, `COMMANDER_CAPABILITY_TOKEN_KEY`, and `COMMANDER_INTEGRITY_KEY` — required API secrets. Generate each with `openssl rand -hex 32`.
+- `COMMANDER_AUDIT_CHAIN_KEY` — HMAC master key for the tamper-evident audit chain. Required in production: the ledger refuses to start (and rejects the public dev key) rather than emitting cryptographically invalid tamper-evidence. Generate with `openssl rand -hex 32`.
+- `COMMANDER_MANIFEST_KEY` — HMAC key for the chain manifest. Required only when `COMMANDER_AUDIT_MANIFEST_DIR` enables the manifest + verify timer, and it must be **distinct** from `COMMANDER_AUDIT_CHAIN_KEY`.
 - `ADMIN_PASSWORD` — required for the initial admin account; use at least 16 random characters.
 - `API_HOST` — listener interface. The API defaults to `127.0.0.1`; Docker and Helm set `0.0.0.0` explicitly.
 - `COMMANDER_EVENT_BUS_BACKEND=redis` — switch from in-memory to Redis-backed EventBus (requires `distributed` profile).
@@ -232,7 +234,7 @@ See `.env.example` for the full list. Highlights:
 
 ## Production hardening checklist (not a readiness sign-off)
 
-1. **Set all API startup credentials**: `COMMANDER_API_KEY`, `COMMANDER_MASTER_KEY`, `JWT_SECRET`, `COMMANDER_CAPABILITY_TOKEN_KEY`, `COMMANDER_INTEGRITY_KEY`, and `ADMIN_PASSWORD`.
+1. **Set all API startup credentials**: `COMMANDER_API_KEY`, `COMMANDER_MASTER_KEY`, `JWT_SECRET`, `COMMANDER_CAPABILITY_TOKEN_KEY`, `COMMANDER_INTEGRITY_KEY`, `COMMANDER_AUDIT_CHAIN_KEY`, and `ADMIN_PASSWORD`.
 2. **Set `API_HOST=127.0.0.1`** when running the API directly behind a reverse proxy / TLS terminator.
 3. **Set `CORS_ORIGINS`** explicitly — never use `*` in production.
 4. **Enable `distributed` profile** when running >1 api replica (Redis is required for cross-node EventBus consistency).
@@ -285,7 +287,8 @@ startup secrets outside the disposable `demo` tier. For any non-demo tier
 (`team`, `enterprise`) the release **fails to render** unless you supply either
 `api.secrets.existingSecret` or all of the individual secret references
 (`COMMANDER_API_KEY`, `COMMANDER_MASTER_KEY`, `JWT_SECRET`,
-`COMMANDER_CAPABILITY_TOKEN_KEY`, `COMMANDER_INTEGRITY_KEY`, `ADMIN_PASSWORD`).
+`COMMANDER_CAPABILITY_TOKEN_KEY`, `COMMANDER_INTEGRITY_KEY`,
+`COMMANDER_AUDIT_CHAIN_KEY`, `ADMIN_PASSWORD`).
 The same fail-fast applies to `worker.authTokenSecret` when `worker.enabled=true`,
 and `web.enabled=true` is rejected because the chart renders no web workload.
 Create the Secret (or the individual references) before installing:
@@ -298,6 +301,7 @@ kubectl create secret generic commander-api-secrets \
   --from-literal=JWT_SECRET="$(openssl rand -hex 32)" \
   --from-literal=COMMANDER_CAPABILITY_TOKEN_KEY="$(openssl rand -hex 32)" \
   --from-literal=COMMANDER_INTEGRITY_KEY="$(openssl rand -hex 32)" \
+  --from-literal=COMMANDER_AUDIT_CHAIN_KEY="$(openssl rand -hex 32)" \
   --from-literal=ADMIN_PASSWORD="$(openssl rand -base64 24)"
 ```
 

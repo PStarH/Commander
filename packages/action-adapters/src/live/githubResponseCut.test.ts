@@ -97,6 +97,32 @@ describe('GitHub response-cut harness', () => {
     assert.equal(observed.remoteCommitConfirmed, true);
     assert.equal(observed.responseCutInjected, false);
   });
+
+  it('intercepts a Request-object create and a create URL carrying a query string', async () => {
+    const requestObjectState = state();
+    const requestObjectCut = createGitHubResponseCutFetch(
+      async () => new Response(JSON.stringify({ number: 1 }), { status: 201 }),
+      requestObjectState,
+    );
+    await assert.rejects(
+      () => requestObjectCut(new Request(createUrl, { method: 'POST' })),
+      (error: unknown) => error instanceof GitHubResponseCutError,
+    );
+    assert.equal(requestObjectState.createRequestCount, 1);
+    assert.equal(requestObjectState.remoteCommitConfirmed, true);
+
+    const queryState = state();
+    const queryCut = createGitHubResponseCutFetch(
+      async () => new Response(JSON.stringify({ number: 1 }), { status: 201 }),
+      queryState,
+    );
+    await assert.rejects(
+      () => queryCut(`${createUrl}?per_page=100`, { method: 'POST' }),
+      (error: unknown) => error instanceof GitHubResponseCutError,
+    );
+    assert.equal(queryState.createRequestCount, 1);
+    assert.equal(queryState.remoteCommitConfirmed, true);
+  });
 });
 
 describe('GitHub response-cut recovery (runs by default, no live egress)', () => {

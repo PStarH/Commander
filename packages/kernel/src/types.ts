@@ -615,6 +615,7 @@ export class KernelInvariantError extends Error {
       | 'IDEMPOTENCY_CONFLICT'
       | 'TIMER_NOT_FOUND'
       | 'INTERACTION_NOT_FOUND'
+      | 'INTERACTION_EXPIRED'
       | 'INTERACTION_ALREADY_ANSWERED'
       | 'STEP_NOT_FOUND'
       | 'KILL_SWITCH_LOOKUP_FAILED'

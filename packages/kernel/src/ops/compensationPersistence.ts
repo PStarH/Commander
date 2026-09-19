@@ -1,3 +1,4 @@
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 import {
   canonicalCompensationHash,
   sealGovernedCompensationAuthorization,
@@ -109,7 +110,13 @@ export function durableCompensationMetadataAuthorization(input: {
     compensationEffectId: input.compensationEffectId,
     compensationEffectType: authorization.compensationEffectType,
     compensationRequest,
-    idempotencyKey: `cmp:${authorization.originalEffectId}:${authorization.adapterVersion}`,
+    idempotencyKey: deriveEffectIdempotencyKey({
+      tenantId: authorization.tenantId,
+      runId: input.compensationRunId,
+      stepId: input.compensationStepId,
+      effectId: input.compensationEffectId,
+      request: compensationRequest,
+    }),
     forwardReceipt,
     forwardReceiptHash: authorization.forwardReceiptHash,
     requestHash: canonicalCompensationHash(compensationRequest),
@@ -162,6 +169,19 @@ export function governedCompensationAuthorizationInput(input: {
   originalEffect: Pick<KernelEffect, 'request' | 'response'>;
 }): GovernedCompensationAuthorizationInput {
   const identifiers = governedCompensationIdentifiers(input.request);
+  const compensationRequest = {
+    originalEffectId: input.request.originalEffectId,
+    destination: input.originalEffect.request.destination,
+    forwardResponse: input.request.forwardReceipt,
+    compensationPatch: input.request.compensationPatch,
+  };
+  const idempotencyKey = deriveEffectIdempotencyKey({
+    tenantId: input.request.tenantId,
+    runId: identifiers.compensationRunId,
+    stepId: identifiers.compensationStepId,
+    effectId: identifiers.compensationEffectId,
+    request: compensationRequest,
+  });
   return {
     schema: 'commander.compensation/v1',
     authorizationId: identifiers.authorizationId,
@@ -174,13 +194,8 @@ export function governedCompensationAuthorizationInput(input: {
     compensationStepId: identifiers.compensationStepId,
     compensationEffectId: identifiers.compensationEffectId,
     compensationEffectType: input.request.compensationEffectType,
-    compensationRequest: {
-      originalEffectId: input.request.originalEffectId,
-      destination: input.originalEffect.request.destination,
-      forwardResponse: input.request.forwardReceipt,
-      compensationPatch: input.request.compensationPatch,
-    },
-    idempotencyKey: identifiers.idempotencyKey,
+    compensationRequest,
+    idempotencyKey,
     forwardReceipt: input.request.forwardReceipt,
     adapterVersion: input.request.adapterVersion,
     policyDecisionId: input.request.policyDecisionId,
@@ -234,5 +249,9 @@ export function prepareCompensationRequest(input: {
   } else if (input.request.actionDigest !== authorization.actionDigest) {
     escalationReason = 'ACTION_DIGEST_MISMATCH';
   }
-  return { authorization, identifiers, escalationReason };
+  return {
+    authorization,
+    identifiers: { ...identifiers, idempotencyKey: authorization.idempotencyKey },
+    escalationReason,
+  };
 }

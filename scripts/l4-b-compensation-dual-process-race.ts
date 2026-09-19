@@ -160,7 +160,8 @@ async function seedGovernedCompensationRows(
         policy_snapshot_id,lease_worker_id,lease_worker_generation,lease_fencing_epoch,
         action_digest,state,request,response,completed_at)
        VALUES ($1,$2,$3,$4,'read.github.pull-request',$5,'seed','policy-forward',
-               'policy-dual-v1','seed-worker',1,0,$6,'COMPLETED','{}'::jsonb,$7::jsonb,now())`,
+               'policy-dual-v1','seed-worker',1,0,$6,'COMPLETED',
+               jsonb_build_object('destination','github://octo/repo/pulls'),$7::jsonb,now())`,
       [
         effect.id,
         runId,
@@ -197,6 +198,12 @@ async function seedGovernedCompensationRows(
         type: 'compensate.github.pull-request.create',
         originalEffectId: effect.id,
         adapterVersion,
+        // Must match the server-side projection in
+        // create_compensation_authorization_internal_v1, which hashes
+        // `destination` from the forward effect's request. Omitting it here (or
+        // seeding the effect with an empty request) makes every seed fail closed
+        // with ACTION_DIGEST_MISMATCH.
+        destination: 'github://octo/repo/pulls',
         forwardResponse: effect.response,
         compensationPatch,
       }),

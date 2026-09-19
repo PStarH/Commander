@@ -175,11 +175,16 @@ describe('MultimodalContentScanner', () => {
       expect(threats.length).toBeGreaterThan(0);
     });
 
-    it('handles oversized files (early reject)', () => {
+    it('handles oversized files (early reject) and fails closed', () => {
       const strictScanner = new MultimodalContentScanner({ maxFileSize: 1024 });
       const bigBuffer = Buffer.alloc(2048, 0x00);
       const result = strictScanner.scan(bigBuffer, { fileExtension: '.png' });
       expect(result.threats).toBeDefined();
+      // The buffer is never scanned, so the result must not claim safety.
+      expect(result.isSafe).toBe(false);
+      const oversize = result.threats.filter((t) => t.type === 'excessive_resolution');
+      expect(oversize).toHaveLength(1);
+      expect(oversize[0].severity).toBe('HIGH');
     });
 
     it('handles unknown extensions', () => {

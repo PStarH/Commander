@@ -398,7 +398,10 @@ describe('FailureInjection', () => {
       });
 
       // http_500 → dependency category
-      assert.ok(report.byCategory.dependency >= 1 || report.injectedFailures.length === 0);
+      assert.ok(
+        report.byCategory.dependency >= 1,
+        `network-500 must be categorized as dependency, got ${JSON.stringify(report.byCategory)}`,
+      );
     });
   });
 

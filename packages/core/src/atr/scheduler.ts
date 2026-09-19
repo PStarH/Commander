@@ -115,6 +115,9 @@ export interface ExecutionSchedulerOptions {
   checkpointer?: StateCheckpointer;
 }
 
+/** Terminal run states are read-only (AS-04). */
+const TERMINAL_RUN_STATES: RunState[] = ['COMMITTED', 'ABORTED', 'COMPENSATED'];
+
 export class ExecutionScheduler {
   private lease: LeaseManager;
   private idempotency: IdempotencyStore;
@@ -128,6 +131,14 @@ export class ExecutionScheduler {
     this.checkpointer = opts.checkpointer;
   }
 
+  /**
+   * Begin (or idempotently re-open) a run.
+   *
+   * AS-04: a terminal run is read-only; begin is bound to the intent; and a
+   * `beginExecuting` refusal is surfaced instead of being reported as
+   * EXECUTING. An idempotent re-begin only succeeds while the caller's stored
+   * lease credentials are still live.
+   */
   beginRun(input: BeginRunInput): RunHandle {
     const intentHash = input.intentHash ?? hashIntent(input.intent ?? input.goal);
     const result = this.ledger.start({
@@ -138,31 +149,77 @@ export class ExecutionScheduler {
       ttlSeconds: input.ttlSeconds,
       holder: input.holder,
     });
-    this.ledger.beginExecuting(result.tx.runId, result.tx.leaseToken, result.tx.fencingEpoch, {
+    const tx = result.tx;
+
+    if (TERMINAL_RUN_STATES.includes(tx.state)) {
+      throw new Error(
+        `beginRun refused: run ${tx.runId} is terminal (state=${tx.state}) and read-only`,
+      );
+    }
+
+    if (tx.state !== 'PENDING') {
+      // Idempotent re-begin of an existing non-terminal run: only legal while
+      // the stored credentials still name the live lease.
+      const live = this.lease.validate(tx.runId, tx.leaseToken, tx.fencingEpoch, {
+        tenantId: input.tenantId,
+      });
+      if (!live) {
+        throw new Error(
+          `beginRun refused: run ${tx.runId} is ${tx.state} but its lease is not live (expired, released or fenced)`,
+        );
+      }
+      return {
+        runId: tx.runId,
+        state: tx.state,
+        leaseToken: tx.leaseToken,
+        fencingEpoch: tx.fencingEpoch,
+        intentHash,
+        tenantId: input.tenantId,
+        metadata: tx.metadata,
+        createdAt: tx.createdAt,
+        resumed: true,
+        acquired: false,
+      };
+    }
+
+    if (!result.lease.acquired) {
+      // A live lease exists without a run row — another owner is mid-begin.
+      throw new Error(
+        `beginRun refused: run ${tx.runId} already has a live lease held by another owner`,
+      );
+    }
+
+    const began = this.ledger.beginExecuting(tx.runId, tx.leaseToken, tx.fencingEpoch, {
       tenantId: input.tenantId,
+      from: ['PENDING'],
     });
+    if (!began) {
+      throw new Error(
+        `beginRun refused: beginExecuting failed for run ${tx.runId} (state=${tx.state}); not reporting EXECUTING`,
+      );
+    }
 
     // Create a git snapshot before the run starts — this provides a full-workspace
     // rollback baseline that complements the per-file .atr-snapshot mechanism.
     // If the process crashes and .atr-snapshot files are lost, the git snapshot
     // can still restore the workspace to its pre-run state.
     try {
-      createGitSnapshot(result.tx.runId);
+      createGitSnapshot(tx.runId);
     } catch {
       /* best-effort — don't block run start on snapshot failure */
     }
 
     return {
-      runId: result.tx.runId,
+      runId: tx.runId,
       state: 'EXECUTING',
-      leaseToken: result.tx.leaseToken,
-      fencingEpoch: result.tx.fencingEpoch,
+      leaseToken: tx.leaseToken,
+      fencingEpoch: tx.fencingEpoch,
       intentHash,
       tenantId: input.tenantId,
-      metadata: result.tx.metadata,
-      createdAt: result.tx.createdAt,
-      resumed: result.lease.acquired === false && result.lease.reclaimed !== true,
-      acquired: result.lease.acquired,
+      metadata: tx.metadata,
+      createdAt: tx.createdAt,
+      resumed: false,
+      acquired: true,
     };
   }
 
@@ -216,17 +273,32 @@ export class ExecutionScheduler {
         if (!leaseResult.acquired) continue;
         leaseToken = leaseResult.lease.token;
         fencingEpoch = leaseResult.lease.fencingEpoch;
-        // SAGA-5: persist the rotated lease credentials to the run row before
-        // beginExecuting, whose guarded UPDATE matches WHERE lease_token/fencing_epoch.
-        // Without this the row keeps the stale credentials, beginExecuting matches
-        // zero rows, and the run becomes permanently unclaimable.
+        // SAGA-5 + AS-04: persist the rotated lease credentials (including the
+        // bounded expiry) to the run row before beginExecuting, whose guarded
+        // UPDATE matches WHERE lease_token/fencing_epoch/lease_expires_at.
+        // Without this the row keeps the stale credentials, beginExecuting
+        // matches zero rows, and the run becomes permanently unclaimable.
+        const synced = this.ledger.syncLeaseCredentials(tx.runId, leaseToken, fencingEpoch, {
+          tenantId: tx.tenantId,
+          expiresAt: leaseResult.lease.expiresAt,
+        });
+        if (!synced) continue;
+      } else {
+        // Reuse the live lease, but refresh the run row's denormalized expiry
+        // so the guarded writes keep working for the whole run.
+        leaseToken = currentLease.token;
+        fencingEpoch = currentLease.fencingEpoch;
         this.ledger.syncLeaseCredentials(tx.runId, leaseToken, fencingEpoch, {
           tenantId: tx.tenantId,
+          expiresAt: currentLease.expiresAt,
         });
       }
 
+      // Exclusive claim: only a PENDING source state may move to EXECUTING, so
+      // exactly one claimer wins even if two read the same live credentials.
       const ok = this.ledger.beginExecuting(tx.runId, leaseToken, fencingEpoch, {
         tenantId: tx.tenantId,
+        from: ['PENDING'],
       });
       if (!ok) continue;
 
@@ -341,6 +413,11 @@ export class ExecutionScheduler {
     });
     if (!ok) return { committed: false, reason: 'fenced' };
     this.lease.release(input.runId, input.leaseToken, { tenantId: input.tenantId });
+    // AS-04: the run is terminal; clear the stored credentials too so a
+    // released token is never reused.
+    this.ledger.revokeLease(input.runId, input.leaseToken, input.fencingEpoch, {
+      tenantId: input.tenantId,
+    });
 
     // Run committed successfully — clear the git snapshot, no rollback needed
     clearGitSnapshot(input.runId);
@@ -378,13 +455,18 @@ export class ExecutionScheduler {
       { tenantId: input.tenantId, maxAttempts: input.maxAttempts },
     );
     this.lease.release(input.runId, input.leaseToken, { tenantId: input.tenantId });
+    // AS-04: a released token must never be reused — invalidate the run row's
+    // stored credentials so a surviving writer cannot keep writing.
+    this.ledger.revokeLease(input.runId, input.leaseToken, input.fencingEpoch, {
+      tenantId: input.tenantId,
+    });
 
     // If compensation had failures, attempt a git snapshot restore as a
     // last-resort full-workspace rollback. This catches the case where
     // per-file .atr-snapshot files were lost or incomplete.
     if (res.outcome.failed > 0) {
       try {
-        const restored = restoreGitSnapshot(input.runId);
+        const restored = restoreGitSnapshot(input.runId, process.cwd());
         if (restored) {
           // Log that we performed a full git restore — operators need to know
           // this happened because it discards ALL changes made during the run
@@ -404,9 +486,19 @@ export class ExecutionScheduler {
     };
   }
 
+  /**
+   * Return the current handle for a run. AS-04: a terminal run is read-only
+   * and a released/expired token is never handed back for recovery, so this
+   * returns null unless the stored credentials still name the live lease.
+   */
   resumeRun(input: { runId: string; tenantId?: string }): RunHandle | null {
     const tx = this.ledger.getTransaction(input.runId, { tenantId: input.tenantId });
     if (!tx) return null;
+    if (TERMINAL_RUN_STATES.includes(tx.state)) return null;
+    const live = this.lease.validate(tx.runId, tx.leaseToken, tx.fencingEpoch, {
+      tenantId: input.tenantId,
+    });
+    if (!live) return null;
     return {
       runId: tx.runId,
       state: tx.state,
@@ -465,7 +557,9 @@ export class ExecutionScheduler {
   }
 
   /**
-   * Claim the next PAUSED run whose resume_at <= now, transitioning it to EXECUTING.
+   * Claim the next PAUSED run whose resume_at <= now, transitioning it to
+   * EXECUTING. The claim is an explicit conditional update from PAUSED, so
+   * exactly one claimer receives the run.
    */
   claimRunnableRun(options?: { tenantId?: string }): RunHandle | null {
     if (!canAdmitSchedulerWork()) {
@@ -482,13 +576,24 @@ export class ExecutionScheduler {
         if (!leaseResult.acquired) continue;
         leaseToken = leaseResult.lease.token;
         fencingEpoch = leaseResult.lease.fencingEpoch;
+        const synced = this.ledger.syncLeaseCredentials(tx.runId, leaseToken, fencingEpoch, {
+          tenantId: tx.tenantId,
+          expiresAt: leaseResult.lease.expiresAt,
+        });
+        if (!synced) continue;
+      } else {
+        leaseToken = currentLease.token;
+        fencingEpoch = currentLease.fencingEpoch;
         this.ledger.syncLeaseCredentials(tx.runId, leaseToken, fencingEpoch, {
           tenantId: tx.tenantId,
+          expiresAt: currentLease.expiresAt,
         });
       }
 
+      // Exclusive claim: only the PAUSED source state may be woken.
       const ok = this.ledger.beginExecuting(tx.runId, leaseToken, fencingEpoch, {
         tenantId: tx.tenantId,
+        from: ['PAUSED'],
       });
       if (!ok) continue;
 
@@ -533,19 +638,39 @@ export class ExecutionScheduler {
     const released = this.lease.release(input.runId, input.leaseToken, {
       tenantId: input.tenantId,
     });
+    if (released) {
+      // AS-04: killing only deleted the lease; the run row still carried
+      // credentials, so the write path could continue. Revoke them too.
+      this.ledger.revokeLease(input.runId, input.leaseToken, input.fencingEpoch, {
+        tenantId: input.tenantId,
+      });
+    }
     return { killed: released, reason: released ? undefined : 'fenced' };
   }
 
+  /**
+   * Renew the lease AND the run row's denormalized expiry, so guarded writes
+   * stay valid for the whole run and expire when the lease does.
+   */
   heartbeat(input: {
     runId: string;
     leaseToken: string;
     tenantId?: string;
     ttlSeconds?: number;
   }): boolean {
-    return this.lease.heartbeat(input.runId, input.leaseToken, {
+    const ok = this.lease.heartbeat(input.runId, input.leaseToken, {
       tenantId: input.tenantId,
       ttlSeconds: input.ttlSeconds,
     });
+    if (!ok) return false;
+    const live = this.lease.get(input.runId, { tenantId: input.tenantId });
+    if (live) {
+      this.ledger.syncLeaseCredentials(input.runId, live.token, live.fencingEpoch, {
+        tenantId: input.tenantId,
+        expiresAt: live.expiresAt,
+      });
+    }
+    return true;
   }
 
   checkpoint(input: SchedulerCheckpointInput): boolean {

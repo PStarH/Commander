@@ -43,6 +43,7 @@ import {
   KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_SQL,
   KERNEL_COMPENSATION_METADATA_BINDING_SQL,
   KERNEL_COMPENSATION_PERSISTENCE_SQL,
+  KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_REPAIR_SQL,
 } from './compensationSchema.js';
 import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
 import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
@@ -475,12 +476,64 @@ export const KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS: readonly Ker
   },
 ];
 
+/**
+ * KC-05: keep terminal compensation requests from retaining a claim deadline so
+ * the automatic claim selection cannot pick an oldest terminal row forever.
+ */
+export const KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-17.1.compensation_terminal_claim_deadline',
+    sql: KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_REPAIR_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_REPAIR_SQL),
+  },
+];
+
 /** Bind legacy durable compensation runs to strict evidence targets. */
 export const KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS: readonly KernelMigration[] = [
   {
     id: '2026-08-09.3.compensation_metadata_binding',
     sql: KERNEL_COMPENSATION_METADATA_BINDING_SQL,
     checksum: checksum(KERNEL_COMPENSATION_METADATA_BINDING_SQL),
+  },
+];
+
+/**
+ * Read-only descriptor state for the runtime migration gate.
+ *
+ * The sealed runtime roles hold no privilege on `commander_kernel_migrations`
+ * (the catalog hardening revokes it), so the gate cannot read the ledger
+ * directly. This owner-owned SECURITY DEFINER reader exposes exactly the applied
+ * `(id, checksum)` pairs the runtime gate needs to compare against the release's
+ * published descriptor set, without granting the runtime roles table access.
+ */
+export const KERNEL_APPLIED_MIGRATION_DESCRIPTORS_SQL = `
+CREATE OR REPLACE FUNCTION public.commander_applied_migration_descriptors()
+RETURNS TABLE (id text, checksum text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $function$
+  SELECT ledger.id::text, ledger.checksum::text
+    FROM public.commander_kernel_migrations AS ledger
+$function$;
+
+REVOKE ALL ON FUNCTION public.commander_applied_migration_descriptors()
+  FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.commander_applied_migration_descriptors()
+  TO commander_app, commander_worker, commander_scheduler, commander_adapter_ops;
+`;
+
+/**
+ * Post-closure descriptor that publishes the runtime migration-gate reader. It is
+ * applied after the Task 1 baseline/closure ledger assertions, which pin that
+ * ledger to exactly the published baseline and lifecycle descriptors.
+ */
+export const KERNEL_APPLIED_MIGRATION_DESCRIPTOR_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-18.1.applied_migration_descriptors_readiness',
+    sql: KERNEL_APPLIED_MIGRATION_DESCRIPTORS_SQL,
+    checksum: checksum(KERNEL_APPLIED_MIGRATION_DESCRIPTORS_SQL),
   },
 ];
 
@@ -500,6 +553,7 @@ export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_MIGRATIONS,
   ...KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS,
   ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
   ...KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS,
@@ -542,10 +596,12 @@ export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
   ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
   ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
   ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_MIGRATIONS,
   ...KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS,
   ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
   ...KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS,
   ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
+  ...KERNEL_APPLIED_MIGRATION_DESCRIPTOR_MIGRATIONS,
 ];
 
 const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';

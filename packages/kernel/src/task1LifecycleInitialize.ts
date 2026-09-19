@@ -735,14 +735,26 @@ async function exactLedgerRows(
   return result.rows.map(({ id, checksum }) => ({ id, checksum }));
 }
 
-function assertExactLedgerRows(rows: Array<{ id: string; checksum: string }>): void {
+function assertExactLedgerRows(
+  rows: Array<{ id: string; checksum: string }>,
+  publishedExtras: readonly { id: string; checksum: string }[] = [],
+): void {
   const expected = KERNEL_TASK1_BASELINE_MIGRATIONS.map(({ id, checksum }) => ({
     id,
     checksum,
   })).sort((left, right) => left.id.localeCompare(right.id));
-  const actual = [...rows].sort((left, right) => left.id.localeCompare(right.id));
+  const allowed = new Map(publishedExtras.map(({ id, checksum }) => [id, checksum] as const));
+  const actual = [...rows]
+    .filter((row) => !allowed.has(row.id))
+    .sort((left, right) => left.id.localeCompare(right.id));
   if (canonicalBootstrapJson(actual) !== canonicalBootstrapJson(expected)) {
     throw new Error('MIGRATION_LEDGER_TAMPERED');
+  }
+  for (const row of rows) {
+    const expectedChecksum = allowed.get(row.id);
+    if (expectedChecksum !== undefined && row.checksum !== expectedChecksum) {
+      throw new Error('MIGRATION_LEDGER_TAMPERED');
+    }
   }
 }
 
@@ -805,7 +817,7 @@ async function applyHistoricalBaseline(
       await client.query(TASK1_MIGRATION_LEDGER_LOCK_SQL);
       const existing = await exactLedgerRows(client);
       if (existing.length > 0) {
-        assertExactLedgerRows(existing);
+        assertExactLedgerRows(existing, KERNEL_TASK1_CLOSURE_MIGRATIONS);
         return;
       }
     }
@@ -838,11 +850,15 @@ async function applyLifecycleDescriptor(client: SqlClient): Promise<void> {
     'SELECT checksum FROM public.commander_kernel_migrations WHERE id=$1',
     [lifecycle.id],
   );
-  if (existing.rows[0]?.checksum !== undefined) {
-    if (existing.rows[0].checksum !== lifecycle.checksum) {
+  const appliedChecksum = existing.rows[0]?.checksum;
+  if (appliedChecksum !== undefined) {
+    if (appliedChecksum !== lifecycle.checksum) {
       throw new Error('MIGRATION_LEDGER_TAMPERED');
     }
-    throw new Error('MIGRATION_LEDGER_TAMPERED');
+    // The exact published descriptor is already recorded: an interrupted install
+    // (descriptor committed, cutover state missing) retries by continuing to
+    // insertState. Re-running the DDL is neither possible nor necessary.
+    return;
   }
   await client.query(lifecycle.sql);
   await client.query(

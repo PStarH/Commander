@@ -120,6 +120,41 @@ class TestClientRequests:
             with pytest.raises(ConnectionError):
                 await client._request("GET", "/health")
 
+    async def test_read_timeout_does_not_retry_a_non_idempotent_post(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        # A ReadTimeout means the server may already have applied the request.
+        # Retrying a POST can duplicate the side effect, so it must be attempted
+        # exactly once.
+        attempts: list[str] = []
+
+        def _timeout(request: httpx.Request) -> httpx.Response:
+            attempts.append(str(request.url))
+            raise httpx.ReadTimeout("read timed out")
+
+        mock_api.post("/workflows").mock(side_effect=_timeout)
+        async with CommanderClient(api_key="test", max_retries=3) as client, mock_api:
+            with pytest.raises(ConnectionError):
+                await client._request("POST", "/workflows", json={"name": "wf"})
+        assert len(attempts) == 1
+
+    async def test_read_timeout_still_retries_an_idempotent_get(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        attempts: list[str] = []
+
+        def _flaky(request: httpx.Request) -> httpx.Response:
+            attempts.append(str(request.url))
+            if len(attempts) == 1:
+                raise httpx.ReadTimeout("read timed out")
+            return httpx.Response(200, json={"status": "ok"})
+
+        mock_api.get("/health").mock(side_effect=_flaky)
+        async with CommanderClient(api_key="test", max_retries=3) as client, mock_api:
+            data = await client._request("GET", "/health")
+        assert data["status"] == "ok"
+        assert len(attempts) == 2
+
 
 ACTION_FIXTURES = {
     "input": {
@@ -168,6 +203,41 @@ ACTION_FIXTURES = {
 
 
 class TestGatewayClient:
+    async def test_static_api_key_travels_as_x_api_key_not_bearer(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        """AUDIT-D1①: a static key must not ride the JWT Bearer channel.
+
+        Enterprise /v1 JWT middleware rejects any non-JWT Bearer with 401
+        INVALID_TOKEN before API-key authentication can inspect it, so a valid
+        static key sent as Bearer cannot authenticate at all.
+        """
+        route = mock_api.get("/v1/actions/kill-switches").respond(
+            200, json={"killSwitches": []}
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="cmd-static-key"
+        ) as client, mock_api:
+            result = await client.list_kill_switches()
+            headers = route.calls.last.request.headers
+            assert headers["X-API-Key"] == "cmd-static-key"
+            assert "Authorization" not in headers
+        assert result == []
+
+    async def test_static_api_key_header_matches_reference_sdk(self) -> None:
+        """Static credential pairing stays identical to packages/sdk + stdioServer."""
+        client = CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="cmd-static-key"
+        )
+        try:
+            assert client._build_headers() == {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-API-Key": "cmd-static-key",
+            }
+        finally:
+            await client.close()
+
     async def test_simulate_action_posts_envelope(self, mock_api: respx.MockRouter) -> None:
         route = mock_api.post("/v1/actions/simulate").respond(
             200, json={"simulation": ACTION_FIXTURES["simulation"]}

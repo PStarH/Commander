@@ -31,6 +31,7 @@ function llmEvent(
   ts: string,
 ): TraceEvent {
   return {
+    id: spanId,
     spanId,
     parentSpanId,
     traceId: 'trace-1',
@@ -42,7 +43,7 @@ function llmEvent(
     data: {
       input: 'q',
       output: 'a',
-      modelInfo: { provider: 'openai', model },
+      modelInfo: { provider: 'openai', model, tier: 'standard' },
       tokenUsage: {
         promptTokens: prompt,
         completionTokens: completion,
@@ -54,6 +55,7 @@ function llmEvent(
 
 function toolEvent(spanId: string, parentSpanId: string, tool: string, ts: string): TraceEvent {
   return {
+    id: spanId,
     spanId,
     parentSpanId,
     traceId: 'trace-1',

@@ -65,29 +65,53 @@ function hashSubject(userId: string): string {
 }
 
 /**
- * Whether a userId has a durable audit-erasure tombstone. Audit readers and
- * compliance exporters should call this and mask the subject's PII when true.
+ * Outcome of a durable audit-erasure tombstone lookup.
+ *
+ * `unknown` is a first-class result: a privacy control that cannot be evaluated
+ * must be treated as "masked" by its consumers, never as "not erased".
  */
-export function isAuditSubjectErased(userId: string): boolean {
+export type AuditErasureState = 'erased' | 'not_erased' | 'unknown';
+
+/**
+ * Whether a userId has a durable audit-erasure tombstone. Audit readers and
+ * compliance exporters must mask the subject's PII when the result is `erased`
+ * — and when it is `unknown`, because an unevaluable privacy control fails
+ * closed. Only `not_erased` is safe to pass through unmasked.
+ */
+export function isAuditSubjectErased(userId: string): AuditErasureState {
+  let target: string;
   try {
-    const file = erasureRegistryPath();
-    if (!fs.existsSync(file)) return false;
-    const target = hashSubject(userId);
+    target = hashSubject(userId);
+  } catch (err) {
+    // Hashing is the identity of the control itself; without it the lookup is
+    // meaningless, so the caller must mask rather than assume "not erased".
+    reportSilentFailure(err, 'gdpr:isAuditSubjectErased:hash');
+    return 'unknown';
+  }
+
+  const file = erasureRegistryPath();
+  // A registry that does not exist yet proves nothing was erased; that is the
+  // one genuinely negative answer, and treating it as unknown would mask every
+  // subject forever on a fresh deployment.
+  if (!fs.existsSync(file)) return 'not_erased';
+
+  try {
     const lines = fs.readFileSync(file, 'utf-8').split('\n').filter(Boolean);
     for (const line of lines) {
       try {
-        if ((JSON.parse(line) as ErasureTombstone).subjectHash === target) return true;
+        if ((JSON.parse(line) as ErasureTombstone).subjectHash === target) return 'erased';
       } catch {
         /* skip a torn record */
       }
     }
-    return false;
+    return 'not_erased';
   } catch (err) {
-    // Fail closed for a privacy control: if we cannot prove the subject is NOT
-    // erased, the caller should treat reads conservatively. We surface the error
-    // and report "not erased" only when the registry genuinely has no match.
+    // Fail closed for a privacy control: the registry exists but cannot be read,
+    // so we cannot prove this subject is NOT erased. Callers must mask on
+    // `unknown`; this previously returned `false` ("not erased") and skipped the
+    // mask exactly when the control could not be evaluated.
     reportSilentFailure(err, 'gdpr:isAuditSubjectErased');
-    return false;
+    return 'unknown';
   }
 }
 
@@ -96,8 +120,18 @@ export function isAuditSubjectErased(userId: string): boolean {
 // ============================================================================
 
 export interface GdprErasureOptions {
-  /** User ID to erase (required) */
+  /**
+   * Erasure key identifying the subject. When a tenant is in play this is the
+   * canonical `tenantId:userId` form — the same identity the audit tombstone is
+   * hashed from and the audit producer records.
+   */
   userId: string;
+  /**
+   * Raw (unprefixed) subject id used for memory attribution. Memory entries are
+   * tagged with the bare subject id, so it cannot be derived by string surgery
+   * on `userId`. Defaults to `userId` for callers that key memories the same way.
+   */
+  subjectId?: string;
   /** Project scope (if erasure should be limited to one project) */
   projectId?: string;
   /** Agent IDs associated with this user (for erasing agent-scoped memories) */
@@ -347,12 +381,30 @@ export class GdprComplianceManager {
       }
     }
 
-    // 4. Clear working memory (in-process, ephemeral)
+    // 4. Delete the subject's own working/episodic entries. Clearing the whole
+    // layer would destroy other subjects' memory in the same tenant, so only
+    // entries explicitly attributed to this subject are removed. Entries with
+    // no subject attribution cannot be proven to be this subject's — they are
+    // left in place and reported, never silently deleted.
     try {
       const threeLayer = getGlobalThreeLayerMemory();
-      threeLayer.clearLayer('working');
-      threeLayer.clearLayer('episodic');
-      getGlobalLogger().info('GdprCompliance', 'Working memory cleared', { userId });
+      const subjectId = options.subjectId ?? userId;
+      const { deleted, unattributed } = threeLayer.deleteBySubject(subjectId, [
+        'working',
+        'episodic',
+      ]);
+      result.memoriesDeleted += deleted;
+      if (unattributed > 0) {
+        result.errors.push({
+          store: 'ThreeLayerMemory',
+          error: `${unattributed} working/episodic entr${unattributed === 1 ? 'y' : 'ies'} carry no subject attribution and were NOT deleted`,
+        });
+      }
+      getGlobalLogger().info('GdprCompliance', 'Subject memory erased', {
+        userId,
+        deleted,
+        unattributed,
+      });
     } catch (err) {
       result.errors.push({
         store: 'ThreeLayerMemory',

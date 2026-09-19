@@ -237,18 +237,32 @@ describe('UnifiedVerificationPipeline', () => {
   });
 
   it('adjusts relevance threshold by task type', async () => {
+    // RTC-16: the old body asserted only inside `if (relevanceSignal)`, and the
+    // fixture could never produce that signal: the goal was 7 words against a
+    // `goalWords > 10` gate. The signal was therefore never exercised and the
+    // test passed no matter what the pipeline did.
     const pipeline = createPipeline();
-    // Code tasks allow longer output
-    const longCodeOutput = 'x '.repeat(2000);
-    const ctx: UVPTaskContext = {
-      goal: 'Write a Python function to process data',
-      output: longCodeOutput,
-    };
-    const report = await pipeline.verify(ctx);
-    // Should not penalize as heavily as it would for a search task
-    const relevanceSignal = report.signals.find((s) => s.source === 'relevance');
-    if (relevanceSignal) {
-      assert.equal(relevanceSignal.severity, 'low');
-    }
+    const output = Array.from({ length: 120 }, (_, i) => `w${i}`).join(' ');
+
+    // `search` tasks use a 6x multiplier: 120 words beats 15 * 6 = 90.
+    const searchReport = await pipeline.verify({
+      goal: 'Search the web for information about the current state of the art in climate modeling',
+      output,
+    });
+    const searchSignal = searchReport.signals.find((s) => s.source === 'relevance');
+    assert.ok(searchSignal, 'a search task must flag output far longer than the goal');
+    assert.equal(searchSignal!.severity, 'low');
+
+    // `code` tasks use a 15x multiplier: the same 120 words is below 15 * 15,
+    // so the identical output must not be flagged there.
+    const codeReport = await pipeline.verify({
+      goal: 'Write a Python function to process the data and return a sorted list of results',
+      output,
+    });
+    assert.equal(
+      codeReport.signals.find((s) => s.source === 'relevance'),
+      undefined,
+      'a code task must tolerate output that a search task would flag',
+    );
   });
 });

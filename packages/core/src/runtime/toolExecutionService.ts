@@ -489,11 +489,12 @@ export class ToolExecutionService {
       } catch (e) {
         if (e instanceof SideEffectGateError) {
           const durationMs = Date.now() - startTime;
-          // Buyer-visible marker: policy denials carry GUARDIAN_BLOCKED so
-          // downstream assertions (and the demo-qa golden path) can detect
-          // interception uniformly across security layers.
-          const prefix = e.code === 'POLICY_DENIED' ? 'GUARDIAN_BLOCKED' : 'SIDE_EFFECT_GATE';
-          const errorMsg = `${prefix}: ${e.code}: ${e.message}`;
+          // Layer-accurate marker: a policy denial must not be relabelled
+          // GUARDIAN_BLOCKED, which would erase the layer that denied the call.
+          const errorMsg =
+            e.code === 'POLICY_DENIED'
+              ? `POLICY_DENIED: ${e.message}`
+              : `SIDE_EFFECT_GATE: ${e.code}: ${e.message}`;
           bus.publish('tool.blocked', agentId, {
             runId,
             toolName: toolCall.name,

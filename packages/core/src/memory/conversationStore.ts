@@ -22,7 +22,11 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { createRequire } from 'node:module';
 import { walCheckpoint } from '../storage/walCheckpoint';
-import { getCurrentTenantId, tenantBucketOrThrow } from '../runtime/tenantContext';
+import {
+  getCurrentTenantId,
+  tenantBucketOrThrow,
+  TenantIsolationError,
+} from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const nodeRequire = createRequire(import.meta.url);
@@ -304,9 +308,17 @@ export class ConversationStore {
       VALUES (@id, @projectId, @agentId, @userId, @goal, @startedAt, @tags, @metadata, @tenantId)
     `);
 
+    // MEM-C09: a turn row has no tenant column of its own — ownership is
+    // derived from conversation_sessions. The INSERT...SELECT therefore only
+    // fires when the target session belongs to the ambient tenant, so a foreign
+    // sessionId cannot be used as a write handle. Zero changes means the session
+    // is unknown or owned by another tenant; the caller refuses (fail closed).
     this.stmtInsertTurn = d.prepare(`
       INSERT INTO conversation_turns (id, session_id, role, content, tool_name, tool_call_id, token_count, importance, created_at)
-      VALUES (@id, @sessionId, @role, @content, @toolName, @toolCallId, @tokenCount, @importance, @createdAt)
+      SELECT @id, @sessionId, @role, @content, @toolName, @toolCallId, @tokenCount, @importance, @createdAt
+      WHERE EXISTS (
+        SELECT 1 FROM conversation_sessions WHERE id = @sessionId AND tenant_id = @tenantId
+      )
     `);
 
     this.stmtGetSession = d.prepare(
@@ -480,7 +492,7 @@ export class ConversationStore {
       createdAt: new Date().toISOString(),
     };
 
-    this.stmtInsertTurn.run({
+    const result = this.stmtInsertTurn.run({
       id: turn.id,
       sessionId: turn.sessionId,
       role: turn.role,
@@ -490,7 +502,14 @@ export class ConversationStore {
       tokenCount: turn.tokenCount ?? null,
       importance: turn.importance,
       createdAt: turn.createdAt,
+      tenantId: this.getTenantId(),
     });
+
+    if (result.changes === 0) {
+      throw new TenantIsolationError(
+        `Conversation session not found in the current tenant: ${params.sessionId}`,
+      );
+    }
 
     return turn;
   }

@@ -1,4 +1,5 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 interface CohereContent {
   type: 'text';
@@ -46,6 +47,7 @@ export class CohereProvider implements LLMProvider {
     this.apiKey = config.apiKey || process.env.CO_API_KEY || process.env.COHERE_API_KEY || '';
     this.baseUrl = config.baseUrl ?? process.env.COHERE_BASE_URL ?? 'https://api.cohere.com';
     this.defaultModel = config.defaultModel ?? process.env.COHERE_MODEL ?? 'command-a-plus-05-2026';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {

@@ -45,7 +45,10 @@ export async function startWorkerHealthServer(options: {
     };
     server.once('error', onError);
     server.once('listening', onListening);
-    server.listen(options.port, options.host);
+    // WP-15: an omitted host used to be passed straight through to listen(), which
+    // binds every interface (0.0.0.0/::). /health and /ready are unauthenticated, so
+    // the default must be loopback; an operator opts into exposure explicitly.
+    server.listen(options.port, options.host ?? '127.0.0.1');
   });
 
   const address = server.address();

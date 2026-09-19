@@ -138,4 +138,31 @@ describe('ActionAdapterRegistry', () => {
     assert.equal(registry.listDescriptors().length, 1);
     assert.equal(registry.listDescriptors()[0]?.effectType, 'connector.github.pull-request.create');
   });
+
+  it('refuses a compensation effect type that collides with another adapter key', () => {
+    const forward = stubAdapter('connector.a.create');
+    const collides: ActionAdapter = {
+      ...stubAdapter('connector.b.create'),
+      descriptor: {
+        ...GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+        effectType: 'connector.b.create',
+        compensationEffectType: 'connector.a.create',
+      },
+    };
+    assert.throws(
+      () => new ActionAdapterRegistry([forward, collides]),
+      /Duplicate action adapter effect type registration: connector\.a\.create/,
+    );
+  });
+
+  it('refuses a duplicate forward effect type registration', () => {
+    assert.throws(
+      () =>
+        new ActionAdapterRegistry([
+          stubAdapter('connector.a.create'),
+          stubAdapter('connector.a.create'),
+        ]),
+      /Duplicate action adapter effect type registration: connector\.a\.create/,
+    );
+  });
 });

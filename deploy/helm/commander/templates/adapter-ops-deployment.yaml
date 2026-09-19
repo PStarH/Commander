@@ -137,8 +137,9 @@ spec:
             - name: COMMANDER_ADAPTER_EGRESS_ALLOWLIST
               value: {{ join "," .Values.adapterOps.egress.allowlist | quote }}
             {{- else if .Values.networkPolicy.egress.adapterCidrs }}
-            - name: COMMANDER_ADAPTER_EGRESS_ALLOWLIST
-              value: {{ join "," .Values.networkPolicy.egress.adapterCidrs | quote }}
+            {{- fail (printf "adapterOps.egress.allowlist is empty while networkPolicy.egress.adapterCidrs is set (%s). Those CIDRs cannot be used as COMMANDER_ADAPTER_EGRESS_ALLOWLIST: the adapter-ops hostname gate rejects a CIDR-only allowlist with ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED because it cannot adjudicate IP literals. Keep the CIDRs in networkPolicy.egress.adapterCidrs (the NetworkPolicy layer) and add at least one hostname or *.suffix entry to adapterOps.egress.allowlist." (join ", " .Values.networkPolicy.egress.adapterCidrs)) }}
+            {{- else if ne (.Values.tier | toString) "demo" }}
+            {{- fail (printf "adapterOps.egress.allowlist is empty on tier %s. The adapter-ops daemon refuses to start its outbound reconciliation/compensation loops without a hostname allowlist (ADAPTER_OPS_EGRESS_ALLOWLIST_REQUIRED). Add at least one hostname or *.suffix entry; only tier: demo may run with an empty allowlist." (.Values.tier | toString)) }}
             {{- end }}
             {{- include "commander.capabilityEnv" . | nindent 12 }}
             {{- include "commander.evidenceSigningEnv" . | nindent 12 }}

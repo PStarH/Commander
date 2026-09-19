@@ -88,7 +88,7 @@ function assertSignedEvidence(input: unknown): void {
   const tampered = { ...(evidence.body as Record<string, unknown>), runId: 'run-tampered' };
   assert.equal(
     verifyEvidenceSignature(
-      canonicalEvidenceBody(tampered as EvidenceBundle),
+      canonicalEvidenceBody(tampered as unknown as EvidenceBundle),
       signature,
       TEST_EVIDENCE_SIGNER.jwks,
     ),
@@ -108,6 +108,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
 function daemonFor(input: {
   outcome?: Record<string, unknown>;
   queryError?: unknown;
+  queryDelayMs?: number;
   brokerFactoryError?: unknown;
   repository?: Record<string, unknown>;
   registry?: Record<string, unknown>;
@@ -115,6 +116,7 @@ function daemonFor(input: {
   drain?: () => Promise<void>;
   telemetry?: (event: Record<string, unknown>) => void;
   terminalEvidenceContext?: Record<string, unknown>;
+  queryTimeoutMs?: number;
 }) {
   const querier = { queryOutcome: async () => ({ status: 'UNKNOWN' }) };
   const queryCalls: Array<Record<string, unknown>> = [];
@@ -147,6 +149,9 @@ function daemonFor(input: {
         reconcileUnknown: async (query: Record<string, unknown>) => {
           queryCalls.push(query);
           if ('queryError' in input) throw input.queryError;
+          if (input.queryDelayMs) {
+            await new Promise<void>((resolve) => setTimeout(resolve, input.queryDelayMs));
+          }
           return (
             input.outcome ?? { status: 'UNKNOWN', error: { code: 'UNKNOWN', message: 'unknown' } }
           );
@@ -157,6 +162,7 @@ function daemonFor(input: {
     drain: input.drain,
     telemetry: input.telemetry as never,
     terminalEvidenceContext: input.terminalEvidenceContext as never,
+    queryTimeoutMs: input.queryTimeoutMs,
   });
   return { daemon, querier, queryCalls, repository, brokerFactoryCalls: () => brokerFactoryCalls };
 }
@@ -580,5 +586,49 @@ describe('ReconciliationDaemon', () => {
     assert.equal(heartbeats, 1);
     assert.equal(drains, 1);
     assert.equal(daemon.getHealth().running, false);
+  });
+
+  /**
+   * AO-06: the outcome query had no timeout, so a query slower than the kernel's
+   * fixed 60s claim lease let the lease expire mid-flight; the later mutation was
+   * fenced (`CLAIM_EXPIRED`) and `reconcile_attempts` never advanced, so the same
+   * effect was re-driven forever. The daemon must bound the query and route the
+   * timeout through the reschedule path.
+   */
+  it('turns an over-budget outcome query into a reschedule instead of blocking the tick', async () => {
+    let persisted: Record<string, unknown> | undefined;
+    const { daemon } = daemonFor({
+      queryTimeoutMs: 25,
+      queryDelayMs: 200,
+      outcome: { status: 'UNKNOWN', error: { code: 'SLOW_REMOTE', message: 'slow remote' } },
+      repository: {
+        rescheduleReconcileEffect: async (input: Record<string, unknown>) => {
+          persisted = input;
+          return { ...SUCCESS, disposition: 'RESCHEDULED' };
+        },
+      },
+    });
+
+    const startedAt = Date.now();
+    const stats = await daemon.tick();
+    const elapsedMs = Date.now() - startedAt;
+
+    assert.equal(stats.rescheduled, 1);
+    assert.equal(stats.completed, 0);
+    assert.deepEqual(persisted?.lastError, {
+      code: 'RECONCILE_QUERY_TIMEOUT',
+      message: 'Outcome query exceeded 25ms budget for effect type github.pull-request.create',
+    });
+    assert.ok(elapsedMs < 150, `tick must not wait for the slow query (waited ${elapsedMs}ms)`);
+  });
+
+  it('refuses a query budget that is not a positive integer below the claim lease', () => {
+    for (const queryTimeoutMs of [0, -1, 1.5, Number.NaN, 60_000, 120_000]) {
+      assert.throws(
+        () => daemonFor({ queryTimeoutMs }),
+        /RECONCILE_QUERY_TIMEOUT_INVALID/,
+        `queryTimeoutMs=${String(queryTimeoutMs)}`,
+      );
+    }
   });
 });

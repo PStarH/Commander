@@ -142,11 +142,20 @@ export class ProceduralMemoryStore {
       );
     }
 
-    // Filter by minimum success rate
-    const minRate = options.minSuccessRate ?? 0;
-    procedural = procedural.filter(
-      (item) => (item.meta?.successRate as number | undefined) ?? 0 >= minRate,
-    );
+    // Filter by minimum success rate.
+    //
+    // The parentheses matter: `x ?? 0 >= minRate` parses as `x ?? (0 >= minRate)`
+    // because `??` binds looser than `>=`. That returned the raw successRate as
+    // the filter's truthiness, so a stored 0.1 passed a 0.9 threshold. A
+    // non-finite stored value (NaN) is "unmeasured" and must not pass either.
+    const minRate = Number.isFinite(options.minSuccessRate)
+      ? (options.minSuccessRate as number)
+      : 0;
+    procedural = procedural.filter((item) => {
+      const successRate = item.meta?.successRate as number | undefined;
+      const effective = Number.isFinite(successRate) ? (successRate as number) : 0;
+      return effective >= minRate;
+    });
 
     // Score and rank by specificity + utility
     const contextTerms = this.tokenize(options.context);

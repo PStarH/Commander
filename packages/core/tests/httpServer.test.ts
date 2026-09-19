@@ -1,6 +1,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import * as http from 'node:http';
+import * as net from 'node:net';
 import * as crypto from 'node:crypto';
 import { CommanderHttpServer } from '../src/runtime/httpServer';
 
@@ -47,6 +48,20 @@ async function requestJson(
       req.write(typeof options.body === 'string' ? options.body : JSON.stringify(options.body));
     req.end();
     req.on('error', reject);
+  });
+}
+
+/** Probe whether a TCP connection to `port` on 127.0.0.1 succeeds. */
+function canConnect(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    const done = (result: boolean) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+    socket.setTimeout(2000, () => done(false));
   });
 }
 
@@ -414,6 +429,113 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
     });
   });
 
+  // EH-04: the compensation dashboard rendered before authentication and the
+  // auxiliary SSE streams had no auth at all; on a multi-tenant server they
+  // also exposed the process-global bus to every tenant.
+  describe('/dashboard/compensation access control', () => {
+    it('requires authentication and refuses multi-tenant servers', async () => {
+      const secured = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'secured-key',
+        rateLimitPerMinute: 0,
+      });
+      await secured.start();
+      const securedUrl = `http://127.0.0.1:${secured.getPort()}`;
+      const multi = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'owner-key',
+        tenantApiKeys: { 'tenant-a-key': 'tenant-a', 'tenant-b-key': 'tenant-b' },
+        rateLimitPerMinute: 0,
+      });
+      await multi.start();
+      const multiUrl = `http://127.0.0.1:${multi.getPort()}`;
+
+      try {
+        const anonymous = await requestJson('GET', `${securedUrl}/dashboard/compensation`, {
+          accept: 'text/html',
+        });
+        assert.strictEqual(anonymous.status, 401);
+
+        const anonymousStream = await requestJson('GET', `${securedUrl}/stream/compensation`);
+        assert.strictEqual(anonymousStream.status, 401);
+
+        const authenticated = await requestJson('GET', `${securedUrl}/dashboard/compensation`, {
+          accept: 'text/html',
+          headers: { authorization: 'Bearer secured-key' },
+        });
+        assert.strictEqual(authenticated.status, 200);
+        assert.ok(authenticated.text?.includes('Compensation Dashboard'));
+
+        const crossTenant = await requestJson('GET', `${multiUrl}/dashboard/compensation`, {
+          accept: 'text/html',
+          headers: { authorization: 'Bearer tenant-a-key' },
+        });
+        assert.strictEqual(crossTenant.status, 403);
+        assert.match(crossTenant.text ?? '', /multi-tenant/);
+
+        const crossTenantStream = await requestJson('GET', `${multiUrl}/stream/cost`, {
+          headers: { authorization: 'Bearer tenant-a-key' },
+        });
+        assert.strictEqual(crossTenantStream.status, 403);
+      } finally {
+        await secured.stop();
+        await multi.stop();
+      }
+    });
+  });
+
+  // EH-06: `readRequestBody` was unbounded and its only public caller (the SAML
+  // ACS) sits outside the dispatcher's main try/catch; and `start()` never
+  // rejected when the bind failed.
+  describe('embedded server input and startup bounds', () => {
+    it('answers 413 (not 500) for an over-limit body on a body route outside the dispatcher try', async () => {
+      const bounded = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'bounded-key',
+        maxBodyBytes: 32,
+        rateLimitPerMinute: 0,
+      });
+      await bounded.start();
+      const boundedUrl = `http://127.0.0.1:${bounded.getPort()}`;
+
+      try {
+        const { status, body } = await requestJson('POST', `${boundedUrl}/slo`, {
+          headers: { authorization: 'Bearer bounded-key' },
+          body: { padding: 'x'.repeat(256) },
+        });
+        assert.strictEqual(status, 413);
+        assert.strictEqual(body.code, 'PAYLOAD_TOO_LARGE');
+      } finally {
+        await bounded.stop();
+      }
+    });
+
+    it('rejects start() when the port is already bound instead of hanging', async () => {
+      const first = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'first-key',
+        rateLimitPerMinute: 0,
+      });
+      await first.start();
+      const second = new CommanderHttpServer({
+        port: first.getPort(),
+        host: '127.0.0.1',
+        apiKey: 'second-key',
+        rateLimitPerMinute: 0,
+      });
+
+      try {
+        await assert.rejects(() => second.start(), /EADDRINUSE/);
+      } finally {
+        await first.stop();
+      }
+    });
+  });
+
   describe('/api/v1/compensation', () => {
     it('returns 200 with JSON compensation data', async () => {
       const { status, body } = await fetchJson('/api/v1/compensation');
@@ -583,7 +705,7 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
   });
 
   describe('Graceful shutdown', () => {
-    it('stop() resolves without error', async () => {
+    it('stop() closes the listening socket', async () => {
       const srv = new CommanderHttpServer({
         port: 0,
         host: '127.0.0.1',
@@ -591,8 +713,16 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         rateLimitPerMinute: 0,
       });
       await srv.start();
+      const port = srv.getPort();
+      assert.ok(port > 0, 'a started server must report its bound port');
+      // A raw TCP probe keeps this assertion independent of the HTTP client's
+      // connection pool: a refused connection after stop() is evidence that the
+      // listening socket was released rather than the call being a no-op.
+      assert.strictEqual(await canConnect(port), true, 'the server must listen while running');
+
       await srv.stop();
-      assert.ok(true, 'stop() resolved successfully');
+      assert.strictEqual(await canConnect(port), false, 'a stopped server must refuse connections');
+      assert.strictEqual(srv.getPort(), 0);
     });
   });
 });

@@ -38,6 +38,19 @@ export function evaluateShadowObservation(
   if (pin.expectedDigest !== undefined && observationDigest(observation) !== pin.expectedDigest) {
     throw new Error('SHADOW_DIGEST_MISMATCH');
   }
+  // Supportability is decided before the missing-fact short-circuit. Otherwise a
+  // specified but unregistered action paired with a null fact was downgraded to
+  // insufficient_evidence/MISSING_POLICY_FACTS, losing the SHADOW_UNSUPPORTED_ACTION
+  // rejection evidence and distorting the report's rejected/uncomparable counts.
+  if (
+    observation.effectType !== null &&
+    observation.effectType !== 'connector.kubernetes.deployment.rollback'
+  ) {
+    throw new Error('SHADOW_UNSUPPORTED_ACTION');
+  }
+  if (observation.tool !== null && observation.tool !== 'kubernetes.deployment.rollback') {
+    throw new Error('SHADOW_UNSUPPORTED_ACTION');
+  }
   if (
     observation.effectType === null ||
     observation.tool === null ||
@@ -50,12 +63,6 @@ export function evaluateShadowObservation(
       policyId: ACTION_GATEWAY_POLICY_ID,
       policyDigest: snapshot.descriptorDigest,
     };
-  }
-  if (
-    observation.effectType !== 'connector.kubernetes.deployment.rollback' ||
-    observation.tool !== 'kubernetes.deployment.rollback'
-  ) {
-    throw new Error('SHADOW_UNSUPPORTED_ACTION');
   }
   const decision = evaluateActionGatewayPolicy({
     effectType: observation.effectType,

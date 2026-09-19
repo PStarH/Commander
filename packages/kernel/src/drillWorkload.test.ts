@@ -40,4 +40,29 @@ describe('DR drill tenant context configuration', () => {
       /DRILL_APP_DATABASE_URL_REQUIRED/,
     );
   });
+
+  // KB-05: a missing authority DSN must not silently produce a drill that never
+  // exercises the enforced tenant-context path.
+  it('fails closed when the tenant-authority DSN is absent', () => {
+    assert.throws(
+      () => resolveDrillTenantContextConfig({}),
+      /DRILL_TENANT_AUTHORITY_DATABASE_URL_REQUIRED/,
+    );
+    assert.throws(
+      () =>
+        resolveDrillTenantContextConfig({
+          COMMANDER_APP_DATABASE_URL: 'postgres://commander_app:x@h/d',
+        }),
+      /DRILL_TENANT_AUTHORITY_DATABASE_URL_REQUIRED/,
+    );
+  });
+
+  it('accepts only an explicit opt-out phase when the authority DSN is absent', () => {
+    assert.deepEqual(
+      resolveDrillTenantContextConfig({ COMMANDER_DRILL_WITHOUT_TENANT_AUTHORITY: '1' }),
+      {
+        phase: 'without-tenant-context-authority',
+      },
+    );
+  });
 });

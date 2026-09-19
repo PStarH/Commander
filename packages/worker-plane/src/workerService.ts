@@ -14,6 +14,7 @@ import type {
 } from './types.js';
 import { WorkerExecutionError as WorkerError } from './types.js';
 import { runWithStepWorkloadIdentity } from './stepWorkloadIdentity.js';
+import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
@@ -73,15 +74,22 @@ function reconciliationOwnsStep(error: WorkerError): boolean {
  */
 export class WorkerService {
   private readonly config: Required<
-    Omit<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>
+    Omit<
+      WorkerServiceConfig,
+      'sandboxReadiness' | 'onRegistered' | 'onClaimLoopHealth' | 'onDispose'
+    >
   > &
-    Pick<WorkerServiceConfig, 'sandboxReadiness' | 'onRegistered'>;
+    Pick<
+      WorkerServiceConfig,
+      'sandboxReadiness' | 'onRegistered' | 'onClaimLoopHealth' | 'onDispose'
+    >;
   private worker: WorkerRecord | null = null;
   private authorization: WorkerAuthorization | null = null;
   private active = new Set<Promise<void>>();
   /** Claims in flight (between claimNextStep call and task registration). Counted toward capacity and heartbeat so concurrent pollOnce races cannot over-claim. */
   private claimInflight = 0;
   private running = false;
+  private disposed = false;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly activeControllers = new Set<AbortController>();
 
@@ -98,8 +106,11 @@ export class WorkerService {
       leaseTtlMs: config.leaseTtlMs ?? 30_000,
       workerHeartbeatMs: config.workerHeartbeatMs ?? 10_000,
       pollIntervalMs: config.pollIntervalMs ?? 250,
+      drainTimeoutMs: config.drainTimeoutMs ?? 30_000,
       sandboxReadiness: config.sandboxReadiness,
       onRegistered: config.onRegistered,
+      onClaimLoopHealth: config.onClaimLoopHealth,
+      onDispose: config.onDispose,
     };
   }
 
@@ -146,6 +157,10 @@ export class WorkerService {
         getGlobalMetrics().incrementCounter('worker.claim_loop.errors', 1, {
           error_name: err.name,
         });
+        // WP-05: readiness is not a one-shot latch. A worker that loses its claim path
+        // must clear readiness (and refresh it once claims succeed again) instead of
+        // sitting in the load balancer advertising /ready while claiming nothing.
+        this.config.onClaimLoopHealth?.(false);
         if (!this.running || signal?.aborted) break;
         await sleep(this.config.pollIntervalMs);
       }
@@ -174,6 +189,8 @@ export class WorkerService {
         leaseTtlMs: this.config.leaseTtlMs,
         capabilities: this.worker.capabilities,
       });
+      // WP-05: a completed claim RPC proves the claim path works again.
+      this.config.onClaimLoopHealth?.(true);
     } finally {
       this.claimInflight--;
     }
@@ -205,7 +222,10 @@ export class WorkerService {
   }
 
   async stop(): Promise<void> {
-    if (!this.worker) return;
+    // Idempotent: run() ends in stop(), and the entrypoint also calls it in its
+    // shutdown path. Resource release must happen exactly once.
+    if (this.disposed) return;
+    this.disposed = true;
     this.running = false;
     if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
     this.heartbeatTimer = null;
@@ -213,12 +233,37 @@ export class WorkerService {
     for (const controller of this.activeControllers) {
       controller.abort(new Error('Worker stopped'));
     }
-    await this.registry.drain(
-      this.worker.id,
-      this.worker.generation,
-      this.worker.claimSecret ?? '',
-    );
-    await Promise.allSettled([...this.active]);
+    if (this.worker) {
+      await this.registry.drain(
+        this.worker.id,
+        this.worker.generation,
+        this.worker.claimSecret ?? '',
+      );
+    }
+    // WP-04: a handler that ignores its abort signal previously held stop() open until
+    // the orchestrator SIGKILLed the pod. Bound the drain, then abandon what is left.
+    const drainDeadline = new AbortController();
+    try {
+      await awaitWithAbortTimeout(() => Promise.allSettled([...this.active]), {
+        parentSignal: drainDeadline.signal,
+        timeoutMs: this.config.drainTimeoutMs,
+        timeoutError: () => new Error(`Worker stop drain exceeded ${this.config.drainTimeoutMs}ms`),
+        abortError: () => new Error('Worker stop drain aborted'),
+      });
+    } catch (error) {
+      const err = error instanceof Error ? error : new Error(String(error));
+      getGlobalLogger().error(
+        'WorkerService',
+        'stop drain deadline exceeded; abandoning in-flight steps',
+        err,
+        { workerId: this.worker?.id, activeSteps: this.active.size },
+      );
+      getGlobalMetrics().incrementCounter('worker.stop.drain_timeouts', 1, {
+        worker_id: this.worker?.id ?? 'unknown',
+      });
+    }
+    // WP-11: release resources the bootstrap handed to this service (verified pool).
+    await this.config.onDispose?.();
   }
 
   async waitForIdle(): Promise<void> {
@@ -242,11 +287,17 @@ export class WorkerService {
           .then((value) => {
             if (value === null) {
               leaseLost = true;
+              this.reportLeasePathFailure(step, 'heartbeat_null', new Error('Kernel lease lost'));
               controller.abort(new Error('Kernel lease lost'));
             }
           })
-          .catch(() => {
+          .catch((error: unknown) => {
             leaseLost = true;
+            this.reportLeasePathFailure(
+              step,
+              'heartbeat_rejected',
+              error instanceof Error ? error : new Error(String(error)),
+            );
             controller.abort(new Error('Kernel heartbeat failed'));
           });
       },
@@ -268,7 +319,14 @@ export class WorkerService {
           output,
           actor: this.worker!.id,
         });
-        if (completed === null) controller.abort(new Error('Kernel rejected step completion'));
+        if (completed === null) {
+          this.reportLeasePathFailure(
+            step,
+            'complete_rejected',
+            new Error('Kernel rejected step completion'),
+          );
+          controller.abort(new Error('Kernel rejected step completion'));
+        }
       }
     } catch (error) {
       if (!leaseLost) {
@@ -304,12 +362,37 @@ export class WorkerService {
               : undefined,
           actor: this.worker!.id,
         });
-        if (failed === null) controller.abort(new Error('Kernel rejected step failure'));
+        if (failed === null) {
+          this.reportLeasePathFailure(
+            step,
+            'fail_rejected',
+            new Error('Kernel rejected step failure'),
+          );
+          controller.abort(new Error('Kernel rejected step failure'));
+        }
       }
     } finally {
       clearInterval(interval);
       this.activeControllers.delete(controller);
     }
+  }
+
+  /**
+   * WP-10: post-claim kernel failures (heartbeat, completion, failure write) used to
+   * only abort the step controller, so a worker whose lease path was broken looked
+   * healthy in logs while every step was abandoned. Mirror the claim loop: never
+   * swallow silently — operators must see the lease-path failure.
+   */
+  private reportLeasePathFailure(step: ClaimedStep, failurePath: string, error: Error): void {
+    getGlobalLogger().error(
+      'WorkerService',
+      'kernel lease path failed after claim; aborting step',
+      error,
+      { workerId: this.worker?.id, stepId: step.id, failurePath },
+    );
+    getGlobalMetrics().incrementCounter('worker.step.lease_path_failures', 1, {
+      failure_path: failurePath,
+    });
   }
 
   private async heartbeat(): Promise<void> {

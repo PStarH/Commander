@@ -96,13 +96,16 @@ describe('WS9 NET-2: SSRF to 169.254.169.254 / private IP blocked', () => {
       blockPrivateIPs: true,
     });
 
+    let metadata: ReturnType<typeof policy.check> | undefined;
+    let loopback: ReturnType<typeof policy.check> | undefined;
+
     try {
       // AWS metadata endpoint.
-      const metadata = policy.check('http://169.254.169.254/latest/meta-data/');
+      metadata = policy.check('http://169.254.169.254/latest/meta-data/');
       expect(metadata.allowed).toBe(false);
 
       // Loopback.
-      const loopback = policy.check('http://127.0.0.1:8080/admin');
+      loopback = policy.check('http://127.0.0.1:8080/admin');
       expect(loopback.allowed).toBe(false);
 
       // Private network.

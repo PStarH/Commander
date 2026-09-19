@@ -52,14 +52,25 @@ export function assertEvidenceRecord(
   ) {
     throw new Error('EVIDENCE_RECORD_BINDING_INVALID');
   }
+  // EB-01: presence first. Comparing the canonicalized signatures made an
+  // *unsigned* record look consistent — `canonicalEvidenceJson(undefined)`
+  // used to return `undefined` on both sides, so `undefined === undefined`
+  // skipped this gate entirely.
+  if (!record.signature || !record.body.signature) {
+    throw new Error('EVIDENCE_SIGNATURE_REQUIRED');
+  }
   if (canonicalEvidenceJson(record.signature) !== canonicalEvidenceJson(record.body.signature)) {
     throw new Error('EVIDENCE_SIGNATURE_REQUIRED');
+  }
+  // EB-02: structural self-consistency is not authenticity. This is an
+  // acceptance boundary, so refuse to run without a trusted verifier rather
+  // than silently accepting whoever can recompute the public hashes.
+  if (!options.verifySignature && !options.jwks) {
+    throw new Error('EVIDENCE_SIGNATURE_VERIFIER_REQUIRED');
   }
   const verification = verifyEvidenceBundle(record.body, {
     verifySignature: options.verifySignature,
     jwks: options.jwks,
-    // Evidence records are an acceptance boundary. Structural self-consistency
-    // is not authenticity; without a trusted verifier, fail closed.
     requireSignature: true,
   });
   if (verification.ok !== true) {
@@ -83,7 +94,14 @@ export class EvidenceSink {
   constructor(
     private readonly repository: EvidenceRepositoryPort,
     private readonly options: EvidenceRecordValidationOptions = {},
-  ) {}
+  ) {
+    // EB-02: a sink without a trusted verifier cannot tell an authentic record
+    // from a forged one. Refuse to be constructed rather than deferring the
+    // failure to a persist() that a caller might not expect to throw.
+    if (!options.verifySignature && !options.jwks) {
+      throw new Error('EVIDENCE_SIGNATURE_VERIFIER_REQUIRED');
+    }
+  }
 
   async persist(record: EvidenceRecord): Promise<void> {
     assertEvidenceRecord(record, this.options);

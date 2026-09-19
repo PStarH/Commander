@@ -110,19 +110,29 @@ function installAuthInterceptor(): void {
   const originalFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = getAuthToken();
-    if (token && isCommanderApiRequest(input)) {
+    const apiRequest = isCommanderApiRequest(input);
+    if (token && apiRequest) {
       // Audit: attach the bearer token ONLY to the configured API origin or
       // same-origin requests. The previous unconditional attach leaked the
       // session token to any external host fetched from the app.
-      const headers = new Headers(init?.headers ?? undefined);
+      //
+      // Header override follows Fetch semantics: an explicit `init.headers`
+      // replaces the Request's headers, otherwise the Request's own header list
+      // stays in force. Building from `init` alone dropped a Request's custom
+      // headers and overwrote an explicit caller Authorization.
+      const headers = new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined),
+      );
       if (!headers.has('Authorization')) {
         headers.set('Authorization', `Bearer ${token}`);
       }
       init = { ...init, headers };
     }
     const response = await originalFetch(input, init);
-    // Auto-logout on 401 from an authenticated request (token was present).
-    if (response.status === 401 && token) {
+    // Auto-logout only for a 401 returned by an authenticated Commander API
+    // request, and only while the token that was sent is still the stored one:
+    // a delayed response from a previous session must not log out a newer one.
+    if (response.status === 401 && token && apiRequest && getAuthToken() === token) {
       clearAuthToken();
     }
     return response;
@@ -1992,6 +2002,8 @@ export interface OIDCConfig {
   roleClaim: string;
   adminRoles: string[];
   operatorRoles: string[];
+  tenantClaim: string;
+  defaultTenantId?: string | null;
   redirectUri: string | null;
 }
 
@@ -2002,6 +2014,8 @@ export interface OIDCSettingsPayload {
   roleClaim: string;
   adminRoles: string[];
   operatorRoles: string[];
+  tenantClaim: string;
+  defaultTenantId?: string;
   redirectUri: string;
 }
 

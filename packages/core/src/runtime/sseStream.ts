@@ -47,6 +47,10 @@ export class SSEStream {
   private subscribers: Array<(event: string) => void> = [];
   private unsubscribers: Array<() => void> = [];
   private closed = false;
+  /** True while close() is dispatching the terminal frame. Guards against the
+   *  reentrant close() a throwing piped writer triggers, which would otherwise
+   *  re-dispatch [DONE] forever. */
+  private closing = false;
   private seqCounter = 0;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private readonly heartbeatIntervalMs: number;
@@ -304,8 +308,11 @@ export class SSEStream {
       this.outputAccumulator.length + content.length - (this.lastSanitizedAccLength ?? 0);
 
     if (!done && this.lastSanitizedAccLength !== undefined && newChars < MIN_GROWTH) {
-      // Not enough new content — emit the raw delta to preserve streaming feel
+      // Not enough new content — emit the raw delta to preserve streaming feel.
+      // Advance the emitted offset too, otherwise the next sanitized diff
+      // (sanitized.slice(lastEmittedLength)) re-sends this same content.
       this.emitStructured('output.delta', { content });
+      this.lastEmittedLength += content.length;
       return;
     }
 
@@ -379,9 +386,21 @@ export class SSEStream {
   }
 
   close(): void {
+    if (this.closed || this.closing) return;
+    this.closing = true;
+    // Send [DONE] marker (Vercel AI SDK pattern) BEFORE marking the stream
+    // closed: the `pipe` subscriber skips writes once `closed` is true, so
+    // closing first silently dropped the terminal frame for piped clients.
+    try {
+      this.dispatch('data: [DONE]\n\n');
+    } catch (e) {
+      // A throwing writer must not abort the rest of the teardown.
+      getGlobalLogger().warn('SSEStream', 'Terminal frame dispatch failed', {
+        error: (e as Error)?.message,
+      });
+    }
     this.closed = true;
-    // Send [DONE] marker (Vercel AI SDK pattern) to signal stream completion
-    this.dispatch('data: [DONE]\n\n');
+    this.closing = false;
     // GAP-28: Stop heartbeat timer on close
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);

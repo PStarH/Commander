@@ -69,7 +69,7 @@ import {
 import { bootstrapRuntimeAdmission } from './runtimeAdmission';
 import { startAuditAggregatorBridge } from '../security/auditAggregatorBridge';
 import { installProcessCrashHandlers } from './processCrashSafety';
-import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
+import { RecoveryBootstrapper, type RecoveryResult } from '../atr/recoveryBootstrapper';
 import { getRunLedgerBundle } from '../atr/runLedger';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
 import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '../security/capabilityToken';
@@ -158,7 +158,16 @@ export interface InitializedServices {
   conversationStore: import('../memory/conversationStore').ConversationStore | null;
   otelExporter: import('./openTelemetryExporter').OpenTelemetryExporter | null;
   supervisor: import('./supervisionTree').Supervisor | null;
+  /**
+   * Settlement of the startup zombie-run recovery scan. Callers MUST await this
+   * before admitting work: recovery fences and reclaims runs left EXECUTING by a
+   * previous process, so starting a run before it settles can race the scan.
+   */
+  recoverySettled: Promise<RecoverySettlement>;
 }
+
+/** Outcome of the startup recovery scan; failures stay explicit, never silent. */
+export type RecoverySettlement = { ok: true; result: RecoveryResult } | { ok: false; error: Error };
 
 export function initializeServices(
   svcConfig: ServiceInitializerConfig,
@@ -764,21 +773,32 @@ export function initializeServices(
   // in EXECUTING/VERIFYING/PAUSED by a previously crashed process. Fences
   // zombies (bumps fencing epoch), then aborts+compensates or reclaims
   // for resume. Idempotent — safe to call even if no zombies exist.
-  try {
-    const recoveryResult = RecoveryBootstrapper.bootstrap();
-    if (recoveryResult.scanned > 0) {
-      getGlobalLogger().info('AgentRuntime', 'Recovery bootstrap scan completed', {
-        scanned: recoveryResult.scanned,
-        recovered: recoveryResult.recovered,
-        aborted: recoveryResult.aborted,
-        skipped: recoveryResult.skipped,
+  //
+  // `bootstrap()` is async and only settles once compensation has actually
+  // settled, so the scan is exposed as `recoverySettled` rather than awaited
+  // here: `initializeServices` is called from a synchronous constructor. The
+  // runtime awaits it before admitting work (see AgentRuntime.execute), and a
+  // failed scan is reported as `{ ok: false }` — never silently dropped.
+  const recoverySettled: Promise<RecoverySettlement> = RecoveryBootstrapper.bootstrap().then(
+    (result) => {
+      if (result.scanned > 0) {
+        getGlobalLogger().info('AgentRuntime', 'Recovery bootstrap scan completed', {
+          scanned: result.scanned,
+          recovered: result.recovered,
+          aborted: result.aborted,
+          skipped: result.skipped,
+        });
+      }
+      return { ok: true, result } as const;
+    },
+    (e: unknown) => {
+      const error = e instanceof Error ? e : new Error(String(e));
+      getGlobalLogger().warn('AgentRuntime', 'Recovery bootstrap scan failed', {
+        error: error.message,
       });
-    }
-  } catch (e) {
-    getGlobalLogger().warn('AgentRuntime', 'Recovery bootstrap scan failed', {
-      error: (e as Error)?.message,
-    });
-  }
+      return { ok: false, error } as const;
+    },
+  );
 
   // ── Supervision Tree (Erlang/OTP "Let It Crash") ──────────────────────
   // Create a root supervisor for agent runtime instances. The supervisor
@@ -899,5 +919,6 @@ export function initializeServices(
     conversationStore,
     otelExporter,
     supervisor,
+    recoverySettled,
   };
 }

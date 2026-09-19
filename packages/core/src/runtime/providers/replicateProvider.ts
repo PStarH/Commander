@@ -1,5 +1,6 @@
 import { reportSilentFailure } from '../../silentFailureReporter';
 import type { LLMProvider, LLMRequest, LLMResponse } from '../types';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 /**
  * Replicate Provider — Run open-source models via Replicate's API.
@@ -30,6 +31,7 @@ export class ReplicateProvider implements LLMProvider {
       config.baseUrl ?? process.env.REPLICATE_BASE_URL ?? 'https://api.replicate.com/v1';
     this.defaultModel =
       config.defaultModel ?? process.env.REPLICATE_MODEL ?? 'meta/meta-llama-3.3-70b-instruct';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
