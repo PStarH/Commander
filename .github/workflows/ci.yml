@@ -789,7 +789,7 @@ jobs:
           install -d -m 700 "$GNUPGHOME"
           printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
           gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
-          gpg --batch --fingerprint 09D0DB9C03667BEE
+          gpg --batch --fingerprint 4C132B5DE96357D5B148807987F7A7F843D07138
           printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
 
       - name: PostgreSQL Task 2 and compensation authority suites
@@ -930,7 +930,7 @@ jobs:
           install -d -m 700 "$GNUPGHOME"
           printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
           gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
-          gpg --batch --fingerprint 09D0DB9C03667BEE
+          gpg --batch --fingerprint 4C132B5DE96357D5B148807987F7A7F843D07138
           printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
 
       - name: Run G4 rotation and DR proof
