@@ -81,7 +81,12 @@ function baseRunParams(services: HarnessServices): HarnessRunParams {
     tokenBudget: 100000,
     maxSteps: 5,
     signal: new AbortController().signal,
-    routing: { modelId: 'test-model', tier: 'standard', provider: 'test-provider', maxTokens: 1024 },
+    routing: {
+      modelId: 'test-model',
+      tier: 'standard',
+      provider: 'test-provider',
+      maxTokens: 1024,
+    },
     services,
   };
 }
