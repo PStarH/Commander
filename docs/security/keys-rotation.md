@@ -211,7 +211,7 @@ The Signed-Commit SHA is the binding artifact; reviewers can replay `git verify-
 | **CISO** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
 | **Head of Security** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
 | **Engineering Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
-| **Compliance Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | ec122bffd313e4ba0531a51a440e25b4cecf7bf2 |
+| **Compliance Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
 
 ### §6.4 — Procedural note
 
