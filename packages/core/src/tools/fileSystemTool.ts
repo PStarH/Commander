@@ -33,7 +33,7 @@ import {
  */
 function canonicalRoot(root: string): string {
   try {
-    return fs.realpathSync(root);
+    return fs.realpathSync.native(root);
   } catch {
     return root;
   }
