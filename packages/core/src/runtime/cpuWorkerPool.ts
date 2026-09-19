@@ -44,10 +44,11 @@ export interface PendingTask {
 function resolveWorkerScript(explicit?: string): string {
   if (explicit) return explicit;
   const dir = __dirname;
-  // Prefer TypeScript source when running under tsx; fall back to compiled JS.
-  const tsPath = path.join(dir, 'cpuWorker.ts');
-  if (fs.existsSync(tsPath)) return tsPath;
-  return path.join(dir, 'cpuWorker.js');
+  // Prefer JavaScript so worker_threads do not depend on a parent TypeScript
+  // loader. The build emits this file alongside the TypeScript source.
+  const jsPath = path.join(dir, 'cpuWorker.js');
+  if (fs.existsSync(jsPath)) return jsPath;
+  return path.join(dir, 'cpuWorker.ts');
 }
 
 function workerExecArgv(): string[] {
