@@ -148,7 +148,13 @@ describe('DeterminismCapture.restoreFromWAL', () => {
   it('is idempotent — calling twice does not duplicate', async () => {
     const capture = getGlobalDeterminismCapture();
     capture.captureLLMResponse('run-idem', 1, { content: 'x' });
-    await new Promise((r) => setTimeout(r, 50));
+    // WAL appends are intentionally fire-and-forget. Poll for the durable
+    // records instead of relying on a fixed delay that is flaky on CI.
+    const deadline = Date.now() + 5_000;
+    while (getGlobalEventSourcingEngine().getEventsByCorrelationId('run-chaos-5').length < 3) {
+      if (Date.now() >= deadline) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
 
     capture.clearRun('run-idem');
     const first = capture.restoreFromWAL('run-idem');

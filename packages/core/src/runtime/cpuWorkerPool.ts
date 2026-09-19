@@ -86,6 +86,10 @@ export class CPUWorkerPool {
   private async createWorker(index: number): Promise<Worker> {
     const worker = new Worker(this.workerScript, {
       name: `cpu-worker-${index}`,
+      // When the parent is running from TypeScript (tsx in the node:test
+      // runner), workers need the same loader to execute cpuWorker.ts.
+      // Production builds resolve cpuWorker.js and process.execArgv is empty.
+      execArgv: process.execArgv,
     } as WorkerOptions);
 
     worker.on('message', (msg: { id: string; result?: unknown; error?: string }) => {
