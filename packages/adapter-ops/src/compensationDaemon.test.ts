@@ -43,9 +43,6 @@ function emptyPort(
 ): CompensationOutboxPort {
   return {
     claimCompensationWork: claim ?? (async () => []),
-    completeCompensationWork: async () => ({ applied: true, disposition: 'COMPLETED' }),
-    handoffCompensationUnknown: async () => ({ applied: true, disposition: 'HANDOFF_UNKNOWN' }),
-    escalateCompensationWork: async () => ({ applied: true, disposition: 'ESCALATED' }),
     parkCompensationUnknown: async () => {
       throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
     },

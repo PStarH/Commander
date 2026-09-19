@@ -218,7 +218,7 @@ export class CompensationDaemon {
                   at: new Date().toISOString(),
                   details: {
                     compensationAction: info.compensationAction,
-                    messageId: info.messageId,
+                    outboxMessageId: info.outboxMessageId,
                   },
                 });
               }

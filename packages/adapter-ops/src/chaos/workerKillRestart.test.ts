@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { consumeCompensationBatch, type CompensationOutboxPort } from '@commander/kernel';
 import {
+  canonicalCompensationHash,
   sealGovernedCompensationAuthorization,
   type GovernedCompensationAuthorizationInput,
 } from '../../../kernel/src/ops/compensationAuthority.js';
@@ -42,18 +43,72 @@ function authorityInput(): GovernedCompensationAuthorizationInput {
   };
 }
 
-function workForGeneration(workerGeneration: number): ClaimedCompensationWork {
-  const authorization = sealGovernedCompensationAuthorization(authorityInput());
+function authorizationRecord(input: GovernedCompensationAuthorizationInput) {
+  const sealed = sealGovernedCompensationAuthorization(input);
   return {
-    messageId: 'outbox-compensation-stable',
-    tenantId: authorization.tenantId,
-    claimToken: `outbox-claim-generation-${workerGeneration}`,
+    id: sealed.authorizationId,
+    tenantId: sealed.tenantId,
+    originalRunId: sealed.originalRunId,
+    originalEffectId: sealed.originalEffectId,
+    compensationEffectType: sealed.compensationEffectType,
+    adapterVersion: sealed.adapterVersion,
+    compensationPatch: sealed.compensationRequest.compensationPatch as Record<string, unknown>,
+    forwardReceiptHash: sealed.forwardReceiptHash,
+    policyDecisionId: sealed.policyDecisionId,
+    policySnapshotId: sealed.policySnapshotId,
+    decision: sealed.decisionEffect,
+    actionDigest: canonicalCompensationHash({
+      type: sealed.compensationEffectType,
+      originalEffectId: sealed.originalEffectId,
+      adapterVersion: sealed.adapterVersion,
+      destination: sealed.compensationRequest.destination,
+      forwardResponse: sealed.forwardReceipt,
+      compensationPatch: sealed.compensationRequest.compensationPatch,
+    }),
+    expiresAt: sealed.authorizationExpiresAt,
+  } as const;
+}
+
+function workForGeneration(workerGeneration: number): ClaimedCompensationWork {
+  const governed = sealGovernedCompensationAuthorization(authorityInput());
+  const authorization = authorizationRecord(authorityInput());
+  return {
+    request: {
+      id: authorization.id,
+      tenantId: authorization.tenantId,
+      originalRunId: authorization.originalRunId,
+      originalEffectId: authorization.originalEffectId,
+      compensationRunId: governed.compensationRunId,
+      compensationStepId: governed.compensationStepId,
+      adapterVersion: authorization.adapterVersion,
+      compensationEffectType: authorization.compensationEffectType,
+      destination: String(governed.compensationRequest.destination),
+      compensationPatch: authorization.compensationPatch,
+      forwardReceiptHash: authorization.forwardReceiptHash,
+      authorizationId: authorization.id,
+      reconcilePolicy: {
+        maxAttempts: 3,
+        initialDelayMs: 1_000,
+        maxDelayMs: 5_000,
+        deadlineAt: authorization.expiresAt,
+      },
+      state: 'CLAIMED',
+      claimWorkerId: WORKER_ID,
+      claimWorkerGeneration: workerGeneration,
+      claimToken: `outbox-claim-generation-${workerGeneration}`,
+      claimExpiresAt: authorization.expiresAt,
+      compensationEffectId: governed.compensationEffectId,
+    },
+    forwardResponse: governed.forwardReceipt,
+    outboxMessageId: 'outbox-compensation-stable',
+    outboxClaimToken: `outbox-claim-generation-${workerGeneration}`,
     authorization,
     lease: {
       workerId: WORKER_ID,
       workerGeneration,
       token: `step-lease-generation-${workerGeneration}`,
       fencingEpoch: workerGeneration,
+      expiresAt: authorization.expiresAt,
     },
   };
 }
@@ -67,26 +122,17 @@ describe('L4-02 operations chaos - compensation worker kill/restart', () => {
         claims.push(input);
         return [workForGeneration(input.workerGeneration)];
       },
-      async completeCompensationWork() {
+      async finalizeCompensation() {
         completeCalls += 1;
         if (completeCalls === 1) {
           throw Object.assign(new Error('worker died after remote commit'), {
             code: 'DB_CONNECTION_LOST',
           });
         }
-        return { applied: true, disposition: 'COMPLETED' };
-      },
-      async handoffCompensationUnknown() {
-        throw new Error('known committed response must not be handed off');
-      },
-      async escalateCompensationWork() {
-        throw new Error('valid governed work must not be escalated');
+        return { applied: true, disposition: 'COMPLETED', replayed: false };
       },
       async parkCompensationUnknown() {
-        throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
-      },
-      async finalizeCompensation() {
-        throw new Error('finalizeCompensation is not exercised by legacy-path fixtures');
+        throw new Error('known committed response must not be parked');
       },
     };
 

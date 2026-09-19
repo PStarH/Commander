@@ -1300,9 +1300,6 @@ describe('adapter-ops safeStop ordering (AO-01)', () => {
         events.push('tick:claim-finished');
         return [];
       },
-      completeCompensationWork: unused,
-      handoffCompensationUnknown: unused,
-      escalateCompensationWork: unused,
       parkCompensationUnknown: unused,
       finalizeCompensation: unused,
     };
