@@ -256,22 +256,26 @@ export class OrchestratorOutputCollector {
  */
 export function extractOutputFilePath(goal: string): string | null {
   const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
+  // Accept POSIX paths, relative dot paths, and Windows drive-qualified paths.
+  // The latter must preserve backslashes because the value is later resolved
+  // by the platform-native path module.
+  const pathStart = `(?:[\\/]|\\.|[A-Za-z]:[\\\\/])`;
 
   const toPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+([\\/\\.][\\S]+\\.${extRe})`,
+    `(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+(${pathStart}[\\S]+\\.${extRe})`,
     'i',
   );
   const toMatch = goal.match(toPattern);
   if (toMatch) return toMatch[1];
 
   const directPattern = new RegExp(
-    `(?:write|create|generate|output|produce|save)\\s+([\\/\\.][\\S]+\\.${extRe})`,
+    `(?:write|create|generate|output|produce|save)\\s+(${pathStart}[\\S]+\\.${extRe})`,
     'i',
   );
   const directMatch = goal.match(directPattern);
   if (directMatch) return directMatch[1];
 
-  const pathPattern = new RegExp(`([\\/][\\S]+\\.${extRe})(?:\\s|$|[.])`, 'i');
+  const pathPattern = new RegExp(`(${pathStart}[\\S]+\\.${extRe})(?:\\s|$|[.])`, 'i');
   const pathMatch = goal.match(pathPattern);
   if (pathMatch) return pathMatch[1];
 
