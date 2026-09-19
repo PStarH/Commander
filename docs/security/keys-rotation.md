@@ -208,10 +208,10 @@ The Signed-Commit SHA is the binding artifact; reviewers can replay `git verify-
 
 | Role                 | Name                  | GitHub handle        | GPG fingerprint (16-char short) | Signed-Commit SHA                        |
 | -------------------- | --------------------- | -------------------- | ------------------------------- | ---------------------------------------- |
-| **CISO** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
-| **Head of Security** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
-| **Engineering Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
-| **Compliance Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
+| **CISO** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | 3d1e47f43b4f66e76d25239f3185e44529112740 |
+| **Head of Security** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | d596b57f5181c5d31860230ddedf2a52104445c0 |
+| **Engineering Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | 85c7cc0bf9342e190033f3cfe49290f752d8ddf2 |
+| **Compliance Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | 7dfacf01e5fba4fff27248eaf07383bbbc8916dd |
 
 ### §6.4 — Procedural note
 
