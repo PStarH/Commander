@@ -209,7 +209,7 @@ The Signed-Commit SHA is the binding artifact; reviewers can replay `git verify-
 | Role                 | Name                  | GitHub handle        | GPG fingerprint (16-char short) | Signed-Commit SHA                        |
 | -------------------- | --------------------- | -------------------- | ------------------------------- | ---------------------------------------- |
 | **CISO** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
-| **Head of Security** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | 5cadef931bc751154dbf7a5ec638f94d23395086 |
+| **Head of Security** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | |
 | **Engineering Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | 905448c7050f9b6171e10cd29bac5a04ef66c931 |
 | **Compliance Lead** | PStarH | @xpanax | 4C132B5DE96357D5B148807987F7A7F843D07138 | ec122bffd313e4ba0531a51a440e25b4cecf7bf2 |
 
