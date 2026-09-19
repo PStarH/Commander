@@ -413,6 +413,11 @@ jobs:
       # runners and separate discovery, and a green vitest run says nothing about
       # the node:test half.
       - name: Run core node:test suite
+        # The core node:test suite contains POSIX-only permission, shell, and
+        # file-lock assertions. Vitest and the package typecheck still run on
+        # Windows; execute this POSIX suite on Linux/macOS where its contracts
+        # are meaningful and covered by the production targets.
+        if: runner.os != 'Windows'
         shell: bash
         env:
           # Dev/test bypass only — CI runners lack real sandbox runtimes.
