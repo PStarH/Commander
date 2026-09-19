@@ -106,6 +106,7 @@ async function main(): Promise<void> {
     COMMANDER_API_KEY: API_KEY,
     COMMANDER_MASTER_KEY: process.env.COMMANDER_MASTER_KEY ?? randomBytes(32).toString('hex'),
     JWT_SECRET: process.env.JWT_SECRET ?? randomBytes(32).toString('hex'),
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD ?? randomBytes(32).toString('hex'),
     COMMANDER_CAPABILITY_TOKEN_KEY:
       process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? randomBytes(32).toString('hex'),
     COMMANDER_INTEGRITY_KEY: process.env.COMMANDER_INTEGRITY_KEY ?? randomBytes(32).toString('hex'),

@@ -293,6 +293,7 @@ jobs:
           # `pnpm --dir packages/core run typecheck:test` until that backlog is cleared.
           pnpm --dir packages/core exec tsc --noEmit
           pnpm --dir packages/kernel exec tsc --noEmit
+          pnpm --dir packages/kernel run typecheck:test
           pnpm run typecheck
 
       - name: TypeScript check (SDK)
