@@ -274,6 +274,9 @@ describe('ci-database-scope — offline negative paths touch nothing', () => {
   it('the role restore refuses before connecting when not admitted', () => {
     const { status, stderr } = runScript('scripts/ci-restore-deploy-gate-roles.ts', {
       DATABASE_URL: LOOPBACK_DSN,
+      [MUTATION_OPT_IN_ENV]: 'no',
+      [INSTANCE_ID_ENV]: '',
+      [PROVISION_TOKEN_ENV]: '',
     });
     assert.equal(status, 1);
     assert.match(stderr, /CI_DATABASE_MUTATION_REFUSED/);
@@ -328,6 +331,9 @@ describe('ci-database-scope — offline negative paths touch nothing', () => {
   it('the bootstrap refuses before connecting when not admitted', () => {
     const { status, stderr } = runScript('scripts/ci-bootstrap-deploy-gates.ts', {
       COMMANDER_OWNER_DATABASE_URL: LOOPBACK_DSN,
+      [MUTATION_OPT_IN_ENV]: 'no',
+      [INSTANCE_ID_ENV]: '',
+      [PROVISION_TOKEN_ENV]: '',
     });
     assert.equal(status, 1);
     assert.match(stderr, /CI_DATABASE_MUTATION_REFUSED/);

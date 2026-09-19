@@ -615,10 +615,10 @@ describe('D2.9 hardening — verifier policy contracts (integration)', () => {
     const result = await runVerifierAsync(REAL_DOC);
     expect(result.rows).toHaveLength(4);
     expect(result.rows.map((row) => row.sha)).toEqual([
-      'b7bfe43de8f1181e8d941f08d029519db7862b51',
-      '5cadef931bc751154dbf7a5ec638f94d23395086',
-      '905448c7050f9b6171e10cd29bac5a04ef66c931',
-      'ec122bffd313e4ba0531a51a440e25b4cecf7bf2',
+      '3d1e47f43b4f66e76d25239f3185e44529112740',
+      'd596b57f5181c5d31860230ddedf2a52104445c0',
+      '85c7cc0bf9342e190033f3cfe49290f752d8ddf2',
+      '7dfacf01e5fba4fff27248eaf07383bbbc8916dd',
     ]);
   });
 
