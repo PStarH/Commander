@@ -220,22 +220,34 @@ export class GoalCompletionVerifier {
   private isVerificationResultSuccessful(result: ToolResult): boolean {
     if (result.error) return false;
     const output = String(result.output ?? '');
+    const trimmed = output.trim();
+
+    // Structured results are authoritative: when the tool returns JSON, the
+    // decision comes from its explicit fields and never from words that happen
+    // to appear inside it (the field NAME "passed" is not a success signal).
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (parsed && typeof parsed === 'object') {
+          if (Array.isArray(parsed)) return false;
+          if ('passed' in parsed) return parsed.passed === true;
+          if ('success' in parsed) return parsed.success === true;
+          if ('ok' in parsed) return parsed.ok === true;
+          return false;
+        }
+      } catch {
+        /* not JSON after all — fall through to the text heuristic */
+      }
+    }
+
     if (/\b(error|fail|failed|failure|invalid|unsuccessful|false)\b/i.test(output)) {
       return false;
     }
     if (/\b(pass|passed|success|successful|ok|valid|true)\b/i.test(output)) {
       return true;
     }
-    try {
-      const parsed = JSON.parse(output);
-      if (parsed && typeof parsed === 'object') {
-        if ('passed' in parsed) return Boolean(parsed.passed);
-        if ('success' in parsed) return Boolean(parsed.success);
-        if ('ok' in parsed) return Boolean(parsed.ok);
-      }
-    } catch {
-      /* not JSON */
-    }
-    return true;
+    // No affirmative evidence. An unparseable, empty or ambiguous verification
+    // result is NOT a success — fail closed instead of inferring completion.
+    return false;
   }
 }

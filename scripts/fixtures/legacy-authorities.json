@@ -63,10 +63,10 @@
     },
     {
       "path": "apps/api/src/pipelineEndpoints.ts",
-      "sourceSha256": "684ac4fc0a4ccc82dc97d5e7639d4b25e5ce953610951c8d9901c2726de849f2",
+      "sourceSha256": "e6ac1bc0fb63db360c968d3f0a228d3bb3b3a4648d5e0695dab6d44ab06d23ce",
       "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
-      "reason": "Legacy pipeline route executes the sequential runtime pending Action Gateway migration",
+      "reason": "Legacy pipeline route executes the sequential runtime pending Action Gateway migration. Re-approved 2026-09-18: the legacy-execution guard was scoped to /api/state-machine and /api/pipeline so mounting this router at '/' no longer answers 410 for the routers registered after it. No execution authority was added or widened.",
       "expiresAt": "2026-10-31",
       "canonicalReplacement": "POST /v1/runs with WorkGraph",
       "disposition": "migrate-and-delete"
@@ -94,7 +94,7 @@
     {
       "path": "apps/api/src/sequentialExecutor.ts",
       "sourceSha256": "cd179034d318f27a0da8a321be7abdeaae459caf97370645c14225495224734c",
-      "callersSha256": "6d0505641617d27a25a595dd26786e176253b51da242a2633422b9942e39e06e",
+      "callersSha256": "ff17d46aa248d2618755cecdf5114a954df0948bb5c5ba256f8c818517dbd18e",
       "owner": "@commander/api",
       "reason": "Legacy sequential runtime construction pending worker migration",
       "expiresAt": "2026-10-31",

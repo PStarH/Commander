@@ -58,6 +58,7 @@ describe('SLO Persistence (InMemorySLOStore)', () => {
     assert.equal(updated.targetPercent, 99);
     // createdAt should be preserved
     const original = await store.getSLO('latency');
+    assert.ok(original);
     assert.equal(original.createdAt, updated.createdAt);
   });
 
@@ -238,6 +239,7 @@ describe('SLO Operations (6 SLOs)', () => {
   it('API availability SLO targets 99.95%', async () => {
     const { DEFAULT_SLO_CONFIG } = await import('../../src/observability/sloOperations.js');
     const slo = DEFAULT_SLO_CONFIG.slos.find((s: any) => s.id === 'api-availability');
+    assert.ok(slo);
     assert.equal(slo.targetPercent, 99.95);
     assert.equal(slo.metric, 'api_success_rate');
   });
@@ -245,12 +247,14 @@ describe('SLO Operations (6 SLOs)', () => {
   it('schedule latency SLO targets 5s', async () => {
     const { DEFAULT_SLO_CONFIG } = await import('../../src/observability/sloOperations.js');
     const slo = DEFAULT_SLO_CONFIG.slos.find((s: any) => s.id === 'schedule-latency');
+    assert.ok(slo);
     assert.equal(slo.threshold, 5000);
   });
 
   it('hash chain integrity SLO targets 100%', async () => {
     const { DEFAULT_SLO_CONFIG } = await import('../../src/observability/sloOperations.js');
     const slo = DEFAULT_SLO_CONFIG.slos.find((s: any) => s.id === 'hash-chain-integrity');
+    assert.ok(slo);
     assert.equal(slo.targetPercent, 100);
     assert.equal(slo.threshold, 1.0);
   });

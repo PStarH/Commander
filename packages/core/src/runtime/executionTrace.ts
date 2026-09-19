@@ -18,17 +18,24 @@ export class ExecutionTraceRecorder {
 
   /** Evict the oldest completed trace to make room. Skips active traces. */
   private evictOldestCompleted(): void {
-    // Use shift for O(1) on the common case (oldest is first inserted)
-    while (this.traceInsertOrder.length > 0) {
-      const key = this.traceInsertOrder[0];
+    for (let i = 0; i < this.traceInsertOrder.length; i++) {
+      const key = this.traceInsertOrder[i];
       const trace = this.traces.get(key);
-      if (trace?.completedAt) {
-        this.traceInsertOrder.shift();
+      if (!trace) {
+        // Stale bookkeeping entry — drop it and keep looking.
+        this.traceInsertOrder.splice(i, 1);
+        i--;
+        continue;
+      }
+      if (trace.completedAt) {
+        // Splice rather than shift: the evicted trace may not be the head when
+        // an older trace is still active, and total insertion order must hold.
+        this.traceInsertOrder.splice(i, 1);
         this.traces.delete(key);
         return;
       }
-      // Oldest is still active — try the next one
-      break;
+      // Active trace: never evict it. Keep scanning for the oldest COMPLETED
+      // trace, otherwise one long-running trace blocks all later eviction.
     }
   }
   private store: TraceStore | null;
@@ -189,7 +196,9 @@ export class ExecutionTraceRecorder {
     return this.recordEvent(runId, {
       type: 'tool_execution',
       durationMs,
-      data: { input, output, error },
+      // `toolCallId` is the field `sopExport.extractToolName` reads for the tool
+      // name; without it every file access was classified as a read.
+      data: { input, output, error, toolCallId: toolName },
       parentSpanId,
     });
   }

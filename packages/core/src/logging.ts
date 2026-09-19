@@ -10,6 +10,69 @@ import { createRequire } from 'node:module';
 const nodeRequire = createRequire(import.meta.url);
 
 // ========================================
+// Credential redaction
+// ========================================
+
+/**
+ * Keys whose values are replaced before a log entry reaches ANY sink.
+ *
+ * LOG-01: `context` was passed straight through to storage, console, the SQLite
+ * persistence queue and every listener, so a synthetic `authorization` value came
+ * back byte-identical from `getRecent()[0].context.authorization`. Logs cross
+ * trust boundaries (console, persisted files, listeners, telemetry) and are the
+ * most common accidental credential sink.
+ *
+ * This is the same field-name set the shadow scrubber enforces
+ * (`SENSITIVE_FIELD_NAME` / `DEFAULT_IGNORE_FIELDS` in `shadow/scrubber.ts`), and
+ * it is deliberately duplicated rather than imported: `shadow/scrubber` pulls in
+ * `security/securityPrimitives`, which imports this module, so reusing it here
+ * would create an import cycle in the logging hot path.
+ */
+const LOG_SENSITIVE_KEY =
+  /password|passwd|passcode|secret|token|authorization|credential|private[_-]?key|access[_-]?key|api[_-]?key|otp|cookie/i;
+
+const LOG_REDACTED = '[REDACTED]';
+const LOG_MAX_DEPTH = 8;
+
+/**
+ * Deep-copy `context` with credential-named fields replaced.
+ *
+ * Deliberately conservative about what it can promise:
+ *  - free text is NOT scanned. Pattern-based PII detection cannot be complete, and
+ *    destroying diagnostic text would defeat the purpose of the log;
+ *  - the caller's object is never mutated;
+ *  - a circular reference, an exotic object or an `Error` must not break logging,
+ *    so unrepresentable values degrade to a marker instead of throwing.
+ */
+function redactLogContext(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
+  if (depth > LOG_MAX_DEPTH) return '[TRUNCATED_DEPTH]';
+  if (value === null || typeof value !== 'object') return value;
+  if (value instanceof Error) return { name: value.name, message: value.message };
+  if (seen.has(value)) return '[CIRCULAR]';
+  seen.add(value);
+
+  if (Array.isArray(value)) {
+    return value.map((item) => redactLogContext(item, depth + 1, seen));
+  }
+
+  const source = value as Record<string, unknown>;
+  const redacted: Record<string, unknown> = {};
+  for (const key of Object.keys(source)) {
+    if (LOG_SENSITIVE_KEY.test(key)) {
+      redacted[key] = LOG_REDACTED;
+      continue;
+    }
+    try {
+      redacted[key] = redactLogContext(source[key], depth + 1, seen);
+    } catch {
+      // A throwing getter must not take the logging hot path down with it.
+      redacted[key] = '[UNREADABLE]';
+    }
+  }
+  return redacted;
+}
+
+// ========================================
 // Log Types
 // ========================================
 
@@ -78,6 +141,45 @@ const LEVEL_PRIORITY: Record<LogLevel, number> = {
   error: 3,
   critical: 4,
 };
+
+/**
+ * True when `process.stdout` is owned by `node --test` rather than by us.
+ *
+ * Node's test runner spawns one child process per test file and frames every
+ * test result on that child's **stdout** as a length-prefixed v8-serialized
+ * message. A line of human-readable text written there is not a frame: the
+ * runner reads the first four bytes as a declared length, then stalls waiting
+ * for a payload that will never arrive, so **every result after that point is
+ * silently dropped** and the file is reported as failed with the opaque
+ * "Unable to deserialize cloned data due to invalid or unsupported version."
+ *
+ * The runner marks its children with `NODE_TEST_CONTEXT`, which is the only
+ * reliable signal — a TTY check would be wrong (CI stdout is not a TTY either,
+ * yet a CLI must still print its results there). `run-node-tests.mjs`
+ * deliberately deletes this variable from the parent so the runner itself is
+ * not in child mode; each test-file child then has it set again by Node.
+ */
+function stdoutOwnedByTestRunner(): boolean {
+  const context = process.env.NODE_TEST_CONTEXT;
+  return typeof context === 'string' && context.length > 0;
+}
+
+/**
+ * Write a non-error, non-warning log line.
+ *
+ * Diagnostics belong on stderr. `console.log` writes to stdout, which is a
+ * *data* channel: it is the runner's protocol channel under `node --test` (see
+ * `stdoutOwnedByTestRunner`), and outside tests it interleaves with whatever a
+ * CLI is actually piping. Only the test-runner case is diverted here, so the
+ * normal console experience is unchanged.
+ */
+function emitInfoLine(text: string): void {
+  if (stdoutOwnedByTestRunner()) {
+    console.error(text);
+  } else {
+    console.log(text);
+  }
+}
 
 export class Logger {
   private config: LoggerConfig;
@@ -206,13 +308,17 @@ export class Logger {
       return;
     }
 
+    // Redact once, here, so storage, console, persistence and listeners all see the
+    // same sanitized context. A per-sink fix would leave whichever sink was added
+    // next unprotected. See LOG-01 / redactLogContext.
     const entry: LogEntry = {
       id: this.generateId(),
       timestamp: new Date().toISOString(),
       level,
       component,
       message,
-      context,
+      context:
+        context === undefined ? undefined : (redactLogContext(context) as Record<string, unknown>),
       error,
     };
 
@@ -272,7 +378,7 @@ export class Logger {
       } else if (entry.level === 'warn') {
         console.warn(jsonLine);
       } else {
-        console.log(jsonLine);
+        emitInfoLine(jsonLine);
       }
       return;
     }
@@ -303,10 +409,8 @@ export class Logger {
       console.error(output);
     } else if (entry.level === 'warn') {
       console.warn(output);
-    } else if (this.config.prettyPrint) {
-      console.log(output);
     } else {
-      console.log(output);
+      emitInfoLine(output);
     }
   }
 

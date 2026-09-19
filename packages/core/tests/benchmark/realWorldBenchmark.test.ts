@@ -107,9 +107,7 @@ describe('Real-World Benchmarks (StepFun API)', () => {
     console.log(`📦 Model: ${STEPFUN_MODEL}`);
   });
 
-  it('deliberation pipeline with real task goals', async () => {
-    if (skipIfNoKey()) return;
-
+  it.skipIf(!STEPFUN_API_KEY)('deliberation pipeline with real task goals', async () => {
     const latencies: number[] = [];
     const results: { task: string; type: string; topology: string; tokens: number }[] = [];
 
@@ -154,213 +152,221 @@ describe('Real-World Benchmarks (StepFun API)', () => {
     // The p99 < 5ms assertion is trivially true and has been removed.
   });
 
-  it('real LLM call latency (single request)', { timeout: 30000 }, async () => {
-    if (skipIfNoKey()) return;
-
-    const { response, latencyMs } = await callStepFun({
-      messages: [{ role: 'user', content: 'What is 2+2? Answer with just the number.' }],
-      max_tokens: 10,
-    });
-
-    expect(response).toBeDefined();
-    expect(response.choices).toBeDefined();
-    expect(response.choices.length).toBeGreaterThan(0);
-
-    const result: BenchmarkResult = {
-      name: 'llm_call_latency_single',
-      category: 'performance',
-      metrics: {
-        latency_ms: Number(latencyMs.toFixed(2)),
-        model: STEPFUN_MODEL,
-        response_text: response.choices[0].message.content?.slice(0, 100),
-        usage: response.usage,
-      },
-      timestamp: new Date().toISOString(),
-      durationMs: latencyMs,
-      passed: latencyMs < 15000,
-      threshold: 15000,
-      actual: latencyMs,
-    };
-
-    runner.addResult(result);
-    expect(latencyMs).toBeLessThan(15000);
-  });
-
-  it('real LLM call throughput (10 sequential requests)', { timeout: 120000 }, async () => {
-    if (skipIfNoKey()) return;
-
-    const latencies: number[] = [];
-    const totalTokens = { prompt: 0, completion: 0 };
-    const responses: string[] = [];
-
-    for (let i = 0; i < 10; i++) {
+  it.skipIf(!STEPFUN_API_KEY)(
+    'real LLM call latency (single request)',
+    { timeout: 30000 },
+    async () => {
       const { response, latencyMs } = await callStepFun({
-        messages: [{ role: 'user', content: REAL_QUERIES[i % REAL_QUERIES.length] }],
-        max_tokens: 150,
+        messages: [{ role: 'user', content: 'What is 2+2? Answer with just the number.' }],
+        max_tokens: 10,
       });
 
-      latencies.push(latencyMs);
-      responses.push(response.choices[0].message.content?.slice(0, 80) ?? '');
-      if (response.usage) {
-        totalTokens.prompt += response.usage.prompt_tokens;
-        totalTokens.completion += response.usage.completion_tokens;
+      expect(response).toBeDefined();
+      expect(response.choices).toBeDefined();
+      expect(response.choices.length).toBeGreaterThan(0);
+
+      const result: BenchmarkResult = {
+        name: 'llm_call_latency_single',
+        category: 'performance',
+        metrics: {
+          latency_ms: Number(latencyMs.toFixed(2)),
+          model: STEPFUN_MODEL,
+          response_text: response.choices[0].message.content?.slice(0, 100),
+          usage: response.usage,
+        },
+        timestamp: new Date().toISOString(),
+        durationMs: latencyMs,
+        passed: latencyMs < 15000,
+        threshold: 15000,
+        actual: latencyMs,
+      };
+
+      runner.addResult(result);
+      expect(latencyMs).toBeLessThan(15000);
+    },
+  );
+
+  it.skipIf(!STEPFUN_API_KEY)(
+    'real LLM call throughput (10 sequential requests)',
+    { timeout: 120000 },
+    async () => {
+      const latencies: number[] = [];
+      const totalTokens = { prompt: 0, completion: 0 };
+      const responses: string[] = [];
+
+      for (let i = 0; i < 10; i++) {
+        const { response, latencyMs } = await callStepFun({
+          messages: [{ role: 'user', content: REAL_QUERIES[i % REAL_QUERIES.length] }],
+          max_tokens: 150,
+        });
+
+        latencies.push(latencyMs);
+        responses.push(response.choices[0].message.content?.slice(0, 80) ?? '');
+        if (response.usage) {
+          totalTokens.prompt += response.usage.prompt_tokens;
+          totalTokens.completion += response.usage.completion_tokens;
+        }
       }
-    }
 
-    latencies.sort((a, b) => a - b);
-    const p50 = latencies[Math.floor(latencies.length * 0.5)];
-    const p95 = latencies[Math.floor(latencies.length * 0.95)];
-    const p99 = latencies[Math.floor(latencies.length * 0.99)];
-    const totalMs = latencies.reduce((a, b) => a + b, 0);
+      latencies.sort((a, b) => a - b);
+      const p50 = latencies[Math.floor(latencies.length * 0.5)];
+      const p95 = latencies[Math.floor(latencies.length * 0.95)];
+      const p99 = latencies[Math.floor(latencies.length * 0.99)];
+      const totalMs = latencies.reduce((a, b) => a + b, 0);
 
-    const result: BenchmarkResult = {
-      name: 'llm_call_throughput_10',
-      category: 'performance',
-      metrics: {
-        requests: 10,
-        total_ms: Number(totalMs.toFixed(2)),
-        avg_ms: Number((totalMs / 10).toFixed(2)),
-        p50_ms: Number(p50.toFixed(2)),
-        p95_ms: Number(p95.toFixed(2)),
-        p99_ms: Number(p99.toFixed(2)),
-        requests_per_sec: Number((10 / (totalMs / 1000)).toFixed(2)),
-        total_prompt_tokens: totalTokens.prompt,
-        total_completion_tokens: totalTokens.completion,
-        sample_responses: responses.slice(0, 3),
-      },
-      timestamp: new Date().toISOString(),
-      durationMs: totalMs,
-      passed: true,
-      threshold: 120000,
-      actual: totalMs,
-    };
+      const result: BenchmarkResult = {
+        name: 'llm_call_throughput_10',
+        category: 'performance',
+        metrics: {
+          requests: 10,
+          total_ms: Number(totalMs.toFixed(2)),
+          avg_ms: Number((totalMs / 10).toFixed(2)),
+          p50_ms: Number(p50.toFixed(2)),
+          p95_ms: Number(p95.toFixed(2)),
+          p99_ms: Number(p99.toFixed(2)),
+          requests_per_sec: Number((10 / (totalMs / 1000)).toFixed(2)),
+          total_prompt_tokens: totalTokens.prompt,
+          total_completion_tokens: totalTokens.completion,
+          sample_responses: responses.slice(0, 3),
+        },
+        timestamp: new Date().toISOString(),
+        durationMs: totalMs,
+        passed: true,
+        threshold: 120000,
+        actual: totalMs,
+      };
 
-    runner.addResult(result);
-    expect(totalMs).toBeLessThan(120000);
-  });
+      runner.addResult(result);
+      expect(totalMs).toBeLessThan(120000);
+    },
+  );
 
-  it('context compactor with real LLM-generated content', { timeout: 60000 }, async () => {
-    if (skipIfNoKey()) return;
+  it.skipIf(!STEPFUN_API_KEY)(
+    'context compactor with real LLM-generated content',
+    { timeout: 60000 },
+    async () => {
+      const compactor = new ContextCompactor({ maxContextTokens: 500 });
+      const messages: LLMMessage[] = [
+        {
+          role: 'system',
+          content: 'You are a senior software engineer helping debug a Node.js application.',
+        },
+      ];
 
-    const compactor = new ContextCompactor({ maxContextTokens: 500 });
-    const messages: LLMMessage[] = [
-      {
-        role: 'system',
-        content: 'You are a senior software engineer helping debug a Node.js application.',
-      },
-    ];
+      for (let i = 0; i < 8; i++) {
+        const { response } = await callStepFun({
+          messages: [
+            {
+              role: 'user',
+              content: `Give a detailed technical answer in 5+ sentences: ${REAL_QUERIES[i % REAL_QUERIES.length]}`,
+            },
+          ],
+          max_tokens: 300,
+        });
 
-    for (let i = 0; i < 8; i++) {
-      const { response } = await callStepFun({
-        messages: [
-          {
-            role: 'user',
-            content: `Give a detailed technical answer in 5+ sentences: ${REAL_QUERIES[i % REAL_QUERIES.length]}`,
-          },
-        ],
-        max_tokens: 300,
+        messages.push({ role: 'user', content: REAL_QUERIES[i] });
+        messages.push({ role: 'assistant', content: response.choices[0].message.content ?? '' });
+      }
+
+      const before = messages.length;
+      const { messages: compacted } = compactor.compact(messages);
+      const after = compacted.length;
+      const reduction = ((1 - after / before) * 100).toFixed(1);
+
+      const result: BenchmarkResult = {
+        name: 'context_compactor_real_content',
+        category: 'cost',
+        metrics: {
+          original_messages: before,
+          compacted_messages: after,
+          reduction_percent: Number(reduction),
+          content_source: 'StepFun LLM-generated responses',
+        },
+        timestamp: new Date().toISOString(),
+        durationMs: 0,
+        passed: after < before,
+        threshold: 30,
+        actual: Number(reduction),
+      };
+
+      runner.addResult(result);
+      expect(after).toBeLessThanOrEqual(before);
+    },
+  );
+
+  it.skipIf(!STEPFUN_API_KEY)(
+    'semantic cache with real embeddings',
+    { timeout: 60000 },
+    async () => {
+      const { SemanticCache } = await import('../../src/runtime/semanticCache');
+      const { LocalEmbeddingFunction } = await import('../../src/runtime/embedding');
+
+      const embeddingFn = new LocalEmbeddingFunction({ ngramSize: 3, useTfIdf: true });
+
+      const cache = new SemanticCache(embeddingFn, {
+        enabled: true,
+        similarityThreshold: 0.85,
+        maxEntries: 100,
       });
 
-      messages.push({ role: 'user', content: REAL_QUERIES[i] });
-      messages.push({ role: 'assistant', content: response.choices[0].message.content ?? '' });
-    }
+      const storeQueries = REAL_QUERIES.slice(0, 5);
+      for (const query of storeQueries) {
+        const { response } = await callStepFun({
+          messages: [{ role: 'user', content: query }],
+          max_tokens: 200,
+        });
 
-    const before = messages.length;
-    const { messages: compacted } = compactor.compact(messages);
-    const after = compacted.length;
-    const reduction = ((1 - after / before) * 100).toFixed(1);
+        await cache.store({ model: STEPFUN_MODEL, messages: [{ role: 'user', content: query }] }, {
+          id: `resp-${Math.random()}`,
+          choices: [
+            {
+              message: { role: 'assistant', content: response.choices[0].message.content ?? '' },
+              finish_reason: 'stop',
+              index: 0,
+            },
+          ],
+          usage: response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+        } as LLMResponse);
+      }
 
-    const result: BenchmarkResult = {
-      name: 'context_compactor_real_content',
-      category: 'cost',
-      metrics: {
-        original_messages: before,
-        compacted_messages: after,
-        reduction_percent: Number(reduction),
-        content_source: 'StepFun LLM-generated responses',
-      },
-      timestamp: new Date().toISOString(),
-      durationMs: 0,
-      passed: after < before,
-      threshold: 30,
-      actual: Number(reduction),
-    };
+      const latencies: number[] = [];
+      let hits = 0;
 
-    runner.addResult(result);
-    expect(after).toBeLessThanOrEqual(before);
-  });
+      for (let i = 0; i < 15; i++) {
+        const query = REAL_QUERIES[i % storeQueries.length];
+        const start = performance.now();
+        const cached = await cache.lookup({
+          model: STEPFUN_MODEL,
+          messages: [{ role: 'user', content: query }],
+        });
+        latencies.push(performance.now() - start);
+        if (cached) hits++;
+      }
 
-  it('semantic cache with real embeddings', { timeout: 60000 }, async () => {
-    if (skipIfNoKey()) return;
+      latencies.sort((a, b) => a - b);
+      const p50 = latencies[Math.floor(latencies.length * 0.5)];
+      const p99 = latencies[Math.floor(latencies.length * 0.99)];
 
-    const { SemanticCache } = await import('../../src/runtime/semanticCache');
-    const { LocalEmbeddingFunction } = await import('../../src/runtime/embedding');
+      const result: BenchmarkResult = {
+        name: 'semantic_cache_real_embeddings',
+        category: 'cost',
+        metrics: {
+          cache_entries: storeQueries.length,
+          lookup_count: 15,
+          hit_rate: `${((hits / 15) * 100).toFixed(1)}%`,
+          p50_ms: Number(p50.toFixed(2)),
+          p99_ms: Number(p99.toFixed(2)),
+          embedding_source: 'LocalEmbeddingFunction (feature hashing)',
+        },
+        timestamp: new Date().toISOString(),
+        durationMs: latencies.reduce((a, b) => a + b, 0),
+        passed: true,
+        threshold: 15000,
+        actual: p99,
+      };
 
-    const embeddingFn = new LocalEmbeddingFunction({ ngramSize: 3, useTfIdf: true });
-
-    const cache = new SemanticCache(embeddingFn, {
-      enabled: true,
-      similarityThreshold: 0.85,
-      maxEntries: 100,
-    });
-
-    const storeQueries = REAL_QUERIES.slice(0, 5);
-    for (const query of storeQueries) {
-      const { response } = await callStepFun({
-        messages: [{ role: 'user', content: query }],
-        max_tokens: 200,
-      });
-
-      await cache.store({ model: STEPFUN_MODEL, messages: [{ role: 'user', content: query }] }, {
-        id: `resp-${Math.random()}`,
-        choices: [
-          {
-            message: { role: 'assistant', content: response.choices[0].message.content ?? '' },
-            finish_reason: 'stop',
-            index: 0,
-          },
-        ],
-        usage: response.usage ?? { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-      } as LLMResponse);
-    }
-
-    const latencies: number[] = [];
-    let hits = 0;
-
-    for (let i = 0; i < 15; i++) {
-      const query = REAL_QUERIES[i % storeQueries.length];
-      const start = performance.now();
-      const cached = await cache.lookup({
-        model: STEPFUN_MODEL,
-        messages: [{ role: 'user', content: query }],
-      });
-      latencies.push(performance.now() - start);
-      if (cached) hits++;
-    }
-
-    latencies.sort((a, b) => a - b);
-    const p50 = latencies[Math.floor(latencies.length * 0.5)];
-    const p99 = latencies[Math.floor(latencies.length * 0.99)];
-
-    const result: BenchmarkResult = {
-      name: 'semantic_cache_real_embeddings',
-      category: 'cost',
-      metrics: {
-        cache_entries: storeQueries.length,
-        lookup_count: 15,
-        hit_rate: `${((hits / 15) * 100).toFixed(1)}%`,
-        p50_ms: Number(p50.toFixed(2)),
-        p99_ms: Number(p99.toFixed(2)),
-        embedding_source: 'LocalEmbeddingFunction (feature hashing)',
-      },
-      timestamp: new Date().toISOString(),
-      durationMs: latencies.reduce((a, b) => a + b, 0),
-      passed: true,
-      threshold: 15000,
-      actual: p99,
-    };
-
-    runner.addResult(result);
-    expect(hits).toBeGreaterThanOrEqual(5);
-  });
+      runner.addResult(result);
+      expect(hits).toBeGreaterThanOrEqual(5);
+    },
+  );
 });

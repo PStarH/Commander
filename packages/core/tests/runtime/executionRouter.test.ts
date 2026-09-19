@@ -1,7 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { ExecutionRouter } from '../../src/runtime/executionRouter';
-import type { AgentExecutionContext, RoutingDecision } from '../../src/runtime/types';
-import type { ModelConfig } from '../../src/runtime/modelConfig';
+import type { AgentExecutionContext, ModelConfig, RoutingDecision } from '../../src/runtime/types';
 
 // Vitest 4 + package type:module: vi.mock of named ESM imports is unreliable for
 // production modules that already bind getX at import time. Prefer deps injection

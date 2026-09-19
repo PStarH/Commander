@@ -50,13 +50,23 @@ export function reqString(table: string, row: Record<string, unknown>, column: s
 }
 
 function strictNumberFrom(value: unknown): number | null {
-  if (typeof value === 'number') return value;
-  if (typeof value === 'bigint') return Number(value);
+  // KB-02: SQLite INTEGER is 64-bit while JS numbers are only exact up to
+  // 2^53-1. `Number(bigint)` silently rounds (9007199254740993n becomes
+  // ...992), so a value that cannot be represented losslessly must be rejected
+  // rather than accepted as a different integer. Generation/version/fencing
+  // counters read through these guards must never drift.
+  if (typeof value === 'number') return Number.isSafeInteger(value) ? value : null;
+  if (typeof value === 'bigint') {
+    if (value < BigInt(Number.MIN_SAFE_INTEGER) || value > BigInt(Number.MAX_SAFE_INTEGER)) {
+      return null;
+    }
+    return Number(value);
+  }
   if (typeof value === 'string') {
     const trimmed = value.trim();
     if (trimmed === '') return null;
     const num = Number(trimmed);
-    if (!Number.isFinite(num)) return null;
+    if (!Number.isSafeInteger(num)) return null;
     return num;
   }
   return null;

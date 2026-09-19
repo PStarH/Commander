@@ -414,7 +414,14 @@ export function createKubernetesDeploymentRollbackAdapter(
     } catch {
       return { classification: 'UNKNOWN', deployments: [], httpStatus: response.status };
     }
-    const deployments = (payload.items ?? [])
+    // AA-05: a 200 response that is not a Kubernetes List (missing/non-array
+    // `items`) says nothing about whether the rollback was applied. Treating it
+    // as an empty list produced NOT_APPLIED, i.e. converted an unmeasured result
+    // into a committed one. Fail closed to UNKNOWN.
+    if (!Array.isArray(payload.items)) {
+      return { classification: 'UNKNOWN', deployments: [], httpStatus: response.status };
+    }
+    const deployments = payload.items
       .map(deploymentSummary)
       .filter((entry): entry is KubernetesDeploymentSummary => entry !== null);
     const matches = deployments.filter(

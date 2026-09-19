@@ -42,8 +42,9 @@ function findReadmes(root) {
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
     } catch (e) {
-      console.error('[lint-docs] WARN: cannot read dir', dir, '--', e.message);
-      return;
+      // An unreadable directory silently narrows the scan, which is the same
+      // silent-miss class this wrapper exists to eliminate.
+      throw new Error(`cannot read directory ${dir}: ${e.message}`);
     }
     for (const ent of entries) {
       const full = path.join(dir, ent.name);
@@ -113,8 +114,12 @@ function lint(readmes, rules) {
           });
         });
       } catch (e) {
-        console.error('[lint-docs] WARN: rule', r.id, 'threw on', rel, '--', e.message);
-        continue;
+        // A rule that throws produced no findings, so `continue` turned a
+        // crashed rule into "no violations". The header of this file promises
+        // the opposite ("module-load or runtime error ... fail loudly, no
+        // silent miss"), so a runtime rule error is exit 2, like a load error.
+        console.error('[lint-docs] FATAL: rule', r.id, 'threw on', rel, '--', e.message);
+        process.exit(2);
       }
       for (const f of findings) {
         console.log(rel + ':' + f.lineNumber + ':1 ' + r.id + ' ' + f.detail);
@@ -126,14 +131,25 @@ function lint(readmes, rules) {
 }
 
 (function main() {
-  const readmes = findReadmes(REPO_ROOT);
-  if (readmes.length === 0) {
-    console.log('[lint-docs] no README*.md files found; nothing to lint');
-    process.exit(0);
+  try {
+    const readmes = findReadmes(REPO_ROOT);
+    if (readmes.length === 0) {
+      // Reporting "nothing to lint" as success over an empty scope is a
+      // vacuous pass: a broken scan root would look identical to a clean tree.
+      console.error(
+        '[lint-docs] FATAL: no README*.md files found under ' +
+          REPO_ROOT +
+          '; refusing to report a clean lint over an empty scope',
+      );
+      process.exit(2);
+    }
+    const rules = loadRules();
+    const violations = lint(readmes, rules);
+    console.log('');
+    console.log('Total files linted: ' + readmes.length + ', violations: ' + violations);
+    process.exit(violations > 0 ? 1 : 0);
+  } catch (e) {
+    console.error('[lint-docs] FATAL:', e.message);
+    process.exit(2);
   }
-  const rules = loadRules();
-  const violations = lint(readmes, rules);
-  console.log('');
-  console.log('Total files linted: ' + readmes.length + ', violations: ' + violations);
-  process.exit(violations > 0 ? 1 : 0);
 })();

@@ -21,11 +21,8 @@ import {
 import { DatasetStore } from '../../src/observability/dataset';
 import { ExperimentRunner } from '../../src/observability/experimentRunner';
 import { AutoScorer } from '../../src/observability/autoScorer';
-import {
-  EvalScorer,
-  type JudgeProvider,
-  type LLMResponse,
-} from '../../src/observability/evalScorer';
+import { EvalScorer, type JudgeProvider } from '../../src/observability/evalScorer';
+import type { LLMResponse } from '../../src/runtime/types';
 import type { ExecutionTraceRecorder } from '../../src/runtime/executionTrace';
 import type { TraceStore } from '../../src/runtime/traceStore';
 
@@ -186,6 +183,7 @@ const mockJudge: JudgeProvider = {
   async call(): Promise<LLMResponse> {
     return {
       content: '{"score": 0.9, "reasoning": "good"}',
+      model: 'mock',
       usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
       finishReason: 'stop',
     };

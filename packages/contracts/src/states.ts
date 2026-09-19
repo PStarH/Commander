@@ -73,7 +73,9 @@ export const STEP_TRANSITIONS: Readonly<Record<StepState, readonly StepState[]>>
   ],
   // 人工应答后释放 step → RETRY_WAIT（与 kernel answerInteraction / repositoryContract 对齐）
   WAITING_FOR_HUMAN: ['RUNNING', 'RETRY_WAIT', 'FAILED', 'CANCELLED'],
-  WAITING_FOR_RECONCILIATION: ['SUCCEEDED', 'FAILED'],
+  // A run may be cancelled (or fail) while a step is parked awaiting
+  // reconciliation; kernel `cancelRun` cancels every non-terminal step.
+  WAITING_FOR_RECONCILIATION: ['SUCCEEDED', 'FAILED', 'CANCELLED'],
   RETRY_WAIT: ['RUNNING', 'FAILED', 'CANCELLED'],
   SUCCEEDED: [],
   FAILED: [],

@@ -1,6 +1,13 @@
 import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import { MCPServer, getModelRouter, MCPClient, createMCPClient } from '@commander/core';
+import * as crypto from 'node:crypto';
+import {
+  MCPServer,
+  getModelRouter,
+  MCPClient,
+  createMCPClient,
+  reportSilentFailure,
+} from '@commander/core';
 import type {
   MCPTool,
   MCPToolResult,
@@ -11,6 +18,7 @@ import type {
 import { URL } from 'node:url';
 import * as path from 'node:path';
 import { hasRole, type UserRole } from './userStore';
+import { getApiKeyStore } from './apiKeyStore';
 import { getCurrentTenantId } from '@commander/core/runtime/tenantContext';
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
@@ -183,6 +191,32 @@ export interface McpRouterOptions {
   actionGatewayUrl?: string;
   actionGatewayApiKey?: string;
   localRuntime?: boolean;
+  /**
+   * AUDIT-D1②: resolves the tenant bound to the configured Action Gateway
+   * service credential (the principal the forwarded request authenticates as).
+   * Defaults to the PostgreSQL API-key store; tests inject an in-memory
+   * resolver so the confused-deputy boundary is provable without a database.
+   */
+  resolveServiceCredentialTenant?: (apiKey: string) => Promise<string | null>;
+}
+
+/** Environment variable holding the Action Gateway service credential. */
+const MCP_SERVICE_CREDENTIAL_ENV = 'COMMANDER_API_KEY';
+
+function sha256(input: string): string {
+  return crypto.createHash('sha256').update(input).digest('hex');
+}
+
+function defaultResolveServiceCredentialTenant(apiKey: string): Promise<string | null> {
+  return getApiKeyStore()
+    .findByHash(sha256(apiKey))
+    .then((record) => record?.tenantId ?? null)
+    .catch((err: unknown) => {
+      reportSilentFailure(err, 'mcpEndpoints:resolveServiceCredentialTenant');
+      // Fail closed: an unresolvable service tenant cannot be proven to match
+      // the caller, so the mismatch check below rejects the dispatch.
+      return null;
+    });
 }
 
 /**
@@ -225,6 +259,30 @@ function callerMayInvokeActionTool(req: Request, tool: string): boolean {
   return scopes.some((sc) => authority.scopes.includes(sc));
 }
 
+/**
+ * AUDIT-D1②: the HTTP MCP executor authenticates to the Action Gateway with a
+ * static service credential. A caller from tenant A invoking a gateway tool
+ * while the service credential belongs to tenant B would otherwise read or
+ * mutate B's actions under B's identity (confused deputy). The caller's
+ * authenticated tenant must therefore equal the service credential's tenant
+ * before any gateway dispatch. Returns `undefined` when the check passes,
+ * otherwise the caller-facing reason. A caller with no authenticated tenant has
+ * no tenant identity to widen, so it proceeds on the service credential
+ * (single-tenant / local deployments); an unresolvable service tenant fails
+ * closed against a tenant-bound caller.
+ */
+function callerTenantViolation(
+  req: Request,
+  serviceCredentialTenant: string | null,
+): string | undefined {
+  const callerTenant = req.tenantId ?? getCurrentTenantId() ?? null;
+  if (!callerTenant) return undefined;
+  if (serviceCredentialTenant !== callerTenant) {
+    return 'Caller tenant does not match the Action Gateway service credential tenant';
+  }
+  return undefined;
+}
+
 export function createMCPRouter(options: McpRouterOptions = {}): Router {
   const router = express.Router();
   // Security: express.json() with limit is applied globally in index.ts.
@@ -236,6 +294,11 @@ export function createMCPRouter(options: McpRouterOptions = {}): Router {
   } else {
     registerActionGatewayTools(server, resolveActionGatewayExecutor(options));
   }
+
+  const serviceCredential =
+    options.actionGatewayApiKey?.trim() || process.env[MCP_SERVICE_CREDENTIAL_ENV]?.trim();
+  const resolveServiceCredentialTenant =
+    options.resolveServiceCredentialTenant ?? defaultResolveServiceCredentialTenant;
 
   // POST /mcp — JSON-RPC 2.0 endpoint for all MCP methods
   router.post('/', async (req, res) => {
@@ -249,6 +312,26 @@ export function createMCPRouter(options: McpRouterOptions = {}): Router {
         error: { code: -32603, message: `Insufficient authority for MCP tool: ${tool}` },
       });
       return;
+    }
+    // AUDIT-D1②: reject a caller whose tenant differs from the tenant bound to
+    // the service credential BEFORE the gateway dispatch (confused deputy).
+    if (tool && !localRuntime && serviceCredential) {
+      let serviceTenant: string | null = null;
+      try {
+        serviceTenant = await resolveServiceCredentialTenant(serviceCredential);
+      } catch (err: unknown) {
+        reportSilentFailure(err, 'mcpEndpoints:callerTenantViolation');
+        serviceTenant = null; // fail closed below
+      }
+      const violation = callerTenantViolation(req, serviceTenant);
+      if (violation) {
+        res.status(403).json({
+          jsonrpc: '2.0',
+          id: (req.body as { id?: unknown })?.id ?? null,
+          error: { code: -32603, message: violation },
+        });
+        return;
+      }
     }
     const response = await server.handleRequest(req.body);
     res.json(response);
@@ -630,12 +713,17 @@ export function createFetchActionGatewayExecutor(options: {
       const headers = new Headers(input.headers);
       headers.set('accept', 'application/json');
       if (input.body) headers.set('content-type', 'application/json');
-      if (options.apiKey) headers.set('authorization', `Bearer ${options.apiKey}`);
-      // AUDIT-C1: attribute the caller's tenant on the forwarded request so
-      // the gateway can scope the action instead of seeing only the service
-      // credential (confused-deputy mitigation).
+      // AUDIT-D1①: a static Commander API key must be sent as X-API-Key.
+      // Authorization: Bearer is reserved for JWT access tokens and is rejected
+      // by enterprise /v1 JWT middleware before API-key auth can inspect it.
+      if (options.apiKey) headers.set('x-api-key', options.apiKey);
+      // AUDIT-D1②: attribute the caller's authenticated tenant on the forwarded
+      // request. The gateway's tenant guard only ever lets this header *match*
+      // the authenticated service principal, so a caller from tenant A hitting a
+      // tenant-B service credential is rejected downstream — the header can
+      // never be trusted as identity on its own.
       const callerTenant = getCurrentTenantId();
-      if (callerTenant) headers.set('x-commander-caller-tenant', callerTenant);
+      if (callerTenant) headers.set('x-tenant-id', callerTenant);
       const response = await fetchImpl(`${baseUrl}${input.path}`, {
         method: input.method,
         headers,

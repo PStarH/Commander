@@ -22,7 +22,7 @@ const MAIN = join(ROOT, 'packages/worker-plane/src/main.ts');
 const BOOTSTRAP_SOURCE = `
 const mode = process.env.WS6_POLL_MODE;
 const never = () => new Promise(() => {});
-export function createWorkerService() {
+export function createWorkerService(options) {
   return {
     async start() {
       return { id: 'ws6-worker' };
@@ -33,8 +33,12 @@ export function createWorkerService() {
       return false;
     },
     async run() {
+      // WP-05: a worker that loses its claim path reports it through the
+      // entrypoint's liveness hook instead of leaving /ready latched at 200.
+      if (mode === 'lose-claim') options?.onClaimLoopHealth?.(false);
       return never();
     },
+    async stop() {},
   };
 }
 `;
@@ -58,7 +62,11 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-function startWorker(mode: string, port: number): ChildProcess {
+function startWorker(
+  mode: string,
+  port: number,
+  extraEnv: Record<string, string> = {},
+): ChildProcess {
   const child = spawn(process.execPath, ['--import', 'tsx', MAIN], {
     cwd: ROOT,
     env: {
@@ -67,6 +75,7 @@ function startWorker(mode: string, port: number): ChildProcess {
       COMMANDER_WORKER_BOOTSTRAP: bootstrapPath,
       COMMANDER_WORKER_HEALTH_PORT: String(port),
       WS6_POLL_MODE: mode,
+      ...extraEnv,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -133,5 +142,38 @@ describe('worker main readiness semantics (WP-05)', () => {
     ]);
     assert.equal(exitCode, 1);
     await assert.rejects(() => fetch(`http://127.0.0.1:${port}/ready`));
+  });
+
+  it('clears readiness when the claim loop reports the claim path lost (WP-05)', async () => {
+    const port = await freePort();
+    const child = startWorker('lose-claim', port);
+    // The first claim probe already succeeded, so readiness must not stay latched:
+    // the claim loop's liveness signal has to be able to clear it.
+    assert.equal(await waitForReadyStatus(port, 503), 503);
+    assert.equal(child.exitCode, null, 'worker keeps running while unready');
+  });
+});
+
+describe('worker main health bind host (F-P1-18)', () => {
+  it('rejects startup when the configured health bind host cannot be resolved', async () => {
+    // Behavioural proof that COMMANDER_WORKER_HEALTH_HOST reaches the listener: before
+    // the fix the env var was ignored, the server bound loopback, and the worker kept
+    // running instead of failing its (unresolvable) configured bind host.
+    const port = await freePort();
+    const child = startWorker('claim-ok', port, {
+      COMMANDER_WORKER_HEALTH_HOST: 'does-not-exist.invalid',
+    });
+    const exitCode = await Promise.race([
+      new Promise<number | null>((resolve) => {
+        child.once('exit', (code) => resolve(code));
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('worker ignored COMMANDER_WORKER_HEALTH_HOST and kept running')),
+          20_000,
+        ),
+      ),
+    ]);
+    assert.equal(exitCode, 1);
   });
 });

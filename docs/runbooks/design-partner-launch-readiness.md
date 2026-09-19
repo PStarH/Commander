@@ -92,9 +92,11 @@ Treat this list as the initial queue. Re-check it at the start of the freeze.
 - `scripts/action-operations-proof.ts` has no wired production campaign driver.
 - `scripts/design-partner-proof.ts` validates a campaign but the repository does
   not provide the real external-process driver needed to produce it.
-- `docs/baselines/ws9/summary.json` is `FAIL` because most cases are simulated.
-  This does not block the dedicated-deployment offer, but it blocks any public
-  multi-tenant production claim.
+- `docs/baselines/ws9/summary.json` is `FAIL`. The committed summary records the
+  live-fire environment gate failing (`postgres-non-owner-role`, `rls-with-check`,
+  `vault-reachable`), so no case evidence was produced (`32/32` missing); earlier
+  recorded runs failed because most cases were `simulated`. This does not block the
+  dedicated-deployment offer, but it blocks any public multi-tenant production claim.
 - Several public quality claims are stronger than the default implementation.
 
 No blocker may be hidden by a skipped test, a fixture labelled as live evidence,

@@ -90,6 +90,9 @@ const schedulerDatabaseUrl =
         process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
       )
     : undefined);
+// Same convention as `liveWorkerDatabaseUrl`: the fixture gate above already
+// fails the run when this is empty, so the alias narrows the type for callers.
+const liveSchedulerDatabaseUrl = schedulerDatabaseUrl as string;
 const adapterOpsDatabaseUrl =
   process.env.COMMANDER_ADAPTER_OPS_DATABASE_URL ??
   (databaseUrl
@@ -858,6 +861,243 @@ describe('PostgresKernelRepository integration', () => {
     },
   );
 
+  // KC-01: cancelling a step that was not occupying a tenant slot must not
+  // decrement the shared tenant running_steps counter, otherwise a tenant with
+  // limit=1 can cancel a PENDING run to free a slot it never used while a
+  // genuinely RUNNING step keeps the tenant over its limit.
+  it(
+    'cancelRun releases a tenant slot only for steps that were actually RUNNING',
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
+    async () => {
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 8 });
+      await runKernelMigrations(pool);
+      await ensureRoleLogin(pool, 'commander_app', appPassword);
+      await ensureRoleLogin(pool, 'commander_tenant_authority', tenantAuthorityPassword);
+      await ensureRoleLogin(
+        pool,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      );
+      await ensureRoleLogin(pool, 'commander_worker', workerPassword);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
+      const schedulerPool = createLoginPool(liveSchedulerDatabaseUrl);
+      const schedulerRepo = new PostgresKernelRepository(schedulerPool, { schedulerMode: true });
+      const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
+      const suffix = `${Date.now()}-${process.pid}`;
+      const tenantId = `kc01-${suffix}`;
+      const workerId = `kc01-worker-${suffix}`;
+      const repo = createRepository();
+      try {
+        await seedWorkerAllowedTenants(pool, [tenantId]);
+        await seedTenantAuthorityAllowedTenants(pool, [tenantId]);
+        await pool.query(
+          `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+           VALUES ($1,'agent','integration','["agent"]',4,'ACTIVE',1,$2,$3::jsonb)`,
+          [workerId, workerId, JSON.stringify([tenantId])],
+        );
+        const secret = await seedWorkerClaimSecret(pool, workerId, 1);
+        await schedulerRepo.setTenantConcurrencyLimit(tenantId, 1);
+        for (const [runId, stepId] of [
+          [`${tenantId}-run-a`, `${tenantId}-step-a`],
+          [`${tenantId}-run-b`, `${tenantId}-step-b`],
+          [`${tenantId}-run-c`, `${tenantId}-step-c`],
+        ]) {
+          await repo.createRun(
+            {
+              id: runId,
+              tenantId,
+              intentHash: `intent-${runId}`,
+              workGraphHash: `graph-${runId}`,
+              workGraphVersion: 'v1',
+              policySnapshotId: `policy-${runId}`,
+              steps: [{ id: stepId, kind: 'agent', maxAttempts: 2 }],
+            },
+            'integration',
+          );
+        }
+
+        const claimA = await workerRepo.claimNextStep({
+          workerId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: secret,
+        });
+        assert.equal(claimA?.id, `${tenantId}-step-a`, 'step-a must hold the only tenant slot');
+
+        const usage = async () =>
+          Number(
+            (
+              await pool.query<{ running_steps: string }>(
+                'SELECT running_steps FROM commander_tenant_execution_usage WHERE tenant_id=$1',
+                [tenantId],
+              )
+            ).rows[0]?.running_steps ?? -1,
+          );
+        assert.equal(await usage(), 1, 'claiming must consume the tenant slot');
+
+        // Cancel the PENDING run B. Before the fix this decremented running_steps to 0.
+        assert.equal(
+          (await repo.cancelRun(`${tenantId}-run-b`, tenantId, 'integration'))?.state,
+          'CANCELLED',
+        );
+        assert.equal(await usage(), 1, 'cancelling a PENDING step must not release a tenant slot');
+
+        assert.equal(
+          await workerRepo.claimNextStep({
+            workerId,
+            workerGeneration: 1,
+            capabilities: ['agent'],
+            leaseTtlMs: 30_000,
+            claimSecret: secret,
+          }),
+          null,
+          'the tenant limit must still be enforced while step-a is RUNNING',
+        );
+
+        assert.equal(
+          (await repo.cancelRun(`${tenantId}-run-a`, tenantId, 'integration'))?.state,
+          'CANCELLED',
+        );
+        assert.equal(await usage(), 0, 'cancelling the RUNNING step must release its slot');
+        const claimC = await workerRepo.claimNextStep({
+          workerId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: secret,
+        });
+        assert.equal(claimC?.id, `${tenantId}-step-c`, 'the freed slot must admit the next step');
+      } finally {
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+          workerId,
+        ]);
+        await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
+        await cleanupTenantTestState(pool, [tenantId]);
+        await schedulerPool.end();
+        await workerPool.end();
+        await tenantAuthorityPool.end();
+        await appPool.end();
+        await pool.end();
+      }
+    },
+  );
+
+  // KC-05: a terminal compensation request must not keep a claim deadline, or the
+  // automatic claim selection (`ORDER BY created_at LIMIT 1` over rows where
+  // `state='AUTHORIZED' OR claim_expires_at<=now()`) always picks the oldest
+  // terminal row, rejects it on state, and starves newer AUTHORIZED requests.
+  it(
+    'terminal compensation requests never retain a claim deadline (queue starvation guard)',
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
+    async () => {
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 4 });
+      await runKernelMigrations(pool);
+      const suffix = `${Date.now()}-${process.pid}`;
+      const tenantId = `kc05-${suffix}`;
+      const runId = `kc05-run-${suffix}`;
+      const stepId = `kc05-step-${suffix}`;
+      const effectId = `kc05-effect-${suffix}`;
+      const authId = `kc05-auth-${suffix}`;
+      const authId2 = `kc05-auth2-${suffix}`;
+      const terminalRequestId = `kc05-terminal-${suffix}`;
+      const authorizedRequestId = `kc05-authorized-${suffix}`;
+      const holder = new PostgresKernelRepository(pool, { schedulerMode: true });
+      try {
+        await holder.createRun(
+          {
+            id: runId,
+            tenantId,
+            intentHash: `intent-${suffix}`,
+            workGraphHash: `graph-${suffix}`,
+            workGraphVersion: 'v1',
+            policySnapshotId: `policy-${suffix}`,
+            steps: [{ id: stepId, kind: 'agent', maxAttempts: 1 }],
+          },
+          'integration',
+        );
+        await pool.query(
+          `INSERT INTO commander_effects
+             (id,run_id,step_id,tenant_id,type,idempotency_key,request_hash,policy_decision_id,state,request,
+              reconcile_attempts,policy_snapshot_id,lease_worker_id,lease_fencing_epoch,action_digest,
+              lease_worker_generation,reconcile_max_attempts,reconcile_initial_delay_ms,reconcile_max_delay_ms,
+              reconcile_deadline_at)
+           VALUES ($1,$2,$3,$4,'compensate.test',$5,repeat('a',64),'pd',$6,'{}'::jsonb,0,'policy-0','w',0,repeat('b',64),0,8,30000,900000,now()+interval '1 day')`,
+          [effectId, runId, stepId, tenantId, `idem-${suffix}`, 'COMPLETED'],
+        );
+        await pool.query(
+          `INSERT INTO commander_compensation_authorizations
+             (id,tenant_id,original_run_id,original_effect_id,compensation_effect_type,adapter_version,
+              compensation_patch,forward_receipt_hash,policy_decision_id,policy_snapshot_id,decision,action_digest,expires_at)
+           VALUES ($1,$2,$3,$4,'compensate.test','v1','{}'::jsonb,repeat('c',64),'pd','ps','allow',repeat('d',64),now()+interval '1 day')`,
+          [authId, tenantId, runId, effectId],
+        );
+        await pool.query(
+          `INSERT INTO commander_compensation_authorizations
+             (id,tenant_id,original_run_id,original_effect_id,compensation_effect_type,adapter_version,
+              compensation_patch,forward_receipt_hash,policy_decision_id,policy_snapshot_id,decision,action_digest,expires_at)
+           VALUES ($1,$2,$3,$4,'compensate.test','v1','{}'::jsonb,repeat('c',64),'pd','ps','allow',repeat('e',64),now()+interval '1 day')`,
+          [authId2, tenantId, runId, effectId],
+        );
+        // Terminal row is older and carries a stale deadline; the fix must null it.
+        await pool.query(
+          `INSERT INTO commander_compensation_requests
+             (id,tenant_id,original_run_id,original_effect_id,compensation_run_id,compensation_step_id,
+              adapter_version,compensation_effect_type,compensation_patch,forward_receipt_hash,authorization_id,
+              reconcile_policy,state,created_at,claim_expires_at)
+           VALUES ($1,$2,$4,$5,$4,$6,'v1','compensate.test','{}'::jsonb,repeat('c',64),$3,'{}'::jsonb,'COMPLETED',now()-interval '2 hours',now()-interval '1 hour')`,
+          [terminalRequestId, tenantId, authId, runId, effectId, stepId],
+        );
+        await pool.query(
+          `INSERT INTO commander_compensation_requests
+             (id,tenant_id,original_run_id,original_effect_id,compensation_run_id,compensation_step_id,
+              adapter_version,compensation_effect_type,compensation_patch,forward_receipt_hash,authorization_id,
+              reconcile_policy,state,created_at)
+           VALUES ($1,$2,$4,$5,$4,$6,'v1','compensate.test','{}'::jsonb,repeat('c',64),$3,'{}'::jsonb,'AUTHORIZED',now()-interval '1 minute')`,
+          [authorizedRequestId, tenantId, authId2, runId, effectId, stepId],
+        );
+
+        const stored = await pool.query<{ claim_expires_at: Date | null }>(
+          'SELECT claim_expires_at FROM commander_compensation_requests WHERE id=$1',
+          [terminalRequestId],
+        );
+        assert.equal(
+          stored.rows[0]?.claim_expires_at,
+          null,
+          'a terminal compensation request must not retain claim_expires_at',
+        );
+
+        // Exact automatic-selection predicate from claim_compensation_request.
+        const selected = await pool.query<{ id: string }>(
+          `SELECT r.id FROM public.commander_compensation_requests r
+            WHERE r.tenant_id=$1
+              AND (NULLIF($2,'') IS NOT NULL OR r.state='AUTHORIZED' OR r.claim_expires_at<=$3::timestamptz)
+              AND (NULLIF($2,'') IS NULL OR r.id=$2)
+            ORDER BY r.created_at FOR UPDATE OF r SKIP LOCKED LIMIT 1`,
+          [tenantId, '', new Date()],
+        );
+        assert.equal(
+          selected.rows[0]?.id,
+          authorizedRequestId,
+          'automatic selection must skip the older terminal request instead of starving the queue',
+        );
+      } finally {
+        await pool.query('DELETE FROM commander_compensation_requests WHERE tenant_id=$1', [
+          tenantId,
+        ]);
+        await pool.query('DELETE FROM commander_compensation_authorizations WHERE tenant_id=$1', [
+          tenantId,
+        ]);
+        await pool.query('DELETE FROM commander_effects WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+        await pool.end();
+      }
+    },
+  );
+
   it(
     'atomically releases kernel-native approvals with fencing and tenant isolation',
     { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
@@ -1025,6 +1265,75 @@ describe('PostgresKernelRepository integration', () => {
         await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
         await cleanupTenantTestState(pool, [tenantA, tenantB]);
         await workerPool.end();
+        await tenantAuthorityPool.end();
+        await appPool.end();
+        await pool.end();
+      }
+    },
+  );
+
+  it(
+    'refuses to answer an expired interaction and leaves the waiting step untouched',
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
+    async () => {
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 8 });
+      await runKernelMigrations(pool);
+      await ensureRoleLogin(pool, 'commander_app', appPassword);
+      await ensureRoleLogin(pool, 'commander_tenant_authority', tenantAuthorityPassword);
+      await ensureRoleLogin(
+        pool,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      );
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
+      const suffix = `${Date.now()}-${process.pid}`;
+      const tenantId = `expiry-${suffix}`;
+      const runId = `run-expiry-${suffix}`;
+      const stepId = `step-expiry-${suffix}`;
+      const interactionId = `interaction-expiry-${suffix}`;
+      const repo = createRepository();
+      try {
+        await seedTenantAuthorityAllowedTenants(pool, [tenantId]);
+        await repo.createRun(
+          {
+            id: runId,
+            tenantId,
+            intentHash: 'expiry-intent',
+            workGraphHash: 'expiry-graph',
+            workGraphVersion: 'v1',
+            policySnapshotId: 'expiry-policy',
+            steps: [
+              {
+                id: stepId,
+                kind: 'tool',
+                initialState: 'WAITING_FOR_HUMAN',
+                interaction: {
+                  id: interactionId,
+                  prompt: 'Expired approval',
+                  expiresAt: new Date(Date.now() - 60_000).toISOString(),
+                },
+              },
+            ],
+          },
+          'integration',
+        );
+        await assert.rejects(
+          () =>
+            repo.answerInteraction({
+              interactionId,
+              runId,
+              tenantId,
+              response: { approved: true },
+              actor: 'late-reviewer',
+            }),
+          (error) => error instanceof KernelInvariantError && error.code === 'INTERACTION_EXPIRED',
+        );
+        assert.equal((await repo.getInteraction(interactionId, tenantId))?.status, 'pending');
+        assert.equal((await repo.getStep(stepId, tenantId))?.state, 'WAITING_FOR_HUMAN');
+      } finally {
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+        await cleanupTenantTestState(pool, [tenantId]);
         await tenantAuthorityPool.end();
         await appPool.end();
         await pool.end();

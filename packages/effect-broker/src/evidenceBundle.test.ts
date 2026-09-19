@@ -79,7 +79,6 @@ describe('EB03 canonical evidence JSON persistence', () => {
   });
 
   for (const [name, value] of [
-    ['undefined', undefined],
     ['function', () => 1],
     ['symbol', Symbol('not-json')],
   ] as const) {
@@ -87,6 +86,14 @@ describe('EB03 canonical evidence JSON persistence', () => {
       assert.throws(() => canonicalEvidenceJson(value), TypeError);
     });
   }
+
+  it('renders a top-level undefined as the JSON literal null', () => {
+    // EB-01: the declared return type is `string`; returning `undefined` made an
+    // unsigned record look signed because both sides compared equal.
+    const canonical: unknown = canonicalEvidenceJson(undefined);
+    assert.equal(typeof canonical, 'string');
+    assert.equal(canonical, 'null');
+  });
 
   it('uses native JSON persistence semantics for non-JSON members and toJSON', () => {
     const value = {

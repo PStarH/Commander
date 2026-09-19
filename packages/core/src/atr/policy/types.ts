@@ -33,6 +33,11 @@ export interface PolicyRuleAst {
   effect: 'allow' | 'deny' | 'require_approval' | 'deny_class';
   denyClass?: PolicyDenyClass;
   body: PolicyExpr;
+  /**
+   * `if { ... }` guard. The rule fires only when both `body` and `condition`
+   * evaluate truthy; a rule without a condition fires on `body` alone.
+   */
+  condition?: PolicyExpr;
   priority: number;
 }
 
@@ -51,7 +56,7 @@ export interface PolicyPackAst {
 export type PolicyExpr =
   | { kind: 'literal'; value: LiteralValue }
   | { kind: 'ref'; path: string[] }
-  | { kind: 'call'; name: string; args: PolicyExpr[] }
+  | { kind: 'call'; name: string; ns?: string; args: PolicyExpr[] }
   | { kind: 'unary'; op: 'not'; arg: PolicyExpr }
   | { kind: 'binary'; op: PolicyBinOp; left: PolicyExpr; right: PolicyExpr }
   | { kind: 'list'; items: PolicyExpr[] }
@@ -184,16 +189,11 @@ export interface ConflictReport {
   inputsAffected?: number;
 }
 
-export interface CacheEntry {
-  decision: PolicyDecision;
-  expiresAt: number;
-}
-
 export interface PolicyEngineOptions {
   maxEvaluationDepth?: number;
+  /** Total expression nodes a single rule may visit before evaluation fails closed. */
+  maxEvaluationNodes?: number;
   evaluationTimeoutMs?: number;
-  maxCacheEntries?: number;
-  cacheTtlMs?: number;
   defaultPackVersion?: number;
 }
 

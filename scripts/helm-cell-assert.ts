@@ -707,10 +707,10 @@ export function assertHelmCellTopology(
     'H8: no default worker token',
   );
 
-  // H9
-  if (raw.includes('default-deny')) {
-    assert.ok(!raw.includes('0.0.0.0/0'), 'H9: no 0.0.0.0/0 egress masquerade');
-  }
+  // H9: no profile may render a 0.0.0.0/0 egress masquerade. This used to be
+  // gated on the rendered text containing the literal `default-deny`, so a
+  // chart that stopped rendering that marker silently skipped the check.
+  assert.ok(!raw.includes('0.0.0.0/0'), 'H9: no 0.0.0.0/0 egress masquerade');
 
   // H10 — per-Deployment replicas (no global replicas: 2 fallback)
   if (profile === 'demo') {

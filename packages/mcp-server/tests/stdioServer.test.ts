@@ -12,6 +12,7 @@ import {
 import {
   assertActionGatewayConfigured,
   createStdioMcpServer,
+  handleLine,
   isEnterpriseOrProductionMcpMode,
   isLocalRuntimeEnabled,
   startStdioServer,
@@ -637,5 +638,108 @@ describe('action gateway MCP routing', () => {
     const text = (response.result as { content: Array<{ text: string }> }).content[0].text;
     expect(text).toContain('ACTION_GATEWAY_REQUIRED');
     expect(localExecutions).toHaveLength(0);
+  });
+});
+
+describe('handleLine JSON-RPC validation (MCP-C01)', () => {
+  function captureStdout(): { written: string[]; restore: () => void } {
+    const written: string[] = [];
+    const original = process.stdout.write.bind(process.stdout);
+    process.stdout.write = ((chunk: string | Uint8Array) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stdout.write;
+    return { written, restore: () => (process.stdout.write = original) };
+  }
+
+  it('rejects JSON null before dispatch and reports an invalid-request error', async () => {
+    const dispatched: unknown[] = [];
+    const server = {
+      handleRequest: async (request: unknown) => {
+        dispatched.push(request);
+        return { jsonrpc: '2.0', id: null, result: {} };
+      },
+    } as unknown as MCPServer;
+    const { written, restore } = captureStdout();
+
+    try {
+      await handleLine(server, 'null');
+    } finally {
+      restore();
+    }
+
+    expect(dispatched).toHaveLength(0);
+    expect(written).toHaveLength(1);
+    expect(JSON.parse(written[0])).toMatchObject({
+      jsonrpc: '2.0',
+      id: null,
+      error: { code: -32600 },
+    });
+  });
+
+  it('still dispatches a well-formed request', async () => {
+    const dispatched: unknown[] = [];
+    const server = {
+      handleRequest: async (request: unknown) => {
+        dispatched.push(request);
+        return { jsonrpc: '2.0', id: 7, result: {} };
+      },
+    } as unknown as MCPServer;
+    const { written, restore } = captureStdout();
+
+    try {
+      await handleLine(server, JSON.stringify({ jsonrpc: '2.0', id: 7, method: 'tools/list' }));
+    } finally {
+      restore();
+    }
+
+    expect(dispatched).toHaveLength(1);
+    expect(JSON.parse(written[0])).toMatchObject({ jsonrpc: '2.0', id: 7, result: {} });
+  });
+
+  it('resolves with an internal-error response when the server throws', async () => {
+    const server = {
+      handleRequest: async () => {
+        throw new Error('downstream blew up');
+      },
+    } as unknown as MCPServer;
+    const { written, restore } = captureStdout();
+
+    try {
+      await expect(
+        handleLine(server, JSON.stringify({ jsonrpc: '2.0', id: 8, method: 'tools/list' })),
+      ).resolves.toBeUndefined();
+    } finally {
+      restore();
+    }
+
+    expect(JSON.parse(written[0])).toMatchObject({
+      jsonrpc: '2.0',
+      id: 8,
+      error: { code: -32603 },
+    });
+  });
+
+  it('keeps ignoring notifications', async () => {
+    const dispatched: unknown[] = [];
+    const server = {
+      handleRequest: async (request: unknown) => {
+        dispatched.push(request);
+        return { jsonrpc: '2.0', id: null, result: {} };
+      },
+    } as unknown as MCPServer;
+    const { written, restore } = captureStdout();
+
+    try {
+      await handleLine(
+        server,
+        JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }),
+      );
+    } finally {
+      restore();
+    }
+
+    expect(dispatched).toHaveLength(0);
+    expect(written).toHaveLength(0);
   });
 });

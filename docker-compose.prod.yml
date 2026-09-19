@@ -130,6 +130,10 @@ services:
       NODE_ENV: production
       DATABASE_URL: '${COMMANDER_API_DATABASE_URL:?}'
       COMMANDER_KERNEL_DATABASE_URL: '${COMMANDER_API_DATABASE_URL:?}'
+      # Audit-chain HMAC master key. The API installs the audit chain under
+      # NODE_ENV=production, and the ledger refuses to start with a public dev
+      # key, so production must inject a strong value (openssl rand -hex 32).
+      COMMANDER_AUDIT_CHAIN_KEY: '${COMMANDER_AUDIT_CHAIN_KEY:?COMMANDER_AUDIT_CHAIN_KEY is required}'
       COMMANDER_TENANT_AUTHORITY_DATABASE_URL: '${COMMANDER_TENANT_AUTHORITY_DATABASE_URL:?}'
       COMMANDER_DATABASE_TLS_CA_FILE: /run/commander/database-tls/ca.crt
       COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: '${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?}'
@@ -211,7 +215,13 @@ services:
     restart: unless-stopped
     volumes:
       - database-ca-runtime:/run/commander/database-tls:ro
-      - adapter-ops-claim-secrets:/run/commander/adapter-ops:ro
+      # MUST be writable. `registerAdapterOpsDaemonWorkers` always persists the
+      # reconcile/compensation claim secrets (`wiring.ts` persistClaimSecret:
+      # mkdir + writeFile{flag:'wx'} + chmod + rename), unconditionally — it does
+      # not short-circuit on an existing file, so a prepopulated volume does not
+      # help. With `:ro` the standard production registration path fails with
+      # EROFS. Only the CA mount above stays read-only.
+      - adapter-ops-claim-secrets:/run/commander/adapter-ops
 
 volumes:
   postgres-init-runtime:

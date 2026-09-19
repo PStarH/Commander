@@ -65,10 +65,8 @@ import { isClassAEffectType } from '@commander/contracts';
 import {
   KERNEL_COMPENSATION_TOPIC,
   LEGACY_COMPENSATION_TOPIC,
-  normalizeCompensationPayload,
   type ClaimedCompensationWork,
   type CompensationClaimAuth,
-  type CompensationWorkDispositionResult,
 } from './ops/compensationConsumer.js';
 import { findMatchingKillSwitchWithLookup } from './killSwitchMatching.js';
 import { createReconcilePolicy } from './reconcilePolicy.js';
@@ -178,85 +176,92 @@ function enforceAppRole(pool: SqlPool): SqlPool {
   return {
     connect: async () => {
       const client = await pool.connect();
+      // KC-02: every failure after a successful connect() must return the slot to
+      // the pool exactly once. Identity lookup / SET ROLE failures used to leak
+      // the client, and repeated failures could exhaust the pool while the
+      // caller's withTransaction never saw the underlying handle.
+      try {
+        // Prefer session_user (LOGIN identity). Alias as login_role — never AS current_user /
+        // AS session_user: node-pg row field names can collide with SQL keyword accessors.
+        const identity = await client.query<{ login_role: string }>(
+          'SELECT session_user::text AS login_role',
+        );
+        const loginRole = identity.rows[0]?.login_role;
+        if (loginRole && KEEP_IDENTITY.has(loginRole)) {
+          // Already least-privilege LOGIN (worker/app) — do not SET ROLE.
+          return {
+            query: client.query.bind(client),
+            release: async (error?: Error | boolean) => {
+              await client.release(error);
+            },
+          };
+        }
 
-      // Prefer session_user (LOGIN identity). Alias as login_role — never AS current_user /
-      // AS session_user: node-pg row field names can collide with SQL keyword accessors.
-      const identity = await client.query<{ login_role: string }>(
-        'SELECT session_user::text AS login_role',
-      );
-      const loginRole = identity.rows[0]?.login_role;
-      if (loginRole && KEEP_IDENTITY.has(loginRole)) {
-        // Already least-privilege LOGIN (worker/app) — do not SET ROLE.
+        if (state === 'unchecked') {
+          try {
+            const result = await client.query<{ exists: boolean }>(
+              "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') AS exists",
+            );
+            state = result.rows[0]?.exists ? 'exists' : 'missing';
+          } catch {
+            state = 'missing';
+          }
+        }
+
+        if (state === 'exists') {
+          try {
+            await client.query('SET ROLE commander_app');
+          } catch (err) {
+            throw new Error(
+              `PostgresKernelRepository failed to SET ROLE commander_app: ${(err as Error).message}`,
+            );
+          }
+        } else if (state === 'missing') {
+          // AUTH-7: without the commander_app downgrade, application queries run as
+          // the (BYPASSRLS) migration owner and tenant isolation is silently off.
+          // Fail closed in production rather than degrade to a cross-tenant read.
+          // COMMANDER_ALLOW_RLS_BYPASS=1 is an explicit, documented escape hatch
+          // for single-tenant/legacy deployments that intentionally lack the role.
+          // AUDIT-K1: production is detected by the shared multi-signal check —
+          // losing NODE_ENV alone must not silently re-enable the bypass.
+          if (mustRefuseMissingAppRole(process.env)) {
+            throw new Error(
+              '[PostgresKernelRepository] commander_app role not found in production. ' +
+                'Refusing to run application queries as the migration owner (RLS would be bypassed). ' +
+                'Create the commander_app role, or set COMMANDER_ALLOW_RLS_BYPASS=1 to explicitly accept the risk.',
+            );
+          }
+          if (!warned) {
+            warned = true;
+            console.warn(
+              '[PostgresKernelRepository] commander_app role not found; continuing without role downgrade. ' +
+                'Application queries may bypass RLS if connected as the migration owner.',
+            );
+          }
+        }
+
         return {
           query: client.query.bind(client),
           release: async (error?: Error | boolean) => {
-            await client.release(error);
-          },
-        };
-      }
-
-      if (state === 'unchecked') {
-        try {
-          const result = await client.query<{ exists: boolean }>(
-            "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') AS exists",
-          );
-          state = result.rows[0]?.exists ? 'exists' : 'missing';
-        } catch {
-          state = 'missing';
-        }
-      }
-
-      if (state === 'exists') {
-        try {
-          await client.query('SET ROLE commander_app');
-        } catch (err) {
-          throw new Error(
-            `PostgresKernelRepository failed to SET ROLE commander_app: ${(err as Error).message}`,
-          );
-        }
-      } else if (state === 'missing') {
-        // AUTH-7: without the commander_app downgrade, application queries run as
-        // the (BYPASSRLS) migration owner and tenant isolation is silently off.
-        // Fail closed in production rather than degrade to a cross-tenant read.
-        // COMMANDER_ALLOW_RLS_BYPASS=1 is an explicit, documented escape hatch
-        // for single-tenant/legacy deployments that intentionally lack the role.
-        // AUDIT-K1: production is detected by the shared multi-signal check —
-        // losing NODE_ENV alone must not silently re-enable the bypass.
-        if (mustRefuseMissingAppRole(process.env)) {
-          await client.release();
-          throw new Error(
-            '[PostgresKernelRepository] commander_app role not found in production. ' +
-              'Refusing to run application queries as the migration owner (RLS would be bypassed). ' +
-              'Create the commander_app role, or set COMMANDER_ALLOW_RLS_BYPASS=1 to explicitly accept the risk.',
-          );
-        }
-        if (!warned) {
-          warned = true;
-          console.warn(
-            '[PostgresKernelRepository] commander_app role not found; continuing without role downgrade. ' +
-              'Application queries may bypass RLS if connected as the migration owner.',
-          );
-        }
-      }
-
-      return {
-        query: client.query.bind(client),
-        release: async (error?: Error | boolean) => {
-          if (error) {
-            await client.release(error);
-            return;
-          }
-          if (state === 'exists') {
-            try {
-              await client.query('SET ROLE NONE');
-            } catch (resetError) {
-              await client.release(unknownConnectionStateError(resetError));
+            if (error) {
+              await client.release(error);
               return;
             }
-          }
-          await client.release();
-        },
-      };
+            if (state === 'exists') {
+              try {
+                await client.query('SET ROLE NONE');
+              } catch (resetError) {
+                await client.release(unknownConnectionStateError(resetError));
+                return;
+              }
+            }
+            await client.release();
+          },
+        };
+      } catch (error) {
+        await client.release(error instanceof Error ? error : undefined);
+        throw error;
+      }
     },
   };
 }
@@ -1365,7 +1370,11 @@ export class PostgresKernelRepository implements KernelRepository {
         );
         for (const row of cancelledSteps.rows) {
           const step = fromStep(row);
-          await this.releaseTenantSlot(client, step.tenantId);
+          const previousState = previousStepStates.get(step.id);
+          // Only a step that was actually occupying a tenant slot may release one.
+          // Cancelling PENDING/RETRY_WAIT/WAITING_* steps must not decrement the
+          // shared running_steps counter (it would let the tenant exceed its limit).
+          if (previousState === 'RUNNING') await this.releaseTenantSlot(client, step.tenantId);
           await this.parkOrphanAdmittedEffects(client, step, 'run_cancelled', actor);
           await this.appendEvent(client, {
             aggregateType: 'step',
@@ -1376,7 +1385,7 @@ export class PostgresKernelRepository implements KernelRepository {
             runId: step.runId,
             stepId: step.id,
             actor,
-            payload: { previousState: previousStepStates.get(step.id) },
+            payload: { previousState },
           });
         }
         await this.appendEvent(client, {
@@ -2819,7 +2828,18 @@ export class PostgresKernelRepository implements KernelRepository {
   ): Promise<ClaimedCompensationWork[]> {
     if (input.topic !== KERNEL_COMPENSATION_TOPIC) return [];
     const claimed: ClaimedCompensationWork[] = [];
-    for (let index = 0; index < input.limit; index += 1) {
+    // A concurrent publisher/consumer can transiently hold the next eligible
+    // outbox/request row. Do not treat one SKIP LOCKED miss as exhaustion: it
+    // caused the race test to consume only the first batch and strand the rest.
+    let misses = 0;
+    const maxMisses = Math.max(3, input.limit);
+    let attempts = 0;
+    while (
+      claimed.length < input.limit &&
+      misses < maxMisses &&
+      attempts < input.limit + maxMisses
+    ) {
+      attempts += 1;
       const result = await this.claimCompensationRequest({
         requestId: '',
         outboxMessageId: '',
@@ -2827,99 +2847,14 @@ export class PostgresKernelRepository implements KernelRepository {
         workerGeneration: input.workerGeneration,
         claimSecret: input.claimSecret,
       });
-      if (!result) break;
+      if (!result) {
+        misses += 1;
+        continue;
+      }
+      misses = 0;
       claimed.push(result);
     }
     return claimed;
-  }
-
-  async completeCompensationWork(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      response: Record<string, unknown>;
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    return this.callCompensationDispositionRpc(
-      'complete_compensation_work_v1',
-      input,
-      input.response,
-    );
-  }
-
-  async handoffCompensationUnknown(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      error: { code: string; message: string };
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    return this.callCompensationDispositionRpc(
-      'handoff_compensation_unknown_v1',
-      input,
-      input.error,
-    );
-  }
-
-  async escalateCompensationWork(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      reason: string;
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    return this.callCompensationDispositionRpc(
-      'escalate_compensation_work_v1',
-      input,
-      input.reason,
-    );
-  }
-
-  private async callCompensationDispositionRpc(
-    functionName:
-      | 'complete_compensation_work_v1'
-      | 'handoff_compensation_unknown_v1'
-      | 'escalate_compensation_work_v1',
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-    },
-    payload: Record<string, unknown> | { code: string; message: string } | string,
-  ): Promise<CompensationWorkDispositionResult> {
-    const client = await this.pool.connect();
-    try {
-      const result = await client.query<{ result: CompensationWorkDispositionResult | string }>(
-        `SELECT ${functionName}($1::text,$2::text,$3::text,$4::text,$5::text,$6::bigint,$7::text,${
-          functionName === 'escalate_compensation_work_v1' ? '$8::text' : '$8::jsonb'
-        }) AS result`,
-        [
-          input.tenantId,
-          input.messageId,
-          input.outboxClaimToken,
-          input.compensationEffectId,
-          input.workerId,
-          input.workerGeneration,
-          input.claimSecret,
-          typeof payload === 'string' ? payload : json(payload),
-        ],
-      );
-      const raw = result.rows[0]?.result;
-      return raw == null
-        ? { applied: false, reason: 'NOT_FOUND' }
-        : typeof raw === 'string'
-          ? (JSON.parse(raw) as CompensationWorkDispositionResult)
-          : raw;
-    } finally {
-      client.release();
-    }
   }
 
   /** Worker LOGIN outbox claim via SECURITY DEFINER claim_outbox_by_topic. */
@@ -3803,6 +3738,19 @@ export class PostgresKernelRepository implements KernelRepository {
             'INTERACTION_NOT_FOUND',
             `Interaction ${request.interactionId} not found or already answered`,
           );
+        }
+        // KTO-01: an interaction past its expiry must not be answerable. The
+        // check runs under the same row lock as the answer, before the step is
+        // released or any answer event is appended; an unparseable expiry is
+        // treated as expired rather than silently ignored.
+        if (interaction.expires_at !== null) {
+          const expiry = new Date(interaction.expires_at).getTime();
+          if (!Number.isFinite(expiry) || expiry <= Date.now()) {
+            throw new KernelInvariantError(
+              'INTERACTION_EXPIRED',
+              `Interaction ${request.interactionId} expired at ${String(interaction.expires_at)}`,
+            );
+          }
         }
         let released: { rows: DbStep[] };
         if (request.releaseStep === false) {

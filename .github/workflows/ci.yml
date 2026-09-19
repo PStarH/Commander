@@ -271,19 +271,24 @@ jobs:
       - name: Claim honesty gate
         run: pnpm claim:gate:test
 
-      - name: TypeScript check (core + kernel, source and tests)
+      - name: TypeScript check (all packages, source and tests)
         run: |
           # tsc --noEmit resolves @commander/plugin-sdk types from dist; clean CI has none
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
           pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/effect-broker build
-          pnpm --dir packages/core exec tsc --noEmit
-          # packages/kernel has a `typecheck:test` script (tsconfig.test.json)
-          # that no root script or workflow invoked, which is how two type errors
-          # in its live-PostgreSQL suites survived unnoticed.
-          pnpm --dir packages/kernel exec tsc --noEmit
-          pnpm --dir packages/kernel run typecheck:test
+          # `typecheck` chains the core and kernel source builds plus every other
+          # package's `typecheck:test` (tsconfig.test.json), which typechecks the
+          # in-src `*.test.ts` files the package builds exclude. Those configs
+          # previously existed for kernel only and were invoked by no root script
+          # or workflow, which is how type errors survived unnoticed.
+          # `packages/core`'s own `tsconfig.test.json` (its `tests/**` tree) is
+          # deliberately NOT in this chain yet: it is a long-standing red gate
+          # (measured 2026-09-18: ~1k pre-existing errors in test fixtures that
+          # vitest transpiles without typechecking). Run it explicitly with
+          # `pnpm --dir packages/core run typecheck:test` until that backlog is cleared.
+          pnpm run typecheck
 
       - name: TypeScript check (SDK)
         run: |
@@ -990,6 +995,7 @@ jobs:
           echo "ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_AUDIT_CHAIN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           # Ed25519 authority + pinned database TLS. `cell:up-assert` generates
           # these when unset, but they must ALSO be in $GITHUB_ENV so a later

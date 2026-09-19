@@ -49,7 +49,9 @@ class InMemoryTable<T extends { id: string }> implements PersistentTable<T> {
     }
     const clone = cloneRow(row);
     this.state.rows.set(row.id, clone);
-    return clone;
+    // Return a copy: handing back the stored object let a caller mutate
+    // persisted state without an update call.
+    return cloneRow(clone);
   }
 
   insertOrReplace(row: T): T {
@@ -59,7 +61,7 @@ class InMemoryTable<T extends { id: string }> implements PersistentTable<T> {
     }
     const clone = cloneRow(row);
     this.state.rows.set(row.id, clone);
-    return clone;
+    return cloneRow(clone);
   }
 
   get(id: string): T | null {
@@ -164,6 +166,7 @@ export class InMemoryDriver implements PersistentDriver {
 
   async transaction<T>(fn: () => T | Promise<T>): Promise<T> {
     if (this.closed) throw new Error('InMemoryDriver: already closed');
+    const namesBeforeTransaction = new Set(this.tables.keys());
     // Deep-snapshot all row maps. JSON clone is sufficient for our typed schemas.
     const snapshot: Array<{ name: string; rows: Map<string, unknown> }> = [];
     for (const [name, state] of this.tables.entries()) {
@@ -184,6 +187,16 @@ export class InMemoryDriver implements PersistentDriver {
           for (const [k, v] of snap.rows.entries()) {
             (state.rows as Map<string, unknown>).set(k, v);
           }
+        }
+      }
+      // Only tables that existed before the transaction were snapshotted. A
+      // table first opened *inside* the callback was therefore never rolled
+      // back, so its writes survived the rejection. Drop those tables entirely.
+      for (const name of Array.from(this.tables.keys())) {
+        if (!namesBeforeTransaction.has(name)) {
+          const created = this.tables.get(name) as InMemoryTableState<{ id: string }> | undefined;
+          if (created) (created.rows as Map<string, unknown>).clear();
+          this.tables.delete(name);
         }
       }
       throw err;

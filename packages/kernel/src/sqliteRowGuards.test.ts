@@ -97,6 +97,41 @@ describe('sqliteRowGuards', () => {
       assert.throws(() => reqInteger(table, { count: NaN }, 'count'));
       assert.throws(() => reqInteger(table, { count: Infinity }, 'count'));
     });
+
+    it('accepts the maximum safe integer from a number, string, and bigint', () => {
+      assert.equal(
+        reqInteger(table, { count: Number.MAX_SAFE_INTEGER }, 'count'),
+        9007199254740991,
+      );
+      assert.equal(reqInteger(table, { count: '9007199254740991' }, 'count'), 9007199254740991);
+      assert.equal(
+        reqInteger(table, { count: BigInt('9007199254740991') }, 'count'),
+        9007199254740991,
+      );
+      assert.equal(
+        reqInteger(table, { count: Number.MIN_SAFE_INTEGER }, 'count'),
+        -9007199254740991,
+      );
+    });
+
+    // KB-02: 9007199254740993n would silently round to 9007199254740992 as a JS
+    // number, so two distinct 64-bit counters would compare equal.
+    it('rejects integers that cannot be represented losslessly as a JS number', () => {
+      assert.throws(
+        () => reqInteger(table, { count: BigInt('9007199254740993') }, 'count'),
+        (err) => err instanceof SqliteRowValidationError,
+      );
+      assert.throws(
+        () => reqInteger(table, { count: BigInt('9223372036854775807') }, 'count'),
+        (err) => err instanceof SqliteRowValidationError,
+      );
+      assert.throws(() => reqInteger(table, { count: 9007199254740992 }, 'count'));
+      assert.throws(() => reqInteger(table, { count: '9007199254740993' }, 'count'));
+      assert.throws(
+        () => reqOptionalInteger(table, { count: BigInt('-9007199254740993') }, 'count'),
+        (err) => err instanceof SqliteRowValidationError,
+      );
+    });
   });
 
   describe('reqOptionalInteger', () => {

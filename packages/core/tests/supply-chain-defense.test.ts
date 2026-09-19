@@ -169,7 +169,7 @@ describe('ToolPoisoningGuard', () => {
       name: 'Custom attack pattern',
       pattern: /custom-attack-pattern/i,
       severity: 'MALICIOUS',
-      category: 'custom',
+      category: 'instruction_override',
     });
 
     assert.strictEqual(guard.getPoisoningPatterns().length, initialCount + 1);

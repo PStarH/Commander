@@ -5,15 +5,23 @@ import {
   compensationIdempotencyKey,
   githubPrBodyMarker,
   servicenowCorrelationId,
+  SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
 } from '@commander/contracts';
 import { createGitHubPullRequestCreateAdapter } from '../github/pullRequestCreate.js';
 import { createServiceNowIncidentCreateAdapter } from '../servicenow/incidentCreate.js';
 import { createKubernetesDeploymentRollbackAdapter } from '../kubernetes/deploymentRollback.js';
-import type { AdapterCredentialProvider, KubernetesCredentialProvider } from '../types.js';
-import { registerConformanceSuite, type ConformanceAdapterFactory } from './suite.js';
+import {
+  toEvidenceSummary,
+  type AdapterCredentialProvider,
+  type KubernetesCredentialProvider,
+} from '../types.js';
+import {
+  conformanceIdempotencyKeyFor,
+  registerConformanceSuite,
+  type ConformanceAdapterFactory,
+} from './suite.js';
 
 const tenantId = 'tenant-a';
-const idempotencyKey = 'conformance-idem';
 
 function githubCredentials(): AdapterCredentialProvider {
   return {
@@ -115,7 +123,13 @@ const githubFactory: ConformanceAdapterFactory = {
     });
   },
   createMultiMarkerContext() {
-    const marker = githubPrBodyMarker(tenantId, idempotencyKey);
+    const marker = githubPrBodyMarker(
+      tenantId,
+      conformanceIdempotencyKeyFor({
+        destination: 'github://octo/repo/pulls',
+        args: { title: 'Conformance PR', body: 'body', head: 'feature', base: 'main' },
+      }),
+    );
     const counters = { createCount: 0, writeCount: 0, compensateCount: 0 };
     const pulls = [
       {
@@ -230,7 +244,13 @@ const serviceNowFactory: ConformanceAdapterFactory = {
     });
   },
   createMultiMarkerContext() {
-    const correlationId = servicenowCorrelationId(tenantId, idempotencyKey);
+    const correlationId = servicenowCorrelationId(
+      tenantId,
+      conformanceIdempotencyKeyFor({
+        destination: 'servicenow://dev12345/incident',
+        args: { short_description: 'Conformance incident', description: 'details' },
+      }),
+    );
     const counters = { createCount: 0, writeCount: 0, compensateCount: 0 };
     const incidents = [
       {
@@ -272,12 +292,23 @@ const serviceNowFactory: ConformanceAdapterFactory = {
   },
 };
 
+/** Deployment template as the Kubernetes API returns it on the wire. */
+interface KubernetesWireTemplate {
+  metadata: { labels: { app: string } };
+  spec: { containers: Array<{ name: string; image: string }> };
+}
+
 const kubernetesFactory: ConformanceAdapterFactory = {
   name: 'kubernetes.deployment.rollback',
   createAdapter() {
     const counters = { createCount: 0, writeCount: 0, compensateCount: 0 };
     let timeoutNextRollback = false;
-    let deployment = {
+    let deployment: {
+      revision: string;
+      template: KubernetesWireTemplate;
+      annotations: Record<string, string>;
+      generation: number;
+    } = {
       revision: '9',
       template: {
         metadata: { labels: { app: 'api' } },
@@ -365,10 +396,7 @@ const kubernetesFactory: ConformanceAdapterFactory = {
           counters.compensateCount += deployment.annotations['commander.io/compensation-marker']
             ? 1
             : 0;
-          deployment.template = (body.spec as Record<string, unknown>).template as Record<
-            string,
-            unknown
-          >;
+          deployment.template = (body.spec as { template: KubernetesWireTemplate }).template;
           deployment.revision = String(Number(deployment.revision) + 1);
           deployment.generation += 1;
           const response = Response.json({
@@ -452,7 +480,13 @@ const kubernetesFactory: ConformanceAdapterFactory = {
     });
   },
   createMultiMarkerContext() {
-    const marker = commanderActionMarker(tenantId, idempotencyKey);
+    const marker = commanderActionMarker(
+      tenantId,
+      conformanceIdempotencyKeyFor({
+        destination: 'k8s://kind/commander/deployments/api',
+        args: { targetRevision: '7', reason: 'conformance rollback' },
+      }),
+    );
     return {
       counters: { createCount: 0, writeCount: 0, compensateCount: 0 },
       destination: 'k8s://kind/commander/deployments/api',
@@ -554,5 +588,19 @@ describe('L4-02 adapter conformance suite', () => {
       factoryInvocations >= 3,
       `expected the suite to exercise all three adapter factories, saw ${factoryInvocations}`,
     );
+  });
+});
+
+describe('toEvidenceSummary own-property scoping', () => {
+  it('ignores inherited values on the response object', () => {
+    const descriptor = {
+      ...SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
+      evidenceResponseSummaryKeys: ['sysId', 'status'],
+    };
+    const inherited = Object.create({ status: 'APPLIED' }) as Record<string, unknown>;
+    inherited.sysId = 'sys-1';
+    const summary = toEvidenceSummary(descriptor, inherited);
+    assert.deepEqual(summary, { sysId: 'sys-1' });
+    assert.equal(Object.hasOwn(inherited, 'status'), false);
   });
 });

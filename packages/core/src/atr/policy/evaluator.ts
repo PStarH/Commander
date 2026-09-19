@@ -1,13 +1,52 @@
 import type { PolicyExpr, PolicyInput, LiteralValue, BuiltinRegistry } from './types';
 
+/**
+ * Thrown when an expression cannot be evaluated within the configured budget
+ * (unknown builtin, depth/node budget exhausted, or deadline exceeded). The
+ * engine converts this into an explicit fail-closed decision — it must never be
+ * swallowed into "the rule did not fire".
+ */
+export class PolicyEvaluationError extends Error {
+  constructor(
+    readonly code: string,
+    detail?: string,
+  ) {
+    super(detail ? `${code}: ${detail}` : code);
+    this.name = 'PolicyEvaluationError';
+  }
+}
+
+/** Mutable per-rule evaluation budget shared by every recursive node visit. */
+export interface EvaluationState {
+  nodes: number;
+  maxNodes: number;
+  deadlineAt: number;
+}
+
+export function createEvaluationState(maxNodes: number, deadlineAt: number): EvaluationState {
+  return { nodes: 0, maxNodes, deadlineAt };
+}
+
 export function evaluateExpr(
   expr: PolicyExpr,
   input: PolicyInput,
   builtins: BuiltinRegistry,
   maxDepth: number,
+  state?: EvaluationState,
 ): LiteralValue {
   if (maxDepth <= 0) {
-    throw new Error('max_evaluation_depth_exceeded');
+    throw new PolicyEvaluationError('max_evaluation_depth_exceeded');
+  }
+  if (state) {
+    state.nodes++;
+    if (state.nodes > state.maxNodes) {
+      throw new PolicyEvaluationError('max_evaluation_nodes_exceeded');
+    }
+    // A synchronous deadline check at every node bounds wall-clock work without
+    // pretending the evaluation is interruptible.
+    if (Date.now() > state.deadlineAt) {
+      throw new PolicyEvaluationError('evaluation_deadline_exceeded');
+    }
   }
   switch (expr.kind) {
     case 'literal':
@@ -19,29 +58,42 @@ export function evaluateExpr(
     case 'call': {
       const fn = builtins[expr.name];
       if (!fn) {
-        throw new Error(`unknown_builtin: ${expr.name}`);
+        throw new PolicyEvaluationError('unknown_builtin', expr.name);
       }
-      const args = expr.args.map((a) => evaluateExpr(a, input, builtins, maxDepth - 1));
+      const args = expr.args.map((a) => evaluateExpr(a, input, builtins, maxDepth - 1, state));
       return fn(args);
     }
     case 'unary': {
       if (expr.op === 'not') {
-        const v = evaluateExpr(expr.arg, input, builtins, maxDepth - 1);
+        const v = evaluateExpr(expr.arg, input, builtins, maxDepth - 1, state);
         return !v;
       }
-      throw new Error('unsupported_unary');
+      throw new PolicyEvaluationError('unsupported_unary');
     }
     case 'binary': {
-      const l = evaluateExpr(expr.left, input, builtins, maxDepth - 1);
-      const r = evaluateExpr(expr.right, input, builtins, maxDepth - 1);
+      // `and`/`or` short-circuit exactly as the language specifies: the right
+      // operand is not evaluated once the left operand decides the result, so a
+      // broken branch that cannot change the outcome cannot void the rule.
+      if (expr.op === 'and') {
+        const l = evaluateExpr(expr.left, input, builtins, maxDepth - 1, state);
+        if (!Boolean(l)) return false;
+        return Boolean(evaluateExpr(expr.right, input, builtins, maxDepth - 1, state));
+      }
+      if (expr.op === 'or') {
+        const l = evaluateExpr(expr.left, input, builtins, maxDepth - 1, state);
+        if (Boolean(l)) return true;
+        return Boolean(evaluateExpr(expr.right, input, builtins, maxDepth - 1, state));
+      }
+      const l = evaluateExpr(expr.left, input, builtins, maxDepth - 1, state);
+      const r = evaluateExpr(expr.right, input, builtins, maxDepth - 1, state);
       return applyBinary(expr.op, l, r);
     }
     case 'list':
-      return expr.items.map((i) => evaluateExpr(i, input, builtins, maxDepth - 1));
+      return expr.items.map((i) => evaluateExpr(i, input, builtins, maxDepth - 1, state));
     case 'object': {
       const out: Record<string, LiteralValue> = {};
       for (const f of expr.fields) {
-        out[f.key] = evaluateExpr(f.value, input, builtins, maxDepth - 1);
+        out[f.key] = evaluateExpr(f.value, input, builtins, maxDepth - 1, state);
       }
       return out;
     }
@@ -86,7 +138,7 @@ function applyBinary(op: string, l: LiteralValue, r: LiteralValue): LiteralValue
     case 'or':
       return Boolean(l) || Boolean(r);
     default:
-      throw new Error(`unsupported_binary: ${op}`);
+      throw new PolicyEvaluationError('unsupported_binary', op);
   }
 }
 

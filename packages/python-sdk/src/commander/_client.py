@@ -130,6 +130,11 @@ _DEFAULT_BASE_URL = "http://localhost:3001"
 _DEFAULT_TIMEOUT = 300.0
 _DEFAULT_MAX_RETRIES = 3
 
+# Methods that may be retried after a ReadTimeout, where the server may already
+# have applied the request. Everything else (notably POST) is retried only when
+# the connection was never established.
+_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
+
 _agent_id_counter = 0
 
 
@@ -2437,7 +2442,15 @@ class CommanderClient:
                 raise map_status_to_error(exc.response.status_code, body) from exc
             except (httpx.ConnectError, httpx.ReadTimeout) as exc:
                 last_exception = exc
-                if attempt < self._max_retries - 1:
+                # A ConnectError means nothing reached the server, so any method
+                # is safe to retry. A ReadTimeout means the server may already
+                # have applied the request: retrying a non-idempotent method
+                # there can duplicate the side effect (the server mints a new id
+                # per POST), so only explicitly idempotent methods are retried.
+                retryable = isinstance(exc, httpx.ConnectError) or (
+                    method.upper() in _IDEMPOTENT_METHODS
+                )
+                if retryable and attempt < self._max_retries - 1:
                     # Exponential backoff with full jitter.
                     delay = (2**attempt) * (0.5 + random.random())
                     await asyncio.sleep(delay)

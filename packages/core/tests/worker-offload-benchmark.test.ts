@@ -17,6 +17,16 @@ const baselineResults: Record<string, unknown> = {
   sections: {} as Record<string, unknown>,
 };
 
+/**
+ * `BENCHMARK.md` documents `.commander_benchmarks/worker-baseline-*.json` as a
+ * CI-produced artifact, but nothing ever wrote into `sections` — the file was
+ * persisted with an empty object, so the documented baseline carried no
+ * measurements. Record every section so the artifact is actually usable.
+ */
+function recordBaseline(section: string, data: unknown): void {
+  baselineResults.sections[section] = data;
+}
+
 function makeTurns(n: number): LLMMessage[] {
   const msgs: LLMMessage[] = [{ role: 'system', content: 'You are a helpful assistant.' }];
   for (let i = 0; i < n; i++) {
@@ -93,6 +103,14 @@ describe('6b. Worker-Offloaded Compaction — Event Loop Lag Reduction', () => {
       console.log(`  Sync P95 lag: ${p95Sync.toFixed(1)}ms`);
       console.log(`  Worker P95 lag: ${p95Worker.toFixed(1)}ms`);
 
+      recordBaseline('6b.workerOffload.lagReduction', {
+        lagSamples: LAG_SAMPLES,
+        syncP95Ms: p95Sync,
+        workerP95Ms: p95Worker,
+        lagReadingsSync,
+        lagReadingsWorker,
+      });
+
       // The worker path has messaging overhead; the invariant is that it keeps
       // the event loop responsive (under a reasonable ceiling), not that it
       // beats the sync path on tiny micro-benchmarks.
@@ -123,6 +141,12 @@ describe('6b. Worker-Offloaded Compaction — Event Loop Lag Reduction', () => {
       console.log(
         `  ${CONCURRENT} concurrent ops: ${duration.toFixed(0)}ms total, event loop lag: ${lag.toFixed(1)}ms`,
       );
+
+      recordBaseline('6b.workerOffload.concurrentStarvation', {
+        concurrent: CONCURRENT,
+        totalMs: duration,
+        lagMs: lag,
+      });
 
       assert.ok(
         lag < 200,
@@ -157,6 +181,14 @@ describe('6b. Worker-Offloaded Compaction — Event Loop Lag Reduction', () => {
         `  Pool stats: size=${stats.poolSize}, available=${stats.availableWorkers}, executed=${stats.totalExecuted}`,
       );
       console.log(`  Metrics: queue_depth=${queueGauge}, executed_total=${executedCounter}`);
+
+      recordBaseline('6b.workerOffload.poolMetrics', {
+        poolSize: stats.poolSize,
+        availableWorkers: stats.availableWorkers,
+        totalExecuted: stats.totalExecuted,
+        queueDepth: queueGauge,
+        executedTotal: executedCounter,
+      });
 
       assert.ok(executedCounter > 0, 'Should have executed at least 1 task');
     } finally {

@@ -97,6 +97,7 @@ export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   // API legacy HMAC only — not worker/adapter authority.
   COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
   COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',
+  COMMANDER_AUDIT_CHAIN_KEY: 'ci-cell-smoke-audit-chain-key-32chars!!',
   COMMANDER_WORKER_AUTH_TOKEN: 'ci-cell-smoke-worker-token',
   COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
   COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,

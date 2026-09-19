@@ -244,7 +244,20 @@ class BudgetEnforcer {
 
   /** 更新配置（运行时可被 AnomalyObserver 调整）。 */
   updateConfig(patch: Partial<BudgetCap>): void {
-    this.config = { ...this.config, ...patch };
+    // A cap that is NaN / undefined / negative makes every `>` and `>=` cap
+    // comparison evaluate false, which silently disables that limit rather than
+    // enforcing it. Reject the invalid patch and keep the previous caps.
+    const next: BudgetCap = { ...this.config };
+    for (const [key, value] of Object.entries(patch) as [keyof BudgetCap, unknown][]) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw new Error(
+          `UnifiedCostAuthority.updateConfig: invalid cap '${key}' ${String(value)} ` +
+            '(must be a finite, non-negative number)',
+        );
+      }
+      next[key] = value;
+    }
+    this.config = next;
   }
 
   /** AnomalyObserver 反馈动态阈值调整（per-tenant）。 */
@@ -617,16 +630,18 @@ export class UnifiedCostAuthority {
       }
       // A model call without a token estimate is unmeasured. Treating it as a
       // $0 call lets an otherwise capped tenant spend without reservation, so
-      // missing, NaN, infinite, and negative estimates all fail closed.
+      // missing, zero, NaN, infinite, and negative estimates all fail closed.
+      // A real model call cannot consume zero tokens, so `0` is an estimation
+      // failure, not a measured free call.
       if (ctx.estimatedTokens === undefined) {
         throw new Error(
           'UnifiedCostAuthority.preCall: estimatedTokens is required for model calls',
         );
       }
-      if (!Number.isFinite(ctx.estimatedTokens) || ctx.estimatedTokens < 0) {
+      if (!Number.isFinite(ctx.estimatedTokens) || ctx.estimatedTokens <= 0) {
         throw new Error(
           `UnifiedCostAuthority.preCall: invalid estimatedTokens ${String(ctx.estimatedTokens)} ` +
-            '(must be a finite, non-negative number)',
+            '(must be a finite, positive number)',
         );
       }
       estimatedCostUsd = this.predictor.predictLLMCost(

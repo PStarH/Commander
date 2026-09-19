@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import * as path from 'node:path';
+import { TenantIsolationError } from '../runtime/tenantContext';
 import type { Tool, ToolDefinition } from '../runtime/types';
 
 // Git subcommands that do NOT mutate repository state in dangerous ways.
@@ -77,19 +77,19 @@ export class GitTool implements Tool {
 
     if (!command) return 'Error: command is required';
 
-    // Enforce tenant workspace boundary on the working directory.
+    // Enforce tenant workspace boundary on the working directory. `safePath` is
+    // the same tenant-aware authority the other file tools use, and it resolves
+    // symlinks so an in-workspace link cannot lead git outside the workspace.
     let resolvedWorkdir: string;
     try {
-      // safePath is async; gitTool uses execFileSync (sync). We resolve via
-      // the synchronous path resolution + isWithinRoot check to avoid mixing
-      // async/sync. getSafeRoot() is tenant-aware.
-      const { getSafeRoot, isWithinRoot } = await import('./fileSystemTool');
-      resolvedWorkdir = path.resolve(getSafeRoot(), workdir);
-      if (!isWithinRoot(resolvedWorkdir, getSafeRoot())) {
-        return `Error: Access denied: workdir "${workdir}" is outside workspace`;
-      }
-    } catch {
-      resolvedWorkdir = path.resolve(process.cwd(), workdir);
+      const { safePath } = await import('./fileSystemTool');
+      resolvedWorkdir = await safePath(workdir);
+    } catch (err) {
+      // Fail closed. Substituting `process.cwd()` here let a tenant-isolation
+      // error (or an escaping workdir) retarget git at the host checkout using
+      // the model-supplied `workdir`.
+      if (err instanceof TenantIsolationError) throw err;
+      return `Error: Access denied: workdir "${workdir}" is outside workspace`;
     }
 
     // Strip shell pipes — agents sometimes write `git log | head -20` but we run

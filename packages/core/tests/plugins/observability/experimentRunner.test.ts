@@ -14,18 +14,16 @@
  *  - dataset_not_found error for unknown dataset
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import { DatasetStore } from '../../../src/observability/dataset';
+import { DatasetStore, type DatasetCase } from '../../../src/observability/dataset';
 import {
   EvalScorer,
   type JudgeProvider,
-  type LLMRequest,
-  type LLMResponse,
 } from '../../../src/plugins/builtin/observability/evalScorer';
+import type { LLMRequest, LLMResponse } from '../../../src/runtime/types';
 import {
   ExperimentRunner,
   type CaseExecutionResult,
   type CaseExecutor,
-  type DatasetCase,
 } from '../../../src/plugins/builtin/observability/experimentRunner';
 
 function mockJudge(score: number, reasoning = 'ok'): JudgeProvider {
@@ -34,6 +32,7 @@ function mockJudge(score: number, reasoning = 'ok'): JudgeProvider {
     async call(): Promise<LLMResponse> {
       return {
         content: JSON.stringify({ score, reasoning }),
+        model: 'mock',
         usage: { promptTokens: 5, completionTokens: 5, totalTokens: 10 },
         finishReason: 'stop',
       };

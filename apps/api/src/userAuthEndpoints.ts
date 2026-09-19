@@ -15,22 +15,22 @@ import {
   deleteUser,
   countAdmins,
   hasRole,
+  LAST_ADMIN_ERROR,
   type UserRole,
   type SafeUser,
 } from './userStore';
 import {
   signAccessToken,
   signRefreshToken,
+  mintRefreshToken,
   verifyToken,
   type AuthUser,
   resolveAccessTenantId,
 } from './jwtMiddleware';
-import {
-  consume as consumeRefreshJti,
-  revoke as revokeRefreshJti,
-  revokeAllForUser,
-} from './refreshTokenStore';
+import { revoke as revokeRefreshJti, rotate as rotateRefreshJti } from './refreshTokenStore';
 import { getAuthFailureStore } from './authFailureStore';
+import { redactAuthErrorDetail } from './authDb';
+import { resolvePositiveSafeInteger } from './startupConfig';
 
 /**
  * AUTH-6: a real bcrypt hash used only to spend comparable CPU on the
@@ -39,8 +39,8 @@ import { getAuthFailureStore } from './authFailureStore';
  * matches the real comparison; it is never a valid credential.
  */
 const DUMMY_PASSWORD_HASH = hashSync(`invalid:${process.pid}:no-such-user`, 10);
-const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
-const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10);
+const MAX_AUTH_FAILURES = resolvePositiveSafeInteger(process.env, 'AUTH_MAX_FAILURES', 5);
+const LOCKOUT_DURATION_MS = resolvePositiveSafeInteger(process.env, 'AUTH_LOCKOUT_MS', 300000);
 const AUTH_FAILURE_WINDOW_MS = 60_000;
 
 // ── Validation schemas ──────────────────────────────────────────────────────
@@ -143,7 +143,10 @@ interface AuthResponseBody {
   user: SafeUser;
 }
 
-async function buildAuthResponse(user: AuthUser): Promise<AuthResponseBody> {
+async function buildAuthResponse(
+  user: AuthUser,
+  rotatedRefreshToken?: string,
+): Promise<AuthResponseBody> {
   // Look up the fresh user record so lastLoginAt / createdAt are current.
   const full = await findUserById(user.id);
   const safeUser: SafeUser = full
@@ -158,7 +161,9 @@ async function buildAuthResponse(user: AuthUser): Promise<AuthResponseBody> {
       };
   return {
     token: signAccessToken(user),
-    refreshToken: await signRefreshToken(user),
+    // AUTH-03: rotation mints+persists its new refresh token inside the
+    // version-fenced transaction, so it is passed in rather than re-persisted.
+    refreshToken: rotatedRefreshToken ?? (await signRefreshToken(user)),
     user: safeUser,
   };
 }
@@ -305,18 +310,62 @@ export function createUserAuthRouter(): Router {
     }
 
     const decoded = verifyToken(parsed.data.refreshToken);
-    if (!decoded || decoded.type !== 'refresh' || !decoded.jti) {
+    if (
+      !decoded ||
+      decoded.type !== 'refresh' ||
+      !decoded.jti ||
+      !Number.isSafeInteger(decoded.auth_version)
+    ) {
       res.status(401).json({ error: 'Invalid or expired refresh token' });
       return;
     }
+    const expectedAuthVersion = Number(decoded.auth_version);
 
-    // Atomic consume: first concurrent refresh wins; replay / race → 401.
-    if (!(await consumeRefreshJti(decoded.jti))) {
+    // AUTH-03: rotate inside one version-fenced transaction — lock the user
+    // row, verify the refresh token's `auth_version` against the authoritative
+    // value, consume the old jti and register the new one. A reset (or role
+    // change) that lands between consume and mint can no longer leave a valid
+    // new refresh behind: it either serializes before us (and we reject on the
+    // stale version) or after us (and revokes the jti we just registered).
+    const minted = mintRefreshToken({
+      id: decoded.id,
+      username: decoded.username,
+      role: decoded.role,
+      authVersion: expectedAuthVersion,
+      tenantId: decoded.tenant_id ?? resolveAccessTenantId(),
+    });
+    const rotation = await rotateRefreshJti({
+      userId: decoded.id,
+      currentJti: decoded.jti,
+      nextJti: minted.jti,
+      nextExp: minted.exp,
+      expectedAuthVersion,
+    }).catch((error: unknown) => {
+      // AUTH-03/07: an unavailable rotation authority must fail closed without
+      // issuing a token, and must not echo the driver detail (it can embed the
+      // DSN). The request id lets operators correlate with the internal log.
+      process.stderr.write(
+        `[Auth] Refresh rotation authority unavailable requestId=${
+          req.requestId ?? 'none'
+        } detail=${redactAuthErrorDetail(error)}\n`,
+      );
+      return { status: 'rejected', reason: 'authority_unavailable' } as const;
+    });
+    if (rotation.status !== 'rotated') {
+      if (rotation.reason === 'authority_unavailable') {
+        res.status(503).json({
+          error: 'Authentication authority unavailable. Retry later.',
+          code: 'AUTH_AUTHORITY_UNAVAILABLE',
+          requestId: req.requestId,
+        });
+        return;
+      }
       res.status(401).json({ error: 'Refresh token revoked or unknown' });
       return;
     }
 
-    // Ensure the user still exists (account may have been removed).
+    // Read the now-authoritative user record; the version was validated inside
+    // the transaction, so `user.authVersion` matches the fenced value.
     const user = await findUserById(decoded.id);
     if (!user) {
       res.status(401).json({ error: 'User no longer exists' });
@@ -330,7 +379,7 @@ export function createUserAuthRouter(): Router {
       authVersion: user.authVersion,
       tenantId: decoded.tenant_id ?? resolveAccessTenantId(),
     };
-    res.json(await buildAuthResponse(authUser));
+    res.json(await buildAuthResponse(authUser, minted.token));
   });
 
   // ── POST /api/auth/logout ────────────────────────────────────────────────
@@ -410,11 +459,17 @@ export function createUserAuthRouter(): Router {
       }
 
       const updated = await updateUserRole(id, parsed.data.role as UserRole);
-      if (!updated) {
+      if (updated.outcome === 'not_found') {
         res.status(404).json({ error: 'User not found' });
         return;
       }
-      res.json({ user: updated });
+      if (updated.outcome === 'last_admin') {
+        // AUTH-04: covers the last `super_admin`, which the old PATCH-only
+        // check (targetUser.role === 'admin') let through.
+        res.status(400).json({ error: LAST_ADMIN_ERROR });
+        return;
+      }
+      res.json({ user: updated.user });
     },
   );
 
@@ -487,14 +542,19 @@ export function createUserAuthRouter(): Router {
         return;
       }
 
-      // Prevent removing admin role from the last admin.
+      // AUTH-04: immediate, precise 400 for the last-admin case. `hasRole(…,
+      // 'admin')` covers super_admin as well as admin — the old check only
+      // matched `targetUser.role === 'admin'`, so the only super_admin could be
+      // demoted. The repository re-checks this authoritatively inside the
+      // membership-locked transaction, so a concurrent delete/demotion cannot
+      // slip past (see the LAST_ADMIN_ERROR mapping below).
       if (
         parsed.data.role !== undefined &&
         !hasRole(parsed.data.role, 'admin') &&
-        targetUser.role === 'admin' &&
+        hasRole(targetUser.role, 'admin') &&
         (await countAdmins()) <= 1
       ) {
-        res.status(400).json({ error: 'Cannot demote the last admin account' });
+        res.status(400).json({ error: LAST_ADMIN_ERROR });
         return;
       }
 
@@ -509,7 +569,7 @@ export function createUserAuthRouter(): Router {
 
       const updated = await updateUser(id, parsed.data);
       if ('error' in updated) {
-        res.status(409).json({ error: updated.error });
+        res.status(updated.error === LAST_ADMIN_ERROR ? 400 : 409).json({ error: updated.error });
         return;
       }
       res.json({ user: updated });
@@ -576,12 +636,14 @@ export function createUserAuthRouter(): Router {
         res.status(403).json({ error: 'You cannot modify a user above your own level' });
         return;
       }
+      // AUTH-03: the version bump and the refresh-token revocation happen in
+      // one transaction (see PostgresUserRepository.resetUserPassword), so a
+      // rotation cannot slip a new jti past a separate revoke call.
       const updated = await resetUserPassword(id, parsed.data.newPassword);
       if (!updated) {
         res.status(404).json({ error: 'User not found' });
         return;
       }
-      await revokeAllForUser(id);
       res.json({ user: updated });
     },
   );

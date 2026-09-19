@@ -42,6 +42,7 @@ Env (optional — generated when unset):
   POSTGRES_PASSWORD, COMMANDER_API_KEY, COMMANDER_MASTER_KEY, JWT_SECRET,
   COMMANDER_CAPABILITY_TOKEN_KEY (API HMAC only — not worker/adapter authority),
   COMMANDER_INTEGRITY_KEY,
+  COMMANDER_AUDIT_CHAIN_KEY,
   COMMANDER_WORKER_AUTH_TOKEN,
   COMMANDER_CAPABILITY_PRIVATE_KEY_PEM / COMMANDER_CAPABILITY_KEY_ID /
   COMMANDER_CAPABILITY_JWKS_JSON (worker/adapter Ed25519; openssl/node when unset)
@@ -64,6 +65,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
   const jwtSecret = process.env.JWT_SECRET ?? opensslHex(32);
   const capabilityKey = process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? opensslHex(32);
   const integrityKey = process.env.COMMANDER_INTEGRITY_KEY ?? opensslHex(32);
+  const auditChainKey = process.env.COMMANDER_AUDIT_CHAIN_KEY ?? opensslHex(32);
   const workerToken = process.env.COMMANDER_WORKER_AUTH_TOKEN ?? opensslHex(32);
 
   const capability =
@@ -93,6 +95,7 @@ export function buildCellUpAssertEnv(): Record<string, string> {
     JWT_SECRET: jwtSecret,
     COMMANDER_CAPABILITY_TOKEN_KEY: capabilityKey,
     COMMANDER_INTEGRITY_KEY: integrityKey,
+    COMMANDER_AUDIT_CHAIN_KEY: auditChainKey,
     COMMANDER_WORKER_AUTH_TOKEN: workerToken,
     COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
     COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,

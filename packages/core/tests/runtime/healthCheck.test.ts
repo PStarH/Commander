@@ -4,7 +4,7 @@ import { HealthCollector, type HealthSources } from '../../src/runtime/healthChe
 describe('HealthCollector', () => {
   it('returns degraded when DLQ exceeds threshold', async () => {
     const sources: HealthSources = {
-      getDLQInfo: () => ({
+      getDLQInfo: async () => ({
         totalEntries: 150,
         byCategory: [{ category: 'llm', count: 150 }],
       }),
@@ -47,7 +47,7 @@ describe('HealthCollector', () => {
   it('marks wired checks healthy when their sources are normal', async () => {
     const sources: HealthSources = {
       getCircuitBreakerInfo: () => ({ open: [], total: 3 }),
-      getDLQInfo: () => ({ totalEntries: 0, byCategory: [] }),
+      getDLQInfo: async () => ({ totalEntries: 0, byCategory: [] }),
       getCompensationInfo: () => ({ pending: 0, compensated: 0 }),
       getEventBusInfo: () => ({ activeTopics: 1, subscriberCount: 2 }),
       getProviderInfo: () => ({ available: 3, total: 3 }),

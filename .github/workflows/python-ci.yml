@@ -52,5 +52,17 @@ jobs:
         # project has never scoped.
         run: pyright -p .
 
+      # The Node workspace has a dependency-vulnerability gate in CI; the
+      # published Python SDK had none, so an advisory in httpx or pydantic would
+      # have shipped silently. `pip-audit .` resolves the *declared* dependency
+      # set from pyproject.toml rather than auditing the runner's own tooling
+      # (auditing the environment instead reports advisories against `pip`
+      # itself, which is not this project's dependency). Verified locally:
+      # `pip-audit .` → "No known vulnerabilities found".
+      - name: Audit dependencies with pip-audit
+        run: |
+          pip install --quiet pip-audit
+          python -m pip_audit . --progress-spinner off
+
       - name: Test with pytest
         run: python -m pytest tests/ -v --tb=short -q

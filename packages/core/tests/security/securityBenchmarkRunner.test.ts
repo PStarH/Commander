@@ -349,8 +349,9 @@ describe('InjecAgent benchmark integration', () => {
   });
 
   it('blocks InjecAgent physical access grant injection', async () => {
-    runner.updateConfig({ defender: createCommanderDefender() });
-    const result = await runner.config.defender!({
+    const defender = createCommanderDefender();
+    runner.updateConfig({ defender });
+    const result = await defender({
       id: 'IA-PHYSICAL-001',
       benchmark: 'injecagent',
       category: 'direct_harm',
@@ -368,8 +369,9 @@ describe('InjecAgent benchmark integration', () => {
   });
 
   it('blocks InjecAgent financial transfer injection', async () => {
-    runner.updateConfig({ defender: createCommanderDefender() });
-    const result = await runner.config.defender!({
+    const defender = createCommanderDefender();
+    runner.updateConfig({ defender });
+    const result = await defender({
       id: 'IA-FIN-001',
       benchmark: 'injecagent',
       category: 'direct_harm',
@@ -387,8 +389,9 @@ describe('InjecAgent benchmark integration', () => {
   });
 
   it('blocks InjecAgent data deletion injection', async () => {
-    runner.updateConfig({ defender: createCommanderDefender() });
-    const result = await runner.config.defender!({
+    const defender = createCommanderDefender();
+    runner.updateConfig({ defender });
+    const result = await defender({
       id: 'IA-DATA-001',
       benchmark: 'injecagent',
       category: 'data_exfiltration',

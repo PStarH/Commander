@@ -82,7 +82,18 @@ test('password reset immediately invalidates existing access tokens', async () =
 
 test('role downgrade immediately invalidates existing privileged access tokens', async () => {
   const { token, user } = await issueToken('role-downgrade-user', 'admin');
-  assert.ok(await updateUserRole(user.id, 'viewer'));
+  // AUTH-04: the repository refuses to demote the *last* admin-level account,
+  // so keep a second admin-level account for the downgrade to be permitted.
+  const keeper = await createUser({
+    username: 'role-downgrade-keeper',
+    email: 'role-downgrade-keeper@example.test',
+    password: 'test-password',
+    role: 'super_admin',
+  });
+  assert.ok(!('error' in keeper));
+  const outcome = await updateUserRole(user.id, 'viewer');
+  assert.equal(outcome.outcome, 'updated');
+  assert.equal((await findUserById(user.id))?.role, 'viewer');
   assert.equal(await protectedStatus(token), 401);
 });
 

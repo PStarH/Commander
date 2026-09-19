@@ -29,6 +29,7 @@ const API_STARTUP_SECRET_ENV = [
   'COMMANDER_API_KEY',
   'COMMANDER_CAPABILITY_TOKEN_KEY',
   'COMMANDER_INTEGRITY_KEY',
+  'COMMANDER_AUDIT_CHAIN_KEY',
   'ADMIN_PASSWORD',
 ];
 
@@ -36,7 +37,7 @@ const DUPLICATE_ENV = 'COMMANDER_ADAPTER_OPS_DATABASE_URL';
 
 type Container = {
   name?: string;
-  env?: Array<{ name?: string; valueFrom?: unknown }>;
+  env?: Array<{ name?: string; value?: unknown; valueFrom?: unknown }>;
   readinessProbe?: {
     httpGet?: { path?: string; port?: unknown };
     exec?: { command?: string[] };
@@ -244,6 +245,7 @@ describe('Helm deployment contract: API startup secrets', () => {
       'apiKeySecret',
       'capabilityTokenKeySecret',
       'integrityKeySecret',
+      'auditChainKeySecret',
       'adminPasswordSecret',
     ]) {
       assert.match(helper, new RegExp(`api\\.secrets\\.${ref}`), `${ref} must gate the guard`);
@@ -281,6 +283,7 @@ describe('Helm deployment contract: API startup secrets', () => {
               'apiKeySecret',
               'capabilityTokenKeySecret',
               'integrityKeySecret',
+              'auditChainKeySecret',
               'adminPasswordSecret',
             ][index]
           }=${name.toLowerCase()}`,
@@ -480,6 +483,113 @@ describe('Helm deployment contract: api probe and tenant-authority env coherence
     assert.ok(
       readinessProbe(demoApi, 'api')?.exec,
       'postgres readiness must use the tenant-authority proof exec probe',
+    );
+  });
+});
+
+/**
+ * AO-11: COMMANDER_ADAPTER_EGRESS_ALLOWLIST is a hostname allowlist. The
+ * adapter-ops runtime (packages/adapter-ops/src/egress.ts) throws
+ * ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED when a non-demo allowlist contains
+ * only CIDR entries — assertEgressUrlAllowed cannot adjudicate IP literals — and
+ * ADAPTER_OPS_EGRESS_ALLOWLIST_REQUIRED when it is unset. The chart must not
+ * render either unbootable configuration: CIDRs belong to
+ * networkPolicy.egress.adapterCidrs (the NetworkPolicy layer), and the allowlist
+ * must name at least one hostname.
+ */
+describe('Helm deployment contract: adapter-ops egress allowlist', () => {
+  it('never repurposes the NetworkPolicy CIDR list and ships a hostname example', () => {
+    const adapterOps = source('templates/adapter-ops-deployment.yaml');
+    assert.doesNotMatch(
+      adapterOps,
+      /value:\s*\{\{ join "," \.Values\.networkPolicy\.egress\.adapterCidrs/,
+      'networkPolicy.egress.adapterCidrs must not be rendered as COMMANDER_ADAPTER_EGRESS_ALLOWLIST',
+    );
+    assert.match(adapterOps, /ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED/);
+    assert.match(adapterOps, /ADAPTER_OPS_EGRESS_ALLOWLIST_REQUIRED/);
+
+    const values = load(readFileSync(join(chartDirectory, 'values.yaml'), 'utf8')) as {
+      adapterOps?: { egress?: { allowlist?: unknown } };
+    };
+    const allowlist = values.adapterOps?.egress?.allowlist;
+    assert.ok(
+      Array.isArray(allowlist) && allowlist.length > 0,
+      'values.yaml must ship a non-empty adapterOps.egress.allowlist example',
+    );
+    assert.ok(
+      allowlist.some(
+        (entry) => typeof entry === 'string' && entry.length > 0 && !entry.includes('/'),
+      ),
+      'the shipped example must contain a hostname, not only CIDRs',
+    );
+
+    if (!helmBin) return;
+
+    const demo = runHelm(demoArgs());
+    assert.equal(demo.status, 0, demo.stderr);
+    const env = envEntry(
+      componentManifest(demo.stdout, 'Deployment', 'adapter-ops'),
+      'adapter-ops',
+      'COMMANDER_ADAPTER_EGRESS_ALLOWLIST',
+    );
+    assert.ok(env, 'the adapter-ops container must carry a hostname allowlist');
+    assert.match(String(env.value), /api\.github\.com/);
+    assert.doesNotMatch(String(env.value), /\//, 'a CIDR must never reach the allowlist env');
+  });
+
+  it('fails the render when only CIDRs are available', () => {
+    if (!helmBin) return;
+    const cidrOnly = runHelm([
+      ...demoArgs(),
+      '--set-json',
+      'adapterOps.egress.allowlist=[]',
+      '--set',
+      'networkPolicy.egress.adapterCidrs[0]=203.0.113.0/24',
+    ]);
+    assert.notEqual(cidrOnly.status, 0, 'a CIDR-only allowlist must fail the render');
+    assert.match(cidrOnly.stderr, /ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED/);
+    assert.match(
+      cidrOnly.stderr,
+      /203\.0\.113\.0\/24/,
+      'the failure must name the CIDRs it refused',
+    );
+    assert.match(cidrOnly.stderr, /networkPolicy\.egress\.adapterCidrs/);
+  });
+
+  it('fails the render for an unset allowlist on non-demo cells', () => {
+    if (!helmBin) return;
+    const unset = runHelm([
+      'template',
+      'contract-empty-allowlist',
+      chart,
+      '--set',
+      'config.nodeEnv=development',
+      '--set',
+      'api.secrets.existingSecret=commander-api-secrets',
+      '--set',
+      'adapterOps.enabled=true',
+      '--set',
+      'worker.tenants=local',
+      '--set-json',
+      'adapterOps.egress.allowlist=[]',
+    ]);
+    assert.notEqual(unset.status, 0, 'an unset non-demo allowlist must fail the render');
+    assert.match(unset.stderr, /ADAPTER_OPS_EGRESS_ALLOWLIST_REQUIRED/);
+    assert.match(unset.stderr, /tier team/);
+  });
+
+  it('keeps tier=demo renderable with an empty allowlist', () => {
+    if (!helmBin) return;
+    const demoEmpty = runHelm([...demoArgs(), '--set-json', 'adapterOps.egress.allowlist=[]']);
+    assert.equal(demoEmpty.status, 0, demoEmpty.stderr);
+    assert.equal(
+      envEntry(
+        componentManifest(demoEmpty.stdout, 'Deployment', 'adapter-ops'),
+        'adapter-ops',
+        'COMMANDER_ADAPTER_EGRESS_ALLOWLIST',
+      ),
+      undefined,
+      'demo cells may run unset; the chart must not emit an empty allowlist env',
     );
   });
 });

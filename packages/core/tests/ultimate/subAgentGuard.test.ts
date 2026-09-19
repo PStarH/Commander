@@ -272,12 +272,7 @@ describe('SubAgentGuard — deep-wiring integration', () => {
   it('SubAgentLimitError: instanceof works for selective catch', () => {
     const g = new SubAgentGuard({ maxSteps: 1 });
     g.check(1);
-    try {
-      g.check(2);
-    } catch (err) {
-      expect(err instanceof SubAgentLimitError).toBe(true);
-      expect(err instanceof Error).toBe(true);
-    }
+    expect(() => g.check(2)).toThrow(SubAgentLimitError);
   });
 
   // ── Guard state and limits introspection ──
@@ -286,7 +281,9 @@ describe('SubAgentGuard — deep-wiring integration', () => {
     const g = new SubAgentGuard({ maxSteps: 10 });
     g.check(5);
     const state = g.getState();
-    state.steps = 999; // mutate copy
+    // `getState` returns a `Readonly<SubAgentState>` copy; mutate it through a
+    // mutable view to prove the internal state is not affected.
+    (state as SubAgentState).steps = 999;
     expect(g.getState().steps).toBe(1); // internal state unchanged
   });
 

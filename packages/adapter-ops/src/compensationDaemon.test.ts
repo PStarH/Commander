@@ -46,6 +46,12 @@ function emptyPort(
     completeCompensationWork: async () => ({ applied: true, disposition: 'COMPLETED' }),
     handoffCompensationUnknown: async () => ({ applied: true, disposition: 'HANDOFF_UNKNOWN' }),
     escalateCompensationWork: async () => ({ applied: true, disposition: 'ESCALATED' }),
+    parkCompensationUnknown: async () => {
+      throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
+    },
+    finalizeCompensation: async () => {
+      throw new Error('finalizeCompensation is not exercised by legacy-path fixtures');
+    },
   };
 }
 
@@ -140,12 +146,18 @@ describe('CompensationDaemon', () => {
     let admittedInput: Record<string, unknown> | undefined;
     const contextReads: unknown[][] = [];
     const repository = {
-      ...emptyPort(async () => [
+      ...emptyPort(async (input) => [
         {
           request,
           authorization,
           forwardResponse,
-          lease: { ...WORKER, token: 'claim-a', fencingEpoch: 4 },
+          lease: {
+            workerId: input.workerId,
+            workerGeneration: input.workerGeneration,
+            token: 'claim-a',
+            fencingEpoch: 4,
+            expiresAt: '2099-01-01T00:00:00.000Z',
+          },
           outboxMessageId: 'outbox-a',
           outboxClaimToken: 'claim-a',
         },
@@ -293,5 +305,128 @@ describe('CompensationDaemon', () => {
     assert.equal(heartbeats, 1);
     assert.equal(drains, 1);
     assert.equal(daemon.getHealth().running, false);
+  });
+
+  /**
+   * AO-03: `parkCompensationUnknown`/`handoffCompensationUnknown` means the
+   * remote outcome is undetermined. The daemon used to add `handedOff` into
+   * `health.completed`, so an unresolved compensation showed up as success on
+   * /health. It must be its own bucket.
+   */
+  it('reports a COMPLETION_UNKNOWN handoff as handedOff, never as completed', async () => {
+    const tenantId = 'tenant-handoff';
+    const forwardResponse = {};
+    const destination = 'https://api.example/repos/o/r';
+    const compensationEffectType = 'compensate.github.pull_request.create';
+    const adapterVersion = 'v1';
+    const compensationPatch = {};
+    const authorization = {
+      id: 'auth-handoff',
+      tenantId,
+      originalRunId: 'run-original',
+      originalEffectId: 'effect-original',
+      compensationEffectType,
+      adapterVersion,
+      compensationPatch,
+      forwardReceiptHash: canonicalCompensationHash(forwardResponse),
+      policyDecisionId: 'pd-1',
+      policySnapshotId: 'ps-1',
+      decision: 'allow' as const,
+      actionDigest: canonicalCompensationHash({
+        type: compensationEffectType,
+        originalEffectId: 'effect-original',
+        adapterVersion,
+        destination,
+        forwardResponse,
+        compensationPatch,
+      }),
+      expiresAt: new Date(Date.now() + 600_000).toISOString(),
+      approvalBinding: null,
+    };
+    const request = {
+      id: 'request-handoff',
+      tenantId,
+      originalRunId: 'run-original',
+      originalEffectId: 'effect-original',
+      compensationRunId: 'run-compensation',
+      compensationStepId: 'step-compensation',
+      adapterVersion,
+      compensationEffectType,
+      destination,
+      compensationPatch,
+      forwardReceiptHash: authorization.forwardReceiptHash,
+      authorizationId: authorization.id,
+      reconcilePolicy: {},
+      state: 'CLAIMED' as const,
+      compensationEffectId: 'effect-compensation',
+      claimToken: 'request-claim',
+    };
+    const workerId = 'compensation:pod-handoff';
+    const work = {
+      authorization,
+      request,
+      forwardResponse,
+      outboxMessageId: 'message-1',
+      outboxClaimToken: 'outbox-claim',
+      lease: { workerId, workerGeneration: 7, token: 'lease-token', fencingEpoch: 0 },
+    };
+    const dispositions: string[] = [];
+    const outbox = {
+      async claimCompensationWork() {
+        return [work];
+      },
+      async completeCompensationWork() {
+        dispositions.push('completeCompensationWork');
+        return { applied: true as const, disposition: 'COMPLETED' as const };
+      },
+      async handoffCompensationUnknown() {
+        dispositions.push('handoffCompensationUnknown');
+        return { applied: true as const, disposition: 'HANDOFF_UNKNOWN' as const };
+      },
+      async escalateCompensationWork() {
+        dispositions.push('escalateCompensationWork');
+        return { applied: true as const, disposition: 'ESCALATED' as const };
+      },
+      async parkCompensationUnknown() {
+        dispositions.push('parkCompensationUnknown');
+        return { applied: true as const, disposition: 'COMPLETION_UNKNOWN' as const };
+      },
+      async finalizeCompensation() {
+        dispositions.push('finalizeCompensation');
+        return { applied: true as const, disposition: 'COMPLETED' as const };
+      },
+    };
+    const daemon = new CompensationDaemon({
+      repository: outbox as never,
+      broker: {
+        admit: async () => ({
+          admitted: true,
+          effectId: 'effect-compensation',
+          replayed: false,
+        }),
+        executeAdmitted: async () => {
+          throw Object.assign(new Error('completion is uncertain'), {
+            code: 'COMPLETION_UNKNOWN',
+          });
+        },
+      } as never,
+      registry: { resolve: () => ({ descriptor: { adapterVersion } }) } as never,
+      tokenProvider: async () => 'token',
+      pollIntervalMs: 60_000,
+      workerId,
+      workerGeneration: 7,
+      claimSecret: 'claim-secret',
+    });
+
+    const stats = await daemon.tick();
+    assert.deepEqual(dispositions, ['parkCompensationUnknown']);
+    assert.equal(stats.consumed, 1);
+    assert.equal(stats.succeeded, 0);
+    assert.equal(stats.handedOff, 1);
+
+    const health = daemon.getHealth();
+    assert.equal(health.claimed, 1);
+    assert.equal(health.completed, 0, 'an undetermined handoff must not count as completed');
+    assert.equal(health.handedOff, 1, 'the undetermined handoff needs its own bucket');
   });
 });

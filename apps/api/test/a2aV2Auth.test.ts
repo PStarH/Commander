@@ -112,3 +112,56 @@ describe('A2A v2 bearer auth (hard rule)', () => {
     }
   });
 });
+
+describe('A2A v2 task lifecycle', () => {
+  it('keeps a CANCELED task CANCELED after the scheduled completion fires', async () => {
+    const server = await startV2(AUTH_TOKEN);
+    try {
+      const headers = {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${AUTH_TOKEN}`,
+      };
+      const rpc = async (
+        id: number,
+        method: string,
+        params: Record<string, unknown>,
+      ): Promise<{
+        result?: { task?: { id: string; status: { state: string } } };
+        error?: { code: number };
+      }> => {
+        const res = await fetch(`${server.baseUrl}/a2a/v2/`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+        });
+        return (await res.json()) as {
+          result?: { task?: { id: string; status: { state: string } } };
+          error?: { code: number };
+        };
+      };
+
+      // Warm the connection so the cancel below reliably lands inside the 50 ms
+      // window in which `message/send` schedules its COMPLETED transition.
+      await rpc(0, 'tasks/list', {});
+
+      const sent = await rpc(1, 'message/send', {
+        message: { role: 'user', parts: [{ type: 'text', text: 'hi' }] },
+      });
+      const taskId = sent.result?.task?.id;
+      assert.ok(taskId, 'expected message/send to create a task');
+
+      const canceled = await rpc(2, 'tasks/cancel', { id: taskId });
+      assert.equal(canceled.error, undefined);
+      assert.equal(canceled.result?.task?.status.state, 'CANCELED');
+
+      // The endpoint schedules COMPLETED ~50 ms after message/send; wait past it.
+      await new Promise((resolve) => setTimeout(resolve, 150));
+
+      const fetched = await rpc(3, 'tasks/get', { id: taskId });
+      assert.equal(fetched.error, undefined);
+      assert.equal(fetched.result?.task?.status.state, 'CANCELED');
+    } finally {
+      await server.close();
+    }
+  });
+});

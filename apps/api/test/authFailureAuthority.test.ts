@@ -71,17 +71,23 @@ describe('authentication-failure authority', () => {
     assert.deepEqual(client.calls[0]!.values, ['203.0.113.9', 2000, 60_000, 3, 60_000]);
   });
 
-  test('cleans up expired unlocked failures with parameterized PostgreSQL SQL', async () => {
+  test('AUTH-06: cleanup reclaims expired lockouts and keeps live ones', async () => {
     const client = new RecordingClient();
     const store = new PostgresAuthFailureStore(recordingPool(client));
 
-    await store.cleanup(120_000, 60_000);
+    const reclaimed = await store.cleanup(120_000, 60_000);
 
-    assert.deepEqual(client.calls, [
-      {
-        sql: 'DELETE FROM commander_auth_failures WHERE locked_until IS NULL AND last_failure_at < to_timestamp(($1 - $2) / 1000.0)',
-        values: [120_000, 60_000],
-      },
-    ]);
+    // The pre-fix predicate required `locked_until IS NULL`, so a row whose
+    // lockout had already expired was never reclaimed (unbounded growth). The
+    // fix keeps a still-valid lockout (`locked_until > now`) and reclaims
+    // everything else whose window has passed.
+    assert.equal(client.calls.length, 1);
+    const sql = client.calls[0]!.sql;
+    assert.match(sql, /^DELETE FROM commander_auth_failures/);
+    assert.match(sql, /\(locked_until IS NULL OR locked_until <= to_timestamp\(\$1 \/ 1000\.0\)\)/);
+    assert.match(sql, /last_failure_at < to_timestamp\(\(\$1 - \$2\) \/ 1000\.0\)/);
+    assert.match(sql, /RETURNING failure_key$/);
+    assert.deepEqual(client.calls[0]!.values, [120_000, 60_000]);
+    assert.equal(typeof reclaimed, 'number');
   });
 });

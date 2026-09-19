@@ -9,6 +9,17 @@ const MAX_CHILD_OUTPUT_BYTES = 16 * 1024;
 const TOTAL_SUITES = 13;
 const PACKAGE_NAME = 'commander-shadow-plane';
 
+/**
+ * Repository root, derived from this module's own URL.
+ *
+ * The evidence file below must land in the same place no matter which directory
+ * the gate was invoked from. A bare relative path (`writeFile('…')`) resolves
+ * against `process.cwd()`, so running the gate from a workspace package — or
+ * from any other subdirectory — would scatter evidence files into the source
+ * tree instead of the repository root the CI upload step expects.
+ */
+const REPO_ROOT = fileURLToPath(new URL('../', import.meta.url));
+
 export const SHADOW_PHASE_A_DATABASE_PREREQUISITE_CODE = 'COMMANDER_SHADOW_PG_ADMIN_URL_REQUIRED';
 
 export interface ShadowPhaseACommand {
@@ -312,7 +323,13 @@ async function main(): Promise<void> {
     `shadow_phase_a_gate status=${result.exitCode === 0 ? 'passed' : 'failed'} code=${result.code} source_revision=${result.sourceRevision} suites_passed=${result.passed} suites_total=${result.total}\n`,
   );
   if (process.env.GITHUB_ACTIONS === 'true') {
-    await writeFile('shadow-phase-a-evidence.json', `${JSON.stringify(result)}\n`, { mode: 0o600 });
+    await writeFile(
+      join(REPO_ROOT, 'shadow-phase-a-evidence.json'),
+      `${JSON.stringify(result)}\n`,
+      {
+        mode: 0o600,
+      },
+    );
   }
   process.exitCode = result.exitCode;
 }

@@ -235,13 +235,13 @@ describe('Provider Performance Optimizations', () => {
           promptCacheKey: 'my-cache-key-123',
         },
       });
-      const body = buildOpenAIBody(req, 'test-model');
+      const body = buildOpenAIBody(req, 'test-model', 'openai');
       assert.strictEqual(body.prompt_cache_key, 'my-cache-key-123');
     });
 
     it('does not include prompt_cache_key when cacheConfig is absent', () => {
       const req = makeRequest();
-      const body = buildOpenAIBody(req, 'test-model');
+      const body = buildOpenAIBody(req, 'test-model', 'openai');
       assert.strictEqual(body.prompt_cache_key, undefined);
     });
 
@@ -254,7 +254,7 @@ describe('Provider Performance Optimizations', () => {
           promptCacheKey: '',
         },
       });
-      const body = buildOpenAIBody(req, 'test-model');
+      const body = buildOpenAIBody(req, 'test-model', 'openai');
       assert.strictEqual(body.prompt_cache_key, undefined);
     });
   });
@@ -326,7 +326,7 @@ describe('Provider Performance Optimizations', () => {
       const req = makeRequest({
         reasoningConfig: { enabled: true, effort: 'high' },
       });
-      const body = buildOpenAIBody(req, 'test-model');
+      const body = buildOpenAIBody(req, 'test-model', 'openai');
       assert.strictEqual(body.reasoning_effort, 'high');
     });
 
@@ -334,14 +334,14 @@ describe('Provider Performance Optimizations', () => {
       const req = makeRequest({
         reasoningConfig: { enabled: true, effort: 'medium', budget: 2048 },
       });
-      const body = buildOpenAIBody(req, 'test-model');
+      const body = buildOpenAIBody(req, 'test-model', 'openai');
       assert.strictEqual(body.reasoning_effort, 'medium');
       assert.strictEqual(body.max_thinking_tokens, 2048);
     });
 
     it('does not include reasoning fields when reasoningConfig is absent', () => {
       const req = makeRequest();
-      const body = buildOpenAIBody(req, 'test-model');
+      const body = buildOpenAIBody(req, 'test-model', 'openai');
       assert.strictEqual(body.reasoning_effort, undefined);
       assert.strictEqual(body.max_thinking_tokens, undefined);
     });
@@ -350,7 +350,7 @@ describe('Provider Performance Optimizations', () => {
       const req = makeRequest({
         reasoningConfig: { enabled: true, effort: 'none' },
       });
-      const body = buildOpenAIBody(req, 'test-model');
+      const body = buildOpenAIBody(req, 'test-model', 'openai');
       assert.strictEqual(body.reasoning_effort, 'none');
     });
 

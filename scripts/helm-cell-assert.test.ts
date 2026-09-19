@@ -303,6 +303,28 @@ spec:
     assert.throws(() => assertHelmCellTopology(docs, 'demo'), /0\.0\.0\.0\/0/);
   });
 
+  it('rejects 0.0.0.0/0 even when no default-deny marker is rendered', () => {
+    // Regression: H9 was gated on the rendered text containing the literal
+    // `default-deny`, so a chart that stopped rendering that marker silently
+    // skipped the egress-masquerade check entirely.
+    const withoutMarker = DEMO_SNIPPET.replace(/cell-default-deny/g, 'cell-egress-open');
+    assert.doesNotMatch(withoutMarker, /default-deny/);
+    const bad = `${withoutMarker}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: cell-egress-permissive
+spec:
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+`;
+    const docs = loadYamlDocuments(bad);
+    assert.throws(() => assertHelmCellTopology(docs, 'demo'), /0\.0\.0\.0\/0/);
+  });
+
   it('extracts kernel database secret keys', () => {
     assert.equal(extractKernelDatabaseSecretKey(dsnEnv('app-url')), 'app-url');
     assert.equal(extractKernelDatabaseSecretKey(dsnEnv('owner-url')), 'owner-url');

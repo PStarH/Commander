@@ -78,7 +78,7 @@ bash scripts/sign-off.sh \
   --commit-sha=$CAPTURED_SHA
 
 # Step 3: confirm d26 gate turns GREEN:
-npx tsx scripts/verify-rotation-signoff.ts --json
+pnpm exec tsx scripts/verify-rotation-signoff.ts --json
 ```
 
 ## Verifier invariants

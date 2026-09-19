@@ -246,13 +246,10 @@ export class EventSourcingEngine implements IEventSourcingEngine {
   async append(event: Omit<IEvent, 'id' | 'timestamp' | 'previousHash'>): Promise<IEvent> {
     const writeStart = Date.now();
 
-    // Result holder — populated inside the lock callback, returned after.
-    let resultEvent: IEvent | null = null;
-
     // Chain the write to ensure ordering. All chain-sensitive computation
     // (prevHash snapshot, id generation, hash computation) happens inside
     // the lock to prevent concurrent appends from corrupting the chain.
-    this.writeLock = this.writeLock.then(async () => {
+    const writePromise = this.writeLock.then(async (): Promise<IEvent> => {
       const prevHash = this.lastHash;
       const timestamp = Date.now();
       const id = crypto.randomUUID();
@@ -290,22 +287,27 @@ export class EventSourcingEngine implements IEventSourcingEngine {
         storedEvent._ts = _ts;
       }
 
-      // StateContract scope: WAL write is the side effect; if it fails we
-      // roll back the in-memory event chain so memory and disk stay consistent.
+      // StateContract scope: the durable WAL append is the side effect. Memory
+      // state is published by commit() only AFTER that append succeeds, so a
+      // rejected write can never publish a phantom event nor evict a hot-window
+      // head (pushHot.shift() is not reversible by restoring the array length).
       const scopeResult = await StateContract.useScope(
         () => {
           const eventsBefore = this.events.length;
+          const headBefore = eventsBefore > 0 ? this.events[0] : undefined;
           const totalBefore = this.totalEventCount;
           const lastHashBefore = this.lastHash;
-          this.pushHot(storedEvent);
-          this.totalEventCount++;
-          this.lastHash = hash;
           return {
-            state: { eventsBefore, totalBefore, lastHashBefore },
+            state: null,
             commit: () => {
-              /* memory state is already updated */
+              this.pushHot(storedEvent);
+              this.totalEventCount++;
+              this.lastHash = hash;
             },
             rollback: () => {
+              if (headBefore !== undefined && this.events[0] !== headBefore) {
+                this.events.unshift(headBefore);
+              }
               this.events.length = eventsBefore;
               this.totalEventCount = totalBefore;
               this.lastHash = lastHashBefore;
@@ -327,12 +329,23 @@ export class EventSourcingEngine implements IEventSourcingEngine {
         getGlobalLogger().error('EventSourcingEngine', 'WAL append rolled back', err, {
           eventId: id,
         });
+        // Fail closed: an unpersisted event is not an event. Never hand the
+        // caller a success value for a write the WAL rejected.
+        throw err;
       }
 
-      resultEvent = { ...fullEvent };
+      return fullEvent;
     });
 
-    await this.writeLock;
+    // Keep the serialising lock alive even when this attempt fails, while still
+    // surfacing the failure to this caller. A rejected chain would otherwise
+    // poison every later append.
+    this.writeLock = writePromise.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    const resultEvent = await writePromise;
 
     // Record write latency for p95 health reporting
     const latency = Date.now() - writeStart;
@@ -343,7 +356,7 @@ export class EventSourcingEngine implements IEventSourcingEngine {
     // Publish event-sourcing metrics (write latency + WAL size + totals)
     this.publishMetrics(latency);
 
-    return resultEvent!;
+    return resultEvent;
   }
 
   /**

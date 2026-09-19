@@ -25,8 +25,12 @@ describe('MessageBus', () => {
 
   it('broadcasts to multiple subscribers on the same topic', () => {
     let count = 0;
-    bus.subscribe('agent.message', () => count++);
-    bus.subscribe('agent.message', () => count++);
+    bus.subscribe('agent.message', () => {
+      count++;
+    });
+    bus.subscribe('agent.message', () => {
+      count++;
+    });
     bus.publish('agent.message', 'agent-1', 'hello');
     assert.equal(count, 2);
   });
@@ -46,7 +50,9 @@ describe('MessageBus', () => {
 
   it('supports unsubscribe via returned function', () => {
     let count = 0;
-    const unsub = bus.subscribe('agent.message', () => count++);
+    const unsub = bus.subscribe('agent.message', () => {
+      count++;
+    });
     bus.publish('agent.message', 'agent-1', 'first');
     unsub();
     bus.publish('agent.message', 'agent-1', 'second');
@@ -55,7 +61,9 @@ describe('MessageBus', () => {
 
   it('unsubscribe is safe to call twice', () => {
     let count = 0;
-    const unsub = bus.subscribe('agent.message', () => count++);
+    const unsub = bus.subscribe('agent.message', () => {
+      count++;
+    });
     unsub();
     // Second call should not throw
     assert.doesNotThrow(() => unsub());
@@ -272,8 +280,12 @@ describe('MessageBus', () => {
 
   it('clears subscribers for a specific topic', () => {
     let count = 0;
-    bus.subscribe('agent.message', () => count++);
-    bus.subscribe('system.alert', () => count++);
+    bus.subscribe('agent.message', () => {
+      count++;
+    });
+    bus.subscribe('system.alert', () => {
+      count++;
+    });
     bus.clearSubscribers('agent.message');
     bus.publish('agent.message', 'agent-1', 'test');
     bus.publish('system.alert', 'system', { type: 'tool_provisioned' });
@@ -282,8 +294,12 @@ describe('MessageBus', () => {
 
   it('clears all subscribers when no topic is specified', () => {
     let count = 0;
-    bus.subscribe('agent.message', () => count++);
-    bus.subscribe('system.alert', () => count++);
+    bus.subscribe('agent.message', () => {
+      count++;
+    });
+    bus.subscribe('system.alert', () => {
+      count++;
+    });
     bus.clearSubscribers();
     bus.publish('agent.message', 'agent-1', 'test');
     bus.publish('system.alert', 'system', { type: 'tool_provisioned' });

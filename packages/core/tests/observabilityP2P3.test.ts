@@ -38,6 +38,7 @@ function toolEvent(
   opts: Partial<{ durationMs: number; error: string; timestamp: string; spanId: string }> = {},
 ): TraceEvent {
   return {
+    id: opts.spanId ?? `id-${toolName}`,
     spanId: opts.spanId ?? `s-${toolName}`,
     traceId: 'trace-1',
     runId: 'run-1',
@@ -54,6 +55,7 @@ function llmEvent(
   opts: Partial<{ timestamp: string; spanId: string; model: string }> = {},
 ): TraceEvent {
   return {
+    id: opts.spanId ?? 'id-llm',
     spanId: opts.spanId ?? 's-llm',
     traceId: 'trace-1',
     runId: 'run-1',
@@ -128,7 +130,7 @@ describe('P2-P3 observability features', () => {
       const decisions = buildDecisions(trace);
       assert.strictEqual(decisions.length, 1);
       assert.strictEqual(decisions[0].toolName, 'read_file');
-      assert.ok(decisions[0].llmReasoning.includes('should read'));
+      assert.ok(decisions[0]!.llmReasoning!.includes('should read'));
       assert.strictEqual(decisions[0].thinkDurationMs, 1000);
     });
 
@@ -333,10 +335,10 @@ describe('P2-P3 observability features', () => {
       assert.ok(trace);
       const decisions = trace!.events.filter((e: TraceEvent) => e.type === 'decision');
       assert.strictEqual(decisions.length, 3);
-      assert.ok(decisions[0]!.data.output.includes('phase:deliberation'));
+      assert.ok(String(decisions[0]!.data.output).includes('phase:deliberation'));
       assert.strictEqual(decisions[0]!.durationMs, 1500);
-      assert.ok(decisions[1]!.data.output.includes('phase:effort_scaling'));
-      assert.ok(decisions[2]!.data.output.includes('phase:topology_routing'));
+      assert.ok(String(decisions[1]!.data.output).includes('phase:effort_scaling'));
+      assert.ok(String(decisions[2]!.data.output).includes('phase:topology_routing'));
     });
   });
 

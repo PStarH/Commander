@@ -39,8 +39,19 @@ export function createGitHubResponseCutFetch(
   cutResponse = true,
 ): FetchFn {
   return async (input, init) => {
-    const method = (init?.method ?? 'GET').toUpperCase();
-    const isPullRequestCreate = method === 'POST' && String(input).endsWith('/pulls');
+    // Normalize through Request so a Request object (method/URL live on the
+    // instance) and a URL carrying a query string are recognized too. Matching
+    // only `init.method` + a `/pulls` suffix let those forms silently pass
+    // through, so the "cut after commit" scenario could not fail.
+    let normalized: Request;
+    try {
+      normalized = new Request(input, init);
+    } catch {
+      throw new Error('GitHub response-cut proxy could not normalize the request');
+    }
+    const isPullRequestCreate =
+      normalized.method.toUpperCase() === 'POST' &&
+      new URL(normalized.url).pathname.endsWith('/pulls');
     if (!isPullRequestCreate) return fetchImpl(input, init);
 
     state.createRequestCount += 1;

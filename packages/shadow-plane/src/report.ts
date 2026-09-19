@@ -368,7 +368,12 @@ function aggregate(records: ShadowReportRecord[], policyDigest: string) {
 function validateManifestRecordBinding(
   report: Pick<ShadowReportBundle, 'manifests' | 'records' | 'campaignId' | 'policySnapshot'>,
 ): boolean {
-  const expected = new Map<string, { observationId: string; digest: string }>();
+  const expected = new Map<
+    string,
+    { observationId: string; digest: string; tenantId: string; producerId: string }
+  >();
+  let tenantId: string | null = null;
+  let producerId: string | null = null;
   for (const rawManifest of report.manifests) {
     const manifest = parseShadowManifest(rawManifest);
     if (
@@ -377,10 +382,21 @@ function validateManifestRecordBinding(
       manifest.policyDigest !== report.policySnapshot.descriptorDigest
     )
       return false;
+    if (tenantId === null || producerId === null) {
+      tenantId = manifest.tenantId;
+      producerId = manifest.producerId;
+    } else if (manifest.tenantId !== tenantId || manifest.producerId !== producerId) {
+      return false;
+    }
     for (const record of manifest.records) {
       const key = `${manifest.batchId}\u0000${record.index}`;
       if (expected.has(key)) return false;
-      expected.set(key, { observationId: record.observationId, digest: record.digest });
+      expected.set(key, {
+        observationId: record.observationId,
+        digest: record.digest,
+        tenantId: manifest.tenantId,
+        producerId: manifest.producerId,
+      });
     }
   }
   if (expected.size !== report.records.length) return false;
@@ -399,6 +415,8 @@ function validateManifestRecordBinding(
     if (
       record.facts &&
       (record.facts.campaignId !== report.campaignId ||
+        record.facts.tenantId !== declared.tenantId ||
+        record.facts.producerId !== declared.producerId ||
         record.facts.batchId !== record.batchId ||
         record.facts.index !== record.index ||
         record.facts.observationId !== record.observationId)

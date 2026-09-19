@@ -13,6 +13,39 @@
  */
 
 import { v4 as uuidv4 } from 'uuid';
+import { getCurrentTenantId } from '@commander/core/runtime/tenantContext';
+
+// ============================================================================
+// Tenant scoping of the in-memory state
+// ============================================================================
+
+/**
+ * AUDIT api-management#L1: `LLMEvaluator.results` and `ScoreSmoother.history`
+ * are process-wide maps keyed by a **caller-supplied** `targetId` / criterion
+ * only, and the production assembly constructs exactly one of each. Two tenants
+ * that both evaluate a target called `same-target` therefore shared one bucket:
+ * tenant B could read tenant A's judge explanations (which quote A's evaluated
+ * output) and both contaminated each other's aggregate scores and trends.
+ *
+ * The key is now namespaced by the ambient tenant. `NUL` cannot appear in a
+ * tenant id (`validateTenantId`) nor in a declared criterion, so a scoped key
+ * can never collide with an unscoped one.
+ *
+ * Outside a tenant context — single-tenant mode, which is the default — the
+ * scope is the empty string, so the key is exactly what it was before and no
+ * existing caller changes behaviour.
+ */
+const SCOPE_SEPARATOR = '\u0000';
+
+/** Build the storage key for `id` in the current tenant scope. */
+function scopedKey(id: string): string {
+  return `${getCurrentTenantId() ?? ''}${SCOPE_SEPARATOR}${id}`;
+}
+
+/** The key prefix that selects exactly the current tenant's entries. */
+function scopePrefix(): string {
+  return `${getCurrentTenantId() ?? ''}${SCOPE_SEPARATOR}`;
+}
 
 // ============================================================================
 // Types
@@ -45,6 +78,60 @@ export type EvaluationCriterion =
   | 'clarity'
   | 'accuracy'
   | 'safety';
+
+/**
+ * The declared criterion set — the single source of truth for both the
+ * published `GET /criteria` list and the request validator.
+ *
+ * `as const satisfies Record<EvaluationCriterion, …>` makes this a **compile
+ * error** if a member is added to `EvaluationCriterion` without being described
+ * here. Before this, the runtime list lived inline in the `GET /criteria`
+ * handler while the validator accepted any string, so the two could — and did —
+ * disagree: an undeclared criterion was accepted and executed one paid judge
+ * call per entry.
+ */
+export const EVALUATION_CRITERION_CATALOGUE = {
+  answer_relevance: {
+    name: 'Answer Relevance',
+    description: 'How well the output addresses the input',
+  },
+  task_completion: {
+    name: 'Task Completion',
+    description: 'Whether all requirements are met',
+  },
+  prompt_adherence: {
+    name: 'Prompt Adherence',
+    description: 'How well instructions are followed',
+  },
+  helpfulness: {
+    name: 'Helpfulness',
+    description: 'How useful the output is',
+  },
+  clarity: {
+    name: 'Clarity',
+    description: 'How clear and understandable the output is',
+  },
+  accuracy: {
+    name: 'Accuracy',
+    description: 'How factually correct the output is',
+  },
+  safety: {
+    name: 'Safety',
+    description: 'Whether the output is safe and harmless',
+  },
+} as const satisfies Record<EvaluationCriterion, { name: string; description: string }>;
+
+/** Every accepted criterion, derived from the catalogue so they cannot drift. */
+export const EVALUATION_CRITERIA: readonly EvaluationCriterion[] = Object.keys(
+  EVALUATION_CRITERION_CATALOGUE,
+) as EvaluationCriterion[];
+
+const EVALUATION_CRITERION_SET: ReadonlySet<string> = new Set<string>(EVALUATION_CRITERIA);
+
+/** True when `value` is one of the declared criteria. */
+export function isEvaluationCriterion(value: unknown): value is EvaluationCriterion {
+  return typeof value === 'string' && EVALUATION_CRITERION_SET.has(value);
+}
 
 export interface EvaluationRequest {
   targetId: string;
@@ -446,9 +533,11 @@ export class LLMEvaluator {
       results.push(result);
     }
 
-    // Store results
-    const existing = this.results.get(request.targetId) || [];
-    this.results.set(request.targetId, [...existing, ...results]);
+    // Store results — scoped to the ambient tenant so two tenants that both
+    // evaluate a target called `same-target` do not share one bucket.
+    const key = scopedKey(request.targetId);
+    const existing = this.results.get(key) || [];
+    this.results.set(key, [...existing, ...results]);
 
     return results;
   }
@@ -462,7 +551,7 @@ export class LLMEvaluator {
     max: number;
     criteria: Partial<Record<EvaluationCriterion, number>>;
   } | null {
-    const results = this.results.get(targetId);
+    const results = this.results.get(scopedKey(targetId));
     if (!results || results.length === 0) return null;
 
     const scores = results.map((r) => r.score);
@@ -493,7 +582,7 @@ export class LLMEvaluator {
    * Get all results for a target
    */
   getResults(targetId: string): EvaluationResult[] {
-    return this.results.get(targetId) || [];
+    return this.results.get(scopedKey(targetId)) || [];
   }
 
   private createResult(
@@ -533,14 +622,14 @@ export interface ScoreTrend {
 }
 
 export class ScoreSmoother {
-  private history: Map<EvaluationCriterion, Array<{ timestamp: string; score: EvaluationScore }>> =
-    new Map();
+  private history: Map<string, Array<{ timestamp: string; score: EvaluationScore }>> = new Map();
 
   /**
    * Add a score to history
    */
   addScore(criterion: EvaluationCriterion, score: EvaluationScore): void {
-    const history = this.history.get(criterion) || [];
+    const key = scopedKey(criterion);
+    const history = this.history.get(key) || [];
     history.push({
       timestamp: new Date().toISOString(),
       score,
@@ -551,14 +640,14 @@ export class ScoreSmoother {
       history.shift();
     }
 
-    this.history.set(criterion, history);
+    this.history.set(key, history);
   }
 
   /**
    * Calculate smoothed score using exponential moving average
    */
   getSmoothedScore(criterion: EvaluationCriterion, alpha: number = 0.3): number {
-    const history = this.history.get(criterion);
+    const history = this.history.get(scopedKey(criterion));
     if (!history || history.length === 0) return 0;
 
     let ema = history[0].score;
@@ -573,7 +662,7 @@ export class ScoreSmoother {
    * Detect trend
    */
   detectTrend(criterion: EvaluationCriterion): 'improving' | 'declining' | 'stable' {
-    const history = this.history.get(criterion);
+    const history = this.history.get(scopedKey(criterion));
     if (!history || history.length < 5) return 'stable';
 
     // Compare recent scores to older scores
@@ -593,11 +682,18 @@ export class ScoreSmoother {
 
   /**
    * Get all trends
+   *
+   * Only the current tenant's entries are returned. The stored key carries a
+   * tenant prefix, so it must be stripped before the criterion is reported —
+   * otherwise the response would publish the internal key.
    */
   getAllTrends(): ScoreTrend[] {
     const trends: ScoreTrend[] = [];
+    const prefix = scopePrefix();
 
-    this.history.forEach((scores, criterion) => {
+    this.history.forEach((scores, key) => {
+      if (!key.startsWith(prefix)) return;
+      const criterion = key.slice(prefix.length) as EvaluationCriterion;
       trends.push({
         criterion,
         scores,

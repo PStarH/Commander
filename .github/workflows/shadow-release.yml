@@ -5,8 +5,15 @@ name: Shadow Release
 # the human-readable ref each SHA was resolved from is kept as a trailing comment.
 # Enforced by scripts/workflow-supply-chain.test.ts.
 on:
+  # `codex/first-customer-trial-20260908` is the line the pilot is actually being
+  # prepared on. This workflow -- the only thing that runs the 13-suite Phase A
+  # gate and assembles the customer bundle -- used to trigger solely on PRs into
+  # `codex/release-20260810`, so on the trial line it could never run at all.
+  # `workflow_dispatch` lets the release owner cut a bundle from an exact clean
+  # revision without opening a PR.
   pull_request:
-    branches: [codex/release-20260810]
+    branches: [codex/release-20260810, codex/first-customer-trial-20260908]
+  workflow_dispatch:
 
 permissions:
   contents: read

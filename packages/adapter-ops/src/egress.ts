@@ -139,15 +139,56 @@ function isLoopbackHost(hostname: string): boolean {
   return host === '127.0.0.1' || host === '::1' || host === 'localhost';
 }
 
+export const ADAPTER_OPS_EGRESS_REDIRECT_DENIED = 'ADAPTER_OPS_EGRESS_REDIRECT_DENIED';
+
+/**
+ * Redirects are never followed through the gate.
+ *
+ * AO-04: the gate used to adjudicate only the first URL and then hand the
+ * request to `fetch`, whose default `redirect: 'follow'` silently re-issued it
+ * against whatever host the allowlisted server named in `Location`. A 302 from
+ * an allowlisted host to an attacker host therefore escaped the allowlist and
+ * the response body (and any credentials the caller attached) went with it.
+ *
+ * The gate now forces `redirect: 'manual'` and rejects any 3xx response, so
+ * every hop stays inside the allowlist. Callers that must follow a redirect
+ * have to adjudicate the target themselves with `assertEgressUrlAllowed` and
+ * re-issue the request — they cannot opt back into blind following.
+ */
 export function createEgressGatedFetch(
   allowlist: readonly string[],
   fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
   options: EgressUrlGateOptions = {},
 ): typeof fetch {
-  return ((input: RequestInfo | URL, init?: RequestInit) => {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
     assertEgressUrlAllowed(input, allowlist, options);
-    return fetchImpl(input, init);
+    const response = await fetchImpl(input, { ...init, redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      let target = location ?? '';
+      if (location) {
+        try {
+          target = new URL(location, requestUrl(input)).href;
+        } catch {
+          target = location;
+        }
+      }
+      throw Object.assign(
+        new Error(
+          `${ADAPTER_OPS_EGRESS_REDIRECT_DENIED}: refusing to follow HTTP ${response.status} redirect to ` +
+            (target || '(missing location)'),
+        ),
+        { code: ADAPTER_OPS_EGRESS_REDIRECT_DENIED },
+      );
+    }
+    return response;
   }) as typeof fetch;
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
 }
 
 function looksLikeCidr(entry: string): boolean {

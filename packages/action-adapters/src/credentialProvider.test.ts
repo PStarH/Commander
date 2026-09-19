@@ -26,7 +26,10 @@ describe('EnvAdapterCredentialProvider', () => {
       t.mock.method(console, method),
     );
     try {
-      const provider = new EnvAdapterCredentialProvider({ cellTenantId: 'tenant-a' });
+      const provider = new EnvAdapterCredentialProvider({
+        cellTenantId: 'tenant-a',
+        githubRepositories: ['octo/repo'],
+      });
       const token = await provider.getGitHubToken('tenant-a', 'github://octo/repo/pulls');
       assert.equal(token, 'gh-secret-token');
       const logged = spies.flatMap((spy) =>
@@ -40,6 +43,70 @@ describe('EnvAdapterCredentialProvider', () => {
     } finally {
       if (previous === undefined) delete process.env.GITHUB_TOKEN;
       else process.env.GITHUB_TOKEN = previous;
+    }
+  });
+
+  it('scopes github tokens to the registered repositories', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: { GITHUB_TOKEN: 'gh-cell-wide-token' },
+      githubRepositories: ['octo/repo'],
+    });
+    assert.equal(
+      await provider.getGitHubToken('tenant-a', 'github://octo/repo/pulls'),
+      'gh-cell-wide-token',
+    );
+    await assert.rejects(
+      () => provider.getGitHubToken('tenant-a', 'github://attacker-org/attacker-repo/pulls'),
+      /GitHub repository is not authorized: attacker-org\/attacker-repo/,
+    );
+  });
+
+  it('denies github tokens when no repository allowlist is configured', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: { GITHUB_TOKEN: 'gh-cell-wide-token' },
+    });
+    await assert.rejects(
+      () => provider.getGitHubToken('tenant-a', 'github://octo/repo/pulls'),
+      /GitHub repository is not authorized/,
+    );
+  });
+
+  it('reads the github repository allowlist from the injected environment', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: {
+        GITHUB_TOKEN: 'gh-cell-wide-token',
+        COMMANDER_GITHUB_REPOSITORIES: 'octo/repo, other/repo',
+      },
+    });
+    assert.equal(
+      await provider.getGitHubToken('tenant-a', 'github://other/repo/pulls'),
+      'gh-cell-wide-token',
+    );
+    await assert.rejects(
+      () => provider.getGitHubToken('tenant-a', 'github://third/repo/pulls'),
+      /GitHub repository is not authorized/,
+    );
+  });
+
+  it('rejects malformed and duplicate github repository registrations', () => {
+    for (const githubRepositories of [
+      ['octo'],
+      ['octo/repo/extra'],
+      [''],
+      ['octo/repo', 'octo/repo'],
+    ]) {
+      assert.throws(
+        () =>
+          new EnvAdapterCredentialProvider({
+            cellTenantId: 'tenant-a',
+            environment: {},
+            githubRepositories,
+          }),
+        /GitHub repository credential registration/,
+      );
     }
   });
 

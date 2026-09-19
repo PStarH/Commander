@@ -5,8 +5,9 @@
     "declaration": false,
     "declarationMap": false,
     "composite": false,
+    "allowImportingTsExtensions": true,
     "lib": ["ES2022", "dom"]
   },
-  "include": ["tests/**/*.ts"],
+  "include": ["tests/**/*.ts", "src/**/__tests__/**/*.ts", "src/**/*.test.ts"],
   "exclude": ["dist", "**/dist/**", "node_modules"]
 }

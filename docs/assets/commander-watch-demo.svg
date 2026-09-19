@@ -18,7 +18,7 @@
 
   <g font-family="ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace" font-size="13">
     <text x="28" y="70" fill="#22c55e">$</text>
-    <text x="44" y="70" fill="#e4e4e7">npx tsx packages/core/src/cli.ts run "audit this repo" --stream</text>
+    <text x="44" y="70" fill="#e4e4e7">pnpm exec tsx packages/core/src/cli.ts run "audit this repo" --stream</text>
 
     <text x="28" y="105" fill="#71717a">[12:34:05]</text>
     <text x="100" y="105" fill="#a855f7">deliberation</text>

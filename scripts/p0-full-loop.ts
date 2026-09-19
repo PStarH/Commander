@@ -111,6 +111,9 @@ async function main(): Promise<void> {
       process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? 'dev-capability-token-key-32bytes-min',
     COMMANDER_INTEGRITY_KEY:
       process.env.COMMANDER_INTEGRITY_KEY ?? 'dev-integrity-key-32-bytes-minimum!!',
+    // Harness-local audit-chain key: this env is NODE_ENV=production, where the
+    // ledger refuses the public dev key, so generate one per run instead.
+    COMMANDER_AUDIT_CHAIN_KEY: process.env.COMMANDER_AUDIT_CHAIN_KEY ?? randomUUID(),
     COMMANDER_KERNEL_ENABLED: '1',
     DATABASE_URL: runtimeDatabaseUrls.app,
     COMMANDER_KERNEL_DATABASE_URL: runtimeDatabaseUrls.app,

@@ -65,7 +65,7 @@ function textContent(result: HttpResult): string {
   assert.ok(Array.isArray(items));
   const text = (items[0] as Record<string, unknown> | undefined)?.text;
   assert.equal(typeof text, 'string');
-  return text;
+  return text as string;
 }
 
 describe('HTTP tenant-only authentication and isolation', () => {
@@ -165,6 +165,99 @@ describe('HTTP tenant-only authentication and isolation', () => {
         'tenant-a-key',
       );
       assert.equal(deletedA.status, 200);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  // EH-01: session creation used to `runtimes.set(id, …)` unconditionally
+  // after resolving the *caller's* tenant, so tenant B could replace tenant A's
+  // runtime by guessing the id. Creation now refuses a duplicate id.
+  it('refuses to let another tenant replace an existing runtime session', async () => {
+    const server = new CommanderHttpServer({
+      port: 0,
+      host: '127.0.0.1',
+      apiKey: 'owner-only-key',
+      tenantApiKeys: {
+        'tenant-a-key': 'tenant-a',
+        'tenant-b-key': 'tenant-b',
+      },
+      oidcEnabled: false,
+      rateLimitPerMinute: 0,
+    });
+    await server.start();
+    const baseUrl = `http://127.0.0.1:${server.getPort()}`;
+
+    try {
+      const created = await request('POST', `${baseUrl}/api/v1/runtime`, 'tenant-a-key', {
+        sessionId: 'contested-session',
+        provider: 'ollama',
+      });
+      assert.equal(created.status, 201);
+
+      const hijack = await request('POST', `${baseUrl}/api/v1/runtime`, 'tenant-b-key', {
+        sessionId: 'contested-session',
+        provider: 'ollama',
+      });
+      assert.equal(hijack.status, 409);
+
+      // The owner is refused identically, so the status code is not an
+      // ownership oracle.
+      const ownerDuplicate = await request('POST', `${baseUrl}/api/v1/runtime`, 'tenant-a-key', {
+        sessionId: 'contested-session',
+        provider: 'ollama',
+      });
+      assert.equal(ownerDuplicate.status, 409);
+
+      // Tenant A still owns the original session; tenant B still cannot reach it.
+      const ownerRead = await request(
+        'GET',
+        `${baseUrl}/api/v1/runtime/contested-session`,
+        'tenant-a-key',
+      );
+      assert.equal(ownerRead.status, 200);
+      const crossTenantRead = await request(
+        'GET',
+        `${baseUrl}/api/v1/runtime/contested-session`,
+        'tenant-b-key',
+      );
+      assert.equal(crossTenantRead.status, 403);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('generates an unguessable session id when the caller omits one', async () => {
+    const server = new CommanderHttpServer({
+      port: 0,
+      host: '127.0.0.1',
+      apiKey: 'owner-only-key',
+      tenantApiKeys: { 'tenant-a-key': 'tenant-a' },
+      oidcEnabled: false,
+      rateLimitPerMinute: 0,
+    });
+    await server.start();
+    const baseUrl = `http://127.0.0.1:${server.getPort()}`;
+
+    try {
+      const first = await request('POST', `${baseUrl}/api/v1/runtime`, 'tenant-a-key', {
+        provider: 'ollama',
+      });
+      const second = await request('POST', `${baseUrl}/api/v1/runtime`, 'tenant-a-key', {
+        provider: 'ollama',
+      });
+      assert.equal(first.status, 201);
+      assert.equal(second.status, 201);
+
+      const firstId = objectBody(first).sessionId;
+      const secondId = objectBody(second).sessionId;
+      assert.equal(typeof firstId, 'string');
+      assert.notEqual(firstId, secondId);
+      // `session_<Date.now()>` was guessable and collision-prone.
+      assert.match(
+        String(firstId),
+        /^session_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
     } finally {
       await server.stop();
     }

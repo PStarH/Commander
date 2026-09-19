@@ -10,7 +10,6 @@ import {
   type NewKernelStep,
 } from '@commander/kernel';
 import {
-  InMemoryWorkerRegistry,
   WorkerService,
   PostgresWorkerRegistry,
   ApiKeyWorkerAuthenticator,
@@ -26,7 +25,9 @@ import {
   createEvidenceSigner,
 } from '@commander/effect-broker';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import { InMemoryWorkerRegistry } from '../registry.js';
 import { InMemoryTicketAdapter } from '../ticketAdapter.js';
+import type { KernelWorkerPort } from '../types.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 const requirePg = process.env.COMMANDER_E2E_REQUIRE_PG === '1';
@@ -241,7 +242,8 @@ describe('Action Gateway → Kernel → EffectBroker → demo adapter (in-memory
         defaultCapabilities: ['tool'],
       }),
       new InMemoryWorkerRegistry(),
-      kernel,
+      // KernelStep types `lease` as optional; a claimed step always carries one.
+      kernel as unknown as KernelWorkerPort,
       new ToolStepExecutor(undefined, broker, issuer),
       {
         leaseTtlMs: 30_000,
@@ -478,7 +480,8 @@ describe(
           },
           authenticator,
           registry,
-          workerKernel,
+          // KernelStep types `lease` as optional; a claimed step always carries one.
+          workerKernel as unknown as KernelWorkerPort,
           deterministicExecutor,
           { leaseTtlMs: 5000, workerHeartbeatMs: 1000, pollIntervalMs: 50 },
         );

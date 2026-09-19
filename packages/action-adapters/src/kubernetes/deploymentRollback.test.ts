@@ -306,6 +306,18 @@ describe('Kubernetes deployment rollback adapter', () => {
     assert.equal(state.rollbackCount, 1);
   });
 
+  it('reports UNKNOWN when a 200 deployment list omits items (AA-05)', async () => {
+    const malformed = fixture({ listStatus: 200 });
+    const outcome = await malformed.adapter.queryOutcome({
+      tenantId,
+      effectId: 'effect-1',
+      idempotencyKey,
+      destination,
+      request: { targetRevision: '7' },
+    });
+    assert.equal(outcome.status, 'UNKNOWN');
+  });
+
   it('preserves NOT_APPLIED and UNKNOWN remote classifications', async () => {
     const absent = fixture();
     const missing = await absent.adapter.queryOutcome({

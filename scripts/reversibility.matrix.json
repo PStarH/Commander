@@ -3,7 +3,7 @@
     {
       "name": "processCrashSafety",
       "importPattern": "installProcessCrashHandlers",
-      "callSitePattern": "installProcessCrashHandlers",
+      "callSitePattern": "installProcessCrashHandlers\\(",
       "minCallSites": 1,
       "srcPaths": [
         "packages/core/src/runtime/serviceInitializer.ts",

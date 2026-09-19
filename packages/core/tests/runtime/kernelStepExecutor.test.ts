@@ -38,7 +38,6 @@ describe('KernelStepExecutor', () => {
     const executor = new KernelStepExecutor(
       createAgentRuntimeFactory({
         providers: { mock: mockProvider },
-        config: { defaultProvider: 'mock' },
       }),
       { defaultMaxSteps: 3 },
     );
@@ -56,7 +55,6 @@ describe('KernelStepExecutor', () => {
     const executor = new KernelStepExecutor(
       createAgentRuntimeFactory({
         providers: { mock: mockProvider },
-        config: { defaultProvider: 'mock' },
       }),
       { defaultMaxSteps: 3 },
     );

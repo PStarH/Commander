@@ -31,7 +31,8 @@ export type VoiceThreatType =
   | 'audio_steganography'
   | 'deepfake_audio'
   | 'ultrasonic_channel'
-  | 'subsonic_channel';
+  | 'subsonic_channel'
+  | 'oversize_unscanned';
 
 export type VoiceThreatSeverity = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -181,8 +182,18 @@ export class VoiceContentScanner {
     const startMs = Date.now();
     const threats: VoiceThreat[] = [];
 
-    // Early size check
+    // Early size check. The buffer is NOT scanned past this point, and
+    // `isSafe` is derived from `threats.length === 0`, so returning an empty
+    // threat list here reported an unmeasured upload as safe. Fail closed with
+    // an explicit HIGH threat instead.
     if (buffer.length > this.config.maxFileSize) {
+      threats.push({
+        type: 'oversize_unscanned',
+        severity: 'HIGH',
+        description: `File size ${buffer.length} exceeds max ${this.config.maxFileSize}; content was not scanned`,
+        evidence: `size=${buffer.length}`,
+        remediation: 'Reject file. Reduce size before uploading.',
+      });
       return this.buildResult(buffer, 'unknown', threats, startMs, {
         fileSize: buffer.length,
         format: 'unknown',

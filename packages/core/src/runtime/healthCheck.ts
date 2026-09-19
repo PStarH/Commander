@@ -12,6 +12,7 @@ import path from 'node:path';
 import { getMessageBus } from './messageBus';
 import { getDeadLetterQueue } from './deadLetterQueueSingleton';
 import { getCompensationQueue } from '../atr/compensationQueue';
+import { getGlobalTenantProvider } from './tenantProvider';
 
 // ============================================================================
 // Types
@@ -57,8 +58,13 @@ export interface HealthSources {
   getCircuitBreakerInfo?: () => { open: string[]; total: number };
   /** Return aggregate dead-letter-queue size and per-category breakdown. */
   getDLQInfo?: () => Promise<{ totalEntries: number; byCategory: DLQCategoryCount[] }>;
-  /** Return pending and completed compensation counts. */
-  getCompensationInfo?: () => { pending: number; compensated: number };
+  /**
+   * Return pending and completed compensation counts. `measured` must be false
+   * when the counts could not actually be read (e.g. no tenant context): queue
+   * reads are tenant-scoped, so an unscoped read returns zeros that must never
+   * be reported as "no pending compensations".
+   */
+  getCompensationInfo?: () => { pending: number; compensated: number; measured?: boolean };
   /** Return active topic count and subscriber count on the event bus. */
   getEventBusInfo?: () => { activeTopics: number; subscriberCount: number };
   /** Return available / total provider counts. */
@@ -113,15 +119,22 @@ export function buildHealthSources(): HealthSources {
     },
     getCompensationInfo: () => {
       try {
+        // Queue reads are tenant-scoped (AR-03). Without a tenant context the
+        // scoped read yields zeros, which are unmeasured — not "no pending".
+        const tenantId = getGlobalTenantProvider().getCurrentTenantId();
         const queue = getCompensationQueue();
+        if (!tenantId) {
+          return { pending: 0, compensated: 0, measured: false };
+        }
         const counts = queue.countByStatus();
         return {
           pending: counts.pending + counts.in_progress,
           compensated: 0,
+          measured: true,
         };
       } catch (err) {
         reportSilentFailure(err, 'healthCheck:buildHealthSources.compensation');
-        return { pending: 0, compensated: 0 };
+        return { pending: 0, compensated: 0, measured: false };
       }
     },
   };
@@ -335,6 +348,14 @@ export class HealthCollector {
     }
     try {
       const info = comp();
+      // Unmeasured counts must never be reported as "no pending compensations".
+      if (info.measured === false) {
+        return {
+          status: 'degraded',
+          message:
+            'Compensation queue not measured — no tenant context, pending compensations unknown',
+        };
+      }
       if (info.pending > 0) {
         return {
           status: 'degraded',

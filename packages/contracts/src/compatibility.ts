@@ -14,15 +14,19 @@ import { CONTRACT_SCHEMAS, type ContractSchemaName } from './schemas.js';
 /** Semantic version of the contracts package. */
 export const CONTRACT_VERSION = CONTRACTS_VERSION;
 
-/** Minimum consumer schema version accepted by the current contracts. */
+/** Consumer schema version required by the current contracts. */
 export const MIN_SUPPORTED_SCHEMA_VERSION = 'v2';
 
 /**
  * Check whether a given schema version is compatible with the current
- * contracts package.
+ * contracts package. Both the package form (`v2`) and the canonical
+ * VersionedContract form published by `versioned.ts` (`commander.run/v2`) are
+ * accepted, so consumers must not be told they are incompatible when they
+ * quote the current contract version verbatim.
  */
 export function isCompatibleSchemaVersion(version: string): boolean {
-  if (version === CONTRACT_VERSION) return true;
+  const schema = version.includes('/') ? version.slice(version.lastIndexOf('/') + 1) : version;
+  if (schema === CONTRACT_VERSION) return true;
   // Future: support semver range checks when versioning moves beyond 'v2'.
   return false;
 }
@@ -166,7 +170,14 @@ export function validateResource(
     // Handle enum validation
     const enumValues = fieldSchema.enum as string[] | undefined;
     if (enumValues) {
-      if (typeof fieldValue === 'string' && !enumValues.includes(fieldValue)) {
+      // CC-02: a non-string value (42, {}, [...], true) used to fall through the
+      // enum check and then `continue`, skipping type validation entirely, so
+      // malformed enum fields passed `validateResource` silently. Check the type
+      // before the enum membership test and fail closed.
+      if (typeof fieldValue !== 'string') {
+        const actualType = Array.isArray(fieldValue) ? 'array' : typeof fieldValue;
+        errors.push(`Field '${field}' expected ${expectedType}, got ${actualType}`);
+      } else if (!enumValues.includes(fieldValue)) {
         errors.push(
           `Field '${field}' value '${fieldValue}' not in enum [${enumValues.join(', ')}]`,
         );

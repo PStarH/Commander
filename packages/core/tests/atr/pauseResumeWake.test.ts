@@ -145,4 +145,78 @@ describe('ATR pause / wake (Architecture V2)', { skip: !betterSqlite3Available }
     const tx = scheduler.getRun({ runId: handle.runId });
     assert.strictEqual(tx!.state, 'PAUSED');
   });
+
+  // ── AS-04: exclusive wake, expiry, terminal read-only ────────────────────
+
+  it('claimRunnableRun has exactly one winner', () => {
+    const { scheduler, ledger } = newBundle();
+    const handle = scheduler.beginRun({ runId: 'run-wake-excl', goal: 'g' });
+    scheduler.scheduleResume({
+      runId: handle.runId,
+      leaseToken: handle.leaseToken,
+      fencingEpoch: handle.fencingEpoch,
+      resumeAt: new Date(Date.now() - 1000).toISOString(),
+    });
+    const first = scheduler.claimRunnableRun();
+    assert.strictEqual(first!.runId, 'run-wake-excl');
+    assert.strictEqual(scheduler.claimRunnableRun(), null);
+    // The same credentials cannot re-run the PAUSED → EXECUTING conditional update.
+    assert.strictEqual(
+      ledger.beginExecuting('run-wake-excl', handle.leaseToken, handle.fencingEpoch, {
+        from: ['PAUSED'],
+      }),
+      false,
+    );
+  });
+
+  it('refuses writes once the lease has expired', () => {
+    const { scheduler, ledger, lease } = newBundle();
+    const handle = scheduler.beginRun({ runId: 'run-expiry-1', goal: 'g' });
+    assert.strictEqual(lease.heartbeat(handle.runId, handle.leaseToken, { ttlSeconds: -1 }), true);
+    const live = lease.get(handle.runId);
+    assert.ok(live);
+    assert.strictEqual(
+      ledger.syncLeaseCredentials(handle.runId, live!.token, live!.fencingEpoch, {
+        expiresAt: live!.expiresAt,
+      }),
+      true,
+    );
+
+    assert.strictEqual(
+      scheduler.scheduleAction({
+        runId: handle.runId,
+        leaseToken: handle.leaseToken,
+        fencingEpoch: handle.fencingEpoch,
+        toolName: 't',
+        externalSystem: 's',
+        args: {},
+        idempotencyKey: 'k-expired',
+        compensable: true,
+      }),
+      null,
+    );
+    assert.strictEqual(
+      scheduler.pauseRun({
+        runId: handle.runId,
+        leaseToken: handle.leaseToken,
+        fencingEpoch: handle.fencingEpoch,
+      }).paused,
+      false,
+    );
+    assert.strictEqual(scheduler.resumeRun({ runId: handle.runId }), null);
+  });
+
+  it('a committed run cannot begin again', () => {
+    const { scheduler } = newBundle();
+    const handle = scheduler.beginRun({ runId: 'run-terminal-1', goal: 'g' });
+    assert.strictEqual(
+      scheduler.commitRun({
+        runId: handle.runId,
+        leaseToken: handle.leaseToken,
+        fencingEpoch: handle.fencingEpoch,
+      }).committed,
+      true,
+    );
+    assert.throws(() => scheduler.beginRun({ runId: 'run-terminal-1', goal: 'g' }), /terminal/);
+  });
 });

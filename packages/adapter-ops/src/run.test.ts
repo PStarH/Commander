@@ -32,12 +32,16 @@ import {
   ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE,
   ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_UNAVAILABLE,
   ADAPTER_OPS_COMPENSATION_WORKER_ID,
+  ADAPTER_OPS_DURABLE_CLAIM_AUTHORITY_REQUIRED,
   ADAPTER_OPS_RECONCILE_WORKER_ID,
   type AdapterOpsWorkerRegistry,
   ADAPTER_OPS_SCHEDULER_MODE_FORBIDDEN,
   CAPABILITY_DURABLE_STORES_REQUIRED,
   COMMANDER_CELL_TENANT_ID_REQUIRED,
+  createAdapterOpsEvidenceSigner,
   createAdapterOpsWiring,
+  EVIDENCE_SIGNING_KEY_ID_ENV,
+  EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV,
   issueCompensationCapabilityToken,
   OWNER_DATABASE_ROLE_REJECTED,
   productionCapabilityBrokerOptions,
@@ -1328,6 +1332,186 @@ describe('adapter-ops safeStop ordering (AO-01)', () => {
     } finally {
       // Never leave the gated claim hanging, even when an assertion above failed.
       releaseClaim();
+      rmSync(dir, { recursive: true, force: true });
+      restoreEnv(saved);
+    }
+  });
+});
+
+/**
+ * AO-07 (bare `Number()` daemon knobs), AO-08 (non-durable claim authority),
+ * AO-09 (evidence signer production signals) and AO-10 (registered identities
+ * left behind by a later startup failure).
+ */
+describe('adapter-ops startup fail-closed gates (AO-07/08/09/10)', () => {
+  const GATE_ENV_KEYS = [
+    'COMMANDER_KERNEL_BACKEND',
+    'COMMANDER_KERNEL_SQLITE_PATH',
+    'COMMANDER_CELL_TENANT_ID',
+    'COMMANDER_CELL_TIER',
+    'COMMANDER_ENV',
+    'COMMANDER_PROFILE',
+    'COMMANDER_WORKER_TENANTS',
+    'COMMANDER_ADAPTER_OPS_INSTANCE_ID',
+    'COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR',
+    'COMMANDER_ADAPTER_OPS_DEMO_OPEN',
+    'COMMANDER_REQUIRE_WORKLOAD_BINDING',
+    'COMMANDER_RECONCILE_INTERVAL_MS',
+    'COMMANDER_RECONCILE_BATCH_SIZE',
+    'COMMANDER_RECONCILE_WORKER_GENERATION',
+    'COMMANDER_RECONCILE_QUERY_TIMEOUT_MS',
+    'COMMANDER_COMPENSATION_INTERVAL_MS',
+    'COMMANDER_COMPENSATION_BATCH_SIZE',
+    EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV,
+    EVIDENCE_SIGNING_KEY_ID_ENV,
+    ...DATABASE_URL_ENV_KEYS,
+  ] as const;
+
+  function snapshotGateEnv(): Record<string, string | undefined> {
+    const out: Record<string, string | undefined> = {};
+    for (const key of GATE_ENV_KEYS) out[key] = process.env[key];
+    return out;
+  }
+
+  function clearDaemonKnobs(): void {
+    for (const key of [
+      'COMMANDER_RECONCILE_INTERVAL_MS',
+      'COMMANDER_RECONCILE_BATCH_SIZE',
+      'COMMANDER_RECONCILE_WORKER_GENERATION',
+      'COMMANDER_RECONCILE_QUERY_TIMEOUT_MS',
+      'COMMANDER_COMPENSATION_INTERVAL_MS',
+      'COMMANDER_COMPENSATION_BATCH_SIZE',
+    ]) {
+      delete process.env[key];
+    }
+  }
+
+  function setSqliteEnv(dir: string): void {
+    clearDatabaseUrlEnv();
+    process.env.COMMANDER_KERNEL_BACKEND = 'sqlite';
+    process.env.COMMANDER_KERNEL_SQLITE_PATH = join(dir, 'kernel.sqlite');
+    process.env.COMMANDER_CELL_TENANT_ID = 'local';
+    delete process.env.COMMANDER_CELL_TIER;
+    delete process.env.COMMANDER_ENV;
+    delete process.env.COMMANDER_PROFILE;
+    delete process.env.COMMANDER_ADAPTER_OPS_DEMO_OPEN;
+    delete process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING;
+    delete process.env.NODE_ENV;
+    clearDaemonKnobs();
+    clearCapabilityEnv();
+    delete process.env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV];
+    delete process.env[EVIDENCE_SIGNING_KEY_ID_ENV];
+  }
+
+  it('rejects malformed daemon intervals, batch sizes and generation (AO-07)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ops-ao07-'));
+    const saved = snapshotGateEnv();
+    setSqliteEnv(dir);
+    try {
+      for (const [name, value] of [
+        ['COMMANDER_RECONCILE_INTERVAL_MS', 'abc'],
+        ['COMMANDER_RECONCILE_INTERVAL_MS', '0'],
+        ['COMMANDER_RECONCILE_INTERVAL_MS', '-5'],
+        ['COMMANDER_COMPENSATION_INTERVAL_MS', 'NaN'],
+        ['COMMANDER_RECONCILE_BATCH_SIZE', '0'],
+        ['COMMANDER_COMPENSATION_BATCH_SIZE', '1.5'],
+        ['COMMANDER_RECONCILE_WORKER_GENERATION', 'gen-1'],
+      ] as const) {
+        clearDaemonKnobs();
+        process.env[name] = value;
+        await assert.rejects(
+          () => createAdapterOpsWiring(),
+          /must be a positive integer/,
+          `${name}=${value}`,
+        );
+      }
+      // A budget at the kernel's fixed 60s claim lease is refused by the daemon.
+      clearDaemonKnobs();
+      process.env.COMMANDER_RECONCILE_QUERY_TIMEOUT_MS = '60000';
+      await assert.rejects(() => createAdapterOpsWiring(), /RECONCILE_QUERY_TIMEOUT_INVALID/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      restoreEnv(saved);
+    }
+  });
+
+  it('accepts valid knobs but reports no durable claim authority without a registry (AO-08)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ops-ao08-'));
+    const saved = snapshotGateEnv();
+    setSqliteEnv(dir);
+    process.env.COMMANDER_RECONCILE_INTERVAL_MS = '2500';
+    try {
+      const wiring = await createAdapterOpsWiring();
+      // Non-demo without a durable registry: the readiness gate must NOT be a
+      // no-op, and no fabricated claim secret may be presented as an identity.
+      assert.equal(wiring.requiresDurableClaim, true);
+      assert.equal(wiring.workers.reconcile.claimSecret, undefined);
+      assert.equal(wiring.workers.compensation.claimSecret, undefined);
+      await wiring.close();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      restoreEnv(saved);
+    }
+  });
+
+  it('refuses a production-signal start without a durable worker registry (AO-08)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ops-ao08-prod-'));
+    const saved = snapshotGateEnv();
+    setSqliteEnv(dir);
+    const material = ed25519Material('kid-ao08');
+    // REQUIRE_WORKLOAD_BINDING is an adapter-ops production signal but not a
+    // kernel backend signal, so sqlite is still allowed to reach the gate.
+    process.env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV] = material.privateKeyPem;
+    process.env[EVIDENCE_SIGNING_KEY_ID_ENV] = material.keyId;
+    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING = '1';
+    try {
+      await assert.rejects(
+        () => createAdapterOpsWiring(),
+        (error: unknown) =>
+          error instanceof Error &&
+          error.message.startsWith(ADAPTER_OPS_DURABLE_CLAIM_AUTHORITY_REQUIRED),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      restoreEnv(saved);
+    }
+  });
+
+  it('requires a signing key for every production/enterprise signal (AO-09)', () => {
+    for (const env of [
+      { NODE_ENV: 'production' },
+      { COMMANDER_ENV: 'production' },
+      { COMMANDER_PROFILE: 'enterprise' },
+      { COMMANDER_CELL_TIER: 'enterprise' },
+      { COMMANDER_REQUIRE_WORKLOAD_BINDING: '1' },
+    ] as NodeJS.ProcessEnv[]) {
+      assert.throws(
+        () => createAdapterOpsEvidenceSigner(env),
+        /EVIDENCE_SIGNING_KEY_REQUIRED/,
+        JSON.stringify(env),
+      );
+    }
+    assert.equal(createAdapterOpsEvidenceSigner({ NODE_ENV: 'development' }), null);
+  });
+
+  it('drains registered identities when startup fails after registration (AO-10)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ops-ao10-'));
+    const saved = snapshotGateEnv();
+    setSqliteEnv(dir);
+    process.env.COMMANDER_WORKER_TENANTS = 'tenant-a';
+    process.env.COMMANDER_ADAPTER_OPS_INSTANCE_ID = 'pod-a';
+    process.env.COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR = join(dir, 'claim-secrets');
+    // Registration succeeds; the next step (daemon construction) must be
+    // preceded by a failure that revokes both identities.
+    process.env.COMMANDER_RECONCILE_INTERVAL_MS = 'not-a-number';
+    const workerRegistry = new InMemoryAdapterOpsWorkerRegistry();
+    try {
+      await assert.rejects(
+        () => createAdapterOpsWiring({ workerRegistry }),
+        /must be a positive integer/,
+      );
+      assert.deepEqual(workerRegistry.drains.sort(), ['compensation:pod-a', 'reconcile:pod-a']);
+    } finally {
       rmSync(dir, { recursive: true, force: true });
       restoreEnv(saved);
     }

@@ -7,7 +7,7 @@
  */
 import type { SqlPool } from '@commander/kernel';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
-import { createAuthPool, withClient, type VerifiedPoolFactory } from './authDb';
+import { createAuthPool, withClient, withTransaction, type VerifiedPoolFactory } from './authDb';
 
 export interface RefreshTokenRecord {
   jti: string;
@@ -20,10 +20,30 @@ export interface RefreshTokenRepository {
   insert(record: RefreshTokenRecord): Promise<void>;
   /** Atomic single-use consumption; true only for the first successful consumer. */
   consume(jti: string): Promise<boolean>;
+  /**
+   * AUTH-03: single-use rotation fenced by the user's `auth_version`. Locks the
+   * user row, validates the version, consumes `currentJti` and registers
+   * `nextJti` in one transaction. `rejected` means no token may be issued.
+   */
+  rotate(input: RotateRefreshTokenInput): Promise<RotateRefreshTokenResult>;
   revoke(jti: string): Promise<void>;
   isActive(jti: string): Promise<boolean>;
   revokeAllForUser(userId: string): Promise<void>;
 }
+
+export interface RotateRefreshTokenInput {
+  userId: string;
+  currentJti: string;
+  nextJti: string;
+  /** Unix expiry (seconds) of the new refresh token. */
+  nextExp: number;
+  /** The `auth_version` carried by the presented refresh token. */
+  expectedAuthVersion: number;
+}
+
+export type RotateRefreshTokenResult =
+  | { status: 'rotated' }
+  | { status: 'rejected'; reason: 'user_missing' | 'auth_version_mismatch' | 'jti_consumed' };
 
 export class PostgresRefreshTokenRepository implements RefreshTokenRepository {
   constructor(private readonly pool: SqlPool) {}
@@ -46,6 +66,41 @@ export class PostgresRefreshTokenRepository implements RefreshTokenRepository {
         [jti],
       );
       return (result.rowCount ?? 0) === 1;
+    });
+  }
+
+  /**
+   * AUTH-03: rotate in one transaction, fenced by the user's auth_version.
+   *
+   * Lock order is always user row → refresh-token rows, matching
+   * `resetUserPassword` and `deleteUser`, so a concurrent reset either commits
+   * first (we then reject on the stale version) or waits for us and revokes the
+   * jti we registered — it can never leave a valid new refresh behind.
+   */
+  async rotate(input: RotateRefreshTokenInput): Promise<RotateRefreshTokenResult> {
+    return withTransaction(this.pool, async (client) => {
+      const user = await client.query<{ auth_version: string | number }>(
+        'SELECT auth_version FROM commander_auth_users WHERE id = $1 FOR UPDATE',
+        [input.userId],
+      );
+      if (!user.rows[0]) return { status: 'rejected', reason: 'user_missing' } as const;
+      if (Number(user.rows[0].auth_version) !== input.expectedAuthVersion) {
+        return { status: 'rejected', reason: 'auth_version_mismatch' } as const;
+      }
+      const consumed = await client.query<{ jti: string }>(
+        `UPDATE commander_auth_refresh_tokens SET revoked_at = clock_timestamp()
+         WHERE jti = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > clock_timestamp()
+         RETURNING jti`,
+        [input.currentJti, input.userId],
+      );
+      if ((consumed.rowCount ?? 0) !== 1) {
+        return { status: 'rejected', reason: 'jti_consumed' } as const;
+      }
+      await client.query(
+        'INSERT INTO commander_auth_refresh_tokens (jti, user_id, expires_at, revoked_at) VALUES ($1, $2, to_timestamp($3), $4)',
+        [input.nextJti, input.userId, input.nextExp, null],
+      );
+      return { status: 'rotated' } as const;
     });
   }
 
@@ -114,6 +169,16 @@ export async function persist(jti: string, userId: string, exp: number): Promise
  */
 export async function consume(jti: string): Promise<boolean> {
   return getRefreshTokenRepository().consume(jti);
+}
+
+/**
+ * AUTH-03: version-fenced single-use rotation (see
+ * `RefreshTokenRepository.rotate`). Returns a rejection instead of throwing so
+ * the caller fails closed without leaking whether the user, the version or the
+ * jti was the reason.
+ */
+export async function rotate(input: RotateRefreshTokenInput): Promise<RotateRefreshTokenResult> {
+  return getRefreshTokenRepository().rotate(input);
 }
 
 /** Mark a jti as revoked (logout / explicit revoke). */

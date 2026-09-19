@@ -46,11 +46,21 @@ CREATE ROLE commander_shadow_tenant_1_ingestion LOGIN PASSWORD :'ingestion_passw
 CREATE ROLE commander_shadow_tenant_1_reader LOGIN PASSWORD :'reader_password' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_reader;
 CREATE ROLE commander_shadow_tenant_1_retention LOGIN PASSWORD :'retention_password' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION NOBYPASSRLS IN ROLE commander_shadow_retention;
 GRANT CREATE ON DATABASE shadow_database TO commander_shadow_installer;
+-- CONNECT is granted explicitly and is NOT optional. A hardened database revokes
+-- CONNECT from PUBLIC, and without this grant every pilot role fails at connect
+-- with `permission denied for database "shadow_database"` (detail: "User does not
+-- have CONNECT privilege") before any schema statement runs. This repository's own
+-- development database is configured that way, which is how the gap was found.
+GRANT CONNECT ON DATABASE shadow_database TO
+  commander_shadow_installer,
+  commander_shadow_tenant_1_ingestion,
+  commander_shadow_tenant_1_reader,
+  commander_shadow_tenant_1_retention;
 ```
 
 Export the shipped schema without modifying it, then apply it once with the
 installer DSN. `SHADOW_SCHEMA_SQL` is the package's supported schema artifact.
-Schema version 2 requires a fresh dedicated database where `pgcrypto` is not
+Schema version 3 requires a fresh dedicated database where `pgcrypto` is not
 already installed. The installer creates it in the locked `commander_shadow`
 schema; installation fails rather than reusing an extension from another schema.
 There is no migration or unauthenticated legacy write API.

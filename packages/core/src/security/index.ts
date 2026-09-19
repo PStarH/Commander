@@ -951,6 +951,7 @@ export {
   FailClosedPersistor,
   AsymmetricChainSigner,
   InMemoryKeyProvider,
+  FileKeyProvider,
   verifyWithManifest,
   startVerifyTimer,
   installAuditChainIntegrity,

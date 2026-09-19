@@ -12,14 +12,14 @@ describe('ArtifactSystem', () => {
     it('treats user query as literal text, not regex', async () => {
       await system.write(
         'agent-1',
-        'text',
+        'SUMMARY',
         'Budget report 2024',
         'Summary',
         'The budget is $1,000.',
       );
       await system.write(
         'agent-1',
-        'text',
+        'SUMMARY',
         'Wildcard notes',
         'Summary',
         'Notes about test.* regex',
@@ -34,8 +34,8 @@ describe('ArtifactSystem', () => {
     });
 
     it('escapes regex metacharacters in query terms', async () => {
-      await system.write('agent-1', 'text', 'Brackets', 'Summary', 'Content with [brackets]');
-      await system.write('agent-1', 'text', 'No brackets', 'Summary', 'Plain content');
+      await system.write('agent-1', 'SUMMARY', 'Brackets', 'Summary', 'Content with [brackets]');
+      await system.write('agent-1', 'SUMMARY', 'No brackets', 'Summary', 'Plain content');
 
       const results = await system.search('[brackets]');
       const titles = results.map((r) => r.artifact.title);
@@ -45,7 +45,7 @@ describe('ArtifactSystem', () => {
     });
 
     it('matches terms case-insensitively', async () => {
-      await system.write('agent-1', 'text', 'Case Test', 'Summary', 'UPPER lower');
+      await system.write('agent-1', 'SUMMARY', 'Case Test', 'Summary', 'UPPER lower');
 
       const results = await system.search('upper');
       expect(results.length).toBeGreaterThan(0);

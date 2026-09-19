@@ -70,7 +70,10 @@ describe('MetaLearner — Self-Optimization', () => {
 
     const suggestions = learner.getSuggestions();
     // With 30% failure rate and minSamplesForSuggestion=1, should get suggestions
-    assert.ok(suggestions.length >= 0); // non-destructive check
+    assert.ok(
+      suggestions.length > 0,
+      'a 30% failure rate over the learning gate must yield suggestions',
+    );
   });
 
   it('1.2 Thompson Sampling selects strategies', () => {

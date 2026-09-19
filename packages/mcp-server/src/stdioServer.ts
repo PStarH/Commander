@@ -2,6 +2,7 @@ import {
   MCPServer,
   getModelRouter,
   createAllTools,
+  MCP_ERROR_CODES,
   MCP_PROTOCOL_VERSION,
   createFetchActionGatewayExecutor,
   type ModelTier,
@@ -10,6 +11,7 @@ import {
   type MCPPrompt,
   type MCPServerCapabilities,
   type ActionGatewayExecutor,
+  type JSONRPCRequest,
 } from '@commander/core';
 
 export interface McpActionGatewayRequest {
@@ -135,7 +137,13 @@ export function startStdioServer(options: StdioMcpServerOptions = {}): {
     for (const line of lines) {
       const trimmed = line.trim();
       if (!trimmed) continue;
-      void handleLine(server, trimmed);
+      // handleLine reports its own failures, but attach a handler so a
+      // transport-level throw can never surface as an unhandled rejection.
+      void handleLine(server, trimmed).catch((err: unknown) => {
+        process.stderr.write(
+          `[commander-mcp-server] request failed: ${err instanceof Error ? err.message : String(err)}\n`,
+        );
+      });
     }
   };
 
@@ -156,7 +164,7 @@ export function startStdioServer(options: StdioMcpServerOptions = {}): {
   return { server, status, stop };
 }
 
-async function handleLine(server: MCPServer, line: string): Promise<void> {
+export async function handleLine(server: MCPServer, line: string): Promise<void> {
   let request: unknown;
   try {
     request = JSON.parse(line);
@@ -165,28 +173,61 @@ async function handleLine(server: MCPServer, line: string): Promise<void> {
       jsonrpc: '2.0',
       id: null,
       error: {
-        code: -32700,
+        code: MCP_ERROR_CODES.PARSE_ERROR,
         message: `Parse error: ${err instanceof Error ? err.message : String(err)}`,
       },
     });
     return;
   }
 
-  if (
-    typeof request === 'object' &&
-    request !== null &&
-    !Array.isArray(request) &&
-    (request as Record<string, unknown>).jsonrpc === '2.0' &&
-    typeof (request as Record<string, unknown>).method === 'string' &&
-    !Object.prototype.hasOwnProperty.call(request, 'id')
-  ) {
+  // A parsed JSON value that is not an object (e.g. `null` or a bare array)
+  // must never reach dispatch/handleRequest: it has no usable `id`.
+  if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+    writeResponse({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: MCP_ERROR_CODES.INVALID_REQUEST,
+        message: 'Invalid Request: expected a JSON-RPC object',
+      },
+    });
     return;
   }
 
-  const response = await server.handleRequest(
-    request as Parameters<typeof server.handleRequest>[0],
-  );
-  writeResponse(response);
+  const message = request as Record<string, unknown>;
+  if (
+    message.jsonrpc === '2.0' &&
+    typeof message.method === 'string' &&
+    !Object.prototype.hasOwnProperty.call(message, 'id')
+  ) {
+    return; // notification — no response
+  }
+
+  if (typeof message.id !== 'string' && typeof message.id !== 'number') {
+    writeResponse({
+      jsonrpc: '2.0',
+      id: null,
+      error: {
+        code: MCP_ERROR_CODES.INVALID_REQUEST,
+        message: 'Invalid Request: "id" must be a string or number',
+      },
+    });
+    return;
+  }
+
+  try {
+    const response = await server.handleRequest(request as JSONRPCRequest);
+    writeResponse(response);
+  } catch (err) {
+    writeResponse({
+      jsonrpc: '2.0',
+      id: message.id,
+      error: {
+        code: MCP_ERROR_CODES.INTERNAL_ERROR,
+        message: `Request failed: ${err instanceof Error ? err.message : String(err)}`,
+      },
+    });
+  }
 }
 
 function writeResponse(response: unknown): void {

@@ -12,13 +12,9 @@
  *  - summarizeTrace: extracts agentId, model, tenantId, hasErrors from the trace
  */
 import { describe, it, expect, beforeEach } from 'vitest';
-import {
-  EvalScorer,
-  type JudgeProvider,
-  type LLMResponse,
-} from '../../src/observability/evalScorer';
+import { EvalScorer, type JudgeProvider } from '../../src/observability/evalScorer';
 import { AutoScorer } from '../../src/observability/autoScorer';
-import type { ExecutionTrace, TraceEvent } from '../../src/runtime/types';
+import type { ExecutionTrace, LLMResponse, TraceEvent } from '../../src/runtime/types';
 
 function mockJudge(score: number, delayMs = 0): JudgeProvider {
   return {
@@ -27,6 +23,7 @@ function mockJudge(score: number, delayMs = 0): JudgeProvider {
       if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
       return {
         content: JSON.stringify({ score, reasoning: 'ok' }),
+        model: 'mock-judge',
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         finishReason: 'stop',
       };
@@ -47,14 +44,16 @@ function makeTrace(
   const events: TraceEvent[] = [];
   if (opts.model) {
     events.push({
+      id: 's1',
       type: 'llm_call',
       timestamp: new Date().toISOString(),
       durationMs: 0,
       spanId: 's1',
       traceId: 't1',
+      runId: opts.runId,
       agentId: opts.agentId ?? 'a',
       data: {
-        modelInfo: { provider: 'mock', model: opts.model },
+        modelInfo: { provider: 'mock', model: opts.model, tier: 'standard' },
         tokenUsage: {
           promptTokens: opts.tokens ?? 100,
           completionTokens: 0,
@@ -64,22 +63,26 @@ function makeTrace(
     });
   } else {
     events.push({
+      id: 's1',
       type: 'state_change',
       timestamp: new Date().toISOString(),
       durationMs: 0,
       spanId: 's1',
       traceId: 't1',
+      runId: opts.runId,
       agentId: opts.agentId ?? 'a',
       data: { input: { goal: 'g' } },
     });
   }
   if (opts.hasError) {
     events.push({
+      id: 's2',
       type: 'error',
       timestamp: new Date().toISOString(),
       durationMs: 0,
       spanId: 's2',
       traceId: 't1',
+      runId: opts.runId,
       agentId: opts.agentId ?? 'a',
       data: { error: 'boom' },
     });
@@ -98,7 +101,7 @@ function makeTrace(
       llmCalls: events.filter((e) => e.type === 'llm_call').length,
       toolExecutions: 0,
       errors: events.filter((e) => e.type === 'error').length,
-      modelUsed: opts.model,
+      modelUsed: opts.model ?? '',
     },
     ...(opts.tenantId ? { tenantId: opts.tenantId } : {}),
   };

@@ -1,7 +1,14 @@
 import { githubPrBodyMarker, GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import type { EffectRemoteOutcome } from '@commander/effect-broker';
-import { assertOkResponse, adapterFetch, readJsonResponse, type FetchFn } from '../http.js';
+import {
+  assertOkResponse,
+  adapterFetch,
+  readJsonResponse,
+  requireArrayResponse,
+  requireObjectResponse,
+  type FetchFn,
+} from '../http.js';
 import type {
   ActionAdapter,
   AdapterCompensateInput,
@@ -19,6 +26,22 @@ interface GitHubPull {
   body: string | null;
   head: { ref: string };
   base: { ref: string };
+}
+
+function requirePull(value: unknown, label: string): GitHubPull {
+  const record = requireObjectResponse<Record<string, unknown>>(value, label);
+  if (
+    typeof record.number !== 'number' ||
+    typeof record.state !== 'string' ||
+    typeof record.html_url !== 'string'
+  ) {
+    throw new AdapterExecutionError(`${label} returned an incomplete pull-request body`, {
+      code: 'ADAPTER_RESPONSE_BODY_INVALID',
+      commitState: 'UNKNOWN',
+      retryMode: 'QUERY_FIRST',
+    });
+  }
+  return record as unknown as GitHubPull;
 }
 
 export interface GitHubPullRequestCreateAdapterOptions {
@@ -39,6 +62,7 @@ export function createGitHubPullRequestCreateAdapter(
     repo: string,
     head?: string,
     base?: string,
+    signal?: AbortSignal,
   ): Promise<GitHubPull[]> {
     const params = new URLSearchParams({ state: 'all', per_page: '100' });
     if (head) params.set('head', `${owner}:${head}`);
@@ -51,10 +75,17 @@ export function createGitHubPullRequestCreateAdapter(
           Accept: 'application/vnd.github+json',
           'X-GitHub-Api-Version': '2022-11-28',
         },
+        // The broker installs its effect deadline by aborting a controller and
+        // forwards that signal through the adapter. Without it here, the marker
+        // pre-flight GET outlives the deadline and the broker cannot settle or
+        // park the effect until the request finishes on its own.
+        ...(signal ? { signal } : {}),
       },
     );
     await assertOkResponse(response, 'GitHub list pulls');
-    return readJsonResponse<GitHubPull[]>(response);
+    return requireArrayResponse(await readJsonResponse(response), 'GitHub list pulls').map(
+      (entry) => requirePull(entry, 'GitHub list pulls'),
+    );
   }
 
   function filterByMarker(
@@ -64,8 +95,8 @@ export function createGitHubPullRequestCreateAdapter(
     base?: string,
   ): GitHubPull[] {
     return pulls.filter((pull) => {
-      if (head && pull.head.ref !== head) return false;
-      if (base && pull.base.ref !== base) return false;
+      if (head && pull.head?.ref !== head) return false;
+      if (base && pull.base?.ref !== base) return false;
       return (pull.body ?? '').includes(marker);
     });
   }
@@ -101,7 +132,7 @@ export function createGitHubPullRequestCreateAdapter(
     const head = typeof input.request.head === 'string' ? input.request.head : undefined;
     const base = typeof input.request.base === 'string' ? input.request.base : undefined;
     const pulls = filterByMarker(
-      await listPullRequests(token, owner, repo, head, base),
+      await listPullRequests(token, owner, repo, head, base, input.signal),
       marker,
       head,
       base,
@@ -196,7 +227,7 @@ export function createGitHubPullRequestCreateAdapter(
         },
       );
       await assertOkResponse(response, 'GitHub create PR');
-      const created = await readJsonResponse<GitHubPull>(response);
+      const created = requirePull(await readJsonResponse(response), 'GitHub create PR');
       return { prNumber: created.number, url: created.html_url, state: created.state };
     },
 
@@ -237,7 +268,10 @@ export function createGitHubPullRequestCreateAdapter(
         },
       );
       await assertOkResponse(getResponse, 'GitHub get PR before compensate');
-      const existing = await readJsonResponse<GitHubPull>(getResponse);
+      const existing = requirePull(
+        await readJsonResponse(getResponse),
+        'GitHub get PR before compensate',
+      );
       const body = existing.body ?? '';
       // Ownership gate: only close PRs that carry a Commander action marker.
       // Exact hash needs the forward idempotency key (not the cmp:* key); when
@@ -282,7 +316,7 @@ export function createGitHubPullRequestCreateAdapter(
         },
       );
       await assertOkResponse(response, 'GitHub close PR');
-      const closed = await readJsonResponse<GitHubPull>(response);
+      const closed = requirePull(await readJsonResponse(response), 'GitHub close PR');
       return { prNumber: closed.number, state: closed.state };
     },
 
@@ -290,7 +324,17 @@ export function createGitHubPullRequestCreateAdapter(
       input: AdapterQueryInput & { compensationResponse?: Record<string, unknown> },
     ): Promise<EffectRemoteOutcome> {
       const { owner, repo } = parseGitHubDestination(input.destination);
-      const prNumber = Number(input.compensationResponse?.prNumber ?? input.request.prNumber);
+      // The governed compensation request carries the forward receipt at
+      // request.forwardResponse; read it there so registry-driven reconciliation
+      // can converge instead of always reporting UNKNOWN.
+      const forward = input.request.forwardResponse;
+      const forwardPrNumber =
+        forward !== null && typeof forward === 'object' && !Array.isArray(forward)
+          ? (forward as Record<string, unknown>).prNumber
+          : undefined;
+      const prNumber = Number(
+        input.compensationResponse?.prNumber ?? forwardPrNumber ?? input.request.prNumber,
+      );
       if (!Number.isFinite(prNumber)) {
         return {
           status: 'UNKNOWN',
@@ -313,7 +357,7 @@ export function createGitHubPullRequestCreateAdapter(
         },
       );
       await assertOkResponse(response, 'GitHub get PR');
-      const pull = await readJsonResponse<GitHubPull>(response);
+      const pull = requirePull(await readJsonResponse(response), 'GitHub get PR');
       if (pull.state === 'closed') {
         return {
           status: 'APPLIED',

@@ -197,6 +197,7 @@ const HOST_ENV: Record<string, string> = {
   JWT_SECRET: 'c'.repeat(48),
   COMMANDER_CAPABILITY_TOKEN_KEY: 'd'.repeat(64),
   COMMANDER_INTEGRITY_KEY: 'e'.repeat(64),
+  COMMANDER_AUDIT_CHAIN_KEY: 'g'.repeat(64),
   ADMIN_PASSWORD: 'f'.repeat(24),
 };
 
@@ -580,6 +581,11 @@ describe('actual process startup configuration', () => {
         env.COMMANDER_KERNEL_DATABASE_URL ?? '',
         /commander_app/,
         `${label} api must use the least-privilege commander_app DSN`,
+      );
+      assert.match(
+        envMap(service(override, 'api')).COMMANDER_AUDIT_CHAIN_KEY ?? '',
+        /:\?/,
+        `${label} api must require COMMANDER_AUDIT_CHAIN_KEY (production refuses the dev key)`,
       );
 
       const config = resolveApiStartupConfig(env);

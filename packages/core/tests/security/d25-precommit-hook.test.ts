@@ -14,14 +14,19 @@
  * `MIRROR_DATE` constant records the duplication window.
  */
 
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const MIRROR_RE = '/\\bbash/'; // placeholder — replaced by real regex below
-
 // Mirror the production regex set from `scripts/precommitHook.ts`. If you
-// touch one, touch the other AND bump MIRROR_DATE so this test fails
-// until the duplication is refreshed.
-const MIRROR_DATE = '2026-06-23';
+// touch one, touch the other: the parity case below reads the production
+// source and fails when the two lists drift.
+const MIRROR_DATE = '2026-09-18';
+
+const PRODUCTION_PRECOMMIT_SOURCE = readFileSync(
+  fileURLToPath(new URL('../../../../scripts/precommitHook.ts', import.meta.url)),
+  'utf8',
+);
 
 interface D25PatternDef {
   readonly id: string;
@@ -61,6 +66,30 @@ const D25_PATTERNS: readonly D25PatternDef[] = [
     regex: /\bxox[abprs]-[A-Za-z0-9-]{16,}/g,
     exampleEnvVar: 'SLACK_BOT_TOKEN',
   },
+  {
+    id: 'mimo-tp',
+    prefix: 'tp-',
+    regex: /\btp-[a-z0-9]{20,}/g,
+    exampleEnvVar: 'MIMO_API_KEY',
+  },
+  {
+    id: 'huggingface-hf',
+    prefix: 'hf_',
+    regex: /\bhf_[A-Za-z0-9]{20,}/g,
+    exampleEnvVar: 'HUGGINGFACE_TOKEN',
+  },
+  {
+    id: 'google-aiza',
+    prefix: 'AIza',
+    regex: /\bAIza[0-9A-Za-z_-]{30,}/g,
+    exampleEnvVar: 'GOOGLE_API_KEY',
+  },
+  {
+    id: 'stripe-live',
+    prefix: 'sk_live_',
+    regex: /\bsk_live_[A-Za-z0-9]{16,}/g,
+    exampleEnvVar: 'STRIPE_SECRET_KEY',
+  },
 ];
 
 function scan(
@@ -96,8 +125,16 @@ function scan(
 }
 
 describe('Audit #6 — d25 precommit regex parity', () => {
-  it('mirror meta-date survives; if production regex set changes this MUST be re-synced', () => {
-    expect(MIRROR_DATE).toBe('2026-06-23');
+  it('mirrors the production pre-commit pattern set exactly', () => {
+    const production = [...PRODUCTION_PRECOMMIT_SOURCE.matchAll(/id:\s*'([^']+)'/g)].map(
+      (m) => m[1],
+    );
+    expect(production.length).toBeGreaterThan(0);
+    expect(production).toEqual(D25_PATTERNS.map((def) => def.id));
+    for (const def of D25_PATTERNS) {
+      expect(PRODUCTION_PRECOMMIT_SOURCE).toContain(def.regex.source);
+    }
+    expect(MIRROR_DATE).toBe('2026-09-18');
   });
 
   // ── Positive fixtures: each pattern MUST match its canonical prefix. ──
@@ -113,6 +150,10 @@ describe('Audit #6 — d25 precommit regex parity', () => {
     ['aws-access-key', 'AKIA0123456789ABCDEF'],
     ['aws-access-key', 'ASIA0123456789ABCDEF'],
     ['slack-xox', 'xox' + 'b-' + 'TEST-FIXTURE-NOT-A-REAL-SLACK-TOKEN-0123456'],
+    ['mimo-tp', 'tp-' + 'abcdefghij0123456789'],
+    ['huggingface-hf', 'hf_' + 'abcdefghij0123456789abcdef'],
+    ['google-aiza', 'AIza' + 'SyDabcdefghij0123456789abcdefghij0'],
+    ['stripe-live', 'sk_live_' + 'abcdefghij0123456789'],
   ];
   for (const [patternId, fixture] of POSITIVES) {
     it(`POSITIVE: ${patternId} matches`, () => {

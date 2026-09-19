@@ -685,7 +685,11 @@ export class AgentLoopOrchestrator {
         // Early exit: skip verification when model is confident and has no tool calls.
         // This saves the verification token cost (~500-2000 tokens) and avoids
         // unnecessary retries on confident responses.
-        if (earlyExit) {
+        //
+        // It is gated on `verification.isComplete`: at the attempt budget the
+        // verifier returns incomplete WITHOUT feedback, and an incomplete
+        // verification must never be converted into a successful early exit.
+        if (earlyExit && verification.isComplete) {
           let safeContent =
             response.content ||
             (response as { reasoning_content?: string }).reasoning_content ||

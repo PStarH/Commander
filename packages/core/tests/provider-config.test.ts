@@ -10,6 +10,22 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 
+/**
+ * Providers resolve their defaults into a `protected config` in the base-class
+ * constructor. These tests assert the *runtime* config that construction
+ * produced, so read it through a narrow structural view rather than calling the
+ * protected `getDefault*` template methods directly.
+ */
+interface ProviderConfigView {
+  apiKey: string;
+  baseUrl: string;
+  defaultModel: string;
+  isLocal?: boolean;
+}
+function providerConfig(provider: unknown): ProviderConfigView {
+  return (provider as { config: ProviderConfigView }).config;
+}
+
 // ============================================================================
 // Ollama
 // ============================================================================
@@ -59,14 +75,14 @@ describe('OllamaProvider', () => {
   it('uses correct default model', async () => {
     const { OllamaProvider } = await import('../src/runtime/providers/ollamaProvider');
     const p = new OllamaProvider({ apiKey: 'test' });
-    assert.strictEqual(p.getDefaultModel(), 'llama3.2');
+    assert.strictEqual(providerConfig(p).defaultModel, 'llama3.2');
   });
 
   it('respects OLLAMA_MODEL env var', async () => {
     const { OllamaProvider } = await import('../src/runtime/providers/ollamaProvider');
     process.env[OLLAMA_MODEL] = 'qwen2.5';
     const p = new OllamaProvider({ apiKey: 'test' });
-    assert.strictEqual(p.getDefaultModel(), 'qwen2.5');
+    assert.strictEqual(providerConfig(p).defaultModel, 'qwen2.5');
   });
 
   it('can be instantiated with no apiKey for local use', async () => {
@@ -95,25 +111,43 @@ describe('VLLMProvider', () => {
   it('defaults to localhost base URL', async () => {
     const { VLLMProvider } = await import('../src/runtime/providers/vllmProvider');
     const p = new VLLMProvider({});
-    assert.strictEqual(p.getDefaultBaseUrl(), 'http://localhost:8000/v1');
+    assert.strictEqual(providerConfig(p).baseUrl, 'http://localhost:8000/v1');
   });
 
   it('respects VLLM_BASE_URL env var', async () => {
     const { VLLMProvider } = await import('../src/runtime/providers/vllmProvider');
     process.env.VLLM_BASE_URL = 'http://my-vllm:8080/v1';
     const p = new VLLMProvider({});
-    assert.strictEqual(p.getDefaultBaseUrl(), 'http://my-vllm:8080/v1');
+    assert.strictEqual(providerConfig(p).baseUrl, 'http://my-vllm:8080/v1');
   });
 
   it('uses correct default model', async () => {
     const { VLLMProvider } = await import('../src/runtime/providers/vllmProvider');
-    assert.strictEqual(new VLLMProvider({}).getDefaultModel(), 'meta-llama/Llama-3.2-3B-Instruct');
+    assert.strictEqual(
+      providerConfig(new VLLMProvider({})).defaultModel,
+      'meta-llama/Llama-3.2-3B-Instruct',
+    );
   });
 
   it('has isLocal flag', async () => {
     const { VLLMProvider } = await import('../src/runtime/providers/vllmProvider');
     const p = new VLLMProvider({});
-    assert.ok(p.getExtraConfig().isLocal);
+    assert.ok(providerConfig(p).isLocal);
+  });
+
+  it('PROV-10: keeps the caller-supplied apiKey when VLLM_API_KEY is unset', async () => {
+    const { VLLMProvider } = await import('../src/runtime/providers/vllmProvider');
+    const p = new VLLMProvider({ apiKey: 'caller-key' }) as unknown as {
+      config: { apiKey: string };
+    };
+    assert.strictEqual(p.config.apiKey, 'caller-key');
+  });
+
+  it('PROV-10: still falls back to VLLM_API_KEY when the caller supplies none', async () => {
+    const { VLLMProvider } = await import('../src/runtime/providers/vllmProvider');
+    process.env.VLLM_API_KEY = 'env-key';
+    const p = new VLLMProvider({}) as unknown as { config: { apiKey: string } };
+    assert.strictEqual(p.config.apiKey, 'env-key');
   });
 });
 
@@ -180,7 +214,7 @@ describe('MistralProvider', () => {
   it('defaults to correct base URL', async () => {
     const { MistralProvider } = await import('../src/runtime/providers/mistralProvider');
     assert.strictEqual(
-      new MistralProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new MistralProvider({ apiKey: 'test' })).baseUrl,
       'https://api.mistral.ai/v1',
     );
   });
@@ -188,7 +222,7 @@ describe('MistralProvider', () => {
   it('uses correct default model', async () => {
     const { MistralProvider } = await import('../src/runtime/providers/mistralProvider');
     assert.strictEqual(
-      new MistralProvider({ apiKey: 'test' }).getDefaultModel(),
+      providerConfig(new MistralProvider({ apiKey: 'test' })).defaultModel,
       'mistral-large-latest',
     );
   });
@@ -197,7 +231,7 @@ describe('MistralProvider', () => {
     const { MistralProvider } = await import('../src/runtime/providers/mistralProvider');
     process.env.MISTRAL_BASE_URL = 'https://custom.mistral.ai/v1';
     assert.strictEqual(
-      new MistralProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new MistralProvider({ apiKey: 'test' })).baseUrl,
       'https://custom.mistral.ai/v1',
     );
   });
@@ -221,7 +255,7 @@ describe('GroqProvider', () => {
   it('defaults to correct base URL', async () => {
     const { GroqProvider } = await import('../src/runtime/providers/groqProvider');
     assert.strictEqual(
-      new GroqProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new GroqProvider({ apiKey: 'test' })).baseUrl,
       'https://api.groq.com/openai/v1',
     );
   });
@@ -229,7 +263,7 @@ describe('GroqProvider', () => {
   it('uses correct default model', async () => {
     const { GroqProvider } = await import('../src/runtime/providers/groqProvider');
     assert.strictEqual(
-      new GroqProvider({ apiKey: 'test' }).getDefaultModel(),
+      providerConfig(new GroqProvider({ apiKey: 'test' })).defaultModel,
       'llama-3.3-70b-versatile',
     );
   });
@@ -238,7 +272,7 @@ describe('GroqProvider', () => {
     const { GroqProvider } = await import('../src/runtime/providers/groqProvider');
     process.env.GROQ_BASE_URL = 'https://custom.groq.com/v1';
     assert.strictEqual(
-      new GroqProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new GroqProvider({ apiKey: 'test' })).baseUrl,
       'https://custom.groq.com/v1',
     );
   });
@@ -262,7 +296,7 @@ describe('TogetherProvider', () => {
   it('defaults to api.together.ai base URL', async () => {
     const { TogetherProvider } = await import('../src/runtime/providers/togetherProvider');
     assert.strictEqual(
-      new TogetherProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new TogetherProvider({ apiKey: 'test' })).baseUrl,
       'https://api.together.ai/v1',
     );
   });
@@ -270,7 +304,7 @@ describe('TogetherProvider', () => {
   it('uses correct default model', async () => {
     const { TogetherProvider } = await import('../src/runtime/providers/togetherProvider');
     assert.strictEqual(
-      new TogetherProvider({ apiKey: 'test' }).getDefaultModel(),
+      providerConfig(new TogetherProvider({ apiKey: 'test' })).defaultModel,
       'meta-llama/Llama-3.3-70B-Instruct-Turbo',
     );
   });
@@ -294,14 +328,17 @@ describe('PerplexityProvider', () => {
   it('defaults to correct base URL', async () => {
     const { PerplexityProvider } = await import('../src/runtime/providers/perplexityProvider');
     assert.strictEqual(
-      new PerplexityProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new PerplexityProvider({ apiKey: 'test' })).baseUrl,
       'https://api.perplexity.ai/v1',
     );
   });
 
   it('uses correct default model', async () => {
     const { PerplexityProvider } = await import('../src/runtime/providers/perplexityProvider');
-    assert.strictEqual(new PerplexityProvider({ apiKey: 'test' }).getDefaultModel(), 'sonar-pro');
+    assert.strictEqual(
+      providerConfig(new PerplexityProvider({ apiKey: 'test' })).defaultModel,
+      'sonar-pro',
+    );
   });
 
   it('throws when tools are passed (unsupported)', async () => {
@@ -309,6 +346,7 @@ describe('PerplexityProvider', () => {
     const p = new PerplexityProvider({ apiKey: 'test' });
     try {
       await p.call({
+        model: 'test-model',
         messages: [{ role: 'user', content: 'hi' }],
         tools: [
           { name: 'test', description: 'test', inputSchema: { type: 'object', properties: {} } },
@@ -340,7 +378,7 @@ describe('FireworksProvider', () => {
   it('defaults to correct base URL', async () => {
     const { FireworksProvider } = await import('../src/runtime/providers/fireworksProvider');
     assert.strictEqual(
-      new FireworksProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new FireworksProvider({ apiKey: 'test' })).baseUrl,
       'https://api.fireworks.ai/inference/v1',
     );
   });
@@ -348,7 +386,7 @@ describe('FireworksProvider', () => {
   it('uses correct default model', async () => {
     const { FireworksProvider } = await import('../src/runtime/providers/fireworksProvider');
     assert.strictEqual(
-      new FireworksProvider({ apiKey: 'test' }).getDefaultModel(),
+      providerConfig(new FireworksProvider({ apiKey: 'test' })).defaultModel,
       'accounts/fireworks/models/llama-v3p3-70b-instruct',
     );
   });
@@ -397,6 +435,7 @@ describe('ReplicateProvider', () => {
     const p = new ReplicateProvider({ apiKey: 'test' });
     try {
       await p.call({
+        model: 'test-model',
         messages: [{ role: 'user', content: 'hi' }],
         tools: [
           { name: 'test', description: 'test', inputSchema: { type: 'object', properties: {} } },
@@ -429,19 +468,22 @@ describe('AzureOpenAIProvider', () => {
   it('defaults to placeholder Azure base URL', async () => {
     const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
     const p = new AzureOpenAIProvider({ apiKey: 'test' });
-    assert.strictEqual(p.getDefaultBaseUrl(), 'https://your-resource.openai.azure.com');
+    assert.strictEqual(providerConfig(p).baseUrl, 'https://your-resource.openai.azure.com');
   });
 
   it('uses correct default model', async () => {
     const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
-    assert.strictEqual(new AzureOpenAIProvider({ apiKey: 'test' }).getDefaultModel(), 'gpt-4o');
+    assert.strictEqual(
+      providerConfig(new AzureOpenAIProvider({ apiKey: 'test' })).defaultModel,
+      'gpt-4o',
+    );
   });
 
   it('respects AZURE_OPENAI_BASE_URL env var', async () => {
     const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
     process.env.AZURE_OPENAI_BASE_URL = 'https://my-resource.openai.azure.com';
     assert.strictEqual(
-      new AzureOpenAIProvider({ apiKey: 'test' }).getDefaultBaseUrl(),
+      providerConfig(new AzureOpenAIProvider({ apiKey: 'test' })).baseUrl,
       'https://my-resource.openai.azure.com',
     );
   });
@@ -450,7 +492,7 @@ describe('AzureOpenAIProvider', () => {
     const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
     process.env.AZURE_OPENAI_MODEL = 'gpt-4o-mini';
     assert.strictEqual(
-      new AzureOpenAIProvider({ apiKey: 'test' }).getDefaultModel(),
+      providerConfig(new AzureOpenAIProvider({ apiKey: 'test' })).defaultModel,
       'gpt-4o-mini',
     );
   });
@@ -458,13 +500,19 @@ describe('AzureOpenAIProvider', () => {
   it('uses api-key header instead of Authorization Bearer', async () => {
     const { AzureOpenAIProvider } = await import('../src/runtime/providers/azureOpenAIProvider');
     const p = new AzureOpenAIProvider({ apiKey: 'azure-key' });
-    let capturedRequest: { url: string; headers: Record<string, string>; body: unknown } | null =
-      null;
+    const captured: {
+      request?: { url: string; headers: Record<string, string>; body: unknown };
+    } = {};
     const originalFetch = global.fetch;
     global.fetch = async (url: RequestInfo | URL, init?: RequestInit) => {
-      capturedRequest = {
+      const headers = new Headers(init?.headers);
+      const headerRecord: Record<string, string> = {};
+      headers.forEach((value, key) => {
+        headerRecord[key] = value;
+      });
+      captured.request = {
         url: url.toString(),
-        headers: Object.fromEntries(new Headers(init?.headers).entries()),
+        headers: headerRecord,
         body: init?.body,
       };
       return new Response(
@@ -473,17 +521,17 @@ describe('AzureOpenAIProvider', () => {
       );
     };
     try {
-      await p.call({ messages: [{ role: 'user', content: 'hello' }] });
-      assert.ok(capturedRequest, 'fetch should have been called');
-      assert.strictEqual(capturedRequest!.headers['api-key'], 'azure-key');
-      assert.strictEqual(capturedRequest!.headers['authorization'], undefined);
+      await p.call({ model: 'gpt-4o', messages: [{ role: 'user', content: 'hello' }] });
+      assert.ok(captured.request, 'fetch should have been called');
+      assert.strictEqual(captured.request.headers['api-key'], 'azure-key');
+      assert.strictEqual(captured.request.headers['authorization'], undefined);
       assert.ok(
-        capturedRequest!.url.includes('/openai/deployments/gpt-4o/chat/completions'),
-        `unexpected url: ${capturedRequest!.url}`,
+        captured.request.url.includes('/openai/deployments/gpt-4o/chat/completions'),
+        `unexpected url: ${captured.request.url}`,
       );
       assert.ok(
-        capturedRequest!.url.includes('api-version=2024-06-01'),
-        `missing api-version: ${capturedRequest!.url}`,
+        captured.request.url.includes('api-version=2024-06-01'),
+        `missing api-version: ${captured.request.url}`,
       );
     } finally {
       global.fetch = originalFetch;
@@ -599,7 +647,7 @@ describe('commanderConfig resolveApiKey', () => {
 describe('Provider registration consistency', () => {
   it('all providers are in ENV_MAP', async () => {
     const { ENV_MAP } = await import('../src/config/commanderConfig');
-    const expectedVars = [
+    const expectedVars: Array<keyof typeof ENV_MAP> = [
       'openai',
       'anthropic',
       'google',
@@ -634,7 +682,7 @@ describe('Provider registration consistency', () => {
 
   it('all providers are in PROVIDER_ORDER', async () => {
     const { PROVIDER_ORDER } = await import('../src/config/commanderConfig');
-    const expectedProviders = [
+    const expectedProviders: Array<(typeof PROVIDER_ORDER)[number]> = [
       'openai',
       'anthropic',
       'google',
@@ -881,5 +929,94 @@ describe('detectProvider', () => {
     assert.strictEqual(result?.baseUrl, 'https://my-resource.openai.azure.com');
     assert.strictEqual(result?.defaultModel, 'gpt-4o-mini');
     assert.strictEqual(result?.apiKey, 'azure-key');
+  });
+});
+
+// ============================================================================
+// Provider base-URL egress policy (PROV-09)
+// ============================================================================
+describe('providerUrlPolicy (PROV-09)', () => {
+  const POLICY_ENV = [
+    'COMMANDER_ALLOW_INSECURE_PROVIDER_URLS',
+    'COMMANDER_PROVIDER_HOST_ALLOWLIST',
+    'COHERE_BASE_URL',
+    'REPLICATE_BASE_URL',
+  ];
+
+  beforeEach(() => {
+    for (const v of POLICY_ENV) delete process.env[v];
+  });
+
+  afterEach(() => {
+    for (const v of POLICY_ENV) delete process.env[v];
+  });
+
+  it('rejects a remote plaintext host even when the caller declares isLocal', async () => {
+    const { assertSafeProviderBaseUrl } =
+      await import('../src/runtime/providers/providerUrlPolicy');
+    assert.throws(
+      () =>
+        assertSafeProviderBaseUrl('http://evil.example.com/v1', {
+          providerName: 'vllm',
+          isLocal: true,
+        }),
+      /must use https/,
+    );
+  });
+
+  it('still allows plaintext on loopback for a local provider', async () => {
+    const { assertSafeProviderBaseUrl } =
+      await import('../src/runtime/providers/providerUrlPolicy');
+    assert.doesNotThrow(() =>
+      assertSafeProviderBaseUrl('http://127.0.0.1:8000/v1', {
+        providerName: 'vllm',
+        isLocal: true,
+      }),
+    );
+  });
+
+  it('rejects a plaintext remote base URL in all six env-credential adapters', async () => {
+    const { DeepSeekProvider } = await import('../src/runtime/providers/deepseekProvider');
+    const { GLMProvider } = await import('../src/runtime/providers/glmProvider');
+    const { MiMoProvider } = await import('../src/runtime/providers/mimoProvider');
+    const { XiaomiProvider } = await import('../src/runtime/providers/xiaomiProvider');
+    const { CohereProvider } = await import('../src/runtime/providers/cohereProvider');
+    const { ReplicateProvider } = await import('../src/runtime/providers/replicateProvider');
+
+    const insecure = 'http://evil.example.com/v1';
+    assert.throws(
+      () => new DeepSeekProvider({ apiKey: 'k', baseUrl: insecure }),
+      /must use https/,
+      'deepseek must reject the plaintext base URL',
+    );
+    assert.throws(
+      () => new GLMProvider({ apiKey: 'k', baseUrl: insecure }),
+      /must use https/,
+      'glm must reject the plaintext base URL',
+    );
+    assert.throws(
+      () => new MiMoProvider({ apiKey: 'k', baseUrl: insecure }),
+      /must use https/,
+      'mimo must reject the plaintext base URL',
+    );
+    assert.throws(
+      () => new XiaomiProvider({ apiKey: 'k', baseUrl: insecure }),
+      /must use https/,
+      'xiaomi must reject the plaintext base URL',
+    );
+
+    process.env.COHERE_BASE_URL = 'http://evil.example.com';
+    assert.throws(
+      () => new CohereProvider({ apiKey: 'k' }),
+      /must use https/,
+      'cohere must reject the env-derived plaintext base URL',
+    );
+
+    process.env.REPLICATE_BASE_URL = 'http://evil.example.com';
+    assert.throws(
+      () => new ReplicateProvider({ apiKey: 'k' }),
+      /must use https/,
+      'replicate must reject the env-derived plaintext base URL',
+    );
   });
 });

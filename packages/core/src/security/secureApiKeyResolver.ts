@@ -19,6 +19,7 @@
 import { getGlobalLogger } from '../logging';
 import { getEncryptedSecretsVault } from './encryptedSecretsVault';
 import { isMultiTenantEnabled } from '../runtime/tenantContext';
+import { reportSilentFailure } from '../silentFailureReporter';
 
 /**
  * Vault instance shape used by the secure API key resolver.
@@ -90,20 +91,39 @@ export function resolveSecureApiKey(keyName: string, envVar: string = keyName): 
     }
   }
 
-  // 2. Fall back to env var with security warning
+  // 2. Fall back to env var with security warning.
+  //
+  // AUDIT SF/SEC: in multi-tenant mode the environment variable is a single
+  // process-wide value shared by every tenant, so substituting it for a tenant
+  // secret the vault could not resolve hands the caller a credential that does
+  // not belong to its tenant. A missing tenant-scoped secret is "unconfigured"
+  // and must fail closed — return no key instead of a shared one.
+  if (isMultiTenantEnabled()) {
+    try {
+      getGlobalLogger().warn(
+        'SecureApiKeyResolver',
+        `API key "${envVar}" was not resolved from the tenant vault; refusing the shared ` +
+          'env-var fallback in multi-tenant mode (fail closed)',
+        { keyName, envVar, multiTenant: true },
+      );
+    } catch (err) {
+      // Logging is best-effort. `getGlobalLogger()` itself fails closed outside a
+      // tenant context in multi-tenant mode, and that must not turn the deny
+      // path into a throw that a caller could mistake for a transient failure.
+      reportSilentFailure(err, 'secureApiKeyResolver:multiTenantFallbackDenied');
+    }
+    return '';
+  }
+
   const envValue = process.env[envVar] ?? '';
   if (envValue) {
-    // Warn in production or when multi-tenant is enabled — env var fallback
-    // bypasses tenant isolation and should never be used in multi-tenant prod.
-    if (process.env.NODE_ENV === 'production' || isMultiTenantEnabled()) {
+    // Warn in production — env var fallback bypasses vault-at-rest protection.
+    if (process.env.NODE_ENV === 'production') {
       getGlobalLogger().warn(
         'SecureApiKeyResolver',
         `API key "${envVar}" loaded from environment variable instead of encrypted vault. ` +
-          'Store keys in the EncryptedSecretsVault for production security. ' +
-          (isMultiTenantEnabled()
-            ? 'MULTI-TENANT MODE: env var fallback is shared across tenants.'
-            : ''),
-        { keyName, envVar, multiTenant: isMultiTenantEnabled() },
+          'Store keys in the EncryptedSecretsVault for production security.',
+        { keyName, envVar, multiTenant: false },
       );
     }
   }

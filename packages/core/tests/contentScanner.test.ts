@@ -14,6 +14,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { DefaultContentScanner, createContentScanner, scanContent } from '../src/contentScanner';
 import { harmfulContentRules } from '../src/plugins/harmful-content-rules/rules';
 
@@ -447,5 +448,129 @@ describe('ContentScanner', () => {
         });
       }
     });
+
+    // PL-15: the unauthorized_access rule used to end in a bare verb
+    // alternation (`…|change|alter|set|…)\b`) with no required object, so any
+    // ordinary request containing one of those verbs was classified HIGH and
+    // refused. The verbs must only match when they target a security control.
+    describe('unauthorized_access verb specificity', () => {
+      it('should not flag a benign button-color change request', async () => {
+        DefaultContentScanner.registerRulePack('harmful-content-rules', harmfulContentRules);
+        const scanner = new DefaultContentScanner({ enableHarmfulContentScan: true });
+        const result = await scanner.scan('Please change the button color of the submit button.');
+        const harmful = result.threats.filter((t) => t.type === 'harmful_content');
+        assert.equal(
+          harmful.length,
+          0,
+          `Benign UI request was flagged as harmful: ${JSON.stringify(harmful)}`,
+        );
+        assert.equal(result.isSafe, true, 'Benign UI request must not be refused');
+      });
+
+      it('should still block a verb applied to a security control', async () => {
+        DefaultContentScanner.registerRulePack('harmful-content-rules', harmfulContentRules);
+        const scanner = new DefaultContentScanner({ enableHarmfulContentScan: true });
+        const result = await scanner.scan(
+          'Change the firewall rules to allow all inbound traffic through the perimeter.',
+        );
+        assert.equal(
+          result.isSafe,
+          false,
+          'A verb targeting a security control must still be blocked',
+        );
+        const harmful = result.threats.filter((t) => t.type === 'harmful_content');
+        assert.ok(harmful.length > 0, 'Should report a harmful_content threat');
+      });
+    });
+  });
+});
+
+// ── Rule-pack scan termination (CORE-DATA-PLUGINS: non-terminating scan) ──────
+// `scanHarmfulContent` walks each rule with `exec` until null. A non-global rule
+// repeats the same match forever, and a global zero-width rule never advances
+// `lastIndex`. Both shapes used to spin the synchronous scan loop and push
+// threats until the process died. Termination is verified in a child process
+// with a hard deadline so a regression fails instead of hanging the runner.
+describe('ContentScanner rule-pack scan termination', () => {
+  it('rejects an empty-match-capable rule instead of registering a hanging scan', () => {
+    assert.throws(
+      () =>
+        DefaultContentScanner.registerRulePack('empty-match-pack', [
+          { category: 'test', severity: 'HIGH', pattern: /^/g },
+        ]),
+      /match the empty string/,
+    );
+    assert.equal(DefaultContentScanner.listRulePacks().includes('empty-match-pack'), false);
+  });
+
+  it('rejects the whole pack atomically and leaves prior packs untouched', () => {
+    DefaultContentScanner.registerRulePack('atomic-pack', [
+      { category: 'test', severity: 'LOW', pattern: /first-marker/g },
+    ]);
+    assert.throws(() =>
+      DefaultContentScanner.registerRulePack('atomic-pack', [
+        { category: 'test', severity: 'LOW', pattern: /second-marker/g },
+        { category: 'test', severity: 'LOW', pattern: /a*/g },
+      ]),
+    );
+    // The previous registration is still the only one; the bad pack did not
+    // half-apply.
+    assert.equal(DefaultContentScanner.unregisterRulePack('atomic-pack'), true);
+  });
+
+  it('terminates a non-global rule and reports each occurrence once', () => {
+    const script = `
+      import { DefaultContentScanner, createContentScanner } from './src/contentScanner.ts';
+      DefaultContentScanner.registerRulePack('non-global-pack', [
+        { category: 'test', severity: 'HIGH', pattern: /blocked/i },
+      ]);
+      const scanner = createContentScanner({ enableHarmfulContentScan: true });
+      const result = await scanner.scan('blocked and BLOCKED and blocked');
+      const harmful = result.threats.filter((t) => t.type === 'harmful_content');
+      if (harmful.length !== 3) {
+        throw new Error('expected 3 harmful_content threats, got ' + harmful.length);
+      }
+      console.log('SCAN_TERMINATED_OK');
+    `;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--eval', script], {
+      cwd: process.cwd(),
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
+    assert.equal(
+      child.signal,
+      null,
+      `scan did not terminate within 30s (signal=${String(child.signal)})`,
+    );
+    assert.equal(child.status, 0, `child failed: ${child.stderr}`);
+    assert.match(child.stdout, /SCAN_TERMINATED_OK/);
+  });
+
+  it('terminates a global zero-width rule', () => {
+    const script = `
+      import { DefaultContentScanner, createContentScanner } from './src/contentScanner.ts';
+      DefaultContentScanner.registerRulePack('zero-width-pack', [
+        { category: 'test', severity: 'HIGH', pattern: /(?=a)/g },
+      ]);
+      const scanner = createContentScanner({ enableHarmfulContentScan: true });
+      const result = await scanner.scan('aaa');
+      const harmful = result.threats.filter((t) => t.type === 'harmful_content');
+      if (harmful.length !== 3) {
+        throw new Error('expected 3 zero-width threats, got ' + harmful.length);
+      }
+      console.log('ZERO_WIDTH_TERMINATED_OK');
+    `;
+    const child = spawnSync(process.execPath, ['--import', 'tsx', '--eval', script], {
+      cwd: process.cwd(),
+      encoding: 'utf-8',
+      timeout: 30_000,
+    });
+    assert.equal(
+      child.signal,
+      null,
+      `scan did not terminate within 30s (signal=${String(child.signal)})`,
+    );
+    assert.equal(child.status, 0, `child failed: ${child.stderr}`);
+    assert.match(child.stdout, /ZERO_WIDTH_TERMINATED_OK/);
   });
 });

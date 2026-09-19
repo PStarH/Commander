@@ -28,7 +28,7 @@ function baseState(overrides: Partial<CheckpointState> = {}): CheckpointState {
     stepNumber: 1,
     attemptNumber: 1,
     messages: [],
-    tokenUsage: { input: 0, output: 0, total: 0 },
+    tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     stepDurations: [],
     context: {
       agentId: 'a-1',

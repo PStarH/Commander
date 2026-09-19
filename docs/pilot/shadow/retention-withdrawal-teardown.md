@@ -2,7 +2,9 @@
 
 The charter sets one retention period between 1 and 30 days. The retention owner
 runs `retention run` on the agreed schedule and monitors cleanup freshness.
-Expired campaign data is deleted from the authoritative PostgreSQL schema.
+Expired campaign data is deleted from the authoritative PostgreSQL schema. Only
+withdrawn campaigns are eligible: an open campaign's shadow evidence is retained
+until the customer withdraws it, even after its retention deadline passes.
 
 ## Export before deletion
 

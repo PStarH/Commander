@@ -61,10 +61,16 @@ function makeAuthUser(id: string, role: UserRole = 'user', tenantId?: string): A
 }
 
 function makeMockRequest(overrides: Partial<Request> & { tenantId?: string } = {}): Request {
+  const url = (overrides.url as string | undefined) ?? '/api/v1/execute';
   return {
     ip: '127.0.0.1',
     socket: { remoteAddress: '127.0.0.1' } as any,
-    url: '/api/v1/execute',
+    url,
+    // Express exposes `req.path` as the canonical pathname with the query string
+    // stripped; the limiter classifies on it, because `req.url` let a query
+    // parameter choose the tier (AUTH-01). Mirror that here so the harness cannot
+    // pass by accident.
+    path: (overrides.path as string | undefined) ?? url.split('?')[0],
     method: 'POST',
     headers: {},
     ...overrides,
@@ -147,6 +153,46 @@ describe('rateLimitMiddleware', async () => {
 
     assert.equal(res._headers['X-RateLimit-Tier'], 'health');
     assert.equal(res._headers['X-RateLimit-Limit'], 20); // floor(2 * 10)
+  });
+
+  it('does not let a query string choose the rate-limit tier', async () => {
+    // AUTH-01: `POST /api/v1/execute?next=/health` matched the non-anchored health
+    // pattern against `req.url` and was granted the 10x health budget instead of
+    // the 0.25x write budget — a caller picked their own limit.
+    const spoofed = makeMockRequest({ url: '/api/v1/execute?next=/health', method: 'POST' });
+    const spoofedRes = makeMockResponse();
+    await rateLimitMiddleware(spoofed, spoofedRes as unknown as Response, () => {});
+    assert.equal(spoofedRes._headers['X-RateLimit-Tier'], 'write');
+    assert.equal(spoofedRes._headers['X-RateLimit-Limit'], 1); // floor(2 * 0.25)
+
+    // And a query string on a genuine health path must not change anything.
+    const health = makeMockRequest({ url: '/metrics?x=/execute', method: 'GET' });
+    const healthRes = makeMockResponse();
+    await rateLimitMiddleware(health, healthRes as unknown as Response, () => {});
+    assert.equal(healthRes._headers['X-RateLimit-Tier'], 'health');
+    assert.equal(healthRes._headers['X-RateLimit-Limit'], 20);
+  });
+
+  it('classifies every mutating route as the write tier, not only the legacy three', async () => {
+    // The old write pattern listed only /api/v1/(execute|plan|memory), so the real
+    // mutating mounts below were billed as reads at 4x the intended budget.
+    const cases: Array<[string, string]> = [
+      ['POST', '/orchestrator/execute'],
+      ['POST', '/api/pipeline/execute'],
+      ['POST', '/api/workflows/wf-1/execute'],
+      ['PATCH', '/api/v1/settings'],
+      ['DELETE', '/v1/actions/run-1'],
+    ];
+    for (const [method, url] of cases) {
+      const req = makeMockRequest({ method, url } as Partial<Request>);
+      const res = makeMockResponse();
+      await rateLimitMiddleware(req, res as unknown as Response, () => {});
+      assert.equal(
+        res._headers['X-RateLimit-Tier'],
+        'write',
+        `${method} ${url} must be the write tier`,
+      );
+    }
   });
 
   it('tracks different users on the same IP independently', async () => {

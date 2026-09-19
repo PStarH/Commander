@@ -128,7 +128,9 @@ describe('PolicyHook integration', () => {
     }
   });
 
-  it('cache hit on second identical eval', () => {
+  // AP-02: the authorization-result cache was deleted, so an identical second
+  // evaluation must re-run the engine rather than replay a stored `allow`.
+  it('re-evaluates a second identical eval instead of serving a cache hit', () => {
     const stack = makeStack();
     try {
       const hook = new PolicyHook();
@@ -149,37 +151,13 @@ describe('PolicyHook integration', () => {
         stepNumber: 1,
       });
       const d1 = hook.evaluate(input);
+      const evaluationsAfterFirst = hook.getStats().evaluations;
       const d2 = hook.evaluate(input);
       assert.strictEqual(d1.effect, 'allow');
-      assert.strictEqual(d2.cached, true);
-    } finally {
-      stack.close();
-    }
-  });
-
-  it('invalidateRun clears cache for that run', () => {
-    const stack = makeStack();
-    try {
-      const hook = new PolicyHook();
-      stack.scheduler.beginRun({ runId: 'r1', goal: 'test' });
-      const input = buildPolicyInput({
-        scheduler: stack.scheduler,
-        runId: 'r1',
-        phase: 'tool',
-        tool: {
-          name: 'read',
-          riskLevel: 'low',
-          destructive: false,
-          isReadOnly: true,
-          isIdempotent: true,
-          category: 'file_read',
-        },
-        args: { path: '/tmp/a' },
-        stepNumber: 1,
-      });
-      hook.evaluate(input);
-      const removed = hook.invalidateRun('r1');
-      assert.ok(removed >= 0);
+      assert.strictEqual(d2.effect, 'allow');
+      assert.strictEqual(d2.cached, false);
+      assert.notStrictEqual(d2.decisionId, d1.decisionId);
+      assert.strictEqual(hook.getStats().evaluations, evaluationsAfterFirst + 1);
     } finally {
       stack.close();
     }

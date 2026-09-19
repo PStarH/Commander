@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { connect } from 'node:net';
+import { networkInterfaces } from 'node:os';
 import { describe, it } from 'node:test';
 import { startWorkerHealthServer } from './healthServer.js';
 
@@ -38,6 +39,27 @@ describe('worker health server', () => {
         await canConnect(health.port, '::1'),
         false,
         'must not answer on an unbound host',
+      );
+    } finally {
+      await health.close();
+    }
+  });
+
+  it('binds loopback when no host is configured (WP-15)', async () => {
+    // main.ts starts the server without a host, and /health + /ready have no
+    // authentication: an omitted host must not expose them on every interface.
+    const external = Object.values(networkInterfaces())
+      .flat()
+      .find((entry) => entry && entry.family === 'IPv4' && !entry.internal)?.address;
+    const probeHost = external ?? '::1';
+
+    const health = await startWorkerHealthServer({ port: 0, isReady: () => true });
+    try {
+      assert.equal(await canConnect(health.port, '127.0.0.1'), true, 'must answer on loopback');
+      assert.equal(
+        await canConnect(health.port, probeHost),
+        false,
+        `must not answer on ${probeHost} without an explicit host`,
       );
     } finally {
       await health.close();

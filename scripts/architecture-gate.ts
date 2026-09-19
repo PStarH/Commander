@@ -7,26 +7,34 @@
  * Run: npx tsx scripts/architecture-gate.ts
  */
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
 import { authoritySignals } from './legacy-authority-inventory';
-
-interface GateConfig {
-  v2Packages: string[];
-  forbiddenCoreImports: string[];
-  v2ImportExceptions: string[];
-  api: {
-    path: string;
-    legacyImportExceptions: string[];
-    unversionedRouteExceptions: string[];
-  };
-  authorityExceptions: string[];
-}
+import { GateConfigError, loadGateConfig, type GateConfig } from './architecture-gate-config';
 
 const ROOT = process.cwd();
 const CONFIG_PATH = join(ROOT, 'scripts', 'architecture-gate.config.json');
-const config: GateConfig = JSON.parse(readFileSync(CONFIG_PATH, 'utf-8'));
+
+/**
+ * LM-18 step 4: validate the configuration before consuming any of it.
+ *
+ * The previous `JSON.parse(readFileSync(...)) as GateConfig` accepted any shape.
+ * A typo'd key therefore removed a whole gate family while the gate still
+ * reported success; an unknown key was accepted in silence.
+ */
+function loadValidatedConfig(): GateConfig {
+  try {
+    return loadGateConfig(CONFIG_PATH);
+  } catch (err) {
+    const detail = err instanceof GateConfigError ? err.message : String(err);
+    console.error('Architecture V2 gate configuration invalid:');
+    console.error(`  - ${detail}`);
+    process.exit(1);
+  }
+}
+
+const config = loadValidatedConfig();
 
 const failures: string[] = [];
 
@@ -39,6 +47,48 @@ function* walk(dir: string): Generator<string> {
     if (st.isDirectory()) {
       if (!SKIP_DIRS.has(entry)) yield* walk(path);
     } else if (path.endsWith('.ts')) yield path;
+  }
+}
+
+/**
+ * Collect the `.ts` files under `dir`, failing closed when the directory cannot
+ * be read.
+ *
+ * LM-18 step 5. The previous loops wrapped `walk()` in a bare `catch {}` whose
+ * only effect was to skip the whole package, so a configured package that did
+ * not exist — or one whose tree could not be read — passed the gate in silence.
+ * That was reproducible: appending `packages/does-not-exist-xyz` to
+ * `v2Packages` still printed "Architecture V2 gate passed." with exit 0.
+ *
+ * "The directory is not there" is still tolerated as a named outcome, but it is
+ * *reported*: a package listed in the config that has no tree means the gate is
+ * checking less than the config claims. Every other failure (EACCES, EIO, …)
+ * is a hard failure.
+ */
+function scanDirectory(dir: string, label: string): string[] {
+  if (!existsSync(dir)) {
+    failures.push(`${label}: ${relative(ROOT, dir) || dir} does not exist — nothing was scanned`);
+    return [];
+  }
+  try {
+    return [...walk(dir)];
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? (err as Error).name;
+    failures.push(`${label}: could not be scanned (${code}): ${(err as Error).message}`);
+    return [];
+  }
+}
+
+/** Read a source file, reporting an unreadable file instead of throwing. */
+function readSource(file: string): string | undefined {
+  try {
+    return readFileSync(file, 'utf-8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code ?? (err as Error).name;
+    failures.push(
+      `${relative(ROOT, file)}: could not be read (${code}): ${(err as Error).message}`,
+    );
+    return undefined;
   }
 }
 
@@ -144,25 +194,24 @@ for (const relativePath of legacyExecutionFiles) {
 // 1. V2 packages must not import @commander/core at all.
 for (const pkg of config.v2Packages) {
   const pkgDir = join(ROOT, pkg, 'src');
-  try {
-    for (const file of walk(pkgDir)) {
-      const rel = relative(ROOT, file).replace(/\\/g, '/');
-      if (config.v2ImportExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`))) continue;
-      const bad = checkFile(file, config.forbiddenCoreImports);
-      if (bad.length > 0) {
-        failures.push(`${rel} imports forbidden @commander/core modules: ${bad.join(', ')}`);
-      }
+  for (const file of scanDirectory(pkgDir, `v2 package ${pkg}`)) {
+    const rel = relative(ROOT, file).replace(/\\/g, '/');
+    if (config.v2ImportExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`))) continue;
+    const bad = checkFile(file, config.forbiddenCoreImports);
+    if (bad.length > 0) {
+      failures.push(`${rel} imports forbidden @commander/core modules: ${bad.join(', ')}`);
     }
-  } catch {
-    // package may not have src yet
   }
 }
 
 // 2. apps/api legacy files are exempt, but new files must not import core execution/runtime modules.
 const apiDir = join(ROOT, config.api.path);
-for (const file of walk(apiDir)) {
+const apiFiles = scanDirectory(apiDir, 'apps/api source tree');
+
+for (const file of apiFiles) {
   const base = relative(apiDir, file).replace(/\\/g, '/');
-  const content = readFileSync(file, 'utf-8');
+  const content = readSource(file);
+  if (content === undefined) continue;
   const runtimeSignals = authoritySignals(`apps/api/src/${base}`, content).writes;
   if (runtimeSignals.includes('construct:AgentRuntime')) {
     failures.push(`apps/api source ${base} constructs forbidden in-process AgentRuntime`);
@@ -177,12 +226,13 @@ for (const file of walk(apiDir)) {
 }
 
 // 3. Public API routes must be versioned (/v1/* or /v2/*), except legacy exemptions.
-for (const file of walk(apiDir)) {
+for (const file of apiFiles) {
   const base = relative(apiDir, file).replace(/\\/g, '/');
   if (!base.endsWith('.ts')) continue;
   if (base.includes('/') || base.startsWith('v1')) continue;
   if (config.api.unversionedRouteExceptions.includes(base)) continue;
-  const content = readFileSync(file, 'utf-8');
+  const content = readSource(file);
+  if (content === undefined) continue;
   if (!/\b(?:router|app)\s*\.\s*(?:get|post|put|patch|delete|use|all)\s*\(/.test(content)) {
     continue;
   }
@@ -234,34 +284,31 @@ function hasTestDirSegment(rel: string): boolean {
 
 for (const pkg of [...config.v2Packages, 'apps/api']) {
   const dir = join(ROOT, pkg);
-  try {
-    for (const file of walk(dir)) {
-      const rel = relative(ROOT, file).replace(/\\/g, '/');
-      // Test-only files and trees carry no production authority and are skipped.
-      // The original check covered `*.test.*` and `/testing/` but missed sibling
-      // conventions, so `apps/api/test/` — a ~100-file test tree — was scanned as
-      // production and its explicitly-labelled test double
-      // (`test/authRepositories.ts`) was reported as "in-process Map as
-      // authority". Match on the *path segment* so every test convention is
-      // covered without matching a production file that merely contains the
-      // letters, e.g. `contest.ts` or `latest.ts`.
-      if (rel.includes('.test.') || rel.includes('.spec.') || hasTestDirSegment(rel)) continue;
-      if (config.authorityExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`))) continue;
-      const apiBase = rel.startsWith('apps/api/src/') ? rel.slice('apps/api/src/'.length) : null;
-      const isExistingMigrationException =
-        (apiBase !== null && config.api.legacyImportExceptions.includes(apiBase)) ||
-        config.v2ImportExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`));
-      if (isExistingMigrationException) continue;
-      const content = readFileSync(file, 'utf-8');
-      if (hasInProcessAuthorityMap(rel, content)) {
-        failures.push(`${rel} appears to use in-process Map as authority`);
-      }
-      if (/better-sqlite3(?!\s*test)/.test(content)) {
-        failures.push(`${rel} appears to use better-sqlite3 dependency in production package`);
-      }
+  for (const file of scanDirectory(dir, `in-process authority scan ${pkg}`)) {
+    const rel = relative(ROOT, file).replace(/\\/g, '/');
+    // Test-only files and trees carry no production authority and are skipped.
+    // The original check covered `*.test.*` and `/testing/` but missed sibling
+    // conventions, so `apps/api/test/` — a ~100-file test tree — was scanned as
+    // production and its explicitly-labelled test double
+    // (`test/authRepositories.ts`) was reported as "in-process Map as
+    // authority". Match on the *path segment* so every test convention is
+    // covered without matching a production file that merely contains the
+    // letters, e.g. `contest.ts` or `latest.ts`.
+    if (rel.includes('.test.') || rel.includes('.spec.') || hasTestDirSegment(rel)) continue;
+    if (config.authorityExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`))) continue;
+    const apiBase = rel.startsWith('apps/api/src/') ? rel.slice('apps/api/src/'.length) : null;
+    const isExistingMigrationException =
+      (apiBase !== null && config.api.legacyImportExceptions.includes(apiBase)) ||
+      config.v2ImportExceptions.some((ex) => rel === ex || rel.endsWith(`/${ex}`));
+    if (isExistingMigrationException) continue;
+    const content = readSource(file);
+    if (content === undefined) continue;
+    if (hasInProcessAuthorityMap(rel, content)) {
+      failures.push(`${rel} appears to use in-process Map as authority`);
     }
-  } catch {
-    // skip
+    if (/better-sqlite3(?!\s*test)/.test(content)) {
+      failures.push(`${rel} appears to use better-sqlite3 dependency in production package`);
+    }
   }
 }
 

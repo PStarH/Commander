@@ -3,6 +3,7 @@ import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types'
 import { FormatBridge } from '../formatBridge';
 import { parseMiMoTextToolCalls } from './mimoProvider';
 import { getGlobalLogger } from '../../logging';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 interface XiaomiCompletionUsage {
   prompt_tokens: number;
@@ -50,6 +51,7 @@ export class XiaomiProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.xiaomimimo.com/v1';
     this.defaultModel = config.defaultModel ?? 'mimo-v2-flash';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {

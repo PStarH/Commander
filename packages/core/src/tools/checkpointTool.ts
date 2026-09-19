@@ -106,7 +106,11 @@ Returns the restored messages.`,
         .join(', ')}`;
     }
 
-    return `Rewound to checkpoint: ${checkpointId}\nRestored ${messages.length} messages.\nAll messages after this checkpoint have been discarded.`;
+    return `Rewound to checkpoint: ${checkpointId}\nRestored ${messages.length} messages. All messages after this checkpoint have been discarded.\n\nThe restored conversation state (now applied to this request):\n${JSON.stringify(
+      messages,
+      null,
+      2,
+    )}`;
   }
 }
 

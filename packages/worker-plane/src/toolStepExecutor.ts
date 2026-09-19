@@ -11,7 +11,11 @@
 
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
 import { WorkerExecutionError } from './types.js';
-import type { CapabilityTokenIssuer, WorkloadBinding } from '@commander/effect-broker';
+import {
+  deriveEffectIdempotencyKey,
+  type CapabilityTokenIssuer,
+  type WorkloadBinding,
+} from '@commander/effect-broker';
 import {
   assertEffectBrokerForProduction,
   isProductionEffectGate,
@@ -127,14 +131,21 @@ export class ToolStepExecutor implements StepExecutor {
           retryable: false,
         });
       }
-      if (!step.lease || !input.effectId || !input.idempotencyKey) {
+      if (!step.lease || !input.effectId) {
         throw new WorkerExecutionError(
-          'External tool execution requires effectId, idempotencyKey, and a live step lease',
+          'External tool execution requires effectId and a live step lease',
           { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
         );
       }
       const request = input.actionEnvelope ?? input.args ?? {};
       const effectType = input.effectType ?? input.toolName;
+      const idempotencyKey = deriveEffectIdempotencyKey({
+        tenantId: step.tenantId,
+        runId: step.runId,
+        stepId: step.id,
+        effectId: input.effectId,
+        request,
+      });
       let capabilityToken = input.capabilityToken;
       // The production gate must be the shared one (effectGate.isProductionEffectGate()).
       // A locally re-derived predicate that omitted COMMANDER_REQUIRE_EFFECT_BROKER let a
@@ -167,7 +178,7 @@ export class ToolStepExecutor implements StepExecutor {
           token: capabilityToken,
           type: effectType,
           request,
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey,
           lease: step.lease,
           actor: context.worker.id,
           timeoutMs: input.timeoutMs,

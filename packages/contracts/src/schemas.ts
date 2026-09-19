@@ -315,6 +315,7 @@ export const effectSchema = {
         'ADMITTED',
         'EXECUTING',
         'COMPLETION_UNKNOWN',
+        'CONFIRMED_NOT_APPLIED',
         'COMPLETED',
         'FAILED',
         'COMPENSATED',

@@ -178,7 +178,7 @@ describe('compensationPublisherRace (postgres)', () => {
               policy_snapshot_id,lease_worker_id,lease_worker_generation,lease_fencing_epoch,
               action_digest,state,request,response,completed_at)
            VALUES ($1,$2,$3,$4,'read.github.pull-request',$5,'seed','policy-forward',
-                   'policy-race-v1','seed-worker',1,0,$6,'COMPLETED','{}'::jsonb,$7::jsonb,now())`,
+                   'policy-race-v1','seed-worker',1,0,$6,'COMPLETED',jsonb_build_object('destination','github://octo/repo/pulls'),$7::jsonb,now())`,
             [
               effect.id,
               runId,
@@ -215,6 +215,7 @@ describe('compensationPublisherRace (postgres)', () => {
               type: 'compensate.github.pull-request.create',
               originalEffectId: effect.id,
               adapterVersion,
+              destination: 'github://octo/repo/pulls',
               forwardResponse: effect.response,
               compensationPatch,
             }),
@@ -325,11 +326,25 @@ describe('compensationPublisherRace (postgres)', () => {
            WHERE tenant_id=$1`,
           [tenantId, LEGACY_COMPENSATION_TOPIC, KERNEL_COMPENSATION_TOPIC],
         );
-        assert.equal(
-          publishedTotal,
-          Number(outstanding.rows[0]?.generic ?? 0),
-          'the generic publisher must publish exactly the non-compensation outbox rows',
+        // `KernelOutboxPublisher.publish` claims through
+        // `repository.claimOutbox(limit, now)`, which is NOT tenant-scoped: it
+        // drains every tenant's due rows. So `publishedTotal` counts all tenants'
+        // publications and can never equal this tenant's row count — comparing
+        // them only held on a database where this tenant was the sole producer.
+        // Assert the tenant-scoped invariants instead: this tenant's generic rows
+        // are what the publisher published (proving it worked the right
+        // population), while both compensation topics stay untouched below.
+        const genericPublished = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM commander_outbox
+            WHERE tenant_id=$1 AND topic NOT IN ($2,$3) AND published_at IS NOT NULL`,
+          [tenantId, LEGACY_COMPENSATION_TOPIC, KERNEL_COMPENSATION_TOPIC],
         );
+        assert.ok(
+          Number(genericPublished.rows[0]?.count ?? 0) > 0,
+          "the generic publisher must publish this tenant's non-compensation outbox rows",
+        );
+        assert.ok(publishedTotal >= Number(genericPublished.rows[0]?.count ?? 0));
         assert.equal(Number(outstanding.rows[0]?.legacy ?? 0), legacySeeded);
         assert.equal(
           Number(outstanding.rows[0]?.governed ?? 0),

@@ -1,7 +1,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ExecutionTraceRecorder, resetTraceRecorder } from '../../src/runtime/executionTrace';
-import type { TraceStore, TraceEvent } from '../../src/runtime/types';
+import type { TraceEvent } from '../../src/runtime/types';
+import type { TraceStore } from '../../src/runtime/traceStore';
 
 describe('ExecutionTraceRecorder', () => {
   let tracer: ExecutionTraceRecorder;

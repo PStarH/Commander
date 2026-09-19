@@ -271,7 +271,7 @@ describe('Context Compactor — Progressive Compaction', () => {
 });
 
 // ── ThreeLayerMemory ─────────────────────────────────────────────────────────
-import { ThreeLayerMemory } from '../src/threeLayerMemory';
+import { ThreeLayerMemory, type MemoryEntry } from '../src/threeLayerMemory';
 
 describe('ThreeLayerMemory — Long Session Persistence', () => {
   let memory: ThreeLayerMemory;
@@ -281,7 +281,7 @@ describe('ThreeLayerMemory — Long Session Persistence', () => {
   });
 
   it('working layer caps at 50 entries', () => {
-    const ids: string[] = [];
+    const ids: MemoryEntry[] = [];
     for (let i = 0; i < 60; i++) {
       const id = memory.add(`Working memory entry ${i}`, 'working', 'test', 0.5, ['test']);
       ids.push(id);
@@ -384,7 +384,7 @@ function makeCheckpoint(overrides: Partial<CheckpointState> = {}): CheckpointSta
     stepNumber: 1,
     attemptNumber: 1,
     messages: [{ role: 'user', content: 'test' }],
-    tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, cachedTokens: 0 },
+    tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, cacheReadTokens: 0 },
     stepDurations: [1000],
     context: {
       agentId: 'agent-1',
@@ -654,7 +654,7 @@ describe('Simulated Long-Running Orchestration', () => {
               promptTokens: totalTokensUsed * 0.7,
               completionTokens: totalTokensUsed * 0.3,
               totalTokens: totalTokensUsed,
-              cachedTokens: 0,
+              cacheReadTokens: 0,
             },
             stepDurations: [1000 + Math.random() * 2000],
             context: {

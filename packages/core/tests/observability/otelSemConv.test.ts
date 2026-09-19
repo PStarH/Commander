@@ -9,7 +9,8 @@ import {
 import type { TraceEvent } from '../../src/runtime/types';
 
 function makeEvent(overrides: Partial<TraceEvent> = {}): TraceEvent {
-  return {
+  const base: TraceEvent = {
+    id: 'id-s1',
     spanId: 's1',
     parentSpanId: undefined,
     traceId: 't1',
@@ -19,11 +20,11 @@ function makeEvent(overrides: Partial<TraceEvent> = {}): TraceEvent {
     timestamp: '2026-06-05T00:00:00.000Z',
     durationMs: 100,
     data: {
-      modelInfo: { provider: 'openai', model: 'gpt-4o' },
+      modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' },
       tokenUsage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
     },
-    ...overrides,
   };
+  return Object.assign(base, overrides);
 }
 
 describe('eventToOtelAttrs', () => {

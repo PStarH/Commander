@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, timingSafeEqual } from 'node:crypto';
 import type { WorkerDefinition, WorkerKind, WorkerRecord, WorkerRegistry } from './types.js';
 
 /**
@@ -28,6 +28,19 @@ function assertExplicitDurableTenantIds(tenantIds: string[]): void {
         "explicit tenant list; open-ended '*' is forbidden (env and claim authz fail-closed)",
     );
   }
+}
+
+/**
+ * Constant-time claim-secret comparison. `!==` short-circuits on the first differing
+ * byte, so a caller-supplied secret could in principle be recovered byte by byte.
+ * A wrong/absent candidate is a plain non-match (never an early throw).
+ */
+function claimSecretMatches(candidate: string | undefined, expected: string | undefined): boolean {
+  if (typeof candidate !== 'string' || typeof expected !== 'string') return false;
+  const candidateBytes = Buffer.from(candidate);
+  const expectedBytes = Buffer.from(expected);
+  if (candidateBytes.length !== expectedBytes.length) return false;
+  return timingSafeEqual(candidateBytes, expectedBytes);
 }
 
 /**
@@ -341,7 +354,7 @@ export class InMemoryWorkerRegistry implements WorkerRegistry {
             `${WORKER_REREGISTER_REQUIRES_SECRET}: active worker requires previousClaimSecret (drain first)`,
           );
         }
-        if (!expected || previousClaimSecret !== expected) {
+        if (!claimSecretMatches(previousClaimSecret, expected)) {
           throw new Error(`${WORKER_REREGISTER_SECRET_MISMATCH}: previousClaimSecret mismatch`);
         }
       }
@@ -377,8 +390,7 @@ export class InMemoryWorkerRegistry implements WorkerRegistry {
       !value ||
       value.generation !== generation ||
       value.status !== 'ACTIVE' ||
-      !claimSecret ||
-      claimSecret !== expected
+      !claimSecretMatches(claimSecret, expected)
     ) {
       return null;
     }
@@ -396,8 +408,7 @@ export class InMemoryWorkerRegistry implements WorkerRegistry {
       !value ||
       value.generation !== generation ||
       value.status !== 'ACTIVE' ||
-      !claimSecret ||
-      claimSecret !== expected
+      !claimSecretMatches(claimSecret, expected)
     ) {
       return false;
     }

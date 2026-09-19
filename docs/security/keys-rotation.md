@@ -97,9 +97,10 @@ Recovery is not complete until the on-call can answer: "Which tickets / consumer
 
 ### §3.2 — Incident log
 
-| Date       | Incident ID        | Secret          | Trigger                 | Status     | Notes                                                                                                                                                                                                             |
-| ---------- | ------------------ | --------------- | ----------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 2026-06-23 | CMDR-2026-0623-001 | STEPFUN_API_KEY | External security audit | **ROTATE** | Key was present in committed `.env`. Key removed from working tree; `.env` is gitignored. Full history scrub with `git filter-branch` / BFG still required. Rotate the key in StepFun console before any release. |
+| Date       | Incident ID        | Secret                                 | Trigger                               | Status     | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ---------- | ------------------ | -------------------------------------- | ------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 2026-06-23 | CMDR-2026-0623-001 | STEPFUN_API_KEY                        | External security audit               | **ROTATE** | Key was present in committed `.env`. Key removed from working tree; `.env` is gitignored. Full history scrub with `git filter-branch` / BFG still required. Rotate the key in StepFun console before any release.                                                                                                                                                                                                                                                                                                          |
+| 2026-09-13 | CMDR-2026-0913-002 | MIMO_API_KEY (MiMo token-plan, `tp-…`) | Static audit of committed credentials | **ROTATE** | A real provider key (redacted; 51-char `tp-`-prefixed literal) was committed on 2026-06-18 across six `packages/core/tests/` benchmark scripts and removed from the current branch only on 2026-09-18. The historical blobs are still reachable from the branch, so the repository must be treated as having distributed the key: **rotation in the provider console is the only effective remediation** — a history purge does not invalidate an already-leaked key. See the §4.1 coverage gaps for why no CI gate fired. |
 
 ---
 
@@ -132,6 +133,32 @@ Remediation:
 2. Replace the plaintext with `process.env.<canonical-env-var>`.
 3. Document the env-var in your deployment README so ops knows what to set.
 4. Confirm CI is green.
+
+### §4.1 — Known coverage gaps (verified at HEAD)
+
+The gate above is an **enumerated, path-scoped** detector, not a repository-wide
+secret scanner. Its limits are load-bearing and must be read together with the
+§1 scope statement and the §7 traceability row:
+
+- **Path scope.** The walk covers only `apps/api/src/` and `apps/web/src/`.
+  Nothing under `packages/`, `scripts/`, `deploy/`, or any test tree is scanned —
+  including `packages/core/tests/`, which is where the 2026-09-13 committed
+  provider credential (§3.2) actually lived. The gate could not have fired on
+  it, and it did not.
+- **Closed prefix list.** The prefix families in §4 are the complete rule set.
+  A provider prefix that is not listed is not detected; the MiMo token-plan
+  form (`tp-…`) is the worked example, and the leak in §3.2 is exactly the case
+  of that rule being absent. Onboard a new provider by adding its prefix to
+  `packages/core/tests/security/d25-api-key-grep.test.ts` in the same change
+  that introduces the provider.
+- **Test/demo exclusions.** `*.test.ts`, `*.spec.ts`, and `*.fixture.ts` are
+  skipped by design so that detector fixtures (for example the synthetic
+  `sk-ant-…` samples under `tests/security/`) do not fail the gate. A real
+  credential committed inside such a file is therefore invisible to the gate.
+
+Closing these gaps (widen the scan roots, add the missing prefixes) is a code
+change in `packages/core/tests/security/`; this document records the gap rather
+than claiming coverage the gate does not have.
 
 ---
 
@@ -196,13 +223,13 @@ Sign-off requires (a) a GPG-signed commit on this document (§6.2 step 3), (b) t
 
 | Policy clause                     | Test gate / enforcement artifact                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| §1 Scope                          | `vitest run tests/security/d25-api-key-grep.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| §1 Scope                          | PARTIAL — `vitest run tests/security/d25-api-key-grep.test.ts` enforces only the §4 scan roots (`apps/api/src`, `apps/web/src`) and the §4 prefix list; the §4.1 coverage gaps are **not** enforced by any gate today.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | §2 Cadence                        | operational; not auto-tested                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | §3 Runbook                        | manual runbook drill; tracked via `/.commander/approval-mode.json` entries                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | §4 CI Gate                        | `vitest run tests/security/d25-api-key-grep.test.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | §5 Pre-commit coord               | `.githooks/pre-commit` → `scripts/precommitHook.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| §6 Sign-off                       | `vitest run tests/security/d26-rotation-signoff-gate.test.ts` + `npx tsx scripts/verify-rotation-signoff.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| §6.1 binding (D2.7 / D2.8 + D3.0) | (a) Date binding: `git log -1 --format=%aI <sha>` derived from GPG-verified SHA (no free-form Date cell); (b) ≥ `POLICY_MIN_VERIFIED_ROWS` (currently 4 per D2.9) verified bound: `evaluateSignoff(rows)` returning `VerifyResult { ok, rows, reasons, report, exitCode }` where D3.0's `reasons: readonly string[]` carries the discrete clause list (separate elements on dual-clause; joined via `' AND '` for the human `report`); contract honoured by `npx tsx scripts/verify-rotation-signoff.ts [--json] [--quiet]` exit-code (0/1/2). D3.0 also adds `--json` (compact `jq`-friendly JSON on stdout) + `--quiet` (terse one-line summary on stderr, multi-line report suppressed). |
+| §6 Sign-off                       | `vitest run tests/security/d26-rotation-signoff-gate.test.ts` + `pnpm exec tsx scripts/verify-rotation-signoff.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| §6.1 binding (D2.7 / D2.8 + D3.0) | (a) Date binding: `git log -1 --format=%aI <sha>` derived from GPG-verified SHA (no free-form Date cell); (b) ≥ `POLICY_MIN_VERIFIED_ROWS` (currently 4 per D2.9) verified bound: `evaluateSignoff(rows)` returning `VerifyResult { ok, rows, reasons, report, exitCode }` where D3.0's `reasons: readonly string[]` carries the discrete clause list (separate elements on dual-clause; joined via `' AND '` for the human `report`); contract honoured by `pnpm exec tsx scripts/verify-rotation-signoff.ts [--json] [--quiet]` exit-code (0/1/2). D3.0 also adds `--json` (compact `jq`-friendly JSON on stdout) + `--quiet` (terse one-line summary on stderr, multi-line report suppressed). |
 
 ---
 
@@ -210,13 +237,13 @@ Sign-off requires (a) a GPG-signed commit on this document (§6.2 step 3), (b) t
 
 ```bash
 # Verify the current sign-off table:
-npx tsx scripts/verify-rotation-signoff.ts
+pnpm exec tsx scripts/verify-rotation-signoff.ts
 
 # Verify a sign-off table in a production fork:
-npx tsx scripts/verify-rotation-signoff.ts --doc=./keys-rotation-fork.md
+pnpm exec tsx scripts/verify-rotation-signoff.ts --doc=./keys-rotation-fork.md
 
 # Run the regression gate (CI):
-cd packages/core && npx vitest run tests/security/d26-rotation-signoff-gate.test.ts
+cd packages/core && pnpm exec vitest run tests/security/d26-rotation-signoff-gate.test.ts
 
 # Show the effective date of an existing sign-off:
 git log -1 --format='%aI  %s' <Signed-Commit SHA>
@@ -234,13 +261,13 @@ pnpm --silent rotate -- OPENAI_API_KEY --confirm <rotation-id> --audit --json > 
 pnpm --silent rotate:receipt:verify -- rotation-confirm.json --audit-dir .commander_security
 
 # D3.0: emit a compact JSON status payload for shell pipelines / `jq`:
-npx tsx scripts/verify-rotation-signoff.ts --json | jq '.reasons[]'
+pnpm exec tsx scripts/verify-rotation-signoff.ts --json | jq '.reasons[]'
 
 # D3.0: terse CI logs — one-line summary on stderr, multi-line report suppressed:
-npx tsx scripts/verify-rotation-signoff.ts --quiet
+pnpm exec tsx scripts/verify-rotation-signoff.ts --quiet
 
 # D3.0: combine `--json` + `--quiet` for the typical `jq` pipeline read-out:
-npx tsx scripts/verify-rotation-signoff.ts --json --quiet
+pnpm exec tsx scripts/verify-rotation-signoff.ts --json --quiet
 ```
 
 ## A2A mTLS Certificate Revocation Limitation

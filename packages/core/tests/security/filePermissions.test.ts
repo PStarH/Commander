@@ -78,14 +78,16 @@ describe('StateCheckpointer file permissions', () => {
     const stat = fs.statSync(tmpDir);
     // The constructor creates a 'completed' subdirectory
     const completedDir = path.join(tmpDir, 'completed');
-    if (fs.existsSync(completedDir)) {
-      const mode = getFileMode(completedDir);
-      assert.strictEqual(
-        mode,
-        0o700,
-        `completed directory should be 0o700, got 0o${mode.toString(8)}`,
-      );
-    }
+    assert.ok(
+      fs.existsSync(completedDir),
+      'StateCheckpointer must create the completed subdirectory',
+    );
+    const mode = getFileMode(completedDir);
+    assert.strictEqual(
+      mode,
+      0o700,
+      `completed directory should be 0o700, got 0o${mode.toString(8)}`,
+    );
   });
 
   it('checkpoint creates files with 0o600', () => {

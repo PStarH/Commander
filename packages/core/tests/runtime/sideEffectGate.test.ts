@@ -695,9 +695,13 @@ describe('SideEffectGate — V2 mandatory PEP', () => {
     const warn = vi.fn();
     const loggerModule = await import('../../src/logging');
     const original = loggerModule.getGlobalLogger();
-    const spy = vi
-      .spyOn(loggerModule, 'getGlobalLogger')
-      .mockReturnValue({ ...original, warn, error: vi.fn(), info: vi.fn(), debug: vi.fn() });
+    const spy = vi.spyOn(loggerModule, 'getGlobalLogger').mockReturnValue({
+      ...original,
+      warn,
+      error: vi.fn(),
+      info: vi.fn(),
+      debug: vi.fn(),
+    } as unknown as typeof original);
 
     const gate = new SideEffectGate({ failClosed: true });
     await expect(gate.admit(baseRequest({ runHandle: null }))).rejects.toMatchObject({

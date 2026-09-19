@@ -228,7 +228,7 @@ describe('MetricsCollector', () => {
   describe('listMetricNames', () => {
     it('returns sorted unique metric names', () => {
       mc.incrementCounter('z_total', 'Z');
-      mc.setGauge('a_gauge', 'A');
+      mc.setGauge('a_gauge', 'A', 1);
       mc.recordHistogram('m_hist', 'M', 1, [10]);
       const names = mc.listMetricNames();
       assert.deepStrictEqual(names, ['a_gauge', 'm_hist', 'z_total']);

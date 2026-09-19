@@ -21,6 +21,7 @@ import {
   evaluate,
   parseFlags,
   parseNonNegativeInt,
+  resolveThreshold,
   writeReportAtomic,
 } from './audit-report.js';
 
@@ -30,15 +31,22 @@ const SCRIPT = join(REPO_ROOT, 'scripts', 'audit-report.ts');
 /** Run the real CLI in a subprocess with a controlled environment. */
 function runCli(
   args: string[],
-  options: { databaseUrl?: string; integrityKey?: string } = {},
+  options: {
+    databaseUrl?: string;
+    integrityKey?: string;
+    extraEnv?: Record<string, string>;
+  } = {},
 ): { status: number; stdout: string; stderr: string } {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env.DATABASE_URL;
   delete env.COMMANDER_KERNEL_DATABASE_URL;
   delete env.OWNER_DSN;
   delete env.COMMANDER_INTEGRITY_KEY;
+  delete env.AUDIT_DLQ_DEPTH_THRESHOLD;
+  delete env.AUDIT_WORKER_STALE_MS;
   if (options.databaseUrl !== undefined) env.DATABASE_URL = options.databaseUrl;
   if (options.integrityKey !== undefined) env.COMMANDER_INTEGRITY_KEY = options.integrityKey;
+  Object.assign(env, options.extraEnv ?? {});
   const result = spawnSync(process.execPath, ['--import', 'tsx', SCRIPT, ...args], {
     cwd: REPO_ROOT,
     env,
@@ -304,5 +312,61 @@ describe('audit-report helpers', () => {
     writeFileSync(join(dir, 'other.txt'), 'x');
     writeReportAtomic(join(dir, 'report.json'), '{}\n');
     assert.ok(statSync(join(dir, 'report.json')).isFile());
+  });
+});
+
+describe('audit-report — a malformed threshold can never disable its check', () => {
+  it('resolveThreshold rejects NaN-producing input and keeps the documented default', () => {
+    assert.equal(resolveThreshold(undefined, 100), 100);
+    assert.equal(resolveThreshold('', 100), 100);
+    assert.equal(resolveThreshold('abc', 100), 100);
+    assert.equal(resolveThreshold('1e3', 100), 100);
+    assert.equal(resolveThreshold('-5', 100), 100);
+    assert.equal(resolveThreshold('1.5', 100), 100);
+    assert.equal(resolveThreshold('NaN', 100), 100);
+    assert.equal(resolveThreshold('0', 100), 0);
+    assert.equal(resolveThreshold('250', 100), 250);
+  });
+
+  it('the signed report carries a usable DLQ threshold when the env var is malformed', () => {
+    const target = outPath('bad-threshold.json');
+    const { status } = runCli(['--test', '--output', target], {
+      extraEnv: { AUDIT_DLQ_DEPTH_THRESHOLD: 'abc' },
+    });
+    assert.equal(status, 0);
+    const report = JSON.parse(readFileSync(target, 'utf-8')) as {
+      thresholds: { dlqDepth: unknown; workerStaleMs: unknown };
+    };
+    // Pre-fix this was NaN, i.e. `null` after JSON serialisation: every
+    // `dlqDepth > threshold` comparison was false, so the CRITICAL DLQ check
+    // could not fire at all.
+    assert.equal(report.thresholds.dlqDepth, 100);
+    assert.equal(typeof report.thresholds.dlqDepth, 'number');
+  });
+
+  it('the CRITICAL DLQ check still fires on a depth above the default threshold', () => {
+    const result = evaluate(
+      {
+        runsByState: {},
+        stepsByState: {},
+        dlqDepth: 500,
+        dlqOldestEntry: null,
+        outboxPending: 0,
+        eventLogSize: 0,
+        eventSequenceContiguity: 'CONTIGUOUS' as const,
+        cryptographicChainIntegrity: 'EMPTY' as const,
+        workerCount: 1,
+        workerHeartbeatsHealthy: true,
+        staleWorkerCount: 0,
+        interactionPending: 0,
+        walSizeMb: 0,
+        tenantCount: 1,
+      },
+      false,
+    );
+    assert.ok(
+      result.failures.some((failure) => failure.includes('CRITICAL: DLQ depth 500')),
+      result.failures.join('\n'),
+    );
   });
 });

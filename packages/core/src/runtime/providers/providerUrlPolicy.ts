@@ -7,8 +7,9 @@
  * plaintext. This module enforces, at the single point where a request URL is
  * built from a base URL:
  *
- *   1. HTTPS is required — except for explicitly-local providers on a loopback
- *      host (Ollama/vLLM), or when COMMANDER_ALLOW_INSECURE_PROVIDER_URLS=1.
+ *   1. HTTPS is required — except on a loopback host (Ollama/vLLM), or when
+ *      COMMANDER_ALLOW_INSECURE_PROVIDER_URLS=1. A caller-declared `isLocal`
+ *      flag does NOT exempt a remote host from the HTTPS requirement.
  *   2. An optional host allowlist (COMMANDER_PROVIDER_HOST_ALLOWLIST, comma
  *      separated, supports leading `*.` wildcards) pins egress to known hosts.
  *
@@ -47,7 +48,7 @@ export function assertSafeProviderBaseUrl(
 
   // 1. Scheme.
   if (url.protocol !== 'https:') {
-    const httpOkForLocal = url.protocol === 'http:' && (opts.isLocal === true || loopback);
+    const httpOkForLocal = url.protocol === 'http:' && loopback;
     if (!httpOkForLocal && !allowInsecure) {
       throw new Error(
         `Provider "${opts.providerName ?? 'unknown'}" base URL must use https ` +

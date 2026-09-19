@@ -193,16 +193,17 @@ describe('PolicyEngine — security guarantees', () => {
       assert.ok(d.decisionId.startsWith('pd_'));
     });
 
-    it('emits decisionPath for default_deny', () => {
+    it('reports default_deny with an empty decisionPath when no rule matches', () => {
       const pack = makePack(`package t
         default allow = false
       `);
       const engine = new PolicyEngine(pack);
       const d = engine.evaluate(makeInput());
-      assert.deepStrictEqual(
-        d.decisionPath,
-        ['engine:fail_closed'].length === 1 ? d.decisionPath : d.decisionPath,
-      );
+      assert.strictEqual(d.effect, 'deny');
+      assert.strictEqual(d.reason, 'default_deny');
+      // No rule matched, so nothing may claim credit in the decision path.
+      // `['engine:fail_closed']` is reserved for `failClosed()` (engine errors).
+      assert.deepStrictEqual(d.decisionPath, []);
       assert.ok(d.decisionId);
     });
   });

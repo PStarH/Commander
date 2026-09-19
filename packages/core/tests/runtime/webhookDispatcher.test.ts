@@ -1,13 +1,64 @@
-import { describe, it, beforeEach, expect, afterAll } from 'vitest';
+import { describe, it, beforeEach, afterEach, expect, afterAll } from 'vitest';
+import * as crypto from 'node:crypto';
 import { WebhookDispatcher } from '../../src/runtime/webhookDispatcher';
+import { getOutboundNetworkPolicy } from '../../src/security/outboundNetworkPolicy';
 import { resetMessageBus } from '../../src/runtime/messageBus';
 import { resetGlobalLogger } from '../../src/logging';
 
+/**
+ * RTC-13/RTC-14: the previous `dispatch` block fired real outbound POSTs to
+ * `https://example.com` and asserted nothing at all, so a dispatcher that sent
+ * no signature, the wrong event, or nothing whatsoever still reported green.
+ * The transport is now stubbed at the policy layer (`ssrfCheckedFetch`) and the
+ * assertions read the bytes that would have gone on the wire.
+ */
+interface CapturedRequest {
+  url: string;
+  init: RequestInit;
+}
+
 describe('WebhookDispatcher', () => {
   let dispatcher: WebhookDispatcher;
+  let captured: CapturedRequest[] = [];
+  let stubStatus = 200;
+  let realSsrfCheckedFetch: unknown;
+  let stubInstalled = false;
+
+  function installFetchStub(): void {
+    const policy = getOutboundNetworkPolicy() as unknown as Record<string, unknown>;
+    realSsrfCheckedFetch = policy.ssrfCheckedFetch;
+    stubInstalled = true;
+    policy.ssrfCheckedFetch = async (url: string, init: RequestInit) => {
+      captured.push({ url, init });
+      return new Response('', { status: stubStatus });
+    };
+  }
+
+  /** `dispatch()` is fire-and-forget; wait until the stub has been reached. */
+  async function settleDispatch(): Promise<void> {
+    for (let i = 0; i < 60 && captured.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    // One extra tick so a dispatch that (wrongly) sends a second request is seen.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+
+  function signatureFor(body: string, secret: string): string {
+    return crypto.createHmac('sha256', secret).update(body).digest('hex');
+  }
 
   beforeEach(() => {
     dispatcher = new WebhookDispatcher();
+    captured = [];
+    stubStatus = 200;
+  });
+
+  afterEach(() => {
+    if (stubInstalled) {
+      const policy = getOutboundNetworkPolicy() as unknown as Record<string, unknown>;
+      policy.ssrfCheckedFetch = realSsrfCheckedFetch;
+      stubInstalled = false;
+    }
   });
 
   afterAll(() => {
@@ -115,56 +166,148 @@ describe('WebhookDispatcher', () => {
   });
 
   describe('dispatch', () => {
-    it('does nothing when not started', () => {
+    it('does nothing when not started', async () => {
       dispatcher.registerWebhook({
         url: 'https://example.com',
         events: ['test.event'],
         enabled: true,
       });
-      // Should not throw
+      installFetchStub();
       dispatcher.dispatch('test.event', { data: 'test' });
+      await settleDispatch();
+      expect(captured).toHaveLength(0);
+      expect(dispatcher.getDeliveryLog()).toHaveLength(0);
     });
 
-    it('dispatches to matching webhooks when started', () => {
+    it('dispatches to matching webhooks when started', async () => {
       dispatcher.registerWebhook({
         url: 'https://example.com',
         events: ['test.event'],
         enabled: true,
       });
+      installFetchStub();
       dispatcher.start();
-      // Should not throw - dispatch is fire-and-forget
       dispatcher.dispatch('test.event', { data: 'test' });
+      await settleDispatch();
+      expect(captured).toHaveLength(1);
+      expect(captured[0].url).toBe('https://example.com');
+      expect(captured[0].init.method).toBe('POST');
     });
 
-    it('does not dispatch to non-matching events', () => {
+    it('signs the exact request body with HMAC-SHA256 over the webhook secret', async () => {
+      const config = dispatcher.registerWebhook({
+        url: 'https://example.com/hook',
+        events: ['test.event'],
+        secret: 'shhh-secret',
+        retryMax: 0,
+        enabled: true,
+      });
+      installFetchStub();
+      dispatcher.start();
+      dispatcher.dispatch('test.event', { data: 'test', n: 1 });
+      await settleDispatch();
+
+      expect(captured).toHaveLength(1);
+      const headers = captured[0].init.headers as Record<string, string>;
+      const body = captured[0].init.body as string;
+
+      // The signature binds the literal bytes sent, not a re-serialised copy.
+      const expected = signatureFor(body, config.secret!);
+      expect(headers['X-Webhook-Signature']).toBe(expected);
+      // A signature computed with any other secret must not match.
+      expect(headers['X-Webhook-Signature']).not.toBe(signatureFor(body, 'wrong-secret'));
+      expect(headers['X-Webhook-Event']).toBe('test.event');
+      expect(headers['Content-Type']).toBe('application/json');
+
+      const sent = JSON.parse(body) as { event: string; source: string; payload: unknown };
+      expect(sent.event).toBe('test.event');
+      expect(sent.source).toBe('system');
+      expect(sent.payload).toEqual({ data: 'test', n: 1 });
+    });
+
+    it('records a successful delivery with the response status', async () => {
+      const config = dispatcher.registerWebhook({
+        url: 'https://example.com/hook',
+        events: ['test.event'],
+        retryMax: 0,
+        enabled: true,
+      });
+      installFetchStub();
+      dispatcher.start();
+      dispatcher.dispatch('test.event', { data: 'test' });
+      await settleDispatch();
+
+      const log = dispatcher.getDeliveryLog();
+      expect(log).toHaveLength(1);
+      expect(log[0].webhookId).toBe(config.id);
+      expect(log[0].status).toBe('success');
+      expect(log[0].statusCode).toBe(200);
+      expect(dispatcher.getStats().deliveries).toBe(1);
+    });
+
+    it('records a failed delivery when the receiver returns a non-2xx status', async () => {
+      dispatcher.registerWebhook({
+        url: 'https://example.com/hook',
+        events: ['test.event'],
+        retryMax: 0,
+        enabled: true,
+      });
+      installFetchStub();
+      stubStatus = 500;
+      dispatcher.start();
+      dispatcher.dispatch('test.event', { data: 'test' });
+      await settleDispatch();
+
+      const log = dispatcher.getDeliveryLog();
+      expect(log).toHaveLength(1);
+      expect(log[0].status).toBe('failed');
+      expect(log[0].statusCode).toBe(500);
+      expect(log[0].attempts).toBe(1);
+    });
+
+    it('does not dispatch to non-matching events', async () => {
       dispatcher.registerWebhook({
         url: 'https://example.com',
         events: ['test.event'],
         enabled: true,
       });
+      installFetchStub();
       dispatcher.start();
       // Different event - should not match
       dispatcher.dispatch('other.event', { data: 'test' });
+      await settleDispatch();
+      expect(captured).toHaveLength(0);
+      expect(dispatcher.getDeliveryLog()).toHaveLength(0);
     });
 
-    it('dispatches to wildcard webhooks', () => {
+    it('dispatches to wildcard webhooks', async () => {
       dispatcher.registerWebhook({
         url: 'https://example.com',
         events: ['*'],
         enabled: true,
       });
+      installFetchStub();
       dispatcher.start();
       dispatcher.dispatch('any.event', { data: 'test' });
+      await settleDispatch();
+      expect(captured).toHaveLength(1);
+      expect((captured[0].init.headers as Record<string, string>)['X-Webhook-Event']).toBe(
+        'any.event',
+      );
     });
 
-    it('does not dispatch to disabled webhooks', () => {
+    it('does not dispatch to disabled webhooks', async () => {
       dispatcher.registerWebhook({
         url: 'https://example.com',
         events: ['*'],
         enabled: false,
       });
+      installFetchStub();
       dispatcher.start();
       dispatcher.dispatch('any.event', { data: 'test' });
+      await settleDispatch();
+      expect(captured).toHaveLength(0);
+      expect(dispatcher.getDeliveryLog()).toHaveLength(0);
     });
   });
 

@@ -63,6 +63,7 @@ export interface EnvAdapterCredentialProviderOptions {
   cellTenantId: string;
   environment?: NodeJS.ProcessEnv;
   githubTokenEnv?: string;
+  githubRepositories?: readonly string[];
   serviceNowInstanceEnv?: string;
   serviceNowUsernameEnv?: string;
   serviceNowPasswordEnv?: string;
@@ -74,6 +75,7 @@ export class EnvAdapterCredentialProvider
 {
   private readonly cellTenantId: string;
   private readonly githubTokenEnv: string;
+  private readonly githubRepositories: ReadonlySet<string>;
   private readonly serviceNowInstanceEnv: string;
   private readonly serviceNowUsernameEnv: string;
   private readonly serviceNowPasswordEnv: string;
@@ -90,6 +92,30 @@ export class EnvAdapterCredentialProvider
     this.cellTenantId = options.cellTenantId;
     this.environment = options.environment ?? process.env;
     this.githubTokenEnv = options.githubTokenEnv ?? 'GITHUB_TOKEN';
+    const configuredGithubRepositories =
+      options.githubRepositories ??
+      (this.environment.COMMANDER_GITHUB_REPOSITORIES === undefined
+        ? []
+        : this.environment.COMMANDER_GITHUB_REPOSITORIES.split(','));
+    const githubRepositories = new Set<string>();
+    for (const entry of configuredGithubRepositories) {
+      const [owner, repo, ...rest] = entry.trim().split('/');
+      if (
+        !owner ||
+        !repo ||
+        rest.length > 0 ||
+        !GITHUB_DEST_SEGMENT.test(owner) ||
+        !GITHUB_DEST_SEGMENT.test(repo)
+      ) {
+        throw new Error(`Invalid GitHub repository credential registration: ${entry}`);
+      }
+      const canonical = `${owner}/${repo}`;
+      if (githubRepositories.has(canonical)) {
+        throw new Error(`Duplicate GitHub repository credential registration: ${canonical}`);
+      }
+      githubRepositories.add(canonical);
+    }
+    this.githubRepositories = githubRepositories;
     this.serviceNowInstanceEnv = options.serviceNowInstanceEnv ?? 'SERVICENOW_INSTANCE';
     this.serviceNowUsernameEnv = options.serviceNowUsernameEnv ?? 'SERVICENOW_USERNAME';
     this.serviceNowPasswordEnv = options.serviceNowPasswordEnv ?? 'SERVICENOW_PASSWORD';
@@ -157,8 +183,15 @@ export class EnvAdapterCredentialProvider
     }
   }
 
-  async getGitHubToken(tenantId: string, _destination: string): Promise<string> {
+  async getGitHubToken(tenantId: string, destination: string): Promise<string> {
     this.assertTenant(tenantId);
+    const { owner, repo } = parseGitHubDestination(destination);
+    // GitHub was the only adapter that issued its credential for any
+    // destination. An unconfigured allowlist denies rather than handing the
+    // cell-wide token to an arbitrary repository.
+    if (!this.githubRepositories.has(`${owner}/${repo}`)) {
+      throw new Error(`GitHub repository is not authorized: ${owner}/${repo}`);
+    }
     const token =
       this.environment[this.githubTokenEnv] ??
       (this.githubTokenEnv === 'GITHUB_TOKEN' ? this.environment.GITHUB_PAT : undefined);
@@ -281,7 +314,9 @@ export function toEvidenceSummary(
 ): AdapterEvidenceSummary {
   const summary: AdapterEvidenceSummary = {};
   for (const key of descriptor.evidenceResponseSummaryKeys) {
-    if (key in response) {
+    // Own properties only: `in` also matches prototype-chain members, which would
+    // copy a value the response never carried into the evidence bundle.
+    if (Object.hasOwn(response, key)) {
       const value = response[key];
       if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
         (summary as Record<string, unknown>)[key] = value;

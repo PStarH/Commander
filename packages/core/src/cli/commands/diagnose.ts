@@ -335,7 +335,7 @@ async function checkKernelHealth(): Promise<CheckResult[]> {
 // 2. WORKER PLANE HEALTH
 // ════════════════════════════════════════════════════════════════════════════
 
-function checkWorkerPlaneHealth(): CheckResult[] {
+export function checkWorkerPlaneHealth(): CheckResult[] {
   const results: CheckResult[] = [];
 
   // ── Required environment variables ──
@@ -348,10 +348,14 @@ function checkWorkerPlaneHealth(): CheckResult[] {
   for (const env of requiredEnvs) {
     const value = process.env[env.name];
     if (value) {
+      // Same redaction policy the header uses at cmdDiagnose: strip the
+      // credentials a connection URL embeds instead of printing them.
       const display =
         env.name === 'COMMANDER_WORKER_AUTH_TOKEN'
           ? `${value.slice(0, 4)}****${value.slice(-2)}`
-          : value;
+          : env.name === 'DATABASE_URL'
+            ? value.replace(/\/\/.*@/, '//****@')
+            : value;
       results.push({
         label: env.name,
         status: 'PASS',

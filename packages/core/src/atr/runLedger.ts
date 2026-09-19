@@ -146,6 +146,20 @@ export interface CompensationOutcome {
   errors: Array<{ actionId: string; toolName: string; error: string }>;
 }
 
+/**
+ * Raised when a run id is re-bound to a different intent. Idempotent begin is
+ * only idempotent for the SAME intent; a different intent for an existing run
+ * id is refused (AS-04).
+ */
+export class RunIntentMismatchError extends Error {
+  constructor(runId: string, expected: string, actual: string) {
+    super(
+      `Run ${runId} already exists with a different intent (existing=${expected}, requested=${actual}); refusing to re-bind`,
+    );
+    this.name = 'RunIntentMismatchError';
+  }
+}
+
 export class RunLedger {
   private db: BetterSqlite3DB | null = null;
   private config: RunLedgerConfig;
@@ -155,7 +169,12 @@ export class RunLedger {
 
   private stmtGetTx: BetterSqlite3Stmt | null = null;
   private stmtInsertTx: BetterSqlite3Stmt | null = null;
-  private stmtUpdateTxState: BetterSqlite3Stmt | null = null;
+  /**
+   * State-transition statements keyed by `${targetState}|${sourceStates}`.
+   * Built lazily because the legal source-state set differs per transition
+   * (idempotent begin vs. exclusive claim).
+   */
+  private stmtGuardedState = new Map<string, BetterSqlite3Stmt>();
   private stmtAppendAction: BetterSqlite3Stmt | null = null;
   private stmtListActions: BetterSqlite3Stmt | null = null;
   private stmtGetAction: BetterSqlite3Stmt | null = null;
@@ -165,6 +184,7 @@ export class RunLedger {
   private stmtListUncompensated: BetterSqlite3Stmt | null = null;
   private stmtListByState: BetterSqlite3Stmt | null = null;
   private stmtSyncLeaseCredentials: BetterSqlite3Stmt | null = null;
+  private stmtRevokeLease: BetterSqlite3Stmt | null = null;
   private stmtPauseTx: BetterSqlite3Stmt | null = null;
   private stmtListRunnablePaused: BetterSqlite3Stmt | null = null;
 
@@ -223,6 +243,7 @@ export class RunLedger {
         aborted_at TEXT,
         error TEXT,
         metadata_json TEXT,
+        lease_expires_at TEXT,
         PRIMARY KEY (run_id, tenant_id)
       );
       CREATE TABLE IF NOT EXISTS run_actions (
@@ -249,6 +270,7 @@ export class RunLedger {
     for (const ddl of [
       `ALTER TABLE run_transactions ADD COLUMN resume_at TEXT`,
       `ALTER TABLE run_transactions ADD COLUMN pause_reason TEXT`,
+      `ALTER TABLE run_transactions ADD COLUMN lease_expires_at TEXT`,
     ]) {
       try {
         this.db.exec(ddl);
@@ -277,20 +299,20 @@ export class RunLedger {
     this.stmtInsertTx = this.db.prepare(`
       INSERT OR REPLACE INTO run_transactions
         (run_id, tenant_id, state, intent_hash, lease_token, fencing_epoch,
-         created_at, metadata_json)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    this.stmtUpdateTxState = this.db.prepare(`
-      UPDATE run_transactions
-      SET state = ?, committed_at = COALESCE(?, committed_at),
-          aborted_at = COALESCE(?, aborted_at), error = COALESCE(?, error)
-      WHERE run_id = ? AND tenant_id IS ? AND lease_token = ? AND fencing_epoch = ?
+         created_at, metadata_json, lease_expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     this.stmtAppendAction = this.db.prepare(`
-      INSERT OR REPLACE INTO run_actions
+      INSERT INTO run_actions
         (action_id, run_id, tenant_id, tool_name, args_json, external_system,
          idempotency_key, executed_at, compensable, tags_json, description)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+      WHERE EXISTS (
+        SELECT 1 FROM run_transactions
+        WHERE run_id = ? AND tenant_id IS ? AND lease_token = ? AND fencing_epoch = ?
+          AND lease_expires_at IS NOT NULL AND lease_expires_at > ?
+          AND state IN ('PENDING', 'EXECUTING', 'VERIFYING')
+      )
     `);
     this.stmtListActions = this.db.prepare(`
       SELECT action_id, run_id, tenant_id, tool_name, args_json, external_system,
@@ -332,6 +354,7 @@ export class RunLedger {
       UPDATE run_transactions
       SET state = 'PAUSED', resume_at = ?, pause_reason = ?, error = COALESCE(?, error)
       WHERE run_id = ? AND tenant_id IS ? AND lease_token = ? AND fencing_epoch = ?
+        AND lease_expires_at IS NOT NULL AND lease_expires_at > ?
         AND state IN ('PENDING', 'EXECUTING', 'VERIFYING', 'PAUSED')
     `);
     this.stmtListRunnablePaused = this.db.prepare(`
@@ -346,9 +369,65 @@ export class RunLedger {
       ORDER BY resume_at ASC
     `);
     this.stmtSyncLeaseCredentials = this.db.prepare(`
-      UPDATE run_transactions SET lease_token = ?, fencing_epoch = ?
+      UPDATE run_transactions SET lease_token = ?, fencing_epoch = ?, lease_expires_at = ?
       WHERE run_id = ? AND tenant_id IS ?
+        AND state NOT IN ('COMMITTED', 'ABORTED', 'COMPENSATED')
     `);
+    this.stmtRevokeLease = this.db.prepare(`
+      UPDATE run_transactions SET lease_expires_at = ?
+      WHERE run_id = ? AND tenant_id IS ? AND lease_token = ? AND fencing_epoch = ?
+    `);
+  }
+
+  /**
+   * Atomically apply a state transition guarded by ownership, a live lease and
+   * the legal source state — all in one condition on the authoritative run
+   * row. `lease_expires_at` on the run row is the denormalized lease expiry
+   * kept in sync by start() / syncLeaseCredentials().
+   */
+  private guardedStateUpdate(state: RunState, from: RunState[]): BetterSqlite3Stmt | null {
+    if (!this.db) return null;
+    const key = `${state}|${from.join(',')}`;
+    let stmt = this.stmtGuardedState.get(key);
+    if (!stmt) {
+      const placeholders = from.map(() => '?').join(', ');
+      stmt = this.db.prepare(`
+        UPDATE run_transactions
+        SET state = ?, committed_at = COALESCE(?, committed_at),
+            aborted_at = COALESCE(?, aborted_at), error = COALESCE(?, error)
+        WHERE run_id = ? AND tenant_id IS ? AND lease_token = ? AND fencing_epoch = ?
+          AND lease_expires_at IS NOT NULL AND lease_expires_at > ?
+          AND state IN (${placeholders})
+      `);
+      this.stmtGuardedState.set(key, stmt);
+    }
+    return stmt;
+  }
+
+  private applyGuardedState(
+    state: RunState,
+    from: RunState[],
+    runId: string,
+    tenantId: string | null,
+    leaseToken: string,
+    fencingEpoch: number,
+    fields?: { committedAt?: string; abortedAt?: string; error?: string },
+  ): boolean {
+    const stmt = this.guardedStateUpdate(state, from);
+    if (!stmt) return false;
+    const result = stmt.run(
+      state,
+      fields?.committedAt ?? null,
+      fields?.abortedAt ?? null,
+      fields?.error ?? null,
+      runId,
+      tenantId,
+      leaseToken,
+      fencingEpoch,
+      new Date().toISOString(),
+      ...from,
+    );
+    return result.changes === 1;
   }
 
   /**
@@ -390,7 +469,13 @@ export class RunLedger {
 
     const existing = this.stmtGetTx.get(runId, tenantId) as TxRow | undefined;
     if (existing) {
+      // AS-04: idempotent begin is bound to the intent — the same run id may
+      // only be re-opened for the same intent.
+      if (existing.intent_hash !== input.intentHash) {
+        throw new RunIntentMismatchError(runId, existing.intent_hash, input.intentHash);
+      }
       const tx = this.rowToTx({ ...existing, tenant_id: tenantId }, true);
+      const liveLease = this.leaseManager.get(runId, { tenantId: input.tenantId });
       return {
         lease: {
           acquired: false,
@@ -398,9 +483,9 @@ export class RunLedger {
             token: existing.lease_token,
             fencingEpoch: existing.fencing_epoch,
             acquiredAt: existing.created_at,
-            expiresAt: '',
+            expiresAt: liveLease?.expiresAt ?? '',
             runId,
-            holder: '',
+            holder: liveLease?.holder ?? '',
           },
         },
         tx,
@@ -423,6 +508,7 @@ export class RunLedger {
       acquireResult.lease.fencingEpoch,
       createdAt,
       input.metadata ? JSON.stringify(input.metadata) : null,
+      acquireResult.lease.expiresAt,
     );
 
     const tx: RunTransaction = {
@@ -448,35 +534,32 @@ export class RunLedger {
   }
 
   /**
-   * Transition a run to EXECUTING. Validates the lease token + epoch before
-   * updating. Returns false if the caller is fenced.
+   * Transition a run to EXECUTING. Ownership, a live lease and the legal
+   * source state are checked in one atomic condition on the run row.
+   *
+   * `from` defaults to PENDING+EXECUTING so a repeat begin with the same
+   * credentials is idempotent. Callers that must win exclusively (a claim)
+   * pass an exact source set such as `['PENDING']` or `['PAUSED']`.
    */
   beginExecuting(
     runId: string,
     leaseToken: string,
     fencingEpoch: number,
-    options?: { tenantId?: string },
+    options?: { tenantId?: string; from?: RunState[] },
   ): boolean {
-    if (!this.db || !this.stmtUpdateTxState) return false;
+    if (!this.db) return false;
     const tenantId = options?.tenantId ?? null;
-    const result = this.stmtUpdateTxState.run(
-      'EXECUTING',
-      null,
-      null,
-      null,
-      runId,
-      tenantId,
-      leaseToken,
-      fencingEpoch,
-    );
-    if (result.changes === 1) {
+    const from = options?.from ?? ['PENDING', 'EXECUTING'];
+    const ok = this.applyGuardedState('EXECUTING', from, runId, tenantId, leaseToken, fencingEpoch);
+    if (ok) {
       this.emitSourcingEvent('run.executing', { runId, tenantId });
     }
-    return result.changes === 1;
+    return ok;
   }
 
   /**
-   * Transition a run to VERIFYING. Same lease validation as beginExecuting.
+   * Transition a run to VERIFYING. Same atomic lease/state guard as
+   * beginExecuting; the only legal source state is EXECUTING.
    */
   beginVerifying(
     runId: string,
@@ -484,26 +567,25 @@ export class RunLedger {
     fencingEpoch: number,
     options?: { tenantId?: string },
   ): boolean {
-    if (!this.db || !this.stmtUpdateTxState) return false;
+    if (!this.db) return false;
     const tenantId = options?.tenantId ?? null;
-    const result = this.stmtUpdateTxState.run(
+    const ok = this.applyGuardedState(
       'VERIFYING',
-      null,
-      null,
-      null,
+      ['EXECUTING'],
       runId,
       tenantId,
       leaseToken,
       fencingEpoch,
     );
-    if (result.changes === 1) {
+    if (ok) {
       this.emitSourcingEvent('run.verifying', { runId, tenantId });
     }
-    return result.changes === 1;
+    return ok;
   }
 
   /**
    * Mark the run as committed (terminal success). No compensation runs.
+   * A terminal run is read-only: only EXECUTING/VERIFYING may commit.
    */
   commit(
     runId: string,
@@ -511,28 +593,33 @@ export class RunLedger {
     fencingEpoch: number,
     options?: { tenantId?: string },
   ): boolean {
-    if (!this.db || !this.stmtUpdateTxState) return false;
+    if (!this.db) return false;
     const tenantId = options?.tenantId ?? null;
-    const result = this.stmtUpdateTxState.run(
+    const now = new Date().toISOString();
+    const ok = this.applyGuardedState(
       'COMMITTED',
-      new Date().toISOString(),
-      null,
-      null,
+      ['EXECUTING', 'VERIFYING'],
       runId,
       tenantId,
       leaseToken,
       fencingEpoch,
+      { committedAt: now },
     );
-    if (result.changes === 1) {
+    if (ok) {
       this.emitSourcingEvent('run.committed', { runId, tenantId });
     }
-    return result.changes === 1;
+    return ok;
   }
 
   /**
    * Record a compensable action against the run. Persists immediately so
    * even a synchronous crash leaves the side-effect on the books for later
-   * compensation. Validates the lease before writing.
+   * compensation.
+   *
+   * AS-04: the write is a single conditional INSERT ... SELECT guarded by
+   * ownership, a live lease and a non-terminal run state on the authoritative
+   * run row, so an expired/killed lease or a terminal run cannot register a
+   * new side effect. The pre-read below only produces a useful log message.
    */
   recordAction(input: RecordActionInput): CompensableAction | null {
     if (!this.db || !this.stmtAppendAction || !this.stmtGetTx) return null;
@@ -555,7 +642,7 @@ export class RunLedger {
 
     const actionId = input.actionId ?? `act_${randomUUID()}`;
     const executedAt = new Date().toISOString();
-    this.stmtAppendAction.run(
+    const appended = this.stmtAppendAction.run(
       actionId,
       input.runId,
       tenantId,
@@ -567,7 +654,19 @@ export class RunLedger {
       input.compensable ? 1 : 0,
       JSON.stringify(input.tags ?? []),
       input.description ?? `${input.toolName}`,
+      input.runId,
+      tenantId,
+      input.leaseToken,
+      input.fencingEpoch,
+      new Date().toISOString(),
     );
+    if (appended.changes !== 1) {
+      getGlobalLogger().warn('RunLedger', 'recordAction: refused (expired lease or terminal run)', {
+        runId: input.runId,
+        state: txRow.state,
+      });
+      return null;
+    }
 
     this.emitSourcingEvent('action.recorded', {
       runId: input.runId,
@@ -633,16 +732,17 @@ export class RunLedger {
       return { aborted: false, outcome };
     }
 
-    if (this.db && this.stmtUpdateTxState) {
-      this.stmtUpdateTxState.run(
+    if (this.db) {
+      // AS-04: abort is itself a guarded transition — a terminal run is
+      // read-only and the run row must still carry a live lease.
+      this.applyGuardedState(
         'ABORTED',
-        null,
-        new Date().toISOString(),
-        errorMessage,
+        ['PENDING', 'EXECUTING', 'VERIFYING', 'PAUSED'],
         runId,
         tenantId,
         leaseToken,
         fencingEpoch,
+        { abortedAt: new Date().toISOString(), error: errorMessage },
       );
 
       this.emitSourcingEvent('run.aborted', {
@@ -717,16 +817,22 @@ export class RunLedger {
       }
     }
 
-    if (this.stmtUpdateTxState) {
-      this.stmtUpdateTxState.run(
+    if (this.db) {
+      // The run was just moved to ABORTED above; settle it as COMPENSATED
+      // when every compensation succeeded, otherwise leave it ABORTED with
+      // the failure recorded. Both are guarded, so a fenced/expired caller
+      // cannot settle the row.
+      this.applyGuardedState(
         outcome.failed === 0 ? 'COMPENSATED' : 'ABORTED',
-        null,
-        null,
-        outcome.failed > 0 ? `${outcome.failed} compensations failed` : null,
+        ['ABORTED'],
         runId,
         tenantId,
         leaseToken,
         fencingEpoch,
+        {
+          abortedAt: new Date().toISOString(),
+          error: outcome.failed > 0 ? `${outcome.failed} compensations failed` : undefined,
+        },
       );
     }
 
@@ -758,6 +864,7 @@ export class RunLedger {
       tenantId,
       leaseToken,
       fencingEpoch,
+      new Date().toISOString(),
     );
     if (result.changes === 1) {
       this.emitSourcingEvent('run.paused', {
@@ -843,24 +950,67 @@ export class RunLedger {
   }
 
   /**
-   * Sync the lease token and fencing epoch into the ledger row.
-   * Called after RecoveryBootstrapper acquires a new lease on a zombie run
-   * so that subsequent scheduler operations can validate against the new credentials.
+   * Sync the lease token, fencing epoch and expiry into the ledger row.
+   * Called after RecoveryBootstrapper / a claim acquires a new lease on a run
+   * so that subsequent scheduler operations validate against the new
+   * credentials.
+   *
+   * AS-04: the caller must present credentials that the lease authority (the
+   * LeaseManager) currently considers live; an arbitrary caller therefore
+   * cannot overwrite another owner's row credentials.
    */
   syncLeaseCredentials(
     runId: string,
     leaseToken: string,
     fencingEpoch: number,
-    options?: { tenantId?: string },
-  ): void {
-    if (!this.db || !this.stmtSyncLeaseCredentials) return;
+    options?: { tenantId?: string; expiresAt?: string },
+  ): boolean {
+    if (!this.db || !this.stmtSyncLeaseCredentials) return false;
     const tenantId = options?.tenantId ?? null;
-    this.stmtSyncLeaseCredentials.run(leaseToken, fencingEpoch, runId, tenantId);
+    const live = this.leaseManager.get(runId, { tenantId: options?.tenantId });
+    if (!live || live.token !== leaseToken || live.fencingEpoch !== fencingEpoch) {
+      getGlobalLogger().warn('RunLedger', 'syncLeaseCredentials: refused (not the live lease)', {
+        runId,
+      });
+      return false;
+    }
+    const result = this.stmtSyncLeaseCredentials.run(
+      leaseToken,
+      fencingEpoch,
+      options?.expiresAt ?? live.expiresAt,
+      runId,
+      tenantId,
+    );
+    return result.changes === 1;
+  }
+
+  /**
+   * Invalidate the run row's lease credentials on release/kill so a surviving
+   * writer can no longer pass the guarded write conditions. The stored row
+   * token is never handed out again for recovery.
+   */
+  revokeLease(
+    runId: string,
+    leaseToken: string,
+    fencingEpoch: number,
+    options?: { tenantId?: string },
+  ): boolean {
+    if (!this.db || !this.stmtRevokeLease) return false;
+    const tenantId = options?.tenantId ?? null;
+    const result = this.stmtRevokeLease.run(
+      '1970-01-01T00:00:00.000Z',
+      runId,
+      tenantId,
+      leaseToken,
+      fencingEpoch,
+    );
+    return result.changes === 1;
   }
 
   close(): void {
     this.db?.close();
     this.db = null;
+    this.stmtGuardedState.clear();
     this.handlers.clear();
   }
 

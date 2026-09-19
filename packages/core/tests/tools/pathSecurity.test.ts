@@ -448,6 +448,66 @@ describe('ApplyPatchTool — targetFile workspace boundary', () => {
 });
 
 // ============================================================================
+// ApplyPatchTool — verification failure must not destroy the working tree
+//
+// TR-02: on a failed `verifyCommand` the tool ran `git checkout -- <file>`,
+// which restores the *index* version rather than this patch's pre-image and so
+// discarded the user's pre-existing unstaged changes.
+// ============================================================================
+describe('ApplyPatchTool — verification failure leaves the file as patched', () => {
+  let tool: ApplyPatchTool;
+  let scratchDir: string;
+
+  beforeEach(() => {
+    tool = new ApplyPatchTool();
+    scratchDir = `_test_patchverify_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    fs.mkdirSync(path.resolve(getSafeRoot(), scratchDir), { recursive: true });
+  });
+
+  afterEach(() => {
+    fs.rmSync(path.resolve(getSafeRoot(), scratchDir), { recursive: true, force: true });
+  });
+
+  it('does not auto-revert (git checkout) when verification fails', async () => {
+    const relFile = `${scratchDir}/target.txt`;
+    const absFile = path.resolve(getSafeRoot(), relFile);
+    fs.writeFileSync(absFile, 'line1\nline2-preexisting\nline3\n');
+
+    const patch = [
+      '--- a/target.txt',
+      '+++ b/target.txt',
+      '@@ -1,3 +1,3 @@',
+      ' line1',
+      '-line2-preexisting',
+      '+line2-patched',
+      ' line3',
+      '',
+    ].join('\n');
+
+    const result = await tool.execute({
+      patch,
+      targetFile: relFile,
+      validate: false,
+      verifyCommand: 'exit 1',
+    });
+
+    assert.ok(
+      result.includes('Verification failed'),
+      `Verification failure must be reported, got: ${result}`,
+    );
+    assert.ok(
+      !/auto-revert|automatically/i.test(result),
+      `Must not attempt an automatic revert, got: ${result}`,
+    );
+    assert.strictEqual(
+      fs.readFileSync(absFile, 'utf-8'),
+      'line1\nline2-patched\nline3\n',
+      'The file must be left exactly as the patch produced it',
+    );
+  });
+});
+
+// ============================================================================
 // CodeRefinerTool — codeFile boundary
 // ============================================================================
 describe('CodeRefinerTool — codeFile workspace boundary', () => {
@@ -785,7 +845,16 @@ describe('PatchEngine — workspace boundary', () => {
     const engine = new PatchEngine();
     const result = await engine.apply({
       filePath: '/dev/null',
-      hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1, content: 'test' }],
+      hunks: [
+        {
+          oldStart: 1,
+          oldCount: 1,
+          newStart: 1,
+          newCount: 1,
+          oldLines: ['test'],
+          newLines: ['test'],
+        },
+      ],
     });
     assert.strictEqual(result.success, false, 'Should fail');
     assert.ok(
@@ -833,7 +902,7 @@ describe('FileWatcher — workspace boundary', () => {
 // GlobTool — safePath boundary and glob pattern resolution
 // ============================================================================
 describe('GlobTool — workspace boundary and patterns', () => {
-  let tool: import('../../src/tools/fileSystemTool')['GlobTool'];
+  let tool: import('../../src/tools/fileSystemTool').GlobTool;
 
   beforeEach(async () => {
     const { GlobTool } = await import('../../src/tools/fileSystemTool');
@@ -906,7 +975,7 @@ describe('GlobTool — workspace boundary and patterns', () => {
 // FileEditTool — safePath boundary for both modes
 // ============================================================================
 describe('FileEditTool — workspace boundary', () => {
-  let tool: import('../../src/tools/fileSystemTool')['FileEditTool'];
+  let tool: import('../../src/tools/fileSystemTool').FileEditTool;
 
   beforeEach(async () => {
     const { FileEditTool } = await import('../../src/tools/fileSystemTool');

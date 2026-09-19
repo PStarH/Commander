@@ -94,9 +94,10 @@ export class LeaseManager {
   private inProcess: Map<string, RunLease> = new Map();
 
   private stmtGet: BetterSqlite3Stmt | null = null;
-  private stmtInsert: BetterSqlite3Stmt | null = null;
+  private stmtInsertIfAbsent: BetterSqlite3Stmt | null = null;
   private stmtHeartbeat: BetterSqlite3Stmt | null = null;
-  private stmtBumpEpoch: BetterSqlite3Stmt | null = null;
+  private stmtReclaimExpired: BetterSqlite3Stmt | null = null;
+  private stmtNextGeneration: BetterSqlite3Stmt | null = null;
   private stmtRelease: BetterSqlite3Stmt | null = null;
   private stmtEvictExpired: BetterSqlite3Stmt | null = null;
 
@@ -116,6 +117,7 @@ export class LeaseManager {
     this.db = new BetterSqlite3(this.config.filePath);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('synchronous = NORMAL');
+    this.db.pragma('busy_timeout = 5000');
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS leases (
         run_id TEXT NOT NULL,
@@ -127,6 +129,23 @@ export class LeaseManager {
         holder TEXT NOT NULL,
         PRIMARY KEY (run_id, tenant_id)
       );
+
+      -- AL-01: SQLite treats NULLs as distinct inside a composite PRIMARY KEY,
+      -- so "PRIMARY KEY (run_id, tenant_id)" does NOT make (run_id, NULL)
+      -- unique. Without this partial index two connections can both insert a
+      -- null-tenant lease for the same run, which defeats the CAS below.
+      CREATE UNIQUE INDEX IF NOT EXISTS ux_leases_run_null_tenant
+        ON leases (run_id) WHERE tenant_id IS NULL;
+
+      -- AL-01: fencing epochs are allocated from this authority, which is
+      -- never deleted. release()/evict() delete the lease row, but the
+      -- generation survives, so a later acquire() cannot restart the epoch.
+      CREATE TABLE IF NOT EXISTS lease_generations (
+        run_id TEXT NOT NULL,
+        tenant_key TEXT NOT NULL,
+        last_epoch INTEGER NOT NULL,
+        PRIMARY KEY (run_id, tenant_key)
+      );
     `);
   }
 
@@ -136,22 +155,37 @@ export class LeaseManager {
       SELECT run_id, tenant_id, token, fencing_epoch, acquired_at, expires_at, holder
       FROM leases WHERE run_id = ? AND tenant_id IS ? LIMIT 1
     `);
-    this.stmtInsert = this.db.prepare(`
-      INSERT OR REPLACE INTO leases
+    // AL-01: the owner key is unique for null and non-null tenants alike (see
+    // the partial index in openDb), so OR IGNORE makes "insert only if the run
+    // is unleased" a single atomic compare-and-set. changes===1 means we won.
+    this.stmtInsertIfAbsent = this.db.prepare(`
+      INSERT OR IGNORE INTO leases
         (run_id, tenant_id, token, fencing_epoch, acquired_at, expires_at, holder)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
+    // AL-01: expires_at > ? is the liveness guard; an expired lease cannot be
+    // resurrected by its old holder. The trailing epoch predicate is bound to
+    // NULL by callers that do not track an epoch — because a token is minted
+    // once per acquisition, a matching token already implies a matching epoch.
     this.stmtHeartbeat = this.db.prepare(`
-      UPDATE leases SET expires_at = ? WHERE run_id = ? AND tenant_id IS ? AND token = ?
+      UPDATE leases SET expires_at = ?
+      WHERE run_id = ? AND tenant_id IS ? AND token = ? AND expires_at > ?
+        AND (? IS NULL OR fencing_epoch = ?)
     `);
-    this.stmtBumpEpoch = this.db.prepare(`
+    // AL-01: single-statement CAS for reclamation. `expires_at <= ?` and the
+    // observed `fencing_epoch` decide the race: SQLite serialises the writers,
+    // so a loser's changes is 0 and it must not report success.
+    this.stmtReclaimExpired = this.db.prepare(`
       UPDATE leases
-      SET fencing_epoch = fencing_epoch + 1,
-          token = ?,
-          acquired_at = ?,
-          expires_at = ?,
-          holder = ?
-      WHERE run_id = ? AND tenant_id IS ? AND token = ?
+      SET token = ?, acquired_at = ?, expires_at = ?, holder = ?, fencing_epoch = ?
+      WHERE run_id = ? AND tenant_id IS ? AND fencing_epoch = ? AND expires_at <= ?
+    `);
+    this.stmtNextGeneration = this.db.prepare(`
+      INSERT INTO lease_generations (run_id, tenant_key, last_epoch)
+      VALUES (?, ?, ?)
+      ON CONFLICT(run_id, tenant_key) DO UPDATE
+        SET last_epoch = MAX(last_epoch + 1, excluded.last_epoch)
+      RETURNING last_epoch AS epoch
     `);
     this.stmtRelease = this.db.prepare(`
       DELETE FROM leases WHERE run_id = ? AND tenant_id IS ? AND token = ?
@@ -167,106 +201,131 @@ export class LeaseManager {
    * (unless the existing lease has expired, in which case it is reclaimed and
    * `acquired=true` is returned with `reclaimed=true`).
    *
-   * Reclamation bumps the fencing epoch, invalidating any tokens a zombie
-   * process might still hold.
+   * AL-01: acquisition is an atomic compare-and-set. A fresh acquire is an
+   * `INSERT OR IGNORE` against the unique owner key and a reclaim is a single
+   * `UPDATE ... WHERE expires_at <= ?`. Both inspect the affected row count, so
+   * only the connection whose write actually changed the row reports
+   * `acquired: true`. Every loser reads back and returns the current owner
+   * instead of a fabricated success.
+   *
+   * Reclamation takes its fencing epoch from the durable lease_generations
+   * authority, which `release`/`evict` never delete, so an epoch stays
+   * monotonic across a run's whole life.
    */
   acquire(
     runId: string,
     options?: { tenantId?: string; holder?: string; ttlSeconds?: number },
   ): AcquireResult {
-    if (!this.db || !this.stmtGet || !this.stmtInsert || !this.stmtBumpEpoch) {
+    if (
+      !this.db ||
+      !this.stmtGet ||
+      !this.stmtInsertIfAbsent ||
+      !this.stmtReclaimExpired ||
+      !this.stmtNextGeneration
+    ) {
       throw new Error('LeaseManager not initialized');
     }
     const tenantId = options?.tenantId ?? null;
     const holder = options?.holder ?? this.config.defaultHolder;
     const ttlSeconds = options?.ttlSeconds ?? this.config.defaultTtlSeconds;
+    const cacheKey = this.cacheKey(runId, tenantId);
 
-    const existing = this.stmtGet.get(runId, tenantId) as LeaseRow | undefined;
-    const now = new Date();
+    // A release racing this acquire can delete the row between the CAS and the
+    // read-back; retry rather than invent a lease.
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const now = new Date();
+      const acquiredAt = now.toISOString();
+      const expiresAt = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
+      const existing = this.stmtGet.get(runId, tenantId) as LeaseRow | undefined;
 
-    if (existing) {
-      const isExpired = new Date(existing.expires_at).getTime() <= now.getTime();
-      if (isExpired) {
-        // Bump epoch: any zombie process holding the old token is now fenced.
-        const newToken = randomUUID();
-        const newEpoch = existing.fencing_epoch + 1;
-        const newAcquired = now.toISOString();
-        const newExpires = new Date(now.getTime() + ttlSeconds * 1000).toISOString();
-        this.stmtBumpEpoch.run(
-          newToken,
-          newAcquired,
-          newExpires,
-          holder,
+      if (existing === undefined) {
+        const token = randomUUID();
+        const fencingEpoch = this.nextEpoch(runId, tenantId, 1);
+        const inserted = this.stmtInsertIfAbsent.run(
           runId,
           tenantId,
-          existing.token,
-        );
-        const lease: RunLease = {
-          token: newToken,
-          fencingEpoch: newEpoch,
-          acquiredAt: newAcquired,
-          expiresAt: newExpires,
-          runId,
+          token,
+          fencingEpoch,
+          acquiredAt,
+          expiresAt,
           holder,
-        };
-        this.inProcess.set(this.cacheKey(runId, tenantId), lease);
-        return { acquired: true, lease, reclaimed: true };
+        );
+        if (inserted.changes === 1) {
+          const lease: RunLease = { token, fencingEpoch, acquiredAt, expiresAt, runId, holder };
+          this.inProcess.set(cacheKey, lease);
+          return { acquired: true, lease };
+        }
+      } else if (new Date(existing.expires_at).getTime() <= now.getTime()) {
+        const token = randomUUID();
+        // Floor of existing+1 keeps the epoch strictly increasing even for a
+        // row that predates the generation authority (legacy / seeded rows).
+        const fencingEpoch = this.nextEpoch(runId, tenantId, existing.fencing_epoch + 1);
+        const reclaimed = this.stmtReclaimExpired.run(
+          token,
+          acquiredAt,
+          expiresAt,
+          holder,
+          fencingEpoch,
+          runId,
+          tenantId,
+          existing.fencing_epoch,
+          acquiredAt,
+        );
+        if (reclaimed.changes === 1) {
+          const lease: RunLease = { token, fencingEpoch, acquiredAt, expiresAt, runId, holder };
+          this.inProcess.set(cacheKey, lease);
+          return { acquired: true, lease, reclaimed: true };
+        }
       }
-      const lease: RunLease = {
-        token: existing.token,
-        fencingEpoch: existing.fencing_epoch,
-        acquiredAt: existing.acquired_at,
-        expiresAt: existing.expires_at,
-        runId,
-        holder: existing.holder,
-      };
-      this.inProcess.set(this.cacheKey(runId, tenantId), lease);
-      return { acquired: false, lease };
+
+      // The row was live, or another connection won the CAS. Return the
+      // authoritative current state instead of a lease we do not own.
+      const current = this.stmtGet.get(runId, tenantId) as LeaseRow | undefined;
+      if (current) {
+        const lease = this.rowToLease(current, runId);
+        this.inProcess.set(cacheKey, lease);
+        return { acquired: false, lease };
+      }
     }
 
-    // No existing lease — create one.
-    const token = randomUUID();
-    const lease: RunLease = {
-      token,
-      fencingEpoch: 1,
-      acquiredAt: now.toISOString(),
-      expiresAt: new Date(now.getTime() + ttlSeconds * 1000).toISOString(),
-      runId,
-      holder,
-    };
-    this.stmtInsert.run(
-      runId,
-      tenantId,
-      token,
-      lease.fencingEpoch,
-      lease.acquiredAt,
-      lease.expiresAt,
-      holder,
+    throw new Error(
+      `LeaseManager.acquire: no lease row could be established or read for run ${runId} after repeated CAS attempts`,
     );
-    this.inProcess.set(this.cacheKey(runId, tenantId), lease);
-    return { acquired: true, lease };
   }
 
   /**
-   * Refresh a lease's expiry. Returns true if the heartbeat succeeded; false
-   * if the lease was lost (token mismatch / fenced / evicted).
+   * Refresh a lease's expiry. Returns true only when the caller is still the
+   * current, unexpired holder.
+   *
+   * AL-01: `expires_at > ?` makes an expired lease unrefreshable, so an old
+   * holder cannot resurrect it before a takeover; a token/epoch mismatch also
+   * fails closed.
    */
   heartbeat(
     runId: string,
     token: string,
-    options?: { tenantId?: string; ttlSeconds?: number },
+    options?: { tenantId?: string; ttlSeconds?: number; epoch?: number },
   ): boolean {
     if (!this.db || !this.stmtHeartbeat) return false;
     const tenantId = options?.tenantId ?? null;
     const ttlSeconds = options?.ttlSeconds ?? this.config.defaultTtlSeconds;
+    const epoch = options?.epoch ?? null;
+    const nowIso = new Date().toISOString();
     const newExpires = new Date(Date.now() + ttlSeconds * 1000).toISOString();
-    const result = this.stmtHeartbeat.run(newExpires, runId, tenantId, token);
+    const result = this.stmtHeartbeat.run(newExpires, runId, tenantId, token, nowIso, epoch, epoch);
+    const cacheKey = this.cacheKey(runId, tenantId);
     if (result.changes === 1) {
-      const cached = this.inProcess.get(this.cacheKey(runId, tenantId));
+      const cached = this.inProcess.get(cacheKey);
       if (cached && cached.token === token) {
         cached.expiresAt = newExpires;
       }
       return true;
+    }
+    // Failed closed: expired, fenced, or released. Drop any stale cached copy
+    // so the next acquire re-reads authoritative state.
+    const cached = this.inProcess.get(cacheKey);
+    if (cached && cached.token === token) {
+      this.inProcess.delete(cacheKey);
     }
     return false;
   }
@@ -343,16 +402,52 @@ export class LeaseManager {
     this.db?.close();
     this.db = null;
     this.stmtGet = null;
-    this.stmtInsert = null;
+    this.stmtInsertIfAbsent = null;
     this.stmtHeartbeat = null;
-    this.stmtBumpEpoch = null;
+    this.stmtReclaimExpired = null;
+    this.stmtNextGeneration = null;
     this.stmtRelease = null;
     this.stmtEvictExpired = null;
     this.inProcess.clear();
   }
 
+  private rowToLease(row: LeaseRow, runId: string): RunLease {
+    return {
+      token: row.token,
+      fencingEpoch: row.fencing_epoch,
+      acquiredAt: row.acquired_at,
+      expiresAt: row.expires_at,
+      runId,
+      holder: row.holder,
+    };
+  }
+
+  /**
+   * Allocate the next fencing epoch from the durable generation authority.
+   * `floor` is the smallest value the allocator may return, which lets a
+   * reclaim outrank an epoch that was written before the authority existed.
+   */
+  private nextEpoch(runId: string, tenantId: string | null, floor: number): number {
+    if (!this.stmtNextGeneration) throw new Error('LeaseManager not initialized');
+    const row = this.stmtNextGeneration.get(runId, this.generationKey(tenantId), floor) as
+      { epoch: number } | undefined;
+    if (!row) {
+      throw new Error(`LeaseManager: could not allocate a fencing epoch for run ${runId}`);
+    }
+    return row.epoch;
+  }
+
+  /**
+   * NOT-NULL generation key. SQLite treats NULLs as distinct inside a composite
+   * PRIMARY KEY, so the null tenant needs its own non-null encoding; the "!"
+   * prefix cannot collide with the "t:" prefixed real-tenant keys.
+   */
+  private generationKey(tenantId: string | null): string {
+    return tenantId === null ? '!' : `t:${tenantId}`;
+  }
+
   private cacheKey(runId: string, tenantId: string | null): string {
-    if (!tenantId) return runId;
+    if (tenantId === null) return runId;
     return createHash('sha256').update(`${tenantId}::${runId}`).digest('hex');
   }
 }

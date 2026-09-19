@@ -28,7 +28,7 @@ test('invalid password attempts are persisted through the authentication-failure
         lockedUntil: 0,
       };
     },
-    cleanup: async () => {},
+    cleanup: async () => 0,
   };
   setAuthFailureStore(authority);
   setUserRepository(new TestUserRepository());
@@ -77,7 +77,7 @@ test('a locked IP is rejected 429 with Retry-After before any credential check',
     recordFailure: async () => {
       throw new Error('recordFailure must not run for a locked IP');
     },
-    cleanup: async () => {},
+    cleanup: async () => 0,
   });
   setUserRepository(new TestUserRepository());
   await createUser({
@@ -124,7 +124,7 @@ test('login fails closed with 503 when the failure authority is unavailable', as
     recordFailure: async () => {
       throw new Error('AUTH_DATABASE_URL_REQUIRED');
     },
-    cleanup: async () => {},
+    cleanup: async () => 0,
   });
   setUserRepository(new TestUserRepository());
   await createUser({

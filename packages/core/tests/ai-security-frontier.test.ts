@@ -924,7 +924,11 @@ describe('SemanticFirewall', () => {
 
     it('应提供隔离区统计', () => {
       const stats = firewall.getQuarantineStats();
-      assert.ok('totalItems' in stats || typeof stats === 'object');
+      assert.strictEqual(typeof stats, 'object');
+      assert.strictEqual(typeof stats.total, 'number');
+      assert.strictEqual(typeof stats.pendingReview, 'number');
+      assert.strictEqual(typeof stats.approved, 'number');
+      assert.strictEqual(typeof stats.byCategory, 'object');
     });
   });
 

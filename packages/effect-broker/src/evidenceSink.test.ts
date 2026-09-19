@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { buildRunEvidenceBundle, canonicalEvidenceJson } from './evidenceBundle.js';
-import { EvidenceSink, type EvidenceRepositoryPort, type EvidenceRecord } from './evidenceSink.js';
+import {
+  EvidenceSink,
+  assertEvidenceRecord,
+  type EvidenceRepositoryPort,
+  type EvidenceRecord,
+} from './evidenceSink.js';
 
 function record(): EvidenceRecord {
   const body = buildRunEvidenceBundle({
@@ -76,7 +81,7 @@ describe('append-only evidence sink', () => {
     assert.equal(writes.length, 1);
   });
 
-  it('fails closed when no trusted signature verifier is supplied', async () => {
+  it('fails closed when no trusted signature verifier is supplied', () => {
     const writes: EvidenceRecord[] = [];
     const repository: EvidenceRepositoryPort = {
       appendEvidence: async (value) => {
@@ -84,10 +89,12 @@ describe('append-only evidence sink', () => {
         return { inserted: true };
       },
     };
-    const sink = new EvidenceSink(repository);
-    await assert.rejects(
-      sink.persist(record()),
-      /EVIDENCE_SIGNATURE_VERIFIER_REQUIRED|EVIDENCE_INTEGRITY_INVALID/,
+    // EB-02: the sink has no acceptance path without a trusted verifier, so the
+    // constructor refuses outright instead of deferring the failure to persist().
+    assert.throws(() => new EvidenceSink(repository), /EVIDENCE_SIGNATURE_VERIFIER_REQUIRED/);
+    assert.throws(
+      () => assertEvidenceRecord(record(), { maxBytes: 1_000_000 }),
+      /EVIDENCE_SIGNATURE_VERIFIER_REQUIRED/,
     );
     assert.equal(writes.length, 0);
   });
@@ -121,7 +128,7 @@ describe('append-only evidence sink', () => {
         canonicalEvidenceJson(body) === canonicalEvidenceJson(pristine.body),
     });
     const tampered = record();
-    tampered.body.effects[0]!.response = { status: 'tampered' };
+    tampered.body.effects[0]!.responseSummary = { status: 'tampered' };
     await assert.rejects(sink.persist(tampered), /EVIDENCE_INTEGRITY_INVALID/);
     assert.equal(writes.length, 0);
   });

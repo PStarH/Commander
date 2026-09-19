@@ -16,7 +16,12 @@
 
 import { CircuitBreaker } from './circuitBreaker';
 
-export type ProviderAttempt<T> = () => Promise<T>;
+/**
+ * An attempt may observe the chain's remaining deadline. The signal argument is
+ * optional, so existing zero-argument callers are unaffected, but an attempt that
+ * accepts it can abort its own transport when the chain runs out of time.
+ */
+export type ProviderAttempt<T> = (signal?: AbortSignal) => Promise<T>;
 
 export interface ProviderEntry<T> {
   name: string;
@@ -88,11 +93,43 @@ export class ProviderFallbackChain<T> {
         continue;
       }
 
+      // RUN-01: the deadline used to be checked only at the top of the loop, so a
+      // single attempt that never settles outlived `totalTimeoutMs` — the chain
+      // awaited it forever and the budget was decorative. Bound the attempt by the
+      // remaining budget, abort the signal the attempt receives, and ignore any
+      // late result instead of waiting for it.
+      const remainingMs = this.options.totalTimeoutMs - (Date.now() - startedAt);
+      if (remainingMs <= 0) {
+        throw new FallbackChainExhaustedError([
+          ...attempts,
+          { provider: entry.name, error: 'total_timeout_exceeded' },
+        ]);
+      }
+
+      const controller = new AbortController();
+      let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+      let deadlineHit = false;
+      const deadline = new Promise<never>((_resolve, reject) => {
+        deadlineTimer = setTimeout(() => {
+          deadlineHit = true;
+          controller.abort();
+          reject(new Error('total_timeout_exceeded'));
+        }, remainingMs);
+        // A pending attempt must not be the only thing keeping the process alive.
+        deadlineTimer.unref?.();
+      });
+
       try {
-        const result = await entry.attempt();
+        const result = await Promise.race([entry.attempt(controller.signal), deadline]);
         if (entry.breaker) entry.breaker.onSuccess();
         return { result, providerUsed: entry.name, attempts: attempts.length + 1 };
       } catch (err) {
+        if (deadlineHit) {
+          // The attempt is still running; its result is discarded. Report the
+          // timeout rather than the synthetic rejection, and stop the chain.
+          attempts.push({ provider: entry.name, error: 'total_timeout_exceeded' });
+          throw new FallbackChainExhaustedError(attempts);
+        }
         const msg = err instanceof Error ? err.message : String(err);
         if (entry.breaker) entry.breaker.onFailure();
         attempts.push({ provider: entry.name, error: msg });
@@ -101,6 +138,8 @@ export class ProviderFallbackChain<T> {
         }
         const next = providers[i + 1];
         this.options.onProviderSkipped?.(entry.name, next ? next.name : null);
+      } finally {
+        if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
       }
     }
 

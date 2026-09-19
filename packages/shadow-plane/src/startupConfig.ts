@@ -9,7 +9,6 @@ import type { ShadowDatabaseOperation } from './repository.js';
 export type { ShadowDatabaseOperation } from './repository.js';
 
 export interface ShadowStartupConfig {
-  databaseUrl: string;
   poolInput: VerifiedPostgresPoolInput;
   tenantId: string;
   retentionDays: number;
@@ -117,6 +116,9 @@ export function loadShadowStartupConfig(
   if (attestationKeyHex !== undefined && !/^[0-9a-f]{64}$/.test(attestationKeyHex)) {
     throw new Error('COMMANDER_SHADOW_INGESTION_ATTESTATION_KEY_HEX_INVALID');
   }
+  // The DSN (which carries credentials) lives only inside poolInput; it is not
+  // copied onto the returned config, so logging/serializing the config cannot
+  // leak a plaintext connection string.
   const databaseUrl = required(env, 'COMMANDER_SHADOW_DATABASE_URL');
   const poolInput: VerifiedPostgresPoolInput = { connectionString: databaseUrl, max: 4 };
   // The verified pool config is built here purely to fail closed at config time:
@@ -129,7 +131,6 @@ export function loadShadowStartupConfig(
     ...(attestationKeyHex === undefined
       ? {}
       : { ingestionAttestationKey: Buffer.from(attestationKeyHex, 'hex') }),
-    databaseUrl,
     poolInput,
     tenantId: identifier(env, 'COMMANDER_SHADOW_TENANT_ID'),
     retentionDays: boundedInteger(env, 'COMMANDER_SHADOW_RETENTION_DAYS', 1, 30),

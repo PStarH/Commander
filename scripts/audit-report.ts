@@ -65,8 +65,33 @@ import { InMemoryKernelRepository } from '../packages/kernel/src/testing/inMemor
 // ============================================================================
 // Thresholds
 // ============================================================================
-const DLQ_DEPTH_THRESHOLD = parseInt(process.env.AUDIT_DLQ_DEPTH_THRESHOLD ?? '100', 10);
-const WORKER_STALE_MS = parseInt(process.env.AUDIT_WORKER_STALE_MS ?? '60000', 10);
+
+/**
+ * Resolve a numeric threshold from the environment without ever producing a
+ * value that silently disables its check.
+ *
+ * `parseInt('abc', 10)` is `NaN`, and every comparison against `NaN` is false,
+ * so a malformed `AUDIT_DLQ_DEPTH_THRESHOLD=abc` used to switch the CRITICAL
+ * DLQ check off entirely while the report still claimed a threshold (JSON
+ * serialises `NaN` as `null`). A malformed value now falls back to the
+ * documented default, so the gate keeps its ability to fail, and the
+ * misconfiguration is reported loudly instead of being absorbed.
+ */
+export function resolveThreshold(raw: string | undefined, fallback: number): number {
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const parsed = parseNonNegativeInt(raw);
+  if (parsed === undefined) {
+    console.error(
+      `[audit-report] ignoring invalid threshold ${JSON.stringify(raw)}; using the documented default ${fallback}. ` +
+        'A malformed numeric limit must not disable its check.',
+    );
+    return fallback;
+  }
+  return parsed;
+}
+
+const DLQ_DEPTH_THRESHOLD = resolveThreshold(process.env.AUDIT_DLQ_DEPTH_THRESHOLD, 100);
+const WORKER_STALE_MS = resolveThreshold(process.env.AUDIT_WORKER_STALE_MS, 60_000);
 const SQL_TIMEOUT_MS = 30_000;
 
 /**

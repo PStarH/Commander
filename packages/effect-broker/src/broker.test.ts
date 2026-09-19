@@ -15,6 +15,7 @@ import {
   isClassAEffectType,
   type EffectKernelPort,
   type CapabilityGrant,
+  type CapabilityRevocationStore,
   type EvidenceRecord,
 } from './index.js';
 
@@ -538,6 +539,8 @@ describe('EffectBroker', () => {
           atomicRecord = record;
           return {};
         },
+        // EB-10: evidence-authoritative brokers must be able to park.
+        markEffectCompletionUnknown: async () => ({}),
         listEffectsForRun: async () => [
           {
             id: 'effect-before',
@@ -639,6 +642,8 @@ describe('EffectBroker', () => {
           failedEvidence = input.evidence;
           return {};
         },
+        // EB-10: evidence-authoritative brokers must be able to park.
+        markEffectCompletionUnknown: async () => ({}),
         listEffectsForRun: async () => [
           {
             id: 'effect-failed-evidence',
@@ -732,6 +737,7 @@ describe('EffectBroker', () => {
           genericWrites += 1;
           return {};
         },
+        markEffectCompletionUnknown: async () => ({}),
         completeCompensationEffectWithEvidence: async (input) => {
           terminalInput = input;
           return {};
@@ -1681,6 +1687,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
             effect: { id: 'effect', state: 'ADMITTED' },
           }),
           completeEffect: async () => ({}),
+          markEffectCompletionUnknown: async () => ({}),
         },
         { execute: executor },
         { append: async () => {} },
@@ -2444,7 +2451,7 @@ describe('P1: durable stores must reject InMemory classes (presence != durabilit
       () =>
         assertEffectBrokerDurableStores({
           replay: { consume: () => false },
-          revocations: {} as unknown as { isRevoked: () => boolean },
+          revocations: {} as unknown as CapabilityRevocationStore,
         }),
       (err: unknown) =>
         err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,

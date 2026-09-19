@@ -5,7 +5,13 @@
  */
 import { test, describe } from 'node:test';
 import * as assert from 'node:assert/strict';
-import { assertEgressAllowlistBeforeDaemonStart, assertEgressUrlAllowed } from './egress.js';
+import { createServer, type Server } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import {
+  assertEgressAllowlistBeforeDaemonStart,
+  assertEgressUrlAllowed,
+  createEgressGatedFetch,
+} from './egress.js';
 
 describe('egress allowlist fail-closed (AUDIT-F1)', () => {
   test('empty allowlist refuses daemon start on non-demo cells (baseline behaviour kept)', () => {
@@ -116,5 +122,71 @@ describe('egress transport gate fail-closed (AO-05)', () => {
       () => assertEgressUrlAllowed('https://api.github.com/x', ['api.*.com']),
       /ADAPTER_OPS_EGRESS_ALLOWLIST_INVALID/,
     );
+  });
+});
+
+/**
+ * AO-04: `createEgressGatedFetch` adjudicated only the URL it was called with;
+ * the runtime then followed a 3xx wherever `Location` pointed. An allowlisted
+ * host could therefore redirect the request — and its response body — to a
+ * non-allowlisted host. The gate must never issue a request to a host outside
+ * the allowlist.
+ */
+describe('egress redirect containment (AO-04)', () => {
+  function listen(server: Server): Promise<number> {
+    return new Promise((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => resolve((server.address() as AddressInfo).port));
+    });
+  }
+  function close(server: Server): Promise<void> {
+    return new Promise((resolve) => server.close(() => resolve()));
+  }
+
+  test('a cross-host 302 is refused and the non-allowlisted host is never contacted', async () => {
+    const hits: string[] = [];
+    const destination = createServer((req, res) => {
+      hits.push(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'text/plain' });
+      res.end('EXFILTRATED');
+    });
+    const destinationPort = await listen(destination);
+    const front = createServer((_req, res) => {
+      res.writeHead(302, { location: `http://localhost:${destinationPort}/exfiltrated` });
+      res.end();
+    });
+    const frontPort = await listen(front);
+    try {
+      const gated = createEgressGatedFetch(['127.0.0.1']);
+      await assert.rejects(
+        () => gated(`http://127.0.0.1:${frontPort}/redirect`),
+        (error: unknown) =>
+          error instanceof Error &&
+          /ADAPTER_OPS_EGRESS_REDIRECT_DENIED/.test(error.message) &&
+          error.message.includes(`localhost:${destinationPort}`),
+      );
+      // Red before the fix: the destination server logged `/exfiltrated`.
+      assert.deepEqual(hits, []);
+    } finally {
+      await close(front);
+      await close(destination);
+    }
+  });
+
+  test('a redirect that stays on an allowlisted host is also refused (no blind following)', async () => {
+    const front = createServer((_req, res) => {
+      res.writeHead(302, { location: 'http://127.0.0.1:1/next' });
+      res.end();
+    });
+    const frontPort = await listen(front);
+    try {
+      const gated = createEgressGatedFetch(['127.0.0.1']);
+      await assert.rejects(
+        () => gated(`http://127.0.0.1:${frontPort}/redirect`),
+        /ADAPTER_OPS_EGRESS_REDIRECT_DENIED/,
+      );
+    } finally {
+      await close(front);
+    }
   });
 });

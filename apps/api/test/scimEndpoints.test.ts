@@ -90,6 +90,86 @@ describe('SCIM 2.0 endpoints', () => {
     assert.equal(body.Resources.length, 2);
   });
 
+  it('reports the total matching count when paging SCIM users', async () => {
+    for (const userName of ['u1', 'u2', 'u3', 'u4', 'u5']) {
+      const created = await fetch(`${baseUrl}/scim/v2/Users`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userName }),
+      });
+      assert.equal(created.status, 201);
+    }
+
+    const list = await fetch(`${baseUrl}/scim/v2/Users?startIndex=1&count=2`);
+    assert.equal(list.status, 200);
+    const body = (await list.json()) as {
+      totalResults: number;
+      startIndex: number;
+      itemsPerPage: number;
+      Resources: unknown[];
+    };
+    assert.equal(body.Resources.length, 2);
+    assert.equal(body.totalResults, 5);
+    assert.equal(body.startIndex, 1);
+    assert.equal(body.itemsPerPage, 2);
+  });
+
+  it('normalises malformed startIndex/count instead of returning NaN', async () => {
+    await fetch(`${baseUrl}/scim/v2/Users`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userName: 'alice' }),
+    });
+
+    const list = await fetch(`${baseUrl}/scim/v2/Users?startIndex=nonsense&count=nonsense`);
+    assert.equal(list.status, 200);
+    const body = (await list.json()) as {
+      totalResults: number;
+      startIndex: number;
+      itemsPerPage: number;
+      Resources: unknown[];
+    };
+    assert.equal(body.startIndex, 1);
+    assert.equal(body.itemsPerPage, 100);
+    assert.equal(body.totalResults, 1);
+    assert.equal(body.Resources.length, 1);
+
+    const negative = await fetch(`${baseUrl}/scim/v2/Users?startIndex=-3&count=-5`);
+    assert.equal(negative.status, 200);
+    const negativeBody = (await negative.json()) as {
+      startIndex: number;
+      itemsPerPage: number;
+      Resources: unknown[];
+    };
+    assert.equal(negativeBody.startIndex, 1);
+    assert.equal(negativeBody.itemsPerPage, 1);
+    assert.equal(negativeBody.Resources.length, 1);
+  });
+
+  it('reports the total matching count when paging SCIM groups', async () => {
+    for (const displayName of ['g1', 'g2', 'g3']) {
+      const created = await fetch(`${baseUrl}/scim/v2/Groups`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ displayName }),
+      });
+      assert.equal(created.status, 201);
+    }
+
+    const list = await fetch(`${baseUrl}/scim/v2/Groups?startIndex=2&count=1`);
+    assert.equal(list.status, 200);
+    const body = (await list.json()) as {
+      totalResults: number;
+      startIndex: number;
+      itemsPerPage: number;
+      Resources: unknown[];
+    };
+    assert.equal(body.Resources.length, 1);
+    assert.equal(body.totalResults, 3);
+    assert.equal(body.startIndex, 2);
+    assert.equal(body.itemsPerPage, 1);
+  });
+
   it('deletes a SCIM user', async () => {
     const create = await fetch(`${baseUrl}/scim/v2/Users`, {
       method: 'POST',

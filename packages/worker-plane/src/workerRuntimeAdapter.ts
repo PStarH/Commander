@@ -13,7 +13,6 @@ import {
   type LlmEffectAuth,
 } from './llmBrokerBridge.js';
 import { assertEffectBrokerForProduction } from './effectGate.js';
-import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 
 export {
   KernelStepExecutor,
@@ -114,18 +113,15 @@ export function createAgentStepExecutor(options: AgentStepExecutorOptions = {}):
     return inner;
   }
 
-  // Inject call-time mint auth for the duration of each agent step.
+  // Inject call-time mint auth for the duration of each agent step. Identity is
+  // read from the step-workload ALS that workerService establishes around this
+  // execute call — never from the caller-supplied step object.
   return {
     async execute(step: ClaimedStep, context) {
-      const stepBinding = getStepWorkloadBinding();
       const auth = createLlmEffectAuth({
-        tenantId: stepBinding?.tenantId ?? step.tenantId,
-        runId: step.runId,
-        stepId: step.id,
         actor: context.worker.id,
         lease: toLlmBrokerLease(step.lease),
         issuer,
-        workloadId: stepBinding?.workloadId,
       });
       return runWithLlmEffectAuth(auth, () => inner.execute(step, context));
     },

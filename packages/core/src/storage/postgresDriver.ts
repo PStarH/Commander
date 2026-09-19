@@ -56,6 +56,20 @@ function qid(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
 }
 
+/**
+ * Map a driver column type to its PostgreSQL SQL type.
+ *
+ * Numbers use DOUBLE PRECISION, not REAL: PostgreSQL REAL is single precision,
+ * so a JavaScript number such as 16777217 or an epoch-millisecond timestamp
+ * silently rounded on write — breaking equality/CAS predicates even though the
+ * insert validator accepted the original finite number.
+ */
+export function sqlTypeForColumn(type: import('./types').ColumnType): string {
+  if (type === 'string') return 'TEXT';
+  if (type === 'number') return 'DOUBLE PRECISION';
+  return 'BOOLEAN';
+}
+
 function normalizeRow(
   row: Record<string, unknown>,
   columns: ReadonlyArray<{ name: string; type: import('./types').ColumnType }>,
@@ -467,7 +481,7 @@ export class PostgresDriver implements PersistentDriver {
   ): Promise<void> {
     const cols = schema.columns
       .map((c) => {
-        const sqlType = c.type === 'string' ? 'TEXT' : c.type === 'number' ? 'REAL' : 'BOOLEAN';
+        const sqlType = sqlTypeForColumn(c.type);
         const pk = c.name === 'id' ? ' PRIMARY KEY' : '';
         return `${qid(c.name)} ${sqlType}${pk}`;
       })

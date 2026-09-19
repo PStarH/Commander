@@ -34,12 +34,12 @@ function makeCrashingHarness(): ToolHarness {
     params: {
       data: { type: 'string', required: true },
     },
-    execute: async (input) => {
-      const data = (input as Record<string, unknown>).data;
-      if (typeof data === 'string' && data.length > 100) {
-        throw new TypeError('Buffer overflow');
-      }
-      return { ok: true };
+    execute: async () => {
+      // Always throw: this harness exists solely to exercise crash detection.
+      // The previous `data.length > 100` guard was never reached by the
+      // mutation generator, so `report.summary.crash` stayed 0 and the
+      // "detects crashes" test asserted nothing.
+      throw new TypeError('Buffer overflow');
     },
   };
 }
@@ -62,10 +62,12 @@ describe('FuzzTestFramework', () => {
       expect(fuzzer.getCorpus().length).toBeGreaterThan(0);
     });
 
-    it('unregisters a harness', () => {
+    it('unregisters a harness', async () => {
       fuzzer.registerHarness(makeEchoHarness());
       fuzzer.unregisterHarness('echo');
-      // After unregister, no harnesses remain; run should be empty
+      const report = await fuzzer.run();
+      // No harness remains, so a full run must produce zero inputs.
+      expect(report.totalInputs).toBe(0);
     });
 
     it('seeds one input per parameter', () => {
@@ -90,12 +92,12 @@ describe('FuzzTestFramework', () => {
       const smallFuzzer = new FuzzTestFramework({ maxMutations: 200 });
       smallFuzzer.registerHarness(makeCrashingHarness());
       const report = await smallFuzzer.run();
-      if (report.summary.crash > 0) {
-        expect(report.crashes.length).toBeGreaterThan(0);
-        const crash = report.crashes[0];
-        expect(crash.crashed).toBe(true);
-        expect(crash.errorMessage).toBeTruthy();
-      }
+      // The crashing harness throws on long inputs; crash detection must fire.
+      expect(report.summary.crash).toBeGreaterThan(0);
+      expect(report.crashes.length).toBeGreaterThan(0);
+      const crash = report.crashes[0];
+      expect(crash.crashed).toBe(true);
+      expect(crash.errorMessage).toBeTruthy();
     });
 
     it('tracks coverage paths', async () => {

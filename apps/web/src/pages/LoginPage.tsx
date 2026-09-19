@@ -14,28 +14,104 @@ const OIDC_STATE_KEY = 'commander.oidc.state';
 
 type Tab = 'login' | 'register';
 
-function getOIDCState(): string | null {
+/** The sessionStorage surface a pending OIDC login needs. */
+export interface OIDCStateStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+}
+
+/**
+ * Read sessionStorage without assuming it exists — touching the global itself
+ * throws in some privacy modes. `null` means "the pending login cannot be
+ * verified", which the callback handler treats as a rejection.
+ */
+function getOIDCStateStorage(): OIDCStateStorage | null {
   try {
-    return sessionStorage.getItem(OIDC_STATE_KEY);
+    return sessionStorage;
   } catch {
     return null;
   }
 }
 
-function setOIDCState(state: string): void {
+function storeOIDCState(storage: OIDCStateStorage | null, state: string): boolean {
   try {
-    sessionStorage.setItem(OIDC_STATE_KEY, state);
+    if (!storage) return false;
+    storage.setItem(OIDC_STATE_KEY, state);
+    return true;
   } catch {
-    /* sessionStorage unavailable — non-fatal */
+    return false;
   }
 }
 
-function clearOIDCState(): void {
+export interface OIDCCallbackDeps {
+  /** `window.location.hash` of the callback page. */
+  hash: string;
+  /** Storage holding the pending login state, or `null` when unreadable. */
+  storage: OIDCStateStorage | null;
+  /** Removes the callback fragment so a reload cannot replay the exchange. */
+  clearCallbackUrl: () => void;
+  exchange: (idToken: string) => Promise<{ token: string; refreshToken: string }>;
+  onExchangeStart: () => void;
+  onAuthenticated: (response: { token: string; refreshToken: string }) => void;
+  onRejected: (message: string) => void;
+}
+
+/**
+ * Complete an OIDC implicit-flow callback (`id_token` in the URL fragment).
+ *
+ * Fail closed: the token is only exchanged when an explicit SSO login stored a
+ * NON-EMPTY state and the returned state matches it exactly. The pending state
+ * is consumed on every callback (including rejections) so a captured fragment
+ * cannot be replayed, and an unreadable/unwritable sessionStorage is treated as
+ * "cannot verify" rather than "nothing to verify".
+ */
+export function handleOIDCCallback(deps: OIDCCallbackDeps): void {
+  const { hash } = deps;
+  if (!hash || !hash.includes('id_token=')) return;
+
+  const params = new URLSearchParams(hash.replace(/^#/, ''));
+  const idToken = params.get('id_token');
+  if (!idToken) return;
+  const returnedState = params.get('state');
+
+  let expectedState: string | null = null;
+  let readable = false;
   try {
-    sessionStorage.removeItem(OIDC_STATE_KEY);
+    if (deps.storage) {
+      expectedState = deps.storage.getItem(OIDC_STATE_KEY);
+      readable = true;
+    }
   } catch {
-    /* sessionStorage unavailable — non-fatal */
+    readable = false;
   }
+
+  // Consume the pending attempt before doing anything else.
+  let consumed = false;
+  try {
+    deps.storage?.removeItem(OIDC_STATE_KEY);
+    consumed = deps.storage !== null;
+  } catch {
+    consumed = false;
+  }
+  deps.clearCallbackUrl();
+
+  if (!readable || !consumed || !expectedState) {
+    deps.onRejected('OIDC login could not be verified');
+    return;
+  }
+  if (!returnedState || returnedState !== expectedState) {
+    deps.onRejected('Invalid OIDC callback state');
+    return;
+  }
+
+  deps.onExchangeStart();
+  void deps
+    .exchange(idToken)
+    .then(deps.onAuthenticated)
+    .catch((err: unknown) => {
+      deps.onRejected(err instanceof Error ? err.message : 'OIDC login failed');
+    });
 }
 
 export function LoginPage() {
@@ -62,38 +138,22 @@ export function LoginPage() {
 
   // Detect and complete an OIDC implicit-flow callback (id_token in fragment).
   useEffect(() => {
-    const hash = window.location.hash;
-    if (!hash || !hash.includes('id_token=')) return;
-
-    const params = new URLSearchParams(hash.replace(/^#/, ''));
-    const idToken = params.get('id_token');
-    const state = params.get('state');
-    if (!idToken) return;
-
-    // Validate the OIDC state parameter to mitigate CSRF / session-fixation.
-    const expectedState = getOIDCState();
-    if (expectedState && state !== expectedState) {
-      setError('Invalid OIDC callback state');
-      clearOIDCState();
-      window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      return;
-    }
-
-    setOidcExchanging(true);
-    setError(null);
-    clearOIDCState();
-
-    exchangeOIDCToken(idToken)
-      .then((response) => {
-        setAuthTokens(response.token, response.refreshToken);
-        // Clear the OIDC fragment so a refresh does not re-trigger exchange.
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      })
-      .catch((err) => {
+    handleOIDCCallback({
+      hash: window.location.hash,
+      storage: getOIDCStateStorage(),
+      clearCallbackUrl: () =>
+        window.history.replaceState(null, '', window.location.pathname + window.location.search),
+      exchange: exchangeOIDCToken,
+      onExchangeStart: () => {
+        setOidcExchanging(true);
+        setError(null);
+      },
+      onAuthenticated: (response) => setAuthTokens(response.token, response.refreshToken),
+      onRejected: (message) => {
         setOidcExchanging(false);
-        setError(err instanceof Error ? err.message : 'OIDC login failed');
-        window.history.replaceState(null, '', window.location.pathname + window.location.search);
-      });
+        setError(message);
+      },
+    });
   }, []);
 
   // Probe whether OIDC SSO is configured so we can show the SSO button.
@@ -154,7 +214,12 @@ export function LoginPage() {
       }
       const authorizationEndpoint = await discoverOIDCAuthorizationEndpoint(config.issuer);
       const state = generateOIDCState();
-      setOIDCState(state);
+      // Fail closed: without a stored non-empty state the callback could never
+      // be verified, so do not start a redirect we must then reject.
+      if (!storeOIDCState(getOIDCStateStorage(), state)) {
+        setError('Cannot start SSO login: browser storage is unavailable');
+        return;
+      }
       const url = buildOIDCAuthorizationUrl(
         authorizationEndpoint,
         config.clientId,

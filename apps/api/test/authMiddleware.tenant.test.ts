@@ -86,7 +86,7 @@ const unlockedFailures: AuthFailureStore = {
     lastFailureAt: Date.now(),
     lockedUntil: 0,
   }),
-  cleanup: async () => {},
+  cleanup: async () => 0,
 };
 
 let app: express.Express;

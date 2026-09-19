@@ -311,6 +311,9 @@ packages/core/.commander/memory/
 /artifacts/
 /output/
 /kind-lifecycle-evidence.json
+# Written by scripts/shadow-phase-a-gate.ts when GITHUB_ACTIONS=true, for the
+# CI evidence upload step. Root-level by design, like kind-lifecycle-evidence.json.
+/shadow-phase-a-evidence.json
 
 # Guard against stray tsc emit inside source trees
 packages/core/src/**/*.js

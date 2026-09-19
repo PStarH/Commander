@@ -15,9 +15,20 @@ export class ActionAdapterRegistry {
   constructor(adapters: readonly ActionAdapter[]) {
     this.adapters = new Map();
     for (const adapter of adapters) {
-      this.adapters.set(adapter.descriptor.effectType, adapter);
-      this.adapters.set(adapter.descriptor.compensationEffectType, adapter);
+      this.register(adapter.descriptor.effectType, adapter);
+      this.register(adapter.descriptor.compensationEffectType, adapter);
     }
+  }
+
+  // One effect type must route to exactly one adapter. Before this check a later
+  // adapter silently overwrote an earlier key, so `resolve()` could return the
+  // wrong adapter and `outcomeQuerierFor()` could call its compensation query for
+  // a forward effect. Refuse to construct a colliding registry instead.
+  private register(effectType: string, adapter: ActionAdapter): void {
+    if (this.adapters.has(effectType)) {
+      throw new Error(`Duplicate action adapter effect type registration: ${effectType}`);
+    }
+    this.adapters.set(effectType, adapter);
   }
 
   static production(

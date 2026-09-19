@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { SemanticToolCompactor } from '../../src/runtime/compactionLayer3.js';
 
 import type { SemanticCompactionConfig } from '../../src/runtime/compactionLayer3.js';
+import type { LLMResponse } from '../../src/runtime/types.js';
 
 // ============================================================================
 // Mock LLM provider for testing
@@ -104,6 +105,7 @@ describe('SemanticToolCompactor', () => {
         content: 'Summarized: this is a compact version',
         usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
         model: 'test',
+        finishReason: 'stop',
       });
 
       const result = await c.compact(
@@ -141,6 +143,7 @@ describe('SemanticToolCompactor', () => {
         content: '',
         usage: { promptTokens: 100, completionTokens: 0, totalTokens: 100 },
         model: 'test',
+        finishReason: 'stop',
       });
 
       const result = await c.compact(
@@ -178,6 +181,7 @@ describe('SemanticToolCompactor', () => {
         content: 'Compacted',
         usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
         model: 'test',
+        finishReason: 'stop',
       });
 
       await c.compact(
@@ -199,6 +203,7 @@ describe('SemanticToolCompactor', () => {
         content: 'Compacted',
         usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
         model: 'test',
+        finishReason: 'stop',
       });
 
       await c.compact(
@@ -220,6 +225,7 @@ describe('SemanticToolCompactor', () => {
         content: 'Compacted',
         usage: { promptTokens: 100, completionTokens: 10, totalTokens: 110 },
         model: 'test',
+        finishReason: 'stop',
       });
 
       const hugeOutput = 'x'.repeat(50000);

@@ -83,7 +83,7 @@ describe('MEMORY-001 on default MemoryService.store path', () => {
       service.store({
         scope: { tenantId: 't1', projectId: 'p1' },
         agentId: 'agent-1',
-        kind: 'FACT',
+        kind: 'SUMMARY',
         title: 'own',
         content: 'ok',
       }),
@@ -96,7 +96,7 @@ describe('MEMORY-001 on default MemoryService.store path', () => {
       service.store({
         scope: { tenantId: 't1', projectId: 'p1' },
         agentId: 'agent-1',
-        kind: 'FACT',
+        kind: 'SUMMARY',
         title: 'cross',
         content: 'denied',
         meta: { namespace: 'agents/agent-2' },
@@ -110,7 +110,7 @@ describe('MEMORY-001 on default MemoryService.store path', () => {
       service.store({
         scope: { tenantId: 't1', projectId: 'p1' },
         agentId: 'agent-1',
-        kind: 'FACT',
+        kind: 'SUMMARY',
         title: 'forged',
         content: 'denied',
         meta: { namespace: 'shared', createdBy: { agentId: 'agent-1', role: 'writer' } },
@@ -124,7 +124,7 @@ describe('MEMORY-001 on default MemoryService.store path', () => {
       service.store({
         scope: { tenantId: 't1', projectId: 'p1' },
         agentId: 'agent-1',
-        kind: 'FACT',
+        kind: 'SUMMARY',
         title: 'forged-acl',
         content: 'denied',
         meta: { namespace: 'shared', acl: { role: 'writer', namespaces: ['shared'] } },
@@ -138,7 +138,7 @@ describe('MEMORY-001 on default MemoryService.store path', () => {
       service.store({
         scope: { tenantId: 't1', projectId: 'p1' },
         agentId: 'api',
-        kind: 'FACT',
+        kind: 'SUMMARY',
         title: 'shared',
         content: 'ok',
         meta: { namespace: 'shared', createdBy: { agentId: 'api', role: 'writer' } },

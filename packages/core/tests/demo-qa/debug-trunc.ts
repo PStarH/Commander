@@ -1,5 +1,6 @@
 import { AgentRuntime, getMetricsCollector } from '../../src';
-import type { LLMProvider, LLMRequest, LLMResponse, Tool } from '../../src';
+import type { LLMProvider, LLMRequest, LLMResponse } from '../../src';
+import type { Tool } from '../../src/runtime/types';
 
 const hugeOutput = 'x'.repeat(12000);
 const tool: Tool = {

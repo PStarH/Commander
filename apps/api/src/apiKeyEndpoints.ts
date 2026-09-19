@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { getApiKeyStore, type ApiKeyRecord } from './apiKeyStore';
+import { isAuthAuthorityUnavailable, redactAuthErrorDetail } from './authDb';
 import { hasRole, type UserRole } from './userStore';
 
 /**
@@ -70,6 +71,35 @@ function redactHash(record: ApiKeyRecord): Omit<ApiKeyRecord, 'hash'> {
   return rest;
 }
 
+/**
+ * AUTH-07: API-key management used `String(error)` as the response body, which
+ * echoed internal exceptions — a pg connection failure embeds the DSN and its
+ * password — and turned an unavailable authority into a 500. The client now
+ * gets a stable code plus the request id; the (redacted) detail goes to the
+ * internal log only, and a down database maps to 503.
+ */
+function sendApiKeyAuthorityError(
+  req: Request,
+  res: Response,
+  operation: string,
+  error: unknown,
+): void {
+  const unavailable = isAuthAuthorityUnavailable(error);
+  const code = unavailable ? 'API_KEY_AUTHORITY_UNAVAILABLE' : 'API_KEY_OPERATION_FAILED';
+  process.stderr.write(
+    `[ApiKeyEndpoints] ${operation} failed code=${code} requestId=${
+      req.requestId ?? 'none'
+    } detail=${redactAuthErrorDetail(error)}\n`,
+  );
+  res.status(unavailable ? 503 : 500).json({
+    error: unavailable
+      ? 'API key authority unavailable. Retry later.'
+      : 'API key operation failed.',
+    code,
+    requestId: req.requestId,
+  });
+}
+
 const createKeySchema = z.object({
   name: z.string().min(1).max(128),
   scopes: z.array(z.enum(['read', 'write', 'admin'])).optional(),
@@ -103,7 +133,7 @@ export function createApiKeyRouter(): Router {
         }
         res.json({ keys: await store.listByTenant(tenant) });
       } catch (error) {
-        res.status(500).json({ error: String(error) });
+        sendApiKeyAuthorityError(req, res, 'list', error);
       }
     },
   );
@@ -147,7 +177,7 @@ export function createApiKeyRouter(): Router {
         const { record, key } = await store.create(parsed.data.name, parsed.data.scopes, tenantId);
         res.status(201).json({ key, record: redactHash(record) });
       } catch (error) {
-        res.status(500).json({ error: String(error) });
+        sendApiKeyAuthorityError(req, res, 'create', error);
       }
     },
   );
@@ -181,7 +211,7 @@ export function createApiKeyRouter(): Router {
         }
         res.json({ status: 'revoked', record: redactHash(revoked) });
       } catch (error) {
-        res.status(500).json({ error: String(error) });
+        sendApiKeyAuthorityError(req, res, 'revoke', error);
       }
     },
   );

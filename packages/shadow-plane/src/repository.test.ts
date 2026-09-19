@@ -347,6 +347,68 @@ describe('shadow PostgreSQL repository contract', () => {
     );
   });
 
+  it('counts only campaigns actually deleted after the locking re-check', async () => {
+    let lockedChecks = 0;
+    const client = new RecordingClient((sql) => {
+      if (/ORDER BY campaign_id/.test(sql))
+        return {
+          rows: [{ campaign_id: 'campaign-1' }, { campaign_id: 'campaign-2' }],
+          rowCount: 2,
+        };
+      if (/FOR UPDATE/.test(sql)) {
+        lockedChecks += 1;
+        // campaign-2 is deleted by a concurrent worker after the candidate scan.
+        return lockedChecks === 1
+          ? { rows: [{ campaign_id: 'campaign-1' }], rowCount: 1 }
+          : { rows: [], rowCount: 0 };
+      }
+      if (/DELETE FROM commander_shadow\.campaigns/.test(sql)) return { rowCount: 1 };
+      return {};
+    });
+    assert.equal(await repository(client).runRetention('tenant-1'), 1);
+    assert.equal(lockedChecks, 2);
+    assert.equal(
+      client.calls.filter((call) => /DELETE FROM commander_shadow\.campaigns/.test(call.sql))
+        .length,
+      1,
+    );
+  });
+
+  it('gates retention candidates and the locking re-check on withdrawal', async () => {
+    const client = new RecordingClient((sql) => {
+      if (/ORDER BY campaign_id/.test(sql))
+        return { rows: [{ campaign_id: 'campaign-1' }], rowCount: 1 };
+      if (/FOR UPDATE/.test(sql)) return { rows: [{ campaign_id: 'campaign-1' }], rowCount: 1 };
+      if (/DELETE FROM commander_shadow\.campaigns/.test(sql)) return { rowCount: 1 };
+      return {};
+    });
+    assert.equal(await repository(client).runRetention('tenant-1'), 1);
+    const candidate = client.calls.find((call) => /ORDER BY campaign_id/.test(call.sql));
+    assert.ok(candidate);
+    assert.match(candidate.sql, /AND state = 'withdrawn'/);
+    const locked = client.calls.find((call) => /FOR UPDATE/.test(call.sql));
+    assert.ok(locked);
+    assert.match(locked.sql, /AND state = 'withdrawn' FOR UPDATE/);
+  });
+
+  it('never deletes an expired campaign that is still open', async () => {
+    // The table holds exactly one expired campaign and it is still open, so a
+    // state-gated query matches nothing while the ungated query returns it.
+    const client = new RecordingClient((sql) => {
+      if (/state = 'withdrawn'/.test(sql)) return { rows: [], rowCount: 0 };
+      if (/ORDER BY campaign_id/.test(sql))
+        return { rows: [{ campaign_id: 'campaign-1' }], rowCount: 1 };
+      if (/FOR UPDATE/.test(sql)) return { rows: [{ campaign_id: 'campaign-1' }], rowCount: 1 };
+      if (/DELETE FROM commander_shadow\.campaigns/.test(sql)) return { rowCount: 1 };
+      return {};
+    });
+    assert.equal(await repository(client).runRetention('tenant-1'), 0);
+    assert.equal(
+      client.calls.some((call) => /DELETE FROM commander_shadow\.campaigns/.test(call.sql)),
+      false,
+    );
+  });
+
   it('checks operation-specific runtime roles and lets retention run while cleanup is overdue', async () => {
     const cases = [
       ['manifest-register', 'commander_shadow_ingestion', true],
@@ -450,6 +512,23 @@ describe('shadow PostgreSQL repository contract', () => {
     assert.match(
       SHADOW_SCHEMA_SQL,
       /GRANT SELECT ON commander_shadow\.cleanup_state TO commander_shadow_ingestion, commander_shadow_reader/,
+    );
+  });
+
+  it('cannot let a NULL campaign identity defeat the conflict guard', () => {
+    const registration = SHADOW_SCHEMA_SQL.split(
+      'CREATE FUNCTION commander_shadow.register_manifest(',
+    )[1]!.split('CREATE FUNCTION')[0]!;
+    assert.match(registration, /v_campaign\.producer_id IS DISTINCT FROM p_producer_id/);
+    assert.match(registration, /v_campaign\.policy_id IS DISTINCT FROM p_policy_id/);
+    assert.match(registration, /v_campaign\.policy_digest IS DISTINCT FROM p_policy_digest/);
+    assert.doesNotMatch(registration, /v_campaign\.(?:producer_id|policy_id|policy_digest) <>/);
+    const campaigns = SHADOW_SCHEMA_SQL.split(
+      'CREATE TABLE commander_shadow.campaigns (',
+    )[1]!.split('CREATE TABLE')[0]!;
+    assert.match(
+      campaigns,
+      /CHECK \(\s*state = 'withdrawn'\s*OR \(producer_id IS NOT NULL AND policy_id IS NOT NULL AND policy_digest IS NOT NULL\)\s*\)/,
     );
   });
 

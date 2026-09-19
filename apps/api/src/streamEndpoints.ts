@@ -46,6 +46,32 @@ const MAX_SSE_CONNECTIONS =
 const MAX_BUFFERED_BYTES =
   Number.parseInt(process.env.COMMANDER_SSE_MAX_BUFFER_BYTES ?? '', 10) || 1024 * 1024;
 
+// Heartbeat interval bounds for the `?heartbeatMs=` override.
+//
+// A floor alone does not bound the resource cost, which is what the previous
+// comment claimed. `setInterval` coerces any delay above 2^31-1 to **1ms**, so
+// `?heartbeatMs=2147483648` satisfied a `>= 5000` check and then scheduled a
+// ~1000 writes/second loop — the opposite of the intended protection. Bound both
+// ends, and keep the ceiling far below the timer-overflow threshold.
+export const HEARTBEAT_FLOOR_MS = 5_000;
+/** 5 minutes — beyond any realistic proxy idle timeout, far below the overflow. */
+export const HEARTBEAT_CEILING_MS = 300_000;
+export const HEARTBEAT_DEFAULT_MS = 25_000;
+
+/**
+ * Resolve the SSE heartbeat interval from a raw `?heartbeatMs=` value.
+ *
+ * Returns the default for anything non-numeric, non-finite, below the floor, or
+ * of the wrong type (e.g. a repeated query parameter arrives as an array), and
+ * clamps the upper end. Never returns a value outside
+ * `[HEARTBEAT_FLOOR_MS, HEARTBEAT_CEILING_MS]`.
+ */
+export function resolveHeartbeatMs(raw: unknown): number {
+  const parsed = typeof raw === 'string' ? Number.parseInt(raw, 10) : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < HEARTBEAT_FLOOR_MS) return HEARTBEAT_DEFAULT_MS;
+  return Math.min(parsed, HEARTBEAT_CEILING_MS);
+}
+
 let activeConnections = 0;
 
 export interface CreateStreamRouterOptions {
@@ -204,14 +230,10 @@ export function createStreamRouter(options: CreateStreamRouterOptions = {}): Rou
 
     const unsubscribe = bus.subscribeMany(watchTopics, handleBusMessage);
 
-    // 4. Heartbeat — overrides via ?heartbeatMs= are clamped to a 5-second floor
-    //    so a malicious client can't pin the server's event loop.
-    const heartbeatMsParam = parseInt(
-      typeof req.query.heartbeatMs === 'string' ? req.query.heartbeatMs : '25000',
-      10,
-    );
-    const heartbeatMs =
-      Number.isFinite(heartbeatMsParam) && heartbeatMsParam >= 5000 ? heartbeatMsParam : 25000;
+    // 4. Heartbeat — overrides via ?heartbeatMs= are clamped into a bounded range
+    //    so a malicious client can't pin the server's event loop. See
+    //    `resolveHeartbeatMs` for why a floor alone is not sufficient.
+    const heartbeatMs = resolveHeartbeatMs(req.query.heartbeatMs);
     const heartbeat = setInterval(() => {
       try {
         res.write(': heartbeat\n\n');

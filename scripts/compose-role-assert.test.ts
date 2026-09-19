@@ -419,6 +419,7 @@ describe('compose source files (static drift guard)', () => {
       'COMMANDER_API_KEY',
       'COMMANDER_CAPABILITY_TOKEN_KEY',
       'COMMANDER_INTEGRITY_KEY',
+      'COMMANDER_AUDIT_CHAIN_KEY',
       'API_KEYS',
       'TENANT_API_KEYS',
       'COMMANDER_EVIDENCE_JWKS_JSON',
@@ -433,8 +434,25 @@ describe('compose source files (static drift guard)', () => {
 
     const adapterBlock = cell.match(/^\s*adapter-ops:\s*\n(?:^\s{2,}.*\n)*/m)?.[0] ?? '';
     assert.ok(adapterBlock.length > 0, 'docker-compose.cell.yml must define adapter-ops');
-    assert.match(adapterBlock, /commander_adapter_ops/, 'cell adapter-ops must use dedicated DSN');
     assert.doesNotMatch(adapterBlock, /commander_owner/, 'cell adapter-ops must not use owner DSN');
+    // docker-compose.cell.yml is an *overlay* (`-f docker-compose.yml -f
+    // docker-compose.cell.yml`): it deliberately does not restate the role DSNs,
+    // so the "dedicated DSN" invariant cannot be satisfied by the overlay's own
+    // text. Asserting it here only ever tested that the overlay omits the DSN —
+    // which it is supposed to do. Check the overlay for a forbidden restatement,
+    // and check the base file (the one that actually supplies the DSN) for the
+    // dedicated role.
+    assert.doesNotMatch(
+      adapterBlock,
+      /DATABASE_URL=/,
+      'the cell overlay must not restate adapter-ops DSNs; the base file owns the role DSN',
+    );
+    const baseCompose = await readFile(resolve(root, 'docker-compose.yml'), 'utf8');
+    assert.match(
+      baseCompose,
+      /COMMANDER_ADAPTER_OPS_DATABASE_URL:-postgres:\/\/commander_adapter_ops:/,
+      'the base compose must pin adapter-ops to the dedicated commander_adapter_ops role DSN',
+    );
 
     const migrationBlock = cell.match(/^  kernel-migrate:\s*\n([\s\S]*?)(?=^  api:)/m)?.[0] ?? '';
     assert.ok(migrationBlock.length > 0, 'docker-compose.cell.yml must define kernel-migrate');

@@ -82,6 +82,12 @@ describe('L4-02 operations chaos - compensation worker kill/restart', () => {
       async escalateCompensationWork() {
         throw new Error('valid governed work must not be escalated');
       },
+      async parkCompensationUnknown() {
+        throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
+      },
+      async finalizeCompensation() {
+        throw new Error('finalizeCompensation is not exercised by legacy-path fixtures');
+      },
     };
 
     let remoteWrites = 0;

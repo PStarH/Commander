@@ -15,10 +15,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   EvalScorer,
   type JudgeProvider,
-  type LLMResponse,
 } from '../../../src/plugins/builtin/observability/evalScorer';
 import { AutoScorer } from '../../../src/plugins/builtin/observability/autoScorer';
-import type { ExecutionTrace, TraceEvent } from '../../../src/runtime/types';
+import type { ExecutionTrace, TraceEvent, LLMResponse } from '../../../src/runtime/types';
 
 function mockJudge(score: number, delayMs = 0): JudgeProvider {
   return {
@@ -27,6 +26,7 @@ function mockJudge(score: number, delayMs = 0): JudgeProvider {
       if (delayMs) await new Promise((r) => setTimeout(r, delayMs));
       return {
         content: JSON.stringify({ score, reasoning: 'ok' }),
+        model: 'mock',
         usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
         finishReason: 'stop',
       };
@@ -47,6 +47,8 @@ function makeTrace(
   const events: TraceEvent[] = [];
   if (opts.model) {
     events.push({
+      id: 's1',
+      runId: opts.runId,
       type: 'llm_call',
       timestamp: new Date().toISOString(),
       durationMs: 0,
@@ -54,7 +56,7 @@ function makeTrace(
       traceId: 't1',
       agentId: opts.agentId ?? 'a',
       data: {
-        modelInfo: { provider: 'mock', model: opts.model },
+        modelInfo: { provider: 'mock', model: opts.model, tier: 'standard' },
         tokenUsage: {
           promptTokens: opts.tokens ?? 100,
           completionTokens: 0,
@@ -64,6 +66,8 @@ function makeTrace(
     });
   } else {
     events.push({
+      id: 's1',
+      runId: opts.runId,
       type: 'state_change',
       timestamp: new Date().toISOString(),
       durationMs: 0,
@@ -75,6 +79,8 @@ function makeTrace(
   }
   if (opts.hasError) {
     events.push({
+      id: 's2',
+      runId: opts.runId,
       type: 'error',
       timestamp: new Date().toISOString(),
       durationMs: 0,
@@ -98,7 +104,7 @@ function makeTrace(
       llmCalls: events.filter((e) => e.type === 'llm_call').length,
       toolExecutions: 0,
       errors: events.filter((e) => e.type === 'error').length,
-      modelUsed: opts.model,
+      modelUsed: opts.model ?? '',
     },
     ...(opts.tenantId ? { tenantId: opts.tenantId } : {}),
   };

@@ -12,11 +12,14 @@ import { startWorkerHealthServer } from './healthServer.js';
 import type { WorkerService } from './workerService.js';
 
 interface WorkerBootstrap {
-  createWorkerService(): Promise<WorkerService> | WorkerService;
+  createWorkerService(options?: {
+    onClaimLoopHealth?: (healthy: boolean) => void;
+  }): Promise<WorkerService> | WorkerService;
 }
 
 async function main(): Promise<void> {
   let ready = false;
+  let service: WorkerService | null = null;
   const healthPortRaw = process.env.COMMANDER_WORKER_HEALTH_PORT?.trim();
   const healthPort = healthPortRaw ? Number(healthPortRaw) : null;
   if (
@@ -25,10 +28,19 @@ async function main(): Promise<void> {
   ) {
     throw new Error('COMMANDER_WORKER_HEALTH_PORT must be an integer between 1 and 65535');
   }
+  // F-P1-18: the listener default stays loopback (WP-15: /health and /ready carry no
+  // authentication), but a deployment whose probes do not originate on loopback must
+  // be able to move it. The Helm chart's kubelet httpGet probes hit the pod IP, so the
+  // chart sets COMMANDER_WORKER_HEALTH_HOST=0.0.0.0; unset keeps the safe default.
+  const healthHost = process.env.COMMANDER_WORKER_HEALTH_HOST?.trim();
   const health =
     healthPort === null
       ? null
-      : await startWorkerHealthServer({ port: healthPort, isReady: () => ready });
+      : await startWorkerHealthServer({
+          port: healthPort,
+          host: healthHost || undefined,
+          isReady: () => ready,
+        });
 
   try {
     const source = process.env.COMMANDER_WORKER_BOOTSTRAP;
@@ -45,7 +57,14 @@ async function main(): Promise<void> {
     if (typeof loaded.createWorkerService !== 'function') {
       throw new Error('Worker bootstrap must export createWorkerService()');
     }
-    const service = await loaded.createWorkerService();
+    service = await loaded.createWorkerService({
+      // WP-05: readiness is not a one-shot latch. The claim loop clears it when the
+      // claim path fails and refreshes it once claims succeed again, so a worker that
+      // can no longer claim work stops advertising itself as ready.
+      onClaimLoopHealth: (healthy) => {
+        ready = healthy;
+      },
+    });
     const controller = new AbortController();
     const shutdown = () => controller.abort();
     process.once('SIGTERM', shutdown);
@@ -62,6 +81,10 @@ async function main(): Promise<void> {
   } finally {
     ready = false;
     await health?.close();
+    // WP-11: start()/run() can fail after the bootstrap created the verified pool.
+    // stop() is idempotent and owns pool release, so shutdown always closes database
+    // connections instead of leaking them for the life of the process.
+    if (service) await service.stop();
   }
 }
 

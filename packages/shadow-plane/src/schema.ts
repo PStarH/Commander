@@ -1,4 +1,4 @@
-export const SHADOW_SCHEMA_VERSION = 2;
+export const SHADOW_SCHEMA_VERSION = 3;
 
 export const SHADOW_SCHEMA_SQL = `
 CREATE SCHEMA commander_shadow;
@@ -21,7 +21,14 @@ CREATE TABLE commander_shadow.campaigns (
   retention_until timestamptz NOT NULL,
   created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   withdrawn_at timestamptz,
-  PRIMARY KEY (tenant_id, campaign_id)
+  PRIMARY KEY (tenant_id, campaign_id),
+  -- Withdrawal scrubs the producer/policy identity down to the minimum tombstone,
+  -- so the columns stay nullable; every other state must carry the full identity,
+  -- otherwise a NULL would defeat the register_manifest conflict guard.
+  CHECK (
+    state = 'withdrawn'
+    OR (producer_id IS NOT NULL AND policy_id IS NOT NULL AND policy_digest IS NOT NULL)
+  )
 );
 
 CREATE TABLE commander_shadow.batches (
@@ -255,9 +262,9 @@ BEGIN
   IF v_campaign.state = 'withdrawn' THEN
     RAISE EXCEPTION 'SHADOW_CAMPAIGN_WITHDRAWN' USING ERRCODE = 'P0001';
   END IF;
-  IF v_campaign.producer_id <> p_producer_id
-     OR v_campaign.policy_id <> p_policy_id
-     OR v_campaign.policy_digest <> p_policy_digest THEN
+  IF v_campaign.producer_id IS DISTINCT FROM p_producer_id
+     OR v_campaign.policy_id IS DISTINCT FROM p_policy_id
+     OR v_campaign.policy_digest IS DISTINCT FROM p_policy_digest THEN
     RAISE EXCEPTION 'SHADOW_CAMPAIGN_CONFLICT' USING ERRCODE = '23505';
   END IF;
 

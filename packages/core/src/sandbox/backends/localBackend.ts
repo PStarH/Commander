@@ -117,7 +117,36 @@ export class LocalBackend implements ExecutionBackend {
     }
 
     if (sandbox.hasSandbox()) {
-      const result = await sandbox.execute(command, 'workspace-write', workdir, undefined, context);
+      // Propagate the per-call deadline into the sandbox profile. The router
+      // passes `timeout` in SECONDS; `SandboxProfile.timeout` is in MILLISECONDS
+      // and is the policy maximum. Previously the per-call value was dropped
+      // entirely (`sandbox.execute(command, 'workspace-write', workdir,
+      // undefined, context)`), so `execSandboxed`'s timeoutSec did not bound the
+      // sandboxed execution. A missing/NaN/non-positive request falls back to
+      // the profile deadline rather than running unbounded, and a request larger
+      // than the profile deadline is capped by it.
+      const baseProfile = sandbox.getProfile('workspace-write');
+      const baseTimeoutMs =
+        typeof baseProfile.timeout === 'number' &&
+        Number.isFinite(baseProfile.timeout) &&
+        baseProfile.timeout > 0
+          ? baseProfile.timeout
+          : undefined;
+      const requestedMs =
+        typeof timeout === 'number' && Number.isFinite(timeout) && timeout > 0
+          ? Math.floor(timeout * 1000)
+          : undefined;
+      const effectiveTimeoutMs =
+        requestedMs === undefined
+          ? baseTimeoutMs
+          : baseTimeoutMs === undefined
+            ? requestedMs
+            : Math.min(requestedMs, baseTimeoutMs);
+      const profile =
+        effectiveTimeoutMs === undefined
+          ? baseProfile
+          : { ...baseProfile, timeout: effectiveTimeoutMs };
+      const result = await sandbox.execute(command, profile, workdir, undefined, context);
       return { ...result, durationMs: result.durationMs };
     }
 

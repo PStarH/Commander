@@ -71,7 +71,7 @@ function getPnpmVersion(): string {
   if (cachedPackageManagerVersion) return cachedPackageManagerVersion;
   try {
     const pkg = JSON.parse(readFileSync(resolve('package.json'), 'utf-8'));
-    const pm = pkg.packageManager ?? '';
+    const pm = typeof pkg?.packageManager === 'string' ? pkg.packageManager : '';
     const match = pm.match(/pnpm@(\d+\.\d+\.\d+)/);
     if (match) {
       cachedPackageManagerVersion = match[1];

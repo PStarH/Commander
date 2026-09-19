@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'http';
-import { OtelSpanExporter } from '../../../src/plugins/builtin/observability/otelExporter';
+import { OtelSpanExporter } from '../../../src/observability/otelExporter';
 import { SamplingPolicy } from '../../../src/plugins/builtin/observability/samplingPolicy';
 import type { ExecutionTrace, TraceEvent } from '../../../src/runtime/types';
 

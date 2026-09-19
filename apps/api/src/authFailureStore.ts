@@ -24,7 +24,16 @@ export interface AuthFailureStore {
     windowMs: number,
     lockoutMs: number,
   ): Promise<AuthFailureEntry>;
-  cleanup(now: number, windowMs: number): Promise<void>;
+  /**
+   * Reclaim rows that can no longer affect a decision. AUTH-06: the previous
+   * predicate required `locked_until IS NULL`, so a row whose lockout had
+   * already expired (`locked_until <= now`) was never reclaimed and the table
+   * grew without bound. A still-valid lockout (`locked_until > now`) is kept
+   * regardless of how old `last_failure_at` is.
+   *
+   * Returns the number of reclaimed rows so callers can observe cleanup work.
+   */
+  cleanup(now: number, windowMs: number): Promise<number>;
 }
 
 type FailureRow = {
@@ -98,12 +107,19 @@ export class PostgresAuthFailureStore implements AuthFailureStore {
     });
   }
 
-  async cleanup(now: number, windowMs: number): Promise<void> {
-    await withClient(this.pool, async (client) => {
-      await client.query(
-        'DELETE FROM commander_auth_failures WHERE locked_until IS NULL AND last_failure_at < to_timestamp(($1 - $2) / 1000.0)',
+  async cleanup(now: number, windowMs: number): Promise<number> {
+    return withClient(this.pool, async (client) => {
+      // The intersection of "the expiry window has passed" and "no lock is
+      // still in force". `locked_until > now` rows survive even when their
+      // last failure is old, because the lockout still gates requests.
+      const result = await client.query(
+        `DELETE FROM commander_auth_failures
+         WHERE (locked_until IS NULL OR locked_until <= to_timestamp($1 / 1000.0))
+           AND last_failure_at < to_timestamp(($1 - $2) / 1000.0)
+         RETURNING failure_key`,
         [now, windowMs],
       );
+      return result.rowCount ?? 0;
     });
   }
 }

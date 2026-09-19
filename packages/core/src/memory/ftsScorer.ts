@@ -242,6 +242,14 @@ export class BM25Scorer {
    * Index a document for BM25 search.
    */
   addDocument(id: string, text: string, fieldTexts?: Map<string, string>): void {
+    // Re-adding an existing id replaces the document. Without removing the old
+    // one first, its term frequencies, N and totalTokens stayed in the index
+    // (df/N/totalTokens only ever grew), so the statistics — and therefore every
+    // BM25 score — drifted permanently and `removeDocument` could not return the
+    // index to empty.
+    if (this.documents.has(id)) {
+      this.removeDocument(id);
+    }
     const tokens = tokenizeForBM25(text, this.config.minTokenLength);
     const fieldTokens = new Map<string, string[]>();
 

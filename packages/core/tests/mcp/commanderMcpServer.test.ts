@@ -39,7 +39,7 @@ function createTool(name: string): Tool & {
 } {
   return {
     definition: toolDefinition(name),
-    execute: tracked(async () => `${name} result`),
+    execute: tracked(async (_args: Record<string, unknown>) => `${name} result`),
   };
 }
 
@@ -50,7 +50,6 @@ function response(overrides: Partial<LLMResponse> = {}): LLMResponse {
     usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     finishReason: 'stop',
     model: 'test-model',
-    provider: 'test-provider',
     ...overrides,
   };
 }
@@ -78,8 +77,12 @@ function createServices(
     assert.ok(next, 'A mock provider response must be configured');
     return next;
   });
-  const beforeToolCall = tracked(async () => ({ blocked: false }));
-  const afterToolCall = tracked(async (ctx) => ctx.result);
+  const beforeToolCall = tracked(
+    async (_ctx: Parameters<HarnessServices['fireBeforeToolCall']>[0]) => ({ blocked: false }),
+  );
+  const afterToolCall = tracked(
+    async (ctx: Parameters<HarnessServices['fireAfterToolCall']>[0]) => ctx.result,
+  );
 
   const services = {
     getProvider: tracked(() => ({ name: 'test-provider', call: providerCall })),
@@ -112,7 +115,7 @@ describe('CommanderMcpServer nested tool capability boundary', () => {
       [
         response({
           toolCalls: [{ id: 'call-1', name: 'privileged', arguments: {} }],
-          finishReason: 'tool_use',
+          finishReason: 'tool_calls',
         }),
       ],
     );
@@ -163,7 +166,7 @@ describe('CommanderMcpServer nested tool capability boundary', () => {
         response({
           content: 'Calling allowed tool',
           toolCalls: [{ id: 'call-1', name: 'allowed', arguments: { input: 'ok' } }],
-          finishReason: 'tool_use',
+          finishReason: 'tool_calls',
         }),
         response(),
       ],

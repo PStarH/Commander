@@ -32,17 +32,18 @@ const CONFIG = {
 };
 
 /** Build a throwaway project and return the gate's combined output. */
-function runGate(source: string): { status: number; output: string } {
+function runGateInProject(
+  config: unknown,
+  setup: (tmp: string) => void,
+): { status: number; output: string } {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'arch-gate-'));
   try {
     fs.mkdirSync(path.join(tmp, 'scripts'), { recursive: true });
-    fs.mkdirSync(path.join(tmp, 'packages/kernel/src'), { recursive: true });
-    fs.mkdirSync(path.join(tmp, 'apps/api/src'), { recursive: true });
     fs.writeFileSync(
       path.join(tmp, 'scripts/architecture-gate.config.json'),
-      JSON.stringify(CONFIG, null, 2),
+      JSON.stringify(config, null, 2),
     );
-    fs.writeFileSync(path.join(tmp, 'packages/kernel/src/subject.ts'), source);
+    setup(tmp);
 
     try {
       const output = execFileSync(path.join(repoRoot, 'node_modules/.bin/tsx'), [gateScript], {
@@ -58,6 +59,14 @@ function runGate(source: string): { status: number; output: string } {
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
+}
+
+function runGate(source: string): { status: number; output: string } {
+  return runGateInProject(CONFIG, (tmp) => {
+    fs.mkdirSync(path.join(tmp, 'packages/kernel/src'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, 'apps/api/src'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'packages/kernel/src/subject.ts'), source);
+  });
 }
 
 describe('LM-18: architecture gate resolves real module specifiers', () => {
@@ -128,5 +137,100 @@ describe('LM-18: architecture gate resolves real module specifiers', () => {
       `import { readFileSync } from 'node:fs';\nexport const r = readFileSync;\n`,
     );
     assert.equal(status, 0, output);
+  });
+});
+
+/**
+ * LM-18 steps 4 and 5: the gate must validate its own configuration, and must
+ * never treat "I could not look" as "I looked and found nothing".
+ *
+ * Before this was fixed the config was only cast to its TypeScript interface —
+ * `JSON.parse(readFileSync(...)) as GateConfig` — and each package walk was
+ * wrapped in a bare `catch {}` that skipped the whole package. Both defects
+ * were fail-open: a typo'd key removed a check, and a package that was not on
+ * disk was reported as clean. Each case below is a RED-before case.
+ */
+describe('LM-18: the gate validates its configuration and fails closed', () => {
+  const CLEAN_SOURCE = `export const y = 1;\n`;
+
+  /** A project whose tree matches CONFIG, so only the config can fail it. */
+  const setupCleanTree = (tmp: string): void => {
+    fs.mkdirSync(path.join(tmp, 'packages/kernel/src'), { recursive: true });
+    fs.mkdirSync(path.join(tmp, 'apps/api/src'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, 'packages/kernel/src/subject.ts'), CLEAN_SOURCE);
+  };
+
+  it('rejects a typo that would otherwise disable a whole check', () => {
+    const { forbiddenCoreImports, ...rest } = CONFIG;
+    const { status, output } = runGateInProject(
+      { ...rest, forbiddenCoreImportZZZ: forbiddenCoreImports },
+      setupCleanTree,
+    );
+    assert.equal(status, 1, `a typo'd key must not be accepted in silence\n${output}`);
+    assert.match(output, /unknown key/);
+    assert.match(output, /forbiddenCoreImportZZZ/);
+  });
+
+  it('rejects a missing required key', () => {
+    const { authorityExceptions, ...rest } = CONFIG;
+    const { status, output } = runGateInProject(rest, setupCleanTree);
+    assert.equal(status, 1, output);
+    assert.match(output, /missing required key "authorityExceptions"/);
+  });
+
+  it('rejects an exception list of the wrong type', () => {
+    const { status, output } = runGateInProject(
+      { ...CONFIG, v2ImportExceptions: 'not-an-array' },
+      setupCleanTree,
+    );
+    assert.equal(status, 1, output);
+    assert.match(output, /"v2ImportExceptions" must be an array/);
+  });
+
+  it('rejects an empty list that would silently disable its check', () => {
+    const { status, output } = runGateInProject({ ...CONFIG, v2Packages: [] }, setupCleanTree);
+    assert.equal(status, 1, output);
+    assert.match(output, /"v2Packages" must not be empty/);
+  });
+
+  it('rejects a $schema reference that points at nothing', () => {
+    const { status, output } = runGateInProject(
+      { ...CONFIG, $schema: './no-such-schema.json' },
+      setupCleanTree,
+    );
+    assert.equal(status, 1, output);
+    assert.match(output, /points at a file that does not exist/);
+  });
+
+  it('accepts the shipped $schema reference', () => {
+    const { status, output } = runGateInProject(
+      { ...CONFIG, $schema: './architecture-gate.schema.json' },
+      (tmp) => {
+        setupCleanTree(tmp);
+        // The real schema lives next to the real config, not in the fixture.
+        fs.copyFileSync(
+          path.join(repoRoot, 'scripts/architecture-gate.schema.json'),
+          path.join(tmp, 'scripts/architecture-gate.schema.json'),
+        );
+      },
+    );
+    assert.equal(status, 0, output);
+  });
+
+  it('fails closed when a configured package does not exist', () => {
+    // RED before the fix: the walk was wrapped in a bare `catch {}`, so the
+    // missing package was skipped and the gate still printed "passed".
+    const { status, output } = runGateInProject(
+      { ...CONFIG, v2Packages: ['packages/kernel', 'packages/does-not-exist'] },
+      setupCleanTree,
+    );
+    assert.equal(status, 1, `a package that is not there must not pass silently\n${output}`);
+    assert.match(output, /packages\/does-not-exist\/src does not exist/);
+  });
+
+  it('still passes when the configuration and the tree agree', () => {
+    const { status, output } = runGateInProject(CONFIG, setupCleanTree);
+    assert.equal(status, 0, output);
+    assert.match(output, /Architecture V2 gate passed/);
   });
 });

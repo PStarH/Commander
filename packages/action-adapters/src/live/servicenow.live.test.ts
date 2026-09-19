@@ -132,7 +132,7 @@ describe(
           destination,
           request: {},
         });
-        assert.equal(outcome.status, 'COMPLETED');
+        assert.equal(outcome.status, 'APPLIED');
         assert.equal(outcome.response?.sysId, remoteSysId);
 
         await adapter.compensate({
@@ -154,7 +154,7 @@ describe(
           request: { expectedState: '7' },
           compensationResponse: { sysId: remoteSysId },
         });
-        assert.equal(postCompensate.status, 'COMPLETED');
+        assert.equal(postCompensate.status, 'APPLIED');
         assert.equal(postCompensate.response?.state, '7');
       } catch (error) {
         printCleanup();

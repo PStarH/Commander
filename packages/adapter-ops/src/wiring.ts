@@ -35,7 +35,10 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { cellTier, createEgressGatedFetch, parseEgressAllowlist } from './egress.js';
-import { ReconciliationDaemon } from './reconciliationDaemon.js';
+import {
+  ReconciliationDaemon,
+  DEFAULT_RECONCILE_QUERY_TIMEOUT_MS,
+} from './reconciliationDaemon.js';
 import { CompensationDaemon } from './compensationDaemon.js';
 
 const ADAPTER_ROUTING_POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
@@ -63,7 +66,12 @@ export function createAdapterOpsEvidenceSigner(
   const privateKeyPem = env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]?.trim() ?? '';
   const keyId = env[EVIDENCE_SIGNING_KEY_ID_ENV]?.trim() ?? '';
   if (!privateKeyPem || !keyId) {
-    if (env.NODE_ENV === 'production') throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
+    // AO-09: the production signal set is `isProductionOrEnterprise()`, not
+    // NODE_ENV alone. With NODE_ENV=development but COMMANDER_CELL_TIER=enterprise
+    // (or the other enterprise signals) the old check silently produced a null
+    // signer, dropping `requireEvidencePersistence` from the compensation broker
+    // and only failing on the first tick.
+    if (isProductionOrEnterprise(env)) throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
     return null;
   }
   return createEvidenceSigner({ privateKeyPem, keyId });
@@ -282,16 +290,17 @@ async function persistClaimSecret(
   }
 }
 
-function isProductionOrEnterprise(): boolean {
+function isProductionOrEnterprise(env: NodeJS.ProcessEnv = process.env): boolean {
   // AUDIT-F3: COMMANDER_ENV joins the signal set (kernel treats it as
   // authoritative); REQUIRE_WORKLOAD_BINDING=1 is also honored so the
-  // hollow-PEP gate cannot be skipped by signal fragmentation.
+  // hollow-PEP gate cannot be skipped by signal fragmentation. The evidence
+  // signer uses this same predicate (AO-09).
   return (
-    process.env.NODE_ENV === 'production' ||
-    process.env.COMMANDER_ENV === 'production' ||
-    process.env.COMMANDER_PROFILE === 'enterprise' ||
-    process.env.COMMANDER_CELL_TIER === 'enterprise' ||
-    process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
+    env.NODE_ENV === 'production' ||
+    env.COMMANDER_ENV === 'production' ||
+    env.COMMANDER_PROFILE === 'enterprise' ||
+    env.COMMANDER_CELL_TIER === 'enterprise' ||
+    env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
   );
 }
 
@@ -778,6 +787,10 @@ function createProductionRegistry(
 
 export const COMPENSATION_AUTHORITY_UNAVAILABLE = 'COMPENSATION_AUTHORITY_UNAVAILABLE';
 
+/** AO-08: production/enterprise adapter-ops without a durable worker registry. */
+export const ADAPTER_OPS_DURABLE_CLAIM_AUTHORITY_REQUIRED =
+  'ADAPTER_OPS_DURABLE_CLAIM_AUTHORITY_REQUIRED';
+
 export const ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE =
   'ADAPTER_OPS_EVIDENCE_AUTHORITY_UNAVAILABLE';
 
@@ -859,20 +872,21 @@ export function requireCompensationAuthority(value: unknown): CompensationOutbox
   return value as CompensationOutboxPort;
 }
 
-function unavailableCompensationAuthority(): CompensationOutboxPort {
-  const unavailable = async (): Promise<never> => {
-    throw Object.assign(new Error(COMPENSATION_AUTHORITY_UNAVAILABLE), {
-      code: COMPENSATION_AUTHORITY_UNAVAILABLE,
-    });
-  };
-  return {
-    claimCompensationWork: unavailable,
-    completeCompensationWork: unavailable,
-    handoffCompensationUnknown: unavailable,
-    escalateCompensationWork: unavailable,
-    parkCompensationUnknown: unavailable,
-    finalizeCompensation: unavailable,
-  };
+/**
+ * AO-07: parse a positive-integer env knob, failing closed. Previously the
+ * daemon intervals, batch sizes and reconcile generation were built with a bare
+ * `Number(...)`: `NaN`/`0`/negative slipped through, `setInterval(fn, NaN)`
+ * fired every ~1ms, `batchSize<=0` claimed nothing forever, and
+ * `pollIntervalMs*3` freshness made the loop permanently not-ready.
+ */
+export function positiveIntegerEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw.trim() === '') return fallback;
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer`);
+  }
+  return value;
 }
 
 export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = {}): Promise<{
@@ -886,7 +900,11 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
   demoOpenHollowPep: boolean;
   /** Registered (or sqlite fallback) daemon worker identities + generations. */
   workers: AdapterOpsWorkerIdentities;
-  /** When true, /ready must see claimSecret on both daemons (postgres / injected registry). */
+  /**
+   * When true, /ready must see claimSecret on both daemons. Set for any
+   * non-demo tier (AO-08), so a wiring with no durable worker registry cannot
+   * skip the readiness gate.
+   */
   requiresDurableClaim: boolean;
   /** Compensation EffectBroker localWorkerId — must equal compensation-daemon. */
   compensationLocalWorkerId: string;
@@ -908,16 +926,19 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
     adapterOpsMode: true,
   });
   const repository = handle.repository;
+  // AO-10: once worker rows + claim-secret files exist, any later startup failure
+  // must revoke them; the outer catch below drains whatever was registered.
+  let lifecycleRegistry: AdapterOpsWorkerRegistry | undefined;
+  let registeredReconcile: { id: string; generation: number; claimSecret: string } | undefined;
+  let registeredCompensation: { id: string; generation: number; claimSecret: string } | undefined;
   try {
     if (handle.postgresPool) await requireAdapterOpsEvidenceAuthorityAvailability(repository);
-    let compensationRepository: CompensationOutboxPort;
-    try {
-      compensationRepository =
-        options.compensationAuthority ?? requireCompensationAuthority(repository);
-    } catch (error) {
-      if (handle.postgresPool) throw error;
-      compensationRepository = unavailableCompensationAuthority();
-    }
+    // AO-08: never substitute a throwing stub for the governed Task 3 compensation
+    // port. A repository that cannot expose it cannot run adapter-ops, so this
+    // fails at startup instead of producing a daemon that reports healthy and
+    // then throws on every tick.
+    const compensationRepository =
+      options.compensationAuthority ?? requireCompensationAuthority(repository);
 
     // Post-connect owner-role gate before capability authority / egress registry.
     if (handle.postgresPool) {
@@ -1004,14 +1025,33 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
     const reconcileWorkerId = adapterOpsWorkerId('reconcile', instanceId);
     const compensationWorkerId = adapterOpsWorkerId('compensation', instanceId);
 
+    // AO-10: repository-only authority probes run before registration so a
+    // missing evidence authority cannot leave ACTIVE worker rows behind.
+    const evidenceAuthority = handle.postgresPool
+      ? requireAdapterOpsEvidenceAuthority(repository)
+      : undefined;
+    const compensationTerminalAuthority = handle.postgresPool
+      ? requireAdapterOpsCompensationTerminalEvidenceAuthority(repository)
+      : undefined;
+
     // P0: register BOTH daemon identities before claim/admit (postgres or injected registry).
     // Fail-closed tenant scope matches worker-plane (COMMANDER_WORKER_TENANTS).
-    let reconcileGeneration = Number(process.env.COMMANDER_RECONCILE_WORKER_GENERATION ?? 1);
+    let reconcileGeneration = positiveIntegerEnv('COMMANDER_RECONCILE_WORKER_GENERATION', 1);
     let compensationGeneration = 1;
-    let reconcileClaimSecret: string = randomUUID();
-    let compensationClaimSecret: string = randomUUID();
-    let lifecycleRegistry: AdapterOpsWorkerRegistry | undefined;
+    // AO-08: never fabricate a worker identity. Without a durable registry the
+    // claim secrets stay unset (and /ready stays false for non-demo tiers)
+    // instead of a randomUUID that matches no worker row but still looks like a
+    // registered claim secret.
+    let reconcileClaimSecret: string | undefined;
+    let compensationClaimSecret: string | undefined;
     const mustRegister = Boolean(handle.postgresPool) || Boolean(options.workerRegistry);
+    // AO-08: production/enterprise must run on durable claim authority.
+    if (!mustRegister && isProductionOrEnterprise()) {
+      throw new Error(
+        `${ADAPTER_OPS_DURABLE_CLAIM_AUTHORITY_REQUIRED}: production/enterprise adapter-ops requires ` +
+          'a durable worker registry (PostgreSQL pool or injected workerRegistry)',
+      );
+    }
     if (mustRegister) {
       const tenantIds = resolveAdapterOpsTenantScope(process.env);
       const claimSecretDir = process.env.COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR?.trim();
@@ -1024,18 +1064,13 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
         instanceId,
         claimSecretDir,
       });
+      registeredReconcile = registered.reconcile;
+      registeredCompensation = registered.compensation;
       reconcileGeneration = registered.reconcile.generation;
       compensationGeneration = registered.compensation.generation;
       reconcileClaimSecret = registered.reconcile.claimSecret;
       compensationClaimSecret = registered.compensation.claimSecret;
     }
-
-    const evidenceAuthority = handle.postgresPool
-      ? requireAdapterOpsEvidenceAuthority(repository)
-      : undefined;
-    const compensationTerminalAuthority = handle.postgresPool
-      ? requireAdapterOpsCompensationTerminalEvidenceAuthority(repository)
-      : undefined;
     const terminalEvidenceContext = (
       workerId: string,
       workerGeneration: number,
@@ -1063,12 +1098,12 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
     const reconcileEvidenceContext = terminalEvidenceContext(
       reconcileWorkerId,
       reconcileGeneration,
-      reconcileClaimSecret,
+      reconcileClaimSecret ?? '',
     );
     const compensationEvidenceContext = terminalEvidenceContext(
       compensationWorkerId,
       compensationGeneration,
-      compensationClaimSecret,
+      compensationClaimSecret ?? '',
     );
 
     const compensationKernelPort = {
@@ -1106,7 +1141,7 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
               compensationTerminalAuthority.completeCompensationEffectWithEvidence({
                 workerId: compensationWorkerId,
                 workerGeneration: compensationGeneration,
-                claimSecret: compensationClaimSecret,
+                claimSecret: compensationClaimSecret ?? '',
                 tenantId: input.tenantId,
                 runId: input.runId,
                 stepId: input.stepId,
@@ -1131,7 +1166,7 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
               compensationTerminalAuthority.failCompensationEffectWithEvidence({
                 workerId: compensationWorkerId,
                 workerGeneration: compensationGeneration,
-                claimSecret: compensationClaimSecret,
+                claimSecret: compensationClaimSecret ?? '',
                 tenantId: input.tenantId,
                 runId: input.runId,
                 stepId: input.stepId,
@@ -1168,6 +1203,19 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
         ...(evidenceSigner ? { evidenceSigner, requireEvidencePersistence: true as const } : {}),
       },
     );
+    // AO-07: validate every daemon knob before constructing the daemons; a
+    // malformed interval/batch must be rejected, not silently become NaN/0.
+    const reconcilePollIntervalMs = positiveIntegerEnv('COMMANDER_RECONCILE_INTERVAL_MS', 5_000);
+    const reconcileBatchSize = positiveIntegerEnv('COMMANDER_RECONCILE_BATCH_SIZE', 50);
+    const reconcileQueryTimeoutMs = positiveIntegerEnv(
+      'COMMANDER_RECONCILE_QUERY_TIMEOUT_MS',
+      DEFAULT_RECONCILE_QUERY_TIMEOUT_MS,
+    );
+    const compensationPollIntervalMs = positiveIntegerEnv(
+      'COMMANDER_COMPENSATION_INTERVAL_MS',
+      5_000,
+    );
+    const compensationBatchSize = positiveIntegerEnv('COMMANDER_COMPENSATION_BATCH_SIZE', 50);
     const reconciliation = new ReconciliationDaemon({
       repository,
       brokerFactory: () =>
@@ -1184,11 +1232,12 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
           productionCapabilityBrokerOptions(capability, reconcileWorkerId, reconcileGeneration),
         ),
       registry,
-      pollIntervalMs: Number(process.env.COMMANDER_RECONCILE_INTERVAL_MS ?? 5_000),
-      batchSize: Number(process.env.COMMANDER_RECONCILE_BATCH_SIZE ?? 50),
+      pollIntervalMs: reconcilePollIntervalMs,
+      batchSize: reconcileBatchSize,
+      queryTimeoutMs: reconcileQueryTimeoutMs,
       workerId: reconcileWorkerId,
       workerGeneration: reconcileGeneration,
-      claimSecret: reconcileClaimSecret,
+      claimSecret: reconcileClaimSecret ?? '',
       ...(reconcileEvidenceContext ? { terminalEvidenceContext: reconcileEvidenceContext } : {}),
       ...(evidenceSigner ? { evidenceSigner } : {}),
       heartbeat:
@@ -1222,11 +1271,11 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
           workerId: compensationWorkerId,
           workerGeneration: compensationGeneration,
         }),
-      pollIntervalMs: Number(process.env.COMMANDER_COMPENSATION_INTERVAL_MS ?? 5_000),
-      batchSize: Number(process.env.COMMANDER_COMPENSATION_BATCH_SIZE ?? 50),
+      pollIntervalMs: compensationPollIntervalMs,
+      batchSize: compensationBatchSize,
       workerId: compensationWorkerId,
       workerGeneration: compensationGeneration,
-      claimSecret: compensationClaimSecret,
+      claimSecret: compensationClaimSecret ?? '',
       ...(evidenceSigner ? { evidenceSigner } : {}),
       heartbeat:
         lifecycleRegistry && compensationClaimSecret
@@ -1246,28 +1295,24 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
                 compensationClaimSecret,
               )
           : undefined,
-      onFatalInvariant: lifecycleRegistry
-        ? async () => {
-            const drained = await Promise.allSettled([
-              lifecycleRegistry!.drain(
-                reconcileWorkerId,
-                reconcileGeneration,
-                reconcileClaimSecret,
-              ),
-              lifecycleRegistry!.drain(
-                compensationWorkerId,
-                compensationGeneration,
-                compensationClaimSecret,
-              ),
-            ]);
-            const failures = drained.flatMap((result) =>
-              result.status === 'rejected' ? [result.reason] : [],
-            );
-            if (failures.length > 0) {
-              throw new AggregateError(failures, 'adapter-ops authority drain failed');
+      onFatalInvariant:
+        lifecycleRegistry && reconcileClaimSecret && compensationClaimSecret
+          ? async () => {
+              const registry = lifecycleRegistry!;
+              const reconcileSecret = reconcileClaimSecret!;
+              const compensationSecret = compensationClaimSecret!;
+              const drained = await Promise.allSettled([
+                registry.drain(reconcileWorkerId, reconcileGeneration, reconcileSecret),
+                registry.drain(compensationWorkerId, compensationGeneration, compensationSecret),
+              ]);
+              const failures = drained.flatMap((result) =>
+                result.status === 'rejected' ? [result.reason] : [],
+              );
+              if (failures.length > 0) {
+                throw new AggregateError(failures, 'adapter-ops authority drain failed');
+              }
             }
-          }
-        : undefined,
+          : undefined,
       audit,
       telemetry: emitOpsLoopTelemetry,
     });
@@ -1320,7 +1365,13 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
       operationsReadiness: () => repository.getOperationsReadiness(cellTenantId),
       safeStop,
       demoOpenHollowPep: demoOpen,
-      requiresDurableClaim: mustRegister,
+      // AO-08: a non-demo cell requires durable claim authority even when no
+      // registry was injected. Previously this was `mustRegister`, so the
+      // no-registry path reported `false` and run.ts's readiness gate was
+      // skipped entirely: a wiring with no registered identity (and therefore
+      // zero claims) could still report ready. Demo is the only tier allowed to
+      // run without durable claims.
+      requiresDurableClaim: mustRegister || cellTier() !== 'demo',
       workers: {
         reconcile: {
           id: reconcileWorkerId,
@@ -1339,12 +1390,34 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
       },
     };
   } catch (error) {
+    // AO-10: a startup failure after registration must revoke the identities it
+    // created. `registerAdapterOpsDaemonWorkers` only cleans up failures inside
+    // its own call; anything that throws afterwards used to leave ACTIVE worker
+    // rows with valid claim secrets until heartbeat freshness expired.
+    const cleanupErrors: unknown[] = [];
+    if (lifecycleRegistry) {
+      for (const registered of [registeredReconcile, registeredCompensation]) {
+        if (!registered?.claimSecret) continue;
+        try {
+          await lifecycleRegistry.drain(
+            registered.id,
+            registered.generation,
+            registered.claimSecret,
+          );
+        } catch (drainError) {
+          cleanupErrors.push(drainError);
+        }
+      }
+    }
     try {
       await handle.close();
     } catch (closeError) {
+      cleanupErrors.push(closeError);
+    }
+    if (cleanupErrors.length > 0) {
       throw new AggregateError(
-        [error, closeError],
-        'adapter-ops startup failed and repository cleanup was incomplete',
+        [error, ...cleanupErrors],
+        'adapter-ops startup failed and cleanup was incomplete',
       );
     }
     throw error;

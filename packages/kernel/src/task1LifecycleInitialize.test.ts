@@ -250,7 +250,12 @@ class RecordingClient implements SqlClient {
     if (this.failDescriptor && sql.includes('CREATE TABLE public.commander_tenant_cutover_state')) {
       throw new Error('descriptor failed');
     }
-    if (sql.includes('SELECT checksum FROM commander_kernel_migrations')) return result<T>([]);
+    if (
+      sql.includes('SELECT checksum FROM public.commander_kernel_migrations WHERE id=$1') ||
+      sql.includes('SELECT checksum FROM commander_kernel_migrations')
+    ) {
+      return result<T>(this.ledgerRows.filter((row) => row.id === String(values[0])) as T[]);
+    }
     return result<T>();
   }
 
@@ -1403,6 +1408,68 @@ describe('Task 1 pinned lifecycle initializer manifests', () => {
       false,
     );
     assert.ok(client.statements.includes('ROLLBACK'));
+  });
+
+  it('reuses an already-committed lifecycle descriptor and installs the missing state row', async () => {
+    const client = new RecordingClient();
+    // Published baseline ledger plus the descriptor row committed by the
+    // interrupted install; the cutover state row is still missing.
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      KERNEL_TASK1_CLOSURE_MIGRATIONS[0]!,
+    ].map(({ id, checksum }) => ({ id, checksum }));
+    let insertedState = false;
+
+    await runTask1LifecycleDescriptorStateTransaction(
+      client,
+      async () => {
+        insertedState = true;
+      },
+      'fresh',
+      undefined,
+      testCatalogTransaction(),
+    );
+
+    assert.equal(insertedState, true, 'a matching descriptor row must still install the state row');
+    assert.equal(
+      client.statements.some((statement) =>
+        statement.includes('CREATE TABLE public.commander_tenant_cutover_state'),
+      ),
+      false,
+      'an already-committed descriptor must not re-run its non-idempotent DDL',
+    );
+    assert.equal(
+      client.statements.filter((statement) =>
+        statement.startsWith('INSERT INTO public.commander_kernel_migrations'),
+      ).length,
+      0,
+      'the descriptor ledger row must not be written twice',
+    );
+  });
+
+  it('still rejects an existing lifecycle descriptor row with a mismatching checksum', async () => {
+    const client = new RecordingClient();
+    client.ledgerRows = [
+      ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+      { id: KERNEL_TASK1_CLOSURE_MIGRATIONS[0]!.id, checksum: 'f'.repeat(64) },
+    ];
+    await assert.rejects(
+      () =>
+        runTask1LifecycleDescriptorStateTransaction(
+          client,
+          async () => undefined,
+          'fresh',
+          undefined,
+          testCatalogTransaction(),
+        ),
+      /MIGRATION_LEDGER_TAMPERED/,
+    );
+    assert.equal(
+      client.statements.some((statement) =>
+        statement.includes('CREATE TABLE public.commander_tenant_cutover_state'),
+      ),
+      false,
+    );
   });
 
   it('loads an existing pending row and rejects a non-exact initializer retry', async () => {

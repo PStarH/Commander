@@ -156,9 +156,18 @@ export interface WorkerServiceConfig {
   leaseTtlMs?: number;
   workerHeartbeatMs?: number;
   pollIntervalMs?: number;
+  /** WP-04: hard bound on stop()'s in-flight drain before remaining work is abandoned. */
+  drainTimeoutMs?: number;
   sandboxReadiness?: WorkerSandboxReadiness;
   /** Called after registry.register so callers can bind worker generation (e.g. EffectBroker). */
   onRegistered?: (worker: WorkerRecord) => void;
+  /**
+   * WP-05: claim-loop liveness signal — `false` when the claim path fails (readiness
+   * must clear), `true` when a claim RPC succeeds (refresh). Never a one-shot latch.
+   */
+  onClaimLoopHealth?: (healthy: boolean) => void;
+  /** WP-11: releases process-owned resources (e.g. the verified Postgres pool). */
+  onDispose?: () => Promise<void> | void;
 }
 
 export interface WorkerSandboxReadiness {

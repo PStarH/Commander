@@ -57,6 +57,11 @@ api:
     capabilityTokenKeySecret: ''
     integrityKeySecret: ''
     adminPasswordSecret: ''
+    # Audit-chain HMAC master key. Required outside the demo tier: the API
+    # refuses to start in production without it (and rejects the public dev key).
+    # COMMANDER_MANIFEST_KEY is only needed when COMMANDER_AUDIT_MANIFEST_DIR
+    # enables the manifest chain; inject it separately in that case.
+    auditChainKeySecret: ''
 
 # No web image or Deployment ships with this chart. Enabling this would render a
 # Service with no backing pods, so the chart rejects web.enabled=true (see
@@ -183,7 +188,12 @@ adapterOps:
     tokenSecretKey: kubernetes-bearer-token
     apiPort: 443
   egress:
-    allowlist: []
+    # Non-demo cells must name at least one hostname here: adapter-ops rejects a
+    # CIDR-only COMMANDER_ADAPTER_EGRESS_ALLOWLIST (ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED)
+    # because its application-layer gate cannot adjudicate IP literals. Pair this
+    # with networkPolicy.egress.adapterCidrs, which stays the NetworkPolicy layer.
+    allowlist:
+      - api.github.com
 
 # Worker/adapter EffectBroker authority (Ed25519 PEM + JWKS). Never HMAC.
 # Deployments mount via secretKeyRef only — never inline PEM/JWKS in env values.

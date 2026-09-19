@@ -58,6 +58,46 @@ describe('ConversationStore tenant isolation', () => {
 
     await store.close();
   });
+
+  // MEM-C09: addTurn used to INSERT by sessionId alone, so a caller holding a
+  // foreign session id could append turns to another tenant's conversation even
+  // though every read path filters on tenant_id.
+  it('refuses a turn written into another tenant session', async () => {
+    const store = await createStore();
+
+    const aSession = await runWithTenant('tenant-a', () =>
+      store.startSession({ projectId: 'proj-1', goal: 'A goal' }),
+    );
+
+    await expect(
+      runWithTenant('tenant-b', () =>
+        store.addTurn({ sessionId: aSession.id, role: 'user', content: 'injected from B' }),
+      ),
+    ).rejects.toThrow(/not found in the current tenant/);
+
+    const aTurns = await runWithTenant('tenant-a', () => store.getTurns(aSession.id));
+    expect(aTurns).toHaveLength(0);
+
+    await store.close();
+  });
+
+  it('allows a turn written into the same tenant session', async () => {
+    const store = await createStore();
+
+    const aSession = await runWithTenant('tenant-a', () =>
+      store.startSession({ projectId: 'proj-1', goal: 'A goal' }),
+    );
+
+    await runWithTenant('tenant-a', () =>
+      store.addTurn({ sessionId: aSession.id, role: 'user', content: 'legitimate turn' }),
+    );
+
+    const aTurns = await runWithTenant('tenant-a', () => store.getTurns(aSession.id));
+    expect(aTurns).toHaveLength(1);
+    expect(aTurns[0].content).toBe('legitimate turn');
+
+    await store.close();
+  });
 });
 
 describe('UserModelManager tenant isolation', () => {

@@ -134,4 +134,30 @@ describe('canonical crypto and historical evaluation', () => {
       },
     );
   });
+
+  it('rejects unsupported actions before the missing-fact short-circuit', () => {
+    const pin = { policyId: snapshot.policyId, policyDigest: snapshot.descriptorDigest };
+    // A specified but unregistered action is unsupported even when another fact
+    // is null; it must not be downgraded to insufficient_evidence.
+    assert.throws(
+      () =>
+        evaluateShadowObservation(
+          observation({
+            effectType: 'connector.aws.s3.delete',
+            tool: 'aws.s3.delete',
+            destination: null,
+          }),
+          pin,
+        ),
+      /SHADOW_UNSUPPORTED_ACTION/,
+    );
+    assert.throws(
+      () => evaluateShadowObservation(observation({ tool: 'aws.s3.delete' }), pin),
+      /SHADOW_UNSUPPORTED_ACTION/,
+    );
+    assert.throws(
+      () => evaluateShadowObservation(observation({ effectType: 'connector.aws.s3.delete' }), pin),
+      /SHADOW_UNSUPPORTED_ACTION/,
+    );
+  });
 });

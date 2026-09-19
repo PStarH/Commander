@@ -43,6 +43,7 @@ import type {
 } from './types.js';
 import { OPERATIONS_HEARTBEAT_TTL_MS } from './types.js';
 import { assertRunTransition, assertStepTransition } from './transitionValidation.js';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 import {
   SQLITE_KERNEL_17_TO_18_MIGRATION_SQL,
   SQLITE_KERNEL_PREVIOUS_SCHEMA_VERSION,
@@ -52,11 +53,8 @@ import {
 import { createSqlitePool } from './sqlitePool.js';
 import {
   KERNEL_COMPENSATION_TOPIC,
-  LEGACY_COMPENSATION_TOPIC,
-  normalizeCompensationPayload,
   type ClaimedCompensationWork,
   type CompensationClaimAuth,
-  type CompensationWorkDispositionResult,
 } from './ops/compensationConsumer.js';
 import { createReconcilePolicy, nextReconcileAfter } from './reconcilePolicy.js';
 import {
@@ -770,16 +768,10 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
     return this.withTransaction(async (client) => {
       const candidates = await client.query<{ id: string }>(
         `SELECT id FROM commander_outbox
-         WHERE published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts
-           AND topic NOT IN (?, ?) AND available_at <= ? AND (claimed_at IS NULL OR claimed_at < ?)
+           WHERE published_at IS NULL AND moved_to_dlq_at IS NULL AND attempts < max_attempts
+           AND topic <> ? AND available_at <= ? AND (claimed_at IS NULL OR claimed_at < ?)
          ORDER BY created_at LIMIT ?`,
-        [
-          KERNEL_COMPENSATION_TOPIC,
-          LEGACY_COMPENSATION_TOPIC,
-          now.toISOString(),
-          staleBefore,
-          limit,
-        ],
+        [KERNEL_COMPENSATION_TOPIC, now.toISOString(), staleBefore, limit],
       );
       if (candidates.rows.length === 0) return [];
       const ids = candidates.rows.map((r) => r.id);
@@ -1264,10 +1256,12 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       adapterVersion: String(row.adapter_version),
       compensationEffectType: String(row.compensation_effect_type),
       destination: typeof row.destination === 'string' ? row.destination : '',
-      compensationPatch: row.compensation_patch as Record<string, unknown>,
+      compensationPatch: parseJsonValue(row.compensation_patch) as Record<string, unknown>,
       forwardReceiptHash: String(row.forward_receipt_hash),
       authorizationId: String(row.authorization_id),
-      reconcilePolicy: row.reconcile_policy as KernelCompensationRequest['reconcilePolicy'],
+      reconcilePolicy: parseJsonValue(
+        row.reconcile_policy,
+      ) as KernelCompensationRequest['reconcilePolicy'],
       state: row.state as KernelCompensationRequest['state'],
       ...(row.claim_worker_id ? { claimWorkerId: String(row.claim_worker_id) } : {}),
       ...(row.claim_worker_generation != null
@@ -1363,7 +1357,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           !durableAuthorization ||
           !originalEffect ||
           !evidence ||
-          run.state !== 'RUNNING' ||
+          run.state !== 'COMPENSATING' ||
           step.state !== 'RUNNING' ||
           !this.workerHasExactCapability(request.lease.workerId, 'effect.compensate') ||
           !Array.isArray(workerTenants) ||
@@ -1901,7 +1895,13 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       compensationEffectId: evidence.compensationEffectId,
       compensationEffectType: durableAuthorization.compensationEffectType,
       compensationRequest,
-      idempotencyKey: `cmp:${request.originalEffectId}:${durableAuthorization.adapterVersion}`,
+      idempotencyKey: deriveEffectIdempotencyKey({
+        tenantId: request.tenantId,
+        runId: request.compensationRunId,
+        stepId: request.compensationStepId,
+        effectId: evidence.compensationEffectId,
+        request: compensationRequest,
+      }),
       forwardReceipt: forwardResponse,
       adapterVersion: durableAuthorization.adapterVersion,
       policyDecisionId: durableAuthorization.policyDecisionId,
@@ -1911,7 +1911,9 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
       approvalBinding: durableAuthorization.approvalBinding ?? null,
     });
     const validation = validateGovernedCompensationAuthorization(sealed);
-    return validation.valid ? validation.authorization : null;
+    return validation.valid
+      ? { ...validation.authorization, actionDigest: durableAuthorization.actionDigest }
+      : null;
   }
 
   override async claimCompensationWork(
@@ -1967,6 +1969,9 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           : { rows: [] as Record<string, unknown>[] };
         const requestRow = requestResult.rows[0];
         const request = requestRow ? this.compensationRequestFromRow(requestRow) : null;
+        if (request && !request.compensationEffectId) {
+          request.compensationEffectId = `effect_${canonicalCompensationHash({ requestId: request.id, originalEffectId: request.originalEffectId }).slice(0, 40)}`;
+        }
         const authorizationResult = request
           ? await client.query<Record<string, unknown>>(
               `SELECT * FROM commander_compensation_authorizations WHERE id=? AND tenant_id=?`,
@@ -1997,6 +2002,11 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         const run = runResult.rows[0];
         const step = stepResult.rows[0];
         const originalEffect = effectResult.rows[0];
+        if (request && originalEffect) {
+          const originalRequest = reqJsonObject('commander_effects', originalEffect, 'request');
+          request.destination =
+            typeof originalRequest.destination === 'string' ? originalRequest.destination : '';
+        }
         const runAuthorization = run
           ? (
               (parseJsonValue(run.metadata) as Record<string, unknown>).compensation as
@@ -2078,10 +2088,21 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
           `UPDATE commander_outbox SET claimed_at=?,claim_token=?,attempts=attempts+1 WHERE id=?`,
           [atIso, claimToken, message.id],
         );
+        // COMPENSATING, not RUNNING: claim_compensation_request (the SQL
+        // authority) and claimCompensationRequest both move the compensation run
+        // to COMPENSATING here, this method's own settlement only advances a run
+        // that is COMPENSATING (`WHERE ... AND state='COMPENSATING'`), and the
+        // governed-completion path requires it. Writing RUNNING here left every
+        // batch-claimed compensation unable to settle.
         await client.query(
-          `UPDATE commander_runs SET state='RUNNING',version=version+1,updated_at=?
-           WHERE id=? AND tenant_id=? AND state='PENDING'`,
+          `UPDATE commander_runs SET state='COMPENSATING',version=version+1,updated_at=?
+           WHERE id=? AND tenant_id=? AND state IN ('PENDING','COMPENSATING')`,
           [atIso, run.id, message.tenant_id],
+        );
+        await client.query(
+          `UPDATE commander_runs SET state='COMPENSATING',terminal_at=NULL,version=version+1,
+             updated_at=? WHERE id=? AND tenant_id=? AND state<>'COMPENSATING'`,
+          [atIso, request.originalRunId, message.tenant_id],
         );
         await client.query(
           `UPDATE commander_steps SET state='RUNNING',version=version+1,attempt=attempt+1,
@@ -2099,334 +2120,54 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
             message.tenant_id,
           ],
         );
+        // Stamp the durable request's ownership exactly as claimCompensationRequest
+        // does; the settlement path validates request.claimToken against the
+        // outbox claim token and refuses otherwise as CLAIM_NOT_OWNED.
+        await client.query(
+          `UPDATE commander_compensation_requests SET state='CLAIMED',claim_worker_id=?,
+             claim_worker_generation=?,claim_token=?,claim_expires_at=?,compensation_effect_id=?,
+             updated_at=? WHERE id=? AND tenant_id=?`,
+          [
+            input.workerId,
+            input.workerGeneration,
+            claimToken,
+            expiresAt,
+            request.compensationEffectId,
+            atIso,
+            request.id,
+            message.tenant_id,
+          ],
+        );
         await client.query(
           `UPDATE commander_tenant_execution_usage
            SET running_steps=running_steps+1,updated_at=? WHERE tenant_id=?`,
           [atIso, message.tenant_id],
         );
+        request.state = 'CLAIMED';
+        request.claimWorkerId = input.workerId;
+        request.claimWorkerGeneration = input.workerGeneration;
+        request.claimToken = claimToken;
+        request.claimExpiresAt = expiresAt;
+        // Keep the batch claim identical to claimCompensationRequest and the
+        // Postgres implementation: the consumer receives durable request data
+        // plus the outbox identity and claim token.
         claimed.push({
-          messageId: String(message.id),
-          tenantId: String(message.tenant_id),
-          claimToken,
-          authorization,
+          request: { ...request, state: 'CLAIMED' },
+          authorization: durableAuthorization,
+          forwardResponse: (originalEffect.response ?? {}) as Record<string, unknown>,
           lease: {
             workerId: input.workerId,
             workerGeneration: input.workerGeneration,
             token: claimToken,
             fencingEpoch,
+            expiresAt,
           },
+          outboxMessageId: String(message.id),
+          outboxClaimToken: claimToken,
         });
       }
       return claimed;
     }, scope.tenantIds);
-  }
-
-  override async completeCompensationWork(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      response: Record<string, unknown>;
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    return this.applyNativeCompensationDisposition(input, 'COMPLETED', input.response);
-  }
-
-  override async handoffCompensationUnknown(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      error: { code: string; message: string };
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    return this.applyNativeCompensationDisposition(input, 'HANDOFF_UNKNOWN', input.error);
-  }
-
-  override async escalateCompensationWork(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      reason: string;
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    return this.applyNativeCompensationDisposition(input, 'ESCALATED', input.reason);
-  }
-
-  private async applyNativeCompensationDisposition(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-    },
-    disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'ESCALATED',
-    payload: Record<string, unknown> | { code: string; message: string } | string,
-  ): Promise<CompensationWorkDispositionResult> {
-    return this.withTransaction(
-      async (client) => {
-        const scope = this.resolveDurableWorkerTenantScope(
-          input.workerId,
-          input.workerGeneration,
-          input.claimSecret,
-        );
-        if (
-          !scope?.tenantIds.includes(input.tenantId) ||
-          !this.workerHasExactCapability(input.workerId, 'effect.compensate')
-        ) {
-          return { applied: false, reason: 'WORKER_FENCED' };
-        }
-        const tokenHash = sha256(input.outboxClaimToken);
-        const fingerprint = sha256(canonicalJson({ disposition, payload }));
-        const receiptResult = await client.query<Record<string, unknown>>(
-          `SELECT * FROM commander_compensation_mutation_receipts WHERE message_id=?`,
-          [input.messageId],
-        );
-        const receipt = receiptResult.rows[0];
-        if (receipt) {
-          if (
-            receipt.tenant_id === input.tenantId &&
-            receipt.compensation_effect_id === input.compensationEffectId &&
-            receipt.claim_token_hash === tokenHash &&
-            receipt.request_fingerprint === fingerprint &&
-            receipt.disposition === disposition
-          ) {
-            const prior = parseJsonValue(receipt.result) as Extract<
-              CompensationWorkDispositionResult,
-              { applied: true }
-            >;
-            return { ...prior, replayed: true };
-          }
-          return { applied: false, reason: 'CLAIM_REPLAY_CONFLICT' };
-        }
-        const outboxResult = await client.query<Record<string, unknown>>(
-          `SELECT * FROM commander_outbox WHERE id=? AND tenant_id=?`,
-          [input.messageId, input.tenantId],
-        );
-        const outbox = outboxResult.rows[0];
-        if (!outbox || outbox.published_at || outbox.claim_token !== input.outboxClaimToken) {
-          return { applied: false, reason: 'CLAIM_NOT_OWNED' };
-        }
-        const authorization = normalizeCompensationPayload(
-          parseJsonValue(outbox.payload) as Record<string, unknown>,
-        );
-        if (!authorization || authorization.compensationEffectId !== input.compensationEffectId) {
-          return { applied: false, reason: 'NOT_FOUND' };
-        }
-        const runResult = await client.query<Record<string, unknown>>(
-          `SELECT * FROM commander_runs WHERE id=? AND tenant_id=?`,
-          [authorization.compensationRunId, input.tenantId],
-        );
-        const stepResult = await client.query<Record<string, unknown>>(
-          `SELECT * FROM commander_steps WHERE id=? AND run_id=? AND tenant_id=?`,
-          [authorization.compensationStepId, authorization.compensationRunId, input.tenantId],
-        );
-        const originalRunResult = await client.query<Record<string, unknown>>(
-          `SELECT * FROM commander_runs WHERE id=? AND tenant_id=?`,
-          [authorization.originalRunId, input.tenantId],
-        );
-        const effectResult = await client.query<Record<string, unknown>>(
-          `SELECT * FROM commander_effects WHERE id=? AND tenant_id=?`,
-          [input.compensationEffectId, input.tenantId],
-        );
-        const run = runResult.rows[0];
-        const step = stepResult.rows[0];
-        const originalRun = originalRunResult.rows[0];
-        const effect = effectResult.rows[0];
-        const runAuthorization = run
-          ? (
-              (parseJsonValue(run.metadata) as Record<string, unknown>).compensation as
-                Record<string, unknown> | undefined
-            )?.authorization
-          : null;
-        const stepAuthorization = step
-          ? (parseJsonValue(step.input) as Record<string, unknown>).authorization
-          : null;
-        const effectOwnsClaim =
-          effect &&
-          effect.lease_worker_id === input.workerId &&
-          Number(effect.lease_worker_generation) === input.workerGeneration &&
-          Number(effect.lease_fencing_epoch) === Number(step?.fencing_epoch);
-        const activeStepLease =
-          step?.lease_worker_id === input.workerId &&
-          Number(step?.lease_worker_generation) === input.workerGeneration &&
-          step?.lease_token === input.outboxClaimToken &&
-          step?.lease_expires_at &&
-          Date.parse(String(step.lease_expires_at)) > Date.now();
-        if (
-          !run ||
-          !step ||
-          !originalRun ||
-          canonicalJson(runAuthorization) !== canonicalJson(authorization) ||
-          canonicalJson(stepAuthorization) !== canonicalJson(authorization) ||
-          (!activeStepLease && !effectOwnsClaim)
-        ) {
-          return { applied: false, reason: 'CLAIM_NOT_OWNED' };
-        }
-        if (disposition !== 'HANDOFF_UNKNOWN' && effect) {
-          const current = fromEffectAdapter(effect);
-          const projected = {
-            ...current,
-            state:
-              disposition === 'COMPLETED'
-                ? current.state
-                : current.state === 'ADMITTED'
-                  ? ('FAILED' as const)
-                  : ('COMPLETION_UNKNOWN' as const),
-          };
-          if (!(await this.hasEvidenceForEffect(client, projected))) {
-            return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
-          }
-        }
-        const at = new Date().toISOString();
-        if (disposition === 'COMPLETED') {
-          if (!effect || effect.state !== 'COMPLETED') {
-            return { applied: false, reason: 'EFFECT_NOT_COMPLETED' };
-          }
-          await client.query(
-            `UPDATE commander_steps SET state='SUCCEEDED',output=?,error=NULL,version=version+1,
-             lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL,
-             updated_at=? WHERE id=? AND tenant_id=?`,
-            [payload, at, step.id, input.tenantId],
-          );
-          const metadata = parseJsonValue(run.metadata) as Record<string, unknown>;
-          (metadata.compensation as Record<string, unknown>).disposition = 'COMPLETED';
-          await client.query(
-            `UPDATE commander_runs SET state='SUCCEEDED',version=version+1,metadata=?,updated_at=?,terminal_at=?
-           WHERE id=? AND tenant_id=?`,
-            [metadata, at, at, run.id, input.tenantId],
-          );
-          await client.query(
-            `UPDATE commander_runs SET state='COMPENSATED',version=version+1,updated_at=?,terminal_at=?
-           WHERE id=? AND tenant_id=? AND state='COMPENSATING'`,
-            [at, at, originalRun.id, input.tenantId],
-          );
-        } else if (disposition === 'HANDOFF_UNKNOWN') {
-          if (!effect || effect.state !== 'COMPLETION_UNKNOWN') {
-            return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
-          }
-          await client.query(
-            `UPDATE commander_steps SET state='WAITING_FOR_RECONCILIATION',version=version+1,
-             lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL,
-             updated_at=? WHERE id=? AND tenant_id=?`,
-            [at, step.id, input.tenantId],
-          );
-          const metadata = parseJsonValue(run.metadata) as Record<string, unknown>;
-          (metadata.compensation as Record<string, unknown>).disposition = 'HANDOFF_UNKNOWN';
-          await client.query(
-            `UPDATE commander_runs SET version=version+1,metadata=?,updated_at=? WHERE id=? AND tenant_id=?`,
-            [metadata, at, run.id, input.tenantId],
-          );
-        } else {
-          if (effect?.state === 'ADMITTED') {
-            await client.query(
-              `UPDATE commander_effects SET state='FAILED',response=?,completed_at=? WHERE id=? AND tenant_id=?`,
-              [{ reason: payload }, at, effect.id, input.tenantId],
-            );
-          }
-          await client.query(
-            `UPDATE commander_steps SET state='FAILED',error=?,version=version+1,
-             lease_worker_id=NULL,lease_worker_generation=0,lease_token=NULL,lease_expires_at=NULL,
-             updated_at=? WHERE id=? AND tenant_id=?`,
-            [
-              {
-                code: String(payload),
-                message: 'Governed compensation was escalated',
-                retryable: false,
-              },
-              at,
-              step.id,
-              input.tenantId,
-            ],
-          );
-          const metadata = parseJsonValue(run.metadata) as Record<string, unknown>;
-          const compensation = metadata.compensation as Record<string, unknown>;
-          compensation.disposition = 'ESCALATED';
-          compensation.escalationReason = payload;
-          await client.query(
-            `UPDATE commander_runs SET state='FAILED',version=version+1,metadata=?,updated_at=?,terminal_at=?
-           WHERE id=? AND tenant_id=?`,
-            [metadata, at, at, run.id, input.tenantId],
-          );
-          await client.query(
-            `UPDATE commander_runs SET state='FAILED',version=version+1,updated_at=?,terminal_at=?
-           WHERE id=? AND tenant_id=? AND state='COMPENSATING'`,
-            [at, at, originalRun.id, input.tenantId],
-          );
-        }
-        await client.query(
-          `UPDATE commander_tenant_execution_usage
-         SET running_steps=MAX(0,running_steps-1),updated_at=? WHERE tenant_id=?`,
-          [at, input.tenantId],
-        );
-        await client.query(
-          `UPDATE commander_outbox SET published_at=?,claimed_at=NULL,claim_token=NULL WHERE id=?`,
-          [at, input.messageId],
-        );
-        const sequenceResult = await client.query<{ sequence: number }>(
-          `SELECT COALESCE(MAX(sequence),0)+1 AS sequence FROM commander_events
-         WHERE aggregate_type='effect' AND aggregate_id=?`,
-          [input.compensationEffectId],
-        );
-        const eventId = randomUUID();
-        await client.query(
-          `INSERT INTO commander_events(
-           id,aggregate_type,aggregate_id,sequence,type,tenant_id,run_id,step_id,
-           actor,schema_version,payload,occurred_at
-         ) VALUES(?,'effect',?,?,?,?,?,?,?,'v2',?,?)`,
-          [
-            eventId,
-            input.compensationEffectId,
-            Number(sequenceResult.rows[0]?.sequence ?? 1),
-            disposition === 'COMPLETED'
-              ? 'compensation.completed'
-              : disposition === 'HANDOFF_UNKNOWN'
-                ? 'compensation.handed_off_unknown'
-                : 'compensation.escalated',
-            input.tenantId,
-            run.id,
-            step.id,
-            input.workerId,
-            {
-              disposition,
-              originalRunId: originalRun.id,
-              originalEffectId: authorization.originalEffectId,
-              compensationRunId: run.id,
-              compensationEffectId: input.compensationEffectId,
-              payload,
-            },
-            at,
-          ],
-        );
-        const result: Extract<CompensationWorkDispositionResult, { applied: true }> = {
-          applied: true,
-          disposition,
-          replayed: false,
-        };
-        await client.query(
-          `INSERT INTO commander_compensation_mutation_receipts(
-           message_id,tenant_id,compensation_effect_id,claim_token_hash,request_fingerprint,
-           disposition,result,created_at
-         ) VALUES(?,?,?,?,?,?,?,?)`,
-          [
-            input.messageId,
-            input.tenantId,
-            input.compensationEffectId,
-            tokenHash,
-            fingerprint,
-            disposition,
-            result,
-            at,
-          ],
-        );
-        return result;
-      },
-      [input.tenantId],
-    );
   }
 
   override async markEffectCompletionUnknown(

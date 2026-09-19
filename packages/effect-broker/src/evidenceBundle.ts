@@ -193,10 +193,17 @@ export interface VerifyEvidenceBundleOptions {
 }
 
 export function canonicalEvidenceJson(value: unknown): string {
+  // EB-01: `JSON.stringify(undefined)` returns `undefined`, so the old
+  // implementation returned a non-string despite declaring `string` — and
+  // `canonicalEvidenceJson(undefined) === canonicalEvidenceJson(undefined)`
+  // made an unsigned evidence record look signed. Render an absent value as the
+  // JSON literal `null` and keep the declared `string` return honest.
+  if (value === undefined) return 'null';
   // Hash the persisted JSON representation, retaining the existing lexicographic key order.
   const serialized = JSON.stringify(value);
   if (serialized === undefined) throw new TypeError('EVIDENCE_JSON_VALUE_REQUIRED');
   const canonical = (input: unknown): string => {
+    if (input === undefined) return 'null';
     if (input === null || typeof input !== 'object') return JSON.stringify(input);
     if (Array.isArray(input)) return `[${input.map(canonical).join(',')}]`;
     const obj = input as Record<string, unknown>;
@@ -238,6 +245,18 @@ function isSecretFieldKey(key: string): boolean {
   return EVIDENCE_SECRET_FIELD_NAME.test(normalizeKey(key));
 }
 
+/**
+ * EB-07: the only field-name-based DLP heuristic that must not see the
+ * attacker-influenced-but-signer-produced signature blob. `signature.value` is
+ * Ed25519 output (base64url of random-looking bytes), so the `sk_…`/`AKIA…`
+ * value patterns match it by chance — a real signature would be reported as a
+ * DLP leak and the effect parked as COMPLETION_UNKNOWN. The verifier, not a
+ * substring scan, decides whether a signature is authentic.
+ */
+function isSignatureArtifactKey(path: string): boolean {
+  return path === 'signature.value';
+}
+
 function isAllowedResponseSummaryKey(key: string): boolean {
   return EVIDENCE_RESPONSE_SUMMARY_KEYS.has(normalizeKey(key));
 }
@@ -266,6 +285,7 @@ export function sanitizeForEvidence(value: unknown): unknown {
 }
 
 export function findDlpViolation(value: unknown, path = ''): string | undefined {
+  if (isSignatureArtifactKey(path)) return undefined;
   if (isSecretValue(value)) return path || '(value)';
   if (value === null || typeof value !== 'object') return undefined;
   if (Array.isArray(value)) {

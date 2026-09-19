@@ -101,4 +101,46 @@ describe('ProviderFallbackChain', () => {
     expect(thrown?.attempts).toHaveLength(2);
     expect(providers[2].attempt).not.toHaveBeenCalled();
   });
+
+  // RUN-01: the deadline was checked only at the top of the loop, so one attempt
+  // that never settles outlived `totalTimeoutMs` and the chain awaited it forever.
+  it('bounds a never-settling attempt by totalTimeoutMs', async () => {
+    const chain = new ProviderFallbackChain<string>({ totalTimeoutMs: 25 });
+    let observedSignal: AbortSignal | undefined;
+    const providers: ProviderEntry<string>[] = [
+      {
+        name: 'hanging',
+        attempt: (signal) => {
+          observedSignal = signal;
+          return new Promise<string>(() => {
+            /* never settles */
+          });
+        },
+      },
+    ];
+
+    const startedAt = Date.now();
+    await expect(chain.tryProviders(providers)).rejects.toBeInstanceOf(FallbackChainExhaustedError);
+    const elapsed = Date.now() - startedAt;
+
+    // It must give up close to the budget rather than hang; the upper bound is
+    // generous so a loaded CI runner does not make this flaky.
+    expect(elapsed).toBeLessThan(2000);
+    expect(observedSignal?.aborted).toBe(true);
+  });
+
+  it('discards a late result that arrives after the deadline', async () => {
+    const chain = new ProviderFallbackChain<string>({ totalTimeoutMs: 25 });
+    const providers: ProviderEntry<string>[] = [
+      {
+        name: 'late',
+        attempt: () =>
+          new Promise<string>((resolve) => {
+            setTimeout(() => resolve('too-late'), 120);
+          }),
+      },
+    ];
+
+    await expect(chain.tryProviders(providers)).rejects.toBeInstanceOf(FallbackChainExhaustedError);
+  });
 });

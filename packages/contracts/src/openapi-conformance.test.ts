@@ -13,16 +13,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import { OPENAPI_V1_SPEC } from './openapi.js';
 import { CONTRACT_SCHEMAS } from './schemas.js';
 import { validateResource, snapshotContracts, detectBreakingChanges } from './compatibility.js';
 import { RUN_STATES, STEP_STATES } from './states.js';
 import { KERNEL_ERROR_CODES } from './errors.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const ACTION_STATES = [
   'PROPOSED',
@@ -241,6 +238,43 @@ describe('OpenAPI Spec Conformance', () => {
       const result = validateResource('organization', 'not an object');
       assert.equal(result.ok, false);
       assert.ok(result.errors[0]!.includes('Expected object'));
+    });
+
+    // CC-02: the enum branch used to `continue` for any non-string value, so a
+    // malformed enum field produced no type error at all.
+    it('rejects non-string values on enum fields', () => {
+      for (const bad of [42, true, { x: 1 }, ['ADMITTED']]) {
+        const result = validateResource('effect', {
+          id: 'effect-1',
+          runId: 'run-1',
+          stepId: 'step-1',
+          tenantId: 'tenant-a',
+          type: 'http.post',
+          idempotencyKey: 'key-1',
+          requestHash: 'a'.repeat(64),
+          status: bad,
+        });
+        assert.equal(result.ok, false, `status=${JSON.stringify(bad)} must not validate`);
+        assert.ok(
+          result.errors.some((e) => e.includes("Field 'status' expected string")),
+          `expected a type error for status=${JSON.stringify(bad)}, got ${result.errors.join('; ')}`,
+        );
+      }
+    });
+
+    it('still rejects unknown string values on enum fields', () => {
+      const result = validateResource('effect', {
+        id: 'effect-1',
+        runId: 'run-1',
+        stepId: 'step-1',
+        tenantId: 'tenant-a',
+        type: 'http.post',
+        idempotencyKey: 'key-1',
+        requestHash: 'a'.repeat(64),
+        status: 'NOT_A_STATUS',
+      });
+      assert.equal(result.ok, false);
+      assert.ok(result.errors.some((e) => e.includes('not in enum')));
     });
 
     it('rejects array value', () => {

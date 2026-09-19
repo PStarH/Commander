@@ -27,6 +27,13 @@ export interface GitSnapshotResult {
   baseCommitSha: string | null;
   /** Whether the working tree was clean before the snapshot */
   wasClean: boolean;
+  /**
+   * Absolute path of the repository the snapshot was taken in. Restoring into a
+   * different repository is refused: a `reset --hard` aimed at the wrong tree
+   * destroys unrelated uncommitted work. Absent on entries persisted before this
+   * field existed, which restore tolerates.
+   */
+  repoRoot?: string;
   /** Error message if snapshot creation failed */
   error?: string;
 }
@@ -104,6 +111,25 @@ function isGitRepo(cwd: string = process.cwd()): boolean {
 }
 
 const GIT_OBJECT_ID_RE = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i;
+
+/**
+ * Absolute repository root of `cwd`, or null when it cannot be resolved. Used to
+ * bind a snapshot to the tree it was taken in, so a restore can refuse to reset
+ * a different repository.
+ */
+function repoRoot(cwd: string): string | null {
+  try {
+    const top = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      stdio: 'pipe',
+      timeout: 5000,
+      cwd,
+      encoding: 'utf8',
+    }).trim();
+    return top.length > 0 ? fs.realpathSync(top) : null;
+  } catch {
+    return null;
+  }
+}
 
 function isValidCommitObject(value: unknown, cwd: string): value is string {
   if (typeof value !== 'string' || !GIT_OBJECT_ID_RE.test(value)) return false;
@@ -198,6 +224,7 @@ export function createGitSnapshot(runId: string, cwd: string = process.cwd()): G
       ref,
       baseCommitSha: baseSha,
       wasClean,
+      repoRoot: repoRoot(cwd) ?? undefined,
     };
 
     store.snapshots.set(runId, result);
@@ -249,6 +276,27 @@ export function restoreGitSnapshot(runId: string, cwd: string = process.cwd()): 
       !isValidCommitObject(snapshot.ref, cwd)
     ) {
       getGlobalLogger().warn('GitSnapshot', `Invalid stash ref for run ${runId}`, { runId });
+      return false;
+    }
+
+    // Fail closed before a destructive reset.
+    //
+    // `git reset --hard` discards uncommitted work, and the default `cwd` is
+    // `process.cwd()` — so a restore aimed at the wrong tree silently destroys
+    // work that has nothing to do with the run. A dirty tree is *expected* here
+    // (discarding the run's changes is the point, and the pre-run state is
+    // re-applied from the stash below), so the dirty check cannot be the guard.
+    // The guard is instead tree identity: refuse when the snapshot was taken in
+    // a different repository than the one being reset.
+    const snapshotRoot = snapshot.repoRoot;
+    const targetRoot = repoRoot(cwd);
+    if (snapshotRoot && targetRoot && snapshotRoot !== targetRoot) {
+      getGlobalLogger().warn(
+        'GitSnapshot',
+        `Refusing to restore run ${runId}: snapshot was taken in ${snapshotRoot} but the ` +
+          `target tree is ${targetRoot}`,
+        { runId, snapshotRoot, targetRoot },
+      );
       return false;
     }
 

@@ -92,7 +92,7 @@ function makeToolResponse(name: string, args: Record<string, unknown>): LLMRespo
       {
         id: `call_${Date.now()}`,
         name,
-        arguments: JSON.stringify(args),
+        arguments: args,
       },
     ],
   };
@@ -128,7 +128,7 @@ describe('Agent Loop E2E', () => {
     const echoDef: ToolDefinition = {
       name: 'echo_tool',
       description: 'Echoes the input back',
-      parameters: {
+      inputSchema: {
         type: 'object',
         properties: { message: { type: 'string' } },
         required: ['message'],
@@ -237,7 +237,7 @@ describe('Agent Loop E2E', () => {
         definition: {
           name: 'echo_tool',
           description: 'Echo',
-          parameters: { type: 'object', properties: {} },
+          inputSchema: { type: 'object', properties: {} },
         },
         // Must be admissible, otherwise the loop stops on a policy denial rather
         // than on maxSteps and this test passes for the wrong reason.
@@ -268,7 +268,7 @@ describe('Agent Loop E2E', () => {
       const failDef: ToolDefinition = {
         name: 'fail_tool',
         description: 'Always fails',
-        parameters: { type: 'object', properties: {} },
+        inputSchema: { type: 'object', properties: {} },
       };
       runtime.registerTool('fail_tool', {
         definition: failDef,
@@ -335,7 +335,7 @@ describe('Agent Loop E2E', () => {
         definition: {
           name: 'echo_tool',
           description: 'Echo',
-          parameters: { type: 'object', properties: {} },
+          inputSchema: { type: 'object', properties: {} },
         },
         isReadOnly: true,
         execute: async () => 'echo',

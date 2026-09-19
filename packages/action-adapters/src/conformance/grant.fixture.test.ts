@@ -50,4 +50,14 @@ describe('conformance grant fixture', () => {
     assert.equal(conformanceGrantIssueFields.workloadId, 'worker-1');
     assert.equal(conformanceGrantIssueFields.policySnapshotId, 'policy');
   });
+
+  it('never hands out the shared fixture object by reference', () => {
+    const first = buildConformanceIssueInput();
+    assert.notEqual(first, conformanceGrantIssueFields);
+    assert.equal(Object.isFrozen(conformanceGrantIssueFields), true);
+    const mutable = first as unknown as Record<string, string>;
+    mutable.nonce = 'mutated-by-caller';
+    const second = buildConformanceIssueInput();
+    assert.equal(second.nonce, 'nonce-conformance-chaos');
+  });
 });

@@ -135,5 +135,35 @@ if "$DESTROY_SCRIPT" missing-tenant --force >/dev/null 2>&1; then
   exit 1
 fi
 
+# -----------------------------------------------------------------------------
+# Test destroy-tenant.sh rejects path-traversal tenant ids (DEP-01)
+# -----------------------------------------------------------------------------
+# `.` and `..` pass the id charset check but are path segments, not tenant ids.
+# The old order of operations deleted the tenant record and API key first and
+# only then failed at `rm`, leaving half-destroyed state behind; the id must be
+# refused before any mutation.
+echo "[test] destroy rejects path-segment tenant ids"
+
+python3 - "$CONFIG_FILE" <<'PY'
+import json, sys
+path = sys.argv[1]
+with open(path) as f:
+    data = json.load(f)
+data['tenants'].append({'tenantId': '..', 'isolation': 'silo'})
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+    f.write('\n')
+PY
+
+for bad_id in . ..; do
+  if "$DESTROY_SCRIPT" "$bad_id" --force >/dev/null 2>&1; then
+    echo "FAIL: destroy-tenant.sh accepted the path-segment id '$bad_id'" >&2
+    exit 1
+  fi
+done
+
+# Rejection must happen before tenants.json is rewritten.
+python3 -c "import json; ids=[t['tenantId'] for t in json.load(open('$CONFIG_FILE'))['tenants']]; assert '..' in ids, 'tenants.json was mutated before the id was rejected'"
+
 echo ""
 echo "All tenant deployment tests passed."

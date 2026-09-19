@@ -8,6 +8,10 @@ const healthyLoop = () => ({
   isHealthy: () => true,
 });
 
+/** A publish tick that fully delivered (or had nothing to deliver). */
+const delivered = { published: 1, duplicates: 0, retried: 0, failed: 0 };
+const fullyFailed = { published: 0, duplicates: 0, retried: 0, failed: 3 };
+
 describe('kernel ops runtime', () => {
   it('starts and stops reclaim, timer, outbox, and compensation as one runtime', async () => {
     const calls: string[] = [];
@@ -33,6 +37,7 @@ describe('kernel ops runtime', () => {
       outbox: {
         publish: async () => {
           calls.push('outbox:publish');
+          return delivered;
         },
       },
       compensation: {
@@ -65,7 +70,7 @@ describe('kernel ops runtime', () => {
     const runtime = new KernelOpsRuntime({
       reclaim: { ...healthyLoop(), isHealthy: () => false },
       timer: healthyLoop(),
-      outbox: { publish: async () => {} },
+      outbox: { publish: async () => delivered },
       compensation: healthyLoop(),
       outboxIntervalMs: 60_000,
       outboxBatchSize: 10,
@@ -109,6 +114,7 @@ describe('kernel ops runtime', () => {
         publish: async () => {
           publishes += 1;
           if (publishes > 1) await blocked;
+          return delivered;
         },
       },
       compensation: healthyLoop(),
@@ -143,6 +149,7 @@ describe('kernel ops runtime', () => {
         publish: async () => {
           publishes += 1;
           if (publishes === 1) await blocked;
+          return delivered;
         },
       },
       compensation: healthyLoop(),
@@ -178,7 +185,7 @@ describe('kernel ops runtime', () => {
         isHealthy: () => true,
       },
       timer: healthyLoop(),
-      outbox: { publish: async () => {} },
+      outbox: { publish: async () => delivered },
       compensation: healthyLoop(),
       outboxIntervalMs: 60_000,
       outboxBatchSize: 10,
@@ -200,6 +207,65 @@ describe('kernel ops runtime', () => {
       assert.equal(runtime.isReady(), true);
     } finally {
       releaseReclaimStop();
+      await runtime.stop();
+    }
+  });
+
+  it('does not report ready while every claimed outbox message fails to publish', async () => {
+    const runtime = new KernelOpsRuntime({
+      reclaim: healthyLoop(),
+      timer: healthyLoop(),
+      outbox: { publish: async () => fullyFailed },
+      compensation: healthyLoop(),
+      outboxIntervalMs: 60_000,
+      outboxBatchSize: 10,
+    });
+
+    runtime.start();
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(
+        runtime.isReady(),
+        false,
+        'a publish tick that delivered none of its claimed messages must not stamp readiness',
+      );
+    } finally {
+      await runtime.stop();
+    }
+  });
+
+  it('recovers readiness on the first outbox tick that fully delivers', async () => {
+    let tick = 0;
+    const runtime = new KernelOpsRuntime({
+      reclaim: healthyLoop(),
+      timer: healthyLoop(),
+      outbox: {
+        publish: async () => {
+          tick += 1;
+          return tick === 1 ? fullyFailed : delivered;
+        },
+      },
+      compensation: healthyLoop(),
+      outboxIntervalMs: 60_000,
+      outboxBatchSize: 10,
+    });
+
+    let readyAfterFailedTick = true;
+    runtime.start();
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      readyAfterFailedTick = runtime.isReady();
+    } finally {
+      await runtime.stop();
+    }
+
+    // A later tick that delivers must be able to clear the failure.
+    runtime.start();
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(readyAfterFailedTick, false, 'a failed tick must not stamp readiness');
+      assert.equal(runtime.isReady(), true, 'a delivering tick must restore readiness');
+    } finally {
       await runtime.stop();
     }
   });

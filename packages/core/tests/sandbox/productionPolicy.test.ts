@@ -44,6 +44,48 @@ describe('production sandbox policy', () => {
     assert.equal(resolveSandboxPolicy({ NODE_ENV: 'development' }).isolation, 'process');
   });
 
+  // Regression: COMMANDER_ENV / enterprise-profile deployments declare
+  // production without setting NODE_ENV. Before the fix the sandbox policy
+  // stayed in the development tier (process isolation, soft plugin mode,
+  // failClosed=false) for those deployments.
+  for (const declared of [
+    { COMMANDER_ENV: 'production' },
+    { COMMANDER_ENV: 'prod' },
+    { NODE_ENV: 'development', COMMANDER_ENV: 'production' },
+    { COMMANDER_PROFILE: 'enterprise' },
+    { COMMANDER_CELL_TIER: 'enterprise' },
+  ]) {
+    it(`treats ${JSON.stringify(declared)} as production`, () => {
+      const policy = resolveSandboxPolicy(declared);
+      assert.equal(policy.environment, 'production');
+      assert.equal(policy.isolation, 'docker');
+      assert.equal(policy.failClosed, true);
+      assert.equal(policy.pluginSandboxMode, 'required');
+    });
+  }
+
+  it('applies the production bans to a COMMANDER_ENV=production deployment', () => {
+    assert.throws(
+      () => resolveSandboxPolicy({ COMMANDER_ENV: 'production', COMMANDER_ALLOW_NO_SANDBOX: '1' }),
+      /ALLOW_NO_SANDBOX/,
+    );
+    assert.throws(
+      () =>
+        resolveSandboxPolicy({
+          COMMANDER_PROFILE: 'enterprise',
+          COMMANDER_ALLOW_EXEC_SCRIPT: '1',
+        }),
+      /ALLOW_EXEC_SCRIPT/,
+    );
+  });
+
+  it('keeps an explicit non-production NODE_ENV in the development tier', () => {
+    const policy = resolveSandboxPolicy({ NODE_ENV: 'test' });
+    assert.equal(policy.environment, 'test');
+    assert.equal(policy.isolation, 'process');
+    assert.equal(policy.failClosed, false);
+  });
+
   it('requires gVisor when explicitly selected', () => {
     const policy = resolveSandboxPolicy({
       NODE_ENV: 'production',

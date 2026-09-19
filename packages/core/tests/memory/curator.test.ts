@@ -180,7 +180,7 @@ describe('MemoryCurator', () => {
       ];
       const store = createMockStore(items);
       const result = await curator.curate(store, 'proj-1');
-      assert.ok(result.evicted >= 0);
+      assert.ok(result.evicted >= 1, `expired item must be evicted, got ${result.evicted}`);
     });
 
     it('returns last curation when already running', async () => {

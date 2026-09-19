@@ -111,6 +111,33 @@ describe('gitSnapshot', () => {
       expect(fs.readFileSync(path.join(tempDir, 'README.md'), 'utf-8')).toBe('before run');
     });
 
+    it('refuses to reset a different repository that can resolve the snapshot commit', () => {
+      createGitSnapshot(testRunId, tempDir);
+      const snapshot = getGitSnapshot(testRunId)!;
+      expect(snapshot.repoRoot).toBeTruthy();
+
+      // A clone shares the snapshot commit, so a `reset --hard` against it would
+      // succeed and silently destroy that tree's uncommitted work.
+      const cloneDir = fs.mkdtempSync(path.join(os.tmpdir(), 'git-snapshot-clone-'));
+      try {
+        execSync(`git clone "${tempDir}" "${cloneDir}"`, { stdio: 'pipe' });
+        execSync('git config user.email "test@test.com"', { cwd: cloneDir, stdio: 'pipe' });
+        execSync('git config user.name "Test"', { cwd: cloneDir, stdio: 'pipe' });
+        execSync(`git cat-file -e ${snapshot.baseCommitSha}^{commit}`, {
+          cwd: cloneDir,
+          stdio: 'pipe',
+        });
+        fs.writeFileSync(path.join(cloneDir, 'unrelated-work.txt'), 'must survive');
+
+        expect(restoreGitSnapshot(testRunId, cloneDir)).toBe(false);
+        expect(fs.readFileSync(path.join(cloneDir, 'unrelated-work.txt'), 'utf-8')).toBe(
+          'must survive',
+        );
+      } finally {
+        fs.rmSync(cloneDir, { recursive: true, force: true });
+      }
+    });
+
     it('rejects injected persisted object ids without executing shell commands', () => {
       createGitSnapshot(testRunId, tempDir);
       const marker = path.join(tempDir, 'command-injection-marker');

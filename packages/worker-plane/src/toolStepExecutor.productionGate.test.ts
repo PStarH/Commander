@@ -10,6 +10,7 @@ import { describe, it } from 'node:test';
 import { ToolStepExecutor } from './toolStepExecutor.js';
 import type { ClaimedStep } from './types.js';
 import { WorkerExecutionError } from './types.js';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 
 const GATE_ENV_KEYS = [
   'NODE_ENV',
@@ -93,6 +94,32 @@ describe('ToolStepExecutor production effect gate (WP-09)', () => {
     });
   });
 
+  it('refuses a caller-supplied capabilityToken when only COMMANDER_REQUIRE_WORKLOAD_BINDING=1 is set', async () => {
+    // This flag used to be part of the executor's local predicate; replacing the local
+    // copy with the shared gate dropped it, which silently re-opened the fallback.
+    await withEnv({ NODE_ENV: 'test', COMMANDER_REQUIRE_WORKLOAD_BINDING: '1' }, async () => {
+      let brokerExecuted = false;
+      const broker = {
+        execute: async () => {
+          brokerExecuted = true;
+          return { effectId: 'e1', replayed: false, response: { ok: true } };
+        },
+      };
+      const executor = new ToolStepExecutor({ get: () => null }, broker);
+      await assert.rejects(
+        () =>
+          executor.execute(step(externalInput), {
+            signal: AbortSignal.timeout(5_000),
+            worker: { id: 'w1' } as never,
+          }),
+        (err: unknown) =>
+          err instanceof WorkerExecutionError &&
+          err.options.code === 'EFFECT_CAPABILITY_ISSUER_REQUIRED',
+      );
+      assert.equal(brokerExecuted, false);
+    });
+  });
+
   it('still allows the caller-supplied token outside the production gate', async () => {
     await withEnv(
       {
@@ -112,5 +139,34 @@ describe('ToolStepExecutor production effect gate (WP-09)', () => {
         assert.equal((out as { result?: { ok?: boolean } }).result?.ok, true);
       },
     );
+  });
+
+  it('derives the broker idempotency key from the verified step identity', async () => {
+    await withEnv({ NODE_ENV: 'test' }, async () => {
+      let brokerInput: { idempotencyKey?: string } | undefined;
+      const broker = {
+        execute: async (input: { idempotencyKey?: string }) => {
+          brokerInput = input;
+          return { effectId: 'e1', replayed: false, response: { ok: true } };
+        },
+      };
+      const executor = new ToolStepExecutor({ get: () => null }, broker);
+      const input = { ...externalInput };
+      delete (input as { idempotencyKey?: string }).idempotencyKey;
+      await executor.execute(step(input), {
+        signal: AbortSignal.timeout(5_000),
+        worker: { id: 'w1' } as never,
+      });
+      assert.equal(
+        brokerInput?.idempotencyKey,
+        deriveEffectIdempotencyKey({
+          tenantId: 'tenant-a',
+          runId: 'run-1',
+          stepId: 'step-1',
+          effectId: 'e1',
+          request: input.args,
+        }),
+      );
+    });
   });
 });

@@ -511,7 +511,9 @@ function validateSchemaValue(
   }
   if (schema.additionalProperties === false) {
     for (const key of Object.keys(obj)) {
-      if (!(key in properties)) {
+      // VT-02: own-property check — `key in properties` walks the prototype
+      // chain, so inherited names such as "toString" satisfied the schema.
+      if (!Object.prototype.hasOwnProperty.call(properties, key)) {
         addSchemaSignal(
           signals,
           'high',
@@ -706,9 +708,26 @@ export class UnifiedVerificationPipeline {
     const stagesRun: number[] = [];
     let tokensUsed = 0;
     let overallConfidence = 1.0;
+    // VT-01: every REQUIRED check that actually executed must pass for the
+    // report to pass. Optional/heuristic stages only contribute confidence.
+    let requiredChecksPassed = true;
 
-    // Stage 0: Zero-cost pattern checks
-    const s0 = runStage0(ctx, taskType);
+    // Stage 0: Zero-cost pattern checks. Required: if it cannot execute, the
+    // output is unverified rather than passed.
+    let s0: { signals: VerificationSignal[]; confidence: number };
+    try {
+      s0 = runStage0(ctx, taskType);
+    } catch (err) {
+      return this.buildUnavailableReport(
+        'stage0_pattern_checks',
+        0,
+        err,
+        allSignals,
+        tokensUsed,
+        stagesRun,
+        taskType,
+      );
+    }
     allSignals.push(...s0.signals);
     overallConfidence = Math.min(overallConfidence, s0.confidence);
     stagesRun.push(0);
@@ -720,7 +739,22 @@ export class UnifiedVerificationPipeline {
 
     // Stage 1: Schema validation (always run when schema provided — zero cost, high value)
     if (ctx.schema) {
-      const s1 = runStage1(ctx);
+      // A supplied JSON Schema is a required, executable contract: an exception
+      // while evaluating it means the contract could not be enforced.
+      let s1: { signals: VerificationSignal[]; confidence: number };
+      try {
+        s1 = runStage1(ctx);
+      } catch (err) {
+        return this.buildUnavailableReport(
+          'stage1_schema_contract',
+          1,
+          err,
+          allSignals,
+          tokensUsed,
+          stagesRun,
+          taskType,
+        );
+      }
       allSignals.push(...s1.signals);
       overallConfidence = Math.min(overallConfidence, s1.confidence);
       stagesRun.push(1);
@@ -783,9 +817,14 @@ export class UnifiedVerificationPipeline {
       );
     }
 
+    // VT-01b: resolve the evaluator that will ACTUALLY be used. `setEvaluatorProvider`
+    // only writes `config.evaluatorProvider`, so gating Stage 2 on the constructor
+    // provider alone meant a configured evaluator never enabled Stage 2.
+    const resolvedEvaluatorProvider = this.config.evaluatorProvider ?? this.provider;
+
     // Stage 2: LLM verification (only when ambiguous)
     const shouldRunLLM =
-      this.provider &&
+      !!resolvedEvaluatorProvider &&
       overallConfidence < 0.7 &&
       overallConfidence >= 0.2 &&
       budgetRemaining >= this.config.budgetFloorTokens;
@@ -805,11 +844,10 @@ export class UnifiedVerificationPipeline {
       }
 
       const model = this.config.llmVerificationModel ?? 'gpt-4o-mini';
-      const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider!;
       const s2 = await runStage2(
         ctx,
         taskType,
-        effectiveEvalProvider,
+        resolvedEvaluatorProvider,
         model,
         Math.min(this.config.llmVerificationBudget, budgetRemaining),
         allSignals,
@@ -837,9 +875,8 @@ export class UnifiedVerificationPipeline {
     if (shouldRunJudge) {
       try {
         const goalJudge = getGoalJudge();
-        const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider;
-        if (effectiveEvalProvider) {
-          goalJudge.setProvider(effectiveEvalProvider);
+        if (resolvedEvaluatorProvider) {
+          goalJudge.setProvider(resolvedEvaluatorProvider);
         }
         if (this.runtime) {
           goalJudge.setRuntime(this.runtime);
@@ -863,6 +900,11 @@ export class UnifiedVerificationPipeline {
         };
 
         if (!verdict.passed) {
+          // VT-01: a judge rejection is an independent HARD result. The score
+          // merge below only keeps the reported confidence honest; it must not
+          // be the thing that decides pass/fail, or a high pre-existing
+          // confidence would outvote the rejection.
+          requiredChecksPassed = false;
           allSignals.push({
             stage: 3,
             source: 'goal_judge',
@@ -876,14 +918,30 @@ export class UnifiedVerificationPipeline {
           overallConfidence = Math.min(1, overallConfidence + 0.05);
         }
       } catch (err) {
-        getGlobalLogger().warn('UnifiedVerification', 'Goal judge failed (best-effort)', {
+        // The judge gate is a required check once it is enabled and triggered:
+        // if it cannot produce a verdict, the run is unverified, never passed.
+        getGlobalLogger().warn('UnifiedVerification', 'Goal judge gate unavailable', {
           error: (err as Error).message,
         });
-        // Judge failure is non-blocking
+        return this.buildUnavailableReport(
+          'stage3_goal_judge',
+          3,
+          err,
+          allSignals,
+          tokensUsed,
+          stagesRun,
+          taskType,
+        );
       }
     }
 
-    const passed = overallConfidence >= 0.5 && !allSignals.some((s) => s.severity === 'critical');
+    // VT-01: `passed` requires that every REQUIRED check that actually executed
+    // passed; the confidence score and the critical-signal scan are additional
+    // conditions, not substitutes for a hard check result.
+    const passed =
+      requiredChecksPassed &&
+      overallConfidence >= 0.5 &&
+      !allSignals.some((s) => s.severity === 'critical');
 
     if (this.config.enableLearning) {
       this.memory.record({
@@ -944,6 +1002,40 @@ export class UnifiedVerificationPipeline {
 
   getTotalTokensUsed(): number {
     return this.totalTokensUsed;
+  }
+
+  /**
+   * VT-01: a required check that could not be executed makes the run
+   * unverified. Report it as a failure (never as a pass) and record why.
+   */
+  private buildUnavailableReport(
+    checkName: string,
+    stage: 0 | 1 | 3,
+    err: unknown,
+    signals: VerificationSignal[],
+    tokensUsed: number,
+    stagesRun: number[],
+    taskType: TaskType,
+  ): VerificationReport {
+    stagesRun.push(stage);
+    signals.push({
+      stage,
+      source: 'check_unavailable',
+      severity: 'critical',
+      message: `Required check "${checkName}" could not be executed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      suggestion: 'Fix the verification failure before treating the output as verified',
+    });
+    return this.buildReport(
+      false,
+      0,
+      signals,
+      tokensUsed,
+      stagesRun,
+      taskType,
+      'check_unavailable',
+    );
   }
 
   private buildReport(

@@ -22,6 +22,12 @@ export class SamplesStore {
   private writeQueue: Array<() => Promise<void>> = [];
   private flushing = false;
   private _flushPromise: Promise<void> | null = null;
+  /**
+   * Set when a drain fails. While halted, `enqueueWrite` only appends to the
+   * queue; the retained tasks are retried by an explicit `flush()` — never by
+   * an automatic re-drain, which would spin on a persistent write error.
+   */
+  private halted = false;
   private readonly MAX_FILE_BYTES = 50 * 1024 * 1024; // 50 MB
   private readonly MAX_ROTATED_FILES = 3;
 
@@ -135,25 +141,19 @@ export class SamplesStore {
 
   /** Drain all pending writes to disk. Call before shutdown. */
   async flush(): Promise<void> {
-    // drainQueue calls itself recursively (fire-and-forget) when new items
-    // arrive during a drain.  We must wait for the entire chain of drains
-    // before returning, otherwise the caller may remove the base directory
-    // while a drain is still writing to it, producing unhandled ENOENT.
-    while (this.flushing && this._flushPromise) {
-      await this._flushPromise;
+    // Join the current owner first: it must finish (or fail) before this call
+    // touches the queue, otherwise two drains would write the same task twice
+    // and the caller could remove the base directory under an active writer.
+    const inFlight = this._flushPromise;
+    if (inFlight) await inFlight;
+
+    if (this.writeQueue.length === 0) {
+      this.halted = false;
+      return;
     }
-    // Drain any remaining items ourselves.
-    this.flushing = true;
-    try {
-      let idx = 0;
-      while (idx < this.writeQueue.length) {
-        const task = this.writeQueue[idx++];
-        if (task) await task();
-      }
-    } finally {
-      this.writeQueue.length = 0;
-      this.flushing = false;
-    }
+    // An explicit flush is the only thing that resumes a halted queue.
+    this.halted = false;
+    await this.startDrain();
   }
 
   /** Get total record count for llm_calls (approximate). */
@@ -279,33 +279,46 @@ export class SamplesStore {
   /** Enqueue a write task to serialise concurrent access. */
   private enqueueWrite(task: () => Promise<void>): void {
     this.writeQueue.push(task);
-    if (!this.flushing) {
-      this.flushing = true;
-      this.drainQueue();
-    }
+    if (this.flushing || this.halted) return;
+    void this.startDrain().catch(() => {
+      // The failure is retained in the queue and surfaced to the caller of the
+      // next explicit flush(); swallowing it here only prevents an unhandled
+      // rejection from a fire-and-forget drain.
+    });
+  }
+
+  /**
+   * Start a drain if none is running. Exactly one owner exists at a time; the
+   * returned promise settles with the owner's outcome so `flush()` can surface
+   * a write failure instead of hiding it.
+   */
+  private startDrain(): Promise<void> {
+    this.flushing = true;
+    const drain = this.drainQueue();
+    this._flushPromise = drain;
+    return drain.finally(() => {
+      if (this._flushPromise === drain) this._flushPromise = null;
+      this.flushing = false;
+    });
   }
 
   private async drainQueue(): Promise<void> {
-    const p = (async () => {
-      try {
-        let idx = 0;
-        while (idx < this.writeQueue.length) {
-          const task = this.writeQueue[idx++];
-          if (task) await task();
-        }
-        this.writeQueue.length = 0;
-      } finally {
-        this.flushing = false;
-        this._flushPromise = null;
-        // If new items were enqueued while draining, start another drain
-        if (this.writeQueue.length > 0) {
-          this.flushing = true;
-          this.drainQueue();
-        }
+    // Remove only the tasks that actually committed: a failure leaves the
+    // offending task and everything behind it queued for an explicit retry,
+    // and never replays work that already reached disk.
+    let committed = 0;
+    try {
+      while (committed < this.writeQueue.length) {
+        const task = this.writeQueue[committed];
+        if (task) await task();
+        committed++;
       }
-    })();
-    this._flushPromise = p;
-    await p;
+    } catch (err) {
+      this.halted = true;
+      throw err;
+    } finally {
+      if (committed > 0) this.writeQueue.splice(0, committed);
+    }
   }
 
   /** Append a JSON line to a given file with rotation. */

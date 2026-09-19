@@ -184,12 +184,40 @@ function sanitizeRunId(runId: string): string {
 }
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
+import { tenantBucketOrThrow } from './tenantContext';
 
-const intentLogSingleton = createTenantAwareSingleton(() => new IntentLog(), {});
+/**
+ * RCH-07 / IP-01: `createTenantAwareSingleton` partitions the *instances* per
+ * tenant, but a zero-argument factory cannot tell which tenant is being
+ * constructed. The class already knows how to lay out a tenant subtree
+ * (`tenant_<id>` under the base dir) — the accessor just never told it, so every
+ * tenant's IntentLog resolved to the same on-disk directory and reads/writes
+ * crossed the tenant boundary on disk. Publish the tenant for the factory,
+ * mirroring `deadLetterQueueSingleton`.
+ *
+ * `__default__` is skipped so the implicit single-tenant bucket keeps the legacy
+ * `.commander_intent` layout.
+ */
+let constructingTenantId: string | undefined;
+
+/** The implicit single-tenant bucket must keep the legacy directory layout. */
+function storageTenantId(tenantId: string | undefined): string | undefined {
+  return !tenantId || tenantId === '__default__' ? undefined : tenantId;
+}
+
+const intentLogSingleton = createTenantAwareSingleton(
+  () => new IntentLog(undefined, storageTenantId(constructingTenantId)),
+  {},
+);
 
 export function getIntentLog(tenantId?: string): IntentLog {
-  if (tenantId) return intentLogSingleton.getForTenant(tenantId);
-  return intentLogSingleton.get();
+  const resolvedTenantId = tenantId || tenantBucketOrThrow();
+  constructingTenantId = resolvedTenantId;
+  try {
+    return intentLogSingleton.getForTenant(resolvedTenantId);
+  } finally {
+    constructingTenantId = undefined;
+  }
 }
 
 export function resetIntentLog(): void {

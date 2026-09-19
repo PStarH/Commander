@@ -369,6 +369,60 @@ describe('SSEStream', () => {
     assert.ok(events[0].includes('agent.status'));
     s.close();
   });
+
+  // EH-03: a short-growth delta was emitted raw without advancing
+  // `lastEmittedLength`, so the next sanitized diff re-sent it, and `close()`
+  // set `closed` before dispatching `[DONE]`, which the `pipe` guard dropped.
+  it('EH-03 emits each delta byte exactly once and terminates a piped client', () => {
+    const s = new SSEStream(undefined, 0);
+    const frames: string[] = [];
+    s.pipe({
+      write: (data: string) => {
+        frames.push(data);
+      },
+    });
+
+    const source = 'alpha bravo charlie delta echo foxtrot';
+    s.emitOutput('alpha'); // first call: sanitized diff
+    s.emitOutput(' bravo'); // 6 chars of growth < MIN_GROWTH (20)
+    s.emitOutput(' charlie delta echo foxtrot'); // large enough to re-sanitize
+    s.close();
+
+    const deltaFrames = frames.filter((f) => f.includes('event: output.delta'));
+    const deltas = deltaFrames.map((frame) => {
+      const dataLine = frame.split('\n').find((line) => line.startsWith('data: '));
+      assert.ok(dataLine, 'output.delta frame must carry a data line');
+      return (JSON.parse(dataLine.slice('data: '.length)) as { data: { content: string } }).data
+        .content;
+    });
+
+    assert.strictEqual(deltaFrames.length, 3);
+    assert.strictEqual(deltas.join(''), source);
+    assert.strictEqual(
+      deltas.join('').split('bravo').length - 1,
+      1,
+      'the short-growth delta must not be re-emitted by the next sanitized diff',
+    );
+    assert.strictEqual(frames[frames.length - 1], 'data: [DONE]\n\n');
+  });
+
+  it('EH-03 close() is idempotent and tolerates a throwing piped writer', () => {
+    const s = new SSEStream(undefined, 0);
+    const frames: string[] = [];
+    s.pipe({
+      write: (data: string) => {
+        frames.push(data);
+        throw new Error('EPIPE');
+      },
+    });
+
+    assert.doesNotThrow(() => s.close());
+    assert.strictEqual(s.isClosed, true);
+    assert.deepStrictEqual(frames, ['data: [DONE]\n\n']);
+
+    assert.doesNotThrow(() => s.close());
+    assert.strictEqual(frames.filter((f) => f === 'data: [DONE]\n\n').length, 1);
+  });
 });
 
 // ============================================================================

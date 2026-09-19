@@ -4,12 +4,52 @@
  */
 
 import express, { Request, Response, Router } from 'express';
-import { LLMEvaluator, ScoreSmoother, EvaluationCriterion, EvaluationRequest } from './evaluation';
+import {
+  EVALUATION_CRITERIA,
+  EVALUATION_CRITERION_CATALOGUE,
+  LLMEvaluator,
+  ScoreSmoother,
+  EvaluationCriterion,
+  EvaluationRequest,
+  isEvaluationCriterion,
+} from './evaluation';
 
 /** Hard cap on batch evaluate items to prevent LLM cost / connection exhaustion. */
 export const MAX_BATCH_ITEMS = 50;
 /** Max concurrent LLM judge calls within a single batch request. */
 export const MAX_BATCH_CONCURRENCY = 3;
+
+/**
+ * Max criteria entries accepted for a single evaluated item.
+ *
+ * AUDIT api-management#L2: `criteria` was only checked for truthiness and a
+ * non-zero length, then cast to `EvaluationCriterion[]`. `evaluateMulti` runs
+ * **one judge call per entry**, so `criteria: Array(10_000).fill('clarity')`
+ * fit inside the global body limit and produced 10 000 paid calls from one
+ * authenticated request. Batch capped the item count at
+ * {@link MAX_BATCH_ITEMS} but never bounded each item's criteria, and three
+ * batch workers bound concurrency, not total work.
+ *
+ * The declared surface is exactly {@link EVALUATION_CRITERIA}, so the bound is
+ * the size of that set — not an arbitrary number.
+ */
+export const MAX_CRITERIA_PER_ITEM = EVALUATION_CRITERIA.length;
+
+/**
+ * Max criteria entries accepted across one batch request.
+ *
+ * Derivable from the two caps above; kept explicit and asserted so that
+ * widening either one cannot silently widen the total work a single request can
+ * buy.
+ */
+export const MAX_CRITERIA_PER_REQUEST = MAX_BATCH_ITEMS * MAX_CRITERIA_PER_ITEM;
+
+/**
+ * Max characters accepted for one evaluated text field (`input` / `output` /
+ * `context`). The global body limit bounds the request, but not the share a
+ * single prompt may take of a judge call.
+ */
+export const MAX_EVALUATION_FIELD_CHARS = 200_000;
 
 /**
  * Stable error code returned when no governed judge is wired.
@@ -98,6 +138,142 @@ async function mapWithConcurrency<T, R>(
   return results;
 }
 
+// ── Request validation ────────────────────────────────────────────────────
+//
+// AUDIT api-management#L2: every handler used to validate by truthiness and
+// then cast. A cast is not a check — `criteria as EvaluationCriterion[]`
+// accepts `Array(10_000).fill('clarity')`, an unknown criterion, or a
+// non-array. All three entry points now share one validator so a fix cannot
+// land on one route and be forgotten on another.
+
+/** A rejected request: the caller-facing detail, with no provider text in it. */
+interface ValidationFailure {
+  ok: false;
+  detail: string;
+}
+type Validation<T> = ({ ok: true } & T) | ValidationFailure;
+
+/** A non-empty string within {@link MAX_EVALUATION_FIELD_CHARS}. */
+function validateField(raw: unknown, field: string): Validation<{ value: string }> {
+  if (typeof raw !== 'string' || raw.length === 0) {
+    return { ok: false, detail: `${field} must be a non-empty string` };
+  }
+  if (raw.length > MAX_EVALUATION_FIELD_CHARS) {
+    return {
+      ok: false,
+      detail: `${field} exceeds ${MAX_EVALUATION_FIELD_CHARS} characters`,
+    };
+  }
+  return { ok: true, value: raw };
+}
+
+/**
+ * The criteria list for one evaluated item.
+ *
+ * Rejects — rather than silently repairing — an empty list, more entries than
+ * the declared surface, an undeclared criterion, and duplicates. Rejecting is
+ * the fail-closed choice: a duplicate is almost always a caller bug, and
+ * "repair" would mean deciding on the caller's behalf how many paid calls they
+ * meant to buy.
+ */
+function validateCriteria(raw: unknown): Validation<{ criteria: EvaluationCriterion[] }> {
+  if (!Array.isArray(raw)) {
+    return { ok: false, detail: 'criteria must be an array' };
+  }
+  if (raw.length === 0) {
+    return { ok: false, detail: 'criteria must not be empty' };
+  }
+  if (raw.length > MAX_CRITERIA_PER_ITEM) {
+    return {
+      ok: false,
+      detail: `criteria must not exceed ${MAX_CRITERIA_PER_ITEM} entries`,
+    };
+  }
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (!isEvaluationCriterion(entry)) {
+      return {
+        ok: false,
+        detail: `unknown criterion: ${typeof entry === 'string' ? entry : typeof entry}`,
+      };
+    }
+    if (seen.has(entry)) {
+      return { ok: false, detail: `duplicate criterion: ${entry}` };
+    }
+    seen.add(entry);
+  }
+  return { ok: true, criteria: [...seen] as EvaluationCriterion[] };
+}
+
+/** `targetType` defaults when absent; anything present must be a declared kind. */
+const EVALUATION_TARGET_TYPES = ['agent_output', 'task_result', 'conversation'] as const;
+
+function validateTargetType(
+  raw: unknown,
+): Validation<{ targetType: EvaluationRequest['targetType'] }> {
+  if (raw === undefined || raw === null || raw === '') {
+    return { ok: true, targetType: 'agent_output' };
+  }
+  if (typeof raw !== 'string' || !(EVALUATION_TARGET_TYPES as readonly string[]).includes(raw)) {
+    return {
+      ok: false,
+      detail: `targetType must be one of: ${EVALUATION_TARGET_TYPES.join(', ')}`,
+    };
+  }
+  return { ok: true, targetType: raw as EvaluationRequest['targetType'] };
+}
+
+/** Validate one item of a batch, including its own criteria bounds. */
+function validateEvaluationItem(
+  raw: unknown,
+  index: number,
+): Validation<{ request: EvaluationRequest }> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    return { ok: false, detail: `items[${index}] must be an object` };
+  }
+  const item = raw as Record<string, unknown>;
+  const at = (field: string) => `items[${index}].${field}`;
+
+  const targetId = validateField(item.targetId, at('targetId'));
+  if (!targetId.ok) return targetId;
+  const input = validateField(item.input, at('input'));
+  if (!input.ok) return input;
+  const output = validateField(item.output, at('output'));
+  if (!output.ok) return output;
+  const criteria = validateCriteria(item.criteria);
+  // `validateCriteria` has no notion of which item it is validating, so the
+  // batch caller adds the locator — an error that does not name the offending
+  // item makes a 50-item rejection needlessly hard to act on.
+  if (!criteria.ok) return { ok: false, detail: `${at('criteria')}: ${criteria.detail}` };
+  const targetType = validateTargetType(item.targetType);
+  if (!targetType.ok) return { ok: false, detail: `${at('targetType')}: ${targetType.detail}` };
+  if (item.context !== undefined && item.context !== null) {
+    const context = validateField(item.context, at('context'));
+    if (!context.ok) return context;
+    return {
+      ok: true,
+      request: {
+        targetId: targetId.value,
+        targetType: targetType.targetType,
+        input: input.value,
+        output: output.value,
+        criteria: criteria.criteria,
+        context: context.value,
+      },
+    };
+  }
+  return {
+    ok: true,
+    request: {
+      targetId: targetId.value,
+      targetType: targetType.targetType,
+      input: input.value,
+      output: output.value,
+      criteria: criteria.criteria,
+    },
+  };
+}
+
 export function createEvaluationRouter(
   evaluator: LLMEvaluator,
   smoother: ScoreSmoother,
@@ -111,21 +287,26 @@ export function createEvaluationRouter(
    * Evaluate a single output
    */
   router.post('/evaluate', async (req: Request, res: Response) => {
-    const { targetId, targetType, input, output, criteria, context } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
 
-    if (!targetId || !input || !output || !criteria || criteria.length === 0) {
-      return res.status(400).json({
-        error: 'Missing required fields: targetId, input, output, criteria',
-      });
-    }
+    const targetId = validateField(body.targetId, 'targetId');
+    if (!targetId.ok) return res.status(400).json({ error: targetId.detail });
+    const input = validateField(body.input, 'input');
+    if (!input.ok) return res.status(400).json({ error: input.detail });
+    const output = validateField(body.output, 'output');
+    if (!output.ok) return res.status(400).json({ error: output.detail });
+    const criteria = validateCriteria(body.criteria);
+    if (!criteria.ok) return res.status(400).json({ error: criteria.detail });
+    const targetType = validateTargetType(body.targetType);
+    if (!targetType.ok) return res.status(400).json({ error: targetType.detail });
 
     const request: EvaluationRequest = {
-      targetId,
-      targetType: targetType || 'agent_output',
-      input,
-      output,
-      criteria: criteria as EvaluationCriterion[],
-      context,
+      targetId: targetId.value,
+      targetType: targetType.targetType,
+      input: input.value,
+      output: output.value,
+      criteria: criteria.criteria,
+      context: typeof body.context === 'string' ? body.context : undefined,
     };
 
     try {
@@ -135,9 +316,9 @@ export function createEvaluationRouter(
       results.forEach((r) => smoother.addScore(r.criterion, r.score));
 
       res.json({
-        targetId,
+        targetId: targetId.value,
         results,
-        aggregated: evaluator.getAggregatedScore(targetId),
+        aggregated: evaluator.getAggregatedScore(targetId.value),
       });
     } catch (error) {
       sendEvaluationError(res, error);
@@ -149,7 +330,8 @@ export function createEvaluationRouter(
    * Batch evaluate multiple outputs
    */
   router.post('/evaluate/batch', async (req: Request, res: Response) => {
-    const { items } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const { items } = body;
 
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'Missing or invalid items array' });
@@ -163,33 +345,45 @@ export function createEvaluationRouter(
       });
     }
 
+    // Validate the whole batch *before* the first judge call. A malformed item
+    // is a caller error, so it rejects the request instead of being executed
+    // alongside the items that happened to parse.
+    const requests: EvaluationRequest[] = [];
+    let totalCriteria = 0;
+    for (let i = 0; i < items.length; i += 1) {
+      const validated = validateEvaluationItem(items[i], i);
+      if (!validated.ok) return res.status(400).json({ error: validated.detail });
+      totalCriteria += validated.request.criteria.length;
+      requests.push(validated.request);
+    }
+    if (totalCriteria > MAX_CRITERIA_PER_REQUEST) {
+      return res.status(400).json({
+        error: `Batch criteria total exceeds maximum of ${MAX_CRITERIA_PER_REQUEST}`,
+        max: MAX_CRITERIA_PER_REQUEST,
+        received: totalCriteria,
+      });
+    }
+
     const allResults: Record<string, any> = {};
 
-    await mapWithConcurrency(items, MAX_BATCH_CONCURRENCY, async (item) => {
-      const request: EvaluationRequest = {
-        targetId: item.targetId,
-        targetType: item.targetType || 'agent_output',
-        input: item.input,
-        output: item.output,
-        criteria: item.criteria as EvaluationCriterion[],
-        context: item.context,
-      };
+    await mapWithConcurrency(requests, MAX_BATCH_CONCURRENCY, async (request) => {
+      const { targetId: itemTargetId } = request;
 
       try {
         const results = await evaluator.evaluateMulti(request, llmCall);
         results.forEach((r) => smoother.addScore(r.criterion, r.score));
-        allResults[item.targetId] = {
+        allResults[itemTargetId] = {
           results,
-          aggregated: evaluator.getAggregatedScore(item.targetId),
+          aggregated: evaluator.getAggregatedScore(itemTargetId),
         };
       } catch (error) {
-        allResults[item.targetId] = {
+        allResults[itemTargetId] = {
           error: error instanceof EvaluationUnavailableError ? error.code : 'EVALUATION_FAILED',
         };
       }
     });
 
-    res.json({ results: allResults, count: items.length });
+    res.json({ results: allResults, count: requests.length });
   });
 
   /**
@@ -242,47 +436,13 @@ export function createEvaluationRouter(
    * List all available evaluation criteria
    */
   router.get('/criteria', (req: Request, res: Response) => {
-    const criteria: Array<{
-      id: EvaluationCriterion;
-      name: string;
-      description: string;
-    }> = [
-      {
-        id: 'answer_relevance',
-        name: 'Answer Relevance',
-        description: 'How well the output addresses the input',
-      },
-      {
-        id: 'task_completion',
-        name: 'Task Completion',
-        description: 'Whether all requirements are met',
-      },
-      {
-        id: 'prompt_adherence',
-        name: 'Prompt Adherence',
-        description: 'How well instructions are followed',
-      },
-      {
-        id: 'helpfulness',
-        name: 'Helpfulness',
-        description: 'How useful the output is',
-      },
-      {
-        id: 'clarity',
-        name: 'Clarity',
-        description: 'How clear and understandable the output is',
-      },
-      {
-        id: 'accuracy',
-        name: 'Accuracy',
-        description: 'How factually correct the output is',
-      },
-      {
-        id: 'safety',
-        name: 'Safety',
-        description: 'Whether the output is safe and harmless',
-      },
-    ];
+    // Derived from the catalogue the validator uses — the published list and the
+    // accepted set are now the same object, so they cannot disagree.
+    const criteria = EVALUATION_CRITERIA.map((id) => ({
+      id,
+      name: EVALUATION_CRITERION_CATALOGUE[id].name,
+      description: EVALUATION_CRITERION_CATALOGUE[id].description,
+    }));
 
     res.json({ criteria, count: criteria.length });
   });
@@ -292,13 +452,14 @@ export function createEvaluationRouter(
    * Quick evaluation with default criteria
    */
   router.post('/evaluate/quick', async (req: Request, res: Response) => {
-    const { targetId, input, output } = req.body;
+    const body = (req.body ?? {}) as Record<string, unknown>;
 
-    if (!targetId || !input || !output) {
-      return res.status(400).json({
-        error: 'Missing required fields: targetId, input, output',
-      });
-    }
+    const targetId = validateField(body.targetId, 'targetId');
+    if (!targetId.ok) return res.status(400).json({ error: targetId.detail });
+    const input = validateField(body.input, 'input');
+    if (!input.ok) return res.status(400).json({ error: input.detail });
+    const output = validateField(body.output, 'output');
+    if (!output.ok) return res.status(400).json({ error: output.detail });
 
     // Default criteria: relevance, completion, clarity
     const defaultCriteria: EvaluationCriterion[] = [
@@ -308,10 +469,10 @@ export function createEvaluationRouter(
     ];
 
     const request: EvaluationRequest = {
-      targetId,
+      targetId: targetId.value,
       targetType: 'agent_output',
-      input,
-      output,
+      input: input.value,
+      output: output.value,
       criteria: defaultCriteria,
     };
 
@@ -319,13 +480,13 @@ export function createEvaluationRouter(
       const results = await evaluator.evaluateMulti(request, llmCall);
       results.forEach((r) => smoother.addScore(r.criterion, r.score));
 
-      const aggregated = evaluator.getAggregatedScore(targetId);
+      const aggregated = evaluator.getAggregatedScore(targetId.value);
 
       // Pass/fail based on aggregated average
       const passed = aggregated ? aggregated.average >= 3.5 : false;
 
       res.json({
-        targetId,
+        targetId: targetId.value,
         results,
         aggregated,
         passed,

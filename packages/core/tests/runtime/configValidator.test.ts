@@ -16,6 +16,32 @@ import type {
   ConfigValidationResult,
 } from '../../src/runtime/configValidator';
 
+/**
+ * `validateRuntimeConfig` / `validateHttpServerConfig` return
+ * `ConfigValidationResult<unknown>`, so `data` is opaque. These local views
+ * describe the shape each validator's schema actually produces.
+ */
+interface RuntimeConfigData {
+  maxStepsPerRun: number;
+  maxRetries: number;
+  timeoutMs: number;
+  maxConcurrency: number;
+  budgetHardCapTokens: number;
+  enableCache: boolean;
+  enableTracing: boolean;
+  logLevel: string;
+}
+
+interface HttpServerConfigData {
+  port: number;
+  host: string;
+  cors: boolean;
+  corsAllowedOrigins: string[];
+  maxBodyBytes: number;
+  apiKey?: string;
+  rateLimitPerMinute: number;
+}
+
 // ── createSchema ────────────────────────────────────────────────────
 
 describe('createSchema', () => {
@@ -63,7 +89,7 @@ describe('validateConfig - valid configs', () => {
       name: { type: 'string', required: true },
       debug: { type: 'boolean', default: false },
     });
-    const result = validateConfig({ name: 'test' }, schema);
+    const result = validateConfig<{ name: string; debug: boolean }>({ name: 'test' }, schema);
     assert.strictEqual(result.valid, true);
     assert.strictEqual(result.data.name, 'test');
     assert.strictEqual(result.data.debug, false);
@@ -474,7 +500,10 @@ describe('validateConfig - nested object validation', () => {
         },
       },
     });
-    const result = validateConfig({ server: {} }, schema);
+    const result = validateConfig<{ server: { host?: string; port?: number } }>(
+      { server: {} },
+      schema,
+    );
     assert.strictEqual(result.valid, true);
     assert.strictEqual(result.data.server.host, '0.0.0.0');
     assert.strictEqual(result.data.server.port, 3000);
@@ -574,7 +603,10 @@ describe('mergeWithDefaults', () => {
       port: { type: 'number', default: 3000 },
       debug: { type: 'boolean', default: false },
     });
-    const merged = mergeWithDefaults({ port: 9090 }, schema);
+    const merged = mergeWithDefaults<{ host: string; port: number; debug: boolean }>(
+      { port: 9090 },
+      schema,
+    );
     assert.strictEqual(merged.host, 'localhost');
     assert.strictEqual(merged.port, 9090);
     assert.strictEqual(merged.debug, false);
@@ -615,8 +647,9 @@ describe('validateRuntimeConfig', () => {
     });
     assert.strictEqual(result.valid, true);
     assert.strictEqual(result.errors.length, 0);
-    assert.strictEqual(result.data.maxStepsPerRun, 50);
-    assert.strictEqual(result.data.logLevel, 'info');
+    const data = result.data as RuntimeConfigData;
+    assert.strictEqual(data.maxStepsPerRun, 50);
+    assert.strictEqual(data.logLevel, 'info');
   });
 
   it('passes with minimal required fields and applies defaults', () => {
@@ -629,9 +662,10 @@ describe('validateRuntimeConfig', () => {
     });
     assert.strictEqual(result.valid, true);
     // Optional fields should get defaults
-    assert.strictEqual(result.data.enableCache, true);
-    assert.strictEqual(result.data.enableTracing, true);
-    assert.strictEqual(result.data.logLevel, 'info');
+    const data = result.data as RuntimeConfigData;
+    assert.strictEqual(data.enableCache, true);
+    assert.strictEqual(data.enableTracing, true);
+    assert.strictEqual(data.logLevel, 'info');
   });
 
   it('fails when required fields are missing', () => {
@@ -743,10 +777,11 @@ describe('validateHttpServerConfig', () => {
   it('passes with only required port field, applies defaults', () => {
     const result = validateHttpServerConfig({ port: 8080 });
     assert.strictEqual(result.valid, true);
-    assert.strictEqual(result.data.port, 8080);
-    assert.strictEqual(result.data.host, '127.0.0.1');
-    assert.strictEqual(result.data.cors, true);
-    assert.strictEqual(result.data.rateLimitPerMinute, 120);
+    const data = result.data as HttpServerConfigData;
+    assert.strictEqual(data.port, 8080);
+    assert.strictEqual(data.host, '127.0.0.1');
+    assert.strictEqual(data.cors, true);
+    assert.strictEqual(data.rateLimitPerMinute, 120);
   });
 
   it('fails when port is missing', () => {
@@ -784,13 +819,13 @@ describe('validateHttpServerConfig', () => {
   it('coerces port from string to number', () => {
     const result = validateHttpServerConfig({ port: '8080' });
     assert.strictEqual(result.valid, true);
-    assert.strictEqual(result.data.port, 8080);
+    assert.strictEqual((result.data as HttpServerConfigData).port, 8080);
   });
 
   it('applies default corsAllowedOrigins array', () => {
     const result = validateHttpServerConfig({ port: 3000 });
     assert.strictEqual(result.valid, true);
-    assert.deepStrictEqual(result.data.corsAllowedOrigins, [
+    assert.deepStrictEqual((result.data as HttpServerConfigData).corsAllowedOrigins, [
       'http://localhost:3000',
       'http://127.0.0.1:3000',
     ]);

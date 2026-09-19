@@ -32,8 +32,14 @@ const {
   setRefreshTokenRepository,
   _resetRefreshTokenStoreForTests,
 } = await import('../src/refreshTokenStore');
-const { createUser, findUserByUsername, setUserRepository, _resetUserStoreForTests } =
-  await import('../src/userStore');
+const {
+  createUser,
+  findUserById,
+  findUserByUsername,
+  resetUserPassword,
+  setUserRepository,
+  _resetUserStoreForTests,
+} = await import('../src/userStore');
 const { createUserAuthRouter } = await import('../src/userAuthEndpoints');
 const { setAuthFailureStore, resetAuthFailureStoreForTesting } =
   await import('../src/authFailureStore');
@@ -46,14 +52,28 @@ const testPassword = ['password', '123'].join('');
 let app: ReturnType<typeof express>;
 let server: ReturnType<typeof app.listen>;
 let port: number;
+let userRepo: InstanceType<typeof TestUserRepository>;
+
+/**
+ * AUTH-03: the refresh double enforces the same auth-version fence the
+ * PostgreSQL repository applies with `SELECT … FOR UPDATE`, by reading the
+ * owning user repository.
+ */
+function makeRefreshRepository() {
+  const repository = new TestRefreshTokenRepository();
+  repository.authVersionProvider = async (userId) =>
+    (await userRepo.findUserById(userId))?.authVersion;
+  return repository;
+}
 
 function request(p: string, init?: RequestInit) {
   return fetch(`http://127.0.0.1:${port}${p}`, init);
 }
 
 before(async () => {
-  setUserRepository(new TestUserRepository());
-  setRefreshTokenRepository(new TestRefreshTokenRepository());
+  userRepo = new TestUserRepository();
+  setUserRepository(userRepo);
+  setRefreshTokenRepository(makeRefreshRepository());
   setAuthFailureStore(new TestAuthFailureStore());
 
   const created = await createUser({
@@ -78,7 +98,7 @@ before(async () => {
 });
 
 beforeEach(() => {
-  setRefreshTokenRepository(new TestRefreshTokenRepository());
+  setRefreshTokenRepository(makeRefreshRepository());
 });
 
 after(async () => {
@@ -229,5 +249,189 @@ describe('auth refresh rotation', () => {
       body: JSON.stringify({ refreshToken: token }),
     });
     assert.equal(refresh.status, 401);
+  });
+});
+
+describe('AUTH-03: refresh rotation is fenced by the user auth version', () => {
+  test('signRefreshToken carries auth_version so rotation can be fenced', async () => {
+    const user = await findUserByUsername('refreshuser');
+    assert.ok(user);
+    const token = await signRefreshToken(user!);
+    const decoded = verifyToken(token);
+    assert.ok(decoded);
+    assert.equal(decoded!.type, 'refresh');
+    // Pre-fix the refresh payload had no auth_version, so a token minted before
+    // a reset stayed exchangeable afterwards.
+    assert.equal(decoded!.auth_version, user!.authVersion);
+  });
+
+  test('a stale refresh token is rejected after the user version advances', async () => {
+    const user = await findUserByUsername('refreshuser');
+    assert.ok(user);
+    const versionBeforeReset = user!.authVersion;
+
+    // This is the reset racing a refresh whose jti was already consumed: the
+    // reset bumps the version, and the new refresh token is minted with the
+    // pre-reset version. Without a version fence it would still be accepted.
+    await resetUserPassword(user!.id, ['rotated', 'secret'].join(''));
+    const stale = await signRefreshToken({
+      id: user!.id,
+      username: user!.username,
+      role: user!.role,
+      authVersion: versionBeforeReset,
+    });
+
+    const refresh = await request('/api/auth/refresh', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ refreshToken: stale }),
+    });
+    assert.equal(refresh.status, 401, 'a pre-reset refresh token must not mint a new session');
+  });
+
+  test('two concurrent refreshes of the same token produce exactly one success', async () => {
+    const login = await request('/api/auth/login', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'refreshuser', password: ['rotated', 'secret'].join('') }),
+    });
+    assert.equal(login.status, 200);
+    const { refreshToken } = (await login.json()) as { refreshToken: string };
+
+    const [a, b] = await Promise.all([
+      request('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      }),
+      request('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken }),
+      }),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    assert.deepEqual(statuses, [200, 401], 'exactly one concurrent refresh may succeed');
+  });
+
+  test('a rotation authority failure returns 503 and never a token', async () => {
+    const user = await findUserByUsername('refreshuser');
+    assert.ok(user);
+    const token = await signRefreshToken(user!);
+
+    const failing = new TestRefreshTokenRepository();
+    failing.rotate = async () => {
+      throw new Error('ECONNREFUSED');
+    };
+    setRefreshTokenRepository(failing);
+    try {
+      const response = await request('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: token }),
+      });
+      assert.equal(response.status, 503);
+      const body = (await response.json()) as Record<string, unknown>;
+      assert.equal(body.token, undefined);
+      assert.equal(body.refreshToken, undefined);
+    } finally {
+      setRefreshTokenRepository(makeRefreshRepository());
+    }
+  });
+});
+
+/** Records the exact statements a PostgreSQL rotation issues. */
+class RecordingClient {
+  readonly calls: Array<{ sql: string; values: readonly unknown[] | undefined }> = [];
+  script: Array<{ match: RegExp; rows?: unknown[]; rowCount?: number }> = [];
+
+  async query<T = Record<string, unknown>>(
+    sql: string,
+    values?: readonly unknown[],
+  ): Promise<{ rows: T[]; rowCount: number }> {
+    this.calls.push({ sql, values });
+    const entry = this.script.find((candidate) => candidate.match.test(sql));
+    return {
+      rows: (entry?.rows ?? []) as T[],
+      rowCount: entry?.rowCount ?? entry?.rows?.length ?? 0,
+    };
+  }
+
+  async release(): Promise<void> {}
+
+  indexOf(pattern: RegExp): number {
+    return this.calls.findIndex((call) => pattern.test(call.sql));
+  }
+}
+
+describe('AUTH-03: PostgreSQL rotation transaction shape', () => {
+  test('fences the auth version, consumes and inserts inside one transaction', async () => {
+    const { PostgresRefreshTokenRepository } = await import('../src/refreshTokenStore');
+    const client = new RecordingClient();
+    client.script = [
+      { match: /SELECT auth_version FROM commander_auth_users/, rows: [{ auth_version: 3 }] },
+      {
+        match: /UPDATE commander_auth_refresh_tokens SET revoked_at/,
+        rows: [{ jti: 'jti-old' }],
+        rowCount: 1,
+      },
+    ];
+    const repository = new PostgresRefreshTokenRepository({
+      connect: async () => client,
+    } as never);
+
+    const result = await repository.rotate({
+      userId: 'user-1',
+      currentJti: 'jti-old',
+      nextJti: 'jti-new',
+      nextExp: Math.floor(Date.now() / 1000) + 3600,
+      expectedAuthVersion: 3,
+    });
+
+    assert.deepEqual(result, { status: 'rotated' });
+    assert.equal(client.calls[0]!.sql, 'BEGIN');
+    assert.equal(client.calls.at(-1)!.sql, 'COMMIT');
+    // Lock order: user row first, then the refresh-token rows — the same order
+    // resetUserPassword and deleteUser use.
+    const lock = client.indexOf(
+      /SELECT auth_version FROM commander_auth_users WHERE id = \$1 FOR UPDATE/,
+    );
+    const consume = client.indexOf(/UPDATE commander_auth_refresh_tokens SET revoked_at/);
+    const insert = client.indexOf(/INSERT INTO commander_auth_refresh_tokens/);
+    assert.ok(lock >= 0, 'the user row must be locked FOR UPDATE');
+    assert.ok(consume > lock, 'the old jti must be consumed after the user lock');
+    assert.ok(insert > consume, 'the new jti must be inserted in the same transaction');
+    assert.deepEqual(client.calls[consume]!.values, ['jti-old', 'user-1']);
+  });
+
+  test('a stale auth_version is rejected without consuming or inserting', async () => {
+    const { PostgresRefreshTokenRepository } = await import('../src/refreshTokenStore');
+    const client = new RecordingClient();
+    client.script = [
+      { match: /SELECT auth_version FROM commander_auth_users/, rows: [{ auth_version: 4 }] },
+    ];
+    const repository = new PostgresRefreshTokenRepository({
+      connect: async () => client,
+    } as never);
+
+    const result = await repository.rotate({
+      userId: 'user-1',
+      currentJti: 'jti-old',
+      nextJti: 'jti-new',
+      nextExp: Math.floor(Date.now() / 1000) + 3600,
+      expectedAuthVersion: 3,
+    });
+
+    assert.deepEqual(result, { status: 'rejected', reason: 'auth_version_mismatch' });
+    assert.equal(
+      client.calls.some((call) => /UPDATE commander_auth_refresh_tokens/.test(call.sql)),
+      false,
+      'a stale version must not consume the old jti',
+    );
+    assert.equal(
+      client.calls.some((call) => /INSERT INTO commander_auth_refresh_tokens/.test(call.sql)),
+      false,
+      'a stale version must not register a new jti',
+    );
   });
 });

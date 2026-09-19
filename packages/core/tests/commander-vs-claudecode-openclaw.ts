@@ -160,7 +160,7 @@ async function runCommander(task: ComparisonTask): Promise<TaskResult> {
 
     const runtime = new AgentRuntime({
       budgetHardCapTokens: 800_000,
-      maxSteps: 20,
+      maxStepsPerRun: 20,
     });
     runtime.registerProvider('mimo', provider);
     runtime.registerProvider('openai', provider);

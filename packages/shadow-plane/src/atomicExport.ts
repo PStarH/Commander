@@ -4,6 +4,7 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
+  realpathSync,
   renameSync,
   unlinkSync,
   writeFileSync,
@@ -12,14 +13,18 @@ import { randomBytes } from 'node:crypto';
 import { basename, dirname, join } from 'node:path';
 
 export function atomicExport(outputPath: string, contents: string | Uint8Array): void {
-  const parent = dirname(outputPath);
-  let parentStats;
+  // Resolve the parent instead of rejecting symlinked parents: on macOS `/tmp`
+  // and `/var` are symlinks, and mounted volumes routinely appear as symlinks
+  // inside containers, so `--output /tmp/report.json` was a false failure. The
+  // write target itself is still protected by O_NOFOLLOW plus the explicit
+  // symlink check below; only the (operator-chosen) directory is resolved.
+  let parent: string;
   try {
-    parentStats = lstatSync(parent);
+    parent = realpathSync(dirname(outputPath));
   } catch {
     throw new Error('SHADOW_EXPORT_PARENT_INVALID');
   }
-  if (!parentStats.isDirectory() || parentStats.isSymbolicLink()) {
+  if (!lstatSync(parent).isDirectory()) {
     throw new Error('SHADOW_EXPORT_PARENT_INVALID');
   }
   try {

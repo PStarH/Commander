@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import { githubPrBodyMarker } from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import { createGitHubPullRequestCreateAdapter } from './pullRequestCreate.js';
+import { ActionAdapterRegistry } from '../registry.js';
 import type { AdapterCredentialProvider } from '../types.js';
 
 const tenantId = 'tenant-a';
@@ -459,5 +460,182 @@ describe('github.pullRequestCreate adapter', () => {
       },
     );
     assert.equal(state.pulls[0]!.state, 'open');
+  });
+
+  it('classifies empty and non-object 2xx create bodies instead of throwing untyped errors', async () => {
+    for (const body of [
+      new Response('{}', { status: 201 }),
+      new Response('', { status: 201 }),
+      new Response('null', { status: 201 }),
+    ]) {
+      const adapter = createGitHubPullRequestCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: async (input, init) =>
+          (init?.method ?? 'GET') === 'GET' && String(input).includes('/pulls?')
+            ? new Response(JSON.stringify([]), { status: 200 })
+            : body,
+      });
+      await assert.rejects(
+        () => adapter.execute(baseInput()),
+        (error: unknown) => {
+          assert.ok(error instanceof AdapterExecutionError);
+          assert.equal(error.code, 'ADAPTER_RESPONSE_BODY_INVALID');
+          assert.equal(error.commitState, 'UNKNOWN');
+          assert.equal(error.retryMode, 'QUERY_FIRST');
+          return true;
+        },
+      );
+    }
+  });
+});
+
+/**
+ * The broker installs its effect deadline by aborting a controller and forwards
+ * that signal through the adapter. `findByMarker`'s pre-flight GET previously
+ * dropped it, so a delayed lookup outlived the deadline and the broker could not
+ * settle or park the effect until the request finished on its own.
+ */
+describe('github.pullRequestCreate adapter — cancellation propagation', () => {
+  /** Records the exact signal handed to each fetch call, and hangs GETs. */
+  function createSignalRecordingFetch(seen: Array<AbortSignal | undefined>) {
+    return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      seen.push(init?.signal ?? undefined);
+      if (method === 'GET' && url.includes('/pulls?')) {
+        const signal = init?.signal;
+        // No signal => the request would hang forever; return promptly so a
+        // regression shows up as a failed assertion, not a hung test.
+        if (!signal) return new Response(JSON.stringify([]), { status: 200 });
+        return new Promise<Response>((_resolve, reject) => {
+          const abort = (): void => reject(signal.reason ?? new Error('aborted'));
+          if (signal.aborted) {
+            abort();
+            return;
+          }
+          signal.addEventListener('abort', abort, { once: true });
+        });
+      }
+      if (method === 'POST' && url.endsWith('/pulls')) {
+        return new Response(
+          JSON.stringify({
+            number: 1,
+            html_url: 'https://github.com/octo/repo/pull/1',
+            state: 'open',
+          }),
+          { status: 201 },
+        );
+      }
+      return new Response('unexpected', { status: 500 });
+    };
+  }
+
+  it('the marker pre-flight GET carries the broker signal', async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createSignalRecordingFetch(seen),
+    });
+
+    const controller = new AbortController();
+    const pending = adapter.execute({ ...baseInput(), signal: controller.signal });
+    // Let the pre-flight GET reach fetch, then fire the effect deadline.
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort(new Error('effect deadline'));
+
+    await assert.rejects(pending, 'the aborted pre-flight must settle the effect');
+    assert.ok(seen.length > 0, 'the pre-flight GET must reach fetch');
+    assert.equal(seen[0], controller.signal, 'the GET must receive the caller’s exact signal');
+  });
+
+  it('queryOutcome forwards its caller’s exact signal', async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createSignalRecordingFetch(seen),
+    });
+
+    const controller = new AbortController();
+    const pending = adapter.queryOutcome({
+      tenantId,
+      effectId: 'eff-1',
+      idempotencyKey,
+      destination,
+      request: {},
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort(new Error('reconcile deadline'));
+
+    await assert.rejects(pending, 'an aborted reconciliation query must settle');
+    assert.ok(seen.length > 0, 'the query must reach fetch');
+    assert.equal(seen[0], controller.signal, 'the query must not invent a signal');
+  });
+
+  it('does not open a PR when the pre-flight is cancelled', async () => {
+    const seen: Array<AbortSignal | undefined> = [];
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createSignalRecordingFetch(seen),
+    });
+
+    const controller = new AbortController();
+    const pending = adapter.execute({ ...baseInput(), signal: controller.signal });
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort(new Error('effect deadline'));
+    await assert.rejects(pending);
+
+    assert.equal(
+      seen.some((s) => s === undefined),
+      false,
+      'no fetch call may run without the caller’s signal',
+    );
+  });
+});
+
+describe('github compensation reconciliation via the registry', () => {
+  it('reads the governed forwardResponse so compensation can converge', async () => {
+    const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if ((init?.method ?? 'GET') === 'GET' && /\/pulls\/42$/.test(String(input))) {
+        return new Response(
+          JSON.stringify({
+            number: 42,
+            html_url: 'https://github.com/octo/repo/pull/42',
+            state: 'closed',
+            body: null,
+            head: { ref: 'feature' },
+            base: { ref: 'main' },
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response('unexpected', { status: 500 });
+    };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: fetchImpl,
+    });
+    const registry = new ActionAdapterRegistry([adapter]);
+    const querier = registry.outcomeQuerierFor('compensate.github.pull-request.create');
+    assert.ok(querier);
+    const outcome = await querier.queryOutcome({
+      effectId: 'eff-cmp-1',
+      idempotencyKey: 'cmp:eff-1:1.0.0',
+      type: 'compensate.github.pull-request.create',
+      tenantId,
+      request: {
+        originalEffectId: 'eff-1',
+        destination,
+        // The kernel constructs exactly this shape for governed compensations.
+        forwardResponse: {
+          prNumber: 42,
+          url: 'https://github.com/octo/repo/pull/42',
+          state: 'open',
+        },
+        compensationPatch: {},
+      },
+    });
+    assert.equal(outcome.status, 'APPLIED');
+    assert.equal(outcome.response?.prNumber, 42);
   });
 });

@@ -17,7 +17,7 @@ function sampleState(runId: string): CheckpointState {
     stepNumber: 1,
     attemptNumber: 1,
     messages: [],
-    tokenUsage: { input: 0, output: 0, total: 0 },
+    tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     stepDurations: [],
     context: {
       agentId: 'agent-1',

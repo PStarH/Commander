@@ -14,6 +14,7 @@ import type { Request, Response, NextFunction } from 'express';
 import type { SqlPool } from '@commander/kernel';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { createAuthPool, type VerifiedPoolFactory } from './authDb';
+import { resolvePositiveSafeInteger } from './startupConfig';
 
 // ============================================================================
 // PostgreSQL-authoritative rate limiting
@@ -185,6 +186,26 @@ interface RateLimitIdentity {
   tenantId?: string;
 }
 
+/**
+ * AUTH-02: identity resolved by `apiKeyIdentityMiddleware` from the canonical
+ * API-key validation, before this limiter runs. It is deliberately a dedicated
+ * field rather than `req.apiKeyId` / `req.tenantId`: those are authorization
+ * identity and must stay unset until `authMiddleware` has validated the key.
+ */
+export interface ResolvedRateLimitApiKey {
+  /** Stable key id (`ak_…`) — never the caller-supplied key name. */
+  id: string;
+  tenantId?: string;
+}
+
+declare global {
+  namespace Express {
+    interface Request {
+      rateLimitApiKey?: ResolvedRateLimitApiKey;
+    }
+  }
+}
+
 // Mirrors the tenant-id validation in core/runtime/tenantContext.ts.
 const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
 
@@ -196,18 +217,62 @@ const TIER_MULTIPLIER: Record<RateLimitTier, number> = {
   write: 0.25,
 };
 
-function classifyTier(url: string, method: string = 'GET'): RateLimitTier {
-  if (/\/(health|metrics|ready|system\/status)/.test(url)) return 'health';
-  if (method === 'POST' && /\/api\/v1\/(execute|plan|memory)/.test(url)) return 'write';
+/**
+ * Paths that legitimately deserve the relaxed 'health' budget. Exact matches on
+ * the canonical pathname only — enumerated from the real mounts in index.ts
+ * (`/health`, `/ready`, `/metrics`, `/v1/health`, `/health/detailed`).
+ */
+const HEALTH_PATHS = new Set([
+  '/health',
+  '/health/detailed',
+  '/ready',
+  '/metrics',
+  '/v1/health',
+  '/system/status',
+]);
+
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+
+/**
+ * Classify a request into a rate-limit tier.
+ *
+ * AUTH-01: this used to test a non-anchored pattern against `req.url`, the raw
+ * request target *including the query string*. `POST /api/v1/execute?next=/health`
+ * therefore matched `health` and was granted the 10x budget instead of the 0.25x
+ * write budget — a caller could pick their own limit.
+ *
+ * It also mis-classified the write tier: the only pattern was
+ * `/api/v1/(execute|plan|memory)`, while the real service mounts dozens of
+ * mutating routes (`/orchestrator/execute`, `/api/pipeline/execute`,
+ * `/api/workflows/:id/execute`, …), so almost every write was billed as a read.
+ *
+ * Fixed on both counts: the tier is derived from the **canonical pathname** plus
+ * the HTTP **method**, which is exact by construction and cannot be influenced by
+ * a query string. Every mutating method is a write, so the tighter 0.25x budget
+ * now applies to the whole mutating surface rather than to three legacy paths.
+ */
+function classifyTier(pathname: string, method: string = 'GET'): RateLimitTier {
+  if (HEALTH_PATHS.has(pathname)) return 'health';
+  if (MUTATING_METHODS.has(method.toUpperCase())) return 'write';
   return 'read';
 }
 
 const RATE_LIMIT_WINDOW_MS = 60_000; // 1 minute
-const RATE_LIMIT_MAX = parseInt(process.env.API_RATE_LIMIT ?? '120', 10);
-const RATE_LIMIT_USER_MAX = parseInt(process.env.API_RATE_LIMIT_USER ?? String(RATE_LIMIT_MAX), 10);
-const RATE_LIMIT_TENANT_MAX = parseInt(
-  process.env.API_RATE_LIMIT_TENANT ?? String(RATE_LIMIT_MAX),
-  10,
+// AUTH-05: validate each quota as a finite positive safe integer. `parseInt`
+// turned "" / "abc" / "1.5" / "-1" / "5x" / overflow into NaN or a truncated
+// value, and `count > NaN` is always false — a typo silently disabled the
+// limit. An invalid value now throws at module load, so the process refuses to
+// start instead of serving unlimited traffic.
+const RATE_LIMIT_MAX = resolvePositiveSafeInteger(process.env, 'API_RATE_LIMIT', 120);
+const RATE_LIMIT_USER_MAX = resolvePositiveSafeInteger(
+  process.env,
+  'API_RATE_LIMIT_USER',
+  RATE_LIMIT_MAX,
+);
+const RATE_LIMIT_TENANT_MAX = resolvePositiveSafeInteger(
+  process.env,
+  'API_RATE_LIMIT_TENANT',
+  RATE_LIMIT_MAX,
 );
 
 // Expired rows are swept periodically; PostgreSQL owns storage so the Map
@@ -231,9 +296,14 @@ function extractTenantId(req: Request): string | undefined {
   // raw X-Tenant-ID header must NEVER be used — this middleware runs before
   // authMiddleware/tenantContextMiddleware, so an unauthenticated (or
   // cross-tenant) caller could otherwise exhaust another tenant's quota by
-  // spoofing the header. `req.tenantId` is set by authMiddleware (API-key
-  // binding); `req.user.tenantId` is the verified JWT claim parsed earlier.
-  const resolved = (req as Request & { tenantId?: string }).tenantId ?? req.user?.tenantId;
+  // spoofing the header. `req.user.tenantId` is the verified JWT claim parsed
+  // earlier; `req.rateLimitApiKey.tenantId` comes from the canonical API-key
+  // lookup (AUTH-02); `req.tenantId` is bound by authMiddleware after this
+  // limiter, so it is only ever set by the API-key anon default.
+  const resolved =
+    req.user?.tenantId ??
+    req.rateLimitApiKey?.tenantId ??
+    (req as Request & { tenantId?: string }).tenantId;
   if (typeof resolved !== 'string') return undefined;
   if (!TENANT_ID_RE.test(resolved)) return undefined;
   return resolved;
@@ -242,7 +312,10 @@ function extractTenantId(req: Request): string | undefined {
 function buildRateLimitIdentity(req: Request): RateLimitIdentity {
   return {
     ip: getClientIp(req),
-    userId: req.user?.id ?? req.apiKeyId,
+    // AUTH-02: the API-key principal bucket is keyed on the stable key id, so
+    // the same key from many IPs shares one bucket and two keys that reuse a
+    // name do not.
+    userId: req.user?.id ?? req.rateLimitApiKey?.id ?? req.apiKeyId,
     tenantId: extractTenantId(req),
   };
 }
@@ -288,7 +361,9 @@ export async function rateLimitMiddleware(
   const now = Date.now();
 
   // Per-tier per-identity, atomically consumed in PostgreSQL.
-  const tier = classifyTier(req.url ?? '/', req.method ?? 'GET');
+  // `req.path` is the canonical pathname (no query string); `req.url` is not, and
+  // using it let a query parameter choose the tier. See classifyTier.
+  const tier = classifyTier(req.path ?? '/', req.method ?? 'GET');
   const scopes = buildScopes(identity, tier);
 
   let entries: RateLimitEntry[];

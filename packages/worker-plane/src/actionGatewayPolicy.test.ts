@@ -22,7 +22,19 @@ const canonical = (value: unknown): string => {
 const digest = (value: Record<string, unknown>): string =>
   createHash('sha256').update(canonical(value)).digest('hex');
 
-const envelope = {
+type ActionEnvelopeFixture = {
+  tenantId: string;
+  source: string;
+  package: string;
+  model: string;
+  tool: string;
+  destination: string;
+  effectType: string;
+  args: Record<string, string>;
+  idempotencyKey: string;
+};
+
+const envelope: ActionEnvelopeFixture = {
   tenantId: 'tenant-a',
   source: 'test-agent',
   package: 'test-package',
@@ -71,7 +83,7 @@ async function createActionRun(
     simulationId?: string;
     simulationActionDigest?: string;
     simulationDecisionId?: string;
-    envelope?: typeof envelope;
+    envelope?: ActionEnvelopeFixture;
   } = {},
 ) {
   const baseEnvelope = options.envelope ?? envelope;
@@ -589,20 +601,20 @@ describe('L4-01 Action Gateway worker policy', () => {
         runId: `run-approval-binding-${name}`,
         effect: 'require_approval',
       });
+      const approvalResponse = {
+        approved: true,
+        actionDigest: action.actionDigest,
+        simulationId: action.simulationId,
+        policySnapshotId: action.policySnapshotId,
+        reviewer: 'reviewer-a',
+        runId: action.runId,
+        tenantId: 'tenant-a',
+      };
       await repository.answerInteraction({
         interactionId: action.interactionId,
         runId: action.runId,
         tenantId: 'tenant-a',
-        response: {
-          approved: true,
-          actionDigest: action.actionDigest,
-          simulationId: action.simulationId,
-          policySnapshotId: action.policySnapshotId,
-          reviewer: 'reviewer-a',
-          runId: action.runId,
-          tenantId: 'tenant-a',
-          ...override,
-        },
+        response: { ...approvalResponse, ...override },
         actor: 'reviewer-a',
       });
       const decision = await evaluate(repository, {

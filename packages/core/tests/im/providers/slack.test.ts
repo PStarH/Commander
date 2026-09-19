@@ -111,4 +111,40 @@ describe('Slack provider', () => {
       /token missing/,
     );
   });
+
+  // PL-16: Slack reports API-level failures as HTTP 200 + {ok:false,error}, so a
+  // status-only check resolved the promise and the dispatcher recorded the
+  // notification as delivered when Slack had rejected it.
+  it('sendMessage rejects an HTTP 200 response whose body is {ok:false}', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: false, error: 'channel_not_found' }),
+    })) as unknown as typeof fetch;
+    try {
+      await assert.rejects(
+        () => slackProvider.sendMessage('C1', { text: 'hello' }, { token: 'xoxb-test' }),
+        /channel_not_found/,
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('sendMessage resolves on an HTTP 200 response whose body is {ok:true}', async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, ts: '123.456' }),
+    })) as unknown as typeof fetch;
+    try {
+      await assert.doesNotReject(() =>
+        slackProvider.sendMessage('C1', { text: 'hello' }, { token: 'xoxb-test' }),
+      );
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
 });

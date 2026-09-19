@@ -31,6 +31,7 @@
 
 import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import {
@@ -330,6 +331,33 @@ const D25_PATTERNS: readonly D25PatternDef[] = [
     regex: /\bxox[abprs]-[A-Za-z0-9-]{16,}/g,
     exampleEnvVar: 'SLACK_BOT_TOKEN',
   },
+  {
+    // The prefix that actually leaked into the public branches. Its absence from
+    // this list was why the local gate stayed green while the CI gate (see
+    // packages/core/tests/security/d25-api-key-grep.test.ts) already had the rule.
+    id: 'mimo-tp',
+    prefix: 'tp-',
+    regex: /\btp-[a-z0-9]{20,}/g,
+    exampleEnvVar: 'MIMO_API_KEY',
+  },
+  {
+    id: 'huggingface-hf',
+    prefix: 'hf_',
+    regex: /\bhf_[A-Za-z0-9]{20,}/g,
+    exampleEnvVar: 'HUGGINGFACE_TOKEN',
+  },
+  {
+    id: 'google-aiza',
+    prefix: 'AIza',
+    regex: /\bAIza[0-9A-Za-z_-]{30,}/g,
+    exampleEnvVar: 'GOOGLE_API_KEY',
+  },
+  {
+    id: 'stripe-live',
+    prefix: 'sk_live_',
+    regex: /\bsk_live_[A-Za-z0-9]{16,}/g,
+    exampleEnvVar: 'STRIPE_SECRET_KEY',
+  },
 ];
 
 interface D25Violation {
@@ -413,16 +441,47 @@ function runExecPolicySmoke(): void {
   // packages/core as cwd so vitest resolves its config and the test
   // file path is relative to the package root.
   const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
+  const vitestArgs = ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'];
+  const execOptions = {
+    cwd: vitestCwd,
+    stdio: 'inherit' as const,
+    env: { ...process.env, NODE_ENV: 'test' },
+  };
+
+  // 1. Preferred: `pnpm exec`. The workspace package manager is the intended
+  //    resolver, and `npx` must never be used — it resolved tsx to a doubled
+  //    path in this workspace (see module-a-ci.test.ts, and the same reasoning
+  //    in packages/core/scripts/run-node-tests.mjs).
   try {
-    execFileSync(
-      'pnpm',
-      ['exec', 'vitest', 'run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'],
-      {
-        cwd: vitestCwd,
-        stdio: 'inherit',
-        env: { ...process.env, NODE_ENV: 'test' },
-      },
+    execFileSync('pnpm', ['exec', 'vitest', ...vitestArgs], execOptions);
+    console.log('[D3 hook] ExecPolicy smoke green ✅');
+    return;
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'ENOENT') {
+      reportSilentFailure(err, 'precommitHook:335');
+      throw new Error('precommit ExecPolicy smoke failed — see vitest output above');
+    }
+    // ENOENT means `pnpm` could not be executed at all — not that the smoke
+    // found a problem. Falling through keeps the gate honest: it must never
+    // report a policy regression it did not observe.
+  }
+
+  // 2. Fallback: the workspace's own vitest CLI, run with `process.execPath`.
+  //    Valid regardless of how the repo was installed.
+  let vitestCli: string;
+  try {
+    const coreRequire = createRequire(path.join(vitestCwd, 'package.json'));
+    vitestCli = path.join(path.dirname(coreRequire.resolve('vitest/package.json')), 'vitest.mjs');
+  } catch (err) {
+    reportSilentFailure(err, 'precommitHook:vitest-resolve');
+    throw new Error(
+      'precommit ExecPolicy smoke could not run — neither `pnpm` nor the workspace vitest ' +
+        'CLI is executable. Run `pnpm install`.',
     );
+  }
+
+  try {
+    execFileSync(process.execPath, [vitestCli, ...vitestArgs], execOptions);
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
     reportSilentFailure(err, 'precommitHook:335');

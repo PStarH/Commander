@@ -90,7 +90,8 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
       },
     };
     let claimServed = false;
-    let handoffInput: Record<string, unknown> | undefined;
+    let handoffInput:
+      Parameters<CompensationOutboxPort['handoffCompensationUnknown']>[0] | undefined;
     const outbox: CompensationOutboxPort = {
       async claimCompensationWork() {
         if (claimServed) return [];
@@ -106,6 +107,12 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
       },
       async escalateCompensationWork() {
         throw new Error('valid governed compensation must not be escalated');
+      },
+      async parkCompensationUnknown() {
+        throw new Error('parkCompensationUnknown is not exercised by legacy-path fixtures');
+      },
+      async finalizeCompensation() {
+        throw new Error('finalizeCompensation is not exercised by legacy-path fixtures');
       },
     };
 
@@ -261,7 +268,9 @@ describe('L4-02 operations chaos - compensation timeout after commit', () => {
     );
     assert.equal(
       verifyEvidenceSignature(
-        canonicalEvidenceBody({ ...(evidence.body as Record<string, unknown>) } as EvidenceBundle),
+        canonicalEvidenceBody({
+          ...(evidence.body as Record<string, unknown>),
+        } as unknown as EvidenceBundle),
         { ...evidence.signature!, value: 'AAAA' },
         TEST_EVIDENCE_SIGNER.jwks,
       ),

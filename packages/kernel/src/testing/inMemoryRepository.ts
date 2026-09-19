@@ -1,5 +1,6 @@
 /** Test-only model of the kernel repository. Never export from the package root. */
 import { randomUUID } from 'node:crypto';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 import type { KernelRepository } from '../repository.js';
 import type {
   AdmitEffectRequest,
@@ -59,7 +60,6 @@ import {
   LEGACY_COMPENSATION_TOPIC,
   type ClaimedCompensationWork,
   type CompensationClaimAuth,
-  type CompensationWorkDispositionResult,
 } from '../ops/compensationConsumer.js';
 import {
   canonicalCompensationHash,
@@ -195,15 +195,6 @@ export class InMemoryKernelRepository implements KernelRepository {
       claimTokenHash: string;
       requestFingerprint: string;
       result: Extract<ReconcileMutationResult, { applied: true }>;
-    }
-  >();
-  private readonly compensationReceipts = new Map<
-    string,
-    {
-      claimTokenHash: string;
-      effectId: string;
-      fingerprint: string;
-      result: Extract<CompensationWorkDispositionResult, { applied: true }>;
     }
   >();
   private readonly compensationAuthorizations = new Map<string, CompensationAuthorizationRecord>();
@@ -2955,7 +2946,13 @@ export class InMemoryKernelRepository implements KernelRepository {
       compensationEffectId: evidence.compensationEffectId,
       compensationEffectType: durableAuthorization.compensationEffectType,
       compensationRequest,
-      idempotencyKey: `cmp:${request.originalEffectId}:${durableAuthorization.adapterVersion}`,
+      idempotencyKey: deriveEffectIdempotencyKey({
+        tenantId: request.tenantId,
+        runId: request.compensationRunId,
+        stepId: request.compensationStepId,
+        effectId: evidence.compensationEffectId,
+        request: compensationRequest,
+      }),
       forwardReceipt: forwardResponse,
       adapterVersion: durableAuthorization.adapterVersion,
       policyDecisionId: durableAuthorization.policyDecisionId,
@@ -2965,7 +2962,16 @@ export class InMemoryKernelRepository implements KernelRepository {
       approvalBinding: durableAuthorization.approvalBinding ?? null,
     });
     const validation = validateGovernedCompensationAuthorization(sealed);
-    return validation.valid ? validation.authorization : null;
+    if (!validation.valid) return null;
+    // Re-sealing recomputes `actionDigest` from the JS digest projection, which
+    // covers a DIFFERENT field set than the durable authorization's digest:
+    // `requestCompensation` and create_compensation_authorization_internal_v1
+    // hash {type, originalEffectId, adapterVersion, destination, forwardResponse,
+    // compensationPatch}. Trusting the re-derived value made
+    // `governed.actionDigest !== request.actionDigest` in admitEffect, so a
+    // durable authorization could be requested but never admitted. The stored row
+    // is the authority, exactly as it is in Postgres.
+    return { ...validation.authorization, actionDigest: durableAuthorization.actionDigest };
   }
 
   async claimCompensationWork(
@@ -3051,28 +3057,44 @@ export class InMemoryKernelRepository implements KernelRepository {
       }
       const fencingEpoch =
         (this.lastFencingEpoch.get(step.id) ?? step.lease?.fencingEpoch ?? 0) + 1;
-      if (run.state === 'PENDING') run.state = 'RUNNING';
+      // COMPENSATING (not RUNNING): claimCompensationRequest and the Postgres
+      // batch claim — which delegates to it — both set this, and completeEffect
+      // only treats a compensate.* effect as a governed compensation completion
+      // when its run is COMPENSATING.
+      if (run.state === 'PENDING') run.state = 'COMPENSATING';
       step.state = 'RUNNING';
       step.version += 1;
+      const claimExpiresAt = new Date(Date.now() + 60_000).toISOString();
       step.lease = {
         workerId: input.workerId,
         workerGeneration: input.workerGeneration,
         token: claimToken,
         fencingEpoch,
-        expiresAt: new Date(Date.now() + 60_000).toISOString(),
+        expiresAt: claimExpiresAt,
       };
       step.updatedAt = now();
+      // Stamp the durable request's ownership exactly as claimCompensationRequest
+      // does. finalizeCompensation validates request.claimWorkerId /
+      // claimWorkerGeneration / claimToken, so a claim that only assigns the step
+      // lease is rejected as CLAIM_NOT_OWNED when the consumer settles it.
+      request.state = 'CLAIMED';
+      request.claimWorkerId = input.workerId;
+      request.claimWorkerGeneration = input.workerGeneration;
+      request.claimToken = claimToken;
+      request.claimExpiresAt = claimExpiresAt;
+      // Keep the batch claim identical to claimCompensationRequest and the
+      // Postgres implementation: the consumer receives durable request data
+      // plus the outbox identity and claim token.
       claimed.push({
-        messageId: message.id,
-        tenantId: message.tenantId,
-        claimToken,
-        authorization,
-        lease: {
-          workerId: input.workerId,
-          workerGeneration: input.workerGeneration,
-          token: claimToken,
-          fencingEpoch,
-        },
+        request: clone(request),
+        // `durableAuthorization` is the same row, already narrowed non-null by
+        // the guard above; re-reading the map here only widened it back to
+        // `... | undefined`.
+        authorization: clone(durableAuthorization),
+        forwardResponse: clone(originalEffect.response ?? {}),
+        lease: clone(step.lease),
+        outboxMessageId: message.id,
+        outboxClaimToken: claimToken,
       });
     }
     return claimed;
@@ -3104,193 +3126,6 @@ export class InMemoryKernelRepository implements KernelRepository {
       };
     }
     return null;
-  }
-
-  private applyCompensationReceipt(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-    },
-    disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'ESCALATED',
-    payload: unknown,
-  ):
-    | { replay: Extract<CompensationWorkDispositionResult, { applied: true }> }
-    | {
-        context: NonNullable<ReturnType<InMemoryKernelRepository['compensationContext']>>;
-        message: KernelOutboxMessage;
-      }
-    | { rejection: CompensationWorkDispositionResult } {
-    const claimTokenHash = createHash('sha256').update(input.outboxClaimToken).digest('hex');
-    const fingerprint = requestHash({ disposition, payload });
-    const previous = this.compensationReceipts.get(input.messageId);
-    if (previous) {
-      if (
-        previous.claimTokenHash === claimTokenHash &&
-        previous.effectId === input.compensationEffectId &&
-        previous.fingerprint === fingerprint &&
-        previous.result.disposition === disposition
-      ) {
-        return { replay: { ...previous.result, replayed: true } };
-      }
-      return { rejection: { applied: false, reason: 'CLAIM_REPLAY_CONFLICT' } };
-    }
-    const worker = this.workers.get(input.workerId);
-    const context = this.compensationContext(input.compensationEffectId, input.tenantId);
-    const message = this.outbox.get(input.messageId);
-    const claim = this.outboxClaims.get(input.messageId);
-    if (!context || !message) return { rejection: { applied: false, reason: 'NOT_FOUND' } };
-    if (
-      worker?.identitySubject !== 'db:commander_adapter_ops' ||
-      worker.status !== 'ACTIVE' ||
-      worker.generation !== input.workerGeneration ||
-      worker.capabilities.length !== 1 ||
-      worker.capabilities[0] !== 'effect.compensate' ||
-      !worker.tenantIds.includes(input.tenantId)
-    ) {
-      return { rejection: { applied: false, reason: 'WORKER_FENCED' } };
-    }
-    const activeStepLease =
-      context.step.lease?.workerId === input.workerId &&
-      context.step.lease.workerGeneration === input.workerGeneration &&
-      context.step.lease.token === input.outboxClaimToken &&
-      Date.parse(context.step.lease.expiresAt) > Date.now();
-    const effectOwnsClaim =
-      context.effect?.leaseWorkerId === input.workerId &&
-      context.effect.leaseWorkerGeneration === input.workerGeneration &&
-      context.effect.leaseFencingEpoch === this.lastFencingEpoch.get(context.step.id);
-    if (
-      message.tenantId !== input.tenantId ||
-      message.publishedAt ||
-      claim?.token !== input.outboxClaimToken ||
-      (!activeStepLease && !effectOwnsClaim)
-    ) {
-      return { rejection: { applied: false, reason: 'CLAIM_NOT_OWNED' } };
-    }
-    return { context, message };
-  }
-
-  private finalizeCompensationReceipt(
-    message: KernelOutboxMessage,
-    input: {
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-    },
-    disposition: 'COMPLETED' | 'HANDOFF_UNKNOWN' | 'ESCALATED',
-    payload: unknown,
-  ): Extract<CompensationWorkDispositionResult, { applied: true }> {
-    message.publishedAt = now();
-    message.claimToken = undefined;
-    this.outboxClaims.delete(input.messageId);
-    const result = { applied: true as const, disposition };
-    this.compensationReceipts.set(input.messageId, {
-      claimTokenHash: createHash('sha256').update(input.outboxClaimToken).digest('hex'),
-      effectId: input.compensationEffectId,
-      fingerprint: requestHash({ disposition, payload }),
-      result,
-    });
-    return result;
-  }
-
-  async completeCompensationWork(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      response: Record<string, unknown>;
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    const checked = this.applyCompensationReceipt(input, 'COMPLETED', input.response);
-    if ('replay' in checked) return checked.replay;
-    if ('rejection' in checked) return checked.rejection;
-    const { context, message } = checked;
-    if (!context.effect || context.effect.state !== 'COMPLETED') {
-      return { applied: false, reason: 'EFFECT_NOT_COMPLETED' };
-    }
-    context.step.state = 'SUCCEEDED';
-    context.step.output = clone(input.response);
-    context.step.lease = undefined;
-    context.step.version += 1;
-    context.step.updatedAt = now();
-    context.run.state = 'SUCCEEDED';
-    context.run.version += 1;
-    context.run.updatedAt = now();
-    context.run.terminalAt = context.run.updatedAt;
-    (context.run.metadata.compensation as Record<string, unknown>).disposition = 'COMPLETED';
-    if (context.originalRun.state === 'COMPENSATING') {
-      context.originalRun.state = 'COMPENSATED';
-      context.originalRun.version += 1;
-      context.originalRun.updatedAt = now();
-      context.originalRun.terminalAt = context.originalRun.updatedAt;
-    }
-    return this.finalizeCompensationReceipt(message, input, 'COMPLETED', input.response);
-  }
-
-  async handoffCompensationUnknown(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      error: { code: string; message: string };
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    const checked = this.applyCompensationReceipt(input, 'HANDOFF_UNKNOWN', input.error);
-    if ('replay' in checked) return checked.replay;
-    if ('rejection' in checked) return checked.rejection;
-    const { context, message } = checked;
-    if (!context.effect || context.effect.state !== 'COMPLETION_UNKNOWN') {
-      return { applied: false, reason: 'EFFECT_NOT_UNKNOWN' };
-    }
-    context.effect.reconcileDisposition = 'PENDING';
-    context.effect.reconcileAfter ??= now();
-    context.step.state = 'WAITING_FOR_RECONCILIATION';
-    context.step.lease = undefined;
-    context.step.version += 1;
-    context.step.updatedAt = now();
-    (context.run.metadata.compensation as Record<string, unknown>).disposition = 'HANDOFF_UNKNOWN';
-    return this.finalizeCompensationReceipt(message, input, 'HANDOFF_UNKNOWN', input.error);
-  }
-
-  async escalateCompensationWork(
-    input: CompensationClaimAuth & {
-      tenantId: string;
-      messageId: string;
-      outboxClaimToken: string;
-      compensationEffectId: string;
-      reason: string;
-    },
-  ): Promise<CompensationWorkDispositionResult> {
-    const checked = this.applyCompensationReceipt(input, 'ESCALATED', input.reason);
-    if ('replay' in checked) return checked.replay;
-    if ('rejection' in checked) return checked.rejection;
-    const { context, message } = checked;
-    context.step.state = 'FAILED';
-    context.step.error = {
-      code: input.reason,
-      message: 'Governed compensation was escalated',
-      retryable: false,
-    };
-    context.step.lease = undefined;
-    context.step.version += 1;
-    context.step.updatedAt = now();
-    context.run.state = 'FAILED';
-    context.run.version += 1;
-    context.run.updatedAt = now();
-    context.run.terminalAt = context.run.updatedAt;
-    const compensation = context.run.metadata.compensation as Record<string, unknown>;
-    compensation.disposition = 'ESCALATED';
-    compensation.escalationReason = input.reason;
-    if (context.originalRun.state === 'COMPENSATING') {
-      context.originalRun.state = 'FAILED';
-      context.originalRun.version += 1;
-      context.originalRun.updatedAt = now();
-      context.originalRun.terminalAt = context.originalRun.updatedAt;
-    }
-    return this.finalizeCompensationReceipt(message, input, 'ESCALATED', input.reason);
   }
 
   // ── WS2 EffectBroker monopoly ──
@@ -3639,6 +3474,18 @@ export class InMemoryKernelRepository implements KernelRepository {
         'INTERACTION_NOT_FOUND',
         `Interaction ${request.interactionId} has no matching waiting step`,
       );
+    }
+    // KTO-01: mirror the PostgreSQL answer transaction — an expired interaction
+    // is not answerable, and the check happens before the step is released or
+    // any answer event is appended.
+    if (interaction.expiresAt !== undefined) {
+      const expiry = Date.parse(interaction.expiresAt);
+      if (!Number.isFinite(expiry) || expiry <= Date.parse(now())) {
+        throw new KernelInvariantError(
+          'INTERACTION_EXPIRED',
+          `Interaction ${request.interactionId} expired at ${interaction.expiresAt}`,
+        );
+      }
     }
     const answeredAt = now();
     interaction.status = 'answered';

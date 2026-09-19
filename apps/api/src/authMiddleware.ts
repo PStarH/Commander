@@ -4,6 +4,8 @@ import { getGlobalLogger } from '@commander/core';
 import { isProductionEnv, describeProdSignal } from './envSignal';
 import { getApiKeyStore } from './apiKeyStore';
 import { getAuthFailureStore } from './authFailureStore';
+import { redactAuthErrorDetail } from './authDb';
+import { resolvePositiveSafeInteger } from './startupConfig';
 
 declare global {
   namespace Express {
@@ -34,22 +36,42 @@ const PUBLIC_PATHS = new Set([
 ]);
 
 interface StoredKey {
+  /** Stable key id (`ak_…`) — used for the rate-limit principal bucket. */
+  id: string;
   name: string;
   scopes: string[];
   tenantId?: string;
 }
 
-const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
-const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
+// AUTH-05: a lockout/quota config that parses to NaN silently disables the
+// limit; a non-finite or non-positive value must abort startup instead.
+const MAX_AUTH_FAILURES = resolvePositiveSafeInteger(process.env, 'AUTH_MAX_FAILURES', 5);
+const LOCKOUT_DURATION_MS = resolvePositiveSafeInteger(process.env, 'AUTH_LOCKOUT_MS', 300000); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
 // Cleanup old entries every 5 minutes
+function reportAuthFailureCleanupError(error: unknown): void {
+  // AUTH-06: cleanup failures must be observable, and the detail must not echo
+  // credentials a driver may embed in a connection error (AUTH-07).
+  const message = redactAuthErrorDetail(error);
+  try {
+    getGlobalLogger().warn('AuthMiddleware', `Auth-failure cleanup failed: ${message}`);
+  } catch {
+    process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${message}\n`);
+  }
+}
+
 setInterval(() => {
-  getAuthFailureStore()
-    .cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS)
-    .catch((err) => {
-      process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${String(err)}\n`);
-    });
+  try {
+    void getAuthFailureStore()
+      .cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS)
+      .catch(reportAuthFailureCleanupError);
+  } catch (error) {
+    // `getAuthFailureStore()` constructs the pool lazily and can throw
+    // synchronously (missing/invalid DSN) — an uncaught throw here would crash
+    // the process from a timer callback.
+    reportAuthFailureCleanupError(error);
+  }
 }, 300_000).unref();
 
 function sha256(input: string): string {
@@ -61,6 +83,7 @@ async function findKey(token: string): Promise<StoredKey | null> {
   const storeRecord = await getApiKeyStore().findByHash(sha256(token));
   if (storeRecord) {
     return {
+      id: storeRecord.id,
       name: storeRecord.name,
       scopes: storeRecord.scopes,
       tenantId: storeRecord.tenantId,
@@ -151,6 +174,51 @@ export async function authMiddleware(req: Request, res: Response, next: NextFunc
       res.status(500).json({ error: 'Internal server error' });
     }
   }
+}
+
+/**
+ * AUTH-02: resolve the API-key rate-limit identity BEFORE `rateLimitMiddleware`,
+ * because `authMiddleware` runs after it and therefore cannot feed the limiter.
+ *
+ * This runs the canonical validation (`findKey` — the same SHA-256 lookup
+ * `authMiddleware` uses) and publishes the result only on the dedicated
+ * `req.rateLimitApiKey` field. It never sets authorization identity
+ * (`req.apiKeyId` / `req.tenantId`), never records an auth failure and never
+ * rejects: an invalid/revoked key simply gets no identity here, so it falls
+ * back to the early anonymous-IP bucket and `authMiddleware` still returns 401.
+ * A JWT-authenticated request is skipped entirely, so it cannot be charged
+ * twice. A database failure leaves the request anonymous; the limiter's own
+ * authority call then fails closed with 503.
+ */
+export async function apiKeyIdentityMiddleware(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (req.user) {
+    next();
+    return;
+  }
+  const apiKeyHeader = readHeader(req.headers['x-api-key']);
+  const authHeader = readHeader(req.headers.authorization);
+  const token =
+    apiKeyHeader ?? (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined);
+  if (!token) {
+    next();
+    return;
+  }
+  try {
+    const matched = await findKey(token);
+    if (matched) {
+      req.rateLimitApiKey = {
+        id: matched.id,
+        ...(matched.tenantId ? { tenantId: matched.tenantId } : {}),
+      };
+    }
+  } catch {
+    // Fail closed downstream: no identity is granted from an unverified key.
+  }
+  next();
 }
 
 async function authMiddlewareInternal(req: Request, res: Response, next: NextFunction) {

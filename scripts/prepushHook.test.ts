@@ -120,9 +120,13 @@ function runHook(cwd: string, env: NodeJS.ProcessEnv, input: string) {
 
 describe('pre-push format hook', () => {
   it('checks only the explicit CI replay paths', () => {
+    // Invoked the same way `runHook` does — `process.execPath` + the local tsx
+    // loader. Going through `pnpm exec tsx` made this test depend on a package
+    // manager being on PATH, and a missing `pnpm` surfaced as `status: null`
+    // (ENOENT), i.e. an environment problem reported as a hook failure.
     const result = spawnSync(
-      'pnpm',
-      ['exec', 'tsx', 'scripts/prepushHook.ts', 'scripts/task1-helm-prerequisite-command.ts'],
+      process.execPath,
+      ['--import', 'tsx', HOOK_PATH, 'scripts/task1-helm-prerequisite-command.ts'],
       {
         encoding: 'utf8',
         env: { ...process.env, CORE_PREPUSH_HOOK: '1' },

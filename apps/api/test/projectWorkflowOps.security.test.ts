@@ -421,6 +421,44 @@ describe('CMD-WORKFLOW-GLOBAL-001', () => {
       );
     });
   });
+
+  it('does not acknowledge a workflow whose write to disk failed', async () => {
+    // Force the atomic write to fail: rename(2) of a file onto an existing
+    // directory fails, so the persistence step cannot succeed.
+    rmSync(workflowsFile, { force: true });
+    mkdirSync(workflowsFile, { recursive: true });
+    try {
+      const app = authenticatedApp(createWorkflowRouter());
+      await withServer(app, async (base) => {
+        const created = await fetch(`${base}/api/workflows`, {
+          method: 'POST',
+          headers: headers('alice', 'tenant-a'),
+          body: JSON.stringify({
+            name: 'must-not-be-acknowledged',
+            nodes: [{ id: 'start', type: 'start', position: { x: 0, y: 0 }, data: {} }],
+            edges: [],
+          }),
+        });
+        assert.ok(
+          created.status >= 400,
+          `a failed disk write must not be acknowledged, got HTTP ${created.status}`,
+        );
+
+        const listed = await fetch(`${base}/api/workflows`, {
+          headers: headers('alice', 'tenant-a'),
+        });
+        const body = (await listed.json()) as { workflows: { name: string }[] };
+        assert.equal(
+          body.workflows.some((workflow) => workflow.name === 'must-not-be-acknowledged'),
+          false,
+          'a workflow that failed to persist must not appear in the served cache',
+        );
+      });
+    } finally {
+      rmSync(workflowsFile, { recursive: true, force: true });
+      writeFileSync(workflowsFile, '[]\n');
+    }
+  });
 });
 
 describe('CMD-TEAM-REASSIGN-001', () => {

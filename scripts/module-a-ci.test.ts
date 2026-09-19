@@ -55,14 +55,33 @@ describe('Module A CI workflow', () => {
     );
   });
 
-  it('builds postgres-runtime before the clean core typecheck', () => {
+  it('builds dependencies before the clean core and kernel typechecks', () => {
     const quality = qualityWorkflow().jobs?.quality;
     assert.ok(quality, 'Quality workflow must define its quality job');
-    const coreTypecheck = quality.steps?.find((step) => step.name === 'TypeScript check (core)');
+    // Match on the step's *job*, not a frozen label: the step was renamed when it
+    // grew to cover the kernel, and a name-based lookup made this gate fail on a
+    // cosmetic edit while telling us nothing about the ordering it exists to
+    // protect.
+    const typecheck = quality.steps?.find((step) =>
+      /TypeScript check \(core/.test(step.name ?? ''),
+    );
+    assert.ok(typecheck, 'Quality workflow must define the core TypeScript check step');
     assert.match(
-      coreTypecheck?.run ?? '',
-      /pnpm --filter @commander\/postgres-runtime build[\s\S]*pnpm --filter @commander\/core exec tsc --noEmit/,
+      typecheck.run ?? '',
+      /@commander\/postgres-runtime build[\s\S]*core exec tsc --noEmit/,
       'clean core typecheck must build postgres-runtime declarations first',
+    );
+    // The kernel sources import @commander/effect-broker, so its build must also
+    // precede the kernel typechecks, and the test-tsconfig check must actually run.
+    assert.match(
+      typecheck.run ?? '',
+      /@commander\/effect-broker build[\s\S]*kernel exec tsc --noEmit/,
+      'kernel source typecheck must build effect-broker declarations first',
+    );
+    assert.match(
+      typecheck.run ?? '',
+      /pnpm --dir packages\/kernel run typecheck:test/,
+      'the kernel test-tsconfig typecheck must be part of the gate',
     );
   });
 

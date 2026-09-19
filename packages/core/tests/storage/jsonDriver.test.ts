@@ -120,4 +120,81 @@ describe('JsonDriver — contract', () => {
     b.close();
     second.close();
   });
+  it('returns a copy from insert so the stored row cannot be mutated through it', () => {
+    const driver = new JsonDriver({ backend: 'json', path: tmpDir });
+    const t = driver.getTable<ProbeRow>('probe', probeSchema);
+    const returned = t.insert({ id: 'alias', tag: 'a', num: 1, flag: true });
+    returned.num = 99;
+    expect(t.get('alias')?.num).toBe(1);
+    driver.close();
+  });
+
+  it('does not discard an acknowledged write made by a second instance (S6)', () => {
+    const a = new JsonDriver({ backend: 'json', path: tmpDir });
+    const ta = a.getTable<ProbeRow>('probe', probeSchema);
+    // `b` opens the same file *before* `a` writes, so its snapshot is stale and
+    // empty. A blind whole-file rewrite from `b` would drop `a`'s acknowledged
+    // row; the read-modify-write must merge it back.
+    const b = new JsonDriver({ backend: 'json', path: tmpDir });
+    const tb = b.getTable<ProbeRow>('probe', probeSchema);
+
+    ta.insert({ id: 'ack', tag: 'first', num: 1, flag: true });
+    tb.insert({ id: 'second', tag: 'second', num: 2, flag: false });
+
+    const fresh = new JsonDriver({ backend: 'json', path: tmpDir });
+    const tf = fresh.getTable<ProbeRow>('probe', probeSchema);
+    expect(tf.get('ack')).not.toBeNull();
+    expect(tf.get('second')).not.toBeNull();
+    expect(tf.count()).toBe(2);
+    a.close();
+    b.close();
+    fresh.close();
+  });
+
+  it('does not resurrect a row an earlier instance deleted (S6)', () => {
+    const a = new JsonDriver({ backend: 'json', path: tmpDir });
+    const ta = a.getTable<ProbeRow>('probe', probeSchema);
+    ta.insert({ id: 'keep', tag: 'k', num: 1, flag: true });
+    ta.insert({ id: 'gone', tag: 'g', num: 2, flag: true });
+
+    const b = new JsonDriver({ backend: 'json', path: tmpDir });
+    const tb = b.getTable<ProbeRow>('probe', probeSchema);
+    ta.delete('gone');
+    tb.insert({ id: 'added', tag: 'a', num: 3, flag: false });
+
+    const fresh = new JsonDriver({ backend: 'json', path: tmpDir });
+    const tf = fresh.getTable<ProbeRow>('probe', probeSchema);
+    expect(tf.get('gone')).toBeNull();
+    expect(tf.get('keep')).not.toBeNull();
+    expect(tf.get('added')).not.toBeNull();
+    a.close();
+    b.close();
+    fresh.close();
+  });
+
+  it('rolls back tables first opened inside a rejected transaction', async () => {
+    const driver = new JsonDriver({ backend: 'json', path: tmpDir });
+    const outer = driver.getTable<ProbeRow>('probe', probeSchema);
+    outer.insert({ id: 'kept', tag: 'pre', num: 0, flag: true });
+
+    let leakedHandle: ReturnType<typeof driver.getTable<ProbeRow>> | undefined;
+    await expect(
+      driver.transaction(() => {
+        leakedHandle = driver.getTable<ProbeRow>('late', probeSchema);
+        leakedHandle.insert({ id: 'leaked', tag: 'x', num: 1, flag: true });
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+
+    expect(leakedHandle?.get('leaked')).toBeNull();
+    const reopened = driver.getTable<ProbeRow>('late', probeSchema);
+    expect(reopened.count()).toBe(0);
+    driver.close();
+
+    // Nothing leaked to disk either.
+    const fresh = new JsonDriver({ backend: 'json', path: tmpDir });
+    const freshLate = fresh.getTable<ProbeRow>('late', probeSchema);
+    expect(freshLate.get('leaked')).toBeNull();
+    fresh.close();
+  });
 });

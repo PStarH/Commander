@@ -27,4 +27,23 @@ describe('worker main health wiring', () => {
     );
     assert.match(compose, /127\.0\.0\.1:8083\/ready/);
   });
+
+  it('reconciles the loopback default with the chart pod-IP probes (F-P1-18)', async () => {
+    // The kubelet sends httpGet probes to the POD IP. Without COMMANDER_WORKER_HEALTH_HOST
+    // the worker listener stays on its loopback default and every probe is refused, so the
+    // worker never becomes ready and crash-loops. Both halves must agree.
+    const source = await readFile(new URL('./main.ts', import.meta.url), 'utf8');
+    assert.match(source, /COMMANDER_WORKER_HEALTH_HOST/);
+    assert.match(source, /host: healthHost \|\| undefined/);
+
+    const template = await readFile(
+      new URL('../../../deploy/helm/commander/templates/worker-deployment.yaml', import.meta.url),
+      'utf8',
+    );
+    assert.match(
+      template,
+      /- name: COMMANDER_WORKER_HEALTH_HOST\s*\n\s*value: "0\.0\.0\.0"/,
+      'the worker chart must bind the pod interface for its httpGet probes',
+    );
+  });
 });

@@ -2,21 +2,25 @@ import { describe, it, expect } from 'vitest';
 import { EpsilonStore } from '../../src/ultimate/epsilonStore';
 import { TopologyRouter } from '../../src/ultimate/topologyRouter';
 import { ExplorationEventLog } from '../../src/ultimate/explorationEventLog';
-import type { OrchestrationTopology } from '../../src/ultimate/types';
+import type { DeliberationPlan, OrchestrationTopology } from '../../src/ultimate/types';
 
-function makeDeliberation(taskType: OrchestrationTopology = 'CODING') {
+function makeDeliberation(recommendedTopology: OrchestrationTopology = 'SINGLE'): DeliberationPlan {
   return {
+    requiresExternalInfo: false,
     taskType: 'CODING' as const,
     reasoning: [],
     confidence: 0.9,
     estimatedAgentCount: 3,
     estimatedTokens: 1000,
     estimatedSteps: 5,
+    estimatedDurationMs: 30_000,
+    tokenBudget: { thinking: 300, execution: 500, synthesis: 200 },
+    timeBudgetPerAgentMs: 10_000,
     capabilitiesNeeded: [],
     decompositionStrategy: 'STEP' as const,
     taskNature: 'IO_BOUND' as const,
     suitableForSpeculation: false,
-    recommendedTopology: taskType,
+    recommendedTopology,
   };
 }
 

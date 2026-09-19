@@ -91,7 +91,7 @@
     "rotate:verify": "pnpm exec tsx scripts/verify-rotation-signoff.ts",
     "rotate:receipt:verify": "pnpm exec tsx scripts/verify-rotation-receipt.ts",
     "cli": "pnpm exec tsx packages/core/src/cliEntry.ts",
-    "typecheck": "pnpm --dir packages/core exec tsc --noEmit && pnpm --dir packages/kernel exec tsc --noEmit && pnpm --dir packages/kernel run typecheck:test",
+    "typecheck": "pnpm --dir packages/core exec tsc --noEmit && pnpm --dir packages/kernel exec tsc --noEmit && pnpm -r --if-present --filter '!@commander/core' run typecheck:test",
     "typecheck:test": "pnpm --dir packages/core run typecheck:test",
     "docker:build": "docker compose build",
     "docker:up": "docker compose up -d",

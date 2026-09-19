@@ -5,7 +5,12 @@ import {
 } from '@commander/postgres-runtime';
 
 export type MigrationGateMode = 'preflight' | 'await';
-export type MigrationGateTarget = { name: string; connectionString: string };
+export type MigrationGateTarget = {
+  name: string;
+  connectionString: string;
+  /** Only the post-migration `await` gate compares the applied descriptor state. */
+  verifyDescriptors: boolean;
+};
 export type MigrationGateDescriptors = Record<string, string>;
 export type MigrationGateProbe = (
   target: MigrationGateTarget,
@@ -15,6 +20,15 @@ export type MigrationGateProbe = (
 const PREFLIGHT_ROLES = ['OWNER', 'APP', 'TENANT_AUTHORITY', 'SCHEDULER', 'WORKER', 'ADAPTER_OPS'];
 const CHECKSUM = /^[a-f0-9]{64}$/;
 const DESCRIPTOR = /^[A-Za-z0-9._-]+$/;
+
+/** Owner-owned SECURITY DEFINER reader installed by the kernel migration descriptors. */
+export const MIGRATION_GATE_DESCRIPTOR_READINESS_FUNCTION =
+  'public.commander_applied_migration_descriptors()';
+export const MIGRATION_GATE_DESCRIPTOR_STATE_MISSING = 'MIGRATION_GATE_DESCRIPTOR_STATE_MISSING';
+export const MIGRATION_GATE_DESCRIPTORS_MISMATCH = 'MIGRATION_GATE_DESCRIPTORS_MISMATCH';
+const DESCRIPTOR_READINESS_QUERY =
+  'SELECT id::text AS id, checksum::text AS checksum FROM ' +
+  MIGRATION_GATE_DESCRIPTOR_READINESS_FUNCTION;
 
 export function parseMigrationGateMode(args: readonly string[]): MigrationGateMode {
   if (args.length !== 1 || (args[0] !== 'preflight' && args[0] !== 'await')) {
@@ -30,12 +44,14 @@ export function migrationGateTargets(
   if (mode === 'await') {
     const connectionString = env.COMMANDER_KERNEL_DATABASE_URL;
     if (!connectionString) throw new Error('MIGRATION_GATE_DATABASE_URL_MISSING');
-    return [{ name: 'RUNTIME', connectionString }];
+    return [{ name: 'RUNTIME', connectionString, verifyDescriptors: true }];
   }
   return PREFLIGHT_ROLES.map((role) => {
     const connectionString = env['COMMANDER_PREFLIGHT_' + role + '_DATABASE_URL'];
     if (!connectionString) throw new Error('MIGRATION_GATE_DATABASE_URL_MISSING');
-    return { name: role, connectionString };
+    // Preflight runs before the migration container, so it can only prove the
+    // sealed role credentials connect; the `await` gate owns descriptor agreement.
+    return { name: role, connectionString, verifyDescriptors: false };
   });
 }
 
@@ -85,14 +101,51 @@ export type MigrationGatePool = {
 
 export type MigrationGatePoolFactory = (input: VerifiedPostgresPoolInput) => MigrationGatePool;
 
+async function appliedDescriptors(
+  pool: MigrationGatePool,
+): Promise<Array<{ id: string; checksum: string }>> {
+  try {
+    const result = await pool.query<{ id: string; checksum: string }>(DESCRIPTOR_READINESS_QUERY);
+    return result.rows.map(({ id, checksum }) => ({ id: String(id), checksum: String(checksum) }));
+  } catch {
+    // Fail closed: a runtime role that cannot read applied-descriptor state is not
+    // evidence that this release's migrations were applied.
+    throw new Error(MIGRATION_GATE_DESCRIPTOR_STATE_MISSING);
+  }
+}
+
+/**
+ * Compare the release's expected descriptors with the database's applied-migration
+ * ledger. Every expected descriptor must be present with the exact published
+ * checksum; the migration set is additive, so extra applied rows are allowed.
+ */
+export async function verifyMigrationGateDescriptors(
+  pool: MigrationGatePool,
+  descriptors: MigrationGateDescriptors,
+): Promise<void> {
+  const expected = Object.entries(descriptors).sort(([left], [right]) => left.localeCompare(right));
+  // An empty expected set is only produced by the Helm transport-bootstrap deploy,
+  // which runs no migration job and can therefore promise no descriptor.
+  if (expected.length === 0) return;
+  const applied = new Map(
+    (await appliedDescriptors(pool)).map(({ id, checksum }) => [id, checksum] as const),
+  );
+  for (const [id, checksum] of expected) {
+    if (applied.get(id) !== checksum) throw new Error(MIGRATION_GATE_DESCRIPTORS_MISMATCH);
+  }
+}
+
 export async function probeMigrationGateTarget(
   target: MigrationGateTarget,
-  _descriptors: MigrationGateDescriptors,
+  descriptors: MigrationGateDescriptors,
   createPool: MigrationGatePoolFactory = createVerifiedPostgresPool,
 ): Promise<void> {
   const pool = createPool(migrationGatePoolConfig(target.connectionString));
   try {
     await pool.query('SELECT 1');
+    if (target.verifyDescriptors) {
+      await verifyMigrationGateDescriptors(pool, descriptors);
+    }
   } finally {
     await pool.end();
   }

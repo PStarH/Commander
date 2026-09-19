@@ -408,6 +408,7 @@ describe('MultiAgentSynthesizer', () => {
       goal: 'Synthesize test',
       role: 'PLANNER',
       isAtomic: false,
+      dependencies: [],
       subtasks: [
         {
           id: 'sub-1',

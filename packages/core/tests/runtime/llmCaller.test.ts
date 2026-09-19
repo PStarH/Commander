@@ -2,7 +2,8 @@
  * LLMCaller extraction tests — Phase 1 of agentRuntime god-object split.
  *
  * Strategy: test the extracted `LLMCaller` module in isolation by feeding it
- * mocked subsystems (dep callbacks + module-level singletons). We DO NOT touch
+ * fake dep callbacks and spying on the module-level singletons it looks up at
+ * call time. We DO NOT touch
  * a real AgentRuntime instance — the goal is to lock down the per-call state
  * machine: cache → hook → fallback → gateway → metric → error-classify-passthrough.
  *
@@ -14,57 +15,34 @@
  *   5. Successful flow clears lastProviderError on success.
  *   6. catch() in `callProvider` writes lastProviderError + records failure sample.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-// --- Module-level singleton mocks ---------------------------------------------
-// These modules export `getX()` factories that the implementation depends on at
-// call time, not at module load. We mock them via vi.mock above the imports.
+// --- Module-level singleton stubs ---------------------------------------------
+// The implementation resolves these singletons at call time via `getX()`
+// factories, so the test stubs the *returned instances* with `vi.spyOn`.
+//
+// `vi.mock('../../src/...')` cannot work here: `tests/setup.ts` transitively
+// imports `src/runtime/llm/llmCaller.ts` (setup → modelRouter →
+// silentFailureReporter → logging → tenantAwareSingleton → tenantContext →
+// tenantProvider → threeLayerMemory → runtime/index → agentRuntime → llmCaller),
+// so llmCaller — and its bindings to pluginManager / enterpriseSecurityGateway /
+// metricsCollector / logging / tenantProvider — is already evaluated, against the
+// real modules, before this file's mock registrations run. A `vi.mock` factory
+// here is never even invoked (verified with a throwing factory). Spying on the
+// live singletons the implementation actually holds is the only honest seam.
 
-const mockHookManager = {
-  fireBeforeBackendSelect: vi.fn(async () => null),
-  fireAfterBackendSelect: vi.fn(async () => null),
-};
-
-const mockGateway = {
-  preLLMCheck: vi.fn(() => ({ allowed: true, reason: undefined })),
-  postLLMCheck: vi.fn(() => ({ allowed: true, reason: undefined })),
-};
-
-const mockTenantProvider = {
-  getCurrentTenantId: vi.fn(() => 'tenant-test'),
-};
-
-const mockMetrics = {
-  recordSemanticCacheEvent: vi.fn(),
-  recordGeminiCacheEvent: vi.fn(),
-  recordSingleFlightEvent: vi.fn(),
-};
-
-const mockLogger = {
-  warn: vi.fn(),
-  error: vi.fn(),
-  info: vi.fn(),
-  debug: vi.fn(),
-};
-
-vi.mock('../../src/pluginManager', () => ({
-  getHookManager: () => mockHookManager,
-}));
-vi.mock('../../src/security/enterpriseSecurityGateway', () => ({
-  getEnterpriseSecurityGateway: () => mockGateway,
-}));
-vi.mock('../../src/runtime/tenantProvider', () => ({
-  getGlobalTenantProvider: () => mockTenantProvider,
-}));
-vi.mock('../../src/runtime/metricsCollector', () => ({
-  getMetricsCollector: () => mockMetrics,
-}));
-vi.mock('../../src/logging', () => ({
-  getGlobalLogger: () => mockLogger,
-}));
+let hookBefore: Mock;
+let gatewayPre: Mock;
+let gatewayPost: Mock;
+let geminiMetric: Mock;
+let loggerWarn: Mock;
 
 import {
-  LLMCaller,
+  // The class is exported as `LlmCaller`; the test imported `LLMCaller`, so the
+  // module failed to instantiate and the file never ran a single case. That is
+  // also why its DECLARED_NOT_RUN reason ("does not record a fallback_exhausted
+  // sample") described a failure nobody had actually observed.
+  LlmCaller,
   type LLMCallerDeps,
   type LLMCallerCallInput,
 } from '../../src/runtime/llm/llmCaller';
@@ -78,8 +56,26 @@ import type {
   LLMResponse,
   RoutingDecision,
 } from '../../src/runtime/types';
+// Real singletons — spied on per-test; see the note above.
+import { getHookManager } from '../../src/pluginManager';
+import { getEnterpriseSecurityGateway } from '../../src/security/enterpriseSecurityGateway';
+import { getGlobalTenantProvider } from '../../src/runtime/tenantProvider';
+import { getMetricsCollector } from '../../src/runtime/metricsCollector';
+import { getGlobalLogger } from '../../src/logging';
 
 // --- Test helpers -------------------------------------------------------------
+
+/** One recorded call captured by the `samplesStore` stub in `makeDeps`. */
+interface RecordedSample {
+  resp: LLMResponse | null;
+  meta: {
+    provider: string;
+    durationMs: number;
+    attemptNumber: number;
+    error?: string;
+    taskId?: string;
+  };
+}
 
 function makeResponse(content = 'hello'): LLMResponse {
   return {
@@ -102,9 +98,10 @@ function makeRouting(provider = 'openai'): RoutingDecision {
   return {
     provider,
     modelId: 'm',
-    modelTier: 'standard' as const,
-    reason: 'test routing',
+    tier: 'standard',
+    reasoning: ['test routing'],
     estimatedCost: 0,
+    maxTokens: 4096,
   };
 }
 
@@ -130,7 +127,7 @@ function makeDeps(overrides: Partial<LLMCallerDeps> = {}): {
   deps: LLMCallerDeps;
   setProvider: (name: string, p: LLMProvider) => void;
   lastErr: { value: Error | null };
-  samples: { calls: Array<Record<string, unknown>> };
+  samples: { calls: RecordedSample[] };
   semanticCache: { hits: number; misses: number; stores: number };
   cache: {
     lookupSemantic: ReturnType<typeof vi.fn>;
@@ -144,7 +141,7 @@ function makeDeps(overrides: Partial<LLMCallerDeps> = {}): {
 } {
   const providers = new Map<string, LLMProvider>();
   const lastErr: { value: Error | null } = { value: null };
-  const samples: { calls: Array<Record<string, unknown>> } = { calls: [] };
+  const samples: { calls: RecordedSample[] } = { calls: [] };
   const semanticCache = { hits: 0, misses: 0, stores: 0 };
 
   const cache = {
@@ -162,14 +159,15 @@ function makeDeps(overrides: Partial<LLMCallerDeps> = {}): {
     wrap: vi.fn(async (p: Promise<LLMResponse>) => p),
   };
 
-  // Real ProviderFallbackChain — keeps code paths honest.
+  // Real ProviderFallbackChain — keeps code paths honest. The option name is
+  // `isRetryable` (providerFallbackChain.ts:26-38); `classify` was a stale,
+  // silently-ignored key that left DEFAULT_RETRYABLE in charge.
   const fallbackChain = new ProviderFallbackChain<LLMResponse>({
-    classify: (err) =>
-      err instanceof Error && /429|timeout|ETIMEDOUT/i.test(err.message) ? 'retryable' : 'fatal',
+    isRetryable: (err) => err instanceof Error && /429|timeout|ETIMEDOUT/i.test(err.message),
   });
 
   const samplesStore = {
-    recordLLMCall: (_req: LLMRequest, resp: LLMResponse | null, meta: Record<string, unknown>) => {
+    recordLLMCall: (_req: LLMRequest, resp: LLMResponse | null, meta: RecordedSample['meta']) => {
       samples.calls.push({ resp, meta });
     },
   } as unknown as LLMCallerDeps['samplesStore'];
@@ -200,28 +198,30 @@ function makeDeps(overrides: Partial<LLMCallerDeps> = {}): {
 }
 
 // --- Reset between tests ------------------------------------------------------
+// The global `tests/setup.ts` beforeEach runs first and resets the security
+// singletons, so these instances must be re-resolved (and re-spied) here.
 
 beforeEach(() => {
-  mockHookManager.fireBeforeBackendSelect.mockReset();
-  mockHookManager.fireBeforeBackendSelect.mockResolvedValue(null);
-  mockHookManager.fireAfterBackendSelect.mockReset();
-  mockHookManager.fireAfterBackendSelect.mockResolvedValue(null);
-  mockGateway.preLLMCheck.mockReset();
-  mockGateway.preLLMCheck.mockReturnValue({ allowed: true, reason: undefined });
-  mockGateway.postLLMCheck.mockReset();
-  mockGateway.postLLMCheck.mockReturnValue({ allowed: true, reason: undefined });
-  mockTenantProvider.getCurrentTenantId.mockReset();
-  mockTenantProvider.getCurrentTenantId.mockReturnValue('tenant-test');
-  mockMetrics.recordSemanticCacheEvent.mockReset();
-  mockMetrics.recordGeminiCacheEvent.mockReset();
-  mockMetrics.recordSingleFlightEvent.mockReset();
-  mockLogger.warn.mockReset();
-  mockLogger.error.mockReset();
+  hookBefore = vi.spyOn(getHookManager(), 'fireBeforeBackendSelect').mockResolvedValue(null);
+  vi.spyOn(getHookManager(), 'fireAfterBackendSelect').mockResolvedValue(undefined);
+  gatewayPre = vi
+    .spyOn(getEnterpriseSecurityGateway(), 'preLLMCheck')
+    .mockReturnValue({ allowed: true, durationMs: 0 });
+  gatewayPost = vi
+    .spyOn(getEnterpriseSecurityGateway(), 'postLLMCheck')
+    .mockReturnValue({ allowed: true, durationMs: 0 });
+  vi.spyOn(getGlobalTenantProvider(), 'getCurrentTenantId').mockReturnValue('tenant-test');
+  const collector = getMetricsCollector();
+  vi.spyOn(collector, 'recordSemanticCacheEvent').mockImplementation(() => {});
+  geminiMetric = vi.spyOn(collector, 'recordGeminiCacheEvent').mockImplementation(() => {});
+  vi.spyOn(collector, 'recordSingleFlightEvent').mockImplementation(() => {});
+  loggerWarn = vi.spyOn(getGlobalLogger(), 'warn').mockImplementation(() => {});
   process.env.GOOGLE_API_KEY = 'test-key';
   process.env.GOOGLE_BASE_URL = undefined;
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   delete process.env.GOOGLE_API_KEY;
   delete process.env.GOOGLE_BASE_URL;
 });
@@ -233,7 +233,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     const env = makeDeps();
     env.setProvider('openai', makeProvider(makeResponse('ok')));
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -253,7 +253,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     env.setProvider('openai', makeProvider(makeResponse('should-not-be-called')));
     env.cache.lookupSemantic.mockResolvedValueOnce(cached);
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -270,7 +270,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
   it('FallbackChainExhaustedError returns null and logs warn', async () => {
     const env = makeDeps();
     // No providers registered -> empty entries -> the wrapped tryProviders throws.
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -285,13 +285,16 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
 
   it('pre-LLM gateway block writes lastProviderError and returns null', async () => {
     const env = makeDeps();
-    env.setProvider('openai', makeProvider(makeResponse('will-not-run')));
-    mockGateway.preLLMCheck.mockReturnValueOnce({
+    const provider = makeProvider(makeResponse('will-not-run'));
+    const providerCall = vi.spyOn(provider, 'call');
+    env.setProvider('openai', provider);
+    gatewayPre.mockReturnValueOnce({
       allowed: false,
       reason: 'rate-limit',
+      durationMs: 0,
     });
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -300,6 +303,8 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     });
 
     expect(result).toBeNull();
+    // The whole point: a denied pre-check must stop the provider call dead.
+    expect(providerCall).not.toHaveBeenCalled();
     // lastProviderError MUST be set by callProvider's catch — so the AgentRuntime
     // retry loop can read it on the next attempt.
     expect(env.lastErr.value).toBeInstanceOf(Error);
@@ -309,15 +314,77 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     expect(env.samples.calls[0].meta.error).toMatch(/Security gateway/i);
   });
 
-  it('post-LLM gateway block writes lastProviderError and returns null', async () => {
+  it('returns and records the gateway-sanitized output when the post-check allows after redaction', async () => {
+    // `postLLMCheck` may allow an output while still having redacted it
+    // (`{ allowed: true, sanitizedOutput }`, enterpriseSecurityGateway.ts:442/462).
+    // The caller used to ignore that field, so the unredacted content was
+    // returned, sampled and stored — a DLP decision that was computed and then
+    // discarded.
     const env = makeDeps();
-    env.setProvider('openai', makeProvider(makeResponse('will-be-blocked')));
-    mockGateway.postLLMCheck.mockReturnValueOnce({
-      allowed: false,
-      reason: 'PII detected',
+    const provider = makeProvider(makeResponse('sk-live-LEAKED-SECRET'));
+    const providerCall = vi.spyOn(provider, 'call');
+    env.setProvider('openai', provider);
+    gatewayPost.mockReturnValueOnce({
+      allowed: true,
+      durationMs: 0,
+      sanitizedOutput: '[REDACTED-OUTPUT]',
     });
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
+    const result = await caller.call({
+      request: makeRequest(),
+      routing: makeRouting('openai'),
+      taskId: 'task-sanitized',
+      attemptNumber: 0,
+    });
+
+    // The provider ran and was allowed, but its output was redacted.
+    expect(providerCall).toHaveBeenCalledTimes(1);
+
+    expect(result?.content).toBe('[REDACTED-OUTPUT]');
+    expect(result?.content).not.toContain('LEAKED');
+    // The recorded sample must carry the sanitized form, not the raw one.
+    expect(JSON.stringify(env.samples.calls)).not.toContain('LEAKED');
+  });
+
+  it('sends the sanitized message content, not the original (SF-02)', async () => {
+    // The gateway sanitizes the detached `input` copy it is handed. The provider
+    // used to receive the ORIGINAL request, so content the gateway had already
+    // redacted was still sent — the DLP decision was computed and discarded.
+    const env = makeDeps();
+    const provider = makeProvider(makeResponse('ok'));
+    const providerCall = vi.spyOn(provider, 'call');
+    env.setProvider('openai', provider);
+
+    const caller = new LlmCaller(env.deps);
+    await caller.call({
+      request: {
+        ...makeRequest(),
+        messages: [{ role: 'user', content: 'contact alice@example.com now' }],
+      },
+      routing: makeRouting('openai'),
+      taskId: 'task-sf02',
+      attemptNumber: 0,
+    });
+
+    expect(providerCall).toHaveBeenCalledTimes(1);
+    const sent = providerCall.mock.calls[0]![0] as { messages: Array<{ content: string }> };
+    expect(sent.messages[0]!.content).not.toContain('alice@example.com');
+    expect(sent.messages[0]!.content).toContain('[EMAIL_REDACTED]');
+  });
+
+  it('post-LLM gateway block writes lastProviderError and returns null', async () => {
+    const env = makeDeps();
+    const provider = makeProvider(makeResponse('will-be-blocked'));
+    const providerCall = vi.spyOn(provider, 'call');
+    env.setProvider('openai', provider);
+    gatewayPost.mockReturnValueOnce({
+      allowed: false,
+      reason: 'PII detected',
+      durationMs: 0,
+    });
+
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -326,6 +393,8 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     });
 
     expect(result).toBeNull();
+    // The provider ran, but a denied post-check must withhold its output.
+    expect(providerCall).toHaveBeenCalledTimes(1);
     expect(env.lastErr.value).toBeInstanceOf(Error);
     expect(env.lastErr.value?.message).toMatch(/Security gateway blocked LLM output/i);
   });
@@ -336,7 +405,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     // Pre-pollute the error to confirm clear-on-success behaviour.
     env.deps.setLastProviderError(new Error('previous attempt failed'));
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -359,9 +428,9 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     // fireBeforeBackendSelect contract: string-or-null. A plain string override
     // is the canonical shape — using an object would silently degrade
     // `resolvedProvider` into a non-key value, hiding future refactor bugs.
-    mockHookManager.fireBeforeBackendSelect.mockResolvedValueOnce('anthropic');
+    hookBefore.mockResolvedValueOnce('anthropic');
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -377,7 +446,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     // 'All providers exhausted' warn is NOT exercised here. The warn only fires
     // when fallbackChain throws FallbackChainExhaustedError (next test).
     const env = makeDeps();
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
 
     const result = await caller.call({
       request: makeRequest(),
@@ -389,21 +458,26 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     expect(result).toBeNull();
     expect(env.samples.calls[0].meta.provider).toBe('none');
     expect(env.samples.calls[0].meta.error).toBe('No provider available');
-    expect(mockLogger.warn).not.toHaveBeenCalled();
+    expect(loggerWarn).not.toHaveBeenCalled();
   });
 
   it('FallbackChainExhaustedError fires the warn and records fallback_exhausted sample', async () => {
     // Drive the warn path through the REAL ProviderFallbackChain: register a
-    // provider that throws a non-retryable error, then classify() as 'fatal' so
-    // the chain gives up and throws FallbackChainExhaustedError — guaranteeing
-    // we exercise the production code path, not a synthetic mock.
+    // provider that throws, then make every error retryable so the single-entry
+    // chain gives up and throws FallbackChainExhaustedError — guaranteeing we
+    // exercise the production code path, not a synthetic mock.
+    //
+    // The option is `isRetryable` (providerFallbackChain.ts:26-38); the old
+    // `classify: () => 'fatal'` was silently ignored, so DEFAULT_RETRYABLE
+    // classified the ResourceGovernor-wrapped error as permanent and the chain
+    // rethrew the raw error — never producing FallbackChainExhaustedError.
     const env = makeDeps();
     env.deps.fallbackChain = new ProviderFallbackChain<LLMResponse>({
-      classify: () => 'fatal',
+      isRetryable: () => true,
     });
     env.setProvider('openai', makeProvider(new Error('manual fault for test')));
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -418,7 +492,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     const chainExhausted = env.samples.calls.find((c) => c.meta.provider === 'fallback_exhausted');
     expect(chainExhausted).toBeDefined();
     expect(env.samples.calls.length).toBeGreaterThanOrEqual(2);
-    expect(mockLogger.warn).toHaveBeenCalledWith(
+    expect(loggerWarn).toHaveBeenCalledWith(
       'AgentRuntime',
       'All providers exhausted in fallback chain',
       expect.objectContaining({ error: expect.stringMatching(/manual fault/) }),
@@ -431,9 +505,9 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     // and third-party plugin regressions.
     const env = makeDeps();
     env.setProvider('openai', makeProvider(makeResponse('after-hook-throw')));
-    mockHookManager.fireBeforeBackendSelect.mockRejectedValueOnce(new Error('plugin crashed'));
+    hookBefore.mockRejectedValueOnce(new Error('plugin crashed'));
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: makeRequest(),
       routing: makeRouting('openai'),
@@ -459,7 +533,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
       >,
     });
 
-    const caller = new LLMCaller(env.deps);
+    const caller = new LlmCaller(env.deps);
     const result = await caller.call({
       request: req,
       routing: makeRouting('google'),
@@ -470,7 +544,7 @@ describe('LLMCaller — extracted Phase 1 helpers', () => {
     expect(result?.content).toBe('google-resp');
     // The contract: cache wiring mutates request.cacheConfig.geminiCachedContentName.
     expect(req.cacheConfig?.geminiCachedContentName).toBe('cached/name/42');
-    expect(mockMetrics.recordGeminiCacheEvent).toHaveBeenCalledWith('create', expect.anything());
+    expect(geminiMetric).toHaveBeenCalledWith('create', expect.anything());
   });
 
   // Sanity: confirm we aren't leaking the FallbackChainExhaustedError class shape

@@ -23,17 +23,24 @@ import { TokenGovernor } from '../src/runtime/tokenGovernor';
 import { ToolResultCache } from '../src/runtime/toolResultCache';
 import { TopologyRouter } from '../src/ultimate/topologyRouter';
 import { ToolPlanner } from '../src/runtime/toolPlanner';
-import type { LLMMessage, ToolCall, Tool, TaskDAGNode, TaskDAGEdge } from '../src/runtime/types';
-import type { DeliberationPlan } from '../src/ultimate/types';
+import type { LLMMessage, ToolCall, Tool } from '../src/runtime/types';
+import type { DeliberationPlan, TaskDAGNode, TaskDAGEdge } from '../src/ultimate/types';
 
 // ============================================================================
 // Baseline collector — accumulates results for persistent baseline output
 // ============================================================================
-const baselineResults: Record<string, unknown> = {
+interface BenchmarkBaseline {
+  benchmark: string;
+  runAt: string;
+  nodeVersion: string;
+  sections: Record<string, unknown>;
+}
+
+const baselineResults: BenchmarkBaseline = {
   benchmark: 'cpu-intensive',
   runAt: new Date().toISOString(),
   nodeVersion: process.version,
-  sections: {} as Record<string, unknown>,
+  sections: {},
 };
 
 function recordBaseline(section: string, data: unknown): void {
@@ -218,6 +225,8 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
       );
     }
 
+    recordBaseline('1.contextCompactor.layer1Snip', { sizes, results });
+
     const ratio200_50 = results[2].avgMs / results[0].avgMs;
     assert.ok(
       ratio200_50 < 100,
@@ -259,6 +268,8 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
       );
     }
 
+    recordBaseline('1.contextCompactor.layer2Microcompact', { outputSizes, results });
+
     const ratio = results[3].avgMs / results[0].avgMs;
     assert.ok(
       ratio < 150,
@@ -298,6 +309,8 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
         `  ${r.turns.toString().padStart(4)} turns: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`,
       );
     }
+
+    recordBaseline('1.contextCompactor.layer3Collapse', { turnCounts, results });
 
     // This is the most CPU-intensive path — flag if > 50ms for 200 turns
     const worst = results[results.length - 1];
@@ -340,6 +353,8 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
         `  ${r.turns.toString().padStart(4)} turns: ${r.avgMs.toFixed(2).padStart(8)} ms/op  (${r.opsPerSec.toFixed(1).padStart(8)} ops/sec)`,
       );
     }
+
+    recordBaseline('1.contextCompactor.layer4Autocompact', { turnCounts, results });
 
     // Layer 4 is the heaviest — flag if > 100ms for 200 turns
     const worst = results[results.length - 1];
@@ -387,6 +402,8 @@ describe('1. ContextCompactor — CPU Cost per Layer', () => {
       );
     }
 
+    recordBaseline('1.contextCompactor.injectionDetection', { outputSizes, results });
+
     // 500KB output should not cause > 20ms delay
     const worst = results[results.length - 1];
     if (worst.avgMs > 20) {
@@ -433,6 +450,8 @@ describe('2. ToolResultCache — FNV-1a Hashing Throughput', () => {
       );
     }
 
+    recordBaseline('2.toolResultCache.keyThroughput', { argSizes, results });
+
     // Should handle > 100K ops/sec for small args
     assert.ok(
       results[0].opsPerSec > 100000,
@@ -478,6 +497,14 @@ describe('2. ToolResultCache — FNV-1a Hashing Throughput', () => {
     );
     console.log(`  Throughput: ${((1000 / s.avg) * times.length).toFixed(0)} ops/sec`);
 
+    recordBaseline('2.toolResultCache.concurrentAccess', {
+      concurrency,
+      opsPerWorker,
+      totalOperations: times.length,
+      hitRate: cs.hitRate,
+      latencyMs: { avg: s.avg, p50: s.p50, p95: s.p95, p99: s.p99 },
+    });
+
     assert.ok(s.p99 < 10, `P99 should be < 10ms, got ${s.p99.toFixed(3)}ms`);
     cache.dispose();
   });
@@ -499,7 +526,10 @@ describe('3. TopologyRouter — DAG Operations Scaling', () => {
       const nodes: TaskDAGNode[] = Array.from({ length: nodeCount }, (_, i) => ({
         id: `task_${i}`,
         label: `Task ${i}`,
-        effort: 'MODERATE' as const,
+        estimatedComplexity: 5,
+        estimatedTokens: 5000,
+        requiredCapabilities: [],
+        atomic: false,
       }));
 
       // Create a realistic DAG with ~1.5x edges (moderate coupling)
@@ -512,15 +542,25 @@ describe('3. TopologyRouter — DAG Operations Scaling', () => {
           edges.push({
             from: `task_${from}`,
             to: `task_${i}`,
+            type: 'SEQUENTIAL',
             dataDependency: Math.random() < 0.3,
           });
         }
       }
 
       const deliberation: DeliberationPlan = {
+        requiresExternalInfo: false,
         taskType: 'CODING',
+        recommendedTopology: 'DISPATCH',
         estimatedAgentCount: Math.min(nodeCount, 10),
+        estimatedSteps: 10,
         estimatedTokens: 50000,
+        estimatedDurationMs: 60_000,
+        tokenBudget: { thinking: 10_000, execution: 30_000, synthesis: 10_000 },
+        timeBudgetPerAgentMs: 10_000,
+        decompositionStrategy: 'STEP',
+        capabilitiesNeeded: [],
+        confidence: 0.9,
         taskNature: 'IO_BOUND',
         suitableForSpeculation: false,
         reasoning: [],
@@ -548,6 +588,8 @@ describe('3. TopologyRouter — DAG Operations Scaling', () => {
       );
     }
 
+    recordBaseline('3.topologyRouter.dagScaling', { nodeCounts, results });
+
     // Should scale sub-quadratically
     const ratio = results[4].avgMs / results[0].avgMs;
     assert.ok(
@@ -568,8 +610,8 @@ describe('4. ToolPlanner — O(n²) Dependency Detection', () => {
 
     const mockTools = new Map<string, Tool>();
     mockTools.set('file_read', {
-      name: 'file_read',
       isReadOnly: true,
+      execute: async () => '',
       definition: {
         name: 'file_read',
         description: '',
@@ -577,8 +619,8 @@ describe('4. ToolPlanner — O(n²) Dependency Detection', () => {
       },
     });
     mockTools.set('file_write', {
-      name: 'file_write',
       isReadOnly: false,
+      execute: async () => '',
       definition: {
         name: 'file_write',
         description: '',
@@ -586,8 +628,8 @@ describe('4. ToolPlanner — O(n²) Dependency Detection', () => {
       },
     });
     mockTools.set('web_search', {
-      name: 'web_search',
       isReadOnly: true,
+      execute: async () => '',
       definition: {
         name: 'web_search',
         description: '',
@@ -627,6 +669,8 @@ describe('4. ToolPlanner — O(n²) Dependency Detection', () => {
       );
     }
 
+    recordBaseline('4.toolPlanner.dependencyDetection', { toolCounts, results });
+
     // O(n²) should still be fast for n=100
     const worst = results[results.length - 1];
     assert.ok(worst.avgMs < 50, `100 tools should be < 50ms, got ${worst.avgMs.toFixed(2)}ms`);
@@ -653,6 +697,13 @@ describe('5. TokenGovernor — CJK Token Estimation', () => {
     console.log('\n  TokenGovernor — Estimation Throughput:');
     console.log('  ─────────────────────────────────────────');
 
+    const results: Array<{
+      contentType: string;
+      avgMs: number;
+      opsPerSec: number;
+      charsPerMs: number;
+    }> = [];
+
     for (const { name, text } of contentTypes) {
       const iterations = 10000;
       const times: number[] = [];
@@ -665,10 +716,18 @@ describe('5. TokenGovernor — CJK Token Estimation', () => {
 
       const s = stats(times);
       const charsPerMs = text.length / s.avg;
+      results.push({
+        contentType: name,
+        avgMs: s.avg,
+        opsPerSec: 1000 / s.avg,
+        charsPerMs,
+      });
       console.log(
         `  ${name.padStart(15)}: ${s.avg.toFixed(3).padStart(8)} ms/op  (${(1000 / s.avg).toFixed(0).padStart(8)} ops/sec, ${charsPerMs.toFixed(0).padStart(6)} chars/ms)`,
       );
     }
+
+    recordBaseline('5.tokenGovernor.estimateTokens', { results });
 
     // All content types should achieve > 10K ops/sec
     const ascii = contentTypes[0];
@@ -704,6 +763,11 @@ describe('5. TokenGovernor — CJK Token Estimation', () => {
     console.log(
       `  Cold call: ${coldTime.toFixed(3)}ms, Warm avg: ${s.avg.toFixed(4)}ms (speedup: ${(coldTime / s.avg).toFixed(0)}x)`,
     );
+    recordBaseline('5.tokenGovernor.recommendationCaching', {
+      coldMs: coldTime,
+      warmAvgMs: s.avg,
+      speedup: coldTime / s.avg,
+    });
     assert.ok(s.avg < 0.01, `Cached calls should be < 0.01ms, got ${s.avg.toFixed(4)}ms`);
   });
 });
@@ -721,6 +785,10 @@ describe('6. Event Loop Lag Measurement', () => {
     console.log(
       `  avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`,
     );
+
+    recordBaseline('6.eventLoopLag.baseline', {
+      lagMs: { avg: s.avg, p50: s.p50, p95: s.p95, p99: s.p99 },
+    });
 
     assert.ok(s.p95 < 15, `Baseline P95 lag should be < 15ms, got ${s.p95.toFixed(2)}ms`);
   });
@@ -753,6 +821,12 @@ describe('6. Event Loop Lag Measurement', () => {
     console.log(
       `  Lag: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`,
     );
+
+    recordBaseline('6.eventLoopLag.duringCompaction', {
+      iterations,
+      cpuTimeMs: cpuTime,
+      lagMs: { avg: s.avg, p50: s.p50, p95: s.p95, p99: s.p99 },
+    });
 
     // Lag should not spike dramatically during compaction
     if (s.p95 > 30) {
@@ -811,9 +885,14 @@ describe('6. Event Loop Lag Measurement', () => {
             const nodes: TaskDAGNode[] = Array.from({ length: 5 }, (_, j) => ({
               id: `t${j}`,
               label: `T${j}`,
-              effort: 'SIMPLE' as const,
+              estimatedComplexity: 2,
+              estimatedTokens: 1000,
+              requiredCapabilities: [],
+              atomic: true,
             }));
-            const edges: TaskDAGEdge[] = [{ from: 't0', to: 't1' }];
+            const edges: TaskDAGEdge[] = [
+              { from: 't0', to: 't1', type: 'SEQUENTIAL', dataDependency: false },
+            ];
             router.buildDAG(nodes, edges);
           }
         })(),
@@ -834,6 +913,14 @@ describe('6. Event Loop Lag Measurement', () => {
     console.log(
       `  Lag: avg=${s.avg.toFixed(2)}ms, p50=${s.p50.toFixed(2)}ms, p95=${s.p95.toFixed(2)}ms, p99=${s.p99.toFixed(2)}ms`,
     );
+
+    recordBaseline('6.eventLoopLag.concurrentMultiTenant', {
+      concurrency,
+      opsPerTenant,
+      totalOperations: concurrency * opsPerTenant,
+      cpuTimeMs: cpuTime,
+      lagMs: { avg: s.avg, p50: s.p50, p95: s.p95, p99: s.p99 },
+    });
 
     if (s.p95 > 50) {
       console.log(
@@ -856,7 +943,15 @@ describe('6. Event Loop Lag Measurement', () => {
 // ============================================================================
 
 describe('7. Summary & worker_threads Decision Matrix', () => {
-  it('print recommendations based on benchmark results', () => {
+  it('summarises the measurements the decision matrix is derived from', () => {
+    // The matrix below is narrative, so it cannot be an assertion target; the
+    // machine-readable record is the baseline JSON written in after(). Assert
+    // that the run actually produced sections for it to summarise.
+    const sections = baselineResults.sections as Record<string, unknown>;
+    assert.ok(
+      Object.keys(sections).length > 0,
+      'the benchmark must record at least one section before summarising',
+    );
     console.log('\n' + '═'.repeat(70));
     console.log('  WORKER_THREADS OFFLOADING — DATA-DRIVEN ASSESSMENT');
     console.log('═'.repeat(70));
@@ -888,7 +983,6 @@ describe('7. Summary & worker_threads Decision Matrix', () => {
   All other operations (cache, routing, planning, estimation) are
   lightweight enough to remain on the main thread.
 `);
-    assert.ok(true, 'Summary printed');
   });
 });
 

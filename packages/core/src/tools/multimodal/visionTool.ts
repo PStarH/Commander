@@ -57,12 +57,16 @@ export class VisionAnalyzeTool implements Tool {
     try {
       let imageData: string;
       let mediaType = 'image/png';
+      const maxSize = 20 * 1024 * 1024;
 
       if (source.startsWith('data:')) {
         const match = source.match(/^data:(image\/\w+);base64,(.+)$/);
         if (!match) return 'Error: Invalid data URL format. Expected: data:image/...;base64,...';
         mediaType = match[1];
         imageData = match[2];
+        const byteLength = Buffer.byteLength(imageData, 'base64');
+        if (byteLength > maxSize)
+          return `Error: Image too large (${(byteLength / 1024 / 1024).toFixed(1)}MB). Max: 20MB.`;
       } else {
         const fs = await import('fs');
         const pathModule = await import('path');
@@ -97,7 +101,6 @@ export class VisionAnalyzeTool implements Tool {
           '.bmp': 'image/bmp',
         };
         mediaType = mediaTypes[ext] ?? 'image/png';
-        const maxSize = 20 * 1024 * 1024;
         if (buffer.length > maxSize)
           return `Error: Image too large (${(buffer.length / 1024 / 1024).toFixed(1)}MB). Max: 20MB.`;
         imageData = buffer.toString('base64');
@@ -120,15 +123,17 @@ export class VisionAnalyzeTool implements Tool {
         max_tokens: 4096,
       };
 
-      const apiKey = process.env.OPENAI_API_KEY || process.env.ANTHROPIC_API_KEY;
-      if (!apiKey)
-        return 'Error: No API key configured. Set VISION_API_KEY, OPENAI_API_KEY, or ANTHROPIC_API_KEY.';
+      // The endpoint below is an OpenAI-compatible `/chat/completions` API, so
+      // only that endpoint's own credential may be sent — never another vendor's.
+      const apiKey = process.env.VISION_API_KEY || process.env.OPENAI_API_KEY;
+      if (!apiKey) return 'Error: No API key configured. Set VISION_API_KEY or OPENAI_API_KEY.';
 
       const baseUrl = process.env.VISION_BASE_URL ?? 'https://api.openai.com/v1';
       const response = await fetch(`${baseUrl}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(this.timeout),
       });
 
       if (!response.ok) {

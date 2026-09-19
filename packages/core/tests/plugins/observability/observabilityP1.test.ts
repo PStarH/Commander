@@ -29,6 +29,7 @@ function makeTrace(events: TraceEvent[]): ExecutionTrace {
 
 function llmEvent(input: string, output: string): TraceEvent {
   return {
+    id: 's1',
     spanId: 's1',
     traceId: 'trace-1',
     runId: 'run-1',
@@ -47,6 +48,7 @@ function llmEvent(input: string, output: string): TraceEvent {
 
 function verificationEvent(passed: boolean, score: number): TraceEvent {
   return {
+    id: 's2',
     spanId: 's2',
     traceId: 'trace-1',
     runId: 'run-1',
@@ -100,6 +102,7 @@ describe('Observability P1 features', () => {
 
   it('feedback field type is valid on TraceEvent.data', () => {
     const event: TraceEvent = {
+      id: 's1',
       spanId: 's1',
       traceId: 'trace-1',
       runId: 'run-1',
@@ -119,6 +122,6 @@ describe('Observability P1 features', () => {
     };
     assert.ok(event.data.feedback);
     assert.strictEqual(event.data.feedback!.rating, 'positive');
-    assert.ok(event.data.feedback!.tags.includes('helpful'));
+    assert.ok(event.data.feedback!.tags?.includes('helpful'));
   });
 });

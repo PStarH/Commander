@@ -170,10 +170,18 @@ export class KernelStepExecutor {
     step: ClaimedStep,
     context: ExecutorContext,
   ): Promise<Record<string, unknown> | undefined> {
+    // Fail closed: an already-cancelled step is a decision, not a race — never
+    // dispatch a run for it.
+    if (context.signal.aborted) {
+      throw this.abortError('Step aborted before execution');
+    }
+
     const input = this.parseStepInput(step);
     const runtime = this.runtimeFactory(step.tenantId);
 
-    // Build the execution context for AgentRuntime
+    // Build the execution context for AgentRuntime. The cancellation signal is
+    // handed to the run lifecycle so an in-flight run cancels itself (and only
+    // itself). The validated reproducibility metadata travels with the run.
     const ctx: AgentExecutionContext = {
       runId: step.runId,
       agentId: input.agentId,
@@ -182,44 +190,35 @@ export class KernelStepExecutor {
       tenantId: step.tenantId,
       maxSteps: input.maxSteps ?? this.config.defaultMaxSteps,
       tokenBudget: input.tokenBudget ?? this.config.defaultTokenBudget,
-      contextData: {},
-      availableTools: [],
+      contextData: {
+        agentState: {
+          definitionVersion: input.definitionVersion,
+          providerSnapshot: input.providerSnapshot,
+        },
+      },
+      availableTools: input.tools ?? [],
+      abortSignal: context.signal,
       ...(input.outputSchema ? { outputSchema: input.outputSchema } : {}),
     };
 
-    // Register abort signal handler
-    const abortPromise = new Promise<never>((_, reject) => {
-      if (context.signal.aborted) {
-        reject(
-          new KernelStepExecutorError('Step aborted before execution', {
-            code: 'ABORTED',
-            retryable: true,
-            retryDelayMs: 1000,
-          }),
-        );
-      }
-      context.signal.addEventListener(
-        'abort',
-        () => {
-          reject(
-            new KernelStepExecutorError('Step aborted during execution', {
-              code: 'ABORTED',
-              retryable: true,
-              retryDelayMs: 1000,
-            }),
-          );
-        },
-        { once: true },
-      );
-    });
+    // Await the run itself — no Promise.race — so cancellation only surfaces
+    // ABORTED once the underlying execution has actually exited and a retry
+    // cannot overlap it.
+    let abortedDuringRun = false;
+    const onAbort = () => {
+      abortedDuringRun = true;
+    };
+    context.signal.addEventListener('abort', onAbort, { once: true });
 
     try {
-      // Race between execution and abort
-      const result = await Promise.race([runtime.execute(ctx), abortPromise]);
+      const result = await runtime.execute(ctx);
+
+      if (abortedDuringRun) throw this.abortError('Step aborted during execution');
 
       return this.mapResult(result);
     } catch (error) {
       if (error instanceof KernelStepExecutorError) throw error;
+      if (abortedDuringRun) throw this.abortError('Step aborted during execution');
 
       const message = error instanceof Error ? error.message : String(error);
       const isRetryable = this.isRetryableError(error);
@@ -229,7 +228,17 @@ export class KernelStepExecutor {
         retryDelayMs: isRetryable ? 5_000 : undefined,
         details: { stepId: step.id, runId: step.runId, attempt: step.attempt },
       });
+    } finally {
+      context.signal.removeEventListener('abort', onAbort);
     }
+  }
+
+  private abortError(message: string): KernelStepExecutorError {
+    return new KernelStepExecutorError(message, {
+      code: 'ABORTED',
+      retryable: true,
+      retryDelayMs: 1000,
+    });
   }
 
   /**

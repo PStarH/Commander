@@ -99,6 +99,15 @@ describe('shadow startup configuration', () => {
       Buffer.alloc(32, 0xab),
     );
   });
+
+  it('does not expose a second plaintext database URL on the returned config', () => {
+    const config = loadShadowStartupConfig('status', validEnvironment());
+    assert.equal(
+      Object.hasOwn(config, 'databaseUrl'),
+      false,
+      'the DSN must live only inside poolInput, not as a printable config field',
+    );
+  });
   it('requires every authoritative credential and policy setting', () => {
     const valid = validEnvironment();
     for (const name of [

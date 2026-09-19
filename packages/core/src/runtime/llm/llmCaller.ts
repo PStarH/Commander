@@ -26,8 +26,11 @@
  *      loop in `AgentRuntime.execute()` can classify the original error before
  *      the next attempt writes a fresh one.
  *   5. `callProvider` semantics:
- *        * Semantic cache lookup short-circuits and returns the cached response
- *          with a 'hit' metric recorded; 'miss' metric recorded otherwise.
+ *        * Semantic cache lookup. A hit re-runs the CURRENT output policy check
+ *          (`postLLMCheck` with zero token counts, so a hit is never billed as
+ *          new inference) and returns the sanitized form; a hit the current
+ *          policy rejects throws instead of returning. 'hit' metric recorded,
+ *          'miss' otherwise.
  *        * Google Gemini cachedContent wiring when
  *          `providerName === 'google' && request.cacheConfig` — attaches the
  *          server-side cache name on success and records 'create' / 'hit' /
@@ -35,8 +38,10 @@
  *          correctness).
  *        * EnterpriseSecurityGateway.preLLMCheck — throws on block.
  *        * singleFlight dedup → stepTimeout.wrap(provider.call) →
- *          'hit'/'miss'/'eviction' metrics → storeSemantic + 'store' metric.
+ *          'hit'/'miss'/'eviction' metrics.
  *        * EnterpriseSecurityGateway.postLLMCheck — throws on block.
+ *        * storeSemantic(effectiveResult) + 'store' metric — only after the
+ *          post-check approves, and only the sanitized content.
  *        * samplesStore.recordLLMCall on the success path.
  *        * Catch: setLastProviderError(err) + samplesStore.recordLLMCall
  *          (failure shape) + logger.error + return null.
@@ -60,7 +65,7 @@ import { getGlobalLogger } from '../../logging';
 import { getGlobalTenantProvider } from '../tenantProvider';
 import { SingleFlightRequestCache } from '../singleFlightRequestCache';
 import type { LLMProvider, LLMRequest, LLMResponse, RoutingDecision } from '../types';
-import { ResourceGovernor } from '../../security/securityPrimitives';
+import { ResourceGovernor, UniversalSanitizer } from '../../security/securityPrimitives';
 import type { CacheManager } from '../cacheManager';
 import type { StepTimeoutManager } from '../stepTimeoutManager';
 import type { SamplesStore } from '../samplesStore';
@@ -235,6 +240,7 @@ export class LlmCaller {
   ): Promise<LLMResponse | null> {
     const startMs = Date.now();
     try {
+      const gateway = getEnterpriseSecurityGateway();
       const cached = await this.deps.cacheManager.lookupSemantic(request);
       if (cached) {
         try {
@@ -247,7 +253,29 @@ export class LlmCaller {
           reportSilentFailure(err, 'agentRuntime:llmCaller:lookupSemantic:hit');
           /* best-effort */
         }
-        return cached;
+        // A cache entry was written under the output policy in force at store
+        // time. Re-run the CURRENT policy check before returning it so a later
+        // policy tightening cannot be bypassed by a previously allowed entry.
+        // Zero token counts keep this re-check out of new-inference cost
+        // accounting — a cache hit never called the provider.
+        const hitCheck = gateway.postLLMCheck({
+          tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+          sessionId: taskId,
+          runId: taskId ?? 'unknown',
+          model: request.model,
+          inputTokens: 0,
+          outputTokens: 0,
+          agentId: taskId,
+          output: cached.content,
+        });
+        if (!hitCheck.allowed) {
+          throw new Error(
+            `Security gateway blocked cached LLM output: ${hitCheck.reason ?? 'DLP policy'}`,
+          );
+        }
+        return hitCheck.sanitizedOutput !== undefined && hitCheck.sanitizedOutput !== cached.content
+          ? { ...cached, content: hitCheck.sanitizedOutput }
+          : cached;
       }
       try {
         getMetricsCollector().recordSemanticCacheEvent(
@@ -307,7 +335,6 @@ export class LlmCaller {
 
       // EnterpriseSecurityGateway: pre-LLM cost + input-scan gate.
       const estimatedTokens = this.estimateRequestTokens(request);
-      const gateway = getEnterpriseSecurityGateway();
       const preCheck = gateway.preLLMCheck({
         tenantId: tenantIdForFlight,
         sessionId: taskId,
@@ -324,12 +351,34 @@ export class LlmCaller {
         throw new Error(`Security gateway blocked LLM call: ${preCheck.reason ?? 'policy'}`);
       }
 
+      // SF-02: the gateway sanitizes the `input` string it is handed, but that
+      // string is a detached, truncated *copy* of the messages. Sending the
+      // original `request` therefore sent content the gateway had already
+      // redacted -- the DLP decision was computed and then discarded, which is
+      // worse than not scanning, because the check reports success.
+      //
+      // The same primitive the gateway uses is applied to the real message
+      // contents, and the sanitized request is what reaches the provider. If a
+      // message is altered, the pre-check above already decided policy on the
+      // sanitized text, so no decision is weakened by this.
+      const sanitizer = new UniversalSanitizer();
+      const sanitizedMessages = request.messages.map((message) =>
+        typeof message.content === 'string'
+          ? { ...message, content: sanitizer.sanitize(message.content, 'input').sanitized }
+          : message,
+      );
+      const outboundRequest: LLMRequest = sanitizedMessages.some(
+        (message, index) => message !== request.messages[index],
+      )
+        ? { ...request, messages: sanitizedMessages }
+        : request;
+
       const result: LLMResponse = await this.deps.cacheManager.dedupeSingleFlight(
         flightKey,
         async () => {
           const governed = await ResourceGovernor.govern(
             () =>
-              this.deps.stepTimeout.wrap(provider.call(request), {
+              this.deps.stepTimeout.wrap(provider.call(outboundRequest), {
                 timeoutMs: llmTimeoutMs,
                 stepId: `llm-${providerName}-${attemptNumber}-${taskId ?? 'main'}`,
               }),
@@ -359,18 +408,6 @@ export class LlmCaller {
           /* best-effort */
         }
       }
-      this.deps.cacheManager.storeSemantic(request, result);
-      try {
-        getMetricsCollector().recordSemanticCacheEvent(
-          'store',
-          0,
-          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-        );
-      } catch (err) {
-        reportSilentFailure(err, 'agentRuntime:llmCaller:storeSemantic');
-        /* best-effort */
-      }
-
       // EnterpriseSecurityGateway: post-LLM cost accounting + DLP scan.
       const postCheck = gateway.postLLMCheck({
         tenantId: tenantIdForFlight,
@@ -386,13 +423,42 @@ export class LlmCaller {
         throw new Error(`Security gateway blocked LLM output: ${postCheck.reason ?? 'DLP policy'}`);
       }
 
-      this.deps.samplesStore.recordLLMCall(request, result, {
+      // The gateway may ALLOW an output while still having redacted it: for a
+      // non-critical DLP hit `postLLMCheck` returns
+      // `{ allowed: true, sanitizedOutput }` (enterpriseSecurityGateway.ts:442,
+      // 462). Ignoring that field returned, sampled and stored the *unredacted*
+      // content — the DLP decision was computed and then discarded, which is worse
+      // than not scanning at all because it looks like the leak was handled.
+      // Treat the sanitized form as authoritative whenever the gateway supplies
+      // one, including the fail-closed `'[REDACTED]'` it substitutes when the
+      // post-check itself throws (:467-471).
+      const effectiveResult =
+        postCheck.sanitizedOutput !== undefined && postCheck.sanitizedOutput !== result.content
+          ? { ...result, content: postCheck.sanitizedOutput }
+          : result;
+
+      // A response enters the semantic cache only AFTER the output policy has
+      // approved it, and only in the sanitized form that policy produced. A
+      // blocked output is never stored, and raw pre-redaction content never is.
+      this.deps.cacheManager.storeSemantic(request, effectiveResult);
+      try {
+        getMetricsCollector().recordSemanticCacheEvent(
+          'store',
+          0,
+          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+        );
+      } catch (err) {
+        reportSilentFailure(err, 'agentRuntime:llmCaller:storeSemantic');
+        /* best-effort */
+      }
+
+      this.deps.samplesStore.recordLLMCall(outboundRequest, effectiveResult, {
         provider: providerName,
         durationMs: Date.now() - startMs,
         attemptNumber,
         taskId,
       });
-      return result;
+      return effectiveResult;
     } catch (err) {
       this.deps.setLastProviderError(err instanceof Error ? err : new Error(String(err)));
       this.deps.samplesStore.recordLLMCall(request, null, {

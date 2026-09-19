@@ -149,15 +149,21 @@ BEGIN
     v_identity || jsonb_build_object('purpose','compensation-run')),1,40);
   v_compensation_step_id := 'step_' || substr(public.commander_compensation_hash_v1(
     jsonb_build_object('compensationRunId',v_compensation_run_id,'kind','tool')),1,32);
-  v_idempotency_key := 'cmp:' || v_original_effect.id || ':' || (p_authorization->>'adapterVersion');
   v_compensation_effect_id := 'effect_' || substr(public.commander_compensation_hash_v1(
-    jsonb_build_object('compensationRunId',v_compensation_run_id,'idempotencyKey',v_idempotency_key)),1,40);
+    jsonb_build_object('compensationRunId',v_compensation_run_id,'originalEffectId',v_original_effect.id)),1,40);
   v_expected_request := jsonb_build_object(
     'originalEffectId',v_original_effect.id,
     'destination',v_original_effect.request->'destination',
     'forwardResponse',p_authorization->'forwardReceipt',
     'compensationPatch',p_authorization->'compensationRequest'->'compensationPatch'
   );
+  v_idempotency_key := public.commander_compensation_hash_v1(jsonb_build_object(
+    'v',1,
+    'tenantId',v_original_run.tenant_id,
+    'runId',v_compensation_run_id,
+    'stepId',v_compensation_step_id,
+    'effectId',v_compensation_effect_id,
+    'request',v_expected_request));
   v_forward_receipt_hash := public.commander_compensation_hash_v1(p_authorization->'forwardReceipt');
   v_request_hash := public.commander_compensation_hash_v1(v_expected_request);
   v_expected_approval := CASE WHEN p_requested_approval_binding IS NULL OR p_requested_approval_binding = 'null'::jsonb
@@ -2075,7 +2081,13 @@ BEGIN
     'compensationEffectId',v_compensation_effect_id,
     'compensationEffectType',v_auth.compensation_effect_type,
     'compensationRequest',v_compensation_request,
-    'idempotencyKey','cmp:'||v_auth.original_effect_id||':'||v_auth.adapter_version,
+    'idempotencyKey',public.commander_compensation_hash_v1(jsonb_build_object(
+      'v',1,
+      'tenantId',v_auth.tenant_id,
+      'runId',v_request->>'compensation_run_id',
+      'stepId',v_request->>'compensation_step_id',
+      'effectId',v_compensation_effect_id,
+      'request',v_compensation_request)),
     'forwardReceipt',COALESCE(v_effect.response,'{}'::jsonb),
     'forwardReceiptHash',v_auth.forward_receipt_hash,
     'requestHash',public.commander_compensation_hash_v1(v_compensation_request),
@@ -2109,4 +2121,45 @@ ALTER FUNCTION public.request_compensation(text,text,text) OWNER TO commander_ow
 REVOKE ALL ON FUNCTION public.request_compensation(text,text,text)
   FROM PUBLIC,commander_worker,commander_adapter_ops,commander_scheduler;
 GRANT EXECUTE ON FUNCTION public.request_compensation(text,text,text) TO commander_app;
+`;
+
+/**
+ * KC-05: only AUTHORIZED/CLAIMED compensation requests may carry a claim
+ * deadline. Terminal transitions (`COMPLETED`/`CONFIRMED_NOT_APPLIED`/
+ * `COMPLETION_UNKNOWN`/`ESCALATED`) used to leave `claim_expires_at` behind, so
+ * the automatic selection inside `claim_compensation_request`
+ * (`r.state='AUTHORIZED' OR r.claim_expires_at<=p_now`) kept matching terminal
+ * rows; `ORDER BY created_at LIMIT 1` then always picked the oldest terminal row
+ * and the following state check rejected it, returning NULL on every tick and
+ * starving newer AUTHORIZED requests for that worker's tenant set.
+ *
+ * Enforce the invariant at the row level and backfill existing rows.
+ */
+export const KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_REPAIR_SQL = String.raw`
+CREATE OR REPLACE FUNCTION public.commander_clear_terminal_compensation_claim_deadline()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public
+AS $fn$
+BEGIN
+  IF NEW.state NOT IN ('AUTHORIZED','CLAIMED') THEN
+    NEW.claim_expires_at := NULL;
+  END IF;
+  RETURN NEW;
+END
+$fn$;
+
+ALTER FUNCTION public.commander_clear_terminal_compensation_claim_deadline() OWNER TO commander_owner;
+REVOKE ALL ON FUNCTION public.commander_clear_terminal_compensation_claim_deadline() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS commander_compensation_terminal_claim_deadline ON public.commander_compensation_requests;
+CREATE TRIGGER commander_compensation_terminal_claim_deadline
+BEFORE INSERT OR UPDATE ON public.commander_compensation_requests
+FOR EACH ROW EXECUTE FUNCTION public.commander_clear_terminal_compensation_claim_deadline();
+
+UPDATE public.commander_compensation_requests
+   SET claim_expires_at = NULL
+ WHERE state NOT IN ('AUTHORIZED','CLAIMED')
+   AND claim_expires_at IS NOT NULL;
 `;

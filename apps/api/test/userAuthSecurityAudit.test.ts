@@ -66,8 +66,14 @@ async function login(username: string, password: string): Promise<string> {
 }
 
 before(async () => {
-  setUserRepository(new TestUserRepository());
-  setRefreshTokenRepository(new TestRefreshTokenRepository());
+  const userRepo = new TestUserRepository();
+  setUserRepository(userRepo);
+  // AUTH-03: the refresh double enforces the same auth-version fence the
+  // PostgreSQL repository applies, so a pre-reset token is rejected even when
+  // the double does not model the transactional revoke.
+  const refreshRepo = new TestRefreshTokenRepository();
+  refreshRepo.authVersionProvider = async (id) => (await userRepo.findUserById(id))?.authVersion;
+  setRefreshTokenRepository(refreshRepo);
   setAuthFailureStore(new TestAuthFailureStore());
 
   for (const u of [

@@ -216,8 +216,12 @@ export class MultimodalContentScanner {
         [
           {
             type: 'excessive_resolution',
-            severity: 'MEDIUM',
-            description: `File size ${buffer.length} exceeds max ${this.config.maxFileSize}`,
+            // HIGH, not MEDIUM: the file is *never scanned*, and `isSafe` only
+            // rejects HIGH/CRITICAL. Reporting an unscanned oversize upload as
+            // MEDIUM made `isSafe` return true — i.e. "unmeasured" became
+            // "safe". Fail closed instead.
+            severity: 'HIGH',
+            description: `File size ${buffer.length} exceeds max ${this.config.maxFileSize}; content was not scanned`,
             modality: 'image',
             evidence: `size=${buffer.length}`,
             remediation: 'Reject file. Reduce size before uploading.',

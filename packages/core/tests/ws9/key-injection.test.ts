@@ -69,7 +69,11 @@ function anthropicTestKey(value: string): string {
 }
 
 /** Read the keypath allowlist to verify env var compliance. */
-function readAllowlist(): { allowed: string[]; forbiddenPatterns: string[] } {
+function readAllowlist(): {
+  allowed: string[];
+  forbiddenPatterns: string[];
+  notes?: string[];
+} {
   const allowlistPath = path.resolve(
     __dirname,
     '..',
