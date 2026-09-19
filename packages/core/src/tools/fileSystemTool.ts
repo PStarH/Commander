@@ -73,7 +73,20 @@ export function getSafeRoot(): string {
 
 /** Check that a resolved path is within SAFE_ROOT (prevents prefix collision like workspace-evil). */
 export function isWithinRoot(resolved: string, root: string): boolean {
-  return resolved === root || resolved.startsWith(root + path.sep);
+  // Windows paths are case-insensitive and may differ between long and 8.3
+  // spellings (for example RUNNER~1 versus runneradmin). Compare normalized
+  // absolute paths so a valid workspace child is not rejected by a lexical
+  // spelling difference while preserving the separator boundary check.
+  const normalize = (value: string): string => {
+    const absolute = path.resolve(value);
+    return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+  };
+  const normalizedResolved = normalize(resolved);
+  const normalizedRoot = normalize(root);
+  return (
+    normalizedResolved === normalizedRoot ||
+    normalizedResolved.startsWith(normalizedRoot + path.sep)
+  );
 }
 
 /**

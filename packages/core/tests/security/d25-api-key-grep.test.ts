@@ -172,6 +172,11 @@ const ALLOWED_SYNTHETIC: ReadonlyArray<{
   readonly reason: string;
 }> = [
   {
+    file: 'apps/api/test/evaluationAdmissionResidual.test.ts',
+    patterns: ['openai-sk'],
+    reason: 'Negative test fixture: provider error text must be redacted.',
+  },
+  {
     file: 'packages/core/tests/security/d25-api-key-grep.test.ts',
     patterns: ['openai-sk', 'anthropic-sk-ant', 'github-gh', 'aws-access-key', 'slack-xox'],
     reason: 'The gate’s own fixture strings; they exist to be matched.',
