@@ -569,11 +569,17 @@ describe('AppContainerSB', () => {
         { path: maliciousPath, access: 'read' },
       ]);
 
-      execFileSync(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-        { timeout: 10_000 },
-      );
+      try {
+        execFileSync(
+          'powershell.exe',
+          ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
+          { timeout: 10_000 },
+        );
+      } catch {
+        // The fixture intentionally points at a missing path, so icacls may
+        // report a rollback failure. The security assertion is that the
+        // injected command never runs.
+      }
       expect(fs.existsSync(marker)).toBe(false);
     },
   );

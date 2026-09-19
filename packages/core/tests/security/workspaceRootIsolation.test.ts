@@ -6,6 +6,7 @@
  */
 import { test, describe, beforeEach, afterEach } from 'vitest';
 import * as assert from 'node:assert/strict';
+import * as path from 'node:path';
 import { runWithTenant, setMultiTenantEnabled } from '../../src/runtime/tenantContext.js';
 import {
   setGlobalTenantProvider,
@@ -44,7 +45,7 @@ describe('getSafeRoot multi-tenant fail-closed (AUDIT-CORE2)', () => {
 
   test('configured tenant stays scoped to its workspace', () => {
     const root = runWithTenant('tenant-configured', () => getSafeRoot());
-    assert.equal(root, '/tmp/workspaces/tenant-configured');
+    assert.equal(root, path.resolve('/tmp/workspaces/tenant-configured'));
   });
 
   test('known tenant WITHOUT workspacePath refuses instead of shared root (baseline hole)', () => {

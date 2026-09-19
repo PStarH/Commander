@@ -13,7 +13,7 @@ const CREATE_SCRIPT = path.join(REPO_ROOT, 'deploy/scripts/create-tenant.sh');
 const DESTROY_SCRIPT = path.join(REPO_ROOT, 'deploy/scripts/destroy-tenant.sh');
 const MIGRATE_SCRIPT = path.join(REPO_ROOT, 'deploy/scripts/migrate-tenant.sh');
 
-describe('tenant deployment scripts', () => {
+describe.skipIf(process.platform === 'win32')('tenant deployment scripts', () => {
   let tmpDir: string;
   let configFile: string;
   let dataRoot: string;
