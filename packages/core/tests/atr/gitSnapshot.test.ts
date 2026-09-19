@@ -9,7 +9,7 @@ import {
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { execSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 
 describe('gitSnapshot', () => {
   const testRunId = 'test-run-git-snapshot';
@@ -123,7 +123,7 @@ describe('gitSnapshot', () => {
         execSync(`git clone "${tempDir}" "${cloneDir}"`, { stdio: 'pipe' });
         execSync('git config user.email "test@test.com"', { cwd: cloneDir, stdio: 'pipe' });
         execSync('git config user.name "Test"', { cwd: cloneDir, stdio: 'pipe' });
-        execSync(`git cat-file -e ${snapshot.baseCommitSha}^{commit}`, {
+        execFileSync('git', ['cat-file', '-e', `${snapshot.baseCommitSha}^{commit}`], {
           cwd: cloneDir,
           stdio: 'pipe',
         });

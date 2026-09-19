@@ -342,7 +342,7 @@ function scanFileForPatterns(file: string): Violation[] {
   } catch {
     return [];
   }
-  const relative = path.relative(REPO_ROOT, file);
+  const relative = path.relative(REPO_ROOT, file).split(path.sep).join('/');
   const allowed = ALLOWED_SYNTHETIC.find((entry) => entry.file === relative);
   const hits: Violation[] = [];
   for (const def of PATTERNS) {
