@@ -149,8 +149,10 @@ export async function safePath(target: string): Promise<string> {
       while (ancestor !== safeRoot && (await statIfExists(ancestor)) === undefined) {
         ancestor = path.dirname(ancestor);
       }
+      let realAncestorPath = ancestor;
       try {
         const realAncestor = await fs.promises.realpath(ancestor);
+        realAncestorPath = realAncestor;
         if (!isWithinRoot(realAncestor, containmentRoot)) {
           throw new Error(`Access denied: ancestor of "${target}" is outside workspace`);
         }
@@ -159,7 +161,10 @@ export async function safePath(target: string): Promise<string> {
         if (!isWithinRoot(resolved, containmentRoot))
           throw new Error(`Access denied: path "${target}" is outside workspace`);
       }
-      return resolved;
+      // Return the canonical spelling even when the leaf does not exist yet.
+      // This keeps callers consistent with realpath() and avoids Windows
+      // 8.3 aliases leaking into persisted output paths.
+      return realAncestorPath + resolved.slice(ancestor.length);
     }
     throw err;
   }
