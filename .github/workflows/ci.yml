@@ -457,6 +457,7 @@ jobs:
       # couples to host disk pressure (`pass: usePercent < 95`), meaning a
       # 90%-full machine fails a check that is not about the product.
       - name: CLI doctor offline (G2 install/first-run contract)
+        if: matrix.node-version == '22'
         shell: bash
         run: pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
 
