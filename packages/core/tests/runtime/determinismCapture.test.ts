@@ -116,7 +116,9 @@ describe('DeterminismCapture.restoreFromWAL', () => {
     expect(capture.hasCaptures('run-crash')).toBe(true);
 
     // Wait for async WAL writes to complete
-    await new Promise((r) => setTimeout(r, 50));
+    // WAL appends are asynchronous; Windows runners need a little more time
+    // for all three records to flush before the simulated crash.
+    await new Promise((r) => setTimeout(r, 250));
 
     // Phase 2: simulate crash — clear in-memory state
     capture.clearRun('run-crash');

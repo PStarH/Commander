@@ -52,6 +52,12 @@ export interface CollectAgentFilesParams {
 export function extractOutputFilePath(goal: string): string | null {
   const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
   const pathStart = String.raw`(?:[\\/.]|[A-Za-z]:[\\/])`;
+  const windowsPattern = new RegExp(
+    String.raw`(?:write|create|generate|output|produce|save)\b[^\n]*?\bto\b\s+([A-Za-z]:[\\/][^\s]+\.${extRe})`,
+    'i',
+  );
+  const windowsMatch = goal.match(windowsPattern);
+  if (windowsMatch) return windowsMatch[1];
 
   // Pattern 1: verb + any words + "to" + path
   const toPattern = new RegExp(

@@ -148,12 +148,16 @@ describe('writeSynthesisOutput', () => {
   it('writes a relative output beneath the workspace', async () => {
     const writtenPath = await writeSynthesisOutput('Write the report to ./reports/result.md', 'ok');
 
-    expect(writtenPath).toBe(path.join(workspace, 'reports', 'result.md'));
+    expect(writtenPath).toBe(path.join(fs.realpathSync.native(workspace), 'reports', 'result.md'));
     expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
   });
 
   it('rejects traversal and absolute output paths outside the workspace', async () => {
-    const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-outside.md`);
+    const canonicalWorkspace = fs.realpathSync.native(workspace);
+    const outside = path.join(
+      path.dirname(canonicalWorkspace),
+      `${path.basename(canonicalWorkspace)}-outside.md`,
+    );
 
     await expect(writeSynthesisOutput(`Write the report to ${outside}`, 'blocked')).rejects.toThrow(
       /outside workspace/,
@@ -165,7 +169,11 @@ describe('writeSynthesisOutput', () => {
   });
 
   it('keeps the legacy output collector inside the same workspace root', async () => {
-    const outside = path.join(path.dirname(workspace), `${path.basename(workspace)}-legacy.md`);
+    const canonicalWorkspace = fs.realpathSync.native(workspace);
+    const outside = path.join(
+      path.dirname(canonicalWorkspace),
+      `${path.basename(canonicalWorkspace)}-legacy.md`,
+    );
     const reasoning: string[] = [];
     const collector = new OrchestratorOutputCollector(makeRuntime());
 
