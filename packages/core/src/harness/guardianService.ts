@@ -113,7 +113,10 @@ export class GuardianService {
       });
 
       if (!response?.content) {
-        return { approved: false, reason: 'Guardian returned empty response — denied (fail-closed)' };
+        return {
+          approved: false,
+          reason: 'Guardian returned empty response — denied (fail-closed)',
+        };
       }
 
       const parsed = this.parseDecision(response.content);

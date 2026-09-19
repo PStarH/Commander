@@ -716,7 +716,10 @@ Respond with a JSON object:
       });
 
       if (!guardianResponse?.content) {
-        return { approved: false, reason: 'Guardian returned empty response — denied (fail-closed)' };
+        return {
+          approved: false,
+          reason: 'Guardian returned empty response — denied (fail-closed)',
+        };
       }
 
       const parsed = extractDecisionObject(guardianResponse.content, 'approved');
