@@ -464,7 +464,17 @@ export async function runComposeDemoCompensationFlow(
   // visible to the API readiness function. Poll only that explicit transient
   // state; every other response remains fail-closed and is returned immediately.
   let proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
-  for (let attempt = 0; attempt < 30 && proposed.status === 503; attempt += 1) {
+  for (
+    let attempt = 0;
+    attempt < 12 && (proposed.status === 503 || proposed.status === 429);
+    attempt += 1
+  ) {
+    if (proposed.status === 429) {
+      const retryAfter = Number(proposed.json?.retryAfter);
+      await sleep((Number.isFinite(retryAfter) ? Math.max(1, retryAfter) : 5) * 1_000);
+      proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
+      continue;
+    }
     const code = proposed.json?.error;
     if (typeof code !== 'object' || code === null) {
       break;
@@ -473,7 +483,7 @@ export async function runComposeDemoCompensationFlow(
     if (transientCode !== 'OPERATIONS_NOT_READY' && transientCode !== 'KILL_SWITCH_LOOKUP_FAILED') {
       break;
     }
-    await sleep(1_000);
+    await sleep(5_000);
     proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
   }
   if (proposed.status !== 202) {
