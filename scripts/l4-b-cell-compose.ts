@@ -90,7 +90,7 @@ const CELL_DATABASE_TLS_MATERIALS = generateCellDatabaseTlsMaterials();
 
 export const COMPOSE_CONFIG_ENV: Record<string, string> = {
   POSTGRES_PASSWORD: 'ci-cell-smoke',
-  COMMANDER_API_KEY: 'ci-cell-smoke-api-key',
+  COMMANDER_API_KEY: process.env.COMMANDER_API_KEY ?? 'ci-cell-smoke-api-key',
   COMMANDER_MASTER_KEY: 'ci-cell-smoke-master-key-32chars!!',
   JWT_SECRET: 'ci-cell-smoke-jwt-secret-at-least-32-characters',
   ADMIN_PASSWORD: 'ci-cell-smoke-admin-password',
