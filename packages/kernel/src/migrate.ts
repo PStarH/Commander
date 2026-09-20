@@ -80,6 +80,7 @@ export async function seedConfiguredApiKey(
     `SELECT to_regclass('public.commander_auth_api_keys')::text AS relation`,
   );
   if (!table.rows[0]?.relation) return;
+  await client.query('GRANT SELECT ON TABLE commander_action_kill_switches TO commander_app');
   const hash = createHash('sha256').update(key).digest('hex');
   await client.query(
     `INSERT INTO commander_auth_api_keys
