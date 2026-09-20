@@ -416,22 +416,32 @@ export async function runComposeDemoCompensationFlow(
   baseUrl = 'http://localhost:4000',
 ): Promise<Record<string, boolean>> {
   const idem = `cell-comp-${Date.now()}`;
-  const proposed = await httpJson(
-    baseUrl,
-    'POST',
-    '/v1/actions',
-    {
-      source: 'cell-e2e',
-      package: 'cell-e2e',
-      model: 'mock',
-      tool: 'ticket.create',
-      destination: 'demo://tickets/approval',
-      effectType: 'demo.ticket.create',
-      args: { title: 'Cell compensation E2E' },
-      idempotencyKey: idem,
-    },
-    idem,
-  );
+  const proposal = {
+    source: 'cell-e2e',
+    package: 'cell-e2e',
+    model: 'mock',
+    tool: 'ticket.create',
+    destination: 'demo://tickets/approval',
+    effectType: 'demo.ticket.create',
+    args: { title: 'Cell compensation E2E' },
+    idempotencyKey: idem,
+  };
+  // Container health becomes ready before the durable worker registrations are
+  // visible to the API readiness function. Poll only that explicit transient
+  // state; every other response remains fail-closed and is returned immediately.
+  let proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
+  for (let attempt = 0; attempt < 30 && proposed.status === 503; attempt += 1) {
+    const code = proposed.json?.error;
+    if (
+      typeof code !== 'object' ||
+      code === null ||
+      (code as { code?: unknown }).code !== 'OPERATIONS_NOT_READY'
+    ) {
+      break;
+    }
+    await sleep(1_000);
+    proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
+  }
   if (proposed.status !== 202)
     return { proposed: false, approved: false, forwardDone: false, compensated: false };
   const action = (proposed.json?.action ?? {}) as {
