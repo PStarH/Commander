@@ -1127,7 +1127,6 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
             completeEffectWithEvidence: undefined,
             failEffectWithEvidence: undefined,
             failEffect: undefined,
-            markEffectCompletionUnknown: undefined,
             listEffectsForRun: undefined,
             listEvents: undefined,
             completeCompensationEffectWithEvidence: (
