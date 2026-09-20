@@ -466,11 +466,11 @@ export async function runComposeDemoCompensationFlow(
   let proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
   for (let attempt = 0; attempt < 30 && proposed.status === 503; attempt += 1) {
     const code = proposed.json?.error;
-    if (
-      typeof code !== 'object' ||
-      code === null ||
-      (code as { code?: unknown }).code !== 'OPERATIONS_NOT_READY'
-    ) {
+    if (typeof code !== 'object' || code === null) {
+      break;
+    }
+    const transientCode = (code as { code?: unknown }).code;
+    if (transientCode !== 'OPERATIONS_NOT_READY' && transientCode !== 'KILL_SWITCH_LOOKUP_FAILED') {
       break;
     }
     await sleep(1_000);
