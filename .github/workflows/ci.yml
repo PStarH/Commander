@@ -1066,6 +1066,9 @@ jobs:
         # below can actually read the containers' logs.
         run: pnpm cell:up-assert --keep
 
+      - name: Cell compensation E2E compose (C3)
+        run: pnpm cell:compensation-e2e -- --mode compose --up
+
       # `cell:up-assert` reports which services are unhealthy but the reason is in
       # the containers. Without this, an unhealthy api/worker/adapter-ops is
       # undiagnosable from CI output.
@@ -1082,11 +1085,8 @@ jobs:
           docker compose -f docker-compose.yml -f docker-compose.cell.yml \
             -f docker-compose.kernel-tls.yml --profile cell down -v --remove-orphans || true
 
-      - name: Cell compensation E2E compose (C3)
-        run: pnpm cell:compensation-e2e -- --mode compose --up
-
       - name: Upload cell up-assert artifacts
-        if: success()
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-cell-up-assert
@@ -1094,7 +1094,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload cell compensation e2e artifacts
-        if: success()
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-cell-compensation-e2e

@@ -12,7 +12,8 @@ import {
   currentTask1Operation,
   createTask1ProofRuntime,
   readTask1OwnerInput,
-  seedTask1ReadinessTenant,
+  seedTask1AllowedTenants,
+  seedDemoApiKey,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
 import {
@@ -115,7 +116,7 @@ describe('kernel owner migration entrypoint', () => {
 
   it('seeds the fixed readiness tenant through the owner authority allowlist', async () => {
     const calls: Array<{ sql: string; values: readonly unknown[] | undefined }> = [];
-    await seedTask1ReadinessTenant({
+    await seedTask1AllowedTenants({
       async query(sql, values) {
         calls.push({ sql, values });
         return sqlResult([]);
@@ -125,6 +126,39 @@ describe('kernel owner migration entrypoint', () => {
     assert.equal(calls.length, 1);
     assert.match(calls[0]!.sql, /INSERT INTO commander_tenant_authority_allowed_tenants/i);
     assert.deepEqual(calls[0]!.values, ['commander/readiness/v1']);
+  });
+
+  it('authorizes configured business tenants alongside the readiness probe', async () => {
+    const tenants: unknown[] = [];
+    await seedTask1AllowedTenants(
+      {
+        async query(_sql, values) {
+          tenants.push(values?.[0]);
+          return sqlResult([]);
+        },
+      },
+      ['cell-smoke-tenant'],
+    );
+    assert.deepEqual(tenants, ['commander/readiness/v1', 'cell-smoke-tenant']);
+  });
+
+  it('bootstraps a tenant-scoped approval key without reviving or rebinding existing keys', async () => {
+    const calls: Array<{ sql: string; values: readonly unknown[] }> = [];
+    await seedDemoApiKey(
+      {
+        async query<T>(sql: string, values: readonly unknown[] = []) {
+          calls.push({ sql, values });
+          return sqlResult<T>([{ relation: 'commander_auth_api_keys' } as T]);
+        },
+      },
+      'test-bootstrap-secret',
+      'cell-smoke-tenant',
+    );
+    const insert = calls.find((call) => call.sql.includes('INSERT INTO commander_auth_api_keys'))!;
+    assert.match(insert.sql, /actions:approve/);
+    assert.match(insert.sql, /ON CONFLICT \(key_hash\) DO NOTHING/);
+    assert.equal(insert.values[3], 'cell-smoke-tenant');
+    assert.ok(!calls.some((call) => call.sql.includes('GRANT')));
   });
 
   it('formats only a sanitized PostgreSQL migration failure diagnostic', () => {

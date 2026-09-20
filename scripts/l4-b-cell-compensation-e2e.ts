@@ -8,7 +8,6 @@
 
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
@@ -26,7 +25,6 @@ import {
   assertComposeCellHealth,
   CELL_COMPOSE_ENV,
   CELL_E2E_TENANT,
-  COMPOSE_CMD,
   tryComposeCellUp,
 } from './l4-b-cell-compose.js';
 import {
@@ -52,35 +50,6 @@ export interface CompensationE2EResult {
 
 export { assertComposeCellHealth, CELL_COMPOSE_ENV, CELL_E2E_TENANT, tryComposeCellUp };
 
-function resolveComposeApiKey(): string {
-  // Read the credential from the running container itself. Re-evaluating the
-  // compose file here can use a different interpolation environment than the
-  // `cell:up-assert` process that created the stack, which silently caused a
-  // host fallback and 401s against an otherwise healthy API.
-  try {
-    const containerId = execSync(`${COMPOSE_CMD} ps -q api`, {
-      cwd: process.cwd(),
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'ignore'],
-    }).trim();
-    if (containerId) {
-      for (const variable of ['API_KEYS', 'COMMANDER_API_KEY']) {
-        const value = execSync(`docker exec ${containerId} printenv ${variable}`, {
-          cwd: process.cwd(),
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-        }).trim();
-        if (value)
-          return variable === 'API_KEYS' ? (value.split(';')[0]?.split(':')[0] ?? value) : value;
-      }
-    }
-  } catch {
-    // Local/mock invocations may not have a running compose API; use the
-    // injected CI value or deterministic fixture fallback below.
-  }
-  return process.env.COMMANDER_API_KEY ?? CELL_COMPOSE_ENV.COMMANDER_API_KEY;
-}
-
 async function httpJson(
   baseUrl: string,
   method: string,
@@ -88,7 +57,7 @@ async function httpJson(
   body?: unknown,
   idempotencyKey?: string,
 ): Promise<{ status: number; json: Record<string, unknown> | null }> {
-  const apiKey = resolveComposeApiKey();
+  const apiKey = CELL_COMPOSE_ENV.COMMANDER_API_KEY;
   const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
@@ -480,7 +449,7 @@ export async function runComposeDemoCompensationFlow(
       break;
     }
     const transientCode = (code as { code?: unknown }).code;
-    if (transientCode !== 'OPERATIONS_NOT_READY' && transientCode !== 'KILL_SWITCH_LOOKUP_FAILED') {
+    if (transientCode !== 'OPERATIONS_NOT_READY') {
       break;
     }
     await sleep(5_000);

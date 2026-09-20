@@ -69,34 +69,36 @@ export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
 }
 
 /** Seed the explicitly injected cell API key into the PostgreSQL auth authority. */
-export async function seedConfiguredApiKey(
+export async function seedDemoApiKey(
   client: Pick<SqlClient, 'query'>,
   apiKey: string | undefined,
   tenantId: string | undefined,
 ): Promise<void> {
   const key = apiKey?.trim();
   if (!key) return;
+  if (!tenantId?.trim() || tenantId.trim() === '*') throw new Error('CELL_API_KEY_TENANT_REQUIRED');
   const table = await client.query<{ relation: string | null }>(
     `SELECT to_regclass('public.commander_auth_api_keys')::text AS relation`,
   );
-  if (!table.rows[0]?.relation) return;
-  await client.query('GRANT SELECT ON TABLE commander_action_kill_switches TO commander_app');
+  if (!table.rows[0]?.relation) throw new Error('CELL_API_KEY_AUTH_SCHEMA_REQUIRED');
   const hash = createHash('sha256').update(key).digest('hex');
   await client.query(
     `INSERT INTO commander_auth_api_keys
        (id, name, prefix, key_hash, scopes, tenant_id)
-     VALUES ($1, 'cell-e2e', $2, $3, ARRAY['read','write']::text[], $4)
-     ON CONFLICT (key_hash) DO UPDATE
-       SET enabled = true, revoked_at = NULL, tenant_id = EXCLUDED.tenant_id`,
-    [`ak_cell_${randomUUID()}`, key.slice(0, 8), hash, tenantId ?? null],
+     VALUES ($1, 'cell-e2e', $2, $3, ARRAY['read','write','actions:approve']::text[], $4)
+     ON CONFLICT (key_hash) DO NOTHING`,
+    [`ak_cell_${randomUUID()}`, key.slice(0, 8), hash, tenantId.trim()],
   );
 }
 
 const TASK1_READINESS_TENANT = 'commander/readiness/v1';
 
-/** The API's fixed tenant-context readiness challenge must be authorized by the owner migration. */
-export async function seedTask1ReadinessTenant(client: ClaimSecretSeedClient): Promise<void> {
-  await seedTenantAuthorityAllowedTenants(client, [TASK1_READINESS_TENANT]);
+/** Authorize the readiness probe and explicitly configured business tenants together. */
+export async function seedTask1AllowedTenants(
+  client: ClaimSecretSeedClient,
+  tenantIds: readonly string[] = [],
+): Promise<void> {
+  await seedTenantAuthorityAllowedTenants(client, [TASK1_READINESS_TENANT, ...tenantIds]);
 }
 
 /** Populated-volume upgrade gate: role init scripts only run on first database creation. */
@@ -933,13 +935,13 @@ async function main() {
       // the API requires at first boot — apply in the same job instead of
       // waiting for a second migration run.
       await runKernelMigrations(activePool, { requiredRole: 'owner' });
-      await seedTask1ReadinessTenant(activePool);
     }
     // Seed cell tenants so register_worker can admit worker LOGIN registrations.
     // Prefer COMMANDER_WORKER_ALLOWED_TENANTS; fall back to COMMANDER_WORKER_TENANTS.
     const tenants = parseAllowedTenantsEnv(
       process.env.COMMANDER_WORKER_ALLOWED_TENANTS ?? process.env.COMMANDER_WORKER_TENANTS,
     );
+    if (closurePhase) await seedTask1AllowedTenants(activePool, tenants);
     if (tenants.length > 0) {
       await seedWorkerAllowedTenants(activePool, tenants);
       console.log(`Seeded commander_worker_allowed_tenants: ${tenants.join(',')}`);
@@ -948,11 +950,13 @@ async function main() {
         console.log(`Seeded demo ticket effect policy: ${tenants.join(',')}`);
       }
     }
-    await seedConfiguredApiKey(
-      activePool,
-      process.env.COMMANDER_API_KEY,
-      process.env.COMMANDER_CELL_TENANT_ID ?? tenants[0],
-    );
+    if (process.env.COMMANDER_ENABLE_DEMO_TICKET === '1') {
+      await seedDemoApiKey(
+        activePool,
+        process.env.COMMANDER_API_KEY,
+        process.env.COMMANDER_CELL_TENANT_ID,
+      );
+    }
     console.log(
       closurePhase
         ? `Task 1 ${closurePhase} migrations applied successfully`
