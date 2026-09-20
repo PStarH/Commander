@@ -62,7 +62,9 @@ async function httpJson(
     headers: {
       'content-type': 'application/json',
       // Prefer x-api-key only — Authorization: Bearer is interpreted as JWT.
-      'x-api-key': CELL_COMPOSE_ENV.COMMANDER_API_KEY,
+      // CI generates a fresh key for each compose stack; local mock compose
+      // keeps the deterministic fallback from CELL_COMPOSE_ENV.
+      'x-api-key': process.env.COMMANDER_API_KEY ?? CELL_COMPOSE_ENV.COMMANDER_API_KEY,
       'x-tenant-id': CELL_E2E_TENANT,
       ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
