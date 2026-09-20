@@ -1,0 +1,47 @@
+# Test-only override. Never include this file in a production deployment.
+# CELL_GITHUB_TLS_DIR contains ephemeral cert.pem/key.pem, SAN DNS:api.github.com.
+services:
+  github-fixture:
+    image: node:22.14.0-alpine
+    profiles: [cell]
+    command: ['node', '/fixture/cell-github-fixture.mjs']
+    environment:
+      CELL_GITHUB_TOKEN: ${CELL_GITHUB_TOKEN:?set CELL_GITHUB_TOKEN}
+      NODE_EXTRA_CA_CERTS: /fixture/tls/cert.pem
+    volumes:
+      - ./scripts/cell-github-fixture.mjs:/fixture/cell-github-fixture.mjs:ro
+      - ${CELL_GITHUB_TLS_DIR:?set CELL_GITHUB_TLS_DIR}:/fixture/tls:ro
+    networks:
+      default:
+        aliases: [api.github.com]
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('https://api.github.com/__cell__/state',{headers:{Authorization:'Bearer '+process.env.CELL_GITHUB_TOKEN}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  worker:
+    environment:
+      GITHUB_TOKEN: ${CELL_GITHUB_TOKEN:?set CELL_GITHUB_TOKEN}
+      NODE_EXTRA_CA_CERTS: /fixture/tls/cert.pem
+      COMMANDER_ADAPTER_EGRESS_ALLOWLIST: api.github.com
+      COMMANDER_GITHUB_REPOSITORIES: octo/repo
+    volumes:
+      - ${CELL_GITHUB_TLS_DIR:?set CELL_GITHUB_TLS_DIR}/cert.pem:/fixture/tls/cert.pem:ro
+    depends_on:
+      github-fixture:
+        condition: service_healthy
+  adapter-ops:
+    environment:
+      GITHUB_TOKEN: ${CELL_GITHUB_TOKEN:?set CELL_GITHUB_TOKEN}
+      NODE_EXTRA_CA_CERTS: /fixture/tls/cert.pem
+      COMMANDER_ADAPTER_EGRESS_ALLOWLIST: api.github.com
+      COMMANDER_GITHUB_REPOSITORIES: octo/repo
+    volumes:
+      - ${CELL_GITHUB_TLS_DIR:?set CELL_GITHUB_TLS_DIR}/cert.pem:/fixture/tls/cert.pem:ro
+    depends_on:
+      github-fixture:
+        condition: service_healthy

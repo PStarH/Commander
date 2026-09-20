@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
+import { KERNEL_COMPENSATION_TOPIC, type RequestCompensationResult } from '@commander/kernel';
 import {
   adapterOpsCompensationMockPassed,
   notReadyControlledChangeEvidence,
@@ -38,83 +38,158 @@ describe('l4-b-cell-compensation-e2e', () => {
     assert.equal(result.verdict, 'ENFORCED-script-only');
   });
 
-  it('sends a valid route-specific Idempotency-Key on every Action write', async () => {
-    const originalFetch = globalThis.fetch;
-    const requests: Array<{
-      method: string;
-      path: string;
-      idempotencyKey: string | null;
-      body: Record<string, unknown> | null;
-    }> = [];
-    let proposalCount = 0;
-
-    globalThis.fetch = (async (input, init) => {
-      const url = new URL(String(input));
-      const method = init?.method ?? 'GET';
-      const body = typeof init?.body === 'string' ? JSON.parse(init.body) : null;
-      requests.push({
-        method,
-        path: url.pathname,
-        idempotencyKey: new Headers(init?.headers).get('Idempotency-Key'),
-        body,
-      });
-
-      if (method === 'POST' && url.pathname === '/v1/actions') {
-        proposalCount += 1;
-        return Response.json(
-          proposalCount === 1
-            ? {
-                action: {
-                  runId: 'forward-run',
-                  simulation: {
-                    actionDigest: 'forward-digest',
-                    simulationId: 'forward-simulation',
-                    policySnapshotId: 'forward-policy',
-                  },
+  for (const scenario of [
+    'success',
+    'missing-receipt',
+    'tamper-accepted',
+    'replay-diverged',
+    'request-replay-diverged',
+    'approval-tamper-accepted',
+  ] as const) {
+    it(`canonical HTTP compensation flow: ${scenario}`, async () => {
+      const originalFetch = globalThis.fetch;
+      const requests: Array<{
+        path: string;
+        method: string;
+        key: string | null;
+        body: Record<string, unknown>;
+      }> = [];
+      const receiptHash = 'a'.repeat(64);
+      let approvals = 0;
+      let authorizations = 0;
+      globalThis.fetch = async (input, init) => {
+        const path = new URL(String(input)).pathname;
+        const method = init?.method ?? 'GET';
+        const body: Record<string, unknown> =
+          typeof init?.body === 'string' ? JSON.parse(init.body) : {};
+        requests.push({
+          path,
+          method,
+          body,
+          key: new Headers(init?.headers).get('Idempotency-Key'),
+        });
+        if (method === 'POST' && path === '/v1/actions') {
+          assert.equal(body.effectType, 'connector.github.pull-request.create');
+          assert.equal(body.destination, 'github://octo/repo/pulls');
+          return Response.json(
+            {
+              action: {
+                runId: 'forward-run',
+                simulation: {
+                  actionDigest: 'b'.repeat(64),
+                  simulationId: 'simulation',
+                  policySnapshotId: 'policy',
                 },
-              }
-            : { action: { runId: 'compensation-run' } },
-          { status: 202 },
-        );
+              },
+            },
+            { status: 202 },
+          );
+        }
+        if (path === '/v1/actions/forward-run/approve') return Response.json({}, { status: 200 });
+        if (method === 'GET' && path === '/v1/actions/forward-run') {
+          return Response.json({
+            action: {
+              state: 'SUCCEEDED',
+              effectId: 'forward-effect',
+              ...(scenario === 'missing-receipt' ? {} : { forwardReceiptHash: receiptHash }),
+            },
+          });
+        }
+        if (path === '/v1/actions/forward-run/compensations') {
+          assert.equal(body.originalEffectId, 'forward-effect');
+          assert.equal(body.adapterVersion, '1.0.0');
+          assert.equal(body.compensationEffectType, 'compensate.github.pull-request.create');
+          assert.deepEqual(body.compensationPatch, {});
+          if (body.forwardReceiptHash !== receiptHash) {
+            return Response.json(
+              { error: { code: 'FORWARD_RECEIPT_MISMATCH' } },
+              {
+                status: scenario === 'tamper-accepted' ? 202 : 409,
+              },
+            );
+          }
+          authorizations += 1;
+          return Response.json(
+            {
+              replayed: authorizations > 1,
+              state: 'AWAITING_APPROVAL',
+              authorization: {
+                id:
+                  scenario === 'replay-diverged' && authorizations > 1
+                    ? 'other-authorization'
+                    : 'authorization',
+                actionDigest: 'c'.repeat(64),
+                policySnapshotId: 'policy',
+              },
+            },
+            { status: 202 },
+          );
+        }
+        if (path === '/v1/actions/forward-run/compensations/authorization/approve') {
+          if (body.actionDigest !== 'c'.repeat(64)) {
+            return Response.json(
+              { error: { code: 'APPROVAL_BINDING_MISMATCH' } },
+              {
+                status: scenario === 'approval-tamper-accepted' ? 202 : 409,
+              },
+            );
+          }
+          approvals += 1;
+          return Response.json(
+            {
+              accepted: true,
+              request: {
+                id: 'request-id',
+                tenantId: 'tenant-id',
+                originalRunId: 'forward-run',
+                originalEffectId: 'forward-effect',
+                compensationStepId: 'compensation-step',
+                adapterVersion: '1.0.0',
+                compensationEffectType: 'compensate.github.pull-request.create',
+                destination: 'github://octo/repo/pulls',
+                compensationPatch: {},
+                forwardReceiptHash: receiptHash,
+                authorizationId: 'authorization',
+                reconcilePolicy: {
+                  maxAttempts: 3,
+                  initialDelayMs: 1000,
+                  maxDelayMs: 5000,
+                  deadlineAt: '2026-10-01T00:00:00.000Z',
+                },
+                state: 'AUTHORIZED',
+                compensationRunId:
+                  scenario === 'request-replay-diverged' && approvals > 1
+                    ? 'other-run'
+                    : 'compensation-run',
+              },
+              replayed: approvals > 1,
+            } satisfies RequestCompensationResult,
+            { status: 202 },
+          );
+        }
+        if (path === '/v1/runs/compensation-run/status')
+          return Response.json({ state: 'SUCCEEDED' });
+        assert.fail(`Unexpected request ${method} ${path}`);
+      };
+      try {
+        const result = await runComposeDemoCompensationFlow('http://cell.test');
+        assert.equal(result.compensated, scenario === 'success');
+        if (scenario === 'success') {
+          assert.equal(result.tamperRejected, true);
+          assert.equal(result.authorizationReplayed, true);
+          assert.equal(approvals, 2);
+          assert.equal(result.requestReplayed, true);
+          assert.equal(result.approvalTamperRejected, true);
+          const writes = requests.filter((request) => request.method === 'POST');
+          for (const write of writes) assert.match(write.key ?? '', /^[A-Za-z0-9._:-]{8,256}$/);
+          assert.equal(requests.filter((request) => request.path === '/v1/actions').length, 1);
+        }
+        if (scenario === 'missing-receipt') assert.equal(approvals, 0);
+      } finally {
+        globalThis.fetch = originalFetch;
       }
-      if (method === 'POST' && url.pathname === '/v1/actions/forward-run/approve') {
-        return Response.json({}, { status: 200 });
-      }
-      if (method === 'GET' && url.pathname === '/v1/actions/forward-run') {
-        return Response.json({ action: { state: 'SUCCEEDED' } });
-      }
-      if (method === 'GET' && url.pathname === '/v1/actions/compensation-run') {
-        return Response.json({ action: { state: 'SUCCEEDED' } });
-      }
-      return Response.json({}, { status: 404 });
-    }) as typeof fetch;
-
-    try {
-      const result = await runComposeDemoCompensationFlow('http://cell.test');
-      assert.deepEqual(result, {
-        proposed: true,
-        approved: true,
-        forwardDone: true,
-        compensated: true,
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-
-    const writes = requests.filter(({ method }) => method === 'POST');
-    assert.equal(writes.length, 3);
-    const [proposal, approval, compensation] = writes;
-    assert.equal(proposal.path, '/v1/actions');
-    assert.equal(proposal.idempotencyKey, proposal.body?.idempotencyKey);
-    assert.equal(approval.path, '/v1/actions/forward-run/approve');
-    assert.equal(approval.idempotencyKey, `approve-${proposal.idempotencyKey}`);
-    assert.equal(compensation.path, '/v1/actions');
-    assert.equal(compensation.idempotencyKey, compensation.body?.idempotencyKey);
-    assert.equal(new Set(writes.map(({ idempotencyKey }) => idempotencyKey)).size, writes.length);
-    for (const { idempotencyKey } of writes) {
-      assert.match(idempotencyKey ?? '', /^[A-Za-z0-9._:-]{8,256}$/);
-    }
-  });
+    });
+  }
 
   it('does not claim PROVEN evidence for the compose harness', () => {
     const source = readFileSync(

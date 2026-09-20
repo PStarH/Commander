@@ -529,6 +529,9 @@ async function renderAction(
     runId: run.id,
     stepId: metadata.stepId,
     effectId: metadata.effectId,
+    ...(effect?.state === 'COMPLETED' && effect.response
+      ? { forwardReceiptHash: canonicalValueHash(effect.response) }
+      : {}),
     state,
     decision: metadata.decision,
     simulation: metadata.simulation,
@@ -1056,7 +1059,12 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
       adapterVersion: parsed.data.adapterVersion,
       actionDigest,
     }).slice(0, 40)}`;
-    const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    const existingAuthorization = await kernel.getCompensationAuthorization(
+      authorizationId,
+      tenantId,
+    );
+    const expiresAt =
+      existingAuthorization?.expiresAt ?? new Date(Date.now() + 10 * 60_000).toISOString();
     const approvalInteractionId =
       decision.effect === 'require_approval'
         ? `interaction_${canonicalValueHash({ authorizationId, actionDigest }).slice(0, 40)}`
@@ -1150,22 +1158,55 @@ export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway |
     ) {
       return res.status(409).json({ error: { code: 'APPROVAL_BINDING_MISMATCH' } });
     }
-    const interaction = await kernel.answerInteraction({
-      interactionId: authorization.approvalInteractionId,
-      runId: loaded.run.id,
-      tenantId,
-      response: {
-        approved: true,
-        approvedBy: approver,
-        authorizationId: authorization.id,
-        originalEffectId: authorization.originalEffectId,
-        actionDigest: authorization.actionDigest,
-        policyDecisionId: authorization.policyDecisionId,
-        policySnapshotId: authorization.policySnapshotId,
-      },
-      actor: approver,
-      releaseStep: false,
-    });
+    const approvalResponse = {
+      approved: true,
+      approvedBy: approver,
+      authorizationId: authorization.id,
+      originalEffectId: authorization.originalEffectId,
+      actionDigest: authorization.actionDigest,
+      policyDecisionId: authorization.policyDecisionId,
+      policySnapshotId: authorization.policySnapshotId,
+    };
+    const loadApproval = async () =>
+      (await kernel.listInteractions(loaded.run.id, tenantId)).find(
+        (item) => item.id === authorization.approvalInteractionId,
+      );
+    let interaction = await loadApproval();
+    if (interaction?.status === 'pending') {
+      try {
+        interaction = await kernel.answerInteraction({
+          interactionId: authorization.approvalInteractionId,
+          runId: loaded.run.id,
+          tenantId,
+          response: approvalResponse,
+          actor: approver,
+          releaseStep: false,
+        });
+      } catch (error) {
+        // Another identical request may have answered after our read. Only
+        // this known CAS conflict is eligible for durable replay validation.
+        if (
+          !(error instanceof Error) ||
+          !('code' in error) ||
+          error.code !== 'INTERACTION_NOT_FOUND'
+        ) {
+          throw error;
+        }
+        interaction = await loadApproval();
+      }
+    }
+    const response = interaction?.response;
+    if (
+      interaction?.status !== 'answered' ||
+      response?.approved !== true ||
+      response.authorizationId !== authorization.id ||
+      response.originalEffectId !== authorization.originalEffectId ||
+      response.actionDigest !== authorization.actionDigest ||
+      response.policyDecisionId !== authorization.policyDecisionId ||
+      response.policySnapshotId !== authorization.policySnapshotId
+    ) {
+      return res.status(409).json({ error: { code: 'APPROVAL_BINDING_MISMATCH' } });
+    }
     const result = await kernel.requestCompensation({
       tenantId,
       authorizationId: authorization.id,

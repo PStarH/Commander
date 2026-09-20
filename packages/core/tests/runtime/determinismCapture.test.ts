@@ -10,7 +10,7 @@
  * 6. eventSourcingHealth includes p95 write latency
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // This suite mutates shared global singletons and tmp WAL files; force
 // sequential execution within the file even when running multi-threaded.
@@ -50,6 +50,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await resetGlobalEventSourcingEngine();
   resetGlobalDeterminismCapture();
+  vi.restoreAllMocks();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -115,10 +116,8 @@ describe('DeterminismCapture.restoreFromWAL', () => {
     capture.captureLLMResponse('run-crash', 3, { content: 'llm-2' });
     expect(capture.hasCaptures('run-crash')).toBe(true);
 
-    // Wait for async WAL writes to complete
-    // WAL appends are asynchronous; Windows runners need a little more time
-    // for all three records to flush before the simulated crash.
-    await new Promise((r) => setTimeout(r, 250));
+    // Simulate a crash only after the pre-crash records are persisted.
+    await getGlobalEventSourcingEngine().flush();
 
     // Phase 2: simulate crash — clear in-memory state
     capture.clearRun('run-crash');
@@ -148,13 +147,7 @@ describe('DeterminismCapture.restoreFromWAL', () => {
   it('is idempotent — calling twice does not duplicate', async () => {
     const capture = getGlobalDeterminismCapture();
     capture.captureLLMResponse('run-idem', 1, { content: 'x' });
-    // WAL appends are intentionally fire-and-forget. Poll for the durable
-    // records instead of relying on a fixed delay that is flaky on CI.
-    const deadline = Date.now() + 5_000;
-    while (getGlobalEventSourcingEngine().getEventsByCorrelationId('run-chaos-5').length < 3) {
-      if (Date.now() >= deadline) break;
-      await new Promise((r) => setTimeout(r, 25));
-    }
+    await getGlobalEventSourcingEngine().flush();
 
     capture.clearRun('run-idem');
     const first = capture.restoreFromWAL('run-idem');
@@ -240,7 +233,7 @@ describe('RunRecovery Path A (event replay)', () => {
     capture.captureToolResponse('run-replay-1', 2, { output: 'result' });
 
     // Wait for WAL persistence
-    await new Promise((r) => setTimeout(r, 50));
+    await getGlobalEventSourcingEngine().flush();
 
     // Simulate crash: in-memory captures lost
     capture.clearRun('run-replay-1');
@@ -294,7 +287,7 @@ describe('RunRecovery Path A (event replay)', () => {
   it('diagnose reports replay strategy when captures are available', async () => {
     const capture = getGlobalDeterminismCapture();
     capture.captureLLMResponse('run-diag', 1, { content: 'x' });
-    await new Promise((r) => setTimeout(r, 50));
+    await getGlobalEventSourcingEngine().flush();
 
     const diag = recovery.diagnose('run-diag');
     expect(diag.hasCaptures).toBe(true);
@@ -305,7 +298,7 @@ describe('RunRecovery Path A (event replay)', () => {
   it('diagnose restores from WAL if in-memory is empty', async () => {
     const capture = getGlobalDeterminismCapture();
     capture.captureLLMResponse('run-diag-2', 1, { content: 'x' });
-    await new Promise((r) => setTimeout(r, 50));
+    await getGlobalEventSourcingEngine().flush();
 
     // Simulate crash
     capture.clearRun('run-diag-2');
@@ -445,12 +438,20 @@ describe('Path A end-to-end replay correctness (chaos injection)', () => {
     const engine = getGlobalEventSourcingEngine();
     await engine.init();
 
+    // Exercise slow serialized WAL I/O without changing the recovery assertions.
+    const appendFile = fs.promises.appendFile.bind(fs.promises);
+    let appendCount = 0;
+    vi.spyOn(fs.promises, 'appendFile').mockImplementation(async (...args) => {
+      if (++appendCount === 3) await new Promise((resolve) => setTimeout(resolve, 75));
+      return appendFile(...args);
+    });
+
     // Pre-crash: capture two LLM responses + one tool response
     capture.captureLLMResponse('run-chaos-5', 1, { content: 'step1' });
     capture.captureToolResponse('run-chaos-5', 2, { output: 'step2-tool' });
     capture.captureLLMResponse('run-chaos-5', 3, { content: 'step3' });
 
-    await new Promise((r) => setTimeout(r, 50));
+    await getGlobalEventSourcingEngine().flush();
 
     // Crash — wipe in-memory state
     capture.clearRun('run-chaos-5');
@@ -499,7 +500,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureLLMResponse('run-xproc-1', 3, { content: 'proc-A-llm-2' });
 
     // Wait for async WAL writes to flush to disk
-    await new Promise((r) => setTimeout(r, 80));
+    await getGlobalEventSourcingEngine().flush();
 
     // Verify WAL file actually has content on disk
     const walStats = fs.statSync(crossProcessWalPath);
@@ -555,7 +556,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureLLMResponse('run-xproc-2', 1, { content: 'pre-crash-llm' });
     captureA.captureToolResponse('run-xproc-2', 2, { output: 'pre-crash-tool' });
 
-    await new Promise((r) => setTimeout(r, 80));
+    await getGlobalEventSourcingEngine().flush();
 
     // ── Process B: fresh process, same WAL ────────────────────────────
     await resetGlobalEventSourcingEngine();
@@ -597,7 +598,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureToolResponse('run-multi-A', 2, { output: 'A-tool' });
     captureA.captureLLMResponse('run-multi-B', 2, { content: 'B-2' });
 
-    await new Promise((r) => setTimeout(r, 80));
+    await getGlobalEventSourcingEngine().flush();
 
     // ── Process B ─────────────────────────────────────────────────────
     await resetGlobalEventSourcingEngine();
@@ -642,7 +643,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureToolResponse('run-integ', 2, { output: 'b' });
     captureA.captureLLMResponse('run-integ', 3, { content: 'c' });
 
-    await new Promise((r) => setTimeout(r, 80));
+    await getGlobalEventSourcingEngine().flush();
 
     // Verify integrity on Process A
     expect(await engineA.verifyIntegrity()).toBe(true);

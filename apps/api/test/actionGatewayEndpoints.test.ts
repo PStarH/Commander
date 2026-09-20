@@ -1241,7 +1241,15 @@ describe('L4-01 governed action HTTP API', () => {
       const terminalGet = await fetch(`${baseUrl}/v1/actions/${terminal.action.runId}`, {
         headers: { 'x-test-tenant': 'tenant-a' },
       });
-      assert.equal(((await terminalGet.json()) as any).action.state, 'SUCCEEDED');
+      const terminalBody = (await terminalGet.json()) as {
+        action: { state: string; forwardReceiptHash?: string };
+      };
+      assert.equal(terminalBody.action.state, 'SUCCEEDED');
+      assert.equal(
+        terminalBody.action.forwardReceiptHash,
+        createHash('sha256').update('{"status":"ok"}').digest('hex'),
+        'clients need the durable receipt hash to request compensation without reading the database',
+      );
     });
   });
 
@@ -1849,6 +1857,202 @@ describe('L4-01 governed action HTTP API', () => {
       const response = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
       assert.equal(response.status, 503);
       assert.equal(((await response.json()) as any).error.code, 'KILL_SWITCH_LOOKUP_FAILED');
+    });
+  });
+});
+
+describe('canonical compensation HTTP retries', () => {
+  async function fixture(baseUrl: string, gateway: InMemoryGateway) {
+    const proposed = await postJson(baseUrl, '/v1/actions', {
+      ...baseAction,
+      destination: 'demo://tickets/approval',
+      idempotencyKey: 'compensation-http-retry',
+    });
+    const { action } = (await proposed.json()) as {
+      action: {
+        runId: string;
+        simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
+      };
+    };
+    assert.equal(
+      (
+        await postJson(baseUrl, `/v1/actions/${action.runId}/approve`, {
+          actionDigest: action.simulation.actionDigest,
+          simulationId: action.simulation.simulationId,
+          policySnapshotId: action.simulation.policySnapshotId,
+        })
+      ).status,
+      200,
+    );
+    const step = await gateway.repository.claimNextStep({
+      workerId: 'retry-worker',
+      workerGeneration: 1,
+      tenantId: 'tenant-a',
+      capabilities: ['tool'],
+      leaseTtlMs: 30000,
+    });
+    assert.ok(step?.lease);
+    const run = await gateway.getRun(action.runId, 'tenant-a');
+    const metadata = run!.metadata.actionGateway as {
+      effectId: string;
+      envelope: Record<string, unknown>;
+    };
+    seedFreshOperationsDrains(gateway.repository, 'tenant-a');
+    assert.equal(
+      (
+        await gateway.repository.admitEffect({
+          id: metadata.effectId,
+          runId: action.runId,
+          stepId: step.id,
+          tenantId: 'tenant-a',
+          type: 'demo.ticket.create',
+          idempotencyKey: 'compensation-http-retry',
+          policyDecisionId: 'decision',
+          policySnapshotId: action.simulation.policySnapshotId,
+          actionDigest: action.simulation.actionDigest,
+          request: metadata.envelope,
+          lease: step.lease,
+          actor: 'retry-worker',
+        })
+      ).admitted,
+      true,
+    );
+    const receipt = { ticketId: 'ticket-retry' };
+    await gateway.repository.completeEffect(
+      metadata.effectId,
+      'tenant-a',
+      step.lease,
+      receipt,
+      'retry-worker',
+    );
+    const path = `/v1/actions/${action.runId}/compensations`;
+    const body = {
+      originalEffectId: metadata.effectId,
+      adapterVersion: '1.0.0',
+      compensationEffectType: 'compensate.demo.ticket.create',
+      compensationPatch: {},
+      forwardReceiptHash: createHash('sha256').update(JSON.stringify(receipt)).digest('hex'),
+    };
+    const response = await postJson(baseUrl, path, body);
+    assert.equal(response.status, 202, await response.clone().text());
+    const { authorization } = (await response.json()) as {
+      authorization: {
+        id: string;
+        expiresAt: string;
+        actionDigest: string;
+        policySnapshotId: string;
+        approvalInteractionId: string;
+      };
+    };
+    assert.ok(authorization);
+    return {
+      path,
+      body,
+      authorization,
+      approvalPath: `${path}/${authorization.id}/approve`,
+      binding: {
+        actionDigest: authorization.actionDigest,
+        policySnapshotId: authorization.policySnapshotId,
+      },
+    };
+  }
+
+  it('preserves authorization TTL and returns the same request on approval retries', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const f = await fixture(baseUrl, gateway);
+      const retry = await postJson(baseUrl, f.path, f.body);
+      assert.equal(retry.status, 202);
+      const repeated = (await retry.json()) as {
+        authorization: { expiresAt: string };
+        replayed: boolean;
+      };
+      assert.equal(repeated.authorization.expiresAt, f.authorization.expiresAt);
+      assert.equal(repeated.replayed, true);
+      const first = await postJson(baseUrl, f.approvalPath, f.binding);
+      assert.equal(first.status, 202, await first.clone().text());
+      const original = (await first.json()) as { request: { id: string }; interaction: unknown };
+      const again = await postJson(baseUrl, f.approvalPath, f.binding);
+      assert.equal(again.status, 202);
+      const replay = (await again.json()) as {
+        request: { id: string };
+        interaction: unknown;
+        replayed: boolean;
+      };
+      assert.equal(replay.request.id, original.request.id);
+      assert.deepEqual(replay.interaction, original.interaction);
+      assert.equal(replay.replayed, true);
+      assert.equal(
+        (await postJson(baseUrl, f.approvalPath, { ...f.binding, actionDigest: '0'.repeat(64) }))
+          .status,
+        409,
+      );
+    });
+  });
+
+  it('concurrent identical approvals converge on one durable request', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const f = await fixture(baseUrl, gateway);
+      const answer = gateway.answerInteraction.bind(gateway);
+      let arrivals = 0;
+      let release!: () => void;
+      const bothArrived = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      gateway.answerInteraction = async (input) => {
+        arrivals += 1;
+        if (arrivals === 2) release();
+        await bothArrived;
+        return answer(input);
+      };
+      const responses = await Promise.all([
+        postJson(baseUrl, f.approvalPath, f.binding),
+        postJson(baseUrl, f.approvalPath, f.binding),
+      ]);
+      assert.deepEqual(
+        responses.map((response) => response.status),
+        [202, 202],
+      );
+      const bodies = await Promise.all(
+        responses.map(
+          async (response) =>
+            (await response.json()) as { request: { id: string }; replayed: boolean },
+        ),
+      );
+      assert.equal(bodies[0]!.request.id, bodies[1]!.request.id);
+      assert.equal(bodies.filter((body) => body.replayed).length, 1);
+      assert.equal(arrivals, 2, 'exercise the pending-to-answered CAS race');
+    });
+  });
+
+  it('recovers after an answered approval whose request write failed, and rejects tampered persisted answers', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const f = await fixture(baseUrl, gateway);
+      const request = gateway.requestCompensation.bind(gateway);
+      let failOnce = true;
+      gateway.requestCompensation = (input) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('injected request persistence failure');
+        }
+        return request(input);
+      };
+      assert.equal((await postJson(baseUrl, f.approvalPath, f.binding)).status, 500);
+      const retry = await postJson(baseUrl, f.approvalPath, f.binding);
+      assert.equal(retry.status, 202, await retry.clone().text());
+      const list = gateway.listInteractions.bind(gateway);
+      gateway.listInteractions = async (runId, tenantId) =>
+        (await list(runId, tenantId)).map((interaction) =>
+          interaction.id === f.authorization.approvalInteractionId
+            ? {
+                ...interaction,
+                response: { ...interaction.response, originalEffectId: 'tampered' },
+              }
+            : interaction,
+        );
+      assert.equal((await postJson(baseUrl, f.approvalPath, f.binding)).status, 409);
     });
   });
 });
