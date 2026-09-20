@@ -8,6 +8,7 @@
 
 import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
+import { execSync } from 'node:child_process';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
@@ -25,6 +26,7 @@ import {
   assertComposeCellHealth,
   CELL_COMPOSE_ENV,
   CELL_E2E_TENANT,
+  COMPOSE_CMD,
   tryComposeCellUp,
 } from './l4-b-cell-compose.js';
 import {
@@ -50,6 +52,21 @@ export interface CompensationE2EResult {
 
 export { assertComposeCellHealth, CELL_COMPOSE_ENV, CELL_E2E_TENANT, tryComposeCellUp };
 
+function resolveComposeApiKey(): string {
+  try {
+    const value = execSync(`${COMPOSE_CMD} exec -T api printenv COMMANDER_API_KEY`, {
+      cwd: process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    if (value) return value;
+  } catch {
+    // Local/mock invocations may not have a running compose API; use the
+    // injected CI value or deterministic fixture fallback below.
+  }
+  return process.env.COMMANDER_API_KEY ?? CELL_COMPOSE_ENV.COMMANDER_API_KEY;
+}
+
 async function httpJson(
   baseUrl: string,
   method: string,
@@ -57,6 +74,7 @@ async function httpJson(
   body?: unknown,
   idempotencyKey?: string,
 ): Promise<{ status: number; json: Record<string, unknown> | null }> {
+  const apiKey = resolveComposeApiKey();
   const res = await fetch(`${baseUrl}${path}`, {
     method,
     headers: {
@@ -64,7 +82,7 @@ async function httpJson(
       // Prefer x-api-key only — Authorization: Bearer is interpreted as JWT.
       // CI generates a fresh key for each compose stack; local mock compose
       // keeps the deterministic fallback from CELL_COMPOSE_ENV.
-      'x-api-key': process.env.COMMANDER_API_KEY ?? CELL_COMPOSE_ENV.COMMANDER_API_KEY,
+      'x-api-key': apiKey,
       'x-tenant-id': CELL_E2E_TENANT,
       ...(idempotencyKey ? { 'Idempotency-Key': idempotencyKey } : {}),
     },
