@@ -5,6 +5,7 @@ import { Pool, type PoolClient } from 'pg';
 import { runKernelMigrations, runTask1ClosureMigrations } from './migrations.js';
 import { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 import { seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
+import { seedDemoApiKey, seedTask1AllowedTenants } from './migrate.js';
 
 const ownerUrl = process.env.COMMANDER_TASK1_PG_URL;
 let liveOwnerUrl: string | undefined;
@@ -206,6 +207,7 @@ describe(
       await runKernelMigrations(ownerPool);
       await runTask1ClosureMigrations(ownerPool, 'expand');
       await runTask1ClosureMigrations(ownerPool, 'enforce');
+      await runKernelMigrations(ownerPool);
       for (const role of [
         'commander_app',
         'commander_worker',
@@ -216,12 +218,7 @@ describe(
         await ownerPool.query(`ALTER ROLE ${role} WITH LOGIN PASSWORD '${role}'`);
       }
       await seedWorkerAllowedTenants(ownerPool, [tenantId, otherTenantId]);
-      await ownerPool.query(
-        `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
-       VALUES ($1), ($2)
-       ON CONFLICT (tenant_id) DO NOTHING`,
-        [tenantId, otherTenantId],
-      );
+      await seedTask1AllowedTenants(ownerPool, [tenantId, otherTenantId]);
       appPool = new Pool({ connectionString: roleUrl('commander_app'), max: 4 });
       workerPool = new Pool({ connectionString: roleUrl('commander_worker'), max: 4 });
       adapterPool = new Pool({ connectionString: roleUrl('commander_adapter_ops'), max: 4 });
@@ -344,6 +341,46 @@ describe(
           await adminPool.query('ALTER ROLE commander_owner NOLOGIN NOCREATEROLE');
         }
         await adminPool.end();
+      }
+    });
+
+    it('does not revive, rebind, or elevate an existing demo API key on restart', async () => {
+      const key = `cell-test-${randomUUID()}`;
+      const hash = createHash('sha256').update(key).digest('hex');
+      try {
+        await seedDemoApiKey(ownerPool, key, tenantId);
+        const created = await ownerPool.query<{ scopes: string[]; tenant_id: string }>(
+          'SELECT scopes, tenant_id FROM commander_auth_api_keys WHERE key_hash = $1',
+          [hash],
+        );
+        assert.deepEqual(created.rows[0], {
+          scopes: ['read', 'write', 'actions:approve'],
+          tenant_id: tenantId,
+        });
+        await ownerPool.query(
+          "UPDATE commander_auth_api_keys SET enabled = false, revoked_at = now(), scopes = ARRAY['read']::text[] WHERE key_hash = $1",
+          [hash],
+        );
+        await seedDemoApiKey(ownerPool, key, otherTenantId);
+        const retained = await ownerPool.query<{
+          enabled: boolean;
+          revoked: boolean;
+          tenant_id: string;
+          scopes: string[];
+        }>(
+          'SELECT enabled, revoked_at IS NOT NULL AS revoked, tenant_id, scopes FROM commander_auth_api_keys WHERE key_hash = $1',
+          [hash],
+        );
+        assert.deepEqual(retained.rows, [
+          {
+            enabled: false,
+            revoked: true,
+            tenant_id: tenantId,
+            scopes: ['read'],
+          },
+        ]);
+      } finally {
+        await ownerPool.query('DELETE FROM commander_auth_api_keys WHERE key_hash = $1', [hash]);
       }
     });
 
