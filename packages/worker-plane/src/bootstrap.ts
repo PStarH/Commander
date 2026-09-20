@@ -445,18 +445,18 @@ export function evaluateActionGatewayMvpV1(
     (effectType === adapter.descriptor.effectType ||
       effectType === adapter.descriptor.compensationEffectType) &&
     tool === adapter.descriptor.toolName &&
-    adapter.descriptor.adapterId === 'kubernetes.deployment.rollback' &&
     typeof destination === 'string'
   ) {
     try {
-      parseKubernetesDeploymentDestination(destination);
-      const effect = adapter.descriptor.defaultGatewayEffect;
-      return {
-        effect,
-        decisionId: `action-gateway-manifest-${effect}`,
-        reason: `Registered adapter policy requires '${effect}' for this exact action.`,
-        policySnapshotId: ACTION_GATEWAY_POLICY_ID,
-      };
+      if (adapter.descriptor.adapterId === 'kubernetes.deployment.rollback') {
+        parseKubernetesDeploymentDestination(destination);
+      }
+      const { effect, decisionId, reason, policySnapshotId } = evaluateActionGatewayPolicy({
+        effectType,
+        tool,
+        destination,
+      });
+      return { effect, decisionId, reason, policySnapshotId };
     } catch {
       // Invalid Kubernetes destinations remain deny-by-default.
     }

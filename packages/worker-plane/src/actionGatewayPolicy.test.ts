@@ -4,6 +4,8 @@ import { describe, it } from 'node:test';
 import { ActionAdapterRegistry, type ActionAdapter } from '@commander/action-adapters';
 import {
   GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
+  evaluateActionGatewayPolicy,
   KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
 } from '@commander/contracts';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
@@ -325,27 +327,83 @@ describe('L4-01 Action Gateway worker policy', () => {
       'deny',
     );
 
-    const githubRegistry = new ActionAdapterRegistry([
-      adapter(GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR),
-    ]);
-    assert.equal(
-      evaluateActionGatewayMvpV1(
-        {
-          ...envelope,
-          effectType: 'connector.github.pull-request.create',
-          tool: 'github.pull-request.create',
-          destination: 'github://commander/repository/pulls',
-        },
-        githubRegistry,
-      ).effect,
-      'deny',
-    );
     assert.equal(evaluateActionGatewayMvpV1(envelope).effect, 'allow');
     assert.equal(
       evaluateActionGatewayMvpV1({ ...envelope, destination: undefined }).reason,
       "Destination 'undefined' is not registered by the Action Gateway.",
     );
   });
+
+  for (const [descriptor, destination] of [
+    [GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR, 'github://commander/repository/pulls'],
+    [SERVICENOW_INCIDENT_CREATE_DESCRIPTOR, 'servicenow://instance/incident'],
+  ] as const) {
+    it(`requires durable bound approval before executing ${descriptor.effectType}`, async () => {
+      const registry = new ActionAdapterRegistry([adapter(descriptor)]);
+      const repository = new InMemoryKernelRepository();
+      const action = await createActionRun(repository, {
+        effect: 'require_approval',
+        decisionId: 'action-gateway-manifest-require_approval',
+        envelope: {
+          ...envelope,
+          effectType: descriptor.effectType,
+          tool: descriptor.toolName,
+          destination,
+        },
+      });
+      const input = {
+        tenantId: 'tenant-a',
+        runId: action.runId,
+        stepId: action.stepId,
+        request: action.actionEnvelope,
+        registry,
+      };
+      assert.equal((await evaluate(repository, input)).effect, 'deny');
+      await repository.answerInteraction({
+        interactionId: action.interactionId,
+        runId: action.runId,
+        tenantId: 'tenant-a',
+        response: {
+          approved: true,
+          actionDigest: action.actionDigest,
+          simulationId: action.simulationId,
+          policySnapshotId: action.policySnapshotId,
+          reviewer: 'reviewer-a',
+          runId: action.runId,
+          tenantId: 'tenant-a',
+        },
+        actor: 'reviewer-a',
+      });
+      assert.equal((await evaluate(repository, input)).effect, 'allow');
+      assert.equal(
+        (
+          await evaluate(repository, {
+            ...input,
+            request: { ...action.actionEnvelope, args: { title: 'tampered' } },
+          })
+        ).effect,
+        'deny',
+      );
+    });
+    for (const effectType of [descriptor.effectType, descriptor.compensationEffectType]) {
+      it(`revalidates registered ${effectType} against the shared gateway policy`, () => {
+        const registry = new ActionAdapterRegistry([adapter(descriptor)]);
+        const input = { ...envelope, effectType, tool: descriptor.toolName, destination };
+        const { reasonCode: _reasonCode, ...expected } = evaluateActionGatewayPolicy(input);
+        assert.equal(expected.effect, 'require_approval');
+        assert.deepEqual(evaluateActionGatewayMvpV1(input, registry), expected);
+        assert.equal(evaluateActionGatewayMvpV1(input).effect, 'deny');
+        for (const invalid of [
+          { ...input, tool: 'unregistered.tool' },
+          { ...input, destination: `${destination}/unregistered` },
+          { ...input, destination: 'https://unregistered.invalid' },
+          { ...input, effectType: 'connector.unregistered.create' },
+        ]) {
+          assert.equal(evaluateActionGatewayMvpV1(invalid, registry).effect, 'deny');
+        }
+      });
+    }
+  }
 
   it('allows only a trusted persisted Action Gateway envelope', async () => {
     const repository = new InMemoryKernelRepository();
