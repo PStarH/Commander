@@ -224,8 +224,12 @@ describe('RecursiveAtomizer', () => {
 // Unit Tests for Topology Router
 // ============================================================================
 describe('TopologyRouter', () => {
-  it('should select SINGLE topology for simple tasks', () => {
-    const router = new TopologyRouter();
+  it('should select SINGLE topology for simple tasks without exploration', () => {
+    // This asserts the heuristic winner; exploration has its own seeded tests.
+    const router = new TopologyRouter(undefined, {
+      epsilon: 0,
+      rng: () => assert.fail('greedy routing must not sample exploration'),
+    });
     const plan: DeliberationPlan = {
       requiresExternalInfo: false,
       taskType: 'FACTUAL',
@@ -245,6 +249,8 @@ describe('TopologyRouter', () => {
     };
     const result = router.route(plan);
     assert.strictEqual(result.topology, 'SINGLE');
+    assert.strictEqual(result.argmaxTopology, 'SINGLE');
+    assert.strictEqual(result.explorationTriggered, false);
     assert.ok(result.reasoning.length > 0);
   });
 

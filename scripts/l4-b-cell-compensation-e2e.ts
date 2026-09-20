@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { KERNEL_COMPENSATION_TOPIC } from '@commander/kernel';
+import { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } from '@commander/contracts';
+import { KERNEL_COMPENSATION_TOPIC, type KernelCompensationRequest } from '@commander/kernel';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 // Root package.json does not declare @commander/action-adapters, so the bare
 // specifier cannot resolve from scripts/; import the workspace source directly.
@@ -33,6 +34,13 @@ import {
   validateControlledChangeEvidence,
   type ControlledChangeCellEvidence,
 } from './l4-b-cell-smoke.js';
+
+import {
+  COMPENSATION_COMPOSE_CMD,
+  prepareCompensationFixture,
+  seedCompensationFixturePolicy,
+  verifyCompensationFixture,
+} from './cell-compensation-fixture.js';
 
 export { notReadyControlledChangeEvidence } from './l4-b-cell-smoke.js';
 
@@ -77,6 +85,13 @@ async function httpJson(
     json = text ? (JSON.parse(text) as Record<string, unknown>) : null;
   } catch {
     json = null;
+  }
+  if (!res.ok) {
+    const error = json?.error;
+    const code =
+      typeof error === 'object' && error !== null && 'code' in error ? error.code : undefined;
+    const safeCode = typeof code === 'string' && /^[A-Z_]{1,80}$/.test(code) ? code : 'UNKNOWN';
+    console.error(`Cell HTTP ${method} ${path}: status=${res.status} code=${safeCode}`);
   }
   return { status: res.status, json };
 }
@@ -367,7 +382,11 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
           },
         );
         if (!completed) throw new Error('compensation effect completion was rejected');
-        return { effectId: completed.id, replayed: false, response: { state: 'closed' } };
+        return {
+          effectId: completed.id,
+          replayed: false,
+          response: { state: 'closed' },
+        };
       },
     },
     tokenProvider: async () => 'cmp-token',
@@ -399,72 +418,76 @@ export async function runAdapterOpsCompensationMock(): Promise<AdapterOpsCompens
   };
 }
 
-async function pollActionTerminal(
+async function pollTerminal(
   baseUrl: string,
-  runId: string,
+  path: string,
+  actionProjection: boolean,
   timeoutMs = 90_000,
-): Promise<string> {
+): Promise<Record<string, unknown> | null> {
   const terminal = new Set(['SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATED']);
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
-    const { json } = await httpJson(baseUrl, 'GET', `/v1/actions/${runId}`);
-    const action = json?.action as { state?: string } | undefined;
-    if (action?.state && terminal.has(action.state)) return action.state;
+    const { status, json } = await httpJson(baseUrl, 'GET', path);
+    if (status !== 200) return null;
+    const value = actionProjection ? json?.action : json;
+    if (typeof value !== 'object' || value === null) return null;
+    const projection = value as Record<string, unknown>;
+    if (typeof projection.state === 'string' && terminal.has(projection.state)) return projection;
     await sleep(500);
   }
-  return 'TIMEOUT';
+  return null;
 }
 
 export async function runComposeDemoCompensationFlow(
   baseUrl = 'http://localhost:4000',
 ): Promise<Record<string, boolean>> {
+  const result = {
+    proposed: false,
+    approved: false,
+    forwardDone: false,
+    tamperRejected: false,
+    authorizationReplayed: false,
+    approvalTamperRejected: false,
+    requestReplayed: false,
+    compensated: false,
+  };
+  const descriptor = GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR;
   const idem = `cell-comp-${Date.now()}`;
   const proposal = {
     source: 'cell-e2e',
     package: 'cell-e2e',
     model: 'mock',
-    tool: 'ticket.create',
-    destination: 'demo://tickets/approval',
-    effectType: 'demo.ticket.create',
-    args: { title: 'Cell compensation E2E' },
+    tool: descriptor.toolName,
+    destination: 'github://octo/repo/pulls',
+    effectType: descriptor.effectType,
+    args: {
+      head: 'cell-e2e',
+      base: 'main',
+      title: 'Cell compensation E2E',
+      body: 'Canonical compensation proof',
+    },
     idempotencyKey: idem,
   };
-  // Container health becomes ready before the durable worker registrations are
-  // visible to the API readiness function. Poll only that explicit transient
-  // state; every other response remains fail-closed and is returned immediately.
   let proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
-  for (
-    let attempt = 0;
-    attempt < 12 && (proposed.status === 503 || proposed.status === 429);
-    attempt += 1
-  ) {
-    if (proposed.status === 429) {
-      const retryAfter = Number(proposed.json?.retryAfter);
-      await sleep((Number.isFinite(retryAfter) ? Math.max(1, retryAfter) : 5) * 1_000);
-      proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
-      continue;
-    }
-    const code = proposed.json?.error;
-    if (typeof code !== 'object' || code === null) {
-      break;
-    }
-    const transientCode = (code as { code?: unknown }).code;
-    if (transientCode !== 'OPERATIONS_NOT_READY') {
-      break;
-    }
+  // Only the explicit worker-registration readiness error is transient.
+  for (let attempt = 0; attempt < 12 && proposed.status === 503; attempt += 1) {
+    const error = proposed.json?.error as { code?: unknown } | undefined;
+    if (error?.code !== 'OPERATIONS_NOT_READY') break;
     await sleep(5_000);
     proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
   }
   if (proposed.status !== 202) {
-    console.error(
-      `Cell compensation proposal rejected: status=${proposed.status} body=${JSON.stringify(proposed.json)}`,
-    );
-    return { proposed: false, approved: false, forwardDone: false, compensated: false };
+    console.error(`Cell compensation proposal rejected: status=${proposed.status}`);
+    return result;
   }
-  const action = (proposed.json?.action ?? {}) as {
-    runId: string;
-    simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
-  };
+  result.proposed = true;
+  const action = proposed.json?.action as
+    | {
+        runId?: string;
+        simulation?: { actionDigest: string; simulationId: string; policySnapshotId: string };
+      }
+    | undefined;
+  if (!action?.runId || !action.simulation) return result;
   const approved = await httpJson(
     baseUrl,
     'POST',
@@ -476,40 +499,120 @@ export async function runComposeDemoCompensationFlow(
     },
     `approve-${idem}`,
   );
-  if (approved.status !== 200)
-    return { proposed: true, approved: false, forwardDone: false, compensated: false };
-  const forwardState = await pollActionTerminal(baseUrl, action.runId);
-  if (forwardState !== 'SUCCEEDED') {
-    return { proposed: true, approved: true, forwardDone: false, compensated: false };
-  }
-  const compensationIdempotencyKey = `cmp-${idem}`;
-  const compensate = await httpJson(
+  if (approved.status !== 200) return result;
+  result.approved = true;
+  const forward = await pollTerminal(baseUrl, `/v1/actions/${action.runId}`, true);
+  if (forward?.state !== 'SUCCEEDED') return result;
+  result.forwardDone = true;
+  if (
+    typeof forward.effectId !== 'string' ||
+    typeof forward.forwardReceiptHash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(forward.forwardReceiptHash)
+  )
+    return result;
+  const path = `/v1/actions/${action.runId}/compensations`;
+  const request = {
+    originalEffectId: forward.effectId,
+    adapterVersion: descriptor.adapterVersion,
+    compensationEffectType: descriptor.compensationEffectType,
+    compensationPatch: {},
+    forwardReceiptHash: forward.forwardReceiptHash,
+  };
+  const tampered = await httpJson(
     baseUrl,
     'POST',
-    '/v1/actions',
+    path,
     {
-      source: 'cell-e2e',
-      package: 'cell-e2e',
-      model: 'mock',
-      tool: 'ticket.compensate',
-      destination: 'demo://tickets',
-      effectType: 'compensate.demo.ticket.create',
-      args: { targetIdempotencyKey: idem },
-      idempotencyKey: compensationIdempotencyKey,
+      ...request,
+      forwardReceiptHash: `${request.forwardReceiptHash[0] === '0' ? '1' : '0'}${request.forwardReceiptHash.slice(1)}`,
     },
-    compensationIdempotencyKey,
+    `tamper-${idem}`,
   );
-  if (compensate.status !== 202) {
-    return { proposed: true, approved: true, forwardDone: true, compensated: false };
+  result.tamperRejected =
+    tampered.status === 409 &&
+    (tampered.json?.error as { code?: unknown } | undefined)?.code === 'FORWARD_RECEIPT_MISMATCH';
+  if (!result.tamperRejected) return result;
+  let compensation = await httpJson(baseUrl, 'POST', path, request, `cmp-${idem}`);
+  if (compensation.status !== 202) return result;
+  let approvalPath: string | undefined;
+  let approvalBody: { actionDigest: string; policySnapshotId: string } | undefined;
+  if (compensation.json?.state === 'AWAITING_APPROVAL') {
+    const authorization = compensation.json.authorization as
+      | {
+          id?: string;
+          actionDigest?: string;
+          policySnapshotId?: string;
+        }
+      | undefined;
+    if (!authorization?.id || !authorization.actionDigest || !authorization.policySnapshotId)
+      return result;
+    // A distinct HTTP idempotency key proves durable authorization replay,
+    // rather than merely returning the middleware's cached HTTP response.
+    const replay = await httpJson(baseUrl, 'POST', path, request, `cmp-replay-${idem}`);
+    const replayAuthorization = replay.json?.authorization as
+      { id?: unknown; actionDigest?: unknown } | undefined;
+    result.authorizationReplayed =
+      replay.status === 202 &&
+      replay.json?.replayed === true &&
+      replayAuthorization?.id === authorization.id &&
+      replayAuthorization?.actionDigest === authorization.actionDigest;
+    if (!result.authorizationReplayed) return result;
+    approvalPath = `${path}/${authorization.id}/approve`;
+    approvalBody = {
+      actionDigest: authorization.actionDigest,
+      policySnapshotId: authorization.policySnapshotId,
+    };
+    const invalidApproval = await httpJson(
+      baseUrl,
+      'POST',
+      approvalPath,
+      {
+        ...approvalBody,
+        actionDigest: `${approvalBody.actionDigest[0] === '0' ? '1' : '0'}${approvalBody.actionDigest.slice(1)}`,
+      },
+      `cmp-approve-tamper-${idem}`,
+    );
+    result.approvalTamperRejected =
+      invalidApproval.status === 409 &&
+      (invalidApproval.json?.error as { code?: unknown } | undefined)?.code ===
+        'APPROVAL_BINDING_MISMATCH';
+    if (!result.approvalTamperRejected) return result;
+    compensation = await httpJson(
+      baseUrl,
+      'POST',
+      approvalPath,
+      approvalBody,
+      `cmp-approve-${idem}`,
+    );
   }
-  const compAction = (compensate.json?.action ?? {}) as { runId: string };
-  const compState = await pollActionTerminal(baseUrl, compAction.runId);
-  return {
-    proposed: true,
-    approved: true,
-    forwardDone: true,
-    compensated: compState === 'SUCCEEDED',
-  };
+  const compensationRequest = compensation.json?.request as
+    Partial<KernelCompensationRequest> | undefined;
+  const runId = compensationRequest?.compensationRunId;
+  if (
+    compensation.status !== 202 ||
+    compensation.json?.accepted !== true ||
+    typeof runId !== 'string'
+  )
+    return result;
+  const terminal = await pollTerminal(baseUrl, `/v1/runs/${runId}/status`, false);
+  if (terminal?.state !== 'SUCCEEDED') return result;
+  const replay = await httpJson(
+    baseUrl,
+    'POST',
+    approvalPath ?? path,
+    approvalBody ?? request,
+    `cmp-request-replay-${idem}`,
+  );
+  const replayRequest = replay.json?.request as Partial<KernelCompensationRequest> | undefined;
+  result.requestReplayed =
+    replay.status === 202 &&
+    replay.json?.accepted === true &&
+    replay.json?.replayed === true &&
+    replayRequest?.compensationRunId === runId &&
+    typeof compensationRequest?.id === 'string' &&
+    replayRequest?.id === compensationRequest.id;
+  result.compensated = result.requestReplayed;
+  return result;
 }
 
 export async function runCellCompensationE2E(options: {
@@ -546,8 +649,25 @@ export async function runCellCompensationE2E(options: {
   }
 
   let dockerError: string | undefined;
+  const fixtureEnv = options.composeUp
+    ? prepareCompensationFixture()
+    : {
+        CELL_GITHUB_TLS_DIR: process.env.CELL_GITHUB_TLS_DIR ?? '',
+        CELL_GITHUB_TOKEN: process.env.CELL_GITHUB_TOKEN ?? '',
+      };
+  if (!fixtureEnv.CELL_GITHUB_TLS_DIR || !fixtureEnv.CELL_GITHUB_TOKEN) {
+    return {
+      mode,
+      verdict: 'BLOCKED',
+      passed: false,
+      steps,
+      controlledChange,
+      dockerError: 'Compose compensation requires --up or an existing configured GitHub fixture',
+      elapsedMs: Date.now() - started,
+    };
+  }
   if (options.composeUp) {
-    const up = tryComposeCellUp();
+    const up = tryComposeCellUp(COMPENSATION_COMPOSE_CMD, fixtureEnv);
     steps.composeUp = up.ok;
     if (!up.ok) {
       return {
@@ -577,8 +697,28 @@ export async function runCellCompensationE2E(options: {
     };
   }
 
+  try {
+    seedCompensationFixturePolicy(fixtureEnv);
+    steps.fixturePolicySeeded = true;
+  } catch {
+    return {
+      mode,
+      verdict: 'BLOCKED',
+      passed: false,
+      steps,
+      controlledChange,
+      dockerError: 'COMPENSATION_FIXTURE_POLICY_SEED_FAILED',
+      elapsedMs: Date.now() - started,
+    };
+  }
   const flow = await runComposeDemoCompensationFlow(options.baseUrl);
   Object.assign(steps, flow);
+  try {
+    steps.remoteExactlyOnce = verifyCompensationFixture(fixtureEnv);
+  } catch {
+    steps.remoteExactlyOnce = false;
+    steps.fixtureEvidenceError = 'COMPENSATION_FIXTURE_EVIDENCE_UNAVAILABLE';
+  }
 
   // Host InMemory CompensationDaemon is informational only and does not raise compose evidence.
   // (specialized audit: S_adapter_ops_mock was greenwashing "adapter-ops consumed outbox").
@@ -592,6 +732,7 @@ export async function runCellCompensationE2E(options: {
     flow.approved === true &&
     flow.forwardDone === true &&
     flow.compensated === true &&
+    steps.remoteExactlyOnce === true &&
     (options.composeUp ? steps.composeUp === true : true);
 
   return {

@@ -167,13 +167,16 @@ export function ensureCellSandboxImage(): void {
   execSync('docker pull node:22-slim', { stdio: 'pipe' });
 }
 
-export function tryComposeCellUp(): { ok: boolean; error?: string } {
+export function tryComposeCellUp(
+  composeCommand = COMPOSE_CMD,
+  fixtureEnv: Record<string, string> = {},
+): { ok: boolean; error?: string } {
   // CELL_COMPOSE_ENV must win over host DATABASE_URL (local :5433 probes).
-  const env = { ...process.env, ...CELL_COMPOSE_ENV };
+  const env = { ...process.env, ...CELL_COMPOSE_ENV, ...fixtureEnv };
   try {
     ensureCellSandboxImage();
     try {
-      execSync(`${COMPOSE_CMD} down -v --remove-orphans`, {
+      execSync(`${composeCommand} down -v --remove-orphans`, {
         cwd: process.cwd(),
         env,
         stdio: 'pipe',
@@ -192,7 +195,7 @@ export function tryComposeCellUp(): { ok: boolean; error?: string } {
     } catch {
       /* ignore */
     }
-    execSync(`${COMPOSE_CMD} up -d --build`, {
+    execSync(`${composeCommand} up -d --build`, {
       cwd: process.cwd(),
       env,
       stdio: 'pipe',
