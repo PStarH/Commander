@@ -53,13 +53,27 @@ export interface CompensationE2EResult {
 export { assertComposeCellHealth, CELL_COMPOSE_ENV, CELL_E2E_TENANT, tryComposeCellUp };
 
 function resolveComposeApiKey(): string {
+  // Read the credential from the running container itself. Re-evaluating the
+  // compose file here can use a different interpolation environment than the
+  // `cell:up-assert` process that created the stack, which silently caused a
+  // host fallback and 401s against an otherwise healthy API.
   try {
-    const value = execSync(`${COMPOSE_CMD} exec -T api printenv COMMANDER_API_KEY`, {
+    const containerId = execSync(`${COMPOSE_CMD} ps -q api`, {
       cwd: process.cwd(),
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     }).trim();
-    if (value) return value;
+    if (containerId) {
+      for (const variable of ['API_KEYS', 'COMMANDER_API_KEY']) {
+        const value = execSync(`docker exec ${containerId} printenv ${variable}`, {
+          cwd: process.cwd(),
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        }).trim();
+        if (value)
+          return variable === 'API_KEYS' ? (value.split(';')[0]?.split(':')[0] ?? value) : value;
+      }
+    }
   } catch {
     // Local/mock invocations may not have a running compose API; use the
     // injected CI value or deterministic fixture fallback below.
