@@ -442,8 +442,12 @@ export async function runComposeDemoCompensationFlow(
     await sleep(1_000);
     proposed = await httpJson(baseUrl, 'POST', '/v1/actions', proposal, idem);
   }
-  if (proposed.status !== 202)
+  if (proposed.status !== 202) {
+    console.error(
+      `Cell compensation proposal rejected: status=${proposed.status} body=${JSON.stringify(proposed.json)}`,
+    );
     return { proposed: false, approved: false, forwardDone: false, compensated: false };
+  }
   const action = (proposed.json?.action ?? {}) as {
     runId: string;
     simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
