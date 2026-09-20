@@ -57,6 +57,7 @@ import {
 import { readFile } from 'node:fs/promises';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
 import { buildAdapterOpsLoginSql } from './sqlSafety.js';
+import { createHash, randomUUID } from 'node:crypto';
 
 /** Parse comma-separated tenant list; reject empty and '*'. */
 export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
@@ -65,6 +66,29 @@ export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0 && t !== '*');
+}
+
+/** Seed the explicitly injected cell API key into the PostgreSQL auth authority. */
+export async function seedConfiguredApiKey(
+  client: Pick<SqlClient, 'query'>,
+  apiKey: string | undefined,
+  tenantId: string | undefined,
+): Promise<void> {
+  const key = apiKey?.trim();
+  if (!key) return;
+  const table = await client.query<{ relation: string | null }>(
+    `SELECT to_regclass('public.commander_auth_api_keys')::text AS relation`,
+  );
+  if (!table.rows[0]?.relation) return;
+  const hash = createHash('sha256').update(key).digest('hex');
+  await client.query(
+    `INSERT INTO commander_auth_api_keys
+       (id, name, prefix, key_hash, scopes, tenant_id)
+     VALUES ($1, 'cell-e2e', $2, $3, ARRAY['read','write']::text[], $4)
+     ON CONFLICT (key_hash) DO UPDATE
+       SET enabled = true, revoked_at = NULL, tenant_id = EXCLUDED.tenant_id`,
+    [`ak_cell_${randomUUID()}`, key.slice(0, 8), hash, tenantId ?? null],
+  );
 }
 
 const TASK1_READINESS_TENANT = 'commander/readiness/v1';
@@ -923,6 +947,11 @@ async function main() {
         console.log(`Seeded demo ticket effect policy: ${tenants.join(',')}`);
       }
     }
+    await seedConfiguredApiKey(
+      activePool,
+      process.env.COMMANDER_API_KEY,
+      process.env.COMMANDER_CELL_TENANT_ID ?? tenants[0],
+    );
     console.log(
       closurePhase
         ? `Task 1 ${closurePhase} migrations applied successfully`
