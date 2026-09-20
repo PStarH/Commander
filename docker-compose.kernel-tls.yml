@@ -50,6 +50,8 @@ services:
 
   api:
     environment:
+      - COMMANDER_TENANT_CONTEXT_PHASE=${COMMANDER_TENANT_AUTHORITY_CUTOVER_PHASE:-enforce}
+      - COMMANDER_TENANT_AUTHORITY_DATABASE_URL=${COMMANDER_TENANT_AUTHORITY_TLS_DSN:-postgres://commander_tenant_authority:commander_tenant_authority@postgres:5432/commander?sslmode=verify-full}
       - DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
       - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
       - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/database-tls/ca.crt

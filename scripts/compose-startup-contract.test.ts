@@ -572,6 +572,14 @@ describe('actual process startup configuration', () => {
         HOST_ENV,
       );
 
+      assert.equal(
+        env.COMMANDER_TENANT_CONTEXT_PHASE,
+        'enforce',
+        `${label} api must bind authenticated tenant context`,
+      );
+      const authority = new URL(env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL ?? 'http://missing');
+      assert.equal(authority.username, 'commander_tenant_authority');
+      assert.equal(authority.searchParams.get('sslmode'), 'verify-full');
       assert.equal(env.NODE_ENV, 'production', `${label} api must be production`);
       assert.equal(env.COMMANDER_KERNEL_ENABLED, '1', `${label} api must set the kernel on`);
       assert.equal(isProductionEnv(env), true);
