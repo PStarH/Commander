@@ -207,7 +207,6 @@ describe(
       await runKernelMigrations(ownerPool);
       await runTask1ClosureMigrations(ownerPool, 'expand');
       await runTask1ClosureMigrations(ownerPool, 'enforce');
-      await runKernelMigrations(ownerPool);
       for (const role of [
         'commander_app',
         'commander_worker',
@@ -347,9 +346,19 @@ describe(
     it('does not revive, rebind, or elevate an existing demo API key on restart', async () => {
       const key = `cell-test-${randomUUID()}`;
       const hash = createHash('sha256').update(key).digest('hex');
+      const authDatabaseName = `commander_task1_live_auth_${randomUUID().replaceAll('-', '')}`;
+      await adminPool.query(
+        `CREATE DATABASE ${databaseIdentifier(authDatabaseName)} OWNER commander_owner`,
+      );
+      const authDsn = new URL(liveOwnerUrl!);
+      authDsn.pathname = `/${authDatabaseName}`;
+      const authPool = new Pool({ connectionString: authDsn.toString(), max: 1 });
       try {
-        await seedDemoApiKey(ownerPool, key, tenantId);
-        const created = await ownerPool.query<{ scopes: string[]; tenant_id: string }>(
+        await runKernelMigrations(authPool);
+        await runTask1ClosureMigrations(authPool, 'enforce');
+        await runKernelMigrations(authPool);
+        await seedDemoApiKey(authPool, key, tenantId);
+        const created = await authPool.query<{ scopes: string[]; tenant_id: string }>(
           'SELECT scopes, tenant_id FROM commander_auth_api_keys WHERE key_hash = $1',
           [hash],
         );
@@ -357,12 +366,12 @@ describe(
           scopes: ['read', 'write', 'actions:approve'],
           tenant_id: tenantId,
         });
-        await ownerPool.query(
+        await authPool.query(
           "UPDATE commander_auth_api_keys SET enabled = false, revoked_at = now(), scopes = ARRAY['read']::text[] WHERE key_hash = $1",
           [hash],
         );
-        await seedDemoApiKey(ownerPool, key, otherTenantId);
-        const retained = await ownerPool.query<{
+        await seedDemoApiKey(authPool, key, otherTenantId);
+        const retained = await authPool.query<{
           enabled: boolean;
           revoked: boolean;
           tenant_id: string;
@@ -380,7 +389,8 @@ describe(
           },
         ]);
       } finally {
-        await ownerPool.query('DELETE FROM commander_auth_api_keys WHERE key_hash = $1', [hash]);
+        await authPool.end();
+        await adminPool.query(`DROP DATABASE ${databaseIdentifier(authDatabaseName)}`);
       }
     });
 
