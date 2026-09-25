@@ -1,0 +1,39 @@
+{
+  "schemaVersion": 2,
+  "timestamp": "2026-09-25T11:19:32.412Z",
+  "iterations": 2000,
+  "warmup": 50,
+  "backend": "wal",
+  "rowsPerSec": 12823.656918139775,
+  "latency": {
+    "p50Us": 26.298,
+    "p99Us": 70.303,
+    "p999Us": 12630.117,
+    "avgUs": 77.57822200000004,
+    "minUs": 23.265,
+    "maxUs": 18823.728
+  },
+  "hint": "lower latency and higher rowsPerSec are better; this is the steady-state single-writer baseline.",
+  "summary": {
+    "passed": true,
+    "errors": 0,
+    "failed": 0,
+    "skipped": 0
+  },
+  "env": {
+    "evidence": "simulated",
+    "gitSha": "961c266d38a1d46c5e5847e9828b02985d03f707",
+    "gitBranch": "master",
+    "gitDirty": false,
+    "nodeVersion": "v22.23.2",
+    "pnpmVersion": "9.15.4",
+    "topology": {
+      "gateways": 1,
+      "workers": 1,
+      "operations": 1,
+      "model": "single"
+    },
+    "datasetVersion": "wal-throughput-v1"
+  },
+  "runAt": "2026-09-25T11:19:32.648Z"
+}
