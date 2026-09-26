@@ -66,6 +66,10 @@ export interface EffectObservation {
   requestHash: string;
   state: string;
   prNumber: number | null;
+  disposition?: string | null;
+  attempts?: number | null;
+  reconcileAfter?: string | null;
+  lastError?: unknown;
 }
 
 export interface ProviderObservation {
@@ -100,13 +104,16 @@ async function until<T>(
   read: () => Promise<T>,
   ready: (value: T) => boolean,
   code: string,
+  timeoutMs = 120_000,
 ): Promise<T> {
-  const deadline = Date.now() + 90_000;
+  const deadline = Date.now() + timeoutMs;
+  let lastValue: T | undefined;
   do {
-    const value = await read();
-    if (ready(value)) return value;
+    lastValue = await read();
+    if (ready(lastValue)) return lastValue;
     await sleep(500);
   } while (Date.now() < deadline);
+  console.error(`until timeout [${code}]: last value =`, JSON.stringify(lastValue));
   throw new Error(code);
 }
 
@@ -378,7 +385,28 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
       compose(['pause', 'adapter-ops']);
     },
     async resumeRecovery() {
-      compose(['unpause', 'adapter-ops']);
+      try {
+        compose(['unpause', 'adapter-ops']);
+      } catch {
+        /* ignore if not paused */
+      }
+      compose(['restart', 'adapter-ops']);
+      await until(
+        async () => {
+          const response = compose([
+            'exec',
+            '-T',
+            'adapter-ops',
+            'node',
+            '-e',
+            "fetch('http://127.0.0.1:8082/health').then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write('unavailable'))",
+          ]);
+          return response === '200';
+        },
+        Boolean,
+        'RESTARTED_ADAPTER_OPS_NOT_READY',
+        30_000,
+      );
     },
     async workerStartedAt() {
       return startedAt('worker');
@@ -407,7 +435,9 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
         query(
           `SELECT COALESCE(json_agg(json_build_object(
         'id',id,'runId',run_id,'idempotencyKey',idempotency_key,'requestHash',request_hash,
-        'state',state,'prNumber',response->'prNumber')), '[]'::json)
+        'state',state,'prNumber',response->'prNumber',
+        'disposition',reconcile_disposition,'attempts',reconcile_attempts,
+        'reconcileAfter',reconcile_after,'lastError',reconcile_last_error)), '[]'::json)
         FROM commander_effects WHERE tenant_id=:'tenant' AND run_id=:'run_id';`,
           { run_id: runId },
         ),
@@ -429,6 +459,10 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
         requestHash: field(row, 'requestHash'),
         state: field(row, 'state'),
         prNumber: row.prNumber,
+        disposition: typeof row.disposition === 'string' ? row.disposition : null,
+        attempts: typeof row.attempts === 'number' ? row.attempts : null,
+        reconcileAfter: typeof row.reconcileAfter === 'string' ? row.reconcileAfter : null,
+        lastError: row.lastError,
       };
     },
     async provider() {
@@ -506,6 +540,9 @@ async function main(): Promise<void> {
       error instanceof Error && /^[A-Z_]+$/.test(error.message)
         ? error.message
         : 'RECOVERY_PROOF_FAILED';
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
     process.exitCode = 1;
   } finally {
     artifact.elapsedMs = Date.now() - started;
