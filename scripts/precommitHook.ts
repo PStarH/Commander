@@ -72,8 +72,8 @@ const SCANNER_MODULE_PATH = path.join(
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function getStagedFiles(): { source: 'git' | 'argv'; files: string[] } {
-  // CI replay: caller passes files via argv.
-  if (process.env.CORE_PRECOMMIT_HOOK === '1' && process.env.GIT_DIR === undefined) {
+  // CI replay explicitly supplies files. Ordinary Git hooks may omit GIT_DIR.
+  if (process.env.CORE_PRECOMMIT_HOOK === '1' && process.argv.length > 2) {
     return { source: 'argv', files: process.argv.slice(2).filter(Boolean) };
   }
   // Git-side invocation: read every staged path that can introduce content.

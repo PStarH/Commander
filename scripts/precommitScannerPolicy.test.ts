@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -17,6 +17,97 @@ const highWarning: ScannerWarning = {
   message: 'Backtick command execution detected',
   evidence: String.fromCharCode(96) + 'safe ${value}' + String.fromCharCode(96),
 };
+
+describe('pre-commit file source selection', () => {
+  for (const mode of ['ordinary hook', 'linked-worktree hook', 'CI argv replay']) {
+    it(`scans the intended content in ${mode}`, () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-hook-source-'));
+      const primary = process.cwd();
+      const repository = path.join(tempRoot, 'repository');
+      const cwd = mode === 'linked-worktree hook' ? path.join(tempRoot, 'linked') : repository;
+      const fixture = 'hook-source-fixture.ts';
+      const safe = "export const value = 'safe';\n";
+      const high = ['sp', 'awn', '('].join('') + 'dangerous()\n';
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('GIT_')) delete env[key];
+      }
+      delete env.CORE_PRECOMMIT_HOOK;
+      const git = (directory: string, args: string[]) =>
+        execFileSync('git', args, { cwd: directory, env, encoding: 'utf8', stdio: 'pipe' });
+
+      try {
+        fs.mkdirSync(repository);
+        git(repository, ['init']);
+        git(repository, ['config', 'core.hooksPath', path.join(repository, '.git', 'hooks')]);
+        git(repository, ['config', 'user.name', 'Hook Test']);
+        git(repository, ['config', 'user.email', 'hook-test@example.com']);
+        git(repository, [
+          '-c',
+          'core.hooksPath=/dev/null',
+          'commit',
+          '--no-gpg-sign',
+          '--allow-empty',
+          '-m',
+          'fixture',
+        ]);
+        if (cwd !== repository) git(repository, ['worktree', 'add', '--detach', cwd]);
+        for (const directory of ['node_modules', 'packages']) {
+          fs.symlinkSync(
+            path.join(primary, directory),
+            path.join(cwd, directory),
+            process.platform === 'win32' ? 'junction' : 'dir',
+          );
+        }
+        const hook = path.join(repository, '.git', 'hooks', 'pre-commit');
+        fs.writeFileSync(
+          hook,
+          '#!/bin/sh\nexport CORE_PRECOMMIT_HOOK=1\n' +
+            'exec "$HOOK_TEST_NODE" --import tsx "$HOOK_TEST_SCRIPT"\n',
+          { mode: 0o755 },
+        );
+        const runHook = () =>
+          spawnSync(
+            mode === 'CI argv replay' ? process.execPath : 'git',
+            mode === 'CI argv replay'
+              ? ['--import', 'tsx', path.join(primary, 'scripts/precommitHook.ts'), fixture]
+              : ['hook', 'run', 'pre-commit'],
+            {
+              cwd,
+              encoding: 'utf8',
+              env: {
+                ...env,
+                ...(mode === 'CI argv replay' ? { CORE_PRECOMMIT_HOOK: '1' } : {}),
+                HOOK_TEST_NODE: process.execPath,
+                HOOK_TEST_SCRIPT: path.join(primary, 'scripts/precommitHook.ts'),
+              },
+            },
+          );
+
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? safe : high);
+        git(cwd, ['add', fixture]);
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? high : safe);
+        const blocked = runHook();
+        assert.equal(blocked.status, 1, blocked.stdout + blocked.stderr);
+        assert.match(
+          blocked.stdout + blocked.stderr,
+          new RegExp(`Scanning 1 staged files via ${mode === 'CI argv replay' ? 'argv' : 'git'}`),
+          blocked.stderr,
+        );
+        assert.match(blocked.stderr, /precommit scanner gate failed/);
+
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? high : safe);
+        git(cwd, ['add', fixture]);
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? safe : high);
+        const allowed = runHook();
+        assert.equal(allowed.status, 0, allowed.stdout + allowed.stderr);
+        assert.match(allowed.stdout + allowed.stderr, /all gates passed/);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+  }
+});
 
 describe('pre-commit scanner index policy', () => {
   it('records an unchanged inherited high warning without allowing its raw evidence into the audit record', async () => {
