@@ -138,7 +138,9 @@ export function governedCompensationIdentifiers(
   input: Pick<
     LegacyGovernedCompensationInput,
     'tenantId' | 'originalRunId' | 'originalEffectId' | 'adapterVersion'
-  >,
+  > & {
+    compensationRequest?: Record<string, unknown>;
+  },
 ): GovernedCompensationIdentifiers {
   const identity = {
     protocol: 'commander.compensation/v1',
@@ -147,12 +149,29 @@ export function governedCompensationIdentifiers(
     originalEffectId: input.originalEffectId,
     adapterVersion: input.adapterVersion,
   };
-  const idempotencyKey = `cmp:${input.originalEffectId}:${input.adapterVersion}`;
   const authorizationId = stableId('authorization', identity, 40);
   const requestId = stableId('request', { ...identity, authorizationId }, 40);
   const compensationRunId = stableId('run', { ...identity, purpose: 'compensation-run' }, 40);
   const compensationStepId = stableId('step', { compensationRunId, kind: 'tool' }, 32);
-  const compensationEffectId = stableId('effect', { compensationRunId, idempotencyKey }, 40);
+  // The effect identity must be stable before deriving the idempotency key;
+  // deriving either from the other would create a cycle.
+  const compensationEffectId = stableId(
+    'effect',
+    { ...identity, compensationRunId, purpose: 'compensation-effect' },
+    40,
+  );
+  const compensationRequest = input.compensationRequest ?? {
+    originalEffectId: input.originalEffectId,
+    forwardResponse: {},
+    compensationPatch: {},
+  };
+  const idempotencyKey = deriveEffectIdempotencyKey({
+    tenantId: input.tenantId,
+    runId: compensationRunId,
+    stepId: compensationStepId,
+    effectId: compensationEffectId,
+    request: compensationRequest,
+  });
   return {
     authorizationId,
     requestId,
@@ -168,13 +187,16 @@ export function governedCompensationAuthorizationInput(input: {
   originalRunStateAtRequest: KernelRunState;
   originalEffect: Pick<KernelEffect, 'request' | 'response'>;
 }): GovernedCompensationAuthorizationInput {
-  const identifiers = governedCompensationIdentifiers(input.request);
   const compensationRequest = {
     originalEffectId: input.request.originalEffectId,
     destination: input.originalEffect.request.destination,
     forwardResponse: input.request.forwardReceipt,
     compensationPatch: input.request.compensationPatch,
   };
+  const identifiers = governedCompensationIdentifiers({
+    ...input.request,
+    compensationRequest,
+  });
   const idempotencyKey = deriveEffectIdempotencyKey({
     tenantId: input.request.tenantId,
     runId: identifiers.compensationRunId,
@@ -212,7 +234,16 @@ export function prepareCompensationRequest(input: {
   originalEffect: Pick<KernelEffect, 'request' | 'response'>;
   now?: Date;
 }): PreparedCompensationRequest {
-  const identifiers = governedCompensationIdentifiers(input.request);
+  const compensationRequest = {
+    originalEffectId: input.request.originalEffectId,
+    destination: input.originalEffect.request.destination,
+    forwardResponse: input.request.forwardReceipt,
+    compensationPatch: input.request.compensationPatch,
+  };
+  const identifiers = governedCompensationIdentifiers({
+    ...input.request,
+    compensationRequest,
+  });
   const authorization = sealGovernedCompensationAuthorization(
     governedCompensationAuthorizationInput(input),
   );
