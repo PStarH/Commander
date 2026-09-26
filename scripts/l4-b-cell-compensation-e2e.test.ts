@@ -97,7 +97,7 @@ describe('l4-b-cell-compensation-e2e', () => {
         }
         if (path === '/v1/actions/forward-run/compensations') {
           assert.equal(body.originalEffectId, 'forward-effect');
-          assert.equal(body.adapterVersion, '1.0.0');
+          assert.equal(body.adapterVersion, '1.1.0');
           assert.equal(body.compensationEffectType, 'compensate.github.pull-request.create');
           assert.deepEqual(body.compensationPatch, {});
           if (body.forwardReceiptHash !== receiptHash) {
@@ -144,7 +144,7 @@ describe('l4-b-cell-compensation-e2e', () => {
                 originalRunId: 'forward-run',
                 originalEffectId: 'forward-effect',
                 compensationStepId: 'compensation-step',
-                adapterVersion: '1.0.0',
+                adapterVersion: '1.1.0',
                 compensationEffectType: 'compensate.github.pull-request.create',
                 destination: 'github://octo/repo/pulls',
                 compensationPatch: {},

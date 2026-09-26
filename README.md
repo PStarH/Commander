@@ -5,15 +5,15 @@
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>Local-first multi-agent orchestration — v0.2 · alpha</strong></p>
+<p align="center"><strong>Approval and recovery for Coding / DevOps agents — GitHub pilot · alpha</strong></p>
 
 > **Alpha notice:** Commander is not production-ready. Treat outputs, benchmarks,
 > POC scenarios, and dashboard values as development or demo signals. Do not use
 > it for unattended production workloads or sensitive data without your own review.
 
 <p align="center">
-  <code>pnpm demo:l4-a</code><br>
-  <sub>After the source setup below: a credential-free simulated run with no provider calls or target-system writes.</sub>
+  <code>pnpm demo:github --help</code><br>
+  <sub>A step-by-step GitHub action pilot using the real Gateway. Requires a configured deployment for external writes.</sub>
 </p>
 
 <p align="center">
@@ -30,23 +30,35 @@
 
 ## What is Commander
 
-Commander provides a local agent runtime and a PostgreSQL-backed gateway for governed actions. The runtime routes tasks to configured providers and can run verification checks on their output.
+An agent asks to open a pull request. A human approves it. GitHub accepts the
+write—but the worker loses the response. Did it happen, and what should the
+next worker do?
 
-- **Simple tasks** get one agent, one pass.
-- **Research tasks** get parallel agents, then synthesis.
-- **Engineering tasks** can use an analysis, implementation, and review pipeline; repository changes still require review before merging.
+Commander keeps the approved request and its execution state together. Its
+GitHub adapter can query for a matching result after response loss, preserve an
+unresolved outcome when the evidence is ambiguous, and close an unmerged PR
+only through a separately authorized compensation action.
 
-Agent events and emitted decisions stream to you in real time. Paths with the verification pipeline enabled run configured checks. Retryable provider failures can trigger fallback to another configured provider. These checks do not guarantee correct output.
+The first pilot is intentionally narrow: **same-repository PR creation from
+existing branches**. It does not generate or push code, merge PRs, or deploy to
+production. Branch contents still need GitHub review and checks.
 
-For enterprise evaluation, [Shadow Phase A](docs/pilot/shadow/README.md) compares historical observations with a pinned policy and exports a verifiable report. It does not execute external actions.
+- [Run the GitHub pilot](docs/pilot/github/README.md): propose → approve → inspect → separately authorize close.
+- [Why not just GitHub permissions and Actions approval?](docs/pilot/github/native-controls.md): native controls are often enough; use Commander when shared action identity, recovery and evidence justify the integration.
+- [Security boundary and limitations](docs/pilot/github/threat-model.md): a correlation marker is not a signature, and external effects are not universally exactly-once.
+
+The adapter contracts and CLI have automated local tests. A complete live
+Gateway + GitHub + worker-restart demonstration is still pending; no adoption
+or production-readiness claim is implied. The existing local agent runtime and
+read-only review tools are also available below.
 
 ---
 
-## Two ways to run Commander
+## Runtime paths
 
-Commander ships as two distinct SKUs. The **Local CLI** is what you run on your
-own machine; the **Enterprise Gateway** is a durable, multi-tenant server path
-that is still **alpha** for enterprise use.
+The GitHub pilot uses the **Enterprise Gateway**, a durable server path that
+is still **alpha**. The **Local CLI** is a separate local agent runtime; its
+simulated demo does not prove the Gateway's governed-write behavior.
 
 |                    | Local CLI                                                                     | Enterprise Gateway                                                     |
 | ------------------ | ----------------------------------------------------------------------------- | ---------------------------------------------------------------------- |
@@ -67,6 +79,11 @@ on your machine.
 
 ## Quick Start
 
+For the new GitHub action path, follow the [pilot guide](docs/pilot/github/README.md).
+It separates credential-free contract tests from the configured Gateway demo
+and the opt-in real GitHub adapter tests. The local runtime demo below remains
+a separate simulated example.
+
 ### E0 simulated demo (recommended first run)
 
 Use Node.js 22.x and pnpm 9 (Corepack selects the repository's pinned pnpm
@@ -77,8 +94,7 @@ registry. The `--offline` flag means no provider request, not a network-free
 installation.
 
 ```bash
-git clone --branch codex/release-20260810 --single-branch \
-  https://github.com/PStarH/Commander.git
+git clone https://github.com/PStarH/Commander.git
 cd Commander
 corepack enable
 pnpm install --frozen-lockfile
@@ -204,13 +220,13 @@ If the output fails a configured gate, the system retries or reports the failure
 
 ### Resilience
 
-| Capability        | Implementation                                                    |
-| ----------------- | ----------------------------------------------------------------- |
-| Circuit Breakers  | 3-state (CLOSED/OPEN/HALF-OPEN), per-provider error rate tracking |
-| Dead Letter Queue | Append-only NDJSON, 7 categories, replay support                  |
+| Capability        | Implementation                                                     |
+| ----------------- | ------------------------------------------------------------------ |
+| Circuit Breakers  | 3-state (CLOSED/OPEN/HALF-OPEN), per-provider error rate tracking  |
+| Dead Letter Queue | Append-only NDJSON, 7 categories, replay support                   |
 | Saga Compensation | Registered compensation steps; external rollback is not guaranteed |
-| Checkpointing     | SQLite + WAL, crash-safe recovery (<5s target)                    |
-| Semantic Caching  | SHA-256 exact + cosine-similarity deduplication                   |
+| Checkpointing     | SQLite + WAL, crash-safe recovery (<5s target)                     |
+| Semantic Caching  | SHA-256 exact + cosine-similarity deduplication                    |
 
 ### Security
 
@@ -276,29 +292,29 @@ pnpm gui
 
 Open `http://localhost:5173`. The console routes are:
 
-| Route | Page |
-| --- | --- |
-| `/` | Dashboard — battle report, token trends, live topology, agent roster, mission board |
-| `/agents` | Agent roster |
-| `/missions` | Mission board and approvals |
-| `/execution` | Real-time execution feed |
-| `/memory` | Memory browser and search |
-| `/governance` | Approval queue and policy configuration |
-| `/security` | Security posture — ISO 42001 / NIST AI RMF **reporting** (reporters, not certification) |
-| `/slo` | SLO panel |
-| `/chat` | Conversational interface with real-time agent streaming |
-| `/dlq` | Dead letter queue management with replay |
-| `/audit` | Audit log |
-| `/cost` | Cost and token reporting |
-| `/knowledge` | Knowledge base |
-| `/alerts` | Alerts |
-| `/onboarding` | First-run onboarding |
-| `/users` | User administration |
-| `/settings`, `/settings/sso` | Settings and OIDC/SSO configuration |
-| `/workflows` | Workflow list and scheduling |
-| `/poc` | POC/demo views |
-| `/research` | Research view |
-| `/actions` | Action Gateway queue (approve / reject / compensate) |
+| Route                        | Page                                                                                    |
+| ---------------------------- | --------------------------------------------------------------------------------------- |
+| `/`                          | Dashboard — battle report, token trends, live topology, agent roster, mission board     |
+| `/agents`                    | Agent roster                                                                            |
+| `/missions`                  | Mission board and approvals                                                             |
+| `/execution`                 | Real-time execution feed                                                                |
+| `/memory`                    | Memory browser and search                                                               |
+| `/governance`                | Approval queue and policy configuration                                                 |
+| `/security`                  | Security posture — ISO 42001 / NIST AI RMF **reporting** (reporters, not certification) |
+| `/slo`                       | SLO panel                                                                               |
+| `/chat`                      | Conversational interface with real-time agent streaming                                 |
+| `/dlq`                       | Dead letter queue management with replay                                                |
+| `/audit`                     | Audit log                                                                               |
+| `/cost`                      | Cost and token reporting                                                                |
+| `/knowledge`                 | Knowledge base                                                                          |
+| `/alerts`                    | Alerts                                                                                  |
+| `/onboarding`                | First-run onboarding                                                                    |
+| `/users`                     | User administration                                                                     |
+| `/settings`, `/settings/sso` | Settings and OIDC/SSO configuration                                                     |
+| `/workflows`                 | Workflow list and scheduling                                                            |
+| `/poc`                       | POC/demo views                                                                          |
+| `/research`                  | Research view                                                                           |
+| `/actions`                   | Action Gateway queue (approve / reject / compensate)                                    |
 
 When running the Compose `web` profile instead of `pnpm gui`, the same console
 is served on `http://localhost:3000`.

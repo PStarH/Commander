@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import { describe, it } from 'node:test';
 import { githubPrBodyMarker } from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import { createGitHubPullRequestCreateAdapter } from './pullRequestCreate.js';
 import { ActionAdapterRegistry } from '../registry.js';
 import type { AdapterCredentialProvider } from '../types.js';
+import type { FetchFn } from '../http.js';
 
 const tenantId = 'tenant-a';
 const destination = 'github://octo/repo/pulls';
@@ -27,8 +30,10 @@ interface MockState {
     html_url: string;
     state: string;
     body: string;
-    head: { ref: string };
-    base: { ref: string };
+    head: { ref: string; sha: string; repo: { full_name: string } };
+    base: { ref: string; repo: { full_name: string } };
+    merged: boolean;
+    merged_at: string | null;
   }>;
   createCount: number;
   writeCount: number;
@@ -64,8 +69,10 @@ function createMockFetch(state: MockState) {
         state: 'open',
         title: body.title,
         body: body.body,
-        head: { ref: body.head },
-        base: { ref: body.base },
+        head: { ref: body.head, sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+        base: { ref: body.base, repo: { full_name: 'octo/repo' } },
+        merged: false,
+        merged_at: null,
       };
       state.pulls.push(created);
       return new Response(JSON.stringify(created), { status: 201 });
@@ -85,6 +92,19 @@ function createMockFetch(state: MockState) {
       return new Response(JSON.stringify(pull), { status: 200 });
     }
     return new Response('unexpected', { status: 500 });
+  };
+}
+
+function storedReceipt(prNumber: number): Record<string, unknown> {
+  return {
+    prNumber,
+    url: `https://github.com/octo/repo/pull/${prNumber}`,
+    state: 'open',
+    idempotencyKey,
+    destination,
+    head: 'feature',
+    base: 'main',
+    headSha: 'a'.repeat(40),
   };
 }
 
@@ -151,7 +171,7 @@ describe('github.pullRequestCreate adapter', () => {
     assert.equal(state.createCount, 1);
   });
 
-  it('rejects same-key execution when head or base changes', async () => {
+  it('rejects a marker candidate outside the requested head/base', async () => {
     const state: MockState = { pulls: [], createCount: 0, writeCount: 0 };
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
@@ -186,8 +206,10 @@ describe('github.pullRequestCreate adapter', () => {
           html_url: 'https://github.com/octo/repo/pull/1',
           state: 'open',
           body: `body\n\n${marker}`,
-          head: { ref: 'feature' },
-          base: { ref: 'main' },
+          head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
         },
       ],
       createCount: 0,
@@ -225,7 +247,7 @@ describe('github.pullRequestCreate adapter', () => {
       effectId: 'eff-1',
       idempotencyKey,
       destination,
-      request: { head: 'feature', base: 'main' },
+      request: { args: baseInput().args },
     });
     assert.equal(state.writeCount, writesBefore);
     assert.equal(outcome.status, 'APPLIED');
@@ -257,7 +279,7 @@ describe('github.pullRequestCreate adapter', () => {
       effectId: 'eff-cmp-1',
       idempotencyKey: 'cmp:eff-1:1.0.0',
       destination,
-      request: { prNumber: forward.prNumber },
+      request: { forwardResponse: forward },
       compensationResponse: compensated,
     });
     assert.equal(outcome.status, 'APPLIED');
@@ -336,16 +358,20 @@ describe('github.pullRequestCreate adapter', () => {
           html_url: 'https://github.com/octo/repo/pull/1',
           state: 'open',
           body: marker,
-          head: { ref: 'feature' },
-          base: { ref: 'main' },
+          head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
         },
         {
           number: 2,
           html_url: 'https://github.com/octo/repo/pull/2',
           state: 'open',
           body: marker,
-          head: { ref: 'feature' },
-          base: { ref: 'main' },
+          head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
         },
       ],
       createCount: 0,
@@ -360,7 +386,7 @@ describe('github.pullRequestCreate adapter', () => {
       effectId: 'eff-1',
       idempotencyKey,
       destination,
-      request: { head: 'feature', base: 'main' },
+      request: { args: baseInput().args },
     });
     assert.equal(outcome.status, 'UNKNOWN');
   });
@@ -388,8 +414,10 @@ describe('github.pullRequestCreate adapter', () => {
           html_url: 'https://github.com/octo/repo/pull/99',
           state: 'open',
           body: 'unrelated human PR',
-          head: { ref: 'feature' },
-          base: { ref: 'main' },
+          head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
         },
       ],
       createCount: 0,
@@ -407,13 +435,13 @@ describe('github.pullRequestCreate adapter', () => {
           originalEffectId: 'eff-1',
           idempotencyKey: 'cmp:eff-1:1.0.0',
           destination,
-          forwardResponse: { prNumber: 99 },
+          forwardResponse: storedReceipt(99),
           compensationPatch: {},
           signal: AbortSignal.timeout(5_000),
         }),
       (error: unknown) => {
         assert.ok(error instanceof AdapterExecutionError);
-        assert.equal(error.code, 'GITHUB_COMPENSATE_MARKER_MISSING');
+        assert.equal(error.code, 'GITHUB_COMPENSATE_MARKER_MISMATCH');
         assert.equal(error.retryMode, 'NEVER');
         return true;
       },
@@ -430,8 +458,10 @@ describe('github.pullRequestCreate adapter', () => {
           html_url: 'https://github.com/octo/repo/pull/7',
           state: 'open',
           body: githubPrBodyMarker(tenantId, 'other-key'),
-          head: { ref: 'feature' },
-          base: { ref: 'main' },
+          head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
         },
       ],
       createCount: 0,
@@ -449,7 +479,7 @@ describe('github.pullRequestCreate adapter', () => {
           originalEffectId: 'eff-1',
           idempotencyKey: 'cmp:eff-1:1.0.0',
           destination,
-          forwardResponse: { prNumber: 7, idempotencyKey },
+          forwardResponse: storedReceipt(7),
           compensationPatch: {},
           signal: AbortSignal.timeout(5_000),
         }),
@@ -545,10 +575,11 @@ describe('github.pullRequestCreate adapter — cancellation propagation', () => 
 
     await assert.rejects(pending, 'the aborted pre-flight must settle the effect');
     assert.ok(seen.length > 0, 'the pre-flight GET must reach fetch');
-    assert.equal(seen[0], controller.signal, 'the GET must receive the caller’s exact signal');
+    assert.equal(seen[0]?.aborted, true);
+    assert.equal(seen[0]?.reason, controller.signal.reason);
   });
 
-  it('queryOutcome forwards its caller’s exact signal', async () => {
+  it('queryOutcome settles UNKNOWN when the caller cancels', async () => {
     const seen: Array<AbortSignal | undefined> = [];
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
@@ -561,15 +592,18 @@ describe('github.pullRequestCreate adapter — cancellation propagation', () => 
       effectId: 'eff-1',
       idempotencyKey,
       destination,
-      request: {},
+      request: { args: baseInput().args },
       signal: controller.signal,
     });
     await new Promise((resolve) => setImmediate(resolve));
     controller.abort(new Error('reconcile deadline'));
 
-    await assert.rejects(pending, 'an aborted reconciliation query must settle');
+    const outcome = await pending;
+    assert.equal(outcome.status, 'UNKNOWN');
+    assert.equal(outcome.error?.code, 'GITHUB_QUERY_ABORTED');
     assert.ok(seen.length > 0, 'the query must reach fetch');
-    assert.equal(seen[0], controller.signal, 'the query must not invent a signal');
+    assert.equal(seen[0]?.aborted, true);
+    assert.equal(seen[0]?.reason, controller.signal.reason);
   });
 
   it('does not open a PR when the pre-flight is cancelled', async () => {
@@ -602,9 +636,11 @@ describe('github compensation reconciliation via the registry', () => {
             number: 42,
             html_url: 'https://github.com/octo/repo/pull/42',
             state: 'closed',
-            body: null,
-            head: { ref: 'feature' },
-            base: { ref: 'main' },
+            body: githubPrBodyMarker(tenantId, idempotencyKey),
+            head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+            base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+            merged: false,
+            merged_at: null,
           }),
           { status: 200 },
         );
@@ -627,15 +663,718 @@ describe('github compensation reconciliation via the registry', () => {
         originalEffectId: 'eff-1',
         destination,
         // The kernel constructs exactly this shape for governed compensations.
-        forwardResponse: {
-          prNumber: 42,
-          url: 'https://github.com/octo/repo/pull/42',
-          state: 'open',
-        },
+        forwardResponse: storedReceipt(42),
         compensationPatch: {},
       },
     });
     assert.equal(outcome.status, 'APPLIED');
     assert.equal(outcome.response?.prNumber, 42);
   });
+});
+
+describe('github.pullRequestCreate adapter — launch contract boundaries', () => {
+  function pull(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      number: 1,
+      html_url: 'https://github.com/octo/repo/pull/1',
+      state: 'open',
+      title: 'Approved title',
+      body: `Approved body\n\n${githubPrBodyMarker(tenantId, idempotencyKey)}`,
+      head: { ref: 'approved-branch', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+      base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+      merged: false,
+      merged_at: null,
+      ...overrides,
+    };
+  }
+
+  function receipt(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      prNumber: 1,
+      url: 'https://github.com/octo/repo/pull/1',
+      state: 'open',
+      idempotencyKey,
+      destination,
+      head: 'approved-branch',
+      base: 'main',
+      headSha: 'a'.repeat(40),
+      ...overrides,
+    };
+  }
+
+  const args = {
+    title: 'Approved title',
+    body: 'Approved body',
+    head: 'approved-branch',
+    base: 'main',
+  };
+  function queryInput() {
+    return { tenantId, effectId: 'eff-1', idempotencyKey, destination, request: { args } };
+  }
+  function compensationInput() {
+    return {
+      tenantId,
+      effectId: 'cmp-1',
+      originalEffectId: 'eff-1',
+      idempotencyKey: 'cmp:eff-1:1.1.0',
+      destination,
+      forwardResponse: receipt(),
+      compensationPatch: {},
+      signal: AbortSignal.timeout(5_000),
+    };
+  }
+
+  it('execute and recovery return the same complete receipt', async () => {
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch([{ pulls: [pull()] }]),
+    });
+    const executed = await adapter.execute({ ...baseInput(), args });
+    const outcome = await adapter.queryOutcome(queryInput());
+    assert.deepEqual(executed, receipt());
+    assert.equal(outcome.status, 'APPLIED');
+    assert.deepEqual(outcome.response, executed);
+  });
+
+  for (const invalidArgs of [
+    {},
+    { ...args, head: undefined },
+    { ...args, base: undefined },
+    { ...args, body: null },
+    { ...args, title: '' },
+    { ...args, head: 'fork:branch' },
+    { ...args, head: 'main' },
+    { ...args, body: githubPrBodyMarker(tenantId, 'injected') },
+  ]) {
+    it(`refuses invalid create args before any I/O: ${JSON.stringify(invalidArgs)}`, async () => {
+      let requests = 0;
+      const adapter = createGitHubPullRequestCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: listFetch([{ pulls: [] }], () => {
+          requests += 1;
+        }),
+      });
+      await assert.rejects(
+        () => adapter.execute({ ...baseInput(), args: invalidArgs }),
+        (error: unknown) =>
+          error instanceof AdapterExecutionError && error.code === 'GITHUB_CREATE_ARGS_INVALID',
+      );
+      assert.equal(requests, 0);
+    });
+  }
+
+  it('missing request.args is UNKNOWN without querying or falling back to top-level fields', async () => {
+    let requests = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch([{ pulls: [pull()] }], () => {
+        requests += 1;
+      }),
+    });
+    const outcome = await adapter.queryOutcome({ ...queryInput(), request: args });
+    assert.equal(outcome.status, 'UNKNOWN');
+    assert.equal(outcome.error?.code, 'GITHUB_CREATE_ARGS_INVALID');
+    assert.equal(requests, 0);
+  });
+
+  for (const changed of [
+    { head: { ref: 'approved-branch', sha: 'a'.repeat(40), repo: { full_name: 'fork/repo' } } },
+    { head: { ref: 'approved-branch', sha: 'not-a-commit', repo: { full_name: 'octo/repo' } } },
+    { html_url: 'https://evil.example/pr/1' },
+    { number: -1 },
+    { body: null },
+  ]) {
+    it(`does not reconcile an invalid or foreign remote PR: ${JSON.stringify(changed)}`, async () => {
+      const adapter = createGitHubPullRequestCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: listFetch([{ pulls: [pull(changed)] }]),
+      });
+      const outcome = await adapter.queryOutcome(queryInput());
+      assert.equal(outcome.status, 'UNKNOWN');
+    });
+  }
+
+  it('refuses to close a merged PR even with a valid receipt', async () => {
+    let writes = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async (_url, init) => {
+        if (init?.method === 'PATCH') writes += 1;
+        return new Response(
+          JSON.stringify(
+            pull({ state: 'closed', merged: true, merged_at: '2026-09-23T00:00:00Z' }),
+          ),
+          { status: 200 },
+        );
+      },
+    });
+    await assert.rejects(
+      () => adapter.compensate(compensationInput()),
+      (error: unknown) =>
+        error instanceof AdapterExecutionError && error.code === 'GITHUB_COMPENSATE_MERGED',
+    );
+    assert.equal(writes, 0);
+  });
+
+  it('releases the PATCH response body before verifying the closed PR', async () => {
+    let patched = false;
+    let released = false;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async (_url, init) => {
+        if (init?.method === 'PATCH') {
+          patched = true;
+          return new Response(
+            new ReadableStream({
+              cancel() {
+                released = true;
+              },
+            }),
+            { status: 200 },
+          );
+        }
+        if (patched) assert.equal(released, true, 'PATCH must release its connection before GET');
+        return Response.json(pull({ state: patched ? 'closed' : 'open' }));
+      },
+    });
+    const result = await adapter.compensate(compensationInput());
+    assert.equal(result.state, 'closed');
+    assert.equal(released, true);
+  });
+
+  it('rechecks after PATCH and refuses success if the PR was concurrently merged', async () => {
+    const methods: string[] = [];
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async (_url, init) => {
+        methods.push(init?.method ?? 'GET');
+        return new Response(
+          JSON.stringify(
+            methods.length === 1
+              ? pull()
+              : pull({ state: 'closed', merged: true, merged_at: '2026-09-23T00:00:00Z' }),
+          ),
+          { status: 200 },
+        );
+      },
+    });
+    await assert.rejects(
+      () => adapter.compensate(compensationInput()),
+      (error: unknown) => error instanceof AdapterExecutionError && error.commitState === 'UNKNOWN',
+    );
+    assert.deepEqual(methods, ['GET', 'PATCH', 'GET']);
+  });
+
+  for (const status of [403, 404, 429, 500]) {
+    it(`query preserves UNKNOWN on HTTP ${status}`, async () => {
+      const adapter = createGitHubPullRequestCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: async () => new Response('unavailable', { status }),
+      });
+      const outcome = await adapter.queryOutcome(queryInput());
+      assert.equal(outcome.status, 'UNKNOWN');
+    });
+  }
+
+  it('bounds execute and recovery to the approved branches and preserves filters across pages', async () => {
+    const urls: URL[] = [];
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async (input) => {
+        const url = new URL(String(input));
+        urls.push(url);
+        assert.equal(url.searchParams.get('head'), 'octo:approved-branch');
+        assert.equal(url.searchParams.get('base'), 'main');
+        assert.equal(url.searchParams.get('state'), 'all');
+        return url.searchParams.has('page')
+          ? new Response(JSON.stringify([pull()]), { status: 200 })
+          : new Response('[]', {
+              status: 200,
+              headers: {
+                Link: '<https://api.github.com/repos/octo/repo/pulls?page=2&head=octo%3Aapproved-branch&base=main&state=all&per_page=100>; rel="next"',
+              },
+            });
+      },
+    });
+    assert.deepEqual(await adapter.execute({ ...baseInput(), args }), receipt());
+    assert.equal((await adapter.queryOutcome(queryInput())).status, 'APPLIED');
+    assert.equal(urls.length, 4);
+  });
+
+  it('refuses a next link that changes an approved branch', async () => {
+    let calls = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch(
+        [
+          {
+            pulls: [pull()],
+            link: '<https://api.github.com/repos/octo/repo/pulls?page=2&head=octo%3Aother>; rel="next"',
+          },
+        ],
+        () => {
+          calls += 1;
+        },
+      ),
+    });
+    const outcome = await adapter.queryOutcome(queryInput());
+    assert.equal(outcome.status, 'UNKNOWN');
+    assert.equal(outcome.error?.code, 'GITHUB_PAGINATION_INVALID');
+    assert.equal(calls, 1);
+  });
+
+  it('accepts an unquoted rel=next link and checks the following page', async () => {
+    let calls = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch(
+        [
+          {
+            pulls: [pull()],
+            link: '<https://api.github.com/repos/octo/repo/pulls?page=2>; rel=next',
+          },
+          { pulls: [pull({ number: 2, html_url: 'https://github.com/octo/repo/pull/2' })] },
+        ],
+        () => {
+          calls += 1;
+        },
+      ),
+    });
+    assert.equal((await adapter.queryOutcome(queryInput())).status, 'UNKNOWN');
+    assert.equal(calls, 2);
+  });
+
+  for (const link of [
+    '<https://api.github.com/repos/octo/repo/pulls?page=2>; rel="next',
+    'garbage',
+    '<https://evil.example/pulls?page=2>; rel=next',
+  ]) {
+    it(`refuses incomplete pagination with malformed or unsafe Link: ${link}`, async () => {
+      const adapter = createGitHubPullRequestCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: listFetch([{ pulls: [pull()], link }]),
+      });
+      const outcome = await adapter.queryOutcome(queryInput());
+      assert.equal(outcome.status, 'UNKNOWN');
+      assert.equal(outcome.error?.code, 'GITHUB_PAGINATION_INVALID');
+    });
+  }
+
+  for (const changes of [
+    { merged: undefined, merged_at: undefined },
+    { head: { ref: 'other-branch', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } } },
+    { number: 2, html_url: 'https://github.com/octo/repo/pull/2' },
+    { body: githubPrBodyMarker(tenantId, 'other-key') },
+  ]) {
+    it(`compensation never closes or confirms an unproven receipt: ${JSON.stringify(changes)}`, async () => {
+      let writes = 0;
+      const adapter = createGitHubPullRequestCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: async (_url, init) => {
+          if (init?.method === 'PATCH') writes += 1;
+          return new Response(JSON.stringify(pull({ state: 'closed', ...changes })), {
+            status: 200,
+          });
+        },
+      });
+      await assert.rejects(
+        () => adapter.compensate(compensationInput()),
+        (error: unknown) => error instanceof AdapterExecutionError,
+      );
+      const outcome = await adapter.queryCompensationOutcome({
+        ...queryInput(),
+        request: { forwardResponse: receipt() },
+      });
+      assert.equal(outcome.status, 'UNKNOWN');
+      assert.equal(writes, 0);
+    });
+  }
+
+  it('accepts an empty approved body with only the server-generated marker', async () => {
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch([{ pulls: [pull({ body: githubPrBodyMarker(tenantId, idempotencyKey) })] }]),
+    });
+    const outcome = await adapter.queryOutcome({
+      ...queryInput(),
+      request: { args: { ...args, body: '' } },
+    });
+    assert.equal(outcome.status, 'APPLIED');
+  });
+
+  it('does not create after an incomplete or malicious preflight', async () => {
+    let writes = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch(
+        [{ pulls: [], link: '<https://evil.example/pulls?page=2>; rel="next"' }],
+        (_url, init) => {
+          if (init?.method === 'POST') writes += 1;
+        },
+      ),
+    });
+    await assert.rejects(
+      () => adapter.execute({ ...baseInput(), args }),
+      (error: unknown) =>
+        error instanceof AdapterExecutionError && error.code === 'GITHUB_PAGINATION_INVALID',
+    );
+    assert.equal(writes, 0);
+  });
+
+  it('cyclic pagination is UNKNOWN and bounded', async () => {
+    let calls = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch(
+        [
+          {
+            pulls: [pull()],
+            link: '<https://api.github.com/repos/octo/repo/pulls?page=2>; rel="next"',
+          },
+        ],
+        () => {
+          calls += 1;
+        },
+      ),
+    });
+    const outcome = await adapter.queryOutcome(queryInput());
+    assert.equal(outcome.status, 'UNKNOWN');
+    assert.equal(outcome.error?.code, 'GITHUB_PAGINATION_INVALID');
+    assert.equal(calls, 2);
+  });
+
+  it('stops after ten pages without claiming a partial match', async () => {
+    let calls = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async () => {
+        calls += 1;
+        return new Response(JSON.stringify(calls === 1 ? [pull()] : []), {
+          status: 200,
+          headers: {
+            Link: `<https://api.github.com/repos/octo/repo/pulls?page=${calls + 1}>; rel="next"`,
+          },
+        });
+      },
+    });
+    const outcome = await adapter.queryOutcome(queryInput());
+    assert.equal(outcome.status, 'UNKNOWN');
+    assert.equal(outcome.error?.code, 'GITHUB_PAGINATION_LIMIT');
+    assert.equal(calls, 10);
+  });
+
+  it('aborting a page prevents the next page and POST even when fetch ignores cancellation', async () => {
+    const controller = new AbortController();
+    let calls = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async () => {
+        calls += 1;
+        controller.abort();
+        return new Response('[]', {
+          status: 200,
+          headers: { Link: '<https://api.github.com/repos/octo/repo/pulls?page=2>; rel="next"' },
+        });
+      },
+    });
+    await assert.rejects(() =>
+      adapter.execute({ ...baseInput(), args, signal: controller.signal }),
+    );
+    assert.equal(calls, 1);
+  });
+
+  function listFetch(
+    pages: Array<{ pulls: unknown[]; link?: string }>,
+    onRequest?: (url: string, init?: RequestInit) => void,
+  ): FetchFn {
+    let page = 0;
+    return async (input, init) => {
+      const url = String(input);
+      onRequest?.(url, init);
+      if ((init?.method ?? 'GET') === 'GET' && url.includes('/pulls?')) {
+        const current = pages[Math.min(page++, pages.length - 1)]!;
+        return new Response(JSON.stringify(current.pulls), {
+          status: 200,
+          headers: current.link ? { Link: current.link } : {},
+        });
+      }
+      if (init?.method === 'GET' && /\/pulls\/\d+$/.test(url)) {
+        return new Response(JSON.stringify(pull({ state: 'closed' })), { status: 200 });
+      }
+      if (init?.method === 'PATCH')
+        return new Response(JSON.stringify(pull({ state: 'closed' })), { status: 200 });
+      return new Response('unexpected', { status: 500 });
+    };
+  }
+
+  it('registry query uses request.args and rejects a different branch', async () => {
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch([{ pulls: [pull()] }]),
+    });
+    const registry = new ActionAdapterRegistry([adapter]);
+    const querier = registry.outcomeQuerierFor(adapter.descriptor.effectType);
+    assert.ok(querier);
+    const outcome = await querier.queryOutcome({
+      tenantId,
+      effectId: 'eff-1',
+      idempotencyKey,
+      type: adapter.descriptor.effectType,
+      request: {
+        destination,
+        args: {
+          title: 'Approved title',
+          body: 'Approved body',
+          head: 'other-branch',
+          base: 'main',
+        },
+      },
+    });
+    assert.equal(outcome.status, 'UNKNOWN');
+  });
+
+  it('query rejects a marker match whose title or body changed', async () => {
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch([{ pulls: [pull()] }]),
+    });
+    const outcome = await adapter.queryOutcome({
+      tenantId,
+      effectId: 'eff-1',
+      idempotencyKey,
+      destination,
+      request: {
+        args: {
+          title: 'Changed title',
+          body: 'Changed body',
+          head: 'approved-branch',
+          base: 'main',
+        },
+      },
+    });
+    assert.equal(outcome.status, 'UNKNOWN');
+  });
+
+  it('compensation without the original idempotency key refuses before PATCH', async () => {
+    let writes = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async (input, init) => {
+        if (init?.method === 'PATCH') {
+          writes += 1;
+          return new Response(JSON.stringify(pull({ state: 'closed' })), { status: 200 });
+        }
+        if ((init?.method ?? 'GET') === 'GET' && /\/pulls\/1$/.test(String(input))) {
+          return new Response(JSON.stringify(pull()), { status: 200 });
+        }
+        return new Response('unexpected', { status: 500 });
+      },
+    });
+    await assert.rejects(
+      () =>
+        adapter.compensate({
+          tenantId,
+          effectId: 'cmp-1',
+          originalEffectId: 'eff-1',
+          idempotencyKey: 'cmp:eff-1:1.1.0',
+          destination,
+          forwardResponse: { prNumber: 1 },
+          compensationPatch: {},
+          signal: AbortSignal.timeout(5_000),
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof AdapterExecutionError);
+        assert.equal(error.code, 'GITHUB_COMPENSATE_MISSING_ORIGINAL_KEY');
+        return true;
+      },
+    );
+    assert.equal(writes, 0);
+  });
+
+  it('merged PR is never reported as compensated', async () => {
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: async () =>
+        new Response(
+          JSON.stringify(
+            pull({ state: 'closed', merged: true, merged_at: '2026-09-23T00:00:00Z' }),
+          ),
+          { status: 200 },
+        ),
+    });
+    const outcome = await adapter.queryCompensationOutcome({
+      tenantId,
+      effectId: 'cmp-1',
+      idempotencyKey: 'cmp:eff-1:1.1.0',
+      destination,
+      request: { forwardResponse: receipt() },
+    });
+    assert.equal(outcome.status, 'UNKNOWN');
+  });
+
+  it('follows a same-repository next link and finds a unique second-page match', async () => {
+    let listCalls = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch(
+        [
+          { pulls: [], link: '<https://api.github.com/repos/octo/repo/pulls?page=2>; rel="next"' },
+          { pulls: [pull()] },
+        ],
+        (url) => {
+          if (url.includes('/pulls?')) listCalls += 1;
+        },
+      ),
+    });
+    const outcome = await adapter.queryOutcome({
+      tenantId,
+      effectId: 'eff-1',
+      idempotencyKey,
+      destination,
+      request: {
+        args: {
+          title: 'Approved title',
+          body: 'Approved body',
+          head: 'approved-branch',
+          base: 'main',
+        },
+      },
+    });
+    assert.equal(listCalls, 2);
+    assert.equal(outcome.status, 'APPLIED');
+  });
+
+  it('returns UNKNOWN when pagination finds a second matching PR', async () => {
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch([
+        {
+          pulls: [pull()],
+          link: '<https://api.github.com/repos/octo/repo/pulls?page=2>; rel="next"',
+        },
+        { pulls: [pull({ number: 2, html_url: 'https://github.com/octo/repo/pull/2' })] },
+      ]),
+    });
+    const outcome = await adapter.queryOutcome({
+      tenantId,
+      effectId: 'eff-1',
+      idempotencyKey,
+      destination,
+      request: {
+        args: {
+          title: 'Approved title',
+          body: 'Approved body',
+          head: 'approved-branch',
+          base: 'main',
+        },
+      },
+    });
+    assert.equal(outcome.status, 'UNKNOWN');
+  });
+
+  it('rejects a cross-repository next link without fetching it', async () => {
+    let requests = 0;
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: listFetch(
+        [
+          {
+            pulls: [pull()],
+            link: '<https://api.github.com/repos/other/repo/pulls?page=2>; rel="next"',
+          },
+        ],
+        () => {
+          requests += 1;
+        },
+      ),
+    });
+    const outcome = await adapter.queryOutcome({
+      tenantId,
+      effectId: 'eff-1',
+      idempotencyKey,
+      destination,
+      request: {
+        args: {
+          title: 'Approved title',
+          body: 'Approved body',
+          head: 'approved-branch',
+          base: 'main',
+        },
+      },
+    });
+    assert.equal(outcome.status, 'UNKNOWN');
+    assert.equal(requests, 1);
+  });
+});
+
+describe('GitHub adapter real HTTP deadline', () => {
+  it(
+    'aborts a stalled response body without a caller signal within the internal deadline',
+    { timeout: 15_000 },
+    async (t) => {
+      let remoteClosed = false;
+      let calls = 0;
+      let closeObserved: () => void = () => {
+        throw new Error('close observer not installed');
+      };
+      const closed = new Promise<void>((resolve) => {
+        closeObserved = resolve;
+      });
+      const server = createServer((_request, response) => {
+        calls += 1;
+        response.on('close', () => {
+          remoteClosed = true;
+          closeObserved();
+        });
+        response.writeHead(200, { 'Content-Type': 'application/json' });
+        response.write('[');
+        // Intentionally never finish the body: reading it must share the same budget.
+      });
+      server.listen(0, '127.0.0.1');
+      await once(server, 'listening');
+      t.after(() => {
+        server.closeAllConnections();
+        server.close();
+      });
+      const address = server.address();
+      assert.ok(address && typeof address === 'object');
+      let observedSignal: AbortSignal | null | undefined;
+      const adapter = createGitHubPullRequestCreateAdapter({
+        credentials: mockCredentials(),
+        fetch: async (_url, init) => {
+          observedSignal = init?.signal;
+          return fetch(`http://127.0.0.1:${address.port}/pulls`, init);
+        },
+      });
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const pending = adapter.queryOutcome({
+        tenantId,
+        effectId: 'deadline',
+        idempotencyKey,
+        destination,
+        request: { args: baseInput().args },
+      });
+      try {
+        const outcome = await Promise.race([
+          pending,
+          new Promise<never>((_resolve, reject) => {
+            timeout = setTimeout(
+              () => reject(new Error('Adapter did not cancel its stalled HTTP body')),
+              12_000,
+            );
+          }),
+        ]);
+        assert.equal(outcome.status, 'UNKNOWN');
+        assert.equal(outcome.error?.code, 'GITHUB_QUERY_ABORTED');
+        assert.equal(observedSignal?.aborted, true);
+        await closed;
+        assert.equal(remoteClosed, true);
+        assert.equal(calls, 1);
+      } finally {
+        clearTimeout(timeout);
+        server.closeAllConnections();
+        await pending;
+      }
+    },
+  );
 });

@@ -107,14 +107,21 @@ describe('action gateway policy contracts', () => {
       {
         schema: 'commander.action-adapter/v1',
         adapterId: 'github.pull-request.create',
-        adapterVersion: '1.0.0',
+        adapterVersion: '1.1.0',
         effectType: 'connector.github.pull-request.create',
         toolName: 'github.pull-request.create',
         compensationEffectType: 'compensate.github.pull-request.create',
         destinationPattern: 'github://{owner}/{repo}/pulls',
         defaultGatewayEffect: 'require_approval',
         reversible: true,
-        evidenceResponseSummaryKeys: ['prNumber', 'url', 'state', 'httpStatus', 'errorCode'],
+        evidenceResponseSummaryKeys: [
+          'prNumber',
+          'url',
+          'state',
+          'headSha',
+          'httpStatus',
+          'errorCode',
+        ],
         compensationPatchKeys: [],
       },
       {
@@ -171,7 +178,7 @@ describe('action gateway policy contracts', () => {
     assert.equal(descriptorDigest, createHash('sha256').update(JSON.stringify(body)).digest('hex'));
     assert.equal(
       descriptorDigest,
-      '43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c',
+      'deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e',
     );
   });
 

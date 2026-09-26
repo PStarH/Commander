@@ -1,7 +1,7 @@
 {
   "schema": "commander.shadow-report/v1",
-  "generatedAt": "2026-09-03T00:00:00.000Z",
-  "sourceRevision": "example-phase-a",
+  "generatedAt": "2026-09-23T00:00:00.000Z",
+  "sourceRevision": "synthetic-example-github-adapter-1.1.0",
   "evaluatorVersion": "shadow-evaluator-v1",
   "campaignId": "example-campaign-100",
   "policySnapshot": {
@@ -11,7 +11,7 @@
       {
         "schema": "commander.action-adapter/v1",
         "adapterId": "github.pull-request.create",
-        "adapterVersion": "1.0.0",
+        "adapterVersion": "1.1.0",
         "effectType": "connector.github.pull-request.create",
         "toolName": "github.pull-request.create",
         "compensationEffectType": "compensate.github.pull-request.create",
@@ -22,6 +22,7 @@
           "prNumber",
           "url",
           "state",
+          "headSha",
           "httpStatus",
           "errorCode"
         ],
@@ -116,7 +117,7 @@
       "unregisteredEffect": "deny",
       "unregisteredDestination": "deny"
     },
-    "descriptorDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+    "descriptorDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
   },
   "manifests": [
     {
@@ -125,7 +126,7 @@
       "tenantId": "example-tenant",
       "producerId": "example-producer",
       "policyId": "action-gateway-mvp-v1",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c",
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e",
       "batchId": "batch-100",
       "closesAt": "2026-09-02T00:00:00.000Z",
       "records": [
@@ -630,8 +631,8 @@
           "digest": "a022c8c619d5a85385a3b1ca4b57aaa2c7381647d1848050cc6214b27d73c991"
         }
       ],
-      "keyId": "example-manifest-key-2026",
-      "signature": "YKbQgq70QZCYeQBnIkdhrMkMzCmtemsiUpiHnyTdQuQlH32rM6J6gKVfOWR0QqHRE6_X6RNptU_uQX_bcXHTCw"
+      "keyId": "example-manifest-github-1.1.0",
+      "signature": "FQ3rW9SeYAxYT6OlzgTktHvkWJwAJjT54xTTrWPmZ509bh7aWMpvObuT7PEQeJYsPng94kP1dVb2PcII9nNoBg"
     }
   ],
   "records": [
@@ -3314,147 +3315,147 @@
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-1",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-2",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-3",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-4",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-5",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-6",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-7",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-8",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-9",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-10",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-11",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-12",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-13",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-14",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-15",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-16",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-17",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-18",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     },
     {
       "observationId": "example-observation-19",
       "productionDecision": "allow",
       "hypotheticalDecision": "require_approval",
       "hypotheticalReasonCode": "REGISTERED_ADAPTER_POLICY",
-      "policyDigest": "43fdfddd96ab33f531305da197df3659a1372619bb0a2cd1930a5196d3bea25c"
+      "policyDigest": "deb0616aeff4a89db25606857f9633ca9e326105f7759bb64c87495961881e0e"
     }
   ],
   "hashes": {
-    "manifestsSha256": "e17a23f87b1d69f9b0279100a482b4dfaebd117ef29aedff6307aa3085686f76",
+    "manifestsSha256": "e367f1522290454aa5051c787fa4231e626e64a7007835133d7746f448ed4580",
     "recordsSha256": "50894c6e0aa21a951532e3f99cdbdd5416f74783219cd160a6a6ebf960d5b165",
-    "policySha256": "27a505a05ebca320a7bdaa14f85a1fc7f7bfc84f555967c77a12b20c1b2ca0e1"
+    "policySha256": "5b7585939ccd85f40c9c10521df2ae39aabb97ae01ad27613dec602c2e4f4292"
   },
-  "keyId": "report-key-1",
-  "signature": "iOeyS1Rf5aF3Art9Y-doYdHnYCXCfcGlipvCUwOHl3VoJ1MfwEE-Vs5WQSxgqwcShi9WaLfxsEWx6n7POBTtAA"
+  "keyId": "example-report-github-1.1.0",
+  "signature": "KYlCvCs13SyfnChblTi3b2KK22GYFS9nH_A0n20ChD0x0jQkoS8Y_SoGTb5rNdf_TNON7Ps-pnbcFPLt4veFDA"
 }

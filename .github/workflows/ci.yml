@@ -11,6 +11,11 @@ on:
     branches: [master, main]
   workflow_dispatch:
     inputs:
+      run_github_live_proof:
+        description: Run GitHub sandbox adapter create, response-cut lookup, and close tests (not Gateway proof)
+        required: true
+        type: boolean
+        default: false
       run_dr_live_proof:
         description: Run the protected G4 rotation and PostgreSQL DR proof
         required: true
@@ -27,6 +32,94 @@ permissions:
   contents: read
 
 jobs:
+  github-launch-contract:
+    name: GitHub launch contracts (synthetic HTTP, no credentials)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the adapter contract dependencies
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/effect-broker build
+      - run: pnpm test:github:offline
+      - run: pnpm typecheck:github
+
+  github-sandbox-adapter:
+    name: GitHub sandbox adapter proof (not Gateway or restart proof)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_github_live_proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: github-sandbox
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build adapter dependencies
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/effect-broker build
+      - name: Validate exact sandbox configuration before minting a token
+        env:
+          SANDBOX_OWNER: ${{ vars.GITHUB_TEST_OWNER }}
+          SANDBOX_REPO: ${{ vars.GITHUB_TEST_REPO }}
+          SANDBOX_APPROVED: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+        run: |
+          node --input-type=module <<'NODE'
+          const { SANDBOX_OWNER: owner, SANDBOX_REPO: repo, SANDBOX_APPROVED: approved } = process.env;
+          const segment = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+          if (!segment.test(owner ?? '') || !segment.test(repo ?? '') || approved !== `${owner}/${repo}`) {
+            throw new Error('SANDBOX_TARGET_INVALID: configure one exact owner/repository');
+          }
+          NODE
+      - name: Mint short-lived token for one sandbox repository
+        id: sandbox-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.GITHUB_SANDBOX_APP_ID }}
+          private-key: ${{ secrets.GITHUB_SANDBOX_APP_PRIVATE_KEY }}
+          owner: ${{ vars.GITHUB_TEST_OWNER }}
+          repositories: ${{ vars.GITHUB_TEST_REPO }}
+          permission-pull-requests: write
+      - name: Run real GitHub adapter scenarios
+        env:
+          LIVE_GITHUB: '1'
+          LIVE_GITHUB_RESPONSE_CUT: '1'
+          GITHUB_TOKEN: ${{ steps.sandbox-token.outputs.token }}
+          COMMANDER_CELL_TENANT_ID: github-sandbox-ci
+          GITHUB_TEST_OWNER: ${{ vars.GITHUB_TEST_OWNER }}
+          GITHUB_TEST_REPO: ${{ vars.GITHUB_TEST_REPO }}
+          COMMANDER_GITHUB_REPOSITORIES: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+          COMMANDER_LIVE_APPROVED_REPO: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+          GITHUB_TEST_HEAD: ${{ vars.GITHUB_TEST_HEAD }}
+          GITHUB_TEST_BASE: ${{ vars.GITHUB_TEST_BASE }}
+          GITHUB_RESPONSE_CUT_HEAD: ${{ vars.GITHUB_RESPONSE_CUT_HEAD }}
+        run: |
+          mkdir -p artifacts/github-sandbox
+          node --input-type=module -e 'import { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR as d } from "./packages/contracts/dist/index.js"; console.log(JSON.stringify({commit: process.env.GITHUB_SHA, adapterVersion: d.adapterVersion, evidence: "live-adapter-only", gatewayApproval: false, postgresRestart: false}))' > artifacts/github-sandbox/source.json
+          pnpm exec node --import tsx --test packages/action-adapters/src/live/github.live.test.ts > artifacts/github-sandbox/results.tap 2>&1
+      - name: Upload actual sandbox evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-sandbox-adapter-${{ github.sha }}
+          path: artifacts/github-sandbox/
+          if-no-files-found: error
+
   quality:
     name: Quality Gates (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
@@ -1068,6 +1161,18 @@ jobs:
 
       - name: Cell compensation E2E compose (C3)
         run: pnpm cell:compensation-e2e -- --mode compose --up
+
+      - name: GitHub recovery through real Gateway and PostgreSQL (synthetic provider)
+        timeout-minutes: 15
+        run: pnpm cell:github-recovery --up
+
+      - name: Upload GitHub cell recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-cell-recovery-${{ github.sha }}
+          path: artifacts/github-cell-recovery.json
+          if-no-files-found: error
 
       # `cell:up-assert` reports which services are unhealthy but the reason is in
       # the containers. Without this, an unhealthy api/worker/adapter-ops is

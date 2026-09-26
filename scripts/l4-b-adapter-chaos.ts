@@ -69,8 +69,8 @@ export function createChaosMockFetch(counters: L4BChaosRemoteCounters) {
     html_url: string;
     state: string;
     body: string;
-    head: { ref: string };
-    base: { ref: string };
+    head: { ref: string; sha: string; repo: { full_name: string } };
+    base: { ref: string; repo: { full_name: string } };
   }> = [];
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -92,9 +92,12 @@ export function createChaosMockFetch(counters: L4BChaosRemoteCounters) {
         number: pulls.length + 1,
         html_url: `https://github.com/octo/repo/pull/${pulls.length + 1}`,
         state: 'open',
+        title: body.title,
         body: body.body,
-        head: { ref: body.head },
-        base: { ref: body.base },
+        head: { ref: body.head, sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+        base: { ref: body.base, repo: { full_name: 'octo/repo' } },
+        merged: false,
+        merged_at: null,
       };
       pulls.push(created);
       return new Response(JSON.stringify(created), { status: 201 });

@@ -35,22 +35,28 @@ export function prepareCompensationFixture(): Record<string, string> {
   return {
     CELL_GITHUB_TLS_DIR: directory,
     CELL_GITHUB_TOKEN: randomBytes(32).toString('hex'),
+    CELL_GITHUB_ORACLE_TOKEN: randomBytes(32).toString('hex'),
   };
 }
 
-function compose(fixtureEnv: Record<string, string>, args: string[], input?: string): string {
+export function fixtureCompose(
+  fixtureEnv: Record<string, string>,
+  args: string[],
+  input?: string,
+): string {
   // The command prefix contains only repository-owned, space-free file names.
   return execFileSync('docker', [...COMPENSATION_COMPOSE_CMD.split(' ').slice(1), ...args], {
     env: { ...process.env, ...CELL_COMPOSE_ENV, ...fixtureEnv },
     input,
     encoding: 'utf8',
     stdio: ['pipe', 'pipe', 'pipe'],
+    timeout: 60_000,
   });
 }
 
 /** Owner-side fixture provisioning; runtime roles cannot invent allowlist policy. */
 export function seedCompensationFixturePolicy(fixtureEnv: Record<string, string>): void {
-  compose(
+  fixtureCompose(
     fixtureEnv,
     [
       'exec',
@@ -76,13 +82,13 @@ export function seedCompensationFixturePolicy(fixtureEnv: Record<string, string>
 /** The independent provider must see exactly one creation and one closure. */
 export function verifyCompensationFixture(fixtureEnv: Record<string, string>): boolean {
   const script = `fetch('https://api.github.com/__cell__/state', {
-    headers: { Authorization: 'Bearer ' + process.env.CELL_GITHUB_TOKEN }
+    headers: { Authorization: 'Bearer ' + process.env.CELL_GITHUB_ORACLE_TOKEN }
   }).then(async response => {
     if (!response.ok) throw new Error('fixture evidence unavailable');
     process.stdout.write(JSON.stringify(await response.json()));
   }).catch(() => process.exit(1));`;
   const state: unknown = JSON.parse(
-    compose(fixtureEnv, ['exec', '-T', 'github-fixture', 'node', '-e', script]),
+    fixtureCompose(fixtureEnv, ['exec', '-T', 'github-fixture', 'node', '-e', script]),
   );
   if (!state || typeof state !== 'object') return false;
   const evidence = state as { createCalls?: unknown; closeCalls?: unknown; pulls?: unknown };

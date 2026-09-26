@@ -6,42 +6,253 @@ import {
   adapterFetch,
   readJsonResponse,
   requireArrayResponse,
-  requireObjectResponse,
   type FetchFn,
 } from '../http.js';
-import type {
-  ActionAdapter,
-  AdapterCompensateInput,
-  AdapterCredentialProvider,
-  AdapterExecuteInput,
-  AdapterQueryInput,
-} from '../types.js';
+import type { ActionAdapter, AdapterCredentialProvider } from '../types.js';
 import { parseGitHubDestination } from '../types.js';
 
-interface GitHubPull {
-  number: number;
-  html_url: string;
-  state: string;
-  title?: string;
-  body: string | null;
-  head: { ref: string };
-  base: { ref: string };
+interface GitHubCreateArgs {
+  title: string;
+  body: string;
+  head: string;
+  base: string;
 }
 
-function requirePull(value: unknown, label: string): GitHubPull {
-  const record = requireObjectResponse<Record<string, unknown>>(value, label);
+interface GitHubCreateReceipt extends Record<string, unknown> {
+  prNumber: number;
+  url: string;
+  state: 'open' | 'closed';
+  idempotencyKey: string;
+  destination: string;
+  head: string;
+  base: string;
+  headSha: string;
+}
+
+function object(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function failure(code: string, message: string, uncertain = false): AdapterExecutionError {
+  return new AdapterExecutionError(message, {
+    code,
+    commitState: uncertain ? 'UNKNOWN' : 'NOT_COMMITTED',
+    retryMode: uncertain ? 'QUERY_FIRST' : 'NEVER',
+  });
+}
+
+function unknownOutcome(code = 'RECONCILE_OUTCOME_NOT_YET_VISIBLE'): EffectRemoteOutcome {
+  return { status: 'UNKNOWN', error: { code, message: 'Remote outcome is not yet provable' } };
+}
+
+function queryFailure(error: unknown, signal: AbortSignal): EffectRemoteOutcome {
+  return unknownOutcome(
+    signal.aborted
+      ? 'GITHUB_QUERY_ABORTED'
+      : error instanceof AdapterExecutionError
+        ? error.code
+        : 'GITHUB_QUERY_UNAVAILABLE',
+  );
+}
+
+function operationSignal(caller?: AbortSignal): AbortSignal {
+  const deadline = AbortSignal.timeout(10_000);
+  return caller ? AbortSignal.any([caller, deadline]) : deadline;
+}
+
+function branch(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0 && !/[\s:]/.test(value);
+}
+
+function parseArgs(value: unknown): GitHubCreateArgs {
+  const args = object(value);
   if (
-    typeof record.number !== 'number' ||
-    typeof record.state !== 'string' ||
-    typeof record.html_url !== 'string'
+    !args ||
+    typeof args.title !== 'string' ||
+    !args.title.trim() ||
+    typeof args.body !== 'string' ||
+    /<!--\s*commander-action:/i.test(args.body) ||
+    !branch(args.head) ||
+    !branch(args.base) ||
+    args.head === args.base
   ) {
-    throw new AdapterExecutionError(`${label} returned an incomplete pull-request body`, {
-      code: 'ADAPTER_RESPONSE_BODY_INVALID',
-      commitState: 'UNKNOWN',
-      retryMode: 'QUERY_FIRST',
-    });
+    throw failure(
+      'GITHUB_CREATE_ARGS_INVALID',
+      'Expected title, body and distinct same-repository head/base branches',
+    );
   }
-  return record as unknown as GitHubPull;
+  return { title: args.title, body: args.body, head: args.head, base: args.base };
+}
+
+function markedBody(args: GitHubCreateArgs, marker: string): string {
+  return args.body ? `${args.body}\n\n${marker}` : marker;
+}
+
+function validPullUrl(value: unknown, destination: string, number: number): value is string {
+  if (typeof value !== 'string') return false;
+  const { owner, repo } = parseGitHubDestination(destination);
+  try {
+    const url = new URL(value);
+    return (
+      url.origin === 'https://github.com' &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash &&
+      url.pathname.toLowerCase() === `/${owner}/${repo}/pull/${number}`.toLowerCase()
+    );
+  } catch {
+    return false;
+  }
+}
+
+function requirePull(value: unknown): Record<string, unknown> {
+  const pull = object(value);
+  if (
+    !pull ||
+    typeof pull.number !== 'number' ||
+    !Number.isSafeInteger(pull.number) ||
+    pull.number <= 0 ||
+    (pull.state !== 'open' && pull.state !== 'closed') ||
+    typeof pull.html_url !== 'string' ||
+    (typeof pull.body !== 'string' && pull.body !== null)
+  ) {
+    throw failure(
+      'ADAPTER_RESPONSE_BODY_INVALID',
+      'GitHub returned an incomplete pull request',
+      true,
+    );
+  }
+  return pull;
+}
+
+function receiptFor(
+  pull: Record<string, unknown>,
+  destination: string,
+  key: string,
+): GitHubCreateReceipt {
+  const { owner, repo } = parseGitHubDestination(destination);
+  const repository = `${owner}/${repo}`.toLowerCase();
+  const head = object(pull.head);
+  const base = object(pull.base);
+  const headRepo = object(head?.repo)?.full_name;
+  const baseRepo = object(base?.repo)?.full_name;
+  if (
+    typeof pull.number !== 'number' ||
+    !validPullUrl(pull.html_url, destination, pull.number) ||
+    (pull.state !== 'open' && pull.state !== 'closed') ||
+    !branch(head?.ref) ||
+    !branch(base?.ref) ||
+    typeof head?.sha !== 'string' ||
+    !/^[a-f0-9]{40}$/i.test(head.sha) ||
+    typeof headRepo !== 'string' ||
+    headRepo.toLowerCase() !== repository ||
+    typeof baseRepo !== 'string' ||
+    baseRepo.toLowerCase() !== repository
+  ) {
+    throw failure(
+      'GITHUB_RECEIPT_INVALID',
+      'Cannot prove a same-repository pull-request receipt',
+      true,
+    );
+  }
+  return {
+    prNumber: pull.number,
+    url: pull.html_url,
+    state: pull.state,
+    idempotencyKey: key,
+    destination,
+    head: head.ref,
+    base: base.ref,
+    headSha: head.sha,
+  };
+}
+
+function matchesRequest(
+  pull: Record<string, unknown>,
+  args: GitHubCreateArgs,
+  body: string,
+): boolean {
+  return (
+    pull.title === args.title &&
+    pull.body === body &&
+    object(pull.head)?.ref === args.head &&
+    object(pull.base)?.ref === args.base
+  );
+}
+
+function parseForwardReceipt(value: unknown, destination: string): GitHubCreateReceipt {
+  const receipt = object(value);
+  if (!receipt || typeof receipt.idempotencyKey !== 'string' || !receipt.idempotencyKey.trim()) {
+    throw failure(
+      'GITHUB_COMPENSATE_MISSING_ORIGINAL_KEY',
+      'Compensation requires the original idempotency key',
+    );
+  }
+  if (
+    typeof receipt.prNumber !== 'number' ||
+    !Number.isSafeInteger(receipt.prNumber) ||
+    receipt.prNumber <= 0 ||
+    !validPullUrl(receipt.url, destination, receipt.prNumber) ||
+    receipt.destination !== destination ||
+    !branch(receipt.head) ||
+    !branch(receipt.base) ||
+    typeof receipt.headSha !== 'string' ||
+    !/^[a-f0-9]{40}$/i.test(receipt.headSha) ||
+    (receipt.state !== 'open' && receipt.state !== 'closed')
+  ) {
+    throw failure(
+      'GITHUB_COMPENSATE_RECEIPT_INVALID',
+      'Compensation requires a complete forward receipt for this destination',
+    );
+  }
+  return {
+    prNumber: receipt.prNumber,
+    url: receipt.url,
+    state: receipt.state,
+    idempotencyKey: receipt.idempotencyKey,
+    destination,
+    head: receipt.head,
+    base: receipt.base,
+    headSha: receipt.headSha,
+  };
+}
+
+function verifyCompensationPull(
+  pull: Record<string, unknown>,
+  forward: GitHubCreateReceipt,
+  tenantId: string,
+): GitHubCreateReceipt {
+  const observed = receiptFor(pull, forward.destination, forward.idempotencyKey);
+  if (
+    observed.prNumber !== forward.prNumber ||
+    observed.head !== forward.head ||
+    observed.base !== forward.base
+  ) {
+    throw failure(
+      'GITHUB_COMPENSATE_RECEIPT_MISMATCH',
+      'Compensation refused: PR does not match the forward receipt',
+    );
+  }
+  if (
+    typeof pull.body !== 'string' ||
+    !pull.body.includes(githubPrBodyMarker(tenantId, forward.idempotencyKey))
+  ) {
+    throw failure('GITHUB_COMPENSATE_MARKER_MISMATCH', 'Compensation refused: PR marker mismatch');
+  }
+  if (pull.merged === true || typeof pull.merged_at === 'string') {
+    throw failure('GITHUB_COMPENSATE_MERGED', 'Compensation cannot undo a merged PR');
+  }
+  if (pull.merged !== false || pull.merged_at !== null) {
+    throw failure(
+      'GITHUB_COMPENSATE_MERGE_STATE_UNKNOWN',
+      'Cannot establish that the PR is unmerged',
+      true,
+    );
+  }
+  return observed;
 }
 
 export interface GitHubPullRequestCreateAdapterOptions {
@@ -53,324 +264,225 @@ export function createGitHubPullRequestCreateAdapter(
   options: GitHubPullRequestCreateAdapterOptions,
 ): ActionAdapter {
   const rawFetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) =>
-    adapterFetch(rawFetch, url, init);
 
-  async function listPullRequests(
+  async function request(
+    url: string,
     token: string,
-    owner: string,
-    repo: string,
-    head?: string,
-    base?: string,
-    signal?: AbortSignal,
-  ): Promise<GitHubPull[]> {
-    const params = new URLSearchParams({ state: 'all', per_page: '100' });
-    if (head) params.set('head', `${owner}:${head}`);
-    if (base) params.set('base', base);
-    const response = await fetchImpl(
-      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?${params}`,
-      {
-        headers: {
-          Authorization: `Bearer ${token}`,
-          Accept: 'application/vnd.github+json',
-          'X-GitHub-Api-Version': '2022-11-28',
-        },
-        // The broker installs its effect deadline by aborting a controller and
-        // forwards that signal through the adapter. Without it here, the marker
-        // pre-flight GET outlives the deadline and the broker cannot settle or
-        // park the effect until the request finishes on its own.
-        ...(signal ? { signal } : {}),
+    signal: AbortSignal,
+    method = 'GET',
+    body?: unknown,
+  ): Promise<Response> {
+    signal.throwIfAborted();
+    const response = await adapterFetch(rawFetch, url, {
+      method,
+      signal,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       },
-    );
-    await assertOkResponse(response, 'GitHub list pulls');
-    return requireArrayResponse(await readJsonResponse(response), 'GitHub list pulls').map(
-      (entry) => requirePull(entry, 'GitHub list pulls'),
-    );
-  }
-
-  function filterByMarker(
-    pulls: GitHubPull[],
-    marker: string,
-    head?: string,
-    base?: string,
-  ): GitHubPull[] {
-    return pulls.filter((pull) => {
-      if (head && pull.head?.ref !== head) return false;
-      if (base && pull.base?.ref !== base) return false;
-      return (pull.body ?? '').includes(marker);
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+    signal.throwIfAborted();
+    await assertOkResponse(response, `GitHub ${method}`);
+    return response;
   }
 
-  function assertPullMatchesCreateRequest(
-    pull: GitHubPull,
-    expected: { title: string; body: string; head: string; base: string },
-  ): void {
-    if (
-      pull.title !== expected.title ||
-      pull.body !== expected.body ||
-      pull.head.ref !== expected.head ||
-      pull.base.ref !== expected.base
-    ) {
-      throw new AdapterExecutionError(
-        'GitHub idempotency key was reused with a different pull-request request',
-        {
-          code: 'GITHUB_IDEMPOTENCY_CONFLICT',
-          commitState: 'NOT_COMMITTED',
-          retryMode: 'NEVER',
-          details: { prNumber: pull.number },
-        },
-      );
-    }
+  function pullsUrl(destination: string): string {
+    const { owner, repo } = parseGitHubDestination(destination);
+    return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`;
   }
 
-  async function findByMarker(
-    input: AdapterQueryInput,
+  async function listByMarker(
+    destination: string,
+    token: string,
+    signal: AbortSignal,
     marker: string,
-  ): Promise<{ pulls: GitHubPull[]; outcome: EffectRemoteOutcome | null }> {
-    const { owner, repo } = parseGitHubDestination(input.destination);
-    const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
-    const head = typeof input.request.head === 'string' ? input.request.head : undefined;
-    const base = typeof input.request.base === 'string' ? input.request.base : undefined;
-    const pulls = filterByMarker(
-      await listPullRequests(token, owner, repo, head, base, input.signal),
-      marker,
-      head,
-      base,
-    );
-    if (pulls.length === 0) {
-      return {
-        pulls,
-        outcome: {
-          status: 'UNKNOWN',
-          error: {
-            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
-            message: 'Remote outcome is not yet provable',
-          },
-        },
-      };
+    args: GitHubCreateArgs,
+  ): Promise<Record<string, unknown>[]> {
+    // The broker/ledger binds the key to the immutable approved request. Scope
+    // lookup to its branches so unrelated repository history cannot starve it.
+    const endpoint = pullsUrl(destination);
+    const { owner } = parseGitHubDestination(destination);
+    const params = new URLSearchParams({
+      state: 'all',
+      per_page: '100',
+      head: `${owner}:${args.head}`,
+      base: args.base,
+    });
+    let url = `${endpoint}?${params}`;
+    const seen = new Set<string>();
+    const candidates: Record<string, unknown>[] = [];
+    for (let page = 0; page < 10; page += 1) {
+      if (seen.has(url))
+        throw failure('GITHUB_PAGINATION_INVALID', 'Cyclic GitHub pagination', true);
+      seen.add(url);
+      const response = await request(url, token, signal);
+      const pulls = requireArrayResponse(await readJsonResponse(response), 'GitHub list pulls').map(
+        requirePull,
+      );
+      signal.throwIfAborted();
+      candidates.push(
+        ...pulls.filter((pull) => typeof pull.body === 'string' && pull.body.includes(marker)),
+      );
+      const link = response.headers.get('link');
+      if (!link) return candidates;
+      const links = link.split(',').map((part) => {
+        const match = part.match(
+          /^\s*<([^>]+)>\s*;\s*rel\s*=\s*(?:"([a-zA-Z\s]+)"|([a-zA-Z]+))\s*$/,
+        );
+        if (!match)
+          throw failure('GITHUB_PAGINATION_INVALID', 'Malformed GitHub Link header', true);
+        return { url: match[1]!, relations: (match[2] ?? match[3]!).toLowerCase().split(/\s+/) };
+      });
+      const nextLinks = links.filter((link) => link.relations.includes('next'));
+      if (nextLinks.length === 0) return candidates;
+      const rawNext = nextLinks.length === 1 ? nextLinks[0]!.url : undefined;
+      let next: URL;
+      try {
+        if (!rawNext) throw new Error('Invalid next link');
+        next = new URL(rawNext);
+      } catch {
+        throw failure('GITHUB_PAGINATION_INVALID', 'Invalid GitHub next link', true);
+      }
+      if (
+        next.origin !== 'https://api.github.com' ||
+        next.pathname !== new URL(endpoint).pathname ||
+        next.username ||
+        next.password ||
+        next.hash ||
+        !/^[1-9]\d*$/.test(next.searchParams.get('page') ?? '') ||
+        [...next.searchParams].some(
+          ([key, value]) => key !== 'page' && (!params.has(key) || value !== params.get(key)),
+        ) ||
+        [...next.searchParams.keys()].some((key) => next.searchParams.getAll(key).length !== 1)
+      ) {
+        throw failure(
+          'GITHUB_PAGINATION_INVALID',
+          'GitHub next link changed the query boundary',
+          true,
+        );
+      }
+      const pageParams = new URLSearchParams(params);
+      pageParams.set('page', next.searchParams.get('page')!);
+      url = `${endpoint}?${pageParams}`;
     }
-    if (pulls.length > 1) {
-      return {
-        pulls,
-        outcome: {
-          status: 'UNKNOWN',
-          error: {
-            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
-            message: 'Remote outcome is not yet provable',
-          },
-        },
-      };
-    }
-    const pull = pulls[0]!;
-    return {
-      pulls,
-      outcome: {
-        status: 'APPLIED',
-        response: {
-          prNumber: pull.number,
-          url: pull.html_url,
-          state: pull.state,
-        },
-      },
-    };
+    throw failure('GITHUB_PAGINATION_LIMIT', 'GitHub lookup exceeded ten pages', true);
+  }
+
+  async function getPull(
+    destination: string,
+    number: number,
+    token: string,
+    signal: AbortSignal,
+  ): Promise<Record<string, unknown>> {
+    const response = await request(`${pullsUrl(destination)}/${number}`, token, signal);
+    const pull = requirePull(await readJsonResponse(response));
+    signal.throwIfAborted();
+    return pull;
   }
 
   return {
     descriptor: GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
 
-    async execute(input: AdapterExecuteInput): Promise<Record<string, unknown>> {
-      const { owner, repo } = parseGitHubDestination(input.destination);
+    async execute(input) {
+      const signal = operationSignal(input.signal);
+      const args = parseArgs(input.args);
+      const endpoint = pullsUrl(input.destination);
       const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
-      const head = String(input.args.head ?? '');
-      const base = String(input.args.base ?? 'main');
-      const title = String(input.args.title ?? 'Commander PR');
-      const bodyText = String(input.args.body ?? '');
-      const body = bodyText.includes(marker) ? bodyText : `${bodyText}\n\n${marker}`.trim();
-      // A replay must find the marker even when the caller mutates routing
-      // fields; the exact request check below turns that mutation into a
-      // conflict instead of allowing a second remote create.
-      const existing = await findByMarker(
-        {
-          ...input,
-          request: {},
-        },
-        marker,
-      );
-      if (existing.pulls.length === 1) {
-        const pull = existing.pulls[0]!;
-        assertPullMatchesCreateRequest(pull, { title, body, head, base });
-        return { prNumber: pull.number, url: pull.html_url, state: pull.state };
-      }
-      if (existing.pulls.length > 1) {
-        throw new AdapterExecutionError('Multiple PRs matched idempotency marker', {
-          code: 'GITHUB_MULTI_MARKER',
-          commitState: 'UNKNOWN',
-          retryMode: 'QUERY_FIRST',
-          details: { matchCount: existing.pulls.length },
-        });
-      }
-
+      const body = markedBody(args, marker);
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
-
-      const response = await fetchImpl(
-        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`,
-        {
-          method: 'POST',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ title, body, head, base }),
-          signal: input.signal,
-        },
-      );
-      await assertOkResponse(response, 'GitHub create PR');
-      const created = requirePull(await readJsonResponse(response), 'GitHub create PR');
-      return { prNumber: created.number, url: created.html_url, state: created.state };
-    },
-
-    async queryOutcome(input: AdapterQueryInput): Promise<EffectRemoteOutcome> {
-      const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
-      const result = await findByMarker(input, marker);
-      return (
-        result.outcome ?? {
-          status: 'UNKNOWN',
-          error: {
-            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
-            message: 'Remote outcome is not yet provable',
-          },
+      const existing = await listByMarker(input.destination, token, signal, marker, args);
+      if (existing.length > 1)
+        throw failure('GITHUB_MULTI_MARKER', 'Multiple PRs matched the marker', true);
+      if (existing.length === 1) {
+        const pull = existing[0]!;
+        if (!matchesRequest(pull, args, body)) {
+          throw failure(
+            'GITHUB_IDEMPOTENCY_CONFLICT',
+            'GitHub idempotency key was reused with a different pull-request request',
+          );
         }
-      );
+        return receiptFor(pull, input.destination, input.idempotencyKey);
+      }
+      const response = await request(endpoint, token, signal, 'POST', { ...args, body });
+      const created = requirePull(await readJsonResponse(response));
+      signal.throwIfAborted();
+      if (!matchesRequest(created, args, body))
+        throw failure(
+          'GITHUB_CREATE_RESPONSE_MISMATCH',
+          'Created PR does not match the approved request',
+          true,
+        );
+      return receiptFor(created, input.destination, input.idempotencyKey);
     },
 
-    async compensate(input: AdapterCompensateInput): Promise<Record<string, unknown>> {
-      const { owner, repo } = parseGitHubDestination(input.destination);
-      const prNumber = Number(input.forwardResponse.prNumber);
-      if (!Number.isFinite(prNumber)) {
-        throw new AdapterExecutionError('Missing prNumber for compensation', {
-          code: 'GITHUB_COMPENSATE_MISSING_PR',
-          commitState: 'NOT_COMMITTED',
-          retryMode: 'NEVER',
-        });
-      }
-      const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
-      const getResponse = await fetchImpl(
-        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-          },
-          signal: input.signal,
-        },
-      );
-      await assertOkResponse(getResponse, 'GitHub get PR before compensate');
-      const existing = requirePull(
-        await readJsonResponse(getResponse),
-        'GitHub get PR before compensate',
-      );
-      const body = existing.body ?? '';
-      // Ownership gate: only close PRs that carry a Commander action marker.
-      // Exact hash needs the forward idempotency key (not the cmp:* key); when
-      // forwardResponse includes it, enforce exact match; otherwise require prefix.
-      const originalIdempotencyKey =
-        typeof input.forwardResponse.idempotencyKey === 'string'
-          ? input.forwardResponse.idempotencyKey
-          : undefined;
-      if (originalIdempotencyKey) {
-        const expected = githubPrBodyMarker(input.tenantId, originalIdempotencyKey);
-        if (!body.includes(expected)) {
-          throw new AdapterExecutionError('Compensation refused: PR marker mismatch', {
-            code: 'GITHUB_COMPENSATE_MARKER_MISMATCH',
-            commitState: 'NOT_COMMITTED',
-            retryMode: 'NEVER',
-            details: { prNumber },
-          });
-        }
-      } else if (!body.includes('<!-- commander-action:')) {
-        throw new AdapterExecutionError('Compensation refused: PR lacks Commander marker', {
-          code: 'GITHUB_COMPENSATE_MARKER_MISSING',
-          commitState: 'NOT_COMMITTED',
-          retryMode: 'NEVER',
-          details: { prNumber },
-        });
-      }
-      if (existing.state === 'closed') {
-        return { prNumber: existing.number, state: existing.state };
-      }
-      const response = await fetchImpl(
-        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
-        {
-          method: 'PATCH',
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ state: 'closed' }),
-          signal: input.signal,
-        },
-      );
-      await assertOkResponse(response, 'GitHub close PR');
-      const closed = requirePull(await readJsonResponse(response), 'GitHub close PR');
-      return { prNumber: closed.number, state: closed.state };
-    },
-
-    async queryCompensationOutcome(
-      input: AdapterQueryInput & { compensationResponse?: Record<string, unknown> },
-    ): Promise<EffectRemoteOutcome> {
-      const { owner, repo } = parseGitHubDestination(input.destination);
-      // The governed compensation request carries the forward receipt at
-      // request.forwardResponse; read it there so registry-driven reconciliation
-      // can converge instead of always reporting UNKNOWN.
-      const forward = input.request.forwardResponse;
-      const forwardPrNumber =
-        forward !== null && typeof forward === 'object' && !Array.isArray(forward)
-          ? (forward as Record<string, unknown>).prNumber
-          : undefined;
-      const prNumber = Number(
-        input.compensationResponse?.prNumber ?? forwardPrNumber ?? input.request.prNumber,
-      );
-      if (!Number.isFinite(prNumber)) {
-        return {
-          status: 'UNKNOWN',
-          error: {
-            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
-            message: 'Remote outcome is not yet provable',
-          },
-        };
-      }
-      const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
-      const response = await fetchImpl(
-        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls/${prNumber}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            Accept: 'application/vnd.github+json',
-            'X-GitHub-Api-Version': '2022-11-28',
-          },
-          signal: input.signal,
-        },
-      );
-      await assertOkResponse(response, 'GitHub get PR');
-      const pull = requirePull(await readJsonResponse(response), 'GitHub get PR');
-      if (pull.state === 'closed') {
+    async queryOutcome(input) {
+      const signal = operationSignal(input.signal);
+      try {
+        const args = parseArgs(input.request.args);
+        const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
+        const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+        const pulls = await listByMarker(input.destination, token, signal, marker, args);
+        if (pulls.length !== 1) return unknownOutcome();
+        const pull = pulls[0]!;
+        if (!matchesRequest(pull, args, markedBody(args, marker)))
+          return unknownOutcome('GITHUB_IDEMPOTENCY_CONFLICT');
         return {
           status: 'APPLIED',
-          response: { prNumber: pull.number, state: pull.state },
+          response: receiptFor(pull, input.destination, input.idempotencyKey),
         };
+      } catch (error) {
+        return queryFailure(error, signal);
       }
-      return {
-        status: 'UNKNOWN',
-        error: {
-          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
-          message: 'Remote outcome is not yet provable',
-        },
-      };
+    },
+
+    async compensate(input) {
+      const signal = operationSignal(input.signal);
+      const forward = parseForwardReceipt(input.forwardResponse, input.destination);
+      const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+      const existing = await getPull(input.destination, forward.prNumber, token, signal);
+      const observed = verifyCompensationPull(existing, forward, input.tenantId);
+      if (observed.state === 'closed') return observed;
+      const patched = await request(
+        `${pullsUrl(input.destination)}/${forward.prNumber}`,
+        token,
+        signal,
+        'PATCH',
+        { state: 'closed' },
+      );
+      // PATCH cannot atomically exclude an external merge. Re-read the remote
+      // state; once we wrote, a failed verification must remain UNKNOWN.
+      try {
+        await patched.body?.cancel();
+        const closed = await getPull(input.destination, forward.prNumber, token, signal);
+        const receipt = verifyCompensationPull(closed, forward, input.tenantId);
+        if (receipt.state !== 'closed')
+          throw failure('GITHUB_COMPENSATE_NOT_CLOSED', 'PR is still open', true);
+        return receipt;
+      } catch {
+        throw failure(
+          'GITHUB_COMPENSATE_OUTCOME_UNCERTAIN',
+          'Could not verify that the PR is closed and unmerged after PATCH',
+          true,
+        );
+      }
+    },
+
+    async queryCompensationOutcome(input) {
+      const signal = operationSignal(input.signal);
+      try {
+        const forward = parseForwardReceipt(input.request.forwardResponse, input.destination);
+        const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+        const pull = await getPull(input.destination, forward.prNumber, token, signal);
+        const receipt = verifyCompensationPull(pull, forward, input.tenantId);
+        return receipt.state === 'closed'
+          ? { status: 'APPLIED', response: receipt }
+          : unknownOutcome();
+      } catch (error) {
+        return queryFailure(error, signal);
+      }
     },
   };
 }
