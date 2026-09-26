@@ -4,11 +4,12 @@
  * Requires: LIVE_GITHUB=1, GITHUB_TOKEN|GITHUB_PAT, COMMANDER_CELL_TENANT_ID,
  * GITHUB_TEST_OWNER, GITHUB_TEST_REPO.
  *
- * Without creds: tests skip — matrix stays ENFORCED, not PROVEN.
+ * Opt-out suites skip. Explicit opt-in without prerequisites fails; neither
+ * these adapter tests nor their cleanup establish Gateway approval/restart proof.
  */
 import assert from 'node:assert/strict';
 import { after, describe, it } from 'node:test';
-import { githubPrBodyMarker } from '@commander/contracts';
+import { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } from '@commander/contracts';
 import { createGitHubPullRequestCreateAdapter, EnvAdapterCredentialProvider } from '../index.js';
 import {
   createGitHubResponseCutFetch,
@@ -22,48 +23,62 @@ const repo = process.env.GITHUB_TEST_REPO ?? '';
 const token = process.env.GITHUB_TOKEN ?? process.env.GITHUB_PAT ?? '';
 const destination = owner && repo ? `github://${owner}/${repo}/pulls` : '';
 
-/**
- * Keep the opt-in live test write-scoped to an explicitly test-only target.
- *
- * The `commander-live-` prefix is only accepted for the configured test owner:
- * keying on the name prefix alone accepted *any* owner with a repo of that name,
- * so a live run could write outside the approved account.
- */
+/** Live writes require the exact sandbox repository, never a naming prefix. */
 export function isAllowlistedGitHubTestRepository(
   repositoryOwner: string,
   repositoryName: string,
   approvedRepository = process.env.COMMANDER_LIVE_APPROVED_REPO ?? '',
-  approvedOwner = process.env.GITHUB_TEST_OWNER ?? '',
 ): boolean {
-  if (!repositoryOwner || !repositoryName) return false;
-  const canonicalRepository = `${repositoryOwner}/${repositoryName}`;
-  if (approvedRepository === canonicalRepository) return true;
   return (
-    approvedOwner !== '' &&
-    repositoryOwner === approvedOwner &&
-    repositoryName.startsWith('commander-live-')
+    Boolean(repositoryOwner && repositoryName) &&
+    approvedRepository === `${repositoryOwner}/${repositoryName}`
   );
 }
 
-const allowlistedTarget = isAllowlistedGitHubTestRepository(owner, repo);
-const liveEnabled =
-  process.env.LIVE_GITHUB === '1' &&
-  Boolean(tenantId) &&
-  Boolean(token) &&
-  Boolean(owner) &&
-  Boolean(repo) &&
-  allowlistedTarget;
-
-const idempotencyKey = `live-github-${Date.now()}`;
-const head = process.env.GITHUB_TEST_HEAD ?? `l4-b-live-${Date.now()}`;
-const base = process.env.GITHUB_TEST_BASE ?? 'main';
+const head = process.env.GITHUB_TEST_HEAD ?? '';
+const base = process.env.GITHUB_TEST_BASE ?? '';
 const responseCutHead = process.env.GITHUB_RESPONSE_CUT_HEAD ?? '';
-const responseCutEnabled =
-  liveEnabled &&
-  process.env.LIVE_GITHUB_RESPONSE_CUT === '1' &&
-  Boolean(responseCutHead) &&
-  responseCutHead !== head;
+const liveRequested = process.env.LIVE_GITHUB === '1';
+const responseCutRequested = process.env.LIVE_GITHUB_RESPONSE_CUT === '1';
+const prerequisites = [
+  ...(!liveRequested ? ['LIVE_GITHUB=1'] : []),
+  ...(!tenantId ? ['COMMANDER_CELL_TENANT_ID'] : []),
+  ...(!token ? ['GITHUB_TOKEN'] : []),
+  ...(!owner || !repo ? ['GITHUB_TEST_OWNER and GITHUB_TEST_REPO'] : []),
+  ...(!isAllowlistedGitHubTestRepository(owner, repo)
+    ? ['exact COMMANDER_LIVE_APPROVED_REPO']
+    : []),
+  ...(!(process.env.COMMANDER_GITHUB_REPOSITORIES ?? '')
+    .split(',')
+    .map((value) => value.trim())
+    .includes(`${owner}/${repo}`)
+    ? ['COMMANDER_GITHUB_REPOSITORIES']
+    : []),
+  ...(!head || !base || head === base || head.includes(':') || base.includes(':')
+    ? ['distinct prepared GITHUB_TEST_HEAD and GITHUB_TEST_BASE']
+    : []),
+  ...(responseCutRequested &&
+  (!responseCutHead ||
+    responseCutHead === head ||
+    responseCutHead === base ||
+    responseCutHead.includes(':'))
+    ? ['distinct prepared GITHUB_RESPONSE_CUT_HEAD']
+    : []),
+];
+const liveEnabled = liveRequested && prerequisites.length === 0;
+const responseCutEnabled = liveEnabled && responseCutRequested;
+const idempotencyKey = `live-github-${Date.now()}`;
 const responseCutIdempotencyKey = `live-github-response-cut-${Date.now()}`;
+
+if (liveRequested || responseCutRequested) {
+  it('explicit live selection has all prerequisites', () => {
+    assert.equal(
+      prerequisites.length,
+      0,
+      `GITHUB_LIVE_PREREQUISITES_MISSING: ${prerequisites.join(', ')}`,
+    );
+  });
+}
 
 const remotePrNumbers: number[] = [];
 
@@ -76,30 +91,22 @@ function printCleanup(): void {
 
 describe('GitHub live target preflight', () => {
   it('rejects a non-test repository without an exact approval', () => {
-    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'Commander', '', 'PStarH'), false);
+    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'Commander', ''), false);
     assert.equal(
-      isAllowlistedGitHubTestRepository('PStarH', 'Commander', 'other/test-repo', 'PStarH'),
+      isAllowlistedGitHubTestRepository('PStarH', 'Commander', 'other/test-repo'),
       false,
     );
   });
 
-  it('rejects the commander-live- prefix under an unapproved owner', () => {
-    // The prefix alone does not scope the write to the approved account.
-    assert.equal(
-      isAllowlistedGitHubTestRepository('attacker', 'commander-live-x', '', 'PStarH'),
-      false,
-    );
-    // Without a configured test owner nothing prefix-based is allowlisted.
-    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'commander-live-demo', '', ''), false);
+  it('rejects the commander-live- prefix without exact repository approval', () => {
+    assert.equal(isAllowlistedGitHubTestRepository('attacker', 'commander-live-x', ''), false);
+    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'commander-live-demo', ''), false);
   });
 
-  it('accepts the dedicated prefix for the approved owner or an exact approved repository', () => {
+  it('accepts only the exact approved repository', () => {
+    assert.equal(isAllowlistedGitHubTestRepository('PStarH', 'commander-live-demo', ''), false);
     assert.equal(
-      isAllowlistedGitHubTestRepository('PStarH', 'commander-live-demo', '', 'PStarH'),
-      true,
-    );
-    assert.equal(
-      isAllowlistedGitHubTestRepository('PStarH', 'private-test', 'PStarH/private-test', ''),
+      isAllowlistedGitHubTestRepository('PStarH', 'private-test', 'PStarH/private-test'),
       true,
     );
   });
@@ -116,7 +123,6 @@ describe(
     it('create → queryOutcome → compensate → queryCompensationOutcome', async () => {
       const credentials = new EnvAdapterCredentialProvider({ cellTenantId: tenantId });
       const adapter = createGitHubPullRequestCreateAdapter({ credentials });
-      const marker = githubPrBodyMarker(tenantId, idempotencyKey);
       const signal = AbortSignal.timeout(60_000);
       try {
         const created = await adapter.execute({
@@ -126,7 +132,7 @@ describe(
           destination,
           args: {
             title: 'L4-B live chaos PR',
-            body: `Live test\n${marker}`,
+            body: 'Live test',
             head,
             base,
           },
@@ -141,7 +147,7 @@ describe(
           effectId: 'eff-live-gh-1',
           idempotencyKey,
           destination,
-          request: { head, base },
+          request: { args: { title: 'L4-B live chaos PR', body: 'Live test', head, base } },
         });
         assert.equal(outcome.status, 'APPLIED');
         assert.equal(outcome.response?.prNumber, remotePrNumber);
@@ -150,9 +156,9 @@ describe(
           tenantId,
           effectId: 'eff-live-gh-cmp',
           originalEffectId: 'eff-live-gh-1',
-          idempotencyKey: `cmp:eff-live-gh-1:1.0.0`,
+          idempotencyKey: `cmp:eff-live-gh-1:${GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR.adapterVersion}`,
           destination,
-          forwardResponse: { ...created, idempotencyKey },
+          forwardResponse: created,
           compensationPatch: {},
           signal,
         });
@@ -161,9 +167,9 @@ describe(
         const compensationOutcome = await adapter.queryCompensationOutcome({
           tenantId,
           effectId: 'eff-live-gh-cmp',
-          idempotencyKey: `cmp:eff-live-gh-1:1.0.0`,
+          idempotencyKey: `cmp:eff-live-gh-1:${GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR.adapterVersion}`,
           destination,
-          request: { prNumber: remotePrNumber },
+          request: { forwardResponse: created },
           compensationResponse: compensated,
         });
         assert.equal(compensationOutcome.status, 'APPLIED');
@@ -228,7 +234,14 @@ describe(
           effectId: 'eff-live-gh-response-cut',
           idempotencyKey: responseCutIdempotencyKey,
           destination,
-          request: { head: responseCutHead, base },
+          request: {
+            args: {
+              title: 'L4-B live response-cut PR',
+              body: 'Live response-cut test',
+              head: responseCutHead,
+              base,
+            },
+          },
           signal,
         });
         assert.equal(outcome.status, 'APPLIED');
@@ -241,9 +254,9 @@ describe(
           tenantId,
           effectId: 'eff-live-gh-response-cut-cmp',
           originalEffectId: 'eff-live-gh-response-cut',
-          idempotencyKey: 'cmp:eff-live-gh-response-cut:1.0.0',
+          idempotencyKey: `cmp:eff-live-gh-response-cut:${GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR.adapterVersion}`,
           destination,
-          forwardResponse: { prNumber: remotePrNumber, idempotencyKey: responseCutIdempotencyKey },
+          forwardResponse: outcome.response,
           compensationPatch: {},
           signal,
         });

@@ -19,14 +19,14 @@ export interface ActionAdapterDescriptorV1 {
 export const GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR: ActionAdapterDescriptorV1 = {
   schema: 'commander.action-adapter/v1',
   adapterId: 'github.pull-request.create',
-  adapterVersion: '1.0.0',
+  adapterVersion: '1.1.0',
   effectType: 'connector.github.pull-request.create',
   toolName: 'github.pull-request.create',
   compensationEffectType: 'compensate.github.pull-request.create',
   destinationPattern: 'github://{owner}/{repo}/pulls',
   defaultGatewayEffect: 'require_approval',
   reversible: true,
-  evidenceResponseSummaryKeys: ['prNumber', 'url', 'state', 'httpStatus', 'errorCode'],
+  evidenceResponseSummaryKeys: ['prNumber', 'url', 'state', 'headSha', 'httpStatus', 'errorCode'],
 };
 
 export const SERVICENOW_INCIDENT_CREATE_DESCRIPTOR: ActionAdapterDescriptorV1 = {

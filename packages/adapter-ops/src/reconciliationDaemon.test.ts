@@ -3,12 +3,18 @@ import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   canonicalEvidenceBody,
+  EffectBroker,
+  type EffectRemoteOutcome,
   createEvidenceSigner,
   verifyEvidenceSignature,
   type EvidenceBundle,
   type EvidenceSignature,
 } from '@commander/effect-broker';
-import { ReconciliationDaemon, reconcileQueryThrownError } from './reconciliationDaemon.js';
+import {
+  ReconciliationDaemon,
+  reconcileQueryThrownError,
+  type ReconciliationDaemonOptions,
+} from './reconciliationDaemon.js';
 
 /**
  * A real Ed25519 signer: the daemon self-checks `assertEvidenceRecord(record,
@@ -110,6 +116,7 @@ function daemonFor(input: {
   queryError?: unknown;
   queryDelayMs?: number;
   brokerFactoryError?: unknown;
+  brokerFactory?: ReconciliationDaemonOptions['brokerFactory'];
   repository?: Record<string, unknown>;
   registry?: Record<string, unknown>;
   heartbeat?: () => Promise<void>;
@@ -142,22 +149,24 @@ function daemonFor(input: {
     pollIntervalMs: 60_000,
     batchSize: 10,
     evidenceSigner: TEST_EVIDENCE_SIGNER,
-    brokerFactory: () => {
-      brokerFactoryCalls += 1;
-      if ('brokerFactoryError' in input) throw input.brokerFactoryError;
-      return {
-        reconcileUnknown: async (query: Record<string, unknown>) => {
-          queryCalls.push(query);
-          if ('queryError' in input) throw input.queryError;
-          if (input.queryDelayMs) {
-            await new Promise<void>((resolve) => setTimeout(resolve, input.queryDelayMs));
-          }
-          return (
-            input.outcome ?? { status: 'UNKNOWN', error: { code: 'UNKNOWN', message: 'unknown' } }
-          );
-        },
-      } as never;
-    },
+    brokerFactory:
+      input.brokerFactory ??
+      (() => {
+        brokerFactoryCalls += 1;
+        if ('brokerFactoryError' in input) throw input.brokerFactoryError;
+        return {
+          reconcileUnknown: async (query: Record<string, unknown>) => {
+            queryCalls.push(query);
+            if ('queryError' in input) throw input.queryError;
+            if (input.queryDelayMs) {
+              await new Promise<void>((resolve) => setTimeout(resolve, input.queryDelayMs));
+            }
+            return (
+              input.outcome ?? { status: 'UNKNOWN', error: { code: 'UNKNOWN', message: 'unknown' } }
+            );
+          },
+        } as never;
+      }),
     heartbeat: input.heartbeat,
     drain: input.drain,
     telemetry: input.telemetry as never,
@@ -217,7 +226,7 @@ describe('ReconciliationDaemon', () => {
           },
         ]),
       );
-      const { daemon, querier, queryCalls } = daemonFor({
+      const { daemon, queryCalls } = daemonFor({
         outcome: test.outcome,
         repository: methods,
       });
@@ -230,7 +239,6 @@ describe('ReconciliationDaemon', () => {
       });
       assert.equal(queryCalls.length, 1);
       assert.equal(queryCalls[0]?.effect, EFFECT, 'broker must receive the claimed snapshot');
-      assert.equal(queryCalls[0]?.querier, querier);
       assert.deepEqual(
         writes.map(({ method, input }) => ({ method, input: mutationWithoutEvidence(input) })),
         [
@@ -620,6 +628,100 @@ describe('ReconciliationDaemon', () => {
       message: 'Outcome query exceeded 25ms budget for effect type github.pull-request.create',
     });
     assert.ok(elapsedMs < 150, `tick must not wait for the slow query (waited ${elapsedMs}ms)`);
+  });
+
+  it('aborts the adapter through the real broker and keeps a timeout ahead of an abort-time APPLIED result', async () => {
+    let observedSignal: AbortSignal | undefined;
+    let aborts = 0;
+    let completions = 0;
+    let lastError: unknown;
+    const { daemon } = daemonFor({
+      queryTimeoutMs: 25,
+      brokerFactory: () => ({ reconcileUnknown: EffectBroker.prototype.reconcileUnknown }),
+      registry: {
+        outcomeQuerierFor: () => ({
+          queryOutcome: async ({ signal }: { signal?: AbortSignal }) => {
+            observedSignal = signal;
+            return new Promise<EffectRemoteOutcome>((resolve) => {
+              signal?.addEventListener(
+                'abort',
+                () => {
+                  aborts += 1;
+                  resolve({ status: 'APPLIED', response: { number: 42 } });
+                },
+                { once: true },
+              );
+            });
+          },
+        }),
+      },
+      repository: {
+        completeReconcileEffect: async () => {
+          completions += 1;
+          return SUCCESS;
+        },
+        rescheduleReconcileEffect: async (input: Record<string, unknown>) => {
+          lastError = input.lastError;
+          return { ...SUCCESS, disposition: 'RESCHEDULED' };
+        },
+      },
+    });
+    const keepAlive = setInterval(() => undefined, 1_000);
+    try {
+      const stats = await daemon.tick();
+      assert.equal(
+        observedSignal?.aborted,
+        true,
+        'adapter must receive an aborted deadline signal',
+      );
+      assert.equal(aborts, 1);
+      assert.equal(stats.rescheduled, 1);
+      assert.equal(stats.completed, 0);
+      assert.equal(completions, 0);
+      assert.deepEqual(lastError, {
+        code: 'RECONCILE_QUERY_TIMEOUT',
+        message: 'Outcome query exceeded 25ms budget for effect type github.pull-request.create',
+      });
+    } finally {
+      clearInterval(keepAlive);
+    }
+  });
+
+  it('does not commit a late APPLIED result from an adapter that ignores cancellation', async () => {
+    let observedSignal: AbortSignal | undefined;
+    let completeQuery: ((outcome: EffectRemoteOutcome) => void) | undefined;
+    let completions = 0;
+    const { daemon } = daemonFor({
+      queryTimeoutMs: 25,
+      brokerFactory: () => ({ reconcileUnknown: EffectBroker.prototype.reconcileUnknown }),
+      registry: {
+        outcomeQuerierFor: () => ({
+          queryOutcome: async ({ signal }: { signal?: AbortSignal }) => {
+            observedSignal = signal;
+            return new Promise<EffectRemoteOutcome>((resolve) => {
+              completeQuery = resolve;
+            });
+          },
+        }),
+      },
+      repository: {
+        completeReconcileEffect: async () => {
+          completions += 1;
+          return SUCCESS;
+        },
+      },
+    });
+    const keepAlive = setInterval(() => undefined, 1_000);
+    try {
+      assert.equal((await daemon.tick()).rescheduled, 1);
+      assert.equal(observedSignal?.aborted, true);
+      assert.ok(completeQuery);
+      completeQuery({ status: 'APPLIED', response: { number: 42 } });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(completions, 0);
+    } finally {
+      clearInterval(keepAlive);
+    }
   });
 
   it('refuses a query budget that is not a positive integer below the claim lease', () => {

@@ -7,6 +7,8 @@ services:
     command: ['node', '/fixture/cell-github-fixture.mjs']
     environment:
       CELL_GITHUB_TOKEN: ${CELL_GITHUB_TOKEN:?set CELL_GITHUB_TOKEN}
+      CELL_GITHUB_ORACLE_TOKEN: ${CELL_GITHUB_ORACLE_TOKEN:?set CELL_GITHUB_ORACLE_TOKEN}
+      CELL_GITHUB_CUT_CREATE_RESPONSE: ${CELL_GITHUB_CUT_CREATE_RESPONSE:-0}
       NODE_EXTRA_CA_CERTS: /fixture/tls/cert.pem
     volumes:
       - ./scripts/cell-github-fixture.mjs:/fixture/cell-github-fixture.mjs:ro
@@ -19,7 +21,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('https://api.github.com/__cell__/state',{headers:{Authorization:'Bearer '+process.env.CELL_GITHUB_TOKEN}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        - "fetch('https://api.github.com/__cell__/state',{headers:{Authorization:'Bearer '+process.env.CELL_GITHUB_ORACLE_TOKEN}}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
       interval: 2s
       timeout: 3s
       retries: 15

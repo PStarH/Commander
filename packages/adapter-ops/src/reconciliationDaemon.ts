@@ -572,18 +572,30 @@ export class ReconciliationDaemon {
     querier: EffectOutcomeQuerier,
   ): Promise<ReconciliationOutcome> {
     let timer: NodeJS.Timeout | undefined;
+    const controller = new AbortController();
+    const boundedQuerier: EffectOutcomeQuerier = {
+      queryOutcome: (input) => {
+        const signal = input.signal
+          ? AbortSignal.any([input.signal, controller.signal])
+          : controller.signal;
+        signal.throwIfAborted();
+        return querier.queryOutcome({ ...input, signal });
+      },
+    };
     try {
       return await Promise.race([
-        Promise.resolve(broker.reconcileUnknown({ effect, querier })).then((value) =>
-          normalizeOutcome(value, effect.type),
+        Promise.resolve(broker.reconcileUnknown({ effect, querier: boundedQuerier })).then(
+          (value) => normalizeOutcome(value, effect.type),
         ),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
-            reject(
-              Object.assign(new Error('reconciliation outcome query exceeded its budget'), {
-                code: RECONCILE_QUERY_TIMEOUT,
-              }),
+            const error = Object.assign(
+              new Error('reconciliation outcome query exceeded its budget'),
+              { code: RECONCILE_QUERY_TIMEOUT },
             );
+            // Settle the timeout first: abort listeners may synchronously resolve a query.
+            reject(error);
+            controller.abort(error);
           }, this.queryTimeoutMs);
           timer.unref();
         }),
@@ -605,6 +617,7 @@ export class ReconciliationDaemon {
       return { status: 'UNKNOWN', error: reconcileQueryThrownError(error, effect.type) };
     } finally {
       if (timer) clearTimeout(timer);
+      controller.abort();
     }
   }
 

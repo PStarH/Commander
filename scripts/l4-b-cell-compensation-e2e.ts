@@ -654,8 +654,13 @@ export async function runCellCompensationE2E(options: {
     : {
         CELL_GITHUB_TLS_DIR: process.env.CELL_GITHUB_TLS_DIR ?? '',
         CELL_GITHUB_TOKEN: process.env.CELL_GITHUB_TOKEN ?? '',
+        CELL_GITHUB_ORACLE_TOKEN: process.env.CELL_GITHUB_ORACLE_TOKEN ?? '',
       };
-  if (!fixtureEnv.CELL_GITHUB_TLS_DIR || !fixtureEnv.CELL_GITHUB_TOKEN) {
+  if (
+    !fixtureEnv.CELL_GITHUB_TLS_DIR ||
+    !fixtureEnv.CELL_GITHUB_TOKEN ||
+    !fixtureEnv.CELL_GITHUB_ORACLE_TOKEN
+  ) {
     return {
       mode,
       verdict: 'BLOCKED',

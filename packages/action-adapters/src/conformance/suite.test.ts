@@ -55,8 +55,8 @@ const githubFactory: ConformanceAdapterFactory = {
       state: string;
       title: string;
       body: string;
-      head: { ref: string };
-      base: { ref: string };
+      head: { ref: string; sha: string; repo: { full_name: string } };
+      base: { ref: string; repo: { full_name: string } };
     }> = [];
     const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input);
@@ -79,8 +79,10 @@ const githubFactory: ConformanceAdapterFactory = {
           state: 'open',
           title: body.title,
           body: body.body,
-          head: { ref: body.head },
-          base: { ref: body.base },
+          head: { ref: body.head, sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: body.base, repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
         };
         pulls.push(created);
         return new Response(JSON.stringify(created), { status: 201 });
@@ -112,7 +114,9 @@ const githubFactory: ConformanceAdapterFactory = {
       counters,
       destination: 'github://octo/repo/pulls',
       executeArgs: { title: 'Conformance PR', body: 'body', head: 'feature', base: 'main' },
-      queryRequest: { head: 'feature', base: 'main' },
+      queryRequest: {
+        args: { title: 'Conformance PR', body: 'body', head: 'feature', base: 'main' },
+      },
       compensationPatch: {},
     };
   },
@@ -136,17 +140,19 @@ const githubFactory: ConformanceAdapterFactory = {
         number: 1,
         html_url: 'https://github.com/octo/repo/pull/1',
         state: 'open',
-        body: marker,
-        head: { ref: 'feature' },
-        base: { ref: 'main' },
+        title: 'Conformance PR',
+        body: `body\n\n${marker}`,
+        head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+        base: { ref: 'main', repo: { full_name: 'octo/repo' } },
       },
       {
         number: 2,
         html_url: 'https://github.com/octo/repo/pull/2',
         state: 'open',
-        body: marker,
-        head: { ref: 'feature' },
-        base: { ref: 'main' },
+        title: 'Conformance PR',
+        body: `body\n\n${marker}`,
+        head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+        base: { ref: 'main', repo: { full_name: 'octo/repo' } },
       },
     ];
     return {
@@ -162,7 +168,9 @@ const githubFactory: ConformanceAdapterFactory = {
       counters,
       destination: 'github://octo/repo/pulls',
       executeArgs: { title: 'Conformance PR', body: 'body', head: 'feature', base: 'main' },
-      queryRequest: { head: 'feature', base: 'main' },
+      queryRequest: {
+        args: { title: 'Conformance PR', body: 'body', head: 'feature', base: 'main' },
+      },
       compensationPatch: {},
     };
   },

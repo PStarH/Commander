@@ -1,8 +1,8 @@
 [
   {
     "algorithm": "Ed25519",
-    "keyId": "example-manifest-key-2026",
+    "keyId": "example-manifest-github-1.1.0",
     "status": "active",
-    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAHYy63ePKH7NNDaU4tRXunKPHc3EIGGw92lxTkxcDDWU=\n-----END PUBLIC KEY-----\n"
+    "publicKeyPem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAQ0kq9NdX0oyAGGqVyo+t8jjBBu1zNALWllqDFDo+0BE=\n-----END PUBLIC KEY-----\n"
   }
 ]

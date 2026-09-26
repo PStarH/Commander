@@ -160,6 +160,7 @@
     "cell:smoke": "pnpm exec tsx scripts/l4-b-cell-smoke.ts",
     "cell:compensation-e2e": "pnpm exec tsx scripts/l4-b-cell-compensation-e2e.ts",
     "cell:reconciliation-e2e": "pnpm exec tsx scripts/l4-b-cell-reconciliation-e2e.ts",
+    "cell:github-recovery": "pnpm exec tsx scripts/github-cell-recovery.ts",
     "cell:compensation-dual-race": "pnpm exec tsx scripts/l4-b-compensation-dual-process-race.ts",
     "cell:up-assert": "pnpm exec tsx scripts/l4-b-cell-up-assert.ts",
     "cell:image-boot-smoke": "pnpm exec tsx scripts/l4-b-image-boot-smoke.ts",
@@ -168,7 +169,10 @@
     "helm:cell-assert:enterprise": "helm template cell-enterprise deploy/helm/commander -f deploy/helm/commander/values-enterprise.yaml --set image.tag=test --set tenantAuthority.proofOwnerSecret=cell-enterprise-proof-owner-r1 --set tenantAuthority.releaseProjectionConfigMap=cell-enterprise-release-projection-r1 --set tenantAuthority.bootstrapAuthoritySecret=cell-enterprise-bootstrap-authority-r1 | pnpm exec tsx scripts/helm-cell-assert.ts --profile enterprise",
     "test:l4": "NODE_PATH=node_modules/.pnpm/node_modules pnpm exec node --import tsx --test scripts/l4-a-golden-demo.test.ts scripts/l4-b-adapter-chaos.test.ts scripts/l4-b-cell-compensation-e2e.test.ts scripts/l4-b-cell-reconciliation-e2e.test.ts",
     "test:acceptance:build-metadata": "pnpm --filter @commander/adapter-ops --filter @commander/kernel --filter @commander/api --filter @commander/mcp-server build && pnpm exec node --import tsx --test scripts/openai-agents-mcp-build-metadata.test.ts",
-    "test:registration": "node scripts/test-registration.mjs --verify"
+    "test:registration": "node scripts/test-registration.mjs --verify",
+    "demo:github": "pnpm exec tsx scripts/github-action-demo.ts",
+    "test:github:offline": "pnpm exec node --import tsx --test packages/action-adapters/src/github/pullRequestCreate.test.ts packages/action-adapters/src/registry.test.ts packages/action-adapters/src/live/githubResponseCut.test.ts scripts/github-action-demo.test.ts scripts/github-launch-ci.test.ts scripts/github-cell-recovery.test.ts",
+    "typecheck:github": "pnpm exec tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext --moduleResolution Bundler --esModuleInterop --allowImportingTsExtensions scripts/github-action-demo.ts scripts/github-action-demo.test.ts scripts/github-launch-ci.test.ts scripts/github-cell-recovery.ts scripts/github-cell-recovery.test.ts"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

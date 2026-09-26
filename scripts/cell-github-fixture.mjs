@@ -3,23 +3,28 @@ import { createServer } from 'node:https';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-export function createGitHubFixture({ key, cert, token }) {
+export function createGitHubFixture({ key, cert, token, oracleToken, cutCreateResponse = false }) {
   if (!token) throw new Error('CELL_GITHUB_TOKEN is required');
+  if (!oracleToken || oracleToken === token)
+    throw new Error('CELL_GITHUB_ORACLE_TOKEN must differ from CELL_GITHUB_TOKEN');
   const pulls = [];
   let createCalls = 0;
   let closeCalls = 0;
+  let responseCutInjected = false;
+  let committedCreateStatus = null;
   return createServer({ key, cert }, async (req, res) => {
     const send = (status, body) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
     const url = new URL(req.url, 'https://api.github.com');
-    if (req.headers.authorization !== `Bearer ${token}`) {
+    const expectedToken = url.pathname === '/__cell__/state' ? oracleToken : token;
+    if (req.headers.authorization !== `Bearer ${expectedToken}`) {
       send(401, { message: 'Bad credentials' });
       return;
     }
     if (req.method === 'GET' && url.pathname === '/__cell__/state') {
-      send(200, { createCalls, closeCalls, pulls });
+      send(200, { createCalls, closeCalls, pulls, responseCutInjected, committedCreateStatus });
       return;
     }
     const match = /^\/repos\/([^/]+)\/([^/]+)\/pulls(?:\/(\d+))?$/.exec(url.pathname);
@@ -81,10 +86,19 @@ export function createGitHubFixture({ key, cert, token }) {
         state: 'open',
         title: body.title,
         body: body.body,
-        head: { ref: body.head },
-        base: { ref: body.base },
+        head: { ref: body.head, sha: 'a'.repeat(40), repo: { full_name: `${owner}/${repo}` } },
+        base: { ref: body.base, repo: { full_name: `${owner}/${repo}` } },
+        merged: false,
+        merged_at: null,
       };
       pulls.push(created);
+      committedCreateStatus = 201;
+      if (cutCreateResponse && !responseCutInjected) {
+        responseCutInjected = true;
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.write(JSON.stringify(created).slice(0, 1), () => res.destroy());
+        return;
+      }
       send(201, created);
     } else if (req.method === 'PATCH' && number && pull && body.state === 'closed') {
       closeCalls += 1;
@@ -101,6 +115,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     key: readFileSync('/fixture/tls/key.pem'),
     cert: readFileSync('/fixture/tls/cert.pem'),
     token: process.env.CELL_GITHUB_TOKEN,
+    oracleToken: process.env.CELL_GITHUB_ORACLE_TOKEN,
+    cutCreateResponse: process.env.CELL_GITHUB_CUT_CREATE_RESPONSE === '1',
   });
   server.listen(443, '0.0.0.0');
 }

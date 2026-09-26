@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { describe, it } from 'node:test';
 import { githubPrBodyMarker } from '@commander/contracts';
 import { createGitHubPullRequestCreateAdapter } from '../github/pullRequestCreate.js';
@@ -27,8 +29,10 @@ interface MockPull {
   state: string;
   title: string;
   body: string;
-  head: { ref: string };
-  base: { ref: string };
+  head: { ref: string; sha: string; repo: { full_name: string } };
+  base: { ref: string; repo: { full_name: string } };
+  merged: boolean;
+  merged_at: string | null;
 }
 
 function testCredentials(): AdapterCredentialProvider {
@@ -152,8 +156,10 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
           state: 'open',
           title: body.title,
           body: body.body,
-          head: { ref: body.head },
-          base: { ref: body.base },
+          head: { ref: body.head, sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: body.base, repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
         };
         pulls.push(created);
         return new Response(JSON.stringify(created), { status: 201 });
@@ -192,7 +198,7 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
       effectId: 'eff-response-cut',
       idempotencyKey,
       destination,
-      request: {},
+      request: { args: { title: 'cut test', body: 'body', head: 'feature', base: 'main' } },
     });
     assert.equal(outcome.status, 'APPLIED');
     assert.equal(outcome.response?.prNumber, 1);
@@ -203,4 +209,37 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
       'the committed body must carry the idempotency marker',
     );
   });
+});
+
+describe('GitHub explicitly selected live proof', () => {
+  for (const flag of ['LIVE_GITHUB', 'LIVE_GITHUB_RESPONSE_CUT']) {
+    it(`fails instead of silently skipping when ${flag}=1 lacks prerequisites`, () => {
+      const env = { ...process.env };
+      delete env.NODE_TEST_CONTEXT;
+      for (const key of Object.keys(env)) {
+        if (
+          key.startsWith('GITHUB_') ||
+          key.startsWith('LIVE_GITHUB') ||
+          key.startsWith('COMMANDER_LIVE_') ||
+          key === 'COMMANDER_CELL_TENANT_ID' ||
+          key === 'COMMANDER_GITHUB_REPOSITORIES'
+        )
+          delete env[key];
+      }
+      env[flag] = '1';
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          '--test',
+          fileURLToPath(new URL('./github.live.test.ts', import.meta.url)),
+        ],
+        { env, encoding: 'utf8', timeout: 10_000 },
+      );
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 1, 'an explicitly requested live run must fail closed');
+      assert.match(result.stdout + result.stderr, /GITHUB_LIVE_PREREQUISITES_MISSING/);
+    });
+  }
 });
