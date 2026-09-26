@@ -166,17 +166,21 @@ describe('MetaLearner', () => {
         minRunsBeforeLearning: 1,
         enablePredictionLoop: true,
       });
-      ml.createPrediction('edit-1', 'switch to parallel', 'PARALLEL', 'SEQUENTIAL', 'gpt-4', [
-        'code',
-      ]);
-      expect(ml.getPredictions().length).toBe(1);
-
       ml.recordExperience(
         makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'SEQUENTIAL' }),
       );
-      ml.selectStrategy('code', 'gpt-4');
+      const chosen = ml.selectStrategy('code', 'gpt-4');
+      const target = chosen === 'SEQUENTIAL' ? 'PARALLEL' : 'SEQUENTIAL';
+      ml.createPrediction('edit-1', 'switch strategy', target, chosen, 'gpt-4', ['code']);
+      expect(ml.getPredictions().length).toBe(1);
+
       ml.recordExperience(
-        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'PARALLEL' }),
+        makeExperience({
+          modelUsed: 'gpt-4',
+          taskType: 'code',
+          strategyUsed: target,
+          success: true,
+        }),
       );
       expect(ml.getVerdicts().length).toBe(1);
     });
