@@ -423,7 +423,7 @@
     },
     {
       "path": "scripts/l4-b-cell-compensation-e2e.ts",
-      "sourceSha256": "ffb0001d9dddbcb5ede32dc3e752ff3edea0e65363bf7529aaeb8396b73e4a2e",
+      "sourceSha256": "1efe862013f6cee710ed3e9d50ea677f4946e8e7ff4532e1118d4f734488ae91",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-operations",
       "reason": "Non-production cell compose e2e fixture drives the legacy local HTTP surface",
