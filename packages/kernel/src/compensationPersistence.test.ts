@@ -10,6 +10,7 @@ import type {
 } from './types.js';
 import type { KernelEvidenceRecord } from './evidenceRepository.js';
 import { canonicalCompensationHash } from './ops/compensationAuthority.js';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
 import { SqliteKernelRepository } from './sqlite.js';
 import {
@@ -550,7 +551,18 @@ async function claimedCompensation(harness: Harness, suffix: string) {
     stepId: claimed.request.compensationStepId,
     tenantId: TENANT,
     type: claimed.authorization.compensationEffectType,
-    idempotencyKey: `cmp:${claimed.request.originalEffectId}:${claimed.request.adapterVersion}`,
+    idempotencyKey: deriveEffectIdempotencyKey({
+      tenantId: claimed.request.tenantId,
+      runId: claimed.request.compensationRunId,
+      stepId: claimed.request.compensationStepId,
+      effectId: compensationEffectId,
+      request: {
+        originalEffectId: claimed.request.originalEffectId,
+        destination: claimed.request.destination,
+        forwardResponse: claimed.forwardResponse,
+        compensationPatch: claimed.authorization.compensationPatch,
+      },
+    }),
     policyDecisionId: claimed.authorization.policyDecisionId,
     policySnapshotId: claimed.authorization.policySnapshotId,
     actionDigest: claimed.authorization.actionDigest,
