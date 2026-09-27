@@ -105,6 +105,18 @@ function field(record: Record<string, unknown>, key: string): string {
   return value;
 }
 
+async function until<T, S extends T>(
+  read: () => Promise<T>,
+  ready: (value: T) => value is S,
+  code: string,
+  timeoutMs?: number,
+): Promise<S>;
+async function until<T>(
+  read: () => Promise<T>,
+  ready: (value: T) => boolean,
+  code: string,
+  timeoutMs?: number,
+): Promise<T>;
 async function until<T>(
   read: () => Promise<T>,
   ready: (value: T) => boolean,
