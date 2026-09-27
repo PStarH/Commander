@@ -1142,6 +1142,13 @@ jobs:
             echo 'EV_EOF'
           } >> "$GITHUB_ENV"
           echo "COMMANDER_EVIDENCE_SIGNING_KEY_ID=cell-ci-ev-r1" >> "$GITHUB_ENV"
+          ev_jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/ev.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-ev-r1' }] }));
+          ")
+          echo "COMMANDER_EVIDENCE_JWKS_JSON=$ev_jwks" >> "$GITHUB_ENV"
           sh deploy/docker/kernel-tls/generate-certificates.sh "$key_dir/db-tls" postgres
           echo "COMMANDER_DATABASE_TLS_HOST_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
           spki=$(openssl x509 -in "$key_dir/db-tls/server.crt" -pubkey -noout \

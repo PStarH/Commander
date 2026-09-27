@@ -3,7 +3,7 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { generateKeyPairSync } from 'node:crypto';
+import { createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import {
   generateCellDatabaseTlsMaterials,
@@ -57,12 +57,28 @@ export function generateCellCapabilityMaterials(): {
   COMMANDER_CAPABILITY_KEY_ID: string;
   COMMANDER_CAPABILITY_JWKS_JSON: string;
 } {
+  const pem = process.env.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM?.trim();
+  const keyId =
+    process.env.COMMANDER_CAPABILITY_KEY_ID?.trim() ?? `cell-${Date.now().toString(36)}`;
+  if (pem) {
+    const priv = createPrivateKey(pem);
+    const pub = createPublicKey(priv);
+    const jwk = pub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
+    return {
+      COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: pem,
+      COMMANDER_CAPABILITY_KEY_ID: keyId,
+      COMMANDER_CAPABILITY_JWKS_JSON:
+        process.env.COMMANDER_CAPABILITY_JWKS_JSON?.trim() ??
+        JSON.stringify({
+          keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+        }),
+    };
+  }
   const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const generatedPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
   const jwk = publicKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
-  const keyId = `cell-${Date.now().toString(36)}`;
   return {
-    COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: pem,
+    COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: generatedPem,
     COMMANDER_CAPABILITY_KEY_ID: keyId,
     COMMANDER_CAPABILITY_JWKS_JSON: JSON.stringify({
       keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
@@ -74,13 +90,36 @@ export function generateCellCapabilityMaterials(): {
 export function generateCellEvidenceSigningMaterials(): {
   COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: string;
   COMMANDER_EVIDENCE_SIGNING_KEY_ID: string;
+  COMMANDER_EVIDENCE_JWKS_JSON: string;
 } {
-  const { privateKey } = generateKeyPairSync('ed25519');
+  const pem = process.env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM?.trim();
+  const keyId =
+    process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID?.trim() ??
+    `cell-evidence-${Date.now().toString(36)}`;
+  if (pem) {
+    const priv = createPrivateKey(pem);
+    const pub = createPublicKey(priv);
+    const jwk = pub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
+    return {
+      COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: pem,
+      COMMANDER_EVIDENCE_SIGNING_KEY_ID: keyId,
+      COMMANDER_EVIDENCE_JWKS_JSON:
+        process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim() ??
+        JSON.stringify({
+          keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+        }),
+    };
+  }
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const jwk = publicKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
   return {
     COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: privateKey
       .export({ type: 'pkcs8', format: 'pem' })
       .toString(),
-    COMMANDER_EVIDENCE_SIGNING_KEY_ID: `cell-evidence-${Date.now().toString(36)}`,
+    COMMANDER_EVIDENCE_SIGNING_KEY_ID: keyId,
+    COMMANDER_EVIDENCE_JWKS_JSON: JSON.stringify({
+      keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+    }),
   };
 }
 

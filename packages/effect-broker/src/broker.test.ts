@@ -1724,6 +1724,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
       fencingEpoch: 1,
       leaseToken: 'l',
       effectId: 'eff-aff-ok',
+      idempotencyKey: 'idem',
     });
   });
 

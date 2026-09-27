@@ -113,6 +113,7 @@ services:
       - 'ADMIN_PASSWORD=${ADMIN_PASSWORD:?ADMIN_PASSWORD is required for the initial admin account}'
       # CORS origins — comma-separated. NEVER use '*' in production.
       - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://localhost:5173}
+      - COMMANDER_EVIDENCE_JWKS_JSON=${COMMANDER_EVIDENCE_JWKS_JSON:-}
     volumes:
       # SQLite API state + ATR/compensation DBs + knowledge base (<cwd>/.commander).
       - commander_local_state:/app/.commander

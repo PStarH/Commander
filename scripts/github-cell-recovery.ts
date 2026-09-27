@@ -55,6 +55,11 @@ export async function runDemoProcess(input: {
       error && typeof error === 'object' && 'stderr' in error ? error.stderr : undefined;
     if (typeof stderr === 'string' && /^GATEWAY_HTTP 503 OPERATIONS_NOT_READY\s*$/.test(stderr))
       throw new Error('OPERATIONS_NOT_READY');
+    if (typeof stderr === 'string' && /^GATEWAY_HTTP 503 EVIDENCE_NOT_READY\s*$/.test(stderr))
+      throw new Error('EVIDENCE_NOT_READY');
+    if (typeof stderr === 'string') {
+      console.error(`runDemoProcess failed: ${stderr.trim()}`);
+    }
     throw new Error('RECOVERY_CLI_FAILED');
   }
 }
@@ -234,7 +239,21 @@ export async function runRecoveryScenario(
         afterReplay.pulls.length === 1,
       'REMOTE_WRITE_COUNT_INVALID',
     );
-    const evidence = await driver.cli('agent', ['evidence', '--run-id', runId]);
+    const evidence = await until(
+      async () => {
+        try {
+          return await driver.cli('agent', ['evidence', '--run-id', runId]);
+        } catch (error) {
+          if (error instanceof Error && error.message === 'EVIDENCE_NOT_READY') {
+            return undefined;
+          }
+          throw error;
+        }
+      },
+      (ev): ev is Record<string, unknown> =>
+        Boolean(ev && typeof ev === 'object' && 'evidenceId' in ev),
+      'RECOVERED_EVIDENCE_NOT_READY',
+    );
     requireProof(
       evidence.runId === runId &&
         Array.isArray(evidence.effects) &&
