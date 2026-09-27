@@ -51,6 +51,8 @@ image:
 
 tenantAuthority:
   configurationSha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  proofOwnerSecret: cell-demo-proof-owner-r1
+  releaseProjectionConfigMap: cell-demo-release-projection-r1
   apiProof:
     publicSecret: commander-api-proof-public
     privateSecret: commander-api-proof-private

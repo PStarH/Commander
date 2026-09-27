@@ -107,8 +107,8 @@ async function createActionRun(
   const actionEnvelope = {
     ...baseEnvelope,
     tenantId,
-    effectType: options.effectType ?? envelope.effectType,
-    tool: options.tool ?? envelope.tool,
+    effectType: options.effectType ?? baseEnvelope.effectType,
+    tool: options.tool ?? baseEnvelope.tool,
     destination,
   };
   const actionDigest = options.actionDigest ?? digest(actionEnvelope);

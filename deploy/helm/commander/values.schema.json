@@ -259,7 +259,18 @@
       "properties": {
         "existingSecret": { "type": "string" },
         "privateKeyPemKey": { "type": "string", "minLength": 1 },
-        "keyIdKey": { "type": "string", "minLength": 1 }
+        "keyIdKey": { "type": "string", "minLength": 1 },
+        "jwksJsonKey": { "type": "string", "minLength": 1 },
+        "create": { "type": "boolean" }
+      }
+    },
+    "evidenceVerification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["existingSecret", "jwksJsonKey"],
+      "properties": {
+        "existingSecret": { "type": "string" },
+        "jwksJsonKey": { "type": "string", "minLength": 1 }
       }
     },
     "networkPolicy": {
@@ -382,7 +393,7 @@
               "existingSecret": { "minLength": 1 },
               "create": { "const": false }
             },
-            "required": ["existingSecret", "create"]
+            "required": ["existingSecret"]
           }
         }
       }

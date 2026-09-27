@@ -51,6 +51,8 @@ jobs:
   bench-gaia-regress:
     name: GAIA Regression
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 10
     env:
       TZ: UTC
@@ -58,6 +60,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
@@ -79,6 +82,10 @@ jobs:
           echo "yesterday=$YESTERDAY"
           echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+      - name: Rebuild and probe better-sqlite3
+        run: |
+          pnpm rebuild better-sqlite3
+          node -e "require('better-sqlite3')"
       - name: Run GAIA bench (captures today baseline JSON)
         run: |
           set -e
@@ -317,4 +324,6 @@ jobs:
             automated
             ci-bench
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  pull-requests: write

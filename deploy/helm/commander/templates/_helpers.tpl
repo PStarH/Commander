@@ -194,6 +194,7 @@ commander.io/tenant-authority-proof-release: {{ .Release.Name | quote }}
 {{- if .Values.capability.create -}}{{- fail "enterprise tier forbids capability.create (existingSecret refs only; no generated-key path)" -}}{{- end -}}
 {{- if not .Values.evidenceSigning.existingSecret -}}{{- fail "enterprise tier requires evidenceSigning.existingSecret" -}}{{- end -}}
 {{- if .Values.evidenceSigning.create -}}{{- fail "enterprise tier forbids evidenceSigning.create (existingSecret refs only; no generated-key path)" -}}{{- end -}}
+{{- if not .Values.evidenceVerification.existingSecret -}}{{- fail "enterprise tier requires evidenceVerification.existingSecret" -}}{{- end -}}
 {{- if .Values.database.postgres.bundled -}}{{- fail "enterprise tier requires database.postgres.bundled=false" -}}{{- end -}}
 {{- if not .Values.worker.enabled -}}{{- fail "enterprise tier requires worker.enabled=true" -}}{{- end -}}
 {{- if not .Values.kernelOps.enabled -}}{{- fail "enterprise tier requires kernelOps.enabled=true" -}}{{- end -}}

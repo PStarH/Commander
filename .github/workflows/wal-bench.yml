@@ -39,6 +39,8 @@ jobs:
   bench-wal-regress:
     name: WAL Bench Regression
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 30
     env:
       TZ: UTC
@@ -46,6 +48,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Setup pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
@@ -269,4 +272,6 @@ jobs:
             automated
             ci-bench
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  pull-requests: write

@@ -42,6 +42,8 @@ jobs:
   bench-slo-regress:
     name: SLO Bench Regression
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 15
     env:
       TZ: UTC
@@ -67,6 +69,10 @@ jobs:
           YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
           echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+      - name: Rebuild and probe better-sqlite3
+        run: |
+          pnpm rebuild better-sqlite3
+          node -e "require('better-sqlite3')"
       - name: Run SLO bench (captures today baseline)
         run: pnpm bench:slo
       - name: Verify today's baseline JSON exists
@@ -218,4 +224,6 @@ jobs:
             automated
             ci-bench
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  pull-requests: write
