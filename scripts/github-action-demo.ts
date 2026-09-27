@@ -293,13 +293,16 @@ export async function runGitHubActionDemo(
     );
     if (response.accepted !== true) throw new DemoError('COMPENSATION_NOT_ACCEPTED');
     const accepted = object(response.request);
-    return {
+    const result: Json = {
       runId,
       authorizationId,
       requestId: identifier(accepted.id),
       compensationRunId: identifier(accepted.compensationRunId),
-      compensationEffectId: identifier(accepted.compensationEffectId),
     };
+    if (accepted.compensationEffectId !== undefined) {
+      result.compensationEffectId = identifier(accepted.compensationEffectId);
+    }
+    return result;
   }
   const action = object((await request(path)).action);
   if (identifier(action.runId) !== runId) throw new DemoError('RUN_BINDING_MISMATCH');
