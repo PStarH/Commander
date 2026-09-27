@@ -296,7 +296,7 @@ export function parseFindings(text: string): ReviewFinding[] {
 
     // Try to extract suggestion
     const suggestionMatch = text.match(
-      new RegExp(`suggestion[:\s]*(.+?)(?=\n\\*{0,2}P[0-3]|\n##|\n$|$)`, 'si'),
+      new RegExp(`suggestion[:\\s]*(.+?)(?=\n\\*{0,2}P[0-3]|\n##|\n$|$)`, 'si'),
     );
 
     findings.push({
