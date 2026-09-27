@@ -6,6 +6,9 @@ image:
 
 tenantAuthority:
   configurationSha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  proofOwnerSecret: cell-enterprise-proof-owner-r1
+  releaseProjectionConfigMap: cell-enterprise-release-projection-r1
+  bootstrapAuthoritySecret: cell-enterprise-bootstrap-authority-r1
   apiProof:
     publicSecret: commander-api-proof-public
     privateSecret: commander-api-proof-private
@@ -50,6 +53,10 @@ capability:
 evidenceSigning:
   existingSecret: cmdr-evidence-signing
   create: false
+
+evidenceVerification:
+  existingSecret: cmdr-evidence-jwks
+  jwksJsonKey: jwks-json
 
 database:
   enabled: true

@@ -63,7 +63,6 @@ import {
   createProductionAdapterRegistry,
 } from './actionAdapterExecutor.js';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
-import { evaluateManifestGatewayEffect, findAdapterManifest } from '@commander/contracts';
 
 /** Thrown when a worker is not scoped to an explicit, non-empty tenant list. */
 export const WORKER_TENANT_SCOPE_REQUIRED = 'WORKER_TENANT_SCOPE_REQUIRED';
@@ -814,6 +813,7 @@ export function createEffectBroker(
 } {
   const capability = createCapabilityAuthority(env, kernel);
   assertDurableCapabilityStores(capability, kernel);
+  const signer = evidenceSigner ?? createWorkerEvidenceSigner(env);
 
   const actionAdapters = createProductionAdapterRegistry(undefined, env);
   const policy = createWorkerPolicyEvaluator(kernel, actionAdapters);
@@ -842,7 +842,7 @@ export function createEffectBroker(
   const brokerOptions = productionCapabilityBrokerOptions(capability, localWorkerId);
   let evidenceOptions: Pick<EffectBrokerOptions, 'evidenceSigner' | 'requireEvidencePersistence'> =
     {};
-  if (evidenceSigner) {
+  if (signer) {
     if (
       !effectKernel.completeEffectWithEvidence ||
       !effectKernel.failEffectWithEvidence ||
@@ -852,7 +852,7 @@ export function createEffectBroker(
       throw new Error(EVIDENCE_REPOSITORY_REQUIRED);
     }
     evidenceOptions = {
-      evidenceSigner,
+      evidenceSigner: signer,
       requireEvidencePersistence: true,
     };
   }

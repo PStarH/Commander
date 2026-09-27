@@ -41,6 +41,8 @@ jobs:
   bench-cost-model-drift-regress:
     name: Cost Model Drift Regression
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     timeout-minutes: 10
     env:
       TZ: UTC
@@ -219,4 +221,6 @@ jobs:
             automated
             ci-bench
 permissions:
-  contents: read
+  actions: read
+  contents: write
+  pull-requests: write

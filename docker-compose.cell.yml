@@ -28,6 +28,7 @@
 
 volumes:
   adapter-ops-claim-secrets:
+  cell-postgres-tls:
 # Worker tenant default for cell: local (override via COMMANDER_WORKER_TENANTS).
 # =============================================================================
 
@@ -219,6 +220,3 @@ services:
     restart: unless-stopped
     profiles:
       - cell
-
-volumes:
-  cell-postgres-tls:

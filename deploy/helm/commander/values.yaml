@@ -215,6 +215,12 @@ evidenceSigning:
   keyIdKey: key-id
   jwksJsonKey: jwks-json
 
+# Public evidence JWKS for the API. The private signing key stays on worker
+# and adapter-ops. Enterprise must name an existing Secret; demo may omit it.
+evidenceVerification:
+  existingSecret: ''
+  jwksJsonKey: jwks-json
+
 sandboxd:
   enabled: false
 
