@@ -69,16 +69,6 @@ export const KERNEL_MEMORY_SCHEMA_MIGRATIONS: readonly KernelMigration[] = [
     sql: KERNEL_MEMORY_SCHEMA_SQL,
     checksum: checksum(KERNEL_MEMORY_SCHEMA_SQL),
   },
-  {
-    id: KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
-    sql: KERNEL_SIGNED_EVIDENCE_SQL,
-    checksum: checksum(KERNEL_SIGNED_EVIDENCE_SQL),
-  },
-  {
-    id: KILL_SWITCH_MIGRATION_ID,
-    sql: KILL_SWITCH_SQL,
-    checksum: checksum(KILL_SWITCH_SQL),
-  },
 ];
 
 const KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM =

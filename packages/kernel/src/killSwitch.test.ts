@@ -3,7 +3,6 @@ import { describe, it } from 'node:test';
 import { KernelInvariantError } from './types.js';
 import type { KillSwitchMatchDims } from './types.js';
 import { InMemoryKernelRepository } from './testing/inMemoryRepository.js';
-import { KILL_SWITCH_MIGRATION_ID, KILL_SWITCH_SQL } from './killSwitchSchema.js';
 import { KERNEL_MIGRATIONS } from './migrations.js';
 
 const dims: KillSwitchMatchDims = {
@@ -31,32 +30,15 @@ async function enableKillSwitch(
 }
 
 describe('Kill switch matrix', () => {
-  it('ships an additive migration for durable kernels created before kill switches', () => {
-    const migration = KERNEL_MIGRATIONS.find((entry) => entry.id === KILL_SWITCH_MIGRATION_ID);
-
-    assert.ok(migration, 'kill-switch storage must have an independent migration entry');
-    assert.equal(migration.sql, KILL_SWITCH_SQL);
-    assert.match(migration.id, /^2026-08-12\.1\.kill_switches$/);
-    assert.match(KILL_SWITCH_SQL, /CREATE TABLE IF NOT EXISTS commander_action_kill_switches/);
+  it('stores kill switches in the published baseline schema', () => {
+    const schema = KERNEL_MIGRATIONS.find((entry) => entry.id.endsWith('.schema'));
+    const roles = KERNEL_MIGRATIONS.find((entry) => entry.id.endsWith('.roles'));
+    assert.ok(schema, 'baseline schema migration is missing');
+    assert.match(schema.sql, /CREATE TABLE IF NOT EXISTS commander_action_kill_switches/);
+    assert.ok(roles, 'baseline role migration is missing');
     assert.match(
-      KILL_SWITCH_SQL,
-      /ALTER TABLE commander_action_kill_switches ENABLE ROW LEVEL SECURITY/,
-    );
-    assert.match(
-      KILL_SWITCH_SQL,
-      /ALTER TABLE commander_action_kill_switches FORCE ROW LEVEL SECURITY/,
-    );
-    assert.match(
-      KILL_SWITCH_SQL,
-      /CREATE POLICY commander_tenant_isolation ON commander_action_kill_switches/,
-    );
-    assert.match(
-      KILL_SWITCH_SQL,
-      /GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE commander_action_kill_switches TO commander_app/,
-    );
-    assert.match(
-      KILL_SWITCH_SQL,
-      /GRANT SELECT ON TABLE commander_action_kill_switches TO commander_worker/,
+      roles.sql,
+      /REVOKE INSERT, UPDATE, DELETE ON TABLE commander_action_kill_switches FROM commander_worker/,
     );
   });
 

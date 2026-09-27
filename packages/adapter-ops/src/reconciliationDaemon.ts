@@ -674,39 +674,4 @@ export class ReconciliationDaemon {
       at,
     });
   }
-
-  private async escalateWithEvidence(
-    effect: Awaited<ReturnType<KernelRepository['claimReconcileEffects']>>[number]['effect'],
-    claimToken: string,
-    reason: string,
-  ): Promise<void> {
-    if (!this.options.evidenceSigner) throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
-    const recordedAt = new Date().toISOString();
-    const evidence = await buildEffectScopedEvidenceRecord({
-      effect,
-      projectedState: 'COMPLETION_UNKNOWN',
-      response: { errorCode: 'REMOTE_OUTCOME_UNKNOWN' },
-      auditEvents: [],
-      terminalEvent: {
-        type: 'effect.reconcile_escalated',
-        severity: 'high',
-        details: { reason },
-      },
-      signer: this.options.evidenceSigner,
-      recordedAt,
-      retentionUntil: new Date(
-        Date.parse(recordedAt) + (this.options.evidenceRetentionMs ?? 365 * 24 * 60 * 60 * 1_000),
-      ).toISOString(),
-    });
-    const persisted = await this.options.repository.escalateReconcileWithEvidence(
-      {
-        effectId: effect.id,
-        tenantId: effect.tenantId,
-        claimToken,
-        reason,
-      },
-      evidence,
-    );
-    if (!persisted) throw new Error('RECONCILE_ESCALATION_NOT_PERSISTED');
-  }
 }

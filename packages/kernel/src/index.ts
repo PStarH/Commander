@@ -108,10 +108,6 @@ export type {
   TenantCutoverState,
 } from './tenantCutoverStateMachine.js';
 export {
-  KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
-  KERNEL_SIGNED_EVIDENCE_SQL,
-} from './evidenceSchema.js';
-export {
   generateWorkerClaimSecret,
   hashWorkerClaimSecret,
   verifyWorkerClaimSecret,
@@ -198,11 +194,6 @@ export type {
   Task1DatabasePeerObservation,
   Task1DatabasePeerObserverOptions,
 } from './task1DatabasePeer.js';
-export {
-  assertEvidenceRecordBinding,
-  assertEvidenceRecordBoundToEffect,
-} from './evidenceRepository.js';
-export type { EvidenceLookup, EvidenceRepository } from './evidenceRepository.js';
 export {
   KernelCapabilityReplayStore,
   KernelCapabilityRevocationStore,

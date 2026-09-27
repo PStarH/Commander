@@ -556,7 +556,7 @@ function actionNotFound(res: Response) {
 
 export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
-  const evidenceJwks = configuredEvidenceJwks(process.env);
+  const evidenceJwks = configuredEvidenceJwks();
 
   router.get('/kill-switches', async (req, res) => {
     const tenantId = requiredTenant(req, res);

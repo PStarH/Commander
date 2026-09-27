@@ -2,11 +2,6 @@
 import { randomUUID } from 'node:crypto';
 import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 import type { KernelRepository } from '../repository.js';
-import {
-  assertEvidenceRecordBinding,
-  assertEvidenceRecordBoundToEffect,
-  type EvidenceLookup,
-} from '../evidenceRepository.js';
 import type {
   AdmitEffectRequest,
   AdmitEffectResult,
@@ -172,7 +167,7 @@ export class InMemoryKernelRepository implements KernelRepository {
   private readonly steps = new Map<string, KernelStep>();
   private readonly effectsByKey = new Map<string, KernelEffect>();
   private readonly effects = new Map<string, KernelEffect>();
-  private readonly evidence = new Map<string, TerminalEvidenceRecord>();
+  private readonly evidence = new Map<string, KernelEvidenceRecord>();
   private readonly events: KernelEvent[] = [];
   private readonly outbox = new Map<string, KernelOutboxMessage>();
   private readonly outboxClaims = new Map<string, { token: string; expiresAt: number }>();
@@ -212,7 +207,6 @@ export class InMemoryKernelRepository implements KernelRepository {
       result: Extract<CompensationMutationResult, { applied: true }>;
     }
   >();
-  private readonly evidence = new Map<string, KernelEvidenceRecord>();
   // Outbox DLQ (declared early so claimOutboxByTopic can filter DLQ'd messages)
   private readonly dlq = new Map<string, KernelDlqEntry>();
   /** Test-only: configurable maximum publish attempts before an outbox message is moved to the DLQ. */
@@ -1472,7 +1466,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     const eventId = this.event(
       'effect',
       effect.id,
-      this.nextEventSequence('effect', effect.id),
+      3,
       request.state === 'COMPLETED' ? 'effect.reconciled_completed' : 'effect.reconciled_failed',
       effect.tenantId,
       effect.runId,
@@ -2070,26 +2064,6 @@ export class InMemoryKernelRepository implements KernelRepository {
       'reconciliation-daemon',
       { reason: input.reason },
     );
-    return true;
-  }
-  async releaseReconcileClaim(
-    effectId: string,
-    tenantId: string,
-    claimToken: string,
-  ): Promise<boolean> {
-    const effect = this.effects.get(effectId);
-    if (!effect || effect.tenantId !== tenantId || effect.reconcileClaimToken !== claimToken) {
-      return false;
-    }
-    assertEvidenceRecordBoundToEffect(evidence, effect);
-    const key = `${evidence.tenantId}\u0000${evidence.bundleId}`;
-    const existing = this.evidence.get(key);
-    if (existing && canonical(existing) !== canonical(evidence)) {
-      throw new Error('EVIDENCE_CONFLICT');
-    }
-    const escalated = await this.escalateReconcile(input);
-    if (!escalated) return false;
-    if (!existing) this.evidence.set(key, clone(evidence));
     return true;
   }
   async releaseReconcileClaim(

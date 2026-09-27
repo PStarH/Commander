@@ -2029,23 +2029,9 @@ export type {
   TerminalEvidenceEffect,
   TerminalEvidenceRecord,
 } from './terminalEvidence.js';
-export {
-  EVIDENCE_BODY_VERSION,
-  assertTerminalEvidence,
-  buildSignedEvidenceBundle,
-  canonicalEvidenceBody,
-  canonicalEvidenceJson,
-  verifySignedEvidenceBundle,
-} from './signedEvidence.js';
-export type {
-  BuildSignedEvidenceBundleInput,
-  EvidenceSignature,
-  EvidenceSigner,
-  EvidenceTerminalDisposition,
-  SignedEvidenceBundle,
-} from './signedEvidence.js';
-export { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
-export type { ConfiguredEvidenceSigner, EvidenceJwk, EvidenceJwks } from './evidenceSigner.js';
+export { buildSignedEvidenceBundle, verifySignedEvidenceBundle } from './signedEvidence.js';
+export type { BuildSignedEvidenceBundleInput, SignedEvidenceBundle } from './signedEvidence.js';
+export type { EvidenceJwk } from './evidenceSigner.js';
 export { verifyEvidenceReceipt } from './evidenceReceipt.js';
 export type { EvidenceVerificationResult } from './evidenceReceipt.js';
 

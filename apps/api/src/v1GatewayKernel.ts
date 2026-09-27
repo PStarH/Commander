@@ -7,7 +7,6 @@ import {
   type KernelRepositoryHandle,
   type AnswerInteractionRequest,
   type KernelEffect,
-  type EvidenceLookup,
   type KernelEvent,
   type KernelInteraction,
   type KernelRun,
