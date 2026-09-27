@@ -26,7 +26,7 @@ describe('l4-b-cell-up-assert failure diagnostics', () => {
     });
 
     assert.deepEqual(commands, [
-      'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell logs --no-color --tail 80 postgres-tls-init',
+      'docker compose -f docker-compose.yml -f docker-compose.cell.yml -f docker-compose.kernel-tls.yml --profile cell logs --no-color --tail 80 postgres-tls-init',
     ]);
     assert.match(logs, /tail 79/);
     assert.doesNotMatch(logs, /early line|do-not-persist|must-not-appear|secret-key-material/);

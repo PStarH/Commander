@@ -54,6 +54,21 @@ services:
   postgres:
     profiles:
       - cell
+    depends_on:
+      postgres-tls-init:
+        condition: service_completed_successfully
+    volumes:
+      - cell-postgres-tls:/etc/postgres-tls:ro
+    command:
+      - postgres
+      - -c
+      - ssl=on
+      - -c
+      - ssl_cert_file=/etc/postgres-tls/server.crt
+      - -c
+      - ssl_key_file=/etc/postgres-tls/server.key
+      - -c
+      - ssl_ca_file=/etc/postgres-tls/ca.crt
     environment:
       # Explicit production + REQUIRED superuser password: the cell path must not
       # inherit the base file's `${POSTGRES_PASSWORD:-}` interpolation guard.
@@ -109,6 +124,10 @@ services:
       # to start without it, so the cell profile must inject a strong value.
       - COMMANDER_AUDIT_CHAIN_KEY=${COMMANDER_AUDIT_CHAIN_KEY:?set COMMANDER_AUDIT_CHAIN_KEY}
       - COMMANDER_EVIDENCE_JWKS_JSON=${COMMANDER_EVIDENCE_JWKS_JSON:-}
+      - DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
     depends_on:
       kernel-migrate:
         condition: service_completed_successfully
@@ -148,6 +167,10 @@ services:
       - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
       - COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM=${COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:?set COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM}
       - COMMANDER_EVIDENCE_SIGNING_KEY_ID=${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?set COMMANDER_EVIDENCE_SIGNING_KEY_ID}
+      - DATABASE_URL=${COMMANDER_WORKER_TLS_DSN:-postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_WORKER_TLS_DSN:-postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
     healthcheck:
       test:
         [
@@ -198,10 +221,15 @@ services:
       # must re-impose the guard instead of inheriting an empty value.
       - COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM=${COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:?set COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM}
       - COMMANDER_EVIDENCE_SIGNING_KEY_ID=${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?set COMMANDER_EVIDENCE_SIGNING_KEY_ID}
+      - DATABASE_URL=${COMMANDER_ADAPTER_OPS_TLS_DSN:-postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_ADAPTER_OPS_TLS_DSN:-postgres://commander_adapter_ops:commander_adapter_ops@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
     expose:
       - '8082'
     volumes:
       - adapter-ops-claim-secrets:/var/run/commander/adapter-ops
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     healthcheck:
       test:
         [

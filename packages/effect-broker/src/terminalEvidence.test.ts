@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
+import { assertEvidenceRecord, type EvidenceRecord } from './evidenceSink.js';
 import { EffectBroker, canonicalRequestHash } from './index.js';
 import { canonicalEvidenceBody, verifySignedEvidenceBundle } from './signedEvidence.js';
 import { buildEffectScopedEvidenceRecord } from './terminalEvidence.js';
-import type { TerminalEvidenceRecord } from './terminalEvidence.js';
 
 function signer() {
   const { privateKey } = generateKeyPairSync('ed25519');
@@ -95,7 +95,7 @@ describe('effect-scoped terminal evidence producer', () => {
 
   it('atomically completes a broker effect with its signed receipt', async () => {
     const evidenceSigner = signer();
-    let persisted: TerminalEvidenceRecord | undefined;
+    let persisted: EvidenceRecord | undefined;
     let legacyCompletionCalled = false;
     const request = { status: 'requested' };
     const broker = new EffectBroker(
@@ -128,10 +128,27 @@ describe('effect-scoped terminal evidence producer', () => {
           admitted: true,
           effect: { id: 'effect-1', state: 'ADMITTED' },
         }),
+        getTerminalEvidenceContext: async () => ({
+          effect: {
+            id: 'effect-1',
+            runId: 'run-1',
+            stepId: 'step-1',
+            tenantId: 'tenant-1',
+            type: 'connector.kubernetes.deployment.rollback',
+            state: 'ADMITTED',
+            policyDecisionId: 'decision-1',
+            policySnapshotId: 'policy-1',
+            actionDigest: 'a'.repeat(64),
+            requestHash: canonicalRequestHash(request),
+            createdAt: '2026-08-11T00:00:00.000Z',
+          },
+          events: [],
+        }),
         completeEffect: async () => {
           legacyCompletionCalled = true;
           return {};
         },
+        markEffectCompletionUnknown: async () => ({}),
         completeEffectWithEvidence: async (
           _effectId,
           _tenantId,
@@ -165,15 +182,10 @@ describe('effect-scoped terminal evidence producer', () => {
     });
 
     assert.equal(legacyCompletionCalled, false);
-    assert.equal(persisted?.receipt.scope.effectId, 'effect-1');
-    assert.equal(persisted?.receipt.actionDigest, 'a'.repeat(64));
-    assert.equal(
-      verifyEvidenceSignature(
-        canonicalEvidenceBody(persisted!.receipt),
-        persisted!.receipt.signature,
-        evidenceSigner.jwks,
-      ),
-      true,
-    );
+    assert.ok(persisted);
+    assertEvidenceRecord(persisted, { jwks: evidenceSigner.jwks });
+    assert.equal(persisted.body.scope.effectId, 'effect-1');
+    assert.equal(persisted.actionDigest, 'a'.repeat(64));
+    assert.equal(persisted.body.terminalDisposition, 'SUCCEEDED');
   });
 });

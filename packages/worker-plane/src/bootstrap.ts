@@ -26,7 +26,6 @@
 
 import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { WorkerService } from './workerService.js';
 import { PostgresWorkerRegistry } from './registry.js';
 import { ApiKeyWorkerAuthenticator } from './apiKeyAuthenticator.js';
@@ -52,7 +51,11 @@ import {
   createEvidenceSigner,
 } from '@commander/effect-broker';
 import type { KernelInteraction, KernelRun, KernelStep, KernelRepository } from '@commander/kernel';
-import { createCapabilityAuthority, type CapabilityAuthority } from '@commander/kernel';
+import {
+  createCapabilityAuthority,
+  createVerifiedPostgresPool,
+  type CapabilityAuthority,
+} from '@commander/kernel';
 import { ACTION_GATEWAY_POLICY_ID, evaluateActionGatewayPolicy } from '@commander/contracts';
 import {
   ActionAdapterRegistry,

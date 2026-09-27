@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
 
-const PROJECT_SHORT_FINGERPRINT = '09D0DB9C03667BEE';
+const PROJECT_SHORT_FINGERPRINT = '87F7A7F843D07138';
 
 test('policy records the project key as four provisional technical rows', () => {
   const policy = readFileSync(join(process.cwd(), 'docs/security/keys-rotation.md'), 'utf8');
