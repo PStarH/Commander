@@ -309,6 +309,7 @@ describe('ReviewAgent', () => {
       assert.strictEqual(result.length, 1);
       assert.strictEqual(result[0].severity, 'P1');
       assert.ok(result[0].message.includes('input validation'));
+      assert.strictEqual(result[0].suggestion, 'Add zod schema.');
     });
 
     it('returns empty array for empty input', () => {

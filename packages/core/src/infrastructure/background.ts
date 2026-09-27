@@ -49,6 +49,13 @@ export interface BackgroundJobOptions {
 // Background Task Manager
 // ============================================================================
 
+function escapeNotificationText(value: string): string {
+  return value
+    .replace(/\\/g, '\\\\')
+    .replace(/"/g, '\\"')
+    .replace(/[\r\n]/g, ' ');
+}
+
 export class BackgroundTaskManager extends EventEmitter {
   private jobs: Map<string, BackgroundJob> = new Map();
   private jobsDir: string;
@@ -206,7 +213,7 @@ export class BackgroundTaskManager extends EventEmitter {
           'osascript',
           [
             '-e',
-            `display notification "${body.replace(/"/g, '\\"')}" with title "${title.replace(/"/g, '\\"')}"`,
+            `display notification "${escapeNotificationText(body)}" with title "${escapeNotificationText(title)}"`,
           ],
           { stdio: 'ignore' },
         );
