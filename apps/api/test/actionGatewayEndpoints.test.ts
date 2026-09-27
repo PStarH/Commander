@@ -1701,64 +1701,62 @@ describe('L4-01 governed action HTTP API', () => {
 
   it('does not reconstruct evidence from transient interaction events', async () => {
     const gateway = new InMemoryGateway();
-    await withGateway(
-      gateway,
-      async (baseUrl) => {
-        const proposed = await postJson(baseUrl, '/v1/actions', {
-          ...baseAction,
-          idempotencyKey: 'action-evidence-escalated-unknown',
-        });
-        assert.equal(proposed.status, 202);
-        const action = ((await proposed.json()) as any).action;
-        const run = await gateway.repository.getRun(action.runId, 'tenant-a');
-        const metadata = run!.metadata.actionGateway as any;
-        const claimedStep = await gateway.repository.claimNextStep({
-          workerId: 'evidence-escalation-worker',
-          workerGeneration: 1,
-          tenantId: 'tenant-a',
-          capabilities: ['tool'],
-          leaseTtlMs: 30_000,
-        });
-        assert.ok(claimedStep?.lease);
-        const admitted = await gateway.repository.admitEffect({
-          id: metadata.effectId,
-          runId: action.runId,
-          stepId: claimedStep.id,
-          tenantId: 'tenant-a',
-          type: metadata.envelope.effectType,
-          idempotencyKey: metadata.envelope.idempotencyKey,
-          policyDecisionId: metadata.decision.decisionId,
-          policySnapshotId: metadata.policySnapshotId,
-          actionDigest: metadata.actionDigest,
-          request: metadata.envelope,
-          lease: claimedStep.lease,
-          actor: 'evidence-escalation-worker',
-        });
-        assert.equal(admitted.admitted, true);
-        if (!admitted.admitted) return;
-        await gateway.repository.markEffectCompletionUnknown({
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-evidence-escalated-unknown',
+      });
+      assert.equal(proposed.status, 202);
+      const action = ((await proposed.json()) as any).action;
+      const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+      const metadata = run!.metadata.actionGateway as any;
+      const claimedStep = await gateway.repository.claimNextStep({
+        workerId: 'evidence-escalation-worker',
+        workerGeneration: 1,
+        tenantId: 'tenant-a',
+        capabilities: ['tool'],
+        leaseTtlMs: 30_000,
+      });
+      assert.ok(claimedStep?.lease);
+      const admitted = await gateway.repository.admitEffect({
+        id: metadata.effectId,
+        runId: action.runId,
+        stepId: claimedStep.id,
+        tenantId: 'tenant-a',
+        type: metadata.envelope.effectType,
+        idempotencyKey: metadata.envelope.idempotencyKey,
+        policyDecisionId: metadata.decision.decisionId,
+        policySnapshotId: metadata.policySnapshotId,
+        actionDigest: metadata.actionDigest,
+        request: metadata.envelope,
+        lease: claimedStep.lease,
+        actor: 'evidence-escalation-worker',
+      });
+      assert.equal(admitted.admitted, true);
+      if (!admitted.admitted) return;
+      await gateway.repository.markEffectCompletionUnknown({
+        effectId: admitted.effect.id,
+        tenantId: 'tenant-a',
+        reason: 'remote outcome unknown',
+        actor: 'evidence-escalation-worker',
+      });
+      const [claimedEffect] = await gateway.repository.claimReconcileEffects({
+        tenantId: 'tenant-a',
+        limit: 1,
+        now: new Date(Date.now() + 60_000),
+        workerId: 'evidence-escalation-worker',
+        workerGeneration: 1,
+      });
+      assert.ok(claimedEffect);
+      assert.equal(
+        await gateway.repository.escalateReconcile({
           effectId: admitted.effect.id,
           tenantId: 'tenant-a',
-          reason: 'remote outcome unknown',
-          actor: 'evidence-escalation-worker',
-        });
-        const [claimedEffect] = await gateway.repository.claimReconcileEffects({
-          tenantId: 'tenant-a',
-          limit: 1,
-          now: new Date(Date.now() + 60_000),
-          workerId: 'evidence-escalation-worker',
-          workerGeneration: 1,
-        });
-        assert.ok(claimedEffect);
-        assert.equal(
-          await gateway.repository.escalateReconcile({
-            effectId: admitted.effect.id,
-            tenantId: 'tenant-a',
-            claimToken: claimedEffect.claimToken,
-            reason: 'unregistered_adapter',
-          }),
-          true,
-        );
+          claimToken: claimedEffect.claimToken,
+          reason: 'unregistered_adapter',
+        }),
+        true,
+      );
 
       const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
         headers: { 'x-test-tenant': 'tenant-a' },
