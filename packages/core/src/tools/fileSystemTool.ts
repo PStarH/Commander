@@ -72,20 +72,35 @@ function normalizeBoundaryPath(value: string, pathApi: typeof path): string {
 }
 
 /** Check that a normalized path is within SAFE_ROOT (including its root). */
+function usesWindowsPaths(resolved: string, root: string): boolean {
+  if (process.platform === 'win32') return true;
+  return /^([A-Za-z]:[\\/]|\\\\)/.test(resolved) || /^([A-Za-z]:[\\/]|\\\\)/.test(root);
+}
+
+function stripWindowsNamespace(value: string): string {
+  const uncPrefix = '\\\\?\\UNC\\';
+  const namespacePrefix = '\\\\?\\';
+  if (value.startsWith(uncPrefix)) return '\\\\' + value.slice(uncPrefix.length);
+  if (value.startsWith(namespacePrefix)) return value.slice(namespacePrefix.length);
+  return value;
+}
+
 export function isWithinRoot(resolved: string, root: string): boolean {
   // Windows paths are case-insensitive and may differ between long and 8.3
   // spellings (for example RUNNER~1 versus runneradmin). Compare normalized
   // absolute paths so a valid workspace child is not rejected by a lexical
   // spelling difference while preserving the separator boundary check.
+  // path.win32 keeps that comparison stable when the process itself is POSIX.
+  const pathApi = usesWindowsPaths(resolved, root) ? path.win32 : path;
   const normalize = (value: string): string => {
-    const absolute = path.resolve(value);
-    return process.platform === 'win32' ? absolute.toLowerCase() : absolute;
+    const absolute = pathApi.resolve(pathApi === path.win32 ? stripWindowsNamespace(value) : value);
+    return pathApi === path.win32 ? absolute.toLowerCase() : absolute;
   };
   const normalizedResolved = normalize(resolved);
   const normalizedRoot = normalize(root);
   return (
     normalizedResolved === normalizedRoot ||
-    normalizedResolved.startsWith(normalizedRoot + path.sep)
+    normalizedResolved.startsWith(normalizedRoot + pathApi.sep)
   );
 }
 
