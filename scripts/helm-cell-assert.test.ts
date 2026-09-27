@@ -573,7 +573,7 @@ describe('protected evidence-signing deployment contract', () => {
     const keyIdExpression =
       '${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?set COMMANDER_EVIDENCE_SIGNING_KEY_ID}';
     const topologies = [
-      { path: 'docker-compose.yml', producers: ['worker'], apis: ['api'] },
+      { path: 'docker-compose.yml', producers: [], apis: ['api'] },
       {
         path: 'docker-compose.cell.yml',
         producers: ['worker', 'adapter-ops'],
@@ -617,6 +617,17 @@ describe('protected evidence-signing deployment contract', () => {
           `${topology.path} ${serviceName} must not receive the signing key id`,
         );
       }
+    }
+
+    const base = loadComposeSource('docker-compose.yml');
+    for (const serviceName of ['worker', 'adapter-ops']) {
+      const env = normalizeEnvironment(base.services?.[serviceName]?.environment);
+      assert.match(
+        env[EVIDENCE_SIGNING_PRIVATE_KEY_ENV] ?? '',
+        /:-}/,
+        `base ${serviceName} keeps the signing key optional because Compose interpolates inactive profiles`,
+      );
+      assert.doesNotMatch(env[EVIDENCE_SIGNING_PRIVATE_KEY_ENV] ?? '', /:\?/);
     }
   });
 });
