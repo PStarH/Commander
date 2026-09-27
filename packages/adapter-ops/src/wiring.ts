@@ -21,7 +21,6 @@ import {
   type EffectBrokerOptions,
   type EvidenceRecord,
   type PolicyEvaluator,
-  createEvidenceSigner,
 } from '@commander/effect-broker';
 import {
   ActionAdapterRegistry,
@@ -41,11 +40,6 @@ import {
   DEFAULT_RECONCILE_QUERY_TIMEOUT_MS,
 } from './reconciliationDaemon.js';
 import { CompensationDaemon } from './compensationDaemon.js';
-import {
-  CampaignFaultControlHandler,
-  KubernetesRollbackFaultArm,
-  type FaultControlRuntime,
-} from './faultControl.js';
 
 const ADAPTER_ROUTING_POLICY_SNAPSHOT_ID = 'adapter-ops-v1';
 
@@ -795,11 +789,6 @@ function createProductionRegistry(
     createGitHubPullRequestCreateAdapter({ credentials, fetch: fetchImpl }),
     createKubernetesDeploymentRollbackAdapter({ credentials, fetch: fetchImpl }),
     createServiceNowIncidentCreateAdapter({ credentials, fetch: fetchImpl }),
-    createKubernetesDeploymentRollbackAdapter({
-      credentials,
-      fetch: fetchImpl,
-      afterPatchResponse: (patch) => kubernetesFaultArm.afterPatchResponse(patch),
-    }),
   ]);
 }
 
@@ -923,11 +912,8 @@ export async function createAdapterOpsWiring(options: AdapterOpsWiringOptions = 
   requiresDurableClaim: boolean;
   /** Compensation EffectBroker localWorkerId — must equal compensation-daemon. */
   compensationLocalWorkerId: string;
-  /** Present only when the dedicated fault-control listener is explicitly configured. */
-  faultControl?: CampaignFaultControlHandler;
 }> {
   const demoOpen = assertDemoOpenGate();
-  const evidenceSigner = createAdapterOpsEvidenceSigner(process.env);
   const egressAllowlist = parseEgressAllowlist();
   const evidenceSigner = createAdapterOpsEvidenceSigner(process.env);
 

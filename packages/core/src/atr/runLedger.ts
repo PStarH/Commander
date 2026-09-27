@@ -1,5 +1,4 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import { createRequire } from 'node:module';
 import { getGlobalEventSourcingEngine } from '../runtime/eventSourcingEngine';
 /**
  * RunLedger — P0-2 ATR worker settlement component.

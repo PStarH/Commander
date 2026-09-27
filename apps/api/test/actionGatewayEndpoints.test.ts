@@ -189,7 +189,7 @@ const baseAction = {
 async function withGateway(
   gateway: InMemoryGateway,
   action: (baseUrl: string) => Promise<void>,
-  evidenceJwks?: ReturnType<typeof evidenceSigner>['jwks'],
+  evidenceJwks?: { keys: readonly unknown[] },
 ): Promise<void> {
   const previousEvidenceJwks = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
   if (evidenceJwks) process.env.COMMANDER_EVIDENCE_JWKS_JSON = JSON.stringify(evidenceJwks);
@@ -1701,7 +1701,6 @@ describe('L4-01 governed action HTTP API', () => {
 
   it('does not reconstruct evidence from transient interaction events', async () => {
     const gateway = new InMemoryGateway();
-    const signer = evidenceSigner();
     await withGateway(
       gateway,
       async (baseUrl) => {
@@ -1751,30 +1750,13 @@ describe('L4-01 governed action HTTP API', () => {
           workerGeneration: 1,
         });
         assert.ok(claimedEffect);
-        const record = await buildEffectScopedEvidenceRecord({
-          effect: claimedEffect.effect,
-          projectedState: 'COMPLETION_UNKNOWN',
-          response: { errorCode: 'REMOTE_OUTCOME_UNKNOWN' },
-          auditEvents: [],
-          terminalEvent: {
-            type: 'effect.reconcile_escalated',
-            severity: 'high',
-            details: { reason: 'unregistered_adapter' },
-          },
-          signer,
-          recordedAt: '2026-08-11T00:00:02.000Z',
-          retentionUntil: '2027-08-11T00:00:02.000Z',
-        });
         assert.equal(
-          await gateway.repository.escalateReconcileWithEvidence(
-            {
-              effectId: admitted.effect.id,
-              tenantId: 'tenant-a',
-              claimToken: claimedEffect.claimToken,
-              reason: 'unregistered_adapter',
-            },
-            record,
-          ),
+          await gateway.repository.escalateReconcile({
+            effectId: admitted.effect.id,
+            tenantId: 'tenant-a',
+            claimToken: claimedEffect.claimToken,
+            reason: 'unregistered_adapter',
+          }),
           true,
         );
 

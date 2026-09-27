@@ -15,6 +15,10 @@
  */
 import { createServer, type Server } from 'node:http';
 import type { OpsLoopHealth } from './reconciliationDaemon.js';
+import {
+  handleFaultControlRequest,
+  type FaultControlHandlerPort,
+} from './faultControlServer.js';
 
 export interface AdapterOpsHealthHandle {
   port: number;
@@ -45,6 +49,7 @@ export async function startAdapterOpsHealthServer(options: {
     reconciliation: OpsLoopHealth;
     compensation: OpsLoopHealth;
   };
+  faultControlHandler?: FaultControlHandlerPort;
 }): Promise<AdapterOpsHealthHandle> {
   const verdict = async (): Promise<HealthVerdict> => {
     if (options.getLoopHealth) {

@@ -21,24 +21,6 @@ import {
   TenantIsolationError,
 } from '../runtime/tenantContext';
 
-/**
- * Canonicalise a workspace root. `resolveSafePath()` compares the *realpath* of
- * the candidate against the root (`:106-108`), so a root that is not itself
- * canonicalised can never contain anything: on macOS `os.tmpdir()` is
- * `/var/folders/...`, whose realpath is `/private/var/folders/...`, and the
- * containment check then rejects every path inside the configured workspace.
- * Fails closed to the lexical path when the directory does not exist yet (a
- * workspace that has not been created cannot be resolved, and the containment
- * check below still applies).
- */
-function canonicalRoot(root: string): string {
-  try {
-    return fs.realpathSync.native(root);
-  } catch {
-    return root;
-  }
-}
-
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
 export function getSafeRoot(): string {
   // Multi-tenant isolation: when a tenant context is active and the tenant
@@ -124,67 +106,6 @@ async function lstatIfExists(p: string): Promise<import('node:fs').Stats | undef
     return await fs.promises.stat(p);
   } catch {
     return undefined;
-  }
-}
-
-export async function safePath(target: string): Promise<string> {
-  const safeRoot = getSafeRoot();
-  // Keep getSafeRoot() lexical for callers (and Windows 8.3 spelling), while
-  // using the filesystem's canonical spelling for containment checks.
-  const containmentRoot = canonicalRoot(safeRoot);
-  const resolved = path.resolve(safeRoot, target);
-  // Resolve symlinks for the resolved path (e.g., /tmp -> /private/tmp on macOS)
-  let resolvedReal: string;
-  try {
-    resolvedReal = await fs.promises.realpath(resolved);
-  } catch (err) {
-    reportSilentFailure(err, 'fileSystemTool:50');
-    // File doesn't exist yet — resolve the parent directory
-    let parent = path.dirname(resolved);
-    while (parent !== '/' && (await statIfExists(parent)) === undefined) {
-      parent = path.dirname(parent);
-    }
-    try {
-      resolvedReal = (await fs.promises.realpath(parent)) + resolved.slice(parent.length);
-    } catch (err) {
-      reportSilentFailure(err, 'fileSystemTool:60');
-      resolvedReal = resolved;
-    }
-  }
-  if (!isWithinRoot(resolvedReal, containmentRoot)) {
-    throw new Error(`Access denied: path "${target}" is outside workspace`);
-  }
-  // GAP-15: Resolve symlinks to prevent traversal bypass.
-  try {
-    const real = await fs.promises.realpath(resolved);
-    if (!isWithinRoot(real, containmentRoot)) {
-      throw new Error(`Access denied: symlink "${target}" points outside workspace`);
-    }
-    return real;
-  } catch (err: unknown) {
-    if (err instanceof Error && 'code' in err && (err as { code: string }).code === 'ENOENT') {
-      let ancestor = path.dirname(resolved);
-      while (ancestor !== safeRoot && (await statIfExists(ancestor)) === undefined) {
-        ancestor = path.dirname(ancestor);
-      }
-      let realAncestorPath = ancestor;
-      try {
-        const realAncestor = await fs.promises.realpath(ancestor);
-        realAncestorPath = realAncestor;
-        if (!isWithinRoot(realAncestor, containmentRoot)) {
-          throw new Error(`Access denied: ancestor of "${target}" is outside workspace`);
-        }
-      } catch (e) {
-        if (e instanceof Error && e.message.startsWith('Access denied')) throw e;
-        if (!isWithinRoot(resolved, containmentRoot))
-          throw new Error(`Access denied: path "${target}" is outside workspace`);
-      }
-      // Return the canonical spelling even when the leaf does not exist yet.
-      // This keeps callers consistent with realpath() and avoids Windows
-      // 8.3 aliases leaking into persisted output paths.
-      return realAncestorPath + resolved.slice(ancestor.length);
-    }
-    throw err;
   }
 }
 
