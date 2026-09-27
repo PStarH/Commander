@@ -63,6 +63,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 });
 
 const EXPECTED_MEMORY_DIR = ISOLATED_MEMORY_DIR;
+const ORIGINAL_CWD = process.cwd();
+let testRoot = '';
+let restoreCwd: (() => void) | undefined;
+
+function expectedMemoryDir(): string {
+  return path.resolve(ISOLATED_MEMORY_DIR);
+}
 
 /** Windows CI can hit ENOTEMPTY/EBUSY/EPERM while AV or node still holds files. */
 async function rmMemoryDirRetry(): Promise<void> {

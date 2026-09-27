@@ -21,6 +21,16 @@ type LedgerRow = {
   applied_at: string;
 };
 
+function openPool(connectionString: string, max: number): Pool {
+  const pool = new Pool({ connectionString, max });
+  pool.on('error', (error: Error) => {
+    if (!/terminating connection due to administrator command/.test(error.message)) {
+      throw error;
+    }
+  });
+  return pool;
+}
+
 function databaseUrl(databaseName: string): string {
   const url = new URL(ownerUrl!);
   url.pathname = `/${databaseName}`;
@@ -43,7 +53,7 @@ async function withTestDatabase<T>(
   const databaseName = `commander_task1_migration_${label}_${process.pid}_${randomUUID().replaceAll('-', '')}`;
   const identifier = databaseIdentifier(databaseName);
   await adminPool.query(`CREATE DATABASE ${identifier}${owner ? ` OWNER ${owner}` : ''}`);
-  const pool = new Pool({ connectionString: databaseUrl(databaseName), max: 4 });
+  const pool = openPool(databaseUrl(databaseName), 4);
   try {
     return await run(pool, databaseName);
   } finally {
@@ -96,7 +106,7 @@ const forbiddenForwardIds = new Set([
 
 describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
   it('upgrades the immutable .16 baseline with only Task 1 forward descriptors', async () => {
-    const adminPool = new Pool({ connectionString: ownerUrl, max: 2 });
+    const adminPool = openPool(ownerUrl!, 2);
     try {
       await withTestDatabase(adminPool, 'upgrade', async (pool) => {
         await applyFrozenBaseline(pool);
@@ -138,7 +148,7 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
   });
 
   it('rejects a corrupted historical checksum before adding forward rows', async () => {
-    const adminPool = new Pool({ connectionString: ownerUrl, max: 2 });
+    const adminPool = openPool(ownerUrl!, 2);
     try {
       await withTestDatabase(adminPool, 'checksum', async (pool) => {
         await applyFrozenBaseline(pool);
@@ -167,7 +177,7 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
   });
 
   it('records the same ledger on fresh install and baseline upgrade', async () => {
-    const adminPool = new Pool({ connectionString: ownerUrl, max: 2 });
+    const adminPool = openPool(ownerUrl!, 2);
     try {
       const upgraded = await withTestDatabase(adminPool, 'parity_upgrade', async (pool) => {
         await applyFrozenBaseline(pool);
@@ -189,7 +199,7 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
   });
 
   it('applies phase-gated closure descriptors through the real owner login', async () => {
-    const adminPool = new Pool({ connectionString: ownerUrl, max: 2 });
+    const adminPool = openPool(ownerUrl!, 2);
     const password = `owner-${randomUUID()}`;
     try {
       await adminPool.query(`
@@ -235,7 +245,7 @@ describe('Task 1 PostgreSQL migration history', { skip: !ownerUrl }, () => {
           const ownerDsn = new URL(databaseUrl(databaseName));
           ownerDsn.username = 'commander_owner';
           ownerDsn.password = password;
-          const lifecyclePool = new Pool({ connectionString: ownerDsn.toString(), max: 2 });
+          const lifecyclePool = openPool(ownerDsn.toString(), 2);
           try {
             await runKernelMigrations(lifecyclePool);
             await runTask1ClosureMigrations(lifecyclePool, 'expand');
