@@ -14,7 +14,13 @@ export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistr
         throw new Error(`UNREGISTERED_EFFECT_TYPE: ${input.type}`);
       }
       const ctx = input.executionContext;
-      if (!ctx?.tenantId || !ctx.effectId || typeof input.request.idempotencyKey !== 'string') {
+      const idempotencyKey =
+        typeof ctx?.idempotencyKey === 'string' && ctx.idempotencyKey.trim().length > 0
+          ? ctx.idempotencyKey
+          : typeof input.request.idempotencyKey === 'string'
+            ? input.request.idempotencyKey
+            : undefined;
+      if (!ctx?.tenantId || !ctx.effectId || !idempotencyKey) {
         throw new Error('EFFECT_AUTHORIZATION_REQUIRED');
       }
       const destination = String(input.request.destination ?? '');
@@ -25,7 +31,7 @@ export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistr
           originalEffectId: String(
             (input.request as Record<string, unknown>).originalEffectId ?? '',
           ),
-          idempotencyKey: input.request.idempotencyKey,
+          idempotencyKey,
           destination,
           forwardResponse:
             ((input.request as Record<string, unknown>).forwardResponse as Record<
@@ -43,7 +49,7 @@ export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistr
       return adapter.execute({
         tenantId: ctx.tenantId,
         effectId: ctx.effectId,
-        idempotencyKey: input.request.idempotencyKey,
+        idempotencyKey,
         destination,
         args: (input.request.args as Record<string, unknown>) ?? {},
         signal: input.signal,

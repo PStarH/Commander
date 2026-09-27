@@ -476,6 +476,7 @@ export interface EffectExecutor {
       fencingEpoch: number;
       leaseToken: string;
       effectId: string;
+      idempotencyKey?: string;
     };
   }): Promise<Record<string, unknown>>;
 }
@@ -870,6 +871,7 @@ export interface AdmittedEffect {
   grant: CapabilityGrant;
   decision: PolicyDecision;
   type: string;
+  idempotencyKey?: string;
   request: Record<string, unknown>;
   lease: { workerId: string; workerGeneration?: number; token: string; fencingEpoch: number };
   actor: string;
@@ -1366,6 +1368,7 @@ export class EffectBroker {
       grant,
       decision,
       type: input.type,
+      idempotencyKey: input.idempotencyKey,
       request: input.request,
       lease: input.lease,
       actor: input.actor,
@@ -1467,6 +1470,7 @@ export class EffectBroker {
             fencingEpoch: admission.lease.fencingEpoch,
             leaseToken: admission.lease.token,
             effectId: admission.effectId,
+            ...(admission.idempotencyKey ? { idempotencyKey: admission.idempotencyKey } : {}),
           },
         });
         void execution.catch(() => undefined);

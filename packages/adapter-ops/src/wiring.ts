@@ -647,13 +647,18 @@ function createAdapterExecutor(registry: ActionAdapterRegistry) {
       executionContext?: {
         tenantId?: string;
         effectId?: string;
+        idempotencyKey?: string;
       };
     }) => {
       const adapter = registry.resolve(input.type);
       if (!adapter) throw new Error('UNREGISTERED_EFFECT_TYPE: ' + input.type);
       const ctx = input.executionContext;
-      if (!ctx?.tenantId || !ctx.effectId) throw new Error('EFFECT_AUTHORIZATION_REQUIRED');
-      const idempotencyKey = String(input.request.idempotencyKey ?? '');
+      const idempotencyKey =
+        typeof ctx?.idempotencyKey === 'string' && ctx.idempotencyKey.trim().length > 0
+          ? ctx.idempotencyKey
+          : String(input.request.idempotencyKey ?? '');
+      if (!ctx?.tenantId || !ctx.effectId || !idempotencyKey)
+        throw new Error('EFFECT_AUTHORIZATION_REQUIRED');
       const destination = String(input.request.destination ?? '');
       if (input.type.startsWith('compensate.')) {
         const compensateInput: AdapterCompensateInput = {
