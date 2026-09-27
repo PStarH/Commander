@@ -48,6 +48,8 @@ describe('ActionAdapterRegistry', () => {
         server: 'https://kubernetes.example',
         token: 'token',
       }),
+      getToken: async () => 'token',
+      getServer: () => new URL('https://kubernetes.example'),
     };
     const registry = ActionAdapterRegistry.production(credentials);
     assert.equal(
