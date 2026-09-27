@@ -87,6 +87,7 @@ services:
       # Audit-chain HMAC master key. NODE_ENV=production makes the ledger refuse
       # to start without it, so the cell profile must inject a strong value.
       - COMMANDER_AUDIT_CHAIN_KEY=${COMMANDER_AUDIT_CHAIN_KEY:?set COMMANDER_AUDIT_CHAIN_KEY}
+      - COMMANDER_EVIDENCE_JWKS_JSON=${COMMANDER_EVIDENCE_JWKS_JSON:-}
     depends_on:
       kernel-migrate:
         condition: service_completed_successfully

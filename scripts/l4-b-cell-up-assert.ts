@@ -85,6 +85,9 @@ export function buildCellUpAssertEnv(): Record<string, string> {
           COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:
             process.env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM,
           COMMANDER_EVIDENCE_SIGNING_KEY_ID: process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID,
+          COMMANDER_EVIDENCE_JWKS_JSON:
+            process.env.COMMANDER_EVIDENCE_JWKS_JSON ??
+            generateCellEvidenceSigningMaterials().COMMANDER_EVIDENCE_JWKS_JSON,
         }
       : generateCellEvidenceSigningMaterials();
 
