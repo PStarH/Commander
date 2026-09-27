@@ -60,7 +60,7 @@ function signedCapability(
     stepId: input.effectId,
     effectTypes: ['fault-control.campaign'],
     expiresAt: input.expiresAt,
-    requestHash: canonicalRequestHash(input),
+    requestHash: canonicalRequestHash({ ...input }),
     nonce: input.nonce,
   });
   const verifier = new CapabilityTokenVerifier({
@@ -166,7 +166,11 @@ describe('CampaignFaultControlHandler', () => {
     const foreignCapability = signedCapability(input, 'untrusted-g3-authority');
     const foreignHandler = new CampaignFaultControlHandler({
       capability: foreignCapability.verifier,
-      audit: { append: async (event) => audits.push(event.type) },
+      audit: {
+        append: async (event) => {
+          audits.push(event.type);
+        },
+      },
       runtime: {
         tenantId: 'tenant-a',
         audience,
@@ -179,8 +183,12 @@ describe('CampaignFaultControlHandler', () => {
         workerGeneration: 1,
       },
       executor: {
-        apply: async () => calls.push('apply'),
-        cleanup: async () => calls.push('cleanup'),
+        apply: async () => {
+          calls.push('apply');
+        },
+        cleanup: async () => {
+          calls.push('cleanup');
+        },
       },
       clock: () => new Date('2030-01-01T00:00:00.000Z'),
     });
@@ -197,7 +205,11 @@ describe('CampaignFaultControlHandler', () => {
     const timeoutCapability = signedCapability(input);
     const timeoutHandler = new CampaignFaultControlHandler({
       capability: timeoutCapability.verifier,
-      audit: { append: async (event) => audits.push(event.type) },
+      audit: {
+        append: async (event) => {
+          audits.push(event.type);
+        },
+      },
       runtime: {
         tenantId: 'tenant-a',
         audience,
@@ -211,7 +223,9 @@ describe('CampaignFaultControlHandler', () => {
       },
       executor: {
         apply: async () => new Promise<void>(() => {}),
-        cleanup: async () => calls.push('cleanup'),
+        cleanup: async () => {
+          calls.push('cleanup');
+        },
       },
       clock: () => new Date('2030-01-01T00:00:00.000Z'),
     });
@@ -236,7 +250,11 @@ describe('CampaignFaultControlHandler', () => {
     const cleanupCapability = signedCapability(input);
     const handler = new CampaignFaultControlHandler({
       capability: cleanupCapability.verifier,
-      audit: { append: async (event) => audits.push(event.type) },
+      audit: {
+        append: async (event) => {
+          audits.push(event.type);
+        },
+      },
       runtime: {
         tenantId: 'tenant-a',
         audience,
@@ -274,7 +292,11 @@ describe('CampaignFaultControlHandler', () => {
     const calls: string[] = [];
     const handler = new CampaignFaultControlHandler({
       capability: capability.verifier,
-      audit: { append: async (event) => audits.push(event.type) },
+      audit: {
+        append: async (event) => {
+          audits.push(event.type);
+        },
+      },
       runtime: {
         tenantId: 'tenant-a',
         audience,
@@ -291,7 +313,9 @@ describe('CampaignFaultControlHandler', () => {
           new Promise<void>((_resolve, reject) => {
             signal.addEventListener('abort', () => reject(signal.reason), { once: true });
           }),
-        cleanup: async () => calls.push('cleanup'),
+        cleanup: async () => {
+          calls.push('cleanup');
+        },
       },
       clock: () => new Date('2030-01-01T00:00:00.000Z'),
     });

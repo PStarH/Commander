@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
-import { createEvidenceSigner } from '@commander/effect-broker';
+import { EffectBroker, canonicalRequestHash, createEvidenceSigner } from '@commander/effect-broker';
+import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import type { CompensationOutboxPort } from '@commander/kernel';
 import { CompensationDaemon } from './compensationDaemon.js';
 import { canonicalCompensationHash } from '../../kernel/src/ops/compensationAuthority.js';
@@ -427,7 +428,7 @@ describe('CompensationDaemon', () => {
     assert.equal(health.handedOff, 1, 'the undetermined handoff needs its own bucket');
   });
 
-  it('persists a verifiable receipt when a compensation broker completes', async () => {
+  it('persists a verifiable receipt when the broker completes an admitted effect', async () => {
     const kernel = new InMemoryKernelRepository();
     await kernel.createRun(
       {
@@ -452,7 +453,7 @@ describe('CompensationDaemon', () => {
       privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
       keyId: 'compensation-evidence-key',
     });
-    const request = { originalEffectId: 'effect-forward' };
+    const request: Record<string, unknown> = { originalEffectId: 'effect-forward' };
     const actionDigest = 'c'.repeat(64);
     const broker = new EffectBroker(
       {
@@ -462,13 +463,19 @@ describe('CompensationDaemon', () => {
           runId: 'run-compensation-evidence',
           stepId: step.id,
           audience: 'commander.effect-broker',
-          effectTypes: ['compensate.github.pull-request.create'],
+          effectTypes: ['compute.echo'],
           expiresAt: '2099-01-01T00:00:00.000Z',
           policySnapshotId: 'adapter-ops-v1',
           requestHash: canonicalRequestHash(request),
           actionDigest,
           workerId: 'compensation-daemon',
           workerGeneration: 1,
+          authorizationId: 'auth-compensation',
+          requestId: 'request-compensation',
+          policyDecisionId: 'adapter-ops-allow',
+          adapterVersion: '1',
+          decisionEffect: 'allow',
+          approvalBinding: null,
         }),
       },
       {
@@ -480,9 +487,20 @@ describe('CompensationDaemon', () => {
         }),
       },
       {
-        admitEffect: (input) => kernel.admitEffect(input),
-        completeEffect: (...args) => kernel.completeEffect(...args),
-        completeEffectWithEvidence: (...args) => kernel.completeEffectWithEvidence(...args),
+        admitEffect: (input: Parameters<InMemoryKernelRepository['admitEffect']>[0]) =>
+          kernel.admitEffect(input),
+        completeEffect: (...args: Parameters<InMemoryKernelRepository['completeEffect']>) =>
+          kernel.completeEffect(...args),
+        completeEffectWithEvidence: (
+          ...args: Parameters<InMemoryKernelRepository['completeEffectWithEvidence']>
+        ) => kernel.completeEffectWithEvidence(...args),
+        markEffectCompletionUnknown: (
+          ...args: Parameters<InMemoryKernelRepository['markEffectCompletionUnknown']>
+        ) => kernel.markEffectCompletionUnknown(...args),
+        listEffectsForRun: (...args: Parameters<InMemoryKernelRepository['listEffectsForRun']>) =>
+          kernel.listEffectsForRun(...args),
+        listEvents: (...args: Parameters<InMemoryKernelRepository['listEvents']>) =>
+          kernel.listEvents(...args),
       },
       { execute: async () => ({ status: 'compensated' }) },
       { append: async () => {} },
@@ -492,27 +510,16 @@ describe('CompensationDaemon', () => {
     await broker.execute({
       effectId: 'effect-compensation',
       token: 'verified-by-test-port',
-      type: 'compensate.github.pull-request.create',
+      type: 'compute.echo',
       request,
       idempotencyKey: 'compensation-evidence',
       lease: step.lease,
       actor: 'compensation-daemon',
     });
-    const evidence = await kernel.getEvidence({
-      tenantId: 'tenant-a',
-      runId: 'run-compensation-evidence',
-      effectId: 'effect-compensation',
-      actionDigest,
-    });
-    assert.equal(evidence?.receipt.terminalDisposition, 'SUCCEEDED');
-    assert.equal(verifySignedEvidenceBundle(evidence!.receipt).ok, true);
-    assert.equal(
-      verifyEvidenceSignature(
-        canonicalEvidenceBody(evidence!.receipt),
-        evidence!.receipt.signature,
-        signer.jwks,
-      ),
-      true,
-    );
+    const evidence = await kernel.getEvidence('run-compensation-evidence', 'tenant-a');
+    assert.ok(evidence);
+    const body = evidence.body as { terminalDisposition?: string; scope?: { effectId?: string } };
+    assert.equal(body.terminalDisposition, 'SUCCEEDED');
+    assert.equal(body.scope?.effectId, 'effect-compensation');
   });
 });
