@@ -85,6 +85,8 @@ async function createActionRun(
     simulationId?: string;
     simulationActionDigest?: string;
     simulationDecisionId?: string;
+    effectType?: string;
+    tool?: string;
     envelope?: ActionEnvelopeFixture;
   } = {},
 ) {
