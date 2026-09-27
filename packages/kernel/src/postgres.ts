@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import type { TerminalEvidenceRecord } from '@commander/effect-broker';
 import type { KernelRepository } from './repository.js';
 import { mustRefuseMissingAppRole } from './productionSignal.js';
 import {
@@ -544,6 +545,20 @@ function fromCompensationRequest(row: Record<string, unknown>): KernelCompensati
     ...(row.compensation_effect_id
       ? { compensationEffectId: String(row.compensation_effect_id) }
       : {}),
+  };
+}
+function fromEvidence(row: DbEvidence): TerminalEvidenceRecord {
+  const effectId = row.receipt.scope.effectId;
+  if (!effectId) throw new Error('EVIDENCE_RECORD_BINDING_INVALID');
+  return {
+    tenantId: row.tenant_id,
+    runId: row.run_id,
+    effectId,
+    bundleId: row.bundle_id,
+    actionDigest: row.action_digest,
+    receipt: row.receipt,
+    anchoredAt: iso(row.anchored_at),
+    retentionUntil: iso(row.retention_until),
   };
 }
 

@@ -176,6 +176,14 @@ function daemonFor(input: {
   return { daemon, querier, queryCalls, repository, brokerFactoryCalls: () => brokerFactoryCalls };
 }
 
+function evidenceSigner() {
+  const { privateKey } = generateKeyPairSync('ed25519');
+  return createEvidenceSigner({
+    privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    keyId: 'reconciliation-evidence-key',
+  });
+}
+
 describe('ReconciliationDaemon', () => {
   it('binds evidence context reads to the current reconcile claim token', async () => {
     const reads: unknown[][] = [];

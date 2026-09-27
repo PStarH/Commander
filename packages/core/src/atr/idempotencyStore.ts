@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
+import { createRequire } from 'node:module';
 // IdempotencyStore — P0-1 ATR kernel component.
 // Persistent deduplication for tool side-effect calls. SQLite-backed, per-tenant.
 //

@@ -63,6 +63,7 @@ import {
   createProductionAdapterRegistry,
 } from './actionAdapterExecutor.js';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
+import { evaluateManifestGatewayEffect, findAdapterManifest } from '@commander/contracts';
 
 /** Thrown when a worker is not scoped to an explicit, non-empty tenant list. */
 export const WORKER_TENANT_SCOPE_REQUIRED = 'WORKER_TENANT_SCOPE_REQUIRED';
@@ -215,6 +216,7 @@ export function assertDurableCapabilityStores(
 export function productionCapabilityBrokerOptions(
   capability: CapabilityAuthority,
   localWorkerId: string,
+  evidenceSigner?: ConfiguredEvidenceSigner,
 ): EffectBrokerOptions & {
   replay: CapabilityAuthority['replayForTenant'];
   revocations: CapabilityAuthority['revocations'];
@@ -229,6 +231,7 @@ export function productionCapabilityBrokerOptions(
     requireOperationsReadiness: true,
     replay: (tenantId: string) => capability.replayForTenant(tenantId),
     revocations: capability.revocations,
+    evidenceSigner,
   };
 }
 

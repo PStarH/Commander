@@ -1294,6 +1294,7 @@ export class EffectBroker {
     const actionDigest = isClassAEffectType(input.type)
       ? grant.actionDigest!
       : (grant.actionDigest ?? canonicalRequestHash(input.request));
+    const createdAt = new Date().toISOString();
     const admitted = await this.kernel.admitEffect({
       id: input.effectId,
       runId: grant.runId,
@@ -2021,6 +2022,32 @@ export { EvidenceSink, DEFAULT_EVIDENCE_MAX_BYTES } from './evidenceSink.js';
 export type { EvidenceRecord, EvidenceRepositoryPort } from './evidenceSink.js';
 export { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
 export type { ConfiguredEvidenceSigner, EvidenceJwks } from './evidenceSigner.js';
+
+export { buildEffectScopedEvidenceRecord } from './terminalEvidence.js';
+export type {
+  SignedTerminalEvidenceReceipt,
+  TerminalEvidenceEffect,
+  TerminalEvidenceRecord,
+} from './terminalEvidence.js';
+export {
+  EVIDENCE_BODY_VERSION,
+  assertTerminalEvidence,
+  buildSignedEvidenceBundle,
+  canonicalEvidenceBody,
+  canonicalEvidenceJson,
+  verifySignedEvidenceBundle,
+} from './signedEvidence.js';
+export type {
+  BuildSignedEvidenceBundleInput,
+  EvidenceSignature,
+  EvidenceSigner,
+  EvidenceTerminalDisposition,
+  SignedEvidenceBundle,
+} from './signedEvidence.js';
+export { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
+export type { ConfiguredEvidenceSigner, EvidenceJwk, EvidenceJwks } from './evidenceSigner.js';
+export { verifyEvidenceReceipt } from './evidenceReceipt.js';
+export type { EvidenceVerificationResult } from './evidenceReceipt.js';
 
 export {
   AdapterExecutionError,

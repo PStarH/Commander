@@ -46,6 +46,15 @@ export interface AdapterCredentialProvider {
     tenantId: string,
     destination: string,
   ): Promise<{ instance: string; username: string; password: string }>;
+  getKubernetesCredentials?(
+    tenantId: string,
+    destination: string,
+  ): Promise<{
+    cluster: string;
+    server: string;
+    token: string;
+    caData?: string;
+  }>;
 }
 
 export interface KubernetesCredentialProvider {

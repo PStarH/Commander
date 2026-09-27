@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   applyApiGateToComposeSidecarSteps,
@@ -9,6 +10,7 @@ import {
   runCellSmoke,
   runOptionalChaosStep,
 } from './l4-b-cell-smoke.js';
+import { generateCellEvidenceSigningMaterials } from './l4-b-cell-compose.js';
 import { buildCellUpAssertEnv } from './l4-b-cell-up-assert.js';
 
 const KERNEL_BACKEND_ENV = { COMMANDER_KERNEL_BACKEND: 'postgres' };

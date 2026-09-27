@@ -189,7 +189,10 @@ const baseAction = {
 async function withGateway(
   gateway: InMemoryGateway,
   action: (baseUrl: string) => Promise<void>,
+  evidenceJwks?: ReturnType<typeof evidenceSigner>['jwks'],
 ): Promise<void> {
+  const previousEvidenceJwks = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+  if (evidenceJwks) process.env.COMMANDER_EVIDENCE_JWKS_JSON = JSON.stringify(evidenceJwks);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -233,6 +236,8 @@ async function withGateway(
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve())),
     );
+    if (previousEvidenceJwks === undefined) delete process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+    else process.env.COMMANDER_EVIDENCE_JWKS_JSON = previousEvidenceJwks;
   }
 }
 
@@ -667,6 +672,235 @@ describe('L4-01 governed action HTTP API', () => {
         assert.equal(response.status, 401, `${request.method} ${request.path}`);
         assert.equal(((await response.json()) as any).error.code, 'AUTHENTICATION_REQUIRED');
       }
+    });
+  });
+
+  it('queues a tenant-bound unknown effect for the adapter reconciler without completing it in the API', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const created = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-reconcile-queue-0001',
+      });
+      assert.equal(created.status, 202);
+      const action = ((await created.json()) as { action: { runId: string } }).action;
+
+      const noUnknown = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
+      assert.equal(noUnknown.status, 409);
+      assert.equal(
+        ((await noUnknown.json()) as { error: { code: string } }).error.code,
+        'NO_RECONCILABLE_EFFECT',
+      );
+
+      const claimed = await gateway.repository.claimNextStep({
+        workerId: 'gateway-reconcile-worker',
+        tenantId: 'tenant-a',
+        leaseTtlMs: 60_000,
+      });
+      assert.ok(claimed?.lease);
+      const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+      assert.ok(run);
+      const metadata = run.metadata.actionGateway as {
+        effectId: string;
+        actionDigest: string;
+        policySnapshotId: string;
+        envelope: Record<string, unknown>;
+      };
+      const unrelatedEffectId = 'effect-unrelated-completion-unknown';
+      await gateway.repository.admitEffect({
+        id: unrelatedEffectId,
+        runId: action.runId,
+        stepId: claimed.id,
+        tenantId: 'tenant-a',
+        type: 'demo.ticket.create',
+        idempotencyKey: 'action-reconcile-unrelated-0001',
+        policyDecisionId: 'action-gateway-allow',
+        policySnapshotId: metadata.policySnapshotId,
+        actionDigest: metadata.actionDigest,
+        request: metadata.envelope,
+        lease: claimed.lease,
+        actor: 'gateway-reconcile-worker',
+      });
+      await gateway.repository.markEffectCompletionUnknown({
+        effectId: unrelatedEffectId,
+        tenantId: 'tenant-a',
+        reason: 'unrelated remote outcome uncertain',
+        actor: 'gateway-reconcile-worker',
+      });
+      const admitted = await gateway.repository.admitEffect({
+        id: metadata.effectId,
+        runId: action.runId,
+        stepId: claimed.id,
+        tenantId: 'tenant-a',
+        type: 'demo.ticket.create',
+        idempotencyKey: 'action-reconcile-queue-0001',
+        policyDecisionId: 'action-gateway-allow',
+        policySnapshotId: metadata.policySnapshotId,
+        actionDigest: metadata.actionDigest,
+        request: metadata.envelope,
+        lease: claimed.lease,
+        actor: 'gateway-reconcile-worker',
+      });
+      assert.equal(admitted.admitted, true);
+      await gateway.repository.markEffectCompletionUnknown({
+        effectId: metadata.effectId,
+        tenantId: 'tenant-a',
+        reason: 'remote outcome uncertain',
+        actor: 'gateway-reconcile-worker',
+      });
+      const reconcileAfterBeforeCrossTenantRequest = (
+        await gateway.repository.getEffect(metadata.effectId, 'tenant-a')
+      )?.reconcileAfter;
+
+      const crossTenant = await postJson(
+        baseUrl,
+        `/v1/actions/${action.runId}/reconcile`,
+        {},
+        'tenant-b',
+      );
+      assert.equal(crossTenant.status, 404);
+      assert.equal(
+        ((await crossTenant.json()) as { error: { code: string } }).error.code,
+        'ACTION_NOT_FOUND',
+      );
+      assert.equal(
+        (await gateway.repository.getEffect(metadata.effectId, 'tenant-a'))?.reconcileAfter,
+        reconcileAfterBeforeCrossTenantRequest,
+      );
+
+      const queued = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
+      assert.equal(queued.status, 202);
+      assert.deepEqual(await queued.json(), {
+        effectId: metadata.effectId,
+        state: 'RECONCILE_QUEUED',
+      });
+      assert.ok(
+        (await gateway.repository.getEffect(metadata.effectId, 'tenant-a'))?.reconcileAfter,
+      );
+      assert.deepEqual(
+        (await gateway.repository.listEvents(action.runId, 'tenant-a'))
+          .filter((event) => event.type === 'effect.reconcile_requested')
+          .map((event) => ({
+            aggregateId: event.aggregateId,
+            actor: event.actor,
+            stepId: event.stepId,
+          })),
+        [{ aggregateId: metadata.effectId, actor: 'test-key', stepId: claimed.id }],
+      );
+
+      const adapter = {
+        descriptor: {
+          ...GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+          effectType: 'demo.ticket.create',
+        },
+        async execute() {
+          throw new Error('reconciliation must not execute writes');
+        },
+        async queryOutcome() {
+          return { status: 'COMPLETED' as const, response: { ticketId: 'ticket-reconciled' } };
+        },
+        async compensate() {
+          throw new Error('not used');
+        },
+        async queryCompensationOutcome() {
+          return { status: 'UNKNOWN' as const };
+        },
+      };
+      const daemon = new ReconciliationDaemon({
+        repository: gateway.repository,
+        registry: new ActionAdapterRegistry([adapter]),
+        actor: 'reconciliation-daemon',
+        pollIntervalMs: 60_000,
+        batchSize: 2,
+        brokerFactory: () =>
+          new EffectBroker(
+            { verify: async () => ({}) },
+            {
+              evaluate: async () => ({
+                effect: 'allow' as const,
+                decisionId: 'unused',
+                policySnapshotId: 'unused',
+              }),
+            },
+            {
+              getEffect: (effectId, tenantId) => gateway.repository.getEffect(effectId, tenantId),
+              reconcileEffect: (input) => gateway.repository.reconcileEffect(input),
+            },
+            {
+              execute: async () => {
+                throw new Error('reconciliation must not execute writes');
+              },
+            },
+            { append: async () => {} },
+            { requireRequestBinding: false },
+          ),
+      });
+      const stats = await daemon.tick();
+      assert.deepEqual(stats, { claimed: 2, completed: 2, escalated: 0, rescheduled: 0 });
+      assert.equal(
+        (await gateway.repository.getEffect(metadata.effectId, 'tenant-a'))?.state,
+        'COMPLETED',
+      );
+    });
+  });
+
+  it('fails closed when durable reconciliation scheduling is unavailable', async () => {
+    const gateway = new InMemoryGateway();
+    gateway.reconcileError = new Error('reconciliation scheduler unavailable');
+    await withGateway(gateway, async (baseUrl) => {
+      const created = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-reconcile-unavailable-0001',
+      });
+      const action = ((await created.json()) as { action: { runId: string } }).action;
+      const claimed = await gateway.repository.claimNextStep({
+        workerId: 'gateway-reconcile-worker',
+        tenantId: 'tenant-a',
+        leaseTtlMs: 60_000,
+      });
+      assert.ok(claimed?.lease);
+      const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+      assert.ok(run);
+      const metadata = run.metadata.actionGateway as {
+        effectId: string;
+        actionDigest: string;
+        policySnapshotId: string;
+        envelope: Record<string, unknown>;
+      };
+      await gateway.repository.admitEffect({
+        id: metadata.effectId,
+        runId: action.runId,
+        stepId: claimed.id,
+        tenantId: 'tenant-a',
+        type: 'demo.ticket.create',
+        idempotencyKey: 'action-reconcile-unavailable-0001',
+        policyDecisionId: 'action-gateway-allow',
+        policySnapshotId: metadata.policySnapshotId,
+        actionDigest: metadata.actionDigest,
+        request: metadata.envelope,
+        lease: claimed.lease,
+        actor: 'gateway-reconcile-worker',
+      });
+      await gateway.repository.markEffectCompletionUnknown({
+        effectId: metadata.effectId,
+        tenantId: 'tenant-a',
+        reason: 'remote outcome uncertain',
+        actor: 'gateway-reconcile-worker',
+      });
+      const reconcileAfterBeforeUnavailableRequest = (
+        await gateway.repository.getEffect(metadata.effectId, 'tenant-a')
+      )?.reconcileAfter;
+
+      const response = await postJson(baseUrl, `/v1/actions/${action.runId}/reconcile`, {});
+      assert.equal(response.status, 503);
+      assert.equal(
+        ((await response.json()) as { error: { code: string } }).error.code,
+        'RECONCILER_UNAVAILABLE',
+      );
+      assert.equal(
+        (await gateway.repository.getEffect(metadata.effectId, 'tenant-a'))?.reconcileAfter,
+        reconcileAfterBeforeUnavailableRequest,
+      );
     });
   });
 
@@ -1320,7 +1554,7 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
-  it('exports verifiable L3-11 evidence without raw prompts, tool args, or secrets', async () => {
+  it('returns the persisted signed receipt for a completed compensation effect', async () => {
     const gateway = new InMemoryGateway();
     const { privateKey } = generateKeyPairSync('ed25519');
     const signer = createEvidenceSigner({
@@ -1467,17 +1701,82 @@ describe('L4-01 governed action HTTP API', () => {
 
   it('does not reconstruct evidence from transient interaction events', async () => {
     const gateway = new InMemoryGateway();
-    await withGateway(gateway, async (baseUrl) => {
-      const proposed = await postJson(baseUrl, '/v1/actions', {
-        ...baseAction,
-        destination: 'demo://tickets/approval',
-        idempotencyKey: 'action-key-reject-evidence',
-      });
-      const payload = (await proposed.json()) as any;
-      const rejected = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/reject`, {
-        reason: 'Bearer USER_CONTROLLED_REJECT_SECRET',
-      });
-      assert.equal(rejected.status, 200);
+    const signer = evidenceSigner();
+    await withGateway(
+      gateway,
+      async (baseUrl) => {
+        const proposed = await postJson(baseUrl, '/v1/actions', {
+          ...baseAction,
+          idempotencyKey: 'action-evidence-escalated-unknown',
+        });
+        assert.equal(proposed.status, 202);
+        const action = ((await proposed.json()) as any).action;
+        const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+        const metadata = run!.metadata.actionGateway as any;
+        const claimedStep = await gateway.repository.claimNextStep({
+          workerId: 'evidence-escalation-worker',
+          workerGeneration: 1,
+          tenantId: 'tenant-a',
+          capabilities: ['tool'],
+          leaseTtlMs: 30_000,
+        });
+        assert.ok(claimedStep?.lease);
+        const admitted = await gateway.repository.admitEffect({
+          id: metadata.effectId,
+          runId: action.runId,
+          stepId: claimedStep.id,
+          tenantId: 'tenant-a',
+          type: metadata.envelope.effectType,
+          idempotencyKey: metadata.envelope.idempotencyKey,
+          policyDecisionId: metadata.decision.decisionId,
+          policySnapshotId: metadata.policySnapshotId,
+          actionDigest: metadata.actionDigest,
+          request: metadata.envelope,
+          lease: claimedStep.lease,
+          actor: 'evidence-escalation-worker',
+        });
+        assert.equal(admitted.admitted, true);
+        if (!admitted.admitted) return;
+        await gateway.repository.markEffectCompletionUnknown({
+          effectId: admitted.effect.id,
+          tenantId: 'tenant-a',
+          reason: 'remote outcome unknown',
+          actor: 'evidence-escalation-worker',
+        });
+        const [claimedEffect] = await gateway.repository.claimReconcileEffects({
+          tenantId: 'tenant-a',
+          limit: 1,
+          now: new Date(Date.now() + 60_000),
+          workerId: 'evidence-escalation-worker',
+          workerGeneration: 1,
+        });
+        assert.ok(claimedEffect);
+        const record = await buildEffectScopedEvidenceRecord({
+          effect: claimedEffect.effect,
+          projectedState: 'COMPLETION_UNKNOWN',
+          response: { errorCode: 'REMOTE_OUTCOME_UNKNOWN' },
+          auditEvents: [],
+          terminalEvent: {
+            type: 'effect.reconcile_escalated',
+            severity: 'high',
+            details: { reason: 'unregistered_adapter' },
+          },
+          signer,
+          recordedAt: '2026-08-11T00:00:02.000Z',
+          retentionUntil: '2027-08-11T00:00:02.000Z',
+        });
+        assert.equal(
+          await gateway.repository.escalateReconcileWithEvidence(
+            {
+              effectId: admitted.effect.id,
+              tenantId: 'tenant-a',
+              claimToken: claimedEffect.claimToken,
+              reason: 'unregistered_adapter',
+            },
+            record,
+          ),
+          true,
+        );
 
       const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
         headers: { 'x-test-tenant': 'tenant-a' },

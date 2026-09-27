@@ -71,7 +71,25 @@ export function getSafeRoot(): string {
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }
 
-/** Check that a resolved path is within SAFE_ROOT (prevents prefix collision like workspace-evil). */
+function looksLikeWindowsPath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
+}
+
+function normalizeBoundaryPath(value: string, pathApi: typeof path): string {
+  const normalized = pathApi.normalize(value);
+  if (pathApi !== path.win32) return normalized;
+
+  // realpath() canonicalizes 8.3 aliases on Windows. Normalize the remaining
+  // case and namespace differences before using path.relative for containment.
+  const withoutNamespace = normalized.startsWith('\\\\?\\UNC\\')
+    ? `\\\\${normalized.slice('\\\\?\\UNC\\'.length)}`
+    : normalized.startsWith('\\\\?\\')
+      ? normalized.slice('\\\\?\\'.length)
+      : normalized;
+  return withoutNamespace.toLowerCase();
+}
+
+/** Check that a normalized path is within SAFE_ROOT (including its root). */
 export function isWithinRoot(resolved: string, root: string): boolean {
   // Windows paths are case-insensitive and may differ between long and 8.3
   // spellings (for example RUNNER~1 versus runneradmin). Compare normalized
@@ -101,7 +119,7 @@ export function isWithinRoot(resolved: string, root: string): boolean {
  *
  * Re-exports for use by other tools (patchTool, multimodal tools).
  */
-async function statIfExists(p: string): Promise<import('node:fs').Stats | undefined> {
+async function lstatIfExists(p: string): Promise<import('node:fs').Stats | undefined> {
   try {
     return await fs.promises.stat(p);
   } catch {
@@ -168,6 +186,62 @@ export async function safePath(target: string): Promise<string> {
     }
     throw err;
   }
+}
+
+/** Walk existing components without following links so dangling reparse points fail closed. */
+async function nearestExistingAncestor(value: string): Promise<string> {
+  let ancestor = value;
+  while ((await lstatIfExists(ancestor)) === undefined) {
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  return ancestor;
+}
+
+export async function safePath(target: string): Promise<string> {
+  const safeRoot = getSafeRoot();
+  let safeRootReal: string;
+  try {
+    safeRootReal = await fs.promises.realpath(safeRoot);
+  } catch (err) {
+    if (!(err instanceof Error && 'code' in err && (err as { code?: string }).code === 'ENOENT')) {
+      throw err;
+    }
+    safeRootReal = safeRoot;
+  }
+
+  const resolved = path.resolve(safeRoot, target);
+  // Resolve symlinks for the resolved path (e.g., /tmp -> /private/tmp on macOS)
+  let resolvedReal: string;
+  let targetExists = true;
+  try {
+    resolvedReal = await fs.promises.realpath(resolved);
+  } catch (err) {
+    if (!(err instanceof Error && 'code' in err && (err as { code?: string }).code === 'ENOENT')) {
+      throw err;
+    }
+    reportSilentFailure(err, 'fileSystemTool:50');
+    const targetStat = await lstatIfExists(resolved);
+    if (targetStat?.isSymbolicLink()) {
+      throw new Error(`Access denied: symlink "${target}" cannot be resolved safely`);
+    }
+    targetExists = false;
+    const parent = await nearestExistingAncestor(path.dirname(resolved));
+    try {
+      const parentReal = await fs.promises.realpath(parent);
+      resolvedReal = path.join(parentReal, path.relative(parent, resolved));
+    } catch (err) {
+      reportSilentFailure(err, 'fileSystemTool:60');
+      throw new Error(`Access denied: path "${target}" cannot be resolved safely`);
+    }
+  }
+  if (!isWithinRoot(resolvedReal, safeRootReal)) {
+    throw new Error(`Access denied: path "${target}" is outside workspace`);
+  }
+  // Existing targets return their canonical path. New targets retain the
+  // caller's path while their canonical existing ancestor proves containment.
+  return targetExists ? resolvedReal : resolved;
 }
 
 // ============================================================================

@@ -108,6 +108,10 @@ export type {
   TenantCutoverState,
 } from './tenantCutoverStateMachine.js';
 export {
+  KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
+  KERNEL_SIGNED_EVIDENCE_SQL,
+} from './evidenceSchema.js';
+export {
   generateWorkerClaimSecret,
   hashWorkerClaimSecret,
   verifyWorkerClaimSecret,
@@ -120,6 +124,12 @@ export {
 export type { ClaimSecretSeedClient } from './seedWorkerClaimSecret.js';
 export { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 export { SqliteKernelRepository } from './sqlite.js';
+export {
+  buildVerifiedPostgresPoolConfig,
+  createVerifiedPostgresPool,
+  verifyPeerCertificateSpki,
+} from './postgresRuntime.js';
+export type { VerifiedPostgresPoolInput } from './postgresRuntime.js';
 export {
   createKernelRepository,
   resolveKernelBackend,
@@ -188,6 +198,11 @@ export type {
   Task1DatabasePeerObservation,
   Task1DatabasePeerObserverOptions,
 } from './task1DatabasePeer.js';
+export {
+  assertEvidenceRecordBinding,
+  assertEvidenceRecordBoundToEffect,
+} from './evidenceRepository.js';
+export type { EvidenceLookup, EvidenceRepository } from './evidenceRepository.js';
 export {
   KernelCapabilityReplayStore,
   KernelCapabilityRevocationStore,
