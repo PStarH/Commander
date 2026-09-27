@@ -1,7 +1,7 @@
 {
   "name": "commander-monorepo",
   "version": "0.2.0",
-  "description": "Commander — Multi-Agent Orchestration System (monorepo root)",
+  "description": "Approval and recovery for Coding and DevOps agents, starting with GitHub pull requests.",
   "private": true,
   "author": "PStarH <sampan090611@gmail.com>",
   "license": "MIT",

@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?style=flat-square&label=CI&logo=github" /></a>
+  <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml?query=branch%3Acodex%2Ffirst-customer-trial-20260908"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?branch=codex/first-customer-trial-20260908&style=flat-square&label=CI&logo=github" /></a>
   <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
   <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
@@ -20,10 +20,6 @@
   <a href="#quick-start"><img src="https://img.shields.io/badge/TRY_NOW-000?style=for-the-badge" /></a>
   <a href="https://github.com/PStarH/Commander/stargazers"><img src="https://img.shields.io/github/stars/PStarH/Commander?style=social" /></a>
   <a href="https://github.com/PStarH/commander-docs"><img src="https://img.shields.io/badge/DOCS-000?style=for-the-badge" /></a>
-</p>
-
-<p align="center">
-  <img src="docs/assets/commander-watch-demo.svg" alt="Commander demo — CLI help, deliberation planning, and system status" width="100%">
 </p>
 
 ---
@@ -82,7 +78,12 @@ on your machine.
 For the new GitHub action path, follow the [pilot guide](docs/pilot/github/README.md).
 It separates credential-free contract tests from the configured Gateway demo
 and the opt-in real GitHub adapter tests. The local runtime demo below remains
-a separate simulated example.
+a separate simulated example. Its animation is the local CLI, not a recording
+of GitHub approval or response-loss recovery.
+
+<p align="center">
+  <img src="docs/assets/commander-watch-demo.svg" alt="Local CLI help animation. This is not a GitHub recovery recording." width="100%">
+</p>
 
 ### E0 simulated demo (recommended first run)
 
