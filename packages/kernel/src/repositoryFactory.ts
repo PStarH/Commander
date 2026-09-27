@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import { createVerifiedPostgresPool } from './postgresRuntime.js';
 import type { KernelRepository } from './repository.js';
 import { isProductionEnvironment } from './productionSignal.js';
 import { PostgresKernelRepository } from './postgres.js';

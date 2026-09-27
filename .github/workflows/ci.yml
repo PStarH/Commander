@@ -474,6 +474,8 @@ jobs:
             packages/worker-plane/src/actionGatewayPolicy.test.ts \
             packages/worker-plane/src/bootstrap.policy.test.ts \
             packages/worker-plane/src/bootstrap.authority.test.ts \
+            packages/worker-plane/src/bootstrap.evidence.test.ts \
+            packages/worker-plane/src/bootstrap.postgresRuntime.test.ts \
             packages/worker-plane/src/registry.rls.test.ts
           pnpm exec node --import tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
@@ -1185,8 +1187,11 @@ jobs:
             process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-ev-r1' }] }));
           ")
           echo "COMMANDER_EVIDENCE_JWKS_JSON=$ev_jwks" >> "$GITHUB_ENV"
+          # Generate cell PostgreSQL TLS fixture. generate-certificates.sh pins
+          # subjectAltName=DNS:postgres so in-network verify-full can match the service.
           sh deploy/docker/kernel-tls/generate-certificates.sh "$key_dir/db-tls" postgres
           echo "COMMANDER_DATABASE_TLS_HOST_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          echo "COMMANDER_CELL_POSTGRES_TLS_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
           spki=$(openssl x509 -in "$key_dir/db-tls/server.crt" -pubkey -noout \
             | openssl pkey -pubin -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)
           echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$spki" >> "$GITHUB_ENV"

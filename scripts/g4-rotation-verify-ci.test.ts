@@ -51,20 +51,20 @@ describe('G4 rotation-only CI workflow', () => {
     assert.equal(job.needs, undefined);
 
     const steps = job.steps ?? [];
-    const checkout = steps.find((step) => step.uses === 'actions/checkout@v6');
-    assert.equal(checkout?.uses, 'actions/checkout@v6');
+    const checkout = steps.find((step) => step.uses?.startsWith('actions/checkout@'));
+    assert.equal(checkout?.uses, 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803');
     assert.equal(
       checkout?.with?.['fetch-depth'],
       0,
       'checkout must retain every immutable signed commit required by the four-row verifier',
     );
     assert.equal(
-      steps.find((step) => step.uses === 'pnpm/action-setup@v6')?.uses,
-      'pnpm/action-setup@v6',
+      steps.find((step) => step.uses?.startsWith('pnpm/action-setup@'))?.uses,
+      'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86',
     );
     assert.equal(
-      steps.find((step) => step.uses === 'actions/setup-node@v7')?.uses,
-      'actions/setup-node@v7',
+      steps.find((step) => step.uses?.startsWith('actions/setup-node@'))?.uses,
+      'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
     );
     assert.equal(
       steps.find((step) => step.name === 'Install locked dependencies')?.run,
@@ -98,7 +98,7 @@ describe('G4 rotation-only CI workflow', () => {
     const artifact = steps.find((step) => step.name === 'Upload sanitized rotation result');
     assert.ok(artifact, 'workflow must upload the sanitized result');
     assert.equal(artifact.if, 'always()');
-    assert.equal(artifact.uses, 'actions/upload-artifact@v4');
+    assert.equal(artifact.uses, 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02');
     assert.match(artifact.with?.path ?? '', /g4-rotation-result\.json/);
 
     assert.doesNotMatch(source, /l4-b|commander-dr|COMMANDER_DR/i);

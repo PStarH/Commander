@@ -41,6 +41,7 @@ export function generateCellDatabaseTlsMaterials(): Record<string, string> {
   const certificate = new X509Certificate(readFileSync(join(directory, 'server.crt')));
   materials = {
     COMMANDER_DATABASE_TLS_HOST_DIR: directory,
+    COMMANDER_CELL_POSTGRES_TLS_DIR: directory,
     COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256: createHash('sha256')
       .update(certificate.publicKey.export({ format: 'der', type: 'spki' }))
       .digest('hex'),
