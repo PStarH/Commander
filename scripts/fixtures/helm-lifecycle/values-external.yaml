@@ -29,6 +29,7 @@ adapterOps:
     pullPolicy: IfNotPresent
 capability: { create: false, existingSecret: cmdr-capability }
 evidenceSigning: { create: false, existingSecret: cmdr-evidence-signing }
+evidenceVerification: { existingSecret: cmdr-evidence-jwks, jwksJsonKey: jwks-json }
 api: { secrets: { existingSecret: external-api-secrets } }
 
 image:
