@@ -10,7 +10,10 @@ import {
 import type { TaskTreeNode } from '../../src/ultimate/types';
 import type { ArtifactReference } from '../../src/shared/types';
 import type { AgentRuntimeInterface } from '../../src/runtime';
-import { OrchestratorOutputCollector } from '../../src/ultimate/orchestratorOutput';
+import {
+  OrchestratorOutputCollector,
+  extractOutputFilePath as extractLegacyOutputFilePath,
+} from '../../src/ultimate/orchestratorOutput';
 import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
 
 // LM-03: this file drives output-collector tool loops and asserts nothing about
@@ -171,12 +174,11 @@ describe('writeSynthesisOutput', () => {
     expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
   });
 
-  it('rejects traversal and absolute output paths outside the workspace', async () => {
-    const canonicalWorkspace = fs.realpathSync.native(workspace);
-    const outside = path.join(
-      path.dirname(canonicalWorkspace),
-      `${path.basename(canonicalWorkspace)}-outside.md`,
-    );
+  it('writes beneath a workspace reached through a symlink or junction', async () => {
+    const linkRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-output-link-'));
+    const linkedWorkspace = path.join(linkRoot, 'workspace');
+    fs.symlinkSync(workspace, linkedWorkspace, process.platform === 'win32' ? 'junction' : 'dir');
+    process.env.COMMANDER_WORKSPACE = linkedWorkspace;
 
     try {
       const writtenPath = await writeSynthesisOutput(

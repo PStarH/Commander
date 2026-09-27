@@ -103,7 +103,7 @@ export function isWithinRoot(resolved: string, root: string): boolean {
  */
 async function lstatIfExists(p: string): Promise<import('node:fs').Stats | undefined> {
   try {
-    return await fs.promises.stat(p);
+    return await fs.promises.lstat(p);
   } catch {
     return undefined;
   }
