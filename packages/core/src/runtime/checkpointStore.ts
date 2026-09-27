@@ -17,6 +17,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
+import { createRequire } from 'node:module';
 import { mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname } from 'node:path';

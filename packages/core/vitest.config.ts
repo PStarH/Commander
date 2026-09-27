@@ -292,6 +292,7 @@ export default defineConfig({
       'tests/security/reversibilityGate.test.ts',
       'tests/security/securityAnomalyDetector.test.ts',
       'tests/security/securityPrimitives.test.ts',
+      'src/security/fetchGovernor.test.ts',
       'tests/security/tenancy.test.ts',
       // --- request data scrubbing ---
       'tests/shadow/scrubber.test.ts',
@@ -446,6 +447,7 @@ export default defineConfig({
       // argv parser, persisted audit chain, and receipt contract.
       'tests/security/commander-rotate.test.ts',
       'tests/security/d25-precommit-hook.test.ts',
+      'tests/security/supplyChainScanner.sourceMode.test.ts',
       // --- http ---
       // --- ultimate ---
       // Not run: tests/ultimate/{coordinationPolicy,coordinationPolicyLearned,

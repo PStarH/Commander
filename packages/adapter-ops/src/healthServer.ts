@@ -95,6 +95,23 @@ export async function startAdapterOpsHealthServer(options: {
         });
       return;
     }
+    if (options.faultControlHandler) {
+      void handleFaultControlRequest(req, res, options.faultControlHandler)
+        .then((handled) => {
+          if (handled) return;
+          res.writeHead(404, { 'content-type': 'text/plain' });
+          res.end('not found');
+        })
+        .catch(() => {
+          if (!res.headersSent) {
+            res.writeHead(503, { 'content-type': 'application/json' });
+            res.end(JSON.stringify({ error: 'fault_control_unavailable' }));
+          } else {
+            res.destroy();
+          }
+        });
+      return;
+    }
     res.writeHead(404, { 'content-type': 'text/plain' });
     res.end('not found');
   });

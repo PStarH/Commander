@@ -32,6 +32,24 @@ volumes:
 # =============================================================================
 
 services:
+  postgres-tls-init:
+    image: postgres:16-alpine
+    profiles:
+      - cell
+    user: '0:0'
+    volumes:
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}:/run/cell-postgres-tls-source:ro
+      - cell-postgres-tls:/etc/postgres-tls
+    entrypoint: ['/bin/sh', '-ec']
+    command:
+      - |
+        cp /run/cell-postgres-tls-source/ca.crt /etc/postgres-tls/ca.crt
+        cp /run/cell-postgres-tls-source/server.crt /etc/postgres-tls/server.crt
+        cp /run/cell-postgres-tls-source/server.key /etc/postgres-tls/server.key
+        chown 70:70 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt /etc/postgres-tls/server.key
+        chmod 0644 /etc/postgres-tls/ca.crt /etc/postgres-tls/server.crt
+        chmod 0600 /etc/postgres-tls/server.key
+
   postgres:
     profiles:
       - cell
@@ -64,6 +82,8 @@ services:
   api:
     profiles:
       - cell
+    volumes:
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     environment:
       # Explicit production: the base file is development/local-only, so the
       # cell path must not inherit NODE_ENV=development or its kernel-off switch.
@@ -99,6 +119,7 @@ services:
     # Entrypoint auto-joins the sock GID; group_add is optional belt-and-suspenders.
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     group_add:
       - ${DOCKER_GID:-0}
     user: '0:0'
@@ -198,3 +219,6 @@ services:
     restart: unless-stopped
     profiles:
       - cell
+
+volumes:
+  cell-postgres-tls:

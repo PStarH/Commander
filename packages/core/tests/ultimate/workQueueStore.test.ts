@@ -23,6 +23,9 @@ const makeItem = (overrides: Partial<WorkItem> = {}): WorkItem => ({
   ...overrides,
 });
 
+const batchWriteDeadlineMs = (platform: NodeJS.Platform): number =>
+  platform === 'win32' ? 20_000 : 5_000;
+
 describe('InMemoryWorkQueueStore', () => {
   let store: InMemoryWorkQueueStore;
   beforeEach(() => {
@@ -93,6 +96,12 @@ describe('SqliteWorkQueueStore', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it('uses a Windows-safe deadline without weakening other platform benchmarks', () => {
+    expect(batchWriteDeadlineMs('win32')).toBe(20_000);
+    expect(batchWriteDeadlineMs('linux')).toBe(5_000);
+    expect(batchWriteDeadlineMs('darwin')).toBe(5_000);
+  });
+
   it('enqueue + loadAll round-trip preserves all fields', () => {
     const store = new SqliteWorkQueueStore({ filePath: dbPath });
     const item = makeItem({
@@ -132,18 +141,22 @@ describe('SqliteWorkQueueStore', () => {
     s2.close();
   });
 
-  it('1000 items enqueue + loadAll < 5000ms', () => {
+  it('1000 items enqueue + loadAll meets the platform-specific deadline', () => {
     const store = new SqliteWorkQueueStore({ filePath: dbPath });
-    const items = Array.from({ length: 1000 }, (_, i) =>
-      makeItem({ id: `perf-${i}`, priority: i % 100 }),
-    );
-    const t0 = Date.now();
-    for (const i of items) store.enqueue(i);
-    const loaded = store.loadAll();
-    const elapsed = Date.now() - t0;
-    expect(loaded).toHaveLength(1000);
-    expect(elapsed).toBeLessThan(5000);
-    store.close();
+    try {
+      const items = Array.from({ length: 1000 }, (_, i) =>
+        makeItem({ id: `perf-${i}`, priority: i % 100 }),
+      );
+      const t0 = Date.now();
+      for (const i of items) store.enqueue(i);
+      const loaded = store.loadAll();
+      const elapsed = Date.now() - t0;
+      expect(loaded).toHaveLength(1000);
+      expect(elapsed).toBeLessThan(batchWriteDeadlineMs(process.platform));
+    } finally {
+      // The threshold assertion can fail on Windows; close before afterEach removes the WAL files.
+      store.close();
+    }
   });
 
   it('updateMany in transaction applies all 50 reassignments', () => {

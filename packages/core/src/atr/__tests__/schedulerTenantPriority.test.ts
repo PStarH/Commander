@@ -10,6 +10,7 @@ import {
   type TenantConfig,
 } from '../../runtime/tenantProvider';
 import { runWithTenant } from '../../runtime/tenantContext';
+import { resetGlobalEventSourcingEngine } from '../../runtime/eventSourcingEngine';
 
 function makeScheduler(tenants: TenantConfig[] = []) {
   process.env.COMMANDER_ATR_IDEMPOTENCY_PATH = ':memory:';
@@ -58,10 +59,11 @@ describe('ExecutionScheduler.claimNextRun tier priority', () => {
     resetIdempotencyStore();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     resetIdempotencyStore();
     delete process.env.COMMANDER_ATR_IDEMPOTENCY_PATH;
     resetGlobalTenantProvider();
+    await resetGlobalEventSourcingEngine();
   });
 
   it('returns null when no PENDING runs exist', () => {
