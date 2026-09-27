@@ -122,6 +122,17 @@ A lost response is **not** a reason to propose a new operation or rerun the
 write with a new ID. Continue inspecting the original operation. Unreadable,
 ambiguous or edited remote results remain unresolved for operator review.
 
+When `status` returns `COMPLETION_UNKNOWN`, the JSON includes an `operator`
+field. Staying in that state is the safe stop. The same field appears on
+`evidence` when the Gateway reports one of these codes:
+
+- `ADAPTER_HTTP_ERROR`: the remote call was rejected, including a revoked token. That does not prove the write is absent.
+- `GITHUB_MULTI_MARKER`, `GITHUB_IDEMPOTENCY_CONFLICT`, `GITHUB_COMPENSATE_MARKER_MISMATCH`: the marker was duplicated or no longer matches. Do not pick a PR and write or close again.
+- `GITHUB_PAGINATION_INVALID`, `GITHUB_PAGINATION_LIMIT`: the lookup did not see a complete result.
+- `GITHUB_QUERY_ABORTED`: the lookup timed out. Inspect this run before another call.
+
+None of these codes authorizes a new operation id.
+
 ### 4. Close only with a separate authorization
 
 In the Agent process:
@@ -200,6 +211,14 @@ adapter version, operation identities, worker start times, provider counts and
 the actual pass/failure result. Adding this test is not a passing CI result;
 inspect the artifact from the commit being evaluated. The provider remains
 synthetic, and this is not a live GitHub or model-inference demonstration.
+
+## Current trial boundary
+
+The supported trial on this source tree is the credential-free contract above
+and the synthetic cell recovery that CI runs. Live GitHub App proof, a crash
+before `COMPLETION_UNKNOWN` is persisted, disaster-recovery rotation, and a
+recorded model call are outside that trial. `pnpm cell:github-recovery --up`
+resets a disposable cell; it is not the install command.
 
 ## Before calling this a public launch
 

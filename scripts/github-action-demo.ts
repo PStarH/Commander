@@ -36,11 +36,34 @@ function binding(value: unknown) {
   };
 }
 
+const operatorGuidance: Record<string, string> = {
+  COMPLETION_UNKNOWN:
+    'Stay on this run. A lost response is not permission to create a new operation or change the key and write again. Revocation, an edited marker, incomplete pagination, and a timeout all stop here until a human reviews the original operation.',
+  GITHUB_PAGINATION_INVALID:
+    'GitHub pagination was incomplete or malformed. That does not prove the write is absent. Stay on this run.',
+  GITHUB_PAGINATION_LIMIT:
+    'GitHub lookup stopped after ten pages. The remote result is not fully known. Stay on this run.',
+  GITHUB_MULTI_MARKER:
+    'More than one pull request matched the action marker. Do not pick one and write again.',
+  GITHUB_IDEMPOTENCY_CONFLICT:
+    'The persisted request no longer matches the remote pull request. The marker or body may have changed. Do not write again under a new id.',
+  GITHUB_COMPENSATE_MARKER_MISMATCH:
+    'Close was refused because the pull request marker no longer matches the approved action. This CLI will not close it.',
+  GITHUB_QUERY_ABORTED:
+    'The lookup timed out before the remote result was proven. Inspect this run before any further call. Do not POST a new write.',
+  ADAPTER_HTTP_ERROR:
+    'The remote call was rejected. If the token was revoked, that is not evidence the write is absent. Stay on this run.',
+  RECONCILE_OUTCOME_NOT_YET_VISIBLE:
+    'The original operation is not yet one matching result. Re-read this run. Do not create another operation.',
+};
+
 function actionSummary(value: unknown): Json {
   const action = object(value);
   const result: Json = { runId: identifier(action.runId), state: identifier(action.state) };
   if (action.effectId !== undefined) result.effectId = identifier(action.effectId);
   if (action.simulation !== undefined) Object.assign(result, binding(action.simulation));
+  const note = operatorGuidance[String(result.state)];
+  if (note) result.operator = note;
   return result;
 }
 
@@ -240,8 +263,13 @@ export async function runGitHubActionDemo(
           typeof value === 'string' &&
           /^[A-Za-z0-9._:-]{1,80}$/.test(value) &&
           !value.includes(token)
-        )
+        ) {
           safe[key] = value;
+          if (key === 'errorCode') {
+            const note = operatorGuidance[value];
+            if (note) safe.operator = note;
+          }
+        }
       }
       if (
         Number.isInteger(summary.httpStatus) &&
