@@ -3,7 +3,7 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { execSync } from 'node:child_process';
 import {
   generateCellDatabaseTlsMaterials,
@@ -61,8 +61,7 @@ export function generateCellCapabilityMaterials(): {
   const keyId =
     process.env.COMMANDER_CAPABILITY_KEY_ID?.trim() ?? `cell-${Date.now().toString(36)}`;
   if (pem) {
-    const priv = createPrivateKey(pem);
-    const pub = createPublicKey(priv);
+    const pub = createPublicKey(pem);
     const jwk = pub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
     return {
       COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: pem,
@@ -97,8 +96,7 @@ export function generateCellEvidenceSigningMaterials(): {
     process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID?.trim() ??
     `cell-evidence-${Date.now().toString(36)}`;
   if (pem) {
-    const priv = createPrivateKey(pem);
-    const pub = createPublicKey(priv);
+    const pub = createPublicKey(pem);
     const jwk = pub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
     return {
       COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: pem,
