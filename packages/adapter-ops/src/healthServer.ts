@@ -15,10 +15,7 @@
  */
 import { createServer, type Server } from 'node:http';
 import type { OpsLoopHealth } from './reconciliationDaemon.js';
-import {
-  handleFaultControlRequest,
-  type FaultControlHandlerPort,
-} from './faultControlServer.js';
+import { handleFaultControlRequest, type FaultControlHandlerPort } from './faultControlServer.js';
 
 export interface AdapterOpsHealthHandle {
   port: number;
