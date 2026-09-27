@@ -390,6 +390,52 @@ test('Gateway errors expose only safe status and code', async () => {
   );
 });
 
+test('unknown status tells the operator to stay on this run', async () => {
+  await withGateway(
+    (_call, res) => respond(res, { action: { ...pending, state: 'COMPLETION_UNKNOWN' } }),
+    async (env) => {
+      const result = await runGitHubActionDemo(['status', '--run-id', 'run-1'], env);
+      assert.equal(result.state, 'COMPLETION_UNKNOWN');
+      assert.match(String(result.operator), /Stay on this run/);
+      assert.match(String(result.operator), /Revocation/);
+      assert.match(String(result.operator), /marker/);
+      assert.match(String(result.operator), /pagination/);
+      assert.match(String(result.operator), /timeout/);
+      assert.doesNotMatch(
+        String(result.operator),
+        /new key and write again is allowed|create a new operation id/,
+      );
+    },
+  );
+});
+
+for (const [errorCode, expected] of [
+  ['ADAPTER_HTTP_ERROR', /revoked/],
+  ['GITHUB_MULTI_MARKER', /More than one pull request/],
+  ['GITHUB_PAGINATION_INVALID', /pagination/],
+  ['GITHUB_QUERY_ABORTED', /timed out/],
+] as const) {
+  test(`evidence explains ${errorCode} without authorizing another write`, async () => {
+    await withGateway(
+      (_call, res) =>
+        respond(res, {
+          receipt: {
+            bundleId: 'evidence-1',
+            scope: { runId: 'run-1' },
+            effects: [{ effectId: 'effect-1', responseSummary: { errorCode } }],
+          },
+          verification: { ok: true },
+        }),
+      async (env) => {
+        const result = await runGitHubActionDemo(['evidence', '--run-id', 'run-1'], env);
+        const effect = (result.effects as Array<{ operator?: string }>)[0];
+        assert.match(String(effect?.operator), expected);
+        assert.match(String(effect?.operator), /Do not|Stay on this run|will not close/);
+      },
+    );
+  });
+}
+
 test('evidence prints only identifiers and allowed Gateway response metadata', async () => {
   await withGateway(
     (_call, res) =>
