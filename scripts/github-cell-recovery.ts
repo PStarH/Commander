@@ -336,6 +336,135 @@ export async function runRecoveryScenario(
   }
 }
 
+export async function runPreParkCrashScenario(
+  driver: RecoveryDriver,
+  operationId: string,
+): Promise<Record<string, unknown>> {
+  const proposal = [
+    'propose',
+    '--operation-id',
+    operationId,
+    '--destination',
+    'github://octo/repo/pulls',
+    '--head',
+    'cell-pre-park',
+    '--base',
+    'main',
+    '--title',
+    'Cell pre-park crash',
+    '--body',
+    'Approved crash before the unknown result is parked',
+  ];
+  const before = await driver.provider();
+  const action = await driver.cli('agent', proposal);
+  requireProof(action.state === 'AWAITING_APPROVAL', 'APPROVAL_WAS_BYPASSED');
+  const runId = field(action, 'runId');
+  const effectId = field(action, 'effectId');
+  const denied = await driver.cli('agent', ['verify-agent-boundary', '--run-id', runId]);
+  requireProof(denied.boundary === 'DENIED', 'AGENT_APPROVAL_BOUNDARY_FAILED');
+  let paused = false;
+  try {
+    await driver.pauseRecovery();
+    paused = true;
+    await driver.cli('approver', [
+      'approve',
+      '--run-id',
+      runId,
+      '--action-digest',
+      field(action, 'actionDigest'),
+      '--simulation-id',
+      field(action, 'simulationId'),
+      '--policy-snapshot-id',
+      field(action, 'policySnapshotId'),
+    ]);
+    const inflight = await until(
+      async () => ({ effect: await driver.effect(runId), remote: await driver.provider() }),
+      (value) =>
+        value.effect?.state === 'ADMITTED' &&
+        value.effect.id === effectId &&
+        value.remote.createCalls === before.createCalls + 1 &&
+        value.remote.committedCreateStatus === 201 &&
+        value.remote.pulls.length === before.pulls.length + 1,
+      'PRE_PARK_INFLIGHT_NOT_OBSERVED',
+      60_000,
+    );
+    const workerBefore = await driver.workerStartedAt();
+    await driver.restartWorker();
+    const workerAfter = await driver.workerStartedAt();
+    requireProof(
+      Number.isFinite(Date.parse(workerBefore)) &&
+        Number.isFinite(Date.parse(workerAfter)) &&
+        Date.parse(workerAfter) > Date.parse(workerBefore),
+      'WORKER_RESTART_NOT_PROVEN',
+    );
+    const duringKill = await driver.provider();
+    requireProof(
+      duringKill.createCalls === before.createCalls + 1 &&
+        duringKill.closeCalls === before.closeCalls,
+      'REMOTE_WRITE_COUNT_INVALID',
+    );
+    const parked = await until(
+      () => driver.effect(runId),
+      (row) => row?.state === 'COMPLETION_UNKNOWN' && row.id === effectId,
+      'PRE_PARK_UNKNOWN_NOT_OBSERVED',
+      90_000,
+    );
+    requireProof(inflight.effect, 'PRE_PARK_INFLIGHT_NOT_OBSERVED');
+    requireProof(
+      parked.idempotencyKey === inflight.effect.idempotencyKey &&
+        parked.requestHash === inflight.effect.requestHash,
+      'RESTART_LOST_PERSISTED_OPERATION',
+    );
+    const afterPark = await driver.provider();
+    requireProof(
+      afterPark.createCalls === before.createCalls + 1 &&
+        afterPark.closeCalls === before.closeCalls,
+      'REMOTE_WRITE_COUNT_INVALID',
+    );
+    await driver.resumeRecovery();
+    paused = false;
+    const recovered = await until(
+      () => driver.effect(runId),
+      (row) => row?.state === 'COMPLETED' && row.id === effectId,
+      'RECOVERY_NOT_COMPLETED',
+    );
+    requireProof(
+      recovered.idempotencyKey === parked.idempotencyKey &&
+        recovered.requestHash === parked.requestHash &&
+        recovered.prNumber === afterPark.pulls.at(-1)?.number,
+      'RECOVERED_IDENTITY_CHANGED',
+    );
+    const replay = await driver.cli('agent', proposal);
+    requireProof(
+      replay.runId === runId && replay.effectId === effectId,
+      'REPLAY_CREATED_NEW_OPERATION',
+    );
+    const finalRemote = await driver.provider();
+    requireProof(
+      finalRemote.createCalls === before.createCalls + 1 &&
+        finalRemote.closeCalls === before.closeCalls,
+      'REMOTE_WRITE_COUNT_INVALID',
+    );
+    return {
+      runId,
+      effectId,
+      operationId,
+      idempotencyKey: recovered.idempotencyKey,
+      requestHash: recovered.requestHash,
+      prNumber: recovered.prNumber,
+      workerBefore,
+      workerAfter,
+      persistedStateAtKill: inflight.effect.state,
+      persistedStateBeforeResume: parked.state,
+      stateAfterRecovery: recovered.state,
+      createCalls: finalRemote.createCalls,
+      closeCalls: finalRemote.closeCalls,
+    };
+  } finally {
+    if (paused) await driver.resumeRecovery();
+  }
+}
+
 async function runComposeRecovery(): Promise<Record<string, unknown>> {
   const {
     fixtureCompose,
@@ -345,7 +474,11 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
   } = await import('./cell-compensation-fixture.js');
   const { tryComposeCellUp, assertComposeCellHealth, CELL_E2E_TENANT } =
     await import('./l4-b-cell-compose.js');
-  const fixtureEnv = { ...prepareCompensationFixture(), CELL_GITHUB_CUT_CREATE_RESPONSE: '1' };
+  const fixtureEnv = {
+    ...prepareCompensationFixture(),
+    CELL_GITHUB_CUT_CREATE_RESPONSE: '1',
+    CELL_GITHUB_HOLD_CREATE_RESPONSE: '1',
+  };
   const up = tryComposeCellUp(COMPENSATION_COMPOSE_CMD, fixtureEnv);
   requireProof(up.ok, 'RECOVERY_CELL_START_FAILED');
   requireProof(
@@ -544,8 +677,9 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
     }
   };
   const result = await runRecoveryScenario(driver, `cell-recovery-${randomUUID()}`);
+  const prePark = await runPreParkCrashScenario(driver, `cell-pre-park-${randomUUID()}`);
   requireProof(startedAt('postgres') === databaseStartedAt, 'DATABASE_RESTARTED_DURING_PROOF');
-  return { ...result, databaseStartedAt };
+  return { ...result, databaseStartedAt, prePark };
 }
 
 async function main(): Promise<void> {
