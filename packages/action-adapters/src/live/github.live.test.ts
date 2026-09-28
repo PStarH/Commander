@@ -81,6 +81,13 @@ if (liveRequested || responseCutRequested) {
   });
 }
 
+function liveCredentials(): EnvAdapterCredentialProvider {
+  return new EnvAdapterCredentialProvider({
+    cellTenantId: tenantId,
+    ...(process.env.COMMANDER_SANDBOX_TOKEN ? { githubTokenEnv: 'COMMANDER_SANDBOX_TOKEN' } : {}),
+  });
+}
+
 const remotePrNumbers: number[] = [];
 
 function printCleanup(): void {
@@ -122,7 +129,7 @@ describe(
     });
 
     it('create → queryOutcome → compensate → queryCompensationOutcome', async () => {
-      const credentials = new EnvAdapterCredentialProvider({ cellTenantId: tenantId });
+      const credentials = liveCredentials();
       const adapter = createGitHubPullRequestCreateAdapter({ credentials });
       const signal = AbortSignal.timeout(60_000);
       try {
@@ -196,7 +203,7 @@ describe(
     });
 
     it('cuts only after GitHub accepts the create and then queries one PR', async () => {
-      const credentials = new EnvAdapterCredentialProvider({ cellTenantId: tenantId });
+      const credentials = liveCredentials();
       const observed: GitHubResponseCutState = {
         createRequestCount: 0,
         remoteCommitConfirmed: false,
