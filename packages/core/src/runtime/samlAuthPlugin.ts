@@ -85,7 +85,7 @@ interface ParsedAssertion {
   /** The Assertion's own ID attribute — the signature must reference exactly this. */
   id: string;
   nameId: string;
-  attributes: Record<string, string | string[]>;
+  attributes: ReadonlyMap<string, string | string[]>;
   issuer: string;
   notBefore?: string;
   notOnOrAfter?: string;
@@ -317,7 +317,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     // Map roles from attributes.
-    const rawRole = assertion.attributes[this.config.roleAttribute];
+    const rawRole = assertion.attributes.get(this.config.roleAttribute);
     const roleValues: string[] = rawRole ? (Array.isArray(rawRole) ? rawRole : [rawRole]) : [];
     let role: AuthRole = 'viewer';
     if (roleValues.some((r) => this.config.adminRoles.includes(r))) {
@@ -326,14 +326,18 @@ export class SAMLAuthPlugin implements AuthPlugin {
       role = 'operator';
     }
 
+    const emailAttr = assertion.attributes.get('email');
+    const emailAddressAttr = assertion.attributes.get('emailAddress');
     const username =
-      (assertion.attributes['email'] as string | undefined) ||
-      (assertion.attributes['emailAddress'] as string | undefined) ||
+      (typeof emailAttr === 'string' ? emailAttr : undefined) ||
+      (typeof emailAddressAttr === 'string' ? emailAddressAttr : undefined) ||
       assertion.nameId;
 
+    const tenantSnake = assertion.attributes.get('tenant_id');
+    const tenantCamel = assertion.attributes.get('tenantId');
     const tenantId =
-      (assertion.attributes['tenant_id'] as string | undefined) ||
-      (assertion.attributes['tenantId'] as string | undefined);
+      (typeof tenantSnake === 'string' ? tenantSnake : undefined) ||
+      (typeof tenantCamel === 'string' ? tenantCamel : undefined);
 
     audit.logAuthSuccess('SAMLAuthPlugin', `SAML user authenticated: ${assertion.nameId}`, {
       nameId: assertion.nameId,
@@ -347,7 +351,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
       username,
       role,
       tenantId,
-      claims: { ...assertion.attributes, issuer: assertion.issuer },
+      claims: samlClaims(assertion.attributes, assertion.issuer),
     };
   }
 
@@ -378,25 +382,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const issuer = extractText(inner, 'Issuer') ?? '';
     const nameId = extractText(inner, 'NameID') ?? extractText(inner, 'NameIdentifier') ?? '';
 
-    const attributes: Record<string, string | string[]> = {};
-    const attrRegex = /<(saml:|)Attribute\b[^>]*?Name="([^"]+)"[^>]*>([\s\S]*?)<\/\1Attribute>/g;
-    let attrMatch: RegExpExecArray | null;
-    while ((attrMatch = attrRegex.exec(inner)) !== null) {
-      const attrName = attrMatch[2];
-      const attrBody = attrMatch[3];
-      const values: string[] = [];
-      const valueRegex = /<(saml:|)AttributeValue\b[^>]*>([\s\S]*?)<\/\1AttributeValue>/g;
-      let valueMatch: RegExpExecArray | null;
-      while ((valueMatch = valueRegex.exec(attrBody)) !== null) {
-        const raw = valueMatch[2].trim();
-        // Strip optional nested XML tags (e.g. <xs:type> wrappers).
-        const text = raw.replace(/<[^>]+>/g, '').trim();
-        values.push(unescapeXml(text));
-      }
-      if (values.length > 0) {
-        attributes[attrName] = values.length === 1 ? values[0] : values;
-      }
-    }
+    const attributes = readSamlAttributes(inner);
 
     const conditions = inner.match(/<(saml:|)Conditions\b([^>]*)>([\s\S]*?)<\/\1Conditions>/);
     const notBefore = conditions
@@ -408,9 +394,8 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const audienceXml = conditions ? conditions[3] : '';
     const audiences: string[] = [];
     const audRegex = /<(saml:|)Audience>([^<]+)<\/\1Audience>/g;
-    let audMatch: RegExpExecArray | null;
-    while ((audMatch = audRegex.exec(audienceXml)) !== null) {
-      audiences.push(unescapeXml(audMatch[2].trim()));
+    for (const audMatch of audienceXml.matchAll(audRegex)) {
+      audiences.push(unescapeXml((audMatch[2] ?? '').trim()));
     }
 
     const subjectConfirmation = inner.match(
@@ -663,6 +648,56 @@ function approximateC14n(xml: string): string {
       });
       return `<${slash}${name} ${unique.join(' ')}>`;
     });
+}
+
+function readSamlAttributes(inner: string): Map<string, string | string[]> {
+  const attributes = new Map<string, string | string[]>();
+  const attrRegex = /<(saml:|)Attribute\b[^>]*?Name="([^"]+)"[^>]*>([\s\S]*?)<\/\1Attribute>/g;
+  for (const attrMatch of inner.matchAll(attrRegex)) {
+    const attrName = attrMatch[2] ?? '';
+    if (
+      attrName.length === 0 ||
+      attrName === '__proto__' ||
+      attrName === 'constructor' ||
+      attrName === 'prototype'
+    ) {
+      continue;
+    }
+    const values: string[] = [];
+    const valueRegex = /<(saml:|)AttributeValue\b[^>]*>([\s\S]*?)<\/\1AttributeValue>/g;
+    for (const valueMatch of (attrMatch[3] ?? '').matchAll(valueRegex)) {
+      const raw = (valueMatch[2] ?? '').trim();
+      const text = raw.replace(/<[^>]+>/g, '').trim();
+      values.push(unescapeXml(text));
+    }
+    if (values.length === 1) {
+      const only = values[0];
+      if (only !== undefined) attributes.set(attrName, only);
+    } else if (values.length > 1) {
+      attributes.set(attrName, values);
+    }
+  }
+  return attributes;
+}
+
+function samlClaims(
+  attributes: ReadonlyMap<string, string | string[]>,
+  issuer: string,
+): Record<string, unknown> {
+  const claims: Record<string, unknown> = { issuer };
+  const email = attributes.get('email');
+  if (email !== undefined) claims.email = email;
+  const emailAddress = attributes.get('emailAddress');
+  if (emailAddress !== undefined) claims.emailAddress = emailAddress;
+  const tenantSnake = attributes.get('tenant_id');
+  if (tenantSnake !== undefined) claims.tenant_id = tenantSnake;
+  const tenantCamel = attributes.get('tenantId');
+  if (tenantCamel !== undefined) claims.tenantId = tenantCamel;
+  const role = attributes.get('role');
+  if (role !== undefined) claims.role = role;
+  const roles = attributes.get('roles');
+  if (roles !== undefined) claims.roles = roles;
+  return claims;
 }
 
 function unescapeXml(value: string): string {

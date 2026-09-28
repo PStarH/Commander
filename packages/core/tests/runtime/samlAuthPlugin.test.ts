@@ -72,6 +72,8 @@ interface SamlResponseOptions {
   email?: string;
   roles?: string | string[];
   tenantId?: string;
+  extraAttributeName?: string;
+  extraAttributeValue?: string;
   notBefore?: string;
   notOnOrAfter?: string;
   audience?: string;
@@ -130,6 +132,9 @@ function createSignedSamlResponse(
     `<saml:Attribute Name="role">${roleAttributeXml}</saml:Attribute>` +
     (options.tenantId
       ? `<saml:Attribute Name="tenant_id"><saml:AttributeValue>${options.tenantId}</saml:AttributeValue></saml:Attribute>`
+      : '') +
+    (options.extraAttributeName && options.extraAttributeValue
+      ? `<saml:Attribute Name="${options.extraAttributeName}"><saml:AttributeValue>${options.extraAttributeValue}</saml:AttributeValue></saml:Attribute>`
       : '') +
     `</saml:AttributeStatement>` +
     `</saml:Assertion>`;
@@ -377,6 +382,18 @@ describe('SAMLAuthPlugin', () => {
       });
       expect(result).not.toBeNull();
       expect(result!.userId).toBe('alice@example.com');
+    });
+
+    it('ignores attribute names that would pollute an object prototype', async () => {
+      const response = createSignedSamlResponse(config, keys, {
+        extraAttributeName: '__proto__',
+        extraAttributeValue: 'polluted',
+      });
+      const result = await plugin.authenticate(response);
+      expect(result).not.toBeNull();
+      expect(result!.role).toBe('operator');
+      expect(Object.hasOwn(result!.claims ?? {}, '__proto__')).toBe(false);
+      expect((Object.prototype as { polluted?: string }).polluted).toBeUndefined();
     });
 
     it('rejects IdP-initiated response when not allowed', async () => {
