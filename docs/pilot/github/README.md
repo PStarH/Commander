@@ -23,6 +23,10 @@ pnpm test:github:offline
 pnpm demo:github --help
 ```
 
+The GitHub launch contracts job runs this sequence on a clean Ubuntu runner
+with Node 22. It installs pnpm through `pnpm/action-setup` rather than
+`corepack enable`. `demo:github --help` does not contact a Gateway.
+
 The offline command runs real adapter code against synthetic GitHub responses
 and real loopback HTTP servers. It tests lost-response lookup, request drift,
 unsafe pagination, merge/close races, credential separation in the CLI, and
