@@ -288,7 +288,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
       return null;
     }
 
-    if (assertion.recipient && assertion.recipient !== this.config.spAcsUrl) {
+    if (assertion.recipient !== this.config.spAcsUrl) {
       audit.logAuthFailure('SAMLAuthPlugin', 'SAML SubjectConfirmation Recipient mismatch', {
         expected: this.config.spAcsUrl,
         actual: assertion.recipient,
