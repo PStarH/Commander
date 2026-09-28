@@ -384,6 +384,25 @@ describe('SAMLAuthPlugin', () => {
       expect(result!.userId).toBe('alice@example.com');
     });
 
+    it('rejects a response that omits Destination', async () => {
+      const response = createSignedSamlResponse(config, keys);
+      const xml = Buffer.from(response, 'base64').toString('utf-8');
+      const stripped = xml.replace(` Destination="${config.spAcsUrl}"`, '');
+      const result = await plugin.authenticate(Buffer.from(stripped).toString('base64'));
+      expect(result).toBeNull();
+    });
+
+    it('removes nested markup from an attribute before using it as the username', async () => {
+      const response = createSignedSamlResponse(config, keys, {
+        nameId: 'alice',
+        email: 'alice&lt;script&gt;alert(1)&lt;/script&gt;@example.com',
+      });
+      const result = await plugin.authenticate(response);
+      expect(result).not.toBeNull();
+      expect(result!.username).toBe('alicealert(1)@example.com');
+      expect(result!.username.includes('<')).toBe(false);
+    });
+
     it('ignores attribute names that would pollute an object prototype', async () => {
       const response = createSignedSamlResponse(config, keys, {
         extraAttributeName: '__proto__',
