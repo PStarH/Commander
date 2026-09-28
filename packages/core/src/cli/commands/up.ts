@@ -152,38 +152,33 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
       res.end(JSON.stringify({ status: 'ok', service: 'commander-up' }));
       return;
     }
-    const filePath = resolveStaticFilePath(webDist, url);
-    if (!filePath) {
-      res.writeHead(403);
-      res.end('Forbidden');
-      return;
-    }
+    const candidate = resolveStaticFilePath(webDist, url);
     const root = path.resolve(webDist);
-    const resolved = path.resolve(filePath);
+    const resolved = candidate === null ? '' : path.resolve(candidate);
     const prefix = root.endsWith(path.sep) ? root : root + path.sep;
-    if (resolved !== root && !resolved.startsWith(prefix)) {
-      res.writeHead(403);
-      res.end('Forbidden');
+    if (candidate !== null && resolved.startsWith(prefix)) {
+      const ext = path.extname(resolved);
+      const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+      fs.readFile(resolved, (err, data) => {
+        if (err) {
+          fs.readFile(path.join(root, 'index.html'), (err2, data2) => {
+            if (err2) {
+              res.writeHead(404);
+              res.end('Not Found');
+              return;
+            }
+            res.writeHead(200, { 'Content-Type': 'text/html' });
+            res.end(data2);
+          });
+          return;
+        }
+        res.writeHead(200, { 'Content-Type': contentType });
+        res.end(data);
+      });
       return;
     }
-    const ext = path.extname(resolved);
-    const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-    fs.readFile(resolved, (err, data) => {
-      if (err) {
-        fs.readFile(path.join(webDist, 'index.html'), (err2, data2) => {
-          if (err2) {
-            res.writeHead(404);
-            res.end('Not Found');
-            return;
-          }
-          res.writeHead(200, { 'Content-Type': 'text/html' });
-          res.end(data2);
-        });
-        return;
-      }
-      res.writeHead(200, { 'Content-Type': contentType });
-      res.end(data);
-    });
+    res.writeHead(403);
+    res.end('Forbidden');
   });
 
   const serverPort = await bindLoopbackWithRetry(server, port);
