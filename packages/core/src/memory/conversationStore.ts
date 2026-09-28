@@ -20,6 +20,7 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
+import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import {
@@ -396,7 +397,7 @@ export class ConversationStore {
     await this.init();
 
     const session: ConversationSession = {
-      id: `conv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `conv-${Date.now()}-${randomBytes(4).toString('hex')}`,
       projectId: params.projectId,
       agentId: params.agentId,
       userId: params.userId,

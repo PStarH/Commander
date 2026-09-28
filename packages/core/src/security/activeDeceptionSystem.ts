@@ -228,10 +228,9 @@ function generateDecoyAwsAccessKeyId(): string {
   // flagging a literal string in the repository.
   const prefix = ['A', 'K', 'I', 'A'].join('');
   const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  const bytes = crypto.randomBytes(16);
   let suffix = '';
   for (let i = 0; i < 16; i++) {
-    suffix += charset[bytes[i]! % charset.length];
+    suffix += charset[crypto.randomInt(charset.length)]!;
   }
   return `${prefix}${suffix}`;
 }
@@ -1625,10 +1624,9 @@ export class ActiveDeceptionSystem {
    */
   private randomBase62(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    const bytes = crypto.randomBytes(length);
     let result = '';
     for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
+      result += charset[crypto.randomInt(charset.length)]!;
     }
     return result;
   }
@@ -1639,10 +1637,9 @@ export class ActiveDeceptionSystem {
    */
   private randomUpperAlphanumeric(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-    const bytes = crypto.randomBytes(length);
     let result = '';
     for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
+      result += charset[crypto.randomInt(charset.length)]!;
     }
     return result;
   }
@@ -1653,10 +1650,9 @@ export class ActiveDeceptionSystem {
    */
   private randomBase64(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-    const bytes = crypto.randomBytes(length);
     let result = '';
     for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
+      result += charset[crypto.randomInt(charset.length)]!;
     }
     return result;
   }
@@ -1667,10 +1663,9 @@ export class ActiveDeceptionSystem {
    */
   private randomBase64Url(length: number): string {
     const charset = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-    const bytes = crypto.randomBytes(length);
     let result = '';
     for (let i = 0; i < length; i++) {
-      result += charset[bytes[i]! % charset.length];
+      result += charset[crypto.randomInt(charset.length)]!;
     }
     return result;
   }

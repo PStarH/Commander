@@ -233,8 +233,8 @@
     },
     {
       "path": "packages/core/src/runtime/httpServer.ts",
-      "sourceSha256": "4db6295c984b2ca9d0247f98827e6a89484904e469a448cee20f7fe254bbc353",
-      "callersSha256": "405e110bc4394180182865e762697cf17264cf45a1de60e3e2bc1096b57762e2",
+      "sourceSha256": "99eb268b2d10a66326c1e8f63d110d6343f569565ecf00979dfb13e0f91fffb9",
+      "callersSha256": "411b4d4672dbadf53114dd82a037b8b7a73e8da47e90e85990b12000792daf59",
       "owner": "@commander/core",
       "reason": "Legacy local runtime HTTP server retained for compatibility",
       "expiresAt": "2026-10-31",
@@ -244,7 +244,7 @@
     {
       "path": "packages/core/src/runtime/runtimeFactory.ts",
       "sourceSha256": "7e9a4e637214819722959c74409c02dd832ff38479fddd2b4f8f7b5d64342e38",
-      "callersSha256": "a77fd57050ed656893e407c6547496a2764ca91e70939371ed2800e7c4cb1c1a",
+      "callersSha256": "494341e0d201afa2a34561d6179b005d8ff4650c11c4993cfa15b9848ee06328",
       "owner": "@commander/core",
       "reason": "Legacy runtime factory pending worker-plane migration",
       "expiresAt": "2026-10-31",

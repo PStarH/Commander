@@ -23,13 +23,17 @@ export function isRbacEnabled(): boolean {
 /**
  * Resolve auth context from Bearer token: AuthManager first, then tenant key map.
  */
+function managerCredential(rawKey: string) {
+  return getAuthManager().authenticate(rawKey);
+}
+
 export function resolveHttpAuthContext(
   req: IncomingMessage,
   tenantApiKeyHashes: ReadonlyMap<string, string>,
 ): HttpAuthContext {
   const rawKey = extractAuthKey(req);
   if (rawKey) {
-    const authResult = getAuthManager().authenticate(rawKey);
+    const authResult = managerCredential(rawKey);
     if (authResult) {
       return {
         role: authResult.role,

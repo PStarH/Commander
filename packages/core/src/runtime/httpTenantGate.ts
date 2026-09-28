@@ -1,14 +1,8 @@
-import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { hashSecret } from './apiCredentialHash';
 import { sendJson } from './httpUtils';
 
-export function hashSecret(secret: string): string {
-  // Prefix-scoped scrypt keeps indexed lookup (same secret, same digest) while
-  // giving the credential a password-hashing cost. Kernel seedDemoApiKey and
-  // scripts that insert commander_auth_api_keys must use these exact parameters.
-  const salt = Buffer.from(`commander.api-credential.v1:${secret.slice(0, 8)}`);
-  return crypto.scryptSync(secret, salt, 32, { N: 16384, r: 8, p: 1 }).toString('hex');
-}
+export { hashSecret };
 
 export function extractAuthKey(req: IncomingMessage): string | undefined {
   const auth = req.headers.authorization;
