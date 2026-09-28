@@ -126,9 +126,11 @@ function requireTenantResponse(req: Request, res: { status: (code: number) => an
 }
 
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(process.cwd()) + path.sep)) return null;
   try {
-    await fsp.access(filePath);
-    return JSON.parse(await fsp.readFile(filePath, 'utf-8')) as T;
+    await fsp.access(resolved);
+    return JSON.parse(await fsp.readFile(resolved, 'utf-8')) as T;
   } catch (err) {
     reportSilentFailure(err, 'replayEndpoints:readJsonFile');
     return null;
@@ -144,9 +146,11 @@ async function readManifestFile(filePath: string): Promise<RunManifest | null> {
 }
 
 async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(process.cwd()) + path.sep)) return [];
   try {
-    await fsp.access(filePath);
-    const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
+    await fsp.access(resolved);
+    const raw = (await fsp.readFile(resolved, 'utf-8')).trim();
     if (!raw) return [];
     const events: TraceEvent[] = [];
     for (const line of raw.split('\n')) {
