@@ -40,8 +40,8 @@ describe('GitHub launch CI evidence boundaries', () => {
     assert.equal(mint.with?.['permission-pull-requests'], 'write');
     assert.equal(
       mint.with?.['permission-contents'],
-      undefined,
-      'preparing branches must not grant the agent contents write',
+      'read',
+      'a private sandbox ref is readable, but the token must not write contents',
     );
   });
 
