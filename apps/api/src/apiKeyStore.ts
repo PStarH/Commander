@@ -1,12 +1,13 @@
 /**
  * PostgreSQL-authoritative API key store.
  *
- * Keys are generated as `cmdr_` prefixed random tokens. Only the SHA-256 hash
+ * Keys are generated as `cmdr_` prefixed random tokens. Only the scrypt digest
  * is persisted; the plaintext is returned exactly once at creation time and is
  * never recoverable. Unique `key_hash` constraint makes collision impossible
  * across replicas.
  */
 import * as crypto from 'node:crypto';
+import { hashSecret } from '@commander/core/runtime';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import type { SqlClient, SqlPool } from '@commander/kernel';
 import { createAuthPool, withTenantScopedClient, type VerifiedPoolFactory } from './authDb';
@@ -48,10 +49,6 @@ const KEY_PREFIX = 'cmdr_';
 const KEY_BYTES = 32;
 const API_KEY_COLUMNS =
   'id, name, prefix, key_hash, scopes, tenant_id, enabled, created_at, revoked_at';
-
-function sha256(input: string): string {
-  return crypto.createHash('sha256').update(input).digest('hex');
-}
 
 function generateKey(): string {
   return KEY_PREFIX + crypto.randomBytes(KEY_BYTES).toString('base64url');
@@ -125,7 +122,7 @@ export class PostgresApiKeyStore implements ApiKeyStore {
           generateId(),
           name.trim() || 'API Key',
           key.slice(0, 8),
-          sha256(key),
+          hashSecret(key),
           scopes.length > 0 ? scopes : ['read', 'write'],
           tenantId ?? null,
         ],

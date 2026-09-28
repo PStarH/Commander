@@ -216,6 +216,7 @@ export type { SOPListItem, SOPDashboardData } from './sopDashboard';
 export { CommanderHttpServer, createHttpServer } from './httpServer';
 export { HttpRequestError, parseBody, sendJson } from './httpUtils';
 export {
+  hashSecret,
   requireTenant,
   assertTenantAccess,
   assertBodyTenant,

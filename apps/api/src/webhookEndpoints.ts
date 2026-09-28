@@ -36,6 +36,20 @@ import {
 import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 import { hasRole } from './userStore';
 
+function dingTalkSignatureMatches(timestamp: string, sign: string, secret: string): boolean {
+  return verifyDingTalkSignature(timestamp, sign, secret);
+}
+
+function weComSignatureMatches(
+  token: string,
+  timestamp: string,
+  nonce: string,
+  encrypt: string,
+  signature: string,
+): boolean {
+  return verifyWeComSignature(token, timestamp, nonce, encrypt, signature);
+}
+
 // ── Types ─────────────────────────────────────────────────────────────────
 
 export type WebhookPlatform = 'dingtalk' | 'feishu' | 'wecom';
@@ -213,7 +227,7 @@ export function createWebhookRouter(): Router {
       // Signature verification is mandatory when a config exists.
       const timestamp = req.query.timestamp as string | undefined;
       const sign = req.query.sign as string | undefined;
-      if (!timestamp || !sign || !verifyDingTalkSignature(timestamp, sign, config.secret)) {
+      if (!timestamp || !sign || !dingTalkSignatureMatches(timestamp, sign, config.secret)) {
         res.status(401).json({ error: 'Invalid signature' });
         return;
       }
@@ -368,7 +382,7 @@ export function createWebhookRouter(): Router {
           return;
         }
         const signPayload = encrypt ?? echostr;
-        if (!verifyWeComSignature(config.secret, timestamp, nonce, signPayload, msgSignature)) {
+        if (!weComSignatureMatches(config.secret, timestamp, nonce, signPayload, msgSignature)) {
           res.status(401).json({ error: 'Invalid msg_signature' });
           return;
         }
@@ -394,7 +408,7 @@ export function createWebhookRouter(): Router {
         res.status(401).json({ error: 'Missing signature parameters' });
         return;
       }
-      if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
+      if (!weComSignatureMatches(config.secret, timestamp, nonce, encrypt, msgSignature)) {
         res.status(401).json({ error: 'Invalid msg_signature' });
         return;
       }

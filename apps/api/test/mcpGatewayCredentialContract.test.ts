@@ -13,7 +13,7 @@
  * run together. Forwarding-only mocks cannot prove this boundary.
  */
 import * as assert from 'node:assert/strict';
-import * as crypto from 'node:crypto';
+import { hashSecret } from '@commander/core/runtime';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, afterEach, before, beforeEach, describe, test } from 'node:test';
@@ -67,7 +67,7 @@ class TestApiKeyStore implements ApiKeyStore {
       id,
       name,
       prefix: key.slice(0, 8),
-      hash: crypto.createHash('sha256').update(key).digest('hex'),
+      hash: hashSecret(key),
       scopes,
       tenantId,
       enabled: true,
@@ -223,8 +223,8 @@ beforeEach(async () => {
   await store.create('service-tenant-a', ['admin'], 'tenant-a');
   await store.create('service-tenant-b', ['admin'], 'tenant-b');
   // Re-bind the well-known service keys to their tenant records.
-  store.records[0]!.hash = crypto.createHash('sha256').update(SERVICE_KEY_A).digest('hex');
-  store.records[1]!.hash = crypto.createHash('sha256').update(SERVICE_KEY_B).digest('hex');
+  store.records[0]!.hash = hashSecret(SERVICE_KEY_A);
+  store.records[1]!.hash = hashSecret(SERVICE_KEY_B);
 });
 
 afterEach(() => {

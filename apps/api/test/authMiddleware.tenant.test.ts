@@ -1,5 +1,5 @@
 import * as assert from 'node:assert/strict';
-import * as crypto from 'node:crypto';
+import { hashSecret } from '@commander/core/runtime';
 import { after, afterEach, before, beforeEach, test } from 'node:test';
 import express, { type Request, type Response } from 'express';
 import { authMiddleware } from '../src/authMiddleware';
@@ -44,7 +44,7 @@ class TestApiKeyStore implements ApiKeyStore {
       id,
       name,
       prefix: key.slice(0, 8),
-      hash: crypto.createHash('sha256').update(key).digest('hex'),
+      hash: hashSecret(key),
       scopes,
       tenantId,
       enabled: true,

@@ -5,7 +5,7 @@ import { Pool, type PoolClient } from 'pg';
 import { runKernelMigrations, runTask1ClosureMigrations } from './migrations.js';
 import { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 import { seedWorkerAllowedTenants } from './seedWorkerClaimSecret.js';
-import { seedDemoApiKey, seedTask1AllowedTenants } from './migrate.js';
+import { hashCellApiKey, seedDemoApiKey, seedTask1AllowedTenants } from './migrate.js';
 
 const ownerUrl = process.env.COMMANDER_TASK1_PG_URL;
 let liveOwnerUrl: string | undefined;
@@ -345,7 +345,7 @@ describe(
 
     it('does not revive, rebind, or elevate an existing demo API key on restart', async () => {
       const key = `cell-test-${randomUUID()}`;
-      const hash = createHash('sha256').update(key).digest('hex');
+      const hash = hashCellApiKey(key);
       const authDatabaseName = `commander_task1_live_auth_${randomUUID().replaceAll('-', '')}`;
       await adminPool.query(
         `CREATE DATABASE ${databaseIdentifier(authDatabaseName)} OWNER commander_owner`,

@@ -735,7 +735,7 @@ describe('EnterpriseSecurityGateway', () => {
 // Auth Middleware 时序安全测试
 // ============================================================================
 describe('Auth Middleware timing safety', () => {
-  it('should use SHA-256 hashing for API keys (not plaintext storage)', () => {
+  it('should hash API keys before lookup (not plaintext storage)', () => {
     // API keys are hashed before the PostgreSQL-authoritative lookup. The raw
     // credential is never stored or compared against an in-process key map.
     const authPath = path.resolve(
@@ -746,8 +746,8 @@ describe('Auth Middleware timing safety', () => {
     );
     const authCode = fs.readFileSync(authPath, 'utf8');
 
-    assert.ok(authCode.includes('getApiKeyStore().findByHash(sha256(token))'));
-    assert.ok(authCode.includes("createHash('sha256')"), 'Should use SHA-256');
+    assert.ok(authCode.includes('getApiKeyStore().findByHash(hashSecret(token))'));
+    assert.ok(authCode.includes('hashSecret'), 'Should hash API keys before lookup');
     // Verify auth failure lockout is implemented
     assert.ok(
       authCode.includes('lockedOut') || authCode.includes('LOCKOUT'),

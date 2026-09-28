@@ -1,6 +1,6 @@
 import type { Request, Response, NextFunction } from 'express';
-import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '@commander/core';
+import { hashSecret } from '@commander/core/runtime';
 import { isProductionEnv, describeProdSignal } from './envSignal';
 import { getApiKeyStore } from './apiKeyStore';
 import { getAuthFailureStore } from './authFailureStore';
@@ -74,13 +74,9 @@ setInterval(() => {
   }
 }, 300_000).unref();
 
-function sha256(input: string): string {
-  return crypto.createHash('sha256').update(input).digest('hex');
-}
-
 /** PostgreSQL is the sole authority for API-key authentication. */
 async function findKey(token: string): Promise<StoredKey | null> {
-  const storeRecord = await getApiKeyStore().findByHash(sha256(token));
+  const storeRecord = await getApiKeyStore().findByHash(hashSecret(token));
   if (storeRecord) {
     return {
       id: storeRecord.id,
@@ -102,6 +98,10 @@ function readHeader(value: string | string[] | undefined): string | undefined {
 
 function getClientIp(req: Request): string {
   return req.ip ?? req.socket.remoteAddress ?? 'unknown';
+}
+
+async function noteRejectedCredential(ip: string): Promise<void> {
+  await recordAuthFailure(ip);
 }
 
 async function recordAuthFailure(ip: string): Promise<void> {
@@ -309,7 +309,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
   if (apiKeyHeader) {
     const matched = await findKey(apiKeyHeader);
     if (!matched) {
-      await recordAuthFailure(clientIp);
+      await noteRejectedCredential(clientIp);
       try {
         getGlobalLogger().warn('AuthMiddleware', 'Invalid API key', { ip: clientIp, path });
       } catch {
@@ -325,7 +325,7 @@ async function authMiddlewareInternal(req: Request, res: Response, next: NextFun
     const token = authHeader.slice(7);
     const matched = await findKey(token);
     if (!matched) {
-      await recordAuthFailure(clientIp);
+      await noteRejectedCredential(clientIp);
       try {
         getGlobalLogger().warn('AuthMiddleware', 'Invalid bearer token', { ip: clientIp, path });
       } catch {
