@@ -1,7 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { hashSecret } from '../packages/core/src/runtime/httpTenantGate';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -523,7 +524,7 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
         id: `ak_recovery_${randomUUID()}`,
         name: `cell-recovery-${role}`,
         prefix: keys[role].slice(0, 8),
-        hash: createHash('sha256').update(keys[role]).digest('hex'),
+        hash: hashSecret(keys[role]),
       },
     );
   }

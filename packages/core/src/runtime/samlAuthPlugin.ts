@@ -103,6 +103,23 @@ interface ParsedAssertion {
 /**
  * Zero-dependency SAML 2.0 Service Provider.
  */
+function noteSamlRejection(
+  audit: ReturnType<typeof getSecurityAuditLogger>,
+  message: string,
+  details?: Record<string, unknown>,
+): void {
+  audit.logAuthFailure('SAMLAuthPlugin', message, details);
+}
+
+function detachedSignatureMatches(
+  algorithm: string,
+  data: Buffer,
+  key: crypto.KeyLike,
+  signature: Buffer,
+): boolean {
+  return crypto.verify(algorithm, data, key, signature);
+}
+
 export class SAMLAuthPlugin implements AuthPlugin {
   readonly name = 'saml';
   private config: Required<
@@ -203,12 +220,12 @@ export class SAMLAuthPlugin implements AuthPlugin {
       }
     } catch (err) {
       reportSilentFailure(err, 'samlAuthPlugin:decode');
-      audit.logAuthFailure('SAMLAuthPlugin', 'Failed to decode SAMLResponse', {});
+      noteSamlRejection(audit, 'Failed to decode SAMLResponse', {});
       return null;
     }
 
     if (!xml.includes('Response') || !xml.includes('<')) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'Decoded bytes are not valid SAML XML', {});
+      noteSamlRejection(audit, 'Decoded bytes are not valid SAML XML', {});
       return null;
     }
 
@@ -218,7 +235,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const responseDestination = extractAttribute(xml, 'Response', 'Destination');
 
     if (responseDestination !== this.config.spAcsUrl) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Response Destination mismatch', {
+      noteSamlRejection(audit, 'SAML Response Destination mismatch', {
         expected: this.config.spAcsUrl,
         actual: responseDestination,
       });
@@ -230,7 +247,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
       options.inResponseTo &&
       responseInResponseTo !== options.inResponseTo
     ) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML InResponseTo mismatch', {
+      noteSamlRejection(audit, 'SAML InResponseTo mismatch', {
         expected: options.inResponseTo,
         actual: responseInResponseTo,
       });
@@ -238,14 +255,14 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     if (!responseInResponseTo && !options.allowIdpInitiated) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'IdP-initiated SAML Response rejected', {});
+      noteSamlRejection(audit, 'IdP-initiated SAML Response rejected', {});
       return null;
     }
 
     // Extract and validate assertion.
     const assertion = this.extractAssertion(xml);
     if (!assertion) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'No usable Assertion found in SAMLResponse', {
+      noteSamlRejection(audit, 'No usable Assertion found in SAMLResponse', {
         responseId,
       });
       return null;
@@ -258,21 +275,21 @@ export class SAMLAuthPlugin implements AuthPlugin {
     // consumed Assertion to carry a document-unique ID that the signature can bind to.
     const assertionCount = (xml.match(/<(?:saml:)?Assertion\b/g) ?? []).length;
     if (assertionCount !== 1) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML response must contain exactly one Assertion', {
+      noteSamlRejection(audit, 'SAML response must contain exactly one Assertion', {
         responseId,
         assertionCount,
       });
       return null;
     }
     if (!assertion.id) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion is missing an ID', { responseId });
+      noteSamlRejection(audit, 'SAML Assertion is missing an ID', { responseId });
       return null;
     }
     const idOccurrences = (
       xml.match(new RegExp(`\\bID=(?:"|')${escapeRegex(assertion.id)}(?:"|')`, 'g')) ?? []
     ).length;
     if (idOccurrences !== 1) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion ID is not unique (possible XSW)', {
+      noteSamlRejection(audit, 'SAML Assertion ID is not unique (possible XSW)', {
         responseId,
         assertionId: assertion.id,
         idOccurrences,
@@ -281,7 +298,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     if (assertion.issuer !== this.config.idpEntityId) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion issuer mismatch', {
+      noteSamlRejection(audit, 'SAML Assertion issuer mismatch', {
         expected: this.config.idpEntityId,
         actual: assertion.issuer,
       });
@@ -289,7 +306,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     if (assertion.recipient !== this.config.spAcsUrl) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML SubjectConfirmation Recipient mismatch', {
+      noteSamlRejection(audit, 'SAML SubjectConfirmation Recipient mismatch', {
         expected: this.config.spAcsUrl,
         actual: assertion.recipient,
       });
@@ -302,14 +319,14 @@ export class SAMLAuthPlugin implements AuthPlugin {
 
     if (this.config.wantAssertionsSigned) {
       if (!assertion.signatureXml) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'Assertion signature required but missing', {
+        noteSamlRejection(audit, 'Assertion signature required but missing', {
           responseId,
         });
         return null;
       }
-      const valid = this.verifyAssertionSignature(assertion);
+      const valid = this.assertionSignatureMatches(assertion);
       if (!valid) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'Assertion signature verification failed', {
+        noteSamlRejection(audit, 'Assertion signature verification failed', {
           responseId,
         });
         return null;
@@ -433,7 +450,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     if (assertion.notBefore) {
       const notBefore = Date.parse(assertion.notBefore);
       if (!isNaN(notBefore) && now < notBefore - skewMs) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion not yet valid', {
+        noteSamlRejection(audit, 'SAML Assertion not yet valid', {
           notBefore: assertion.notBefore,
           now: new Date(now).toISOString(),
         });
@@ -444,7 +461,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     if (assertion.notOnOrAfter) {
       const notOnOrAfter = Date.parse(assertion.notOnOrAfter);
       if (!isNaN(notOnOrAfter) && now > notOnOrAfter + skewMs) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion expired', {
+        noteSamlRejection(audit, 'SAML Assertion expired', {
           notOnOrAfter: assertion.notOnOrAfter,
           now: new Date(now).toISOString(),
         });
@@ -453,7 +470,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     if (assertion.audiences.length > 0 && !assertion.audiences.includes(this.config.spEntityId)) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML AudienceRestriction mismatch', {
+      noteSamlRejection(audit, 'SAML AudienceRestriction mismatch', {
         expected: this.config.spEntityId,
         actual: assertion.audiences,
       });
@@ -463,7 +480,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     return true;
   }
 
-  private verifyAssertionSignature(assertion: ParsedAssertion): boolean {
+  private assertionSignatureMatches(assertion: ParsedAssertion): boolean {
     if (!assertion.signatureXml) return false;
 
     try {
@@ -516,7 +533,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
       // 2. Verify the signature over the canonicalized SignedInfo.
       const canonicalizedSignedInfo = approximateC14n(signedInfo);
       const signatureBuf = Buffer.from(signatureValue, 'base64');
-      return crypto.verify(
+      return detachedSignatureMatches(
         sigAlg,
         Buffer.from(canonicalizedSignedInfo, 'utf-8'),
         publicKey,

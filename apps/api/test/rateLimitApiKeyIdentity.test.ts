@@ -6,7 +6,7 @@
  * the pre-limiter canonical lookup (`apiKeyIdentityMiddleware`) and the
  * tenant/principal buckets it must produce.
  */
-import * as crypto from 'node:crypto';
+import { hashSecret } from '@commander/core/runtime';
 
 // Pin tiny limits BEFORE importing securityMiddleware (parsed at module load).
 process.env.API_RATE_LIMIT = '10';
@@ -28,10 +28,6 @@ import type { RateLimitBucket, RateLimitEntry, RateLimitStore } from '../src/sec
 const { rateLimitMiddleware, setRateLimitStoreForTesting } =
   await import('../src/securityMiddleware');
 
-function sha256(input: string): string {
-  return crypto.createHash('sha256').update(input).digest('hex');
-}
-
 const VALID_KEY = 'cmdr_test_key_alpha';
 const SECOND_KEY = 'cmdr_test_key_beta';
 const GLOBAL_KEY = 'cmdr_test_key_global';
@@ -42,7 +38,7 @@ function record(overrides: Partial<ApiKeyRecord>): ApiKeyRecord {
     id: 'ak_1',
     name: 'alpha',
     prefix: 'cmdr_tes',
-    hash: sha256(VALID_KEY),
+    hash: hashSecret(VALID_KEY),
     scopes: ['read', 'write'],
     enabled: true,
     createdAt: new Date().toISOString(),
@@ -178,14 +174,14 @@ async function runIdentityAndLimit(req: Request): Promise<{
 describe('AUTH-02: API-key rate-limit identity', () => {
   beforeEach(() => {
     keyStore = new FakeApiKeyStore();
-    keyStore.records.set(sha256(VALID_KEY), record({ id: 'ak_1', tenantId: 'tenant-a' }));
+    keyStore.records.set(hashSecret(VALID_KEY), record({ id: 'ak_1', tenantId: 'tenant-a' }));
     keyStore.records.set(
-      sha256(SECOND_KEY),
+      hashSecret(SECOND_KEY),
       record({ id: 'ak_2', name: 'beta', tenantId: 'tenant-a' }),
     );
     // No tenant: isolates the per-key principal bucket in the cross-IP test.
     keyStore.records.set(
-      sha256(GLOBAL_KEY),
+      hashSecret(GLOBAL_KEY),
       record({ id: 'ak_global', name: 'global', tenantId: undefined }),
     );
     limitStore = new FakeRateLimitStore();
@@ -237,7 +233,7 @@ describe('AUTH-02: API-key rate-limit identity', () => {
   });
 
   test('a revoked key gets no identity and only consumes the anonymous IP bucket', async () => {
-    keyStore.records.delete(sha256(REVOKED_KEY));
+    keyStore.records.delete(hashSecret(REVOKED_KEY));
     const req = makeReq({ headers: { 'x-api-key': REVOKED_KEY } });
     const { res } = await runIdentityAndLimit(req);
     assert.equal(req.rateLimitApiKey, undefined);

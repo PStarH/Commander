@@ -14,6 +14,7 @@ import {
   readTask1OwnerInput,
   seedTask1AllowedTenants,
   seedDemoApiKey,
+  hashCellApiKey,
 } from './migrate.js';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
 import {
@@ -158,6 +159,11 @@ describe('kernel owner migration entrypoint', () => {
     assert.match(insert.sql, /actions:approve/);
     assert.match(insert.sql, /ON CONFLICT \(key_hash\) DO NOTHING/);
     assert.equal(insert.values[3], 'cell-smoke-tenant');
+    assert.equal(
+      insert.values[2],
+      'f49ed27369d4e336be5339ffc80049ede6082faf1e5612c932a929ddb0c9d18d',
+    );
+    assert.equal(hashCellApiKey('test-bootstrap-secret'), insert.values[2]);
     assert.ok(!calls.some((call) => call.sql.includes('GRANT')));
   });
 

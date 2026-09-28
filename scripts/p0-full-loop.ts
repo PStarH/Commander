@@ -27,6 +27,7 @@ import {
   seedWorkerAllowedTenants,
 } from '@commander/kernel';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import { hashSecret } from '../packages/core/src/runtime/httpTenantGate';
 import { buildP0RuntimeDatabaseUrls } from './p0-runtime-config.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -98,7 +99,7 @@ async function main(): Promise<void> {
         'ak_p0_full_loop',
         'p0-full-loop',
         API_KEY.slice(0, 8),
-        createHash('sha256').update(API_KEY).digest('hex'),
+        hashSecret(API_KEY),
         ['read', 'write'],
         TENANT,
       ],

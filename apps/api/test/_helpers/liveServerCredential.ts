@@ -23,7 +23,8 @@
  * uses, and every route still enforces its own authorization. Nothing here
  * weakens the routes.
  */
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { hashSecret } from '@commander/core/runtime';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import type { SqlClient, SqlPool } from '@commander/kernel';
 import { withTenantScopedClient } from '../../src/authDb.js';
@@ -72,10 +73,6 @@ function withAuthClient<T>(
   operation: (client: SqlClient) => Promise<T>,
 ): Promise<T> {
   return withTenantScopedClient(pool, '', operation);
-}
-
-function sha256(input: string): string {
-  return createHash('sha256').update(input).digest('hex');
 }
 
 /** Delete earlier runs' fixture rows so the fixture is idempotent. */
@@ -131,7 +128,7 @@ export async function provisionLiveServerCredential(): Promise<LiveServerCredent
           userId,
           TEST_PRINCIPAL_NAME,
           apiKey.slice(0, 8),
-          sha256(apiKey),
+          hashSecret(apiKey),
           ['read', 'write', 'admin'],
           TEST_TENANT_ID,
         ],

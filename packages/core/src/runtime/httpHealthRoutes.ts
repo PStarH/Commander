@@ -14,6 +14,15 @@ export interface HttpHealthRouteDeps {
   rateLimitEntries: () => number;
 }
 
+async function permitHealth(
+  req: IncomingMessage,
+  res: ServerResponse,
+  deps: HttpHealthRouteDeps,
+): Promise<boolean> {
+  if (!deps.protectHealthEndpoints) return true;
+  return deps.authenticate(req, res);
+}
+
 /**
  * Handle /health, /health/detailed, /metrics, /ready.
  * Returns true when the request was handled.
@@ -25,10 +34,9 @@ export async function handleHealthRoutes(
   deps: HttpHealthRouteDeps,
 ): Promise<boolean> {
   const method = req.method ?? 'GET';
-  const protectHealth = deps.protectHealthEndpoints;
 
   if (segments[0] === 'health' && method === 'GET') {
-    if (protectHealth && !(await deps.authenticate(req, res))) return true;
+    if (!(await permitHealth(req, res, deps))) return true;
     const { HealthCollector } = await import('./healthCheck');
     const collector = new HealthCollector({ sources: deps.buildHealthSources() });
     const report = await collector.collect();
@@ -45,7 +53,7 @@ export async function handleHealthRoutes(
   }
 
   if (segments[0] === 'health' && segments[1] === 'detailed' && method === 'GET') {
-    if (protectHealth && !(await deps.authenticate(req, res))) return true;
+    if (!(await permitHealth(req, res, deps))) return true;
     const { HealthCollector } = await import('./healthCheck');
     const collector = new HealthCollector({ sources: deps.buildHealthSources() });
     const report = await collector.collect();
@@ -60,7 +68,7 @@ export async function handleHealthRoutes(
   }
 
   if (segments[0] === 'metrics' && method === 'GET') {
-    if (protectHealth && !(await deps.authenticate(req, res))) return true;
+    if (!(await permitHealth(req, res, deps))) return true;
     const accept = req.headers.accept ?? '';
     if (accept.includes('text/plain') || accept.includes('openmetrics')) {
       res.writeHead(200, { 'Content-Type': 'text/plain; version=0.0.4' });
@@ -88,7 +96,7 @@ export async function handleHealthRoutes(
   }
 
   if (segments[0] === 'ready' && method === 'GET') {
-    if (protectHealth && !(await deps.authenticate(req, res))) return true;
+    if (!(await permitHealth(req, res, deps))) return true;
     const mem = process.memoryUsage();
     const { HealthCollector } = await import('./healthCheck');
     const collector = new HealthCollector({ sources: deps.buildHealthSources() });

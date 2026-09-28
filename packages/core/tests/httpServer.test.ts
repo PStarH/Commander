@@ -2,8 +2,8 @@ import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import * as http from 'node:http';
 import * as net from 'node:net';
-import * as crypto from 'node:crypto';
 import { CommanderHttpServer } from '../src/runtime/httpServer';
+import { hashSecret } from '../src/runtime/httpTenantGate';
 
 const PORT = 0; // dynamic port
 let server: CommanderHttpServer | null = null;
@@ -222,7 +222,7 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
     it('accepts hashed API key config without retaining the raw key', async () => {
       const rawKey = 'hashed-test-key-123';
-      const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+      const keyHash = hashSecret(rawKey);
       const authServer = new CommanderHttpServer({
         port: 0,
         host: '127.0.0.1',

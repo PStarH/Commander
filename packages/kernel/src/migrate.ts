@@ -57,7 +57,7 @@ import {
 import { readFile } from 'node:fs/promises';
 import { canonicalBootstrapJson, canonicalBootstrapSha256 } from './canonicalBootstrap.js';
 import { buildAdapterOpsLoginSql } from './sqlSafety.js';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID, scryptSync } from 'node:crypto';
 
 /** Parse comma-separated tenant list; reject empty and '*'. */
 export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
@@ -66,6 +66,12 @@ export function parseAllowedTenantsEnv(raw: string | undefined): string[] {
     .split(',')
     .map((t) => t.trim())
     .filter((t) => t.length > 0 && t !== '*');
+}
+
+/** Same parameters as `hashSecret` in packages/core/src/runtime/httpTenantGate.ts. */
+export function hashCellApiKey(secret: string): string {
+  const salt = Buffer.from(`commander.api-credential.v1:${secret.slice(0, 8)}`);
+  return scryptSync(secret, salt, 32, { N: 16384, r: 8, p: 1 }).toString('hex');
 }
 
 /** Seed the explicitly injected cell API key into the PostgreSQL auth authority. */
@@ -81,7 +87,7 @@ export async function seedDemoApiKey(
     `SELECT to_regclass('public.commander_auth_api_keys')::text AS relation`,
   );
   if (!table.rows[0]?.relation) throw new Error('CELL_API_KEY_AUTH_SCHEMA_REQUIRED');
-  const hash = createHash('sha256').update(key).digest('hex');
+  const hash = hashCellApiKey(key);
   await client.query(
     `INSERT INTO commander_auth_api_keys
        (id, name, prefix, key_hash, scopes, tenant_id)

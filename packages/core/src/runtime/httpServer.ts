@@ -746,6 +746,44 @@ export class CommanderHttpServer {
     });
   }
 
+  private admitCaller(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    return this.authenticateRequest(req, res);
+  }
+
+  private samlBrowserRedirect(plugin: SAMLAuthPlugin, relayState: string | undefined): string {
+    return plugin.createLoginRedirectUrl(relayState);
+  }
+
+  private async acceptBearerPlugin(
+    bearerToken: string,
+    requiredRole: AuthRole | undefined,
+    res: ServerResponse,
+  ): Promise<boolean> {
+    for (const plugin of this.authPlugins) {
+      try {
+        const result = await plugin.authenticate(bearerToken);
+        if (result) {
+          if (requiredRole && ROLE_HIERARCHY[result.role] < ROLE_HIERARCHY[requiredRole]) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Insufficient privileges.' }));
+            return false;
+          }
+          return true;
+        }
+      } catch (err) {
+        reportSilentFailure(err, 'httpServer:558');
+        continue;
+      }
+    }
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'Unauthorized. Provide Authorization: Bearer <api-key> or valid OIDC token.',
+      }),
+    );
+    return false;
+  }
+
   /** Full auth gate (API key + OIDC). Returns true if allowed; sends an error otherwise. */
   private async authenticateRequest(
     req: IncomingMessage,
@@ -769,29 +807,7 @@ export class CommanderHttpServer {
     if (this.authPlugins.length > 0) {
       const bearerToken = extractAuthKey(req);
       if (bearerToken) {
-        for (const plugin of this.authPlugins) {
-          try {
-            const result = await plugin.authenticate(bearerToken);
-            if (result) {
-              if (requiredRole && ROLE_HIERARCHY[result.role] < ROLE_HIERARCHY[requiredRole]) {
-                res.writeHead(403, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Insufficient privileges.' }));
-                return false;
-              }
-              return true;
-            }
-          } catch (err) {
-            reportSilentFailure(err, 'httpServer:558');
-            continue;
-          }
-        }
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            error: 'Unauthorized. Provide Authorization: Bearer <api-key> or valid OIDC token.',
-          }),
-        );
-        return false;
+        return this.acceptBearerPlugin(bearerToken, requiredRole, res);
       }
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
@@ -972,7 +988,7 @@ export class CommanderHttpServer {
       segments[1] === 'compensation' &&
       (req.method ?? 'GET') === 'GET'
     ) {
-      if (!(await this.authenticateRequest(req, res))) return;
+      if (!(await this.admitCaller(req, res))) return;
       if (!this.permitUnscopedDiagnostics(res)) return;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(renderDashboardHtml(this.bus));
@@ -987,7 +1003,7 @@ export class CommanderHttpServer {
     // version did readdirSync + readFileSync + statSync per SOP file,
     // which lagged the event loop for the entire render.
     if (segments[0] === 'dashboard' && segments[1] === 'sop' && (req.method ?? 'GET') === 'GET') {
-      if (!(await this.authenticateRequest(req, res))) return;
+      if (!(await this.admitCaller(req, res))) return;
       try {
         const html = await renderSOPDashboardHtmlAsync();
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -1023,7 +1039,7 @@ export class CommanderHttpServer {
         res.end(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }));
         return;
       }
-      await this.handleSamlAuthRequest(req, res, segments, queryStr);
+      await this.completeSamlHttp(req, res, segments, queryStr);
       return;
     }
 
@@ -1083,7 +1099,7 @@ export class CommanderHttpServer {
           streamSegments[0] === 'compensation' ||
           streamSegments[0] === 'sop'
         ) {
-          if (!(await this.authenticateRequest(req, res))) return;
+          if (!(await this.admitCaller(req, res))) return;
           if (!this.permitUnscopedDiagnostics(res)) return;
         }
         if (streamSegments[0] === 'cost') {
@@ -1197,7 +1213,7 @@ export class CommanderHttpServer {
    * Handle public SAML 2.0 SSO endpoints (/api/v1/auth/saml/login and /acs).
    * Called before API key authentication so unauthenticated users can log in.
    */
-  private async handleSamlAuthRequest(
+  private async completeSamlHttp(
     req: IncomingMessage,
     res: ServerResponse,
     segments: string[],
@@ -1216,7 +1232,7 @@ export class CommanderHttpServer {
       const relayState = queryStr
         ? (new URLSearchParams(queryStr).get('relayState') ?? undefined)
         : undefined;
-      const redirectUrl = samlPlugin.createLoginRedirectUrl(relayState);
+      const redirectUrl = this.samlBrowserRedirect(samlPlugin, relayState);
       res.writeHead(302, { Location: redirectUrl });
       res.end();
       return;

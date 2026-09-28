@@ -1,6 +1,6 @@
 import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import * as crypto from 'node:crypto';
+import { hashSecret } from '@commander/core/runtime';
 import {
   MCPServer,
   getModelRouter,
@@ -203,13 +203,9 @@ export interface McpRouterOptions {
 /** Environment variable holding the Action Gateway service credential. */
 const MCP_SERVICE_CREDENTIAL_ENV = 'COMMANDER_API_KEY';
 
-function sha256(input: string): string {
-  return crypto.createHash('sha256').update(input).digest('hex');
-}
-
 function defaultResolveServiceCredentialTenant(apiKey: string): Promise<string | null> {
   return getApiKeyStore()
-    .findByHash(sha256(apiKey))
+    .findByHash(hashSecret(apiKey))
     .then((record) => record?.tenantId ?? null)
     .catch((err: unknown) => {
       reportSilentFailure(err, 'mcpEndpoints:resolveServiceCredentialTenant');
