@@ -75,8 +75,8 @@ jobs:
           pnpm --filter @commander/effect-broker build
       - name: Validate exact sandbox configuration before minting a token
         env:
-          SANDBOX_OWNER: ${{ vars.GITHUB_TEST_OWNER }}
-          SANDBOX_REPO: ${{ vars.GITHUB_TEST_REPO }}
+          SANDBOX_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          SANDBOX_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
           SANDBOX_APPROVED: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
         run: |
           node --input-type=module <<'NODE'
@@ -90,24 +90,24 @@ jobs:
         id: sandbox-token
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
         with:
-          app-id: ${{ secrets.GITHUB_SANDBOX_APP_ID }}
-          private-key: ${{ secrets.GITHUB_SANDBOX_APP_PRIVATE_KEY }}
-          owner: ${{ vars.GITHUB_TEST_OWNER }}
-          repositories: ${{ vars.GITHUB_TEST_REPO }}
+          app-id: ${{ secrets.COMMANDER_SANDBOX_APP_ID }}
+          private-key: ${{ secrets.COMMANDER_SANDBOX_APP_PRIVATE_KEY }}
+          owner: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          repositories: ${{ vars.COMMANDER_SANDBOX_REPO }}
           permission-pull-requests: write
       - name: Run real GitHub adapter scenarios
         env:
           LIVE_GITHUB: '1'
           LIVE_GITHUB_RESPONSE_CUT: '1'
-          GITHUB_TOKEN: ${{ steps.sandbox-token.outputs.token }}
+          COMMANDER_SANDBOX_TOKEN: ${{ steps.sandbox-token.outputs.token }}
           COMMANDER_CELL_TENANT_ID: github-sandbox-ci
-          GITHUB_TEST_OWNER: ${{ vars.GITHUB_TEST_OWNER }}
-          GITHUB_TEST_REPO: ${{ vars.GITHUB_TEST_REPO }}
+          GITHUB_TEST_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          GITHUB_TEST_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
           COMMANDER_GITHUB_REPOSITORIES: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
           COMMANDER_LIVE_APPROVED_REPO: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
-          GITHUB_TEST_HEAD: ${{ vars.GITHUB_TEST_HEAD }}
-          GITHUB_TEST_BASE: ${{ vars.GITHUB_TEST_BASE }}
-          GITHUB_RESPONSE_CUT_HEAD: ${{ vars.GITHUB_RESPONSE_CUT_HEAD }}
+          GITHUB_TEST_HEAD: ${{ vars.COMMANDER_SANDBOX_HEAD }}
+          GITHUB_TEST_BASE: ${{ vars.COMMANDER_SANDBOX_BASE }}
+          GITHUB_RESPONSE_CUT_HEAD: ${{ vars.COMMANDER_SANDBOX_RESPONSE_CUT_HEAD }}
         run: |
           mkdir -p artifacts/github-sandbox
           node --input-type=module -e 'import { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR as d } from "./packages/contracts/dist/index.js"; console.log(JSON.stringify({commit: process.env.GITHUB_SHA, adapterVersion: d.adapterVersion, evidence: "live-adapter-only", gatewayApproval: false, postgresRestart: false}))' > artifacts/github-sandbox/source.json

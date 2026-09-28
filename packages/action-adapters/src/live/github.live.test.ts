@@ -1,8 +1,8 @@
 /**
  * L4-02 GitHub live adapter proof (opt-in).
  *
- * Requires: LIVE_GITHUB=1, GITHUB_TOKEN|GITHUB_PAT, COMMANDER_CELL_TENANT_ID,
- * GITHUB_TEST_OWNER, GITHUB_TEST_REPO.
+ * Requires: LIVE_GITHUB=1, COMMANDER_SANDBOX_TOKEN|GITHUB_TOKEN|GITHUB_PAT,
+ * COMMANDER_CELL_TENANT_ID, GITHUB_TEST_OWNER, GITHUB_TEST_REPO.
  *
  * Opt-out suites skip. Explicit opt-in without prerequisites fails; neither
  * these adapter tests nor their cleanup establish Gateway approval/restart proof.
@@ -20,7 +20,11 @@ import {
 const tenantId = process.env.COMMANDER_CELL_TENANT_ID ?? '';
 const owner = process.env.GITHUB_TEST_OWNER ?? '';
 const repo = process.env.GITHUB_TEST_REPO ?? '';
-const token = process.env.GITHUB_TOKEN ?? process.env.GITHUB_PAT ?? '';
+const token =
+  process.env.COMMANDER_SANDBOX_TOKEN ??
+  process.env.GITHUB_TOKEN ??
+  process.env.GITHUB_PAT ??
+  '';
 const destination = owner && repo ? `github://${owner}/${repo}/pulls` : '';
 
 /** Live writes require the exact sandbox repository, never a naming prefix. */
@@ -43,7 +47,7 @@ const responseCutRequested = process.env.LIVE_GITHUB_RESPONSE_CUT === '1';
 const prerequisites = [
   ...(!liveRequested ? ['LIVE_GITHUB=1'] : []),
   ...(!tenantId ? ['COMMANDER_CELL_TENANT_ID'] : []),
-  ...(!token ? ['GITHUB_TOKEN'] : []),
+  ...(!token ? ['COMMANDER_SANDBOX_TOKEN or GITHUB_TOKEN'] : []),
   ...(!owner || !repo ? ['GITHUB_TEST_OWNER and GITHUB_TEST_REPO'] : []),
   ...(!isAllowlistedGitHubTestRepository(owner, repo)
     ? ['exact COMMANDER_LIVE_APPROVED_REPO']
