@@ -49,6 +49,7 @@ jobs:
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/effect-broker build
       - run: pnpm test:github:offline
+      - run: pnpm demo:github --help
       - run: pnpm typecheck:github
 
   github-sandbox-adapter:

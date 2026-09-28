@@ -170,7 +170,9 @@ describe('writeSynthesisOutput', () => {
   it('writes a relative output beneath the workspace', async () => {
     const writtenPath = await writeSynthesisOutput('Write the report to ./reports/result.md', 'ok');
 
-    expect(writtenPath).toBe(path.join(fs.realpathSync.native(workspace), 'reports', 'result.md'));
+    expect(fs.realpathSync.native(writtenPath!)).toBe(
+      path.join(fs.realpathSync.native(workspace), 'reports', 'result.md'),
+    );
     expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
   });
 
