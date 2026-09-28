@@ -164,7 +164,7 @@
     {
       "path": "packages/core/src/cli/commands/_shared.ts",
       "sourceSha256": "122d18a2c35284d7a973a9c49412146cc45e1e1e9f83b223a38b8ffb90145554",
-      "callersSha256": "a9fd95f3ee3cdd57ff4fc71ad32ecd8d70e33d359c68d0cd104be556ef0aca4c",
+      "callersSha256": "6428cb33494929b1a5569dbfec111876b44955cf4c3b41fa6eb63053a389ce85",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime factory pending gateway client migration",
       "expiresAt": "2026-10-31",
@@ -174,7 +174,7 @@
     {
       "path": "packages/core/src/cli/commands/core.ts",
       "sourceSha256": "cf6a16fb8a7720906547dfea7fd1a6a1f028cfaabfbdcc577e306d030a7e154f",
-      "callersSha256": "8dd00bc099998ff35e412f3f8fcb07303d30d45934312967322da826ed94e259",
+      "callersSha256": "bb22dc59761f502aa7d6a7502a32ec96c55a4af92a77ed62d48ef8fa74595e64",
       "owner": "@commander/core",
       "reason": "Legacy local CLI orchestration pending gateway client migration",
       "expiresAt": "2026-10-31",
@@ -193,7 +193,7 @@
     },
     {
       "path": "packages/core/src/cli/commands/up.ts",
-      "sourceSha256": "5ebae160054f4742658cda64c6aca44920c0019e2bec19e4407be97fbf82affc",
+      "sourceSha256": "97df68ed6564a1a428bf6df083599499cffa4422a97712408366e6219abfee55",
       "callersSha256": "c7ed60b8797ffa17dbfd0185601e7b2a7d253e5c07fa995ae0e6b08ca5c90b90",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime startup pending gateway client migration",
