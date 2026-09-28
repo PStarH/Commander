@@ -21,10 +21,7 @@ const tenantId = process.env.COMMANDER_CELL_TENANT_ID ?? '';
 const owner = process.env.GITHUB_TEST_OWNER ?? '';
 const repo = process.env.GITHUB_TEST_REPO ?? '';
 const token =
-  process.env.COMMANDER_SANDBOX_TOKEN ??
-  process.env.GITHUB_TOKEN ??
-  process.env.GITHUB_PAT ??
-  '';
+  process.env.COMMANDER_SANDBOX_TOKEN ?? process.env.GITHUB_TOKEN ?? process.env.GITHUB_PAT ?? '';
 const destination = owner && repo ? `github://${owner}/${repo}/pulls` : '';
 
 /** Live writes require the exact sandbox repository, never a naming prefix. */
