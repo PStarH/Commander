@@ -79,6 +79,7 @@ interface SamlResponseOptions {
   audience?: string;
   inResponseTo?: string;
   recipient?: string;
+  omitRecipient?: boolean;
   issuer?: string;
   wantSigned?: boolean;
   tamperDigest?: boolean;
@@ -99,7 +100,9 @@ function createSignedSamlResponse(
   const roles = options.roles ?? 'operator';
   const audience = options.audience ?? config.spEntityId;
   const issuer = options.issuer ?? config.idpEntityId;
-  const recipient = options.recipient ?? config.spAcsUrl;
+  const recipientAttribute = options.omitRecipient
+    ? ''
+    : ` Recipient="${options.recipient ?? config.spAcsUrl}"`;
   const assertionId = `_assertion_${crypto.randomUUID()}`;
   const responseId = `_response_${crypto.randomUUID()}`;
   const inResponseTo = options.inResponseTo;
@@ -110,8 +113,8 @@ function createSignedSamlResponse(
     .join('');
 
   const subjectConfirmationData = inResponseTo
-    ? `<saml:SubjectConfirmationData Recipient="${recipient}" InResponseTo="${inResponseTo}" NotOnOrAfter="${notOnOrAfter}"/>`
-    : `<saml:SubjectConfirmationData Recipient="${recipient}" NotOnOrAfter="${notOnOrAfter}"/>`;
+    ? `<saml:SubjectConfirmationData${recipientAttribute} InResponseTo="${inResponseTo}" NotOnOrAfter="${notOnOrAfter}"/>`
+    : `<saml:SubjectConfirmationData${recipientAttribute} NotOnOrAfter="${notOnOrAfter}"/>`;
 
   let assertionXml =
     `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${assertionId}" IssueInstant="${issueInstant}" Version="2.0">` +
@@ -382,6 +385,12 @@ describe('SAMLAuthPlugin', () => {
       });
       expect(result).not.toBeNull();
       expect(result!.userId).toBe('alice@example.com');
+    });
+
+    it('rejects a signed assertion that omits Recipient', async () => {
+      const response = createSignedSamlResponse(config, keys, { omitRecipient: true });
+      const result = await plugin.authenticate(response);
+      expect(result).toBeNull();
     });
 
     it('rejects a response that omits Destination', async () => {
