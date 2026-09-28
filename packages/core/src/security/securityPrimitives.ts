@@ -138,7 +138,7 @@ export class UniversalSanitizer {
   }> = [
     {
       name: 'script_tag',
-      pattern: /<script\b[^<]*(?:(?!<\/script\s*>)<[^<]*)*<\/script\s*>/gi,
+      pattern: /<script\b[^<]*(?:(?!<\/script[^>]*>)<[^<]*)*<\/script[^>]*>/gi,
       replacement: '',
     },
     { name: 'event_handler', pattern: /\son\w+\s*=\s*"[^"]*"/gi, replacement: '' },

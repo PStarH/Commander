@@ -227,7 +227,7 @@ const EMBEDDED_EXEC_PATTERNS = [
     message: 'data:text/html URI detected — potential XSS vector',
   },
   {
-    regex: /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi,
+    regex: /<script\b[^>]*>[\s\S]*?<\/script[^>]*>/gi,
     category: 'embedded_exec',
     severity: 'medium' as const,
     message: 'HTML script tag detected in skill content',
