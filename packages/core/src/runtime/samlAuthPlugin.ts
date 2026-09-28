@@ -217,7 +217,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const responseInResponseTo = extractAttribute(xml, 'Response', 'InResponseTo');
     const responseDestination = extractAttribute(xml, 'Response', 'Destination');
 
-    if (responseDestination && responseDestination !== this.config.spAcsUrl) {
+    if (responseDestination !== this.config.spAcsUrl) {
       audit.logAuthFailure('SAMLAuthPlugin', 'SAML Response Destination mismatch', {
         expected: this.config.spAcsUrl,
         actual: responseDestination,
@@ -650,6 +650,23 @@ function approximateC14n(xml: string): string {
     });
 }
 
+function xmlInnerText(value: string): string {
+  const parts: string[] = [];
+  let index = 0;
+  while (index < value.length) {
+    const open = value.indexOf('<', index);
+    if (open < 0) {
+      parts.push(value.slice(index));
+      break;
+    }
+    parts.push(value.slice(index, open));
+    const close = value.indexOf('>', open + 1);
+    if (close < 0) break;
+    index = close + 1;
+  }
+  return parts.join('').trim();
+}
+
 function readSamlAttributes(inner: string): Map<string, string | string[]> {
   const attributes = new Map<string, string | string[]>();
   const attrRegex = /<(saml:|)Attribute\b[^>]*?Name="([^"]+)"[^>]*>([\s\S]*?)<\/\1Attribute>/g;
@@ -667,8 +684,7 @@ function readSamlAttributes(inner: string): Map<string, string | string[]> {
     const valueRegex = /<(saml:|)AttributeValue\b[^>]*>([\s\S]*?)<\/\1AttributeValue>/g;
     for (const valueMatch of (attrMatch[3] ?? '').matchAll(valueRegex)) {
       const raw = (valueMatch[2] ?? '').trim();
-      const text = raw.replace(/<[^>]+>/g, '').trim();
-      values.push(unescapeXml(text));
+      values.push(xmlInnerText(unescapeXml(raw)));
     }
     if (values.length === 1) {
       const only = values[0];
