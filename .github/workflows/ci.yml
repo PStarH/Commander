@@ -94,6 +94,7 @@ jobs:
           private-key: ${{ secrets.COMMANDER_SANDBOX_APP_PRIVATE_KEY }}
           owner: ${{ vars.COMMANDER_SANDBOX_OWNER }}
           repositories: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          permission-contents: read
           permission-pull-requests: write
       - name: Run real GitHub adapter scenarios
         env:

@@ -181,7 +181,7 @@ secrets `COMMANDER_SANDBOX_APP_ID` and `COMMANDER_SANDBOX_APP_PRIVATE_KEY`, and 
 GitHub rejects secret and variable names that start with `GITHUB_`, so these names do not use that prefix.
 
 Dispatch CI with `run_github_live_proof=true`. The job mints a short-lived App
-token restricted to the exact sandbox and requests only PR write permission.
+token restricted to the exact sandbox. It can read that repository and write pull requests, and it cannot write repository contents.
 It is not reachable from pull-request events. Explicit live selection with
 missing prerequisites fails; ordinary offline runs may skip the live suites.
 The job creates up to two test PRs and explicitly closes them as adapter test
