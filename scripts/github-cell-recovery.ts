@@ -405,7 +405,8 @@ export async function runPreParkCrashScenario(
     );
     const parked = await until(
       () => driver.effect(runId),
-      (row) => row?.state === 'COMPLETION_UNKNOWN' && row.id === effectId,
+      (row): row is EffectObservation =>
+        !!row && row.state === 'COMPLETION_UNKNOWN' && row.id === effectId,
       'PRE_PARK_UNKNOWN_NOT_OBSERVED',
       90_000,
     );
@@ -425,7 +426,7 @@ export async function runPreParkCrashScenario(
     paused = false;
     const recovered = await until(
       () => driver.effect(runId),
-      (row) => row?.state === 'COMPLETED' && row.id === effectId,
+      (row): row is EffectObservation => !!row && row.state === 'COMPLETED' && row.id === effectId,
       'RECOVERY_NOT_COMPLETED',
     );
     requireProof(
