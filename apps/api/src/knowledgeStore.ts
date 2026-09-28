@@ -661,7 +661,23 @@ export class KnowledgeStore {
   }
 
   private chunkFilePath(docId: string): string {
-    return path.join(this.chunksDir, `${docId}.ndjson`);
+    const name = path.basename(docId);
+    if (name !== docId || name.length === 0 || name === '.' || name === '..') {
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Document id is not a single path segment',
+      );
+    }
+    const root = path.resolve(this.chunksDir);
+    const resolved = path.resolve(root, `${name}.ndjson`);
+    const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+    if (!resolved.startsWith(prefix)) {
+      throw new KnowledgeStoreError(
+        'KNOWLEDGE_STORE_UNAVAILABLE',
+        'Document id escapes the chunk directory',
+      );
+    }
+    return resolved;
   }
 
   /**
@@ -905,6 +921,7 @@ export class KnowledgeStore {
       await this.init();
       const docs = await this.loadDocuments();
       if (!docs.some((doc) => doc.id === id)) return false;
+      this.chunkFilePath(id);
 
       await this.commitDocuments(docs.filter((doc) => doc.id !== id));
 
