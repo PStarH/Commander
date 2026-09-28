@@ -162,8 +162,8 @@ export class DefaultContentScanner implements ContentScanner {
     /<[^>]+style\s*=\s*["'][^"']*opacity\s*:\s*0[^"']*["'][^>]*>/gi,
     /<[^>]+hidden[^>]*>/gi,
     /<input[^>]+type\s*=\s*["']hidden["'][^>]*>/gi,
-    /<script[^>]*>[\s\S]*?<\/script\s*>/gi,
-    /<iframe[^>]*>[\s\S]*?<\/iframe\s*>/gi,
+    /<script[^>]*>[\s\S]*?<\/script[^>]*>/gi,
+    /<iframe[^>]*>[\s\S]*?<\/iframe[^>]*>/gi,
     /<!--[\s\S]*?-->/g, // HTML 注释可能隐藏指令
   ];
 
