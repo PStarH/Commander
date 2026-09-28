@@ -3,7 +3,14 @@ import { createServer } from 'node:https';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-export function createGitHubFixture({ key, cert, token, oracleToken, cutCreateResponse = false }) {
+export function createGitHubFixture({
+  key,
+  cert,
+  token,
+  oracleToken,
+  cutCreateResponse = false,
+  holdCreateResponse = false,
+}) {
   if (!token) throw new Error('CELL_GITHUB_TOKEN is required');
   if (!oracleToken || oracleToken === token)
     throw new Error('CELL_GITHUB_ORACLE_TOKEN must differ from CELL_GITHUB_TOKEN');
@@ -11,6 +18,7 @@ export function createGitHubFixture({ key, cert, token, oracleToken, cutCreateRe
   let createCalls = 0;
   let closeCalls = 0;
   let responseCutInjected = false;
+  let responseHeld = false;
   let committedCreateStatus = null;
   return createServer({ key, cert }, async (req, res) => {
     const send = (status, body) => {
@@ -24,7 +32,14 @@ export function createGitHubFixture({ key, cert, token, oracleToken, cutCreateRe
       return;
     }
     if (req.method === 'GET' && url.pathname === '/__cell__/state') {
-      send(200, { createCalls, closeCalls, pulls, responseCutInjected, committedCreateStatus });
+      send(200, {
+        createCalls,
+        closeCalls,
+        pulls,
+        responseCutInjected,
+        responseHeld,
+        committedCreateStatus,
+      });
       return;
     }
     const match = /^\/repos\/([^/]+)\/([^/]+)\/pulls(?:\/(\d+))?$/.exec(url.pathname);
@@ -99,6 +114,12 @@ export function createGitHubFixture({ key, cert, token, oracleToken, cutCreateRe
         res.write(JSON.stringify(created).slice(0, 1), () => res.destroy());
         return;
       }
+      if (holdCreateResponse && !responseHeld) {
+        responseHeld = true;
+        res.writeHead(201, { 'Content-Type': 'application/json' });
+        res.flushHeaders();
+        return;
+      }
       send(201, created);
     } else if (req.method === 'PATCH' && number && pull && body.state === 'closed') {
       closeCalls += 1;
@@ -117,6 +138,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     token: process.env.CELL_GITHUB_TOKEN,
     oracleToken: process.env.CELL_GITHUB_ORACLE_TOKEN,
     cutCreateResponse: process.env.CELL_GITHUB_CUT_CREATE_RESPONSE === '1',
+    holdCreateResponse: process.env.CELL_GITHUB_HOLD_CREATE_RESPONSE === '1',
   });
   server.listen(443, '0.0.0.0');
 }

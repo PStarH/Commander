@@ -211,3 +211,103 @@ test('cuts the first valid create response after committing the pull request', a
   assert.equal(state.pulls.length, 2);
   assert.equal((await call('GET', '/repos/cell/repo/pulls/1')).body.body, payload.body);
 });
+
+test('a held create is visible before the response body ends', async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), 'cell-github-hold-'));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(
+    join(dir, 'openssl.cnf'),
+    '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=api.github.com\n[ext]\nsubjectAltName=DNS:api.github.com\nbasicConstraints=critical,CA:TRUE\n',
+  );
+  execFileSync(
+    'openssl',
+    [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-days',
+      '1',
+      '-config',
+      join(dir, 'openssl.cnf'),
+      '-keyout',
+      join(dir, 'key.pem'),
+      '-out',
+      join(dir, 'cert.pem'),
+    ],
+    { stdio: 'ignore' },
+  );
+  const cert = readFileSync(join(dir, 'cert.pem'));
+  const server = createGitHubFixture({
+    key: readFileSync(join(dir, 'key.pem')),
+    cert,
+    token: 'fixture-test-token',
+    oracleToken: 'fixture-oracle-token',
+    holdCreateResponse: true,
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  t.after(
+    () =>
+      new Promise((resolve, reject) => {
+        server.closeAllConnections();
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  );
+  const { port } = server.address();
+  const payload = {
+    title: 'Held proof',
+    body: 'held',
+    head: 'cell-held',
+    base: 'main',
+  };
+  const status = await new Promise((resolve, reject) => {
+    const req = request(
+      {
+        host: '127.0.0.1',
+        servername: 'api.github.com',
+        port,
+        ca: cert,
+        method: 'POST',
+        path: '/repos/cell/repo/pulls',
+        headers: { Authorization: 'Bearer fixture-test-token' },
+      },
+      (res) => {
+        resolve(res.statusCode);
+        req.destroy();
+      },
+    );
+    req.on('error', () => undefined);
+    req.on('timeout', () => reject(new Error('hold timed out')));
+    req.setTimeout(5_000);
+    req.end(JSON.stringify(payload));
+  });
+  assert.equal(status, 201);
+  const state = await new Promise((resolve, reject) => {
+    const req = request(
+      {
+        host: '127.0.0.1',
+        servername: 'api.github.com',
+        port,
+        ca: cert,
+        method: 'GET',
+        path: '/__cell__/state',
+        headers: { Authorization: 'Bearer fixture-oracle-token' },
+      },
+      (res) => {
+        let raw = '';
+        res.on('data', (chunk) => {
+          raw += chunk;
+        });
+        res.on('end', () => resolve(JSON.parse(raw)));
+      },
+    );
+    req.on('error', reject);
+    req.end();
+  });
+  assert.equal(state.createCalls, 1);
+  assert.equal(state.responseHeld, true);
+  assert.equal(state.committedCreateStatus, 201);
+  assert.equal(state.pulls[0].state, 'open');
+});

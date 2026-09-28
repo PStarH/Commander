@@ -4,6 +4,7 @@ import { createServer } from 'node:http';
 import { once } from 'node:events';
 import {
   runDemoProcess,
+  runPreParkCrashScenario,
   runRecoveryScenario,
   type RecoveryDriver,
 } from './github-cell-recovery.js';
@@ -241,6 +242,86 @@ for (const role of ['agent', 'approver'] as const) {
     assert.equal(calls, 0, 'other-role operation must fail before HTTP');
   });
 }
+
+test('pre-park crash parks the admitted effect and does not create again', async () => {
+  const events: string[] = [];
+  let approved = false;
+  let restarted = false;
+  let recovered = false;
+  const effect = {
+    id: 'effect-pre-park',
+    runId: 'run-pre-park',
+    idempotencyKey: 'key-pre-park',
+    requestHash: 'a'.repeat(64),
+    state: 'ADMITTED',
+    prNumber: null as number | null,
+  };
+  const driver: RecoveryDriver = {
+    async cli(_role, args) {
+      events.push(args[0] ?? '');
+      if (args[0] === 'propose') {
+        return {
+          runId: effect.runId,
+          effectId: effect.id,
+          state: recovered ? 'SUCCEEDED' : 'AWAITING_APPROVAL',
+          actionDigest: 'b'.repeat(64),
+          simulationId: 'sim',
+          policySnapshotId: 'policy',
+        };
+      }
+      if (args[0] === 'verify-agent-boundary') return { boundary: 'DENIED' };
+      if (args[0] === 'approve') {
+        approved = true;
+        return { state: 'RUNNING' };
+      }
+      throw new Error('unexpected CLI phase');
+    },
+    async pauseRecovery() {
+      events.push('pause');
+    },
+    async resumeRecovery() {
+      events.push('resume');
+      recovered = true;
+      effect.state = 'COMPLETED';
+      effect.prNumber = 2;
+    },
+    async workerStartedAt() {
+      return restarted ? '2026-09-28T00:00:02Z' : '2026-09-28T00:00:01Z';
+    },
+    async restartWorker() {
+      events.push('restart');
+      restarted = true;
+      effect.state = 'COMPLETION_UNKNOWN';
+    },
+    async effect() {
+      return { ...effect };
+    },
+    async provider() {
+      return {
+        createCalls: approved ? 1 : 0,
+        closeCalls: 0,
+        responseCutInjected: false,
+        committedCreateStatus: approved ? 201 : null,
+        pulls: approved ? [{ number: 2, state: 'open' }] : [],
+      };
+    },
+  };
+  const result = await runPreParkCrashScenario(driver, 'operation-pre-park');
+  assert.equal(result.persistedStateAtKill, 'ADMITTED');
+  assert.equal(result.persistedStateBeforeResume, 'COMPLETION_UNKNOWN');
+  assert.equal(result.stateAfterRecovery, 'COMPLETED');
+  assert.equal(result.createCalls, 1);
+  assert.equal(result.closeCalls, 0);
+  assert.deepEqual(events, [
+    'propose',
+    'verify-agent-boundary',
+    'pause',
+    'approve',
+    'restart',
+    'resume',
+    'propose',
+  ]);
+});
 
 test('recovery proof requires separate approvals, persisted unknown, restart and one original effect', async () => {
   const { driver, events } = fixture();

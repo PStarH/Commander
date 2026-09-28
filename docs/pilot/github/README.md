@@ -202,7 +202,13 @@ then lets adapter-ops reconcile the original operation. It checks the same run,
 effect, idempotency key and request hash, verifies evidence, replays the proposal,
 and separately approves closing the unmerged PR. Exactly one create and one close
 must reach the provider. A separate oracle credential stays outside the execution
-services. The test does not cover a crash before the unknown result is persisted.
+services.
+
+The same disposable cell then runs a second operation. The provider commits that
+PR and leaves the 201 response open. The test kills the worker while the effect
+is still `ADMITTED`, waits for lease reclaim to park `COMPLETION_UNKNOWN`, and
+resumes reconciliation. The second create must stay at one call. This is still
+the synthetic provider. It does not prove the same window against live GitHub.
 
 **Run this command only on a disposable cell:** `--up` uses the existing cell reset,
 including deleting its volumes and replacing `commander-postgres`. Do not run it
@@ -217,10 +223,11 @@ synthetic, and this is not a live GitHub or model-inference demonstration.
 ## Current trial boundary
 
 The supported trial on this source tree is the credential-free contract above
-and the synthetic cell recovery that CI runs. Live GitHub App proof, a crash
-before `COMPLETION_UNKNOWN` is persisted, disaster-recovery rotation, and a
-recorded model call are outside that trial. `pnpm cell:github-recovery --up`
-resets a disposable cell; it is not the install command.
+and the synthetic cell recovery that CI runs, including the kill while a create
+is committed and the effect is still `ADMITTED`. Live GitHub through the
+Gateway, disaster-recovery rotation, and a recorded model call are outside that
+trial. `pnpm cell:github-recovery --up` resets a disposable cell; it is not the
+install command.
 
 ## Before calling this a public launch
 
