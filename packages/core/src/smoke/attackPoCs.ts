@@ -21,6 +21,17 @@ import type { GapConfig } from '../plugins/builtin/gap/config';
 import { getDirname } from '../esmCompat';
 const __dirname = getDirname(import.meta.url);
 
+function textHasHost(value: string, host: string): boolean {
+  const matches = value.match(/https?:\/\/[^\s<>"']+/g) ?? [];
+  return matches.some((candidate) => {
+    try {
+      return new URL(candidate).hostname === host;
+    } catch {
+      return false;
+    }
+  });
+}
+
 interface Finding {
   id: string;
   vulnerability: string;
@@ -518,7 +529,7 @@ async function attackSlaEnforcer(): Promise<void> {
         'sanitize title (strip @here, @channel, @everyone, URLs) before forwarding to Slack/PagerDuty',
       );
     }
-    if (pdTitle.includes('evil.com')) {
+    if (textHasHost(pdTitle, 'evil.com')) {
       report(
         'SlaEnforcer forwards attacker URL into PagerDuty incident',
         'high',

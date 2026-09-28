@@ -2,7 +2,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { execFile, execFileSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { hashSecret } from '../packages/core/src/runtime/httpTenantGate';
+import { hashSecret } from '../packages/core/src/runtime/apiCredentialHash';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

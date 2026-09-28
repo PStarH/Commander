@@ -15,7 +15,7 @@ export interface SecurityWarning {
 /**
  * Scan skill content for potentially dangerous patterns before creation/import.
  * Checks:
- *   - Shell injection (command injection via backticks, $(), |)
+ *   - Shell injection (command substitution, pipes, and backticks)
  *   - Path traversal (../, absolute paths that escape the sandbox)
  *   - Sensitive data exposure (API keys, tokens, passwords)
  *   - Dangerous imports/requires (child_process, fs with write, eval, exec)
@@ -227,7 +227,7 @@ const EMBEDDED_EXEC_PATTERNS = [
     message: 'data:text/html URI detected — potential XSS vector',
   },
   {
-    regex: /<script\b[^>]*>[\s\S]*?<\/script>/gi,
+    regex: /<script\b[^>]*>[\s\S]*?<\/script\s*>/gi,
     category: 'embedded_exec',
     severity: 'medium' as const,
     message: 'HTML script tag detected in skill content',

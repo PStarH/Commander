@@ -27,7 +27,7 @@ import {
   seedWorkerAllowedTenants,
 } from '@commander/kernel';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
-import { hashSecret } from '../packages/core/src/runtime/httpTenantGate';
+import { hashSecret } from '../packages/core/src/runtime/apiCredentialHash';
 import { buildP0RuntimeDatabaseUrls } from './p0-runtime-config.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
