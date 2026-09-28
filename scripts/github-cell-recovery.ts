@@ -528,6 +528,18 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
     );
   }
   const compose = (args: string[]) => fixtureCompose(fixtureEnv, args).trim();
+  const containerStatus = (service: string): string => {
+    try {
+      const id = compose(['ps', '--all', '--quiet', service]);
+      if (!/^[a-f0-9]{12,64}$/.test(id)) return 'missing';
+      return execFileSync('docker', ['inspect', '--format', '{{.State.Status}}', id], {
+        encoding: 'utf8',
+        timeout: 10_000,
+      }).trim();
+    } catch {
+      return 'missing';
+    }
+  };
   const startedAt = (service: string) => {
     const id = compose(['ps', '--all', '--quiet', service]);
     requireProof(/^[a-f0-9]{12,64}$/.test(id), 'RECOVERY_CONTAINER_NOT_FOUND');
@@ -578,18 +590,29 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
     },
     async restartWorker() {
       compose(['kill', '--signal', 'SIGKILL', 'worker']);
+      await until(
+        async () => containerStatus('worker') === 'exited',
+        Boolean,
+        'WORKER_KILL_NOT_OBSERVED',
+        30_000,
+      );
       compose(['start', 'worker']);
       await until(
         async () => {
-          const response = compose([
-            'exec',
-            '-T',
-            'worker',
-            'node',
-            '-e',
-            "fetch('http://127.0.0.1:8083/ready').then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write('unavailable'))",
-          ]);
-          return response === '200';
+          if (containerStatus('worker') !== 'running') return false;
+          try {
+            const response = compose([
+              'exec',
+              '-T',
+              'worker',
+              'node',
+              '-e',
+              "fetch('http://127.0.0.1:8083/ready').then(r=>process.stdout.write(String(r.status))).catch(()=>process.stdout.write('unavailable'))",
+            ]);
+            return response === '200';
+          } catch {
+            return false;
+          }
         },
         Boolean,
         'RESTARTED_WORKER_NOT_READY',
