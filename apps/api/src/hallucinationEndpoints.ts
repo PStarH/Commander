@@ -76,7 +76,13 @@ function findTracesDir(tenantId?: string): string {
  * read failure (EACCES/EIO/…) propagates so the handler answers non-2xx — a
  * permission error must never be reported as "zero hallucination risk".
  */
-async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
+async function readNdjsonFile(tracesDir: string, runId: string): Promise<TraceEvent[]> {
+  const root = path.resolve(tracesDir);
+  const filePath = path.resolve(root, `${runId}.ndjson`);
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  if (!filePath.startsWith(prefix)) {
+    throw new Error('TRACE_PATH_ESCAPE');
+  }
   let raw: string;
   try {
     raw = await fsp.readFile(filePath, 'utf-8');
@@ -299,7 +305,7 @@ export function createHallucinationRouter(): Router {
 
       const tenantId = (req as typeof req & { tenantId?: string }).tenantId;
       const tracesDir = findTracesDir(tenantId);
-      const events = await readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`));
+      const events = await readNdjsonFile(tracesDir, runId);
 
       const reports: HallucinationReportEntry[] = [];
       for (const event of events) {

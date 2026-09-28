@@ -158,9 +158,17 @@ export async function cmdUp(args: string[], flags: Record<string, string>): Prom
       res.end('Forbidden');
       return;
     }
-    const ext = path.extname(filePath);
+    const root = path.resolve(webDist);
+    const resolved = path.resolve(filePath);
+    const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+    if (resolved !== root && !resolved.startsWith(prefix)) {
+      res.writeHead(403);
+      res.end('Forbidden');
+      return;
+    }
+    const ext = path.extname(resolved);
     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
-    fs.readFile(filePath, (err, data) => {
+    fs.readFile(resolved, (err, data) => {
       if (err) {
         fs.readFile(path.join(webDist, 'index.html'), (err2, data2) => {
           if (err2) {
