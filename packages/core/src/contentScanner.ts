@@ -162,8 +162,8 @@ export class DefaultContentScanner implements ContentScanner {
     /<[^>]+style\s*=\s*["'][^"']*opacity\s*:\s*0[^"']*["'][^>]*>/gi,
     /<[^>]+hidden[^>]*>/gi,
     /<input[^>]+type\s*=\s*["']hidden["'][^>]*>/gi,
-    /<script[^>]*>[\s\S]*?<\/script>/gi,
-    /<iframe[^>]*>[\s\S]*?<\/iframe>/gi,
+    /<script[^>]*>[\s\S]*?<\/script\s*>/gi,
+    /<iframe[^>]*>[\s\S]*?<\/iframe\s*>/gi,
     /<!--[\s\S]*?-->/g, // HTML 注释可能隐藏指令
   ];
 
@@ -493,13 +493,13 @@ export class DefaultContentScanner implements ContentScanner {
 
     for (const pattern of this.hiddenHtmlPatterns) {
       pattern.lastIndex = 0;
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
+      for (const match of content.matchAll(pattern)) {
+        const start = match.index ?? 0;
         threats.push({
           type: 'hidden_html',
           severity: 'HIGH',
           description: `Hidden HTML element detected: ${match[0].substring(0, 50)}...`,
-          location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+          location: { start, end: start + match[0].length, snippet: match[0] },
           remediation: this.getRemediation({ type: 'hidden_html' } as ContentThreat),
         });
       }
@@ -681,22 +681,15 @@ export class DefaultContentScanner implements ContentScanner {
     for (const rules of DefaultContentScanner.rulePacks.values()) {
       for (const { category, severity, pattern } of rules) {
         pattern.lastIndex = 0;
-        let match;
-        while ((match = pattern.exec(content)) !== null) {
+        for (const match of content.matchAll(pattern)) {
+          const start = match.index ?? 0;
           threats.push({
             type: 'harmful_content',
             severity,
             description: `Harmful content detected (${category}): "${match[0].slice(0, 80)}"`,
-            location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+            location: { start, end: start + match[0].length, snippet: match[0] },
             remediation: this.getRemediation({ type: 'harmful_content' } as ContentThreat),
           });
-          // A zero-width match (e.g. a lookahead like `(?=x)`) leaves
-          // `lastIndex` untouched, so `exec` would return the same position
-          // forever: the synchronous scan loop never terminates and `threats`
-          // grows until the process runs out of memory. Force forward progress.
-          if (match[0].length === 0) {
-            pattern.lastIndex += 1;
-          }
         }
       }
     }
