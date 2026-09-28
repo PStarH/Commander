@@ -21,9 +21,16 @@ import * as path from 'node:path';
  * A crash can never observe a half-written or truncated target.
  */
 export function atomicWriteFileSync(filePath: string, data: string | Buffer, mode?: number): void {
-  const dir = path.dirname(filePath);
+  const resolved = path.resolve(filePath);
+  const dir = path.dirname(resolved);
+  const base = path.basename(resolved);
+  const prefix = dir.endsWith(path.sep) ? dir : dir + path.sep;
+  const target = path.resolve(dir, base);
+  const tmp = path.resolve(dir, `.${base}.tmp-${process.pid}-${Date.now()}`);
+  if (!target.startsWith(prefix) || !tmp.startsWith(prefix)) {
+    throw new Error('ATOMIC_WRITE_PATH_ESCAPE');
+  }
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}`);
   const fd = fs.openSync(tmp, 'w', mode);
   try {
     fs.writeFileSync(fd, data);
@@ -31,7 +38,7 @@ export function atomicWriteFileSync(filePath: string, data: string | Buffer, mod
   } finally {
     fs.closeSync(fd);
   }
-  fs.renameSync(tmp, filePath);
+  fs.renameSync(tmp, target);
   try {
     const dfd = fs.openSync(dir, 'r');
     try {
