@@ -173,10 +173,12 @@ manual action.
 
 To configure the optional adapter job, create a `github-sandbox` Actions
 Environment with required reviewer and branch restrictions. Set environment
-secrets `GITHUB_SANDBOX_APP_ID` and `GITHUB_SANDBOX_APP_PRIVATE_KEY`, and variables:
+secrets `COMMANDER_SANDBOX_APP_ID` and `COMMANDER_SANDBOX_APP_PRIVATE_KEY`, and variables:
 
-- `GITHUB_TEST_OWNER`, `GITHUB_TEST_REPO`, `COMMANDER_LIVE_APPROVED_REPO` (exact `owner/repo`).
-- `GITHUB_TEST_BASE`, `GITHUB_TEST_HEAD`, `GITHUB_RESPONSE_CUT_HEAD` (distinct prepared branches).
+- `COMMANDER_SANDBOX_OWNER`, `COMMANDER_SANDBOX_REPO`, `COMMANDER_LIVE_APPROVED_REPO` (exact `owner/repo`).
+- `COMMANDER_SANDBOX_BASE`, `COMMANDER_SANDBOX_HEAD`, `COMMANDER_SANDBOX_RESPONSE_CUT_HEAD` (distinct prepared branches).
+
+GitHub rejects secret and variable names that start with `GITHUB_`, so these names do not use that prefix.
 
 Dispatch CI with `run_github_live_proof=true`. The job mints a short-lived App
 token restricted to the exact sandbox and requests only PR write permission.

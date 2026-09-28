@@ -36,7 +36,7 @@ describe('GitHub launch CI evidence boundaries', () => {
       step.uses?.startsWith('actions/create-github-app-token@'),
     );
     assert.ok(mint);
-    assert.equal(mint.with?.repositories, '${{ vars.GITHUB_TEST_REPO }}');
+    assert.equal(mint.with?.repositories, '${{ vars.COMMANDER_SANDBOX_REPO }}');
     assert.equal(mint.with?.['permission-pull-requests'], 'write');
     assert.equal(
       mint.with?.['permission-contents'],
