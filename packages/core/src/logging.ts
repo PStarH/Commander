@@ -373,7 +373,7 @@ export class Logger {
         context: entry.context ?? undefined,
         error: entry.error ?? undefined,
       });
-      const line = jsonLine.replace(/[\r\n]+/g, ' ');
+      const line = jsonLine.replace(/\n|\r/g, ' ');
       if (entry.level === 'error' || entry.level === 'critical') {
         console.error(line);
       } else if (entry.level === 'warn') {
@@ -405,7 +405,7 @@ export class Logger {
     if (entry.error) {
       output += ` | Error: ${String(entry.error.message)}`;
     }
-    output = output.replace(/[\r\n]+/g, ' ');
+    output = output.replace(/\n|\r/g, ' ');
 
     if (entry.level === 'error' || entry.level === 'critical') {
       console.error(output);
