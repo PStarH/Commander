@@ -354,22 +354,30 @@ export async function runRecoveryScenario(
   }
 }
 
+const SYNTHETIC_PRE_PARK_TARGET: RecoveryTarget = {
+  destination: 'github://octo/repo/pulls',
+  head: 'cell-pre-park',
+  base: 'main',
+  title: 'Cell pre-park crash',
+};
+
 export async function runPreParkCrashScenario(
   driver: RecoveryDriver,
   operationId: string,
+  target: RecoveryTarget = SYNTHETIC_PRE_PARK_TARGET,
 ): Promise<Record<string, unknown>> {
   const proposal = [
     'propose',
     '--operation-id',
     operationId,
     '--destination',
-    'github://octo/repo/pulls',
+    target.destination,
     '--head',
-    'cell-pre-park',
+    target.head,
     '--base',
-    'main',
+    target.base,
     '--title',
-    'Cell pre-park crash',
+    target.title,
     '--body',
     'Approved crash before the unknown result is parked',
   ];
@@ -550,20 +558,27 @@ async function livePulls(
     .map((pull) => ({ number: pull.number, state: pull.state }));
 }
 
-async function closeLeftoverPulls(live: LiveGitHubConfig, title: string): Promise<void> {
+async function closeLeftoverPulls(live: LiveGitHubConfig, title: string): Promise<number> {
+  let closed = 0;
   for (const pull of await livePulls(live, title)) {
     if (pull.state !== 'open') continue;
-    await fetch(`https://api.github.com/repos/${live.owner}/${live.repo}/pulls/${pull.number}`, {
-      method: 'PATCH',
-      headers: {
-        Authorization: `Bearer ${live.token}`,
-        Accept: 'application/vnd.github+json',
-        'X-GitHub-Api-Version': '2022-11-28',
+    const response = await fetch(
+      `https://api.github.com/repos/${live.owner}/${live.repo}/pulls/${pull.number}`,
+      {
+        method: 'PATCH',
+        headers: {
+          Authorization: `Bearer ${live.token}`,
+          Accept: 'application/vnd.github+json',
+          'X-GitHub-Api-Version': '2022-11-28',
+        },
+        body: JSON.stringify({ state: 'closed' }),
+        signal: AbortSignal.timeout(15_000),
       },
-      body: JSON.stringify({ state: 'closed' }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    );
+    requireProof(response.ok, 'LIVE_CLEANUP_FAILED');
+    closed += 1;
   }
+  return closed;
 }
 
 async function runComposeRecovery(liveMode = false): Promise<Record<string, unknown>> {
@@ -577,6 +592,8 @@ async function runComposeRecovery(liveMode = false): Promise<Record<string, unkn
     await import('./l4-b-cell-compose.js');
   const live = liveMode ? await liveGitHubConfig() : undefined;
   const liveTitle = `Cell GitHub live recovery ${randomUUID().slice(0, 8)}`;
+  const livePreParkTitle = `${liveTitle} pre-park`;
+  let activeLiveTitle = liveTitle;
   const fixtureEnv: Record<string, string> = {
     ...prepareCompensationFixture(),
     CELL_GITHUB_CUT_CREATE_RESPONSE: '1',
@@ -780,7 +797,7 @@ async function runComposeRecovery(liveMode = false): Promise<Record<string, unkn
           Array.isArray(state.pulls),
         'PROVIDER_ORACLE_INVALID',
       );
-      const pulls = (live ? await livePulls(live, liveTitle) : state.pulls).map(
+      const pulls = (live ? await livePulls(live, activeLiveTitle) : state.pulls).map(
         (value: unknown) => {
           const pull = jsonObject(JSON.stringify(value));
           requireProof(
@@ -814,17 +831,35 @@ async function runComposeRecovery(liveMode = false): Promise<Record<string, unkn
     }
   };
   if (live) {
+    const destination = `github://${live.owner}/${live.repo}/pulls`;
+    let cleanupClosedDirectly = 0;
     try {
       const result = await runRecoveryScenario(driver, `cell-live-recovery-${randomUUID()}`, {
-        destination: `github://${live.owner}/${live.repo}/pulls`,
+        destination,
         head: live.head,
         base: live.base,
         title: liveTitle,
       });
+      activeLiveTitle = livePreParkTitle;
+      const prePark = await runPreParkCrashScenario(driver, `cell-live-pre-park-${randomUUID()}`, {
+        destination,
+        head: live.head,
+        base: live.base,
+        title: livePreParkTitle,
+      });
       requireProof(startedAt('postgres') === databaseStartedAt, 'DATABASE_RESTARTED_DURING_PROOF');
-      return { ...result, databaseStartedAt, repository: `${live.owner}/${live.repo}` };
+      // The pre-park scenario never closes its pull request; close it directly, and record that.
+      cleanupClosedDirectly += await closeLeftoverPulls(live, livePreParkTitle);
+      return {
+        ...result,
+        databaseStartedAt,
+        prePark,
+        repository: `${live.owner}/${live.repo}`,
+        cleanupClosedDirectly,
+      };
     } finally {
       await closeLeftoverPulls(live, liveTitle);
+      await closeLeftoverPulls(live, livePreParkTitle);
     }
   }
   const result = await runRecoveryScenario(driver, `cell-recovery-${randomUUID()}`);

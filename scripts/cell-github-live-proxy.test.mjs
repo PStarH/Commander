@@ -141,3 +141,64 @@ test('refuses to start without one exact repository', (t) => {
       }),
     );
 });
+
+test('holds a committed create response open so the caller can be killed mid-call', async (t) => {
+  const { key, cert } = selfSignedPair(t);
+  const upstream = createGitHubFixture({
+    key,
+    cert,
+    token: 'real-token',
+    oracleToken: 'upstream-oracle',
+  });
+  const upstreamPort = await listen(upstream);
+  const proxy = createLiveGitHubProxy({
+    key,
+    cert,
+    oracleToken: 'proxy-oracle',
+    allowedRepository: 'cell/repo',
+    upstream: { host: '127.0.0.1', port: upstreamPort, agent: new Agent({ ca: cert }) },
+    holdCreateResponse: true,
+  });
+  const proxyPort = await listen(proxy);
+  const agent = new Agent({ ca: cert });
+  t.after(() => {
+    agent.destroy();
+    proxy.close();
+    upstream.close();
+  });
+  const payload = { title: 'Cell live', body: 'marker', head: 'live-head', base: 'main' };
+  const held = await new Promise((resolve, reject) => {
+    const req = request(
+      {
+        host: '127.0.0.1',
+        servername: 'api.github.com',
+        port: proxyPort,
+        agent,
+        method: 'POST',
+        path: '/repos/cell/repo/pulls',
+        headers: { Authorization: 'Bearer real-token' },
+      },
+      (res) => {
+        let body = '';
+        res.on('data', (chunk) => {
+          body += chunk;
+        });
+        setTimeout(() => {
+          const outcome = { status: res.statusCode, bodyBytes: body.length };
+          req.destroy();
+          resolve(outcome);
+        }, 300);
+      },
+    );
+    req.on('error', () => {});
+    req.on('close', () => {});
+    req.end(JSON.stringify(payload));
+    setTimeout(() => reject(new Error('no headers')), 5000).unref();
+  });
+  assert.equal(held.status, 201);
+  assert.equal(held.bodyBytes, 0);
+  const state = await caller(proxyPort, cert)('GET', '/__cell__/state', undefined, 'proxy-oracle');
+  assert.equal(state.body.createCalls, 1);
+  assert.equal(state.body.responseHeld, true);
+  assert.equal(state.body.responseCutInjected, false);
+});
