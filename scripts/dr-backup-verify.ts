@@ -264,10 +264,7 @@ export async function buildDrillEvidenceReceipt(input: {
   };
 }
 
-async function recordSentinelEvidence(
-  databaseUrl: string,
-  run: DrilledRun,
-): Promise<void> {
+async function recordSentinelEvidence(databaseUrl: string, run: DrilledRun): Promise<void> {
   const keyFile = process.env.COMMANDER_DR_EVIDENCE_SIGNING_KEY_FILE;
   const jwksPath = process.env.COMMANDER_DR_RETAINED_JWKS_PATH;
   if (!keyFile || !jwksPath) throw new Error('DRILL_EVIDENCE_SIGNING_KEY_REQUIRED');
