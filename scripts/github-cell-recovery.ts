@@ -25,6 +25,7 @@ export async function runDemoProcess(input: {
   baseUrl: string;
   tenantId: string;
   args: string[];
+  model?: 'agnes-2.5-flash';
 }): Promise<Record<string, unknown>> {
   // An explicit environment keeps owner, GitHub and other-role secrets out of each child.
   const env: NodeJS.ProcessEnv = {
@@ -34,6 +35,7 @@ export async function runDemoProcess(input: {
     TEMP: process.env.TEMP,
     COMMANDER_GITHUB_DEMO_GATEWAY_URL: input.baseUrl,
     COMMANDER_GITHUB_DEMO_TENANT_ID: input.tenantId,
+    ...(input.model ? { COMMANDER_GITHUB_DEMO_MODEL: input.model } : {}),
     [input.role === 'agent'
       ? 'COMMANDER_GITHUB_DEMO_AGENT_TOKEN'
       : 'COMMANDER_GITHUB_DEMO_APPROVER_TOKEN']: input.token,

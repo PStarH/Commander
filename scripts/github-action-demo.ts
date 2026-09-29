@@ -232,10 +232,12 @@ export async function runGitHubActionDemo(
     const title = required('title');
     const body = required('body', true);
     if (body.includes('commander-action:')) throw new DemoError('RESERVED_BODY_MARKER');
+    const configuredModel = env.COMMANDER_GITHUB_DEMO_MODEL;
+    const model = configuredModel === 'agnes-2.5-flash' ? configuredModel : 'none';
     const response = await request('/v1/actions', {
       source: 'github-action-demo',
       package: 'github-action-demo',
-      model: 'none',
+      model,
       tool: descriptor.toolName,
       destination,
       effectType: descriptor.effectType,
