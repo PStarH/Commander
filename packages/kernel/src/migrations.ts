@@ -850,6 +850,23 @@ export async function runKernelMigrations(
       await client.query(`ALTER ROLE "${ownerInfo.rows[0].rolname}" BYPASSRLS`);
     }
 
+    // Scheduler cross-tenant recovery is BYPASSRLS. The published role SQL only
+    // sets that bit when the migrator is a superuser, so a non-superuser owner
+    // that already has BYPASSRLS must grant it too. commander_owner can.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler')
+           AND EXISTS (
+             SELECT 1 FROM pg_roles
+              WHERE rolname = current_user
+                AND (rolsuper OR rolbypassrls)
+           ) THEN
+          ALTER ROLE commander_scheduler BYPASSRLS;
+        END IF;
+      END $$;
+    `);
+
     // The least-privilege application role must never bypass RLS. The roles
     // migration creates it without BYPASSRLS; this defensive block ensures the
     // role exists even if that migration is skipped in a legacy/test harness.
