@@ -25,11 +25,7 @@ import { getGlobalLogger } from '../logging';
 import { type EmbeddingFunction, cosineSimilarity } from '../runtime/embedding';
 import { LocalEmbeddingFunction } from '../runtime/embedding';
 import { HNSWIndex } from './hnswIndex';
-import {
-  getCurrentTenantId,
-  assertSameTenant,
-  tenantBucketOrThrow,
-} from '../runtime/tenantContext';
+import { assertSameTenant, tenantBucketOrThrow } from '../runtime/tenantContext';
 import type {
   ISemanticStore,
   ISemanticEntity,

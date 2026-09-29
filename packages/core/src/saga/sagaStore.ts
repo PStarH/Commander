@@ -27,7 +27,7 @@ export class FileSagaStore implements SagaStore {
   constructor(private readonly options: FileSagaStoreOptions) {}
 
   private contained(runId: string, leaf: string): string {
-    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(runId)) {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_:-]{0,255}$/.test(runId)) {
       throw new Error('SAGA_RUN_ID_INVALID');
     }
     const root = resolve(this.options.baseDir);

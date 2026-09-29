@@ -29,7 +29,7 @@ import type {
   TokenUsage,
 } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
-import { generateId, now } from '../runtime/runtimeHelpers';
+import { now } from '../runtime/runtimeHelpers';
 import { BaseHarness } from './baseHarness';
 import { extractDecisionObject } from './decisionJson';
 

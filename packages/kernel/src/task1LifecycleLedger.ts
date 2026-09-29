@@ -1067,12 +1067,10 @@ export class PostgresTask1LifecycleOwnerTransactions implements Task1LifecycleOw
       transactionOpen = true;
       const result = await work(new PostgresOwnerTransaction(client, this.options.applyTransition));
       await client.query('COMMIT');
-      transactionOpen = false;
       return result;
     } catch (error) {
       if (transactionOpen) {
         await client.query('ROLLBACK');
-        transactionOpen = false;
       }
       throw error;
     } finally {

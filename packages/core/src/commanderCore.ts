@@ -31,7 +31,6 @@ import type { ProbeResult } from './commander/probe';
 import type { CommanderOptions, DeploymentTier, ResolvedConfig } from './commander/tier';
 import type { WiredRuntime } from './commander/factory';
 import type { AgentRuntimeInterface, AgentExecutionResult } from './runtime';
-import { AgentRuntime, getMessageBus } from './runtime';
 import { getGlobalLogger } from './logging';
 import { assessGovernanceRiskLevel } from './ultimate/riskAssessor';
 

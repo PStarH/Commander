@@ -1,6 +1,5 @@
 import express, { type Request, type Response, type Router } from 'express';
 import {
-  ACTION_GATEWAY_POLICY_ID,
   evaluateActionGatewayPolicy,
   isClassAEffectType,
   type ActionStateV1,
@@ -24,7 +23,6 @@ import {
 import type { KillSwitchMatchDims } from './v1GatewayKernel';
 
 const ACTION_GATEWAY_AUTHORITY = 'commander.action-gateway/v1';
-const ACTION_POLICY_SNAPSHOT = ACTION_GATEWAY_POLICY_ID;
 
 function configuredEvidenceJwks(): EvidenceJwks | null {
   const raw = process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim();
@@ -556,8 +554,6 @@ function actionNotFound(res: Response) {
 
 export function createActionGatewayRouter(resolveKernel: () => V1KernelGateway | null): Router {
   const router = express.Router();
-  const evidenceJwks = configuredEvidenceJwks();
-
   router.get('/kill-switches', async (req, res) => {
     const tenantId = requiredTenant(req, res);
     if (!tenantId) return;

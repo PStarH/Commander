@@ -762,7 +762,6 @@ export async function collectTask1PrebootstrapInventory(
       inventory.bootstrapIdentities = classification.bootstrapIdentities;
     if (open) {
       await client.query('COMMIT');
-      open = false;
     }
     return inventory;
   } catch (error) {

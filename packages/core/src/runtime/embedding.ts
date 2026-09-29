@@ -189,8 +189,8 @@ export class LocalEmbeddingFunction implements EmbeddingFunction {
   private fnv1a(str: string): number {
     const bounded = str.length > 8192 ? str.slice(0, 8192) : str;
     let hash = 0x811c9dc5;
-    for (let i = 0; i < bounded.length; i++) {
-      hash ^= bounded.charCodeAt(i);
+    for (const unit of bounded.split('')) {
+      hash ^= unit.charCodeAt(0);
       hash = (hash * 0x01000193) >>> 0;
     }
     return hash;

@@ -264,8 +264,8 @@ export class ExecutionScheduler {
     });
 
     for (const tx of sorted) {
-      let leaseToken = tx.leaseToken;
-      let fencingEpoch = tx.fencingEpoch;
+      let leaseToken: typeof tx.leaseToken;
+      let fencingEpoch: typeof tx.fencingEpoch;
 
       const currentLease = this.lease.get(tx.runId, { tenantId: tx.tenantId });
       if (!currentLease || new Date(currentLease.expiresAt).getTime() <= Date.now()) {
@@ -567,8 +567,8 @@ export class ExecutionScheduler {
     }
     const candidates = this.ledger.listRunnablePaused({ tenantId: options?.tenantId });
     for (const tx of candidates) {
-      let leaseToken = tx.leaseToken;
-      let fencingEpoch = tx.fencingEpoch;
+      let leaseToken: typeof tx.leaseToken;
+      let fencingEpoch: typeof tx.fencingEpoch;
 
       const currentLease = this.lease.get(tx.runId, { tenantId: tx.tenantId });
       if (!currentLease || new Date(currentLease.expiresAt).getTime() <= Date.now()) {

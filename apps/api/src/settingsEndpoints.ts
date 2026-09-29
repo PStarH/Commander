@@ -2,7 +2,6 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { loadSettings, updateSettings, type AppSettings } from './settingsStore';
 import { toErrorMessage } from './routeHelpers';
-import { hasRole, type UserRole } from './userStore';
 
 /**
  * Global settings management endpoints.
@@ -26,16 +25,6 @@ function requireAuth(req: Request, res: Response, next: NextFunction): void {
  * 'super_admin' and 'admin' satisfy an unparameterised check). Must be
  * mounted after requireAuth.
  */
-function requireRole(requiredRole: UserRole = 'admin') {
-  return (req: Request, res: Response, next: NextFunction): void => {
-    if (!req.user || !hasRole(req.user.role, requiredRole)) {
-      res.status(403).json({ error: 'Insufficient privileges' });
-      return;
-    }
-    next();
-  };
-}
-
 /** Settings contain process-wide credentials; hierarchy-based admin access is
  * intentionally not sufficient for changing them. */
 function requireSuperAdmin(req: Request, res: Response, next: NextFunction): void {

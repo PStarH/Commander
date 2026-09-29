@@ -23,7 +23,6 @@ import { reportSilentFailure } from '@commander/core';
 import { Router, text, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
 import * as path from 'path';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';

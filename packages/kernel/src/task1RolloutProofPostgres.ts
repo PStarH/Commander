@@ -363,7 +363,6 @@ export class PostgresTask1RolloutProofTransactions implements Task1RolloutProofT
         if (recovered) return recovered as T;
         throw error;
       }
-      transactionOpen = false;
       return result;
     } catch (error) {
       primaryErrorRaised = true;
@@ -372,8 +371,6 @@ export class PostgresTask1RolloutProofTransactions implements Task1RolloutProofT
           await client.query('ROLLBACK');
         } catch (rollbackError) {
           recordCleanupFailure(rollbackError);
-        } finally {
-          transactionOpen = false;
         }
       }
       throw error;
@@ -385,8 +382,6 @@ export class PostgresTask1RolloutProofTransactions implements Task1RolloutProofT
               await client.query(LIFECYCLE_SESSION_UNLOCK_SQL);
             } catch (unlockError) {
               recordCleanupFailure(unlockError);
-            } finally {
-              lifecycleLocked = false;
             }
           }
         } finally {
@@ -396,8 +391,6 @@ export class PostgresTask1RolloutProofTransactions implements Task1RolloutProofT
                 await client.query(LEGACY_SESSION_UNLOCK_SQL);
               } catch (unlockError) {
                 recordCleanupFailure(unlockError);
-              } finally {
-                legacyLocked = false;
               }
             }
           } finally {
@@ -411,8 +404,6 @@ export class PostgresTask1RolloutProofTransactions implements Task1RolloutProofT
               );
             } catch (releaseError) {
               recordCleanupFailure(releaseError);
-            } finally {
-              released = true;
             }
           }
         }

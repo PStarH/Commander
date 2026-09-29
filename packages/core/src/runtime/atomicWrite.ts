@@ -55,20 +55,20 @@ export async function atomicWriteFile(filePath: string, data: string | Buffer): 
   const dir = path.dirname(filePath);
   await fs.promises.mkdir(dir, { recursive: true });
   const tmp = exclusiveTempPath(dir, path.basename(filePath));
-  const fh = await fs.promises.open(tmp, 'wx');
+  await fs.promises.writeFile(tmp, data, { flag: 'wx', mode: 0o600 });
+  const fd = fs.openSync(tmp, 'r+');
   try {
-    await fh.writeFile(data);
-    await fh.sync();
+    fs.fsyncSync(fd);
   } finally {
-    await fh.close();
+    fs.closeSync(fd);
   }
   await fs.promises.rename(tmp, filePath);
   try {
-    const dh = await fs.promises.open(dir, 'r');
+    const dfd = fs.openSync(dir, 'r');
     try {
-      await dh.sync();
+      fs.fsyncSync(dfd);
     } finally {
-      await dh.close();
+      fs.closeSync(dfd);
     }
   } catch {
     /* directory fsync is best-effort */

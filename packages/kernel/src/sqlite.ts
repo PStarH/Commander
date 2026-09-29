@@ -2717,7 +2717,7 @@ export class SqliteKernelRepository extends PostgresKernelRepository {
         let disposition: Extract<ReconcileMutationResult, { applied: true }>['disposition'];
         let eventType: string;
         let attempts = Number(effect.reconcile_attempts);
-        let reconcileAfter = effect.reconcile_after ? String(effect.reconcile_after) : null;
+        let reconcileAfter: string | null;
         let escalatedAt = effect.reconcile_escalated_at
           ? String(effect.reconcile_escalated_at)
           : null;

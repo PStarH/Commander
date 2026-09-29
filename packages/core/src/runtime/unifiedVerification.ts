@@ -338,7 +338,6 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
   if (!ctx.schema) return { signals: [], confidence: 1.0 };
 
   const signals: VerificationSignal[] = [];
-  let confidence = 1.0;
 
   let parsed: unknown;
   try {

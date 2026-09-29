@@ -28,6 +28,7 @@ import { tenantPathSegment, validateTenantId } from '@commander/core/runtime/ten
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { v4 as uuidv4 } from 'uuid';
+import { removeHtmlElement, stripAngleSpans, stripHtmlComments } from './htmlStrip';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -218,8 +219,8 @@ class LocalEmbeddingFunction {
   private fnv1a(str: string): number {
     const bounded = str.length > 8192 ? str.slice(0, 8192) : str;
     let hash = 0x811c9dc5;
-    for (let i = 0; i < bounded.length; i++) {
-      hash ^= bounded.charCodeAt(i);
+    for (const unit of bounded.split('')) {
+      hash ^= unit.charCodeAt(0);
       hash = (hash * 0x01000193) >>> 0;
     }
     return hash;
@@ -335,45 +336,6 @@ export function chunkText(
   flush();
 
   return chunks;
-}
-
-function removeHtmlElement(value: string, tag: string): string {
-  let text = value;
-  const open = `<${tag}`;
-  const close = `</${tag}`;
-  for (;;) {
-    const start = text.toLowerCase().indexOf(open);
-    if (start < 0) return text;
-    const openEnd = text.indexOf('>', start + open.length);
-    if (openEnd < 0) return text.slice(0, start);
-    const closeStart = text.toLowerCase().indexOf(close, openEnd + 1);
-    if (closeStart < 0) return text.slice(0, start);
-    const closeEnd = text.indexOf('>', closeStart + close.length);
-    if (closeEnd < 0) return text.slice(0, start);
-    text = text.slice(0, start) + text.slice(closeEnd + 1);
-  }
-}
-
-function stripAngleSpans(value: string): string {
-  let text = value;
-  for (;;) {
-    const start = text.indexOf('<');
-    if (start < 0) return text;
-    const end = text.indexOf('>', start + 1);
-    if (end < 0) return text.slice(0, start);
-    text = text.slice(0, start) + text.slice(end + 1);
-  }
-}
-
-function stripHtmlComments(value: string): string {
-  let text = value;
-  for (;;) {
-    const start = text.indexOf('<!--');
-    if (start < 0) return text;
-    const end = text.indexOf('-->', start + 4);
-    if (end < 0) return text.slice(0, start);
-    text = text.slice(0, start) + text.slice(end + 3);
-  }
 }
 
 function stripHtmlDocument(value: string): string {

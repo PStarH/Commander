@@ -12,7 +12,7 @@ import { getGlobalLogger } from '../logging';
 import { getMessageBus } from './messageBus';
 import { ResourceGovernor } from '../security/securityPrimitives';
 import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
-import { getCurrentTenantId, tenantPathSegment, tenantBucketOrThrow } from './tenantContext';
+import { tenantPathSegment, tenantBucketOrThrow } from './tenantContext';
 
 // ── Types ──────────────────────────────────────────────────────────
 

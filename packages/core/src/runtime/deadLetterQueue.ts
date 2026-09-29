@@ -211,12 +211,11 @@ export class DeadLetterQueue {
           this.baseDir,
           `.${cat}.${crypto.randomBytes(8).toString('hex')}.tmp`,
         );
-        const tmpHandle = await fs.promises.open(tmpPath, 'wx');
-        try {
-          await tmpHandle.writeFile(trimmed.join('\n') + '\n');
-        } finally {
-          await tmpHandle.close();
-        }
+        await fs.promises.writeFile(tmpPath, trimmed.join('\n') + '\n', {
+          encoding: 'utf-8',
+          flag: 'wx',
+          mode: 0o600,
+        });
         await fs.promises.rename(tmpPath, filePath);
         this.lineCounts.set(cat, trimmed.length);
       }
@@ -318,12 +317,11 @@ export class DeadLetterQueue {
           this.baseDir,
           `.${category}.${crypto.randomBytes(8).toString('hex')}.replay.tmp`,
         );
-        const tmpHandle = await fs.promises.open(tmp, 'wx');
-        try {
-          await tmpHandle.writeFile(lines.join('\n') + '\n');
-        } finally {
-          await tmpHandle.close();
-        }
+        await fs.promises.writeFile(tmp, lines.join('\n') + '\n', {
+          encoding: 'utf-8',
+          flag: 'wx',
+          mode: 0o600,
+        });
         await fs.promises.rename(tmp, filePath);
         this.lineCounts.set(category, lines.length);
         return { category, entry };

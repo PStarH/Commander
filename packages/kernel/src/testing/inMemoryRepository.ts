@@ -1463,7 +1463,7 @@ export class InMemoryKernelRepository implements KernelRepository {
     effect.state = request.state;
     effect.response = request.response;
     effect.completedAt = now();
-    const eventId = this.event(
+    this.event(
       'effect',
       effect.id,
       3,

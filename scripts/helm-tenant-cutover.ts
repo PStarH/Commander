@@ -4582,7 +4582,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
         if (!ownerCompletion.completed) throw ownerCompletion.error;
       } catch {
         const ownerJob = 'job/' + bundle.jobName;
-        let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+        let logs: string;
         let logTransport: 'kubectl_logs' | 'kubectl_logs_unavailable' = 'kubectl_logs_unavailable';
         try {
           logs = await command('kubectl', [
@@ -5354,7 +5354,7 @@ export function createNodePorts(overrides: NodePortsRuntime = {}): HelmCutoverPo
             'proof_job_wait',
           );
         } catch {
-          let logs = 'TENANT_CUTOVER_OWNER_JOB_LOG_UNAVAILABLE';
+          let logs: string;
           let logTransport: 'kubectl_logs' | 'kubectl_logs_unavailable' =
             'kubectl_logs_unavailable';
           try {

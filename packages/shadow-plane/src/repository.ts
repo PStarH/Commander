@@ -9,11 +9,7 @@ import {
   type ShadowObservationV1,
 } from './contracts.js';
 import { compareShadowDecision, type ShadowComparison } from './comparison.js';
-import {
-  evaluateShadowObservation,
-  observationDigest,
-  type ShadowEvaluation,
-} from './evaluator.js';
+import { evaluateShadowObservation, type ShadowEvaluation } from './evaluator.js';
 import { SHADOW_SCHEMA_VERSION } from './schema.js';
 import type { ShadowManifestTrust } from './report.js';
 import type { Pool, PoolClient } from 'pg';

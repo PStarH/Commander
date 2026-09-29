@@ -14,7 +14,7 @@
 
 import path from 'node:path';
 import { createRequire } from 'node:module';
-import { mkdirSync, existsSync, unlinkSync, readdirSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { getGlobalLogger } from '../logging';
 
 const nodeRequire = createRequire(import.meta.url);

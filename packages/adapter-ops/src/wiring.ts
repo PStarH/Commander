@@ -456,7 +456,6 @@ export function issueCompensationCapabilityToken(input: {
 }): string {
   const source = input.authorization;
   const durable = isDurableCompensationTokenContext(source) ? source : null;
-  const authorization = durable?.authorization;
   const legacy: LegacyCompensationTokenContext | null = durable
     ? null
     : (source as LegacyCompensationTokenContext);

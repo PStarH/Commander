@@ -1292,8 +1292,11 @@ export function runKernelRepositoryContractTests(ctx: RepositoryContractContext)
       const kernel = await ctx.create();
       try {
         if (!ctx.seedCompensationWorker) return;
-        const { work, workerId, request, durableActionDigest } =
-          await seedClaimedGovernedCompensation(kernel, ctx, 'durable-digest');
+        const { work, workerId, request } = await seedClaimedGovernedCompensation(
+          kernel,
+          ctx,
+          'durable-digest',
+        );
         const admitted = await kernel.admitEffect({
           id: request.compensationEffectId!,
           runId: request.compensationRunId,

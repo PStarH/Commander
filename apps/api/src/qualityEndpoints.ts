@@ -135,7 +135,7 @@ export function createQualityRouter(): Router {
         handoffSignals.push('missing_input');
       }
 
-      const outputValid = output !== null && output !== undefined && outputStr.trim().length > 0;
+      const outputValid = outputStr.trim().length > 0;
 
       res.json({
         hallucination: hallucinationReport,

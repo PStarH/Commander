@@ -127,8 +127,8 @@ export function wilcoxonSignedRankTest(deltas: number[], alpha: number = 0.05): 
   // Sum positive and negative ranks
   let wPlus = 0;
   let wMinus = 0;
-  for (let i = 0; i < nonZero.length; i++) {
-    if (nonZero[i] > 0) {
+  for (const [i, delta] of nonZero.entries()) {
+    if (delta > 0) {
       wPlus += ranks[i];
     } else {
       wMinus += ranks[i];
