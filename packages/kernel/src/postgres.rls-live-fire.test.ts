@@ -510,6 +510,11 @@ describe(
         false,
         'commander_worker must NOT bypass RLS',
       );
+      assert.equal(
+        byName.get('commander_scheduler')?.rolbypassrls,
+        true,
+        'commander_scheduler must bypass RLS',
+      );
       // Every runtime role must be a non-superuser.
       for (const name of ['commander_app', 'commander_worker', 'commander_scheduler']) {
         assert.equal(byName.get(name)?.rolsuper, false, `${name} must not be a superuser`);
