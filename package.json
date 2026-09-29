@@ -192,7 +192,7 @@
     "@commander/kernel": "workspace:*",
     "@commander/postgres-runtime": "workspace:*",
     "@commander/worker-plane": "workspace:*",
-    "js-yaml": "^5.2.2",
+    "js-yaml": "^5.4.1",
     "pg": "^8.15.0",
     "playwright": "^1.61.1",
     "playwright-extra": "^4.3.6",
@@ -222,6 +222,7 @@
       "vite@<=6.4.2": ">=6.4.3",
       "js-yaml@<=4.1.1": ">=4.2.0",
       "js-yaml@>=4.0.0 <4.3.0": ">=4.3.0",
+      "markdown-it@<14.3.1": "14.3.1",
       "fast-uri@<3.1.7": "3.1.7",
       "ip-address@<10.5.1": "10.5.1"
     }
