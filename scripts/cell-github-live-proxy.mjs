@@ -1,7 +1,8 @@
 // Test-only TLS proxy in front of the real GitHub API for the live Gateway proof.
 // Reads are forwarded for one approved repository. The only writes forwarded are a pull-request
 // create and a close of that repository's pull requests; everything else is refused. The first
-// accepted create is answered with a cut response, so the client cannot see the committed result.
+// accepted create is answered with a cut response, and the next one with headers that never finish,
+// so the client cannot see the committed result.
 import { createServer, request } from 'node:https';
 import { readFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
@@ -15,6 +16,7 @@ export function createLiveGitHubProxy({
   allowedRepository,
   upstream,
   cutCreateResponse = false,
+  holdCreateResponse = false,
 }) {
   if (!oracleToken) throw new Error('CELL_GITHUB_ORACLE_TOKEN is required');
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(allowedRepository ?? ''))
@@ -25,6 +27,7 @@ export function createLiveGitHubProxy({
   let createCalls = 0;
   let closeCalls = 0;
   let responseCutInjected = false;
+  let responseHeld = false;
   let committedCreateStatus = null;
   return createServer({ key, cert }, async (req, res) => {
     const send = (status, body) => {
@@ -37,7 +40,13 @@ export function createLiveGitHubProxy({
         send(401, { message: 'Bad credentials' });
         return;
       }
-      send(200, { createCalls, closeCalls, responseCutInjected, committedCreateStatus });
+      send(200, {
+        createCalls,
+        closeCalls,
+        responseCutInjected,
+        responseHeld,
+        committedCreateStatus,
+      });
       return;
     }
     let raw = '';
@@ -118,6 +127,12 @@ export function createLiveGitHubProxy({
       res.write(forwarded.body.subarray(0, 1), () => res.destroy());
       return;
     }
+    if (isCreate && forwarded.status === 201 && holdCreateResponse && !responseHeld) {
+      responseHeld = true;
+      res.writeHead(201, responseHeaders);
+      res.flushHeaders();
+      return;
+    }
     res.writeHead(forwarded.status, responseHeaders);
     res.end(forwarded.body);
   });
@@ -131,6 +146,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     allowedRepository: process.env.CELL_GITHUB_ALLOWED_REPO,
     upstream: { host: process.env.CELL_GITHUB_UPSTREAM_IP },
     cutCreateResponse: process.env.CELL_GITHUB_CUT_CREATE_RESPONSE === '1',
+    holdCreateResponse: process.env.CELL_GITHUB_HOLD_CREATE_RESPONSE === '1',
   });
   server.listen(443, '0.0.0.0');
 }
