@@ -38,7 +38,10 @@ import {
 import { createVerifiedPostgresPool } from '../packages/postgres-runtime/src/index.js';
 import { verifyEvidenceReceipt, type EvidenceVerificationResult } from './verify-evidence.js';
 import {
+  buildSignedEvidenceBundle,
+  canonicalEvidenceBody,
   canonicalEvidenceJson,
+  createEvidenceSigner,
   type EvidenceBundle,
   type EvidenceJwks,
   type EvidenceSignature,
@@ -213,6 +216,108 @@ pg_restore: warning: errors ignored on restore: 1`
  * repository's CA + hostname + SPKI contract, so use one short-lived pool
  * connection as an authenticated TLS preflight for every DR target.
  */
+export async function buildDrillEvidenceReceipt(input: {
+  tenantId: string;
+  runId: string;
+  privateKeyPem: string;
+  keyId: string;
+  recordedAt: string;
+}): Promise<{
+  body: EvidenceBundle;
+  signature: EvidenceSignature;
+  actionDigest: string;
+  contentHash: string;
+}> {
+  const signer = createEvidenceSigner({
+    privateKeyPem: input.privateKeyPem,
+    keyId: input.keyId,
+  });
+  const bundle = buildSignedEvidenceBundle({
+    tenantId: input.tenantId,
+    runId: input.runId,
+    effectId: `${input.runId}-effect`,
+    bundleId: `${input.runId}-evidence`,
+    actionDigest: createHash('sha256').update(input.runId).digest('hex'),
+    policySnapshotId: 'drill-policy',
+    exportedAt: input.recordedAt,
+    effects: [
+      {
+        id: `${input.runId}-effect`,
+        tenantId: input.tenantId,
+        runId: input.runId,
+        stepId: `${input.runId}-step-0`,
+        type: 'drill.sentinel',
+        state: 'COMPLETED',
+        policyDecisionId: 'drill-decision',
+        requestHash: createHash('sha256').update(`${input.runId}:request`).digest('hex'),
+        createdAt: input.recordedAt,
+        completedAt: input.recordedAt,
+      },
+    ],
+  });
+  const signature = await signer.sign(canonicalEvidenceBody(bundle));
+  return {
+    body: bundle,
+    signature,
+    actionDigest: bundle.actionDigest,
+    contentHash: bundle.contentHash,
+  };
+}
+
+async function recordSentinelEvidence(
+  databaseUrl: string,
+  run: DrilledRun,
+): Promise<void> {
+  const keyFile = process.env.COMMANDER_DR_EVIDENCE_SIGNING_KEY_FILE;
+  const jwksPath = process.env.COMMANDER_DR_RETAINED_JWKS_PATH;
+  if (!keyFile || !jwksPath) throw new Error('DRILL_EVIDENCE_SIGNING_KEY_REQUIRED');
+  const privateKeyPem = await readFile(keyFile, 'utf8');
+  const jwks = JSON.parse(await readFile(jwksPath, 'utf8')) as EvidenceJwks;
+  const keyId = jwks.keys[0]?.kid;
+  if (!keyId) throw new Error('DRILL_EVIDENCE_SIGNING_KEY_REQUIRED');
+  const recordedAt = new Date().toISOString();
+  const receipt = await buildDrillEvidenceReceipt({
+    tenantId: run.tenantId,
+    runId: run.id,
+    privateKeyPem,
+    keyId,
+    recordedAt,
+  });
+  const verification = verifyEvidenceReceipt(
+    { ...receipt.body, signature: receipt.signature },
+    jwks,
+  );
+  if (!verification.ok) {
+    throw new Error(`DRILL_EVIDENCE_RECEIPT_INVALID:${verification.reason ?? 'UNKNOWN'}`);
+  }
+  const retentionUntil = new Date(Date.parse(recordedAt) + 365 * 24 * 60 * 60 * 1000).toISOString();
+  const pool = createVerifiedPostgresPool(
+    { connectionString: databaseUrl, connectionTimeoutMillis: 10_000, max: 1 },
+    process.env,
+  );
+  try {
+    await pool.query(
+      `INSERT INTO commander_evidence_receipts
+         (tenant_id, run_id, bundle_id, action_digest, body, content_hash, signature,
+          created_at, anchored_at, retention_until)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8::timestamptz, $8::timestamptz, $9::timestamptz)`,
+      [
+        run.tenantId,
+        run.id,
+        `${run.id}-evidence`,
+        receipt.actionDigest,
+        JSON.stringify(receipt.body),
+        receipt.contentHash,
+        JSON.stringify(receipt.signature),
+        recordedAt,
+        retentionUntil,
+      ],
+    );
+  } finally {
+    await pool.end();
+  }
+}
+
 export async function verifyDrDatabaseTlsConnection(
   databaseUrl: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -919,6 +1024,7 @@ async function main(): Promise<void> {
       console.log('[1/6] Sentinel runA (before cutoff)...');
       runA = await createDrillRun(dbUrl, drillTenantContext);
       report.sentinel.runA = runA;
+      await recordSentinelEvidence(dbUrl, runA);
       lastCommittedAt = queryRunCommittedAt(sourceDsn, runA.id, runPsql);
 
       cutoffAt = runPsql(sourceDsn, "SELECT (now() AT TIME ZONE 'UTC')::timestamptz::text");
