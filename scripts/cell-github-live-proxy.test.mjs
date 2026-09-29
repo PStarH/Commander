@@ -1,13 +1,22 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { request } from 'node:https';
 import { test } from 'node:test';
 import { createGitHubFixture } from './cell-github-fixture.mjs';
 import { createLiveGitHubProxy } from './cell-github-live-proxy.mjs';
 
-function selfSignedPair() {
-  const pem = execFileSync(
+function selfSignedPair(t) {
+  const dir = mkdtempSync(join(tmpdir(), 'cell-github-live-proxy-test-'));
+  t?.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(
+    join(dir, 'openssl.cnf'),
+    '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=api.github.com\n[ext]\nsubjectAltName=DNS:api.github.com\nbasicConstraints=critical,CA:TRUE\n',
+  );
+  execFileSync(
     'openssl',
     [
       'req',
@@ -17,22 +26,16 @@ function selfSignedPair() {
       '-nodes',
       '-days',
       '1',
+      '-config',
+      join(dir, 'openssl.cnf'),
       '-keyout',
-      '/dev/stdout',
+      join(dir, 'key.pem'),
       '-out',
-      '/dev/stdout',
-      '-subj',
-      '/CN=api.github.com',
-      '-addext',
-      'subjectAltName=DNS:api.github.com',
-      '-addext',
-      'basicConstraints=critical,CA:TRUE',
+      join(dir, 'cert.pem'),
     ],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    { stdio: 'ignore' },
   );
-  const block = (label) =>
-    new RegExp(`-----BEGIN ${label}-----[\\s\\S]+?-----END ${label}-----`)[Symbol.match](pem)[0];
-  return { key: block('PRIVATE KEY'), cert: block('CERTIFICATE') };
+  return { key: readFileSync(join(dir, 'key.pem')), cert: readFileSync(join(dir, 'cert.pem')) };
 }
 
 async function listen(server) {
@@ -71,7 +74,7 @@ function caller(port, cert) {
 }
 
 test('forwards only the approved repository writes and cuts the first committed create', async (t) => {
-  const { key, cert } = selfSignedPair();
+  const { key, cert } = selfSignedPair(t);
   const upstream = createGitHubFixture({
     key,
     cert,
@@ -124,8 +127,8 @@ test('forwards only the approved repository writes and cuts the first committed 
   assert.equal(final.closeCalls, 1);
 });
 
-test('refuses to start without one exact repository', () => {
-  const { key, cert } = selfSignedPair();
+test('refuses to start without one exact repository', (t) => {
+  const { key, cert } = selfSignedPair(t);
   for (const allowedRepository of ['', 'owner', 'owner/*', 'a/b/c'])
     assert.throws(() =>
       createLiveGitHubProxy({
