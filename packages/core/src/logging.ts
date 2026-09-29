@@ -373,12 +373,13 @@ export class Logger {
         context: entry.context ?? undefined,
         error: entry.error ?? undefined,
       });
+      const line = jsonLine.replace(/[\r\n]+/g, ' ');
       if (entry.level === 'error' || entry.level === 'critical') {
-        console.error(jsonLine);
+        console.error(line);
       } else if (entry.level === 'warn') {
-        console.warn(jsonLine);
+        console.warn(line);
       } else {
-        emitInfoLine(jsonLine);
+        emitInfoLine(line);
       }
       return;
     }
@@ -395,16 +396,16 @@ export class Logger {
     const component = entry.component.padEnd(20);
     const icon = icons[entry.level];
 
-    const oneLine = (value: string): string => value.replace(/[\r\n]+/g, ' ');
-    let output = `${icon} [${levelName}] [${component}] ${oneLine(String(entry.message))}`;
+    let output = `${icon} [${levelName}] [${component}] ${String(entry.message)}`;
 
     if (entry.context) {
       output += ` ${JSON.stringify(entry.context)}`;
     }
 
     if (entry.error) {
-      output += `\n   Error: ${oneLine(String(entry.error.message))}`;
+      output += ` | Error: ${String(entry.error.message)}`;
     }
+    output = output.replace(/[\r\n]+/g, ' ');
 
     if (entry.level === 'error' || entry.level === 'critical') {
       console.error(output);
