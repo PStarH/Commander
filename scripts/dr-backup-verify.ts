@@ -444,8 +444,13 @@ export function restoredValidationFailures(validation: DrillReport['validation']
   return required.filter(([key]) => validation[key] !== true).map(([, message]) => message);
 }
 
-export function createFreshRestoreDatabase(_dsn: DsnParts, createDatabase: () => void): void {
+export function createFreshRestoreDatabase(
+  _dsn: DsnParts,
+  createDatabase: () => void,
+  dropExistingDatabase?: () => void,
+): void {
   try {
+    dropExistingDatabase?.();
     createDatabase();
   } catch (err) {
     throw new Error(`failed to create a fresh restore database: ${sanitizeError(err)}`);
@@ -1082,12 +1087,23 @@ async function main(): Promise<void> {
       // The target database does not exist yet. Verify the restore server
       // identity through its control database before issuing createdb.
       await preflightRestoreServerBeforeCreate(restoreDbUrl, verifyDrDatabaseTlsConnection, () => {
-        createFreshRestoreDatabase(restoredDsn, () => {
-          execFileSync('createdb', [restoredDsn.database], {
-            env: { ...buildDrPostgresEnv(restoredDsn), PGDATABASE: 'postgres' },
-            stdio: 'pipe',
-          });
-        });
+        createFreshRestoreDatabase(
+          restoredDsn,
+          () => {
+            execFileSync('createdb', [restoredDsn.database], {
+              env: { ...buildDrPostgresEnv(restoredDsn), PGDATABASE: 'postgres' },
+              stdio: 'pipe',
+            });
+          },
+          process.env.COMMANDER_DR_DROP_EXISTING_RESTORE_DATABASE === 'true'
+            ? () => {
+                execFileSync('dropdb', ['--if-exists', restoredDsn.database], {
+                  env: { ...buildDrPostgresEnv(restoredDsn), PGDATABASE: 'postgres' },
+                  stdio: 'pipe',
+                });
+              }
+            : undefined,
+        );
       });
       assertEmptyRestoreTarget(countRestoreTargetUserObjects(restoredDsn));
       // The restore database is created immediately above. Verify its

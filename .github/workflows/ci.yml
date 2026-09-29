@@ -1115,6 +1115,8 @@ jobs:
           printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
 
       - name: Run G4 rotation and DR proof
+        env:
+          COMMANDER_DR_DROP_EXISTING_RESTORE_DATABASE: 'true'
         run: |
           set -euo pipefail
           evidence_root="$GITHUB_WORKSPACE/.internal/evidence/cd/$GITHUB_RUN_ID/g4"

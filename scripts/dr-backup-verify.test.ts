@@ -411,6 +411,32 @@ pg_restore: warning: errors ignored on restore: 1`;
       /create a fresh restore database/,
     );
     assert.equal(attempts, 1);
+    const order: string[] = [];
+    createFreshRestoreDatabase(
+      dsn,
+      () => {
+        order.push('create');
+      },
+      () => {
+        order.push('drop');
+      },
+    );
+    assert.deepEqual(order, ['drop', 'create']);
+    let created = false;
+    assert.throws(
+      () =>
+        createFreshRestoreDatabase(
+          dsn,
+          () => {
+            created = true;
+          },
+          () => {
+            throw new Error('drop refused');
+          },
+        ),
+      /create a fresh restore database/,
+    );
+    assert.equal(created, false);
   });
 
   it('rejects a newly created restore target that contains user objects', () => {
