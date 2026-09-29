@@ -994,6 +994,7 @@ jobs:
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/postgres-runtime build
+          pnpm --filter @commander/effect-broker build
 
       - name: Materialize protected DR inputs
         env:
