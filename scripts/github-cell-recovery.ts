@@ -137,22 +137,37 @@ async function until<T>(
   throw new Error(code);
 }
 
+export interface RecoveryTarget {
+  destination: string;
+  head: string;
+  base: string;
+  title: string;
+}
+
+const SYNTHETIC_TARGET: RecoveryTarget = {
+  destination: 'github://octo/repo/pulls',
+  head: 'cell-recovery',
+  base: 'main',
+  title: 'Cell GitHub recovery',
+};
+
 export async function runRecoveryScenario(
   driver: RecoveryDriver,
   operationId: string,
+  target: RecoveryTarget = SYNTHETIC_TARGET,
 ): Promise<Record<string, unknown>> {
   const proposal = [
     'propose',
     '--operation-id',
     operationId,
     '--destination',
-    'github://octo/repo/pulls',
+    target.destination,
     '--head',
-    'cell-recovery',
+    target.head,
     '--base',
-    'main',
+    target.base,
     '--title',
-    'Cell GitHub recovery',
+    target.title,
     '--body',
     'Approved response-loss recovery proof',
   ];
@@ -469,7 +484,89 @@ export async function runPreParkCrashScenario(
   }
 }
 
-async function runComposeRecovery(): Promise<Record<string, unknown>> {
+interface LiveGitHubConfig {
+  token: string;
+  owner: string;
+  repo: string;
+  head: string;
+  base: string;
+  upstreamIp: string;
+}
+
+async function liveGitHubConfig(): Promise<LiveGitHubConfig> {
+  const segment = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+  const owner = process.env.COMMANDER_SANDBOX_OWNER ?? '';
+  const repo = process.env.COMMANDER_SANDBOX_REPO ?? '';
+  const head = process.env.COMMANDER_SANDBOX_RESPONSE_CUT_HEAD ?? '';
+  const base = process.env.COMMANDER_SANDBOX_BASE ?? '';
+  requireProof(
+    segment.test(owner) &&
+      segment.test(repo) &&
+      process.env.COMMANDER_LIVE_APPROVED_REPO === `${owner}/${repo}`,
+    'LIVE_TARGET_NOT_APPROVED',
+  );
+  requireProof(
+    /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(head) &&
+      /^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(base) &&
+      head !== base,
+    'LIVE_BRANCHES_INVALID',
+  );
+  const token = process.env.COMMANDER_SANDBOX_TOKEN ?? '';
+  requireProof(token.length > 0, 'LIVE_TOKEN_MISSING');
+  const { lookup } = await import('node:dns/promises');
+  const upstream = await lookup('api.github.com', { family: 4 });
+  return { token, owner, repo, head, base, upstreamIp: upstream.address };
+}
+
+async function livePulls(
+  live: LiveGitHubConfig,
+  title: string,
+): Promise<Array<{ number: number; state: string }>> {
+  const query = new URLSearchParams({
+    state: 'all',
+    head: `${live.owner}:${live.head}`,
+    base: live.base,
+    per_page: '100',
+  });
+  const response = await fetch(
+    `https://api.github.com/repos/${live.owner}/${live.repo}/pulls?${query}`,
+    {
+      headers: {
+        Authorization: `Bearer ${live.token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      signal: AbortSignal.timeout(15_000),
+    },
+  );
+  requireProof(response.ok, 'PROVIDER_ORACLE_UNAVAILABLE');
+  const pulls: unknown = await response.json();
+  requireProof(Array.isArray(pulls), 'PROVIDER_ORACLE_INVALID');
+  return pulls
+    .filter(
+      (pull): pull is { number: number; state: string; title: string } =>
+        !!pull && typeof pull === 'object' && pull.title === title,
+    )
+    .map((pull) => ({ number: pull.number, state: pull.state }));
+}
+
+async function closeLeftoverPulls(live: LiveGitHubConfig, title: string): Promise<void> {
+  for (const pull of await livePulls(live, title)) {
+    if (pull.state !== 'open') continue;
+    await fetch(`https://api.github.com/repos/${live.owner}/${live.repo}/pulls/${pull.number}`, {
+      method: 'PATCH',
+      headers: {
+        Authorization: `Bearer ${live.token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      body: JSON.stringify({ state: 'closed' }),
+      signal: AbortSignal.timeout(15_000),
+    });
+  }
+}
+
+async function runComposeRecovery(liveMode = false): Promise<Record<string, unknown>> {
   const {
     fixtureCompose,
     prepareCompensationFixture,
@@ -478,10 +575,21 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
   } = await import('./cell-compensation-fixture.js');
   const { tryComposeCellUp, assertComposeCellHealth, CELL_E2E_TENANT } =
     await import('./l4-b-cell-compose.js');
-  const fixtureEnv = {
+  const live = liveMode ? await liveGitHubConfig() : undefined;
+  const liveTitle = `Cell GitHub live recovery ${randomUUID().slice(0, 8)}`;
+  const fixtureEnv: Record<string, string> = {
     ...prepareCompensationFixture(),
     CELL_GITHUB_CUT_CREATE_RESPONSE: '1',
     CELL_GITHUB_HOLD_CREATE_RESPONSE: '1',
+    ...(live
+      ? {
+          CELL_GITHUB_TOKEN: live.token,
+          CELL_GITHUB_PEER_SCRIPT: '/fixture/cell-github-live-proxy.mjs',
+          CELL_GITHUB_UPSTREAM_IP: live.upstreamIp,
+          CELL_GITHUB_ALLOWED_REPO: `${live.owner}/${live.repo}`,
+          CELL_GITHUB_REPOSITORIES: `${live.owner}/${live.repo}`,
+        }
+      : {}),
   };
   const up = tryComposeCellUp(COMPENSATION_COMPOSE_CMD, fixtureEnv);
   requireProof(up.ok, 'RECOVERY_CELL_START_FAILED');
@@ -660,7 +768,7 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
       // The recovery worker cannot read this oracle; only the test controller does.
       const script = `fetch('https://api.github.com/__cell__/state', {headers:{Authorization:'Bearer '+process.env.CELL_GITHUB_ORACLE_TOKEN},signal:AbortSignal.timeout(5000)}).then(async r=>{
         if(!r.ok) throw new Error('ORACLE_UNAVAILABLE'); const s=await r.json();
-        process.stdout.write(JSON.stringify({createCalls:s.createCalls,closeCalls:s.closeCalls,responseCutInjected:s.responseCutInjected,committedCreateStatus:s.committedCreateStatus,pulls:s.pulls.map(p=>({number:p.number,state:p.state}))}));
+        process.stdout.write(JSON.stringify({createCalls:s.createCalls,closeCalls:s.closeCalls,responseCutInjected:s.responseCutInjected,committedCreateStatus:s.committedCreateStatus,pulls:(s.pulls??[]).map(p=>({number:p.number,state:p.state}))}));
       }).catch(()=>process.exit(1));`;
       const state = jsonObject(compose(['exec', '-T', 'github-fixture', 'node', '-e', script]));
       requireProof(
@@ -672,14 +780,16 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
           Array.isArray(state.pulls),
         'PROVIDER_ORACLE_INVALID',
       );
-      const pulls = state.pulls.map((value: unknown) => {
-        const pull = jsonObject(JSON.stringify(value));
-        requireProof(
-          typeof pull.number === 'number' && Number.isSafeInteger(pull.number) && pull.number > 0,
-          'PROVIDER_ORACLE_INVALID',
-        );
-        return { number: pull.number, state: field(pull, 'state') };
-      });
+      const pulls = (live ? await livePulls(live, liveTitle) : state.pulls).map(
+        (value: unknown) => {
+          const pull = jsonObject(JSON.stringify(value));
+          requireProof(
+            typeof pull.number === 'number' && Number.isSafeInteger(pull.number) && pull.number > 0,
+            'PROVIDER_ORACLE_INVALID',
+          );
+          return { number: pull.number, state: field(pull, 'state') };
+        },
+      );
       return {
         createCalls: state.createCalls,
         closeCalls: state.closeCalls,
@@ -703,6 +813,20 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
       }
     }
   };
+  if (live) {
+    try {
+      const result = await runRecoveryScenario(driver, `cell-live-recovery-${randomUUID()}`, {
+        destination: `github://${live.owner}/${live.repo}/pulls`,
+        head: live.head,
+        base: live.base,
+        title: liveTitle,
+      });
+      requireProof(startedAt('postgres') === databaseStartedAt, 'DATABASE_RESTARTED_DURING_PROOF');
+      return { ...result, databaseStartedAt, repository: `${live.owner}/${live.repo}` };
+    } finally {
+      await closeLeftoverPulls(live, liveTitle);
+    }
+  }
   const result = await runRecoveryScenario(driver, `cell-recovery-${randomUUID()}`);
   const prePark = await runPreParkCrashScenario(driver, `cell-pre-park-${randomUUID()}`);
   requireProof(startedAt('postgres') === databaseStartedAt, 'DATABASE_RESTARTED_DURING_PROOF');
@@ -710,7 +834,12 @@ async function runComposeRecovery(): Promise<Record<string, unknown>> {
 }
 
 async function main(): Promise<void> {
-  requireProof(process.argv.slice(2).join(' ') === '--up', 'EXPLICIT_DISPOSABLE_CELL_UP_REQUIRED');
+  const args = process.argv.slice(2).join(' ');
+  requireProof(
+    args === '--up' || args === '--up --live-github',
+    'EXPLICIT_DISPOSABLE_CELL_UP_REQUIRED',
+  );
+  const liveMode = args === '--up --live-github';
   const started = Date.now();
   const artifact: Record<string, unknown> = {
     schema: 'commander.github-cell-recovery/v1',
@@ -718,14 +847,14 @@ async function main(): Promise<void> {
     sourceDirty:
       execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim().length > 0,
     adapterVersion: GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR.adapterVersion,
-    provider: 'synthetic-github-https',
+    provider: liveMode ? 'real-github-api-via-cut-proxy' : 'synthetic-github-https',
     gateway: 'real-cell',
     database: 'postgres',
     model: 'none',
     passed: false,
   };
   try {
-    artifact.result = await runComposeRecovery();
+    artifact.result = await runComposeRecovery(liveMode);
     artifact.passed = true;
   } catch (error) {
     artifact.error =

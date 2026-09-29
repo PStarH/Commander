@@ -4,15 +4,18 @@ services:
   github-fixture:
     image: node:22.14.0-alpine
     profiles: [cell]
-    command: ['node', '/fixture/cell-github-fixture.mjs']
+    command: ['node', '${CELL_GITHUB_PEER_SCRIPT:-/fixture/cell-github-fixture.mjs}']
     environment:
       CELL_GITHUB_TOKEN: ${CELL_GITHUB_TOKEN:?set CELL_GITHUB_TOKEN}
       CELL_GITHUB_ORACLE_TOKEN: ${CELL_GITHUB_ORACLE_TOKEN:?set CELL_GITHUB_ORACLE_TOKEN}
       CELL_GITHUB_CUT_CREATE_RESPONSE: ${CELL_GITHUB_CUT_CREATE_RESPONSE:-0}
       CELL_GITHUB_HOLD_CREATE_RESPONSE: ${CELL_GITHUB_HOLD_CREATE_RESPONSE:-0}
+      CELL_GITHUB_UPSTREAM_IP: ${CELL_GITHUB_UPSTREAM_IP:-}
+      CELL_GITHUB_ALLOWED_REPO: ${CELL_GITHUB_ALLOWED_REPO:-}
       NODE_EXTRA_CA_CERTS: /fixture/tls/cert.pem
     volumes:
       - ./scripts/cell-github-fixture.mjs:/fixture/cell-github-fixture.mjs:ro
+      - ./scripts/cell-github-live-proxy.mjs:/fixture/cell-github-live-proxy.mjs:ro
       - ${CELL_GITHUB_TLS_DIR:?set CELL_GITHUB_TLS_DIR}:/fixture/tls:ro
     networks:
       default:
@@ -31,7 +34,7 @@ services:
       GITHUB_TOKEN: ${CELL_GITHUB_TOKEN:?set CELL_GITHUB_TOKEN}
       NODE_EXTRA_CA_CERTS: /fixture/tls/cert.pem
       COMMANDER_ADAPTER_EGRESS_ALLOWLIST: api.github.com
-      COMMANDER_GITHUB_REPOSITORIES: octo/repo
+      COMMANDER_GITHUB_REPOSITORIES: ${CELL_GITHUB_REPOSITORIES:-octo/repo}
     volumes:
       - ${CELL_GITHUB_TLS_DIR:?set CELL_GITHUB_TLS_DIR}/cert.pem:/fixture/tls/cert.pem:ro
     depends_on:
@@ -42,7 +45,7 @@ services:
       GITHUB_TOKEN: ${CELL_GITHUB_TOKEN:?set CELL_GITHUB_TOKEN}
       NODE_EXTRA_CA_CERTS: /fixture/tls/cert.pem
       COMMANDER_ADAPTER_EGRESS_ALLOWLIST: api.github.com
-      COMMANDER_GITHUB_REPOSITORIES: octo/repo
+      COMMANDER_GITHUB_REPOSITORIES: ${CELL_GITHUB_REPOSITORIES:-octo/repo}
     volumes:
       - ${CELL_GITHUB_TLS_DIR:?set CELL_GITHUB_TLS_DIR}/cert.pem:/fixture/tls/cert.pem:ro
     depends_on:
