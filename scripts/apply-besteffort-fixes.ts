@@ -184,7 +184,7 @@ function isBalanced(s: string): boolean {
 // .catch(...) invocations — those are not empty catches and would only be
 // mutated by mistake.
 
-const RE_CATCH = /([ \t]*)}(?:\s|\n)+catch\s*(?:\(\s*([A-Za-z_$][\w$]*)\s*\))?\s*\{([\s\S]*?)\}/g;
+const RE_CATCH = /([ \t]*)}\s+catch\s*(?:\(\s*([A-Za-z_$][\w$]*)\s*\))?\s*\{([\s\S]*?)\}/g;
 
 function rewriteCatches(content: string, baseName: string): { content: string; edits: number } {
   let edits = 0;
