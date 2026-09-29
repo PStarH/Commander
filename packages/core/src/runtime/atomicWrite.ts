@@ -52,7 +52,21 @@ export function atomicWriteFileSync(filePath: string, data: string | Buffer): vo
  * fsync → rename → directory fsync.
  */
 export async function atomicWriteFile(filePath: string, data: string | Buffer): Promise<void> {
-  atomicWriteFileSync(filePath, data);
+  const dir = path.dirname(filePath);
+  await fs.promises.mkdir(dir, { recursive: true });
+  const tmp = exclusiveTempPath(dir, path.basename(filePath));
+  await fs.promises.writeFile(tmp, data, { flag: 'wx', mode: 0o600, flush: true });
+  await fs.promises.rename(tmp, filePath);
+  try {
+    const dh = await fs.promises.open(dir, 'r');
+    try {
+      await dh.sync();
+    } finally {
+      await dh.close();
+    }
+  } catch {
+    /* directory fsync is best-effort */
+  }
 }
 
 /** Optional top-level shape guard; fail → same `.corrupt-*` quarantine as parse errors. */
