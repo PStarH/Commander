@@ -990,6 +990,11 @@ jobs:
 
       - run: pnpm install
 
+      - name: Build the packages the drill imports
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/postgres-runtime build
+
       - name: Materialize protected DR inputs
         env:
           COMMANDER_DR_SOURCE_DATABASE_URL: ${{ secrets.COMMANDER_DR_SOURCE_DATABASE_URL }}
