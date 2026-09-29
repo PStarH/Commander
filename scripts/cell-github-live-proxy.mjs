@@ -77,7 +77,7 @@ export function createLiveGitHubProxy({
           host: upstream.host,
           port: upstream.port ?? 443,
           servername: 'api.github.com',
-          ca: upstream.ca,
+          agent: upstream.agent,
           method: req.method,
           path: `${url.pathname}${url.search}`,
           headers,
