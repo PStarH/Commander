@@ -228,6 +228,7 @@ describe('deployment gate portability', () => {
     assert.match(inputStep?.run ?? '', /must not contain private key material/);
     assert.match(proofStep?.run ?? '', /pnpm rotate:verify/);
     assert.match(proofStep?.run ?? '', /pnpm dr:verify/);
+    assert.equal(proofStep?.env?.COMMANDER_DR_DROP_EXISTING_RESTORE_DATABASE, 'true');
   });
 
   it('pins every CI Helm installation to the supported 3.17.3 runtime', () => {
