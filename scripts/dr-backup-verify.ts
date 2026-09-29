@@ -303,7 +303,7 @@ async function recordSentinelEvidence(databaseUrl: string, run: DrilledRun): Pro
         run.id,
         `${run.id}-evidence`,
         receipt.actionDigest,
-        JSON.stringify(receipt.body),
+        JSON.stringify({ ...receipt.body, signature: receipt.signature }),
         receipt.contentHash,
         JSON.stringify(receipt.signature),
         recordedAt,
