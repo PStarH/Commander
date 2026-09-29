@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { request } from 'node:https';
+import { Agent, request } from 'node:https';
 import { once } from 'node:events';
 import { createGitHubFixture } from './cell-github-fixture.mjs';
 
@@ -57,7 +57,7 @@ test('HTTPS GitHub peer shares remote state and counts actual creates and closes
           host: '127.0.0.1',
           servername: 'api.github.com',
           port,
-          ca: cert,
+          agent: new Agent({ ca: cert }),
           method,
           path,
           headers: { Authorization: `Bearer ${token}` },
@@ -168,7 +168,7 @@ test('cuts the first valid create response after committing the pull request', a
           host: '127.0.0.1',
           servername: 'api.github.com',
           port,
-          ca: cert,
+          agent: new Agent({ ca: cert }),
           method,
           path,
           headers: { Authorization: `Bearer ${token}` },
@@ -268,7 +268,7 @@ test('a held create is visible before the response body ends', async (t) => {
         host: '127.0.0.1',
         servername: 'api.github.com',
         port,
-        ca: cert,
+        agent: new Agent({ ca: cert }),
         method: 'POST',
         path: '/repos/cell/repo/pulls',
         headers: { Authorization: 'Bearer fixture-test-token' },
@@ -290,7 +290,7 @@ test('a held create is visible before the response body ends', async (t) => {
         host: '127.0.0.1',
         servername: 'api.github.com',
         port,
-        ca: cert,
+        agent: new Agent({ ca: cert }),
         method: 'GET',
         path: '/__cell__/state',
         headers: { Authorization: 'Bearer fixture-oracle-token' },
