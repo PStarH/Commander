@@ -1004,6 +1004,7 @@ jobs:
           COMMANDER_DR_DATABASE_TLS_SPKI_SHA256: ${{ secrets.COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 }}
           COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY: ${{ vars.COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY }}
           COMMANDER_DR_EVIDENCE_JWKS_JSON: ${{ secrets.COMMANDER_DR_EVIDENCE_JWKS_JSON }}
+          COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM: ${{ secrets.COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM }}
           COMMANDER_DR_APP_DATABASE_URL: ${{ secrets.COMMANDER_DR_APP_DATABASE_URL }}
           COMMANDER_DR_AUTHORITY_DATABASE_URL: ${{ secrets.COMMANDER_DR_AUTHORITY_DATABASE_URL }}
         run: |
@@ -1015,6 +1016,7 @@ jobs:
             COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 \
             COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY \
             COMMANDER_DR_EVIDENCE_JWKS_JSON \
+            COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM \
             COMMANDER_DR_APP_DATABASE_URL \
             COMMANDER_DR_AUTHORITY_DATABASE_URL; do
             test -n "$(printenv "$required")" || {
@@ -1047,10 +1049,29 @@ jobs:
           if (!jwks || typeof jwks !== 'object' || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
             throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must contain public verification keys');
           }
+          if (jwks.keys.length !== 1) {
+            throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must contain exactly one verification key');
+          }
           for (const key of jwks.keys) {
             if (!key || typeof key !== 'object' || Array.isArray(key) || Object.hasOwn(key, 'd')) {
               throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must not contain private key material');
             }
+          }
+          const { createPrivateKey, createPublicKey } = await import('node:crypto');
+          let publicJwk;
+          try {
+            const privateKey = createPrivateKey(process.env.COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM);
+            if (privateKey.asymmetricKeyType !== 'ed25519') {
+              throw new Error('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM must be an Ed25519 key');
+            }
+            publicJwk = createPublicKey(privateKey).export({ format: 'jwk' });
+          } catch (error) {
+            if (error instanceof Error && error.message.startsWith('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM')) throw error;
+            throw new Error('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM must be an Ed25519 private key');
+          }
+          const retained = jwks.keys[0];
+          if (retained.kty !== 'OKP' || retained.crv !== 'Ed25519' || retained.x !== publicJwk.x || !retained.kid) {
+            throw new Error('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM does not match the retained JWKS');
           }
           NODE
           umask 077
@@ -1059,9 +1080,11 @@ jobs:
           install -d -m 700 "$tls_dir" "$evidence_root/dr"
           printf '%s' "$COMMANDER_DR_DATABASE_TLS_CA_PEM" > "$tls_dir/ca.crt"
           printf '%s' "$COMMANDER_DR_EVIDENCE_JWKS_JSON" > "$evidence_root/jwks.json"
+          printf '%s' "$COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM" > "$tls_dir/evidence-signing.pem"
           test -s "$tls_dir/ca.crt"
           test -s "$evidence_root/jwks.json"
-          chmod 600 "$tls_dir/ca.crt" "$evidence_root/jwks.json"
+          test -s "$tls_dir/evidence-signing.pem"
+          chmod 600 "$tls_dir/ca.crt" "$evidence_root/jwks.json" "$tls_dir/evidence-signing.pem"
           {
             printf 'DATABASE_URL=%s\n' "$COMMANDER_DR_SOURCE_DATABASE_URL"
             printf 'RST_DATABASE_URL=%s\n' "$COMMANDER_DR_RESTORE_DATABASE_URL"
@@ -1072,6 +1095,7 @@ jobs:
             printf 'PGSSLROOTCERT=%s\n' "$tls_dir/ca.crt"
             printf 'COMMANDER_DR_BACKUP_DIR=%s\n' "$evidence_root/dr"
             printf 'COMMANDER_DR_RETAINED_JWKS_PATH=%s\n' "$evidence_root/jwks.json"
+            printf 'COMMANDER_DR_EVIDENCE_SIGNING_KEY_FILE=%s\n' "$tls_dir/evidence-signing.pem"
             printf 'COMMANDER_APP_DATABASE_URL=%s\n' "$COMMANDER_DR_APP_DATABASE_URL"
             printf 'COMMANDER_TENANT_AUTHORITY_DATABASE_URL=%s\n' "$COMMANDER_DR_AUTHORITY_DATABASE_URL"
           } >> "$GITHUB_ENV"
