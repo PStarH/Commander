@@ -1,6 +1,6 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import { promises as fs } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
 import type { SagaStateSnapshot, SagaEvent } from './types';
 
 export interface SagaStore {
@@ -26,12 +26,25 @@ export interface FileSagaStoreOptions {
 export class FileSagaStore implements SagaStore {
   constructor(private readonly options: FileSagaStoreOptions) {}
 
+  private contained(runId: string, leaf: string): string {
+    if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(runId)) {
+      throw new Error('SAGA_RUN_ID_INVALID');
+    }
+    const root = resolve(this.options.baseDir);
+    const resolved = resolve(root, runId, leaf);
+    const fromRoot = relative(root, resolved);
+    if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) {
+      throw new Error('SAGA_RUN_ID_INVALID');
+    }
+    return resolved;
+  }
+
   private eventsPath(runId: string): string {
-    return join(this.options.baseDir, runId, 'events.ndjson');
+    return this.contained(runId, 'events.ndjson');
   }
 
   private snapshotPath(runId: string): string {
-    return join(this.options.baseDir, runId, 'snapshot.json');
+    return this.contained(runId, 'snapshot.json');
   }
 
   private async ensureDir(path: string): Promise<void> {
@@ -109,7 +122,7 @@ export class FileSagaStore implements SagaStore {
   }
 
   async deleteRun(runId: string): Promise<void> {
-    const path = join(this.options.baseDir, runId);
+    const path = dirname(this.snapshotPath(runId));
     try {
       await fs.rm(path, { recursive: true, force: true });
     } catch (err) {

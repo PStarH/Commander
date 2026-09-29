@@ -6,7 +6,7 @@ import {
 } from '@commander/core';
 import { assertSameTenant, getCurrentTenantId } from '@commander/core/runtime/tenantContext';
 import { Router, type Request, type Response } from 'express';
-import { join } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import {
   CheckpointManager as SagaCheckpointManager,
@@ -17,7 +17,7 @@ import {
 import { hasRole } from './userStore';
 
 const DATA_DIR = process.env.COMMANDER_SAGA_DATA ?? join(process.cwd(), '.commander', 'sagas');
-const RUN_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
+const RUN_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_-]{0,126}$/;
 
 function isValidRunId(runId: unknown): runId is string {
   return (
@@ -33,7 +33,11 @@ function buildSagaProjection(): SagaCheckpointManager {
 }
 
 function readSnapshot(runId: string): SagaStateSnapshot | undefined {
-  const path = join(DATA_DIR, runId, 'snapshot.json');
+  if (!isValidRunId(runId)) return undefined;
+  const root = resolve(DATA_DIR);
+  const path = resolve(root, runId, 'snapshot.json');
+  const fromRoot = relative(root, path);
+  if (fromRoot.startsWith('..') || isAbsolute(fromRoot)) return undefined;
   if (!existsSync(path)) return undefined;
   try {
     return JSON.parse(readFileSync(path, 'utf-8')) as SagaStateSnapshot;
