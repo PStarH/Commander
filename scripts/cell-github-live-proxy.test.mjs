@@ -4,7 +4,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { request } from 'node:https';
+import { Agent, request } from 'node:https';
 import { test } from 'node:test';
 import { createGitHubFixture } from './cell-github-fixture.mjs';
 import { createLiveGitHubProxy } from './cell-github-live-proxy.mjs';
@@ -45,6 +45,7 @@ async function listen(server) {
 }
 
 function caller(port, cert) {
+  const agent = new Agent({ ca: cert });
   return (method, path, body, token = 'real-token') =>
     new Promise((resolve, reject) => {
       const req = request(
@@ -52,7 +53,7 @@ function caller(port, cert) {
           host: '127.0.0.1',
           servername: 'api.github.com',
           port,
-          ca: cert,
+          agent,
           method,
           path,
           headers: { Authorization: `Bearer ${token}` },
@@ -87,7 +88,7 @@ test('forwards only the approved repository writes and cuts the first committed 
     cert,
     oracleToken: 'proxy-oracle',
     allowedRepository: 'cell/repo',
-    upstream: { host: '127.0.0.1', port: upstreamPort, ca: cert },
+    upstream: { host: '127.0.0.1', port: upstreamPort, agent: new Agent({ ca: cert }) },
     cutCreateResponse: true,
   });
   const proxyPort = await listen(proxy);
