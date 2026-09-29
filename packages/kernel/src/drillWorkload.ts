@@ -8,7 +8,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
-import { runKernelMigrations } from './migrations.js';
+import { runKernelMigrations, runTask1ClosureMigrations } from './migrations.js';
 import { seedTenantAuthorityAllowedTenants } from './seedWorkerClaimSecret.js';
 
 export interface CreatedRun {
@@ -83,6 +83,10 @@ export async function createDrillRun(
     : undefined;
   try {
     await runKernelMigrations(pool);
+    if (tenantContext.phase === 'enforce') {
+      await runTask1ClosureMigrations(pool, 'enforce');
+      await runKernelMigrations(pool);
+    }
     const tenantId = `tenant-drill-${Date.now()}`;
     const id = `run_${randomUUID().slice(0, 8)}`;
     if (authorityPool) {
