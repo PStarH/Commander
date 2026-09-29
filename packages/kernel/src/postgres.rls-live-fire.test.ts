@@ -16,6 +16,7 @@ import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { describe, it, before, after, test } from 'node:test';
 import { Pool } from 'pg';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 import type { SqlClient, SqlPool } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
@@ -34,12 +35,27 @@ import {
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 
+function passwordFromDatabaseUrl(urlValue: string | undefined): string | undefined {
+  if (!urlValue) return undefined;
+  try {
+    const password = decodeURIComponent(new URL(urlValue).password);
+    return password.length > 0 ? password : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Bench/init convention: password matches role name unless overridden. */
-const appPassword = process.env.COMMANDER_APP_PASSWORD ?? 'commander_app';
+const appPassword =
+  process.env.COMMANDER_APP_PASSWORD ??
+  passwordFromDatabaseUrl(process.env.COMMANDER_APP_DATABASE_URL) ??
+  'commander_app';
 const schedulerPassword = process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler';
 const workerPassword = process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker';
 const authorityPassword =
-  process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority';
+  process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ??
+  passwordFromDatabaseUrl(process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL) ??
+  'commander_tenant_authority';
 const adapterOpsPassword = process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops';
 
 function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string): string {
@@ -122,9 +138,17 @@ function createRunCommand(
   };
 }
 
+function createDatabasePool(connectionString: string, max: number): Pool {
+  const modes = new URL(connectionString).searchParams.getAll('sslmode');
+  if (modes.length === 1 && modes[0] === 'verify-full') {
+    return createVerifiedPostgresPool({ connectionString, max });
+  }
+  return new Pool({ connectionString, max });
+}
+
 /** True LOGIN pool — session_user is the role (unlike SET SESSION ROLE from owner). */
 function createLoginPool(roleDatabaseUrl: string): SqlPool & { end: () => Promise<void> } {
-  const pool = new Pool({ connectionString: roleDatabaseUrl, max: 2 });
+  const pool = createDatabasePool(roleDatabaseUrl, 2);
   return {
     connect: async () => (await pool.connect()) as SqlClient,
     end: () => pool.end(),
@@ -167,7 +191,7 @@ describe(
     const claimSecrets = new Map<string, string>();
 
     before(async () => {
-      ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
+      ownerPool = createDatabasePool(liveDatabaseUrl, 4);
 
       // Apply migrations as owner, then verify roles exist.
       await runKernelMigrations(ownerPool);
