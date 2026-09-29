@@ -142,8 +142,18 @@ function ensureDlqDir(): void {
   }
 }
 
+function categoryFile(category: string): string | undefined {
+  if (!DLQ_CATEGORIES.includes(category as (typeof DLQ_CATEGORIES)[number])) return undefined;
+  const root = path.resolve(DLQ_DIR);
+  const filePath = path.resolve(root, `${category}.ndjson`);
+  const fromRoot = path.relative(root, filePath);
+  if (fromRoot.startsWith('..') || path.isAbsolute(fromRoot)) return undefined;
+  return filePath;
+}
+
 function readCategoryEntries(category: string): DlqEntry[] {
-  const filePath = path.join(DLQ_DIR, `${category}.ndjson`);
+  const filePath = categoryFile(category);
+  if (!filePath) return [];
   if (!fs.existsSync(filePath)) return [];
   try {
     const raw = fs.readFileSync(filePath, 'utf-8').trim();
@@ -217,8 +227,8 @@ function markEntryRecovered(
   canAccess: (entry: DlqEntry) => boolean,
 ): boolean {
   ensureDlqDir();
-  const filePath = path.join(DLQ_DIR, `${category}.ndjson`);
-  if (!fs.existsSync(filePath)) return false;
+  const filePath = categoryFile(category);
+  if (!filePath || !fs.existsSync(filePath)) return false;
   const raw = fs.readFileSync(filePath, 'utf-8').trim();
   if (!raw) return false;
   const lines = raw.split('\n');
