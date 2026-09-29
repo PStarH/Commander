@@ -21,6 +21,11 @@ on:
         required: true
         type: boolean
         default: false
+      run_github_gateway_live:
+        description: Run the real Cell Gateway against the GitHub sandbox repository through a response-cut proxy
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
@@ -1160,6 +1165,144 @@ jobs:
             .internal/evidence/cd/${{ github.run_id }}/g4/dr.log
             .internal/evidence/cd/${{ github.run_id }}/g4/jwks.json
             .internal/evidence/cd/${{ github.run_id }}/g4/dr/**/drill-report.json
+
+  github-gateway-live:
+    name: GitHub Gateway live proof (real GitHub, response-cut proxy)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_github_gateway_live
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: github-sandbox
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build host packages for cell scripts
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/action-adapters build
+
+      - name: Validate exact sandbox configuration before minting a token
+        env:
+          SANDBOX_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          SANDBOX_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          SANDBOX_APPROVED: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+        run: |
+          node --input-type=module <<'NODE'
+          const { SANDBOX_OWNER: owner, SANDBOX_REPO: repo, SANDBOX_APPROVED: approved } = process.env;
+          const segment = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+          if (!segment.test(owner ?? '') || !segment.test(repo ?? '') || approved !== `${owner}/${repo}`) {
+            throw new Error('SANDBOX_TARGET_INVALID: configure one exact owner/repository');
+          }
+          NODE
+
+      - name: Mint short-lived token for one sandbox repository
+        id: sandbox-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.COMMANDER_SANDBOX_APP_ID }}
+          private-key: ${{ secrets.COMMANDER_SANDBOX_APP_PRIVATE_KEY }}
+          owner: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          repositories: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      - name: Generate cell compose secrets
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          echo "COMMANDER_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_MASTER_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_AUDIT_CHAIN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          # Ed25519 authority + pinned database TLS. `cell:up-assert` generates
+          # these when unset, but they must ALSO be in $GITHUB_ENV so a later
+          # diagnostic step can interpolate the compose files at all.
+          key_dir="$(mktemp -d)"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/cap.pem"
+          {
+            echo 'COMMANDER_CAPABILITY_PRIVATE_KEY_PEM<<CAP_EOF'
+            cat "$key_dir/cap.pem"
+            echo 'CAP_EOF'
+          } >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_KEY_ID=cell-ci-r1" >> "$GITHUB_ENV"
+          # Real JWKS derived from the private key above. The worker rejects an
+          # empty `keys` array with CAPABILITY_AUTHORITY_REQUIRED, so a `{"keys":[]}`
+          # placeholder keeps it crash-looping.
+          jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/cap.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-r1' }] }));
+          ")
+          echo "COMMANDER_CAPABILITY_JWKS_JSON=$jwks" >> "$GITHUB_ENV"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/ev.pem"
+          {
+            echo 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM<<EV_EOF'
+            cat "$key_dir/ev.pem"
+            echo 'EV_EOF'
+          } >> "$GITHUB_ENV"
+          echo "COMMANDER_EVIDENCE_SIGNING_KEY_ID=cell-ci-ev-r1" >> "$GITHUB_ENV"
+          ev_jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/ev.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-ev-r1' }] }));
+          ")
+          echo "COMMANDER_EVIDENCE_JWKS_JSON=$ev_jwks" >> "$GITHUB_ENV"
+          # Generate cell PostgreSQL TLS fixture. generate-certificates.sh pins
+          # subjectAltName=DNS:postgres so in-network verify-full can match the service.
+          sh deploy/docker/kernel-tls/generate-certificates.sh "$key_dir/db-tls" postgres
+          echo "COMMANDER_DATABASE_TLS_HOST_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          echo "COMMANDER_CELL_POSTGRES_TLS_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          spki=$(openssl x509 -in "$key_dir/db-tls/server.crt" -pubkey -noout \
+            | openssl pkey -pubin -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)
+          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$spki" >> "$GITHUB_ENV"
+
+      - name: GitHub recovery through real Gateway, PostgreSQL and real GitHub
+        timeout-minutes: 25
+        env:
+          COMMANDER_SANDBOX_TOKEN: ${{ steps.sandbox-token.outputs.token }}
+          COMMANDER_SANDBOX_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          COMMANDER_SANDBOX_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          COMMANDER_LIVE_APPROVED_REPO: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+          COMMANDER_SANDBOX_RESPONSE_CUT_HEAD: ${{ vars.COMMANDER_SANDBOX_RESPONSE_CUT_HEAD }}
+          COMMANDER_SANDBOX_BASE: ${{ vars.COMMANDER_SANDBOX_BASE }}
+        run: pnpm cell:github-recovery --up --live-github
+
+      - name: Upload GitHub Gateway live evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-gateway-live-${{ github.sha }}
+          path: artifacts/github-cell-recovery.json
+          if-no-files-found: error
+
+      - name: Cell container logs (on failure)
+        if: failure()
+        run: |
+          for svc in api worker kernel-ops adapter-ops kernel-migrate postgres; do
+            echo "===== $svc ====="
+            docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+              -f docker-compose.kernel-tls.yml --profile cell logs --no-color --tail 80 "$svc" || true
+          done
 
   l4-b-cell-runtime:
     name: L4-B Cell Runtime

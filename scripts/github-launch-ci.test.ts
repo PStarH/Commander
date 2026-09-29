@@ -45,6 +45,35 @@ describe('GitHub launch CI evidence boundaries', () => {
     );
   });
 
+  it('keeps the live Gateway job behind explicit dispatch, the sandbox environment and a scoped token', () => {
+    const job = ci.jobs['github-gateway-live'];
+    assert.ok(job, 'GitHub Gateway live job must exist');
+    assert.equal(ci.on.workflow_dispatch.inputs.run_github_gateway_live?.default, false);
+    assert.equal(
+      job.if,
+      "github.event_name == 'workflow_dispatch' && inputs.run_github_gateway_live",
+    );
+    assert.equal(job.environment, 'github-sandbox');
+    assert.deepEqual(job.permissions, { contents: 'read' });
+    const mint = job.steps.find((step) =>
+      step.uses?.startsWith('actions/create-github-app-token@'),
+    );
+    assert.equal(mint?.with?.repositories, '${{ vars.COMMANDER_SANDBOX_REPO }}');
+    assert.equal(mint?.with?.['permission-pull-requests'], 'write');
+    assert.equal(mint?.with?.['permission-contents'], 'read');
+    const proof = job.steps.find(
+      (step) => step.run === 'pnpm cell:github-recovery --up --live-github',
+    );
+    assert.ok(proof);
+    assert.equal(proof.env?.COMMANDER_SANDBOX_TOKEN, '${{ steps.sandbox-token.outputs.token }}');
+    assert.equal(
+      proof.env?.COMMANDER_LIVE_APPROVED_REPO,
+      '${{ vars.COMMANDER_LIVE_APPROVED_REPO }}',
+    );
+    const upload = job.steps.find((step) => step.uses?.startsWith('actions/upload-artifact@'));
+    assert.equal(upload?.with?.['if-no-files-found'], 'error');
+  });
+
   it('opts into both live scenarios and retains their actual exit status', () => {
     const job = ci.jobs['github-sandbox-adapter'];
     assert.ok(job);
