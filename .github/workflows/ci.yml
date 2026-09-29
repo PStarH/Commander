@@ -994,6 +994,8 @@ jobs:
           COMMANDER_DR_DATABASE_TLS_SPKI_SHA256: ${{ secrets.COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 }}
           COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY: ${{ vars.COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY }}
           COMMANDER_DR_EVIDENCE_JWKS_JSON: ${{ secrets.COMMANDER_DR_EVIDENCE_JWKS_JSON }}
+          COMMANDER_DR_APP_DATABASE_URL: ${{ secrets.COMMANDER_DR_APP_DATABASE_URL }}
+          COMMANDER_DR_AUTHORITY_DATABASE_URL: ${{ secrets.COMMANDER_DR_AUTHORITY_DATABASE_URL }}
         run: |
           set -eu
           for required in \
@@ -1002,7 +1004,9 @@ jobs:
             COMMANDER_DR_DATABASE_TLS_CA_PEM \
             COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 \
             COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY \
-            COMMANDER_DR_EVIDENCE_JWKS_JSON; do
+            COMMANDER_DR_EVIDENCE_JWKS_JSON \
+            COMMANDER_DR_APP_DATABASE_URL \
+            COMMANDER_DR_AUTHORITY_DATABASE_URL; do
             test -n "$(printenv "$required")" || {
               echo "::error::$required is required for protected DR proof"
               exit 1
@@ -1058,6 +1062,8 @@ jobs:
             printf 'PGSSLROOTCERT=%s\n' "$tls_dir/ca.crt"
             printf 'COMMANDER_DR_BACKUP_DIR=%s\n' "$evidence_root/dr"
             printf 'COMMANDER_DR_RETAINED_JWKS_PATH=%s\n' "$evidence_root/jwks.json"
+            printf 'COMMANDER_APP_DATABASE_URL=%s\n' "$COMMANDER_DR_APP_DATABASE_URL"
+            printf 'COMMANDER_TENANT_AUTHORITY_DATABASE_URL=%s\n' "$COMMANDER_DR_AUTHORITY_DATABASE_URL"
           } >> "$GITHUB_ENV"
 
       - name: Import authorized rotation sign-off key
