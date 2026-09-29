@@ -11,8 +11,13 @@
  * copies avoid a cross-package build-order dependency. Dedupe when a shared
  * `@commander/*` fs utility exists.
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+
+function exclusiveTempPath(dir: string, base: string): string {
+  return path.join(dir, `.${base}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+}
 
 /**
  * Atomically write a file: write to a temp file in the same directory, fsync the
@@ -26,12 +31,12 @@ export function atomicWriteFileSync(filePath: string, data: string | Buffer, mod
   const base = path.basename(resolved);
   const prefix = dir.endsWith(path.sep) ? dir : dir + path.sep;
   const target = path.resolve(dir, base);
-  const tmp = path.resolve(dir, `.${base}.tmp-${process.pid}-${Date.now()}`);
+  const tmp = path.resolve(exclusiveTempPath(dir, base));
   if (!target.startsWith(prefix) || !tmp.startsWith(prefix)) {
     throw new Error('ATOMIC_WRITE_PATH_ESCAPE');
   }
   fs.mkdirSync(dir, { recursive: true });
-  const fd = fs.openSync(tmp, 'w', mode);
+  const fd = fs.openSync(tmp, 'wx', mode);
   try {
     fs.writeFileSync(fd, data);
     fs.fsyncSync(fd);

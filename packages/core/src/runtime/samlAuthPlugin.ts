@@ -734,12 +734,16 @@ function samlClaims(
 }
 
 function unescapeXml(value: string): string {
-  return value
+  let current = value
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
+    .replace(/&apos;/g, "'");
+  for (;;) {
+    const next = current.replace(/&amp;/g, '&');
+    if (next === current) return current;
+    current = next;
+  }
 }
 
 function escapeRegex(value: string): string {

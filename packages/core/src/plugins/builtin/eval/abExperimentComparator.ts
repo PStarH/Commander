@@ -96,10 +96,11 @@ export interface ABExperimentResult {
  * @returns Statistical result with z, p-value, and effect size
  */
 export function wilcoxonSignedRankTest(deltas: number[], alpha: number = 0.05): StatisticalResult {
-  const n = deltas.length;
+  const sample = deltas.length > 10_000 ? deltas.slice(0, 10_000) : deltas;
+  const n = sample.length;
 
   // Filter out zero differences (ties)
-  const nonZero = deltas.filter((d) => Math.abs(d) > 1e-10);
+  const nonZero = sample.filter((d) => Math.abs(d) > 1e-10);
   const effectiveN = nonZero.length;
 
   if (effectiveN === 0) {

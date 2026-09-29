@@ -5,6 +5,7 @@
  * Uses append-only writes for performance. Supports per-category isolation (llm, tool, execution).
  */
 import { reportSilentFailure } from '../silentFailureReporter';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
@@ -206,8 +207,16 @@ export class DeadLetterQueue {
         const raw = (await fs.promises.readFile(filePath, 'utf-8')).trim();
         const lines = raw ? raw.split('\n') : [];
         const trimmed = lines.slice(-DeadLetterQueue.MAX_ENTRIES_PER_FILE);
-        const tmpPath = path.join(this.baseDir, `${cat}.tmp`);
-        await fs.promises.writeFile(tmpPath, trimmed.join('\n') + '\n', 'utf-8');
+        const tmpPath = path.join(
+          this.baseDir,
+          `.${cat}.${crypto.randomBytes(8).toString('hex')}.tmp`,
+        );
+        const tmpHandle = await fs.promises.open(tmpPath, 'wx');
+        try {
+          await tmpHandle.writeFile(trimmed.join('\n') + '\n');
+        } finally {
+          await tmpHandle.close();
+        }
         await fs.promises.rename(tmpPath, filePath);
         this.lineCounts.set(cat, trimmed.length);
       }
@@ -305,8 +314,16 @@ export class DeadLetterQueue {
         entry.recovered = true;
         entry.tags = [...(entry.tags ?? []), 'replayed'];
         lines[idx] = JSON.stringify(entry);
-        const tmp = path.join(this.baseDir, `${category}.replay.tmp`);
-        await fs.promises.writeFile(tmp, lines.join('\n') + '\n', 'utf-8');
+        const tmp = path.join(
+          this.baseDir,
+          `.${category}.${crypto.randomBytes(8).toString('hex')}.replay.tmp`,
+        );
+        const tmpHandle = await fs.promises.open(tmp, 'wx');
+        try {
+          await tmpHandle.writeFile(lines.join('\n') + '\n');
+        } finally {
+          await tmpHandle.close();
+        }
         await fs.promises.rename(tmp, filePath);
         this.lineCounts.set(category, lines.length);
         return { category, entry };

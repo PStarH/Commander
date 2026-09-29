@@ -3,11 +3,36 @@ import type { Tool, ToolDefinition } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 import { isUrlSafe } from './_utils/urlSafety';
 import { safeFetch, SafeFetchError } from './_utils/httpClient';
+import { stripAngleSpans, stripMarkupToText } from '../runtime/observationPurifier';
 
 const CHROME_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
 type SearchResult = { title: string; url: string; snippet: string };
+
+function hostMatches(hostname: string, domain: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === domain || host.endsWith(`.${domain}`);
+}
+
+function isSearchNoiseUrl(rawUrl: string): boolean {
+  try {
+    const parsed = new URL(rawUrl);
+    if (hostMatches(parsed.hostname, 'google.com')) return true;
+    return hostMatches(parsed.hostname, 'youtube.com') && parsed.pathname.startsWith('/results');
+  } catch {
+    return true;
+  }
+}
+
+function decodeAmpersands(value: string): string {
+  let current = value;
+  for (;;) {
+    const next = current.replace(/&amp;/gi, '&');
+    if (next === current) return current;
+    current = next;
+  }
+}
 
 export class WebSearchTool implements Tool {
   definition: ToolDefinition = {
@@ -158,14 +183,14 @@ export class WebSearchTool implements Tool {
 
     while ((match = linkRegex.exec(html)) !== null && urls.length < maxResults) {
       const rawUrl = decodeURIComponent(match[1]);
-      if (rawUrl.includes('google.com') || rawUrl.includes('youtube.com/results')) continue;
+      if (isSearchNoiseUrl(rawUrl)) continue;
       urls.push(rawUrl);
-      titles.push(match[2].replace(/<[^>]+>/g, '').trim());
+      titles.push(stripAngleSpans(match[2]).trim());
     }
 
     const snippets: string[] = [];
     while ((match = snippetRegex.exec(html)) !== null && snippets.length < urls.length) {
-      const text = match[1].replace(/<[^>]+>/g, '').trim();
+      const text = stripAngleSpans(match[1]).trim();
       if (text.length > 30 && !text.includes('Sign in') && !text.includes('Settings')) {
         snippets.push(text);
       }
@@ -197,13 +222,13 @@ export class WebSearchTool implements Tool {
 
     let m;
     while ((m = titleRegex.exec(html)) !== null && titles.length < maxResults) {
-      titles.push(m[1].replace(/<[^>]*>/g, '').trim());
+      titles.push(stripAngleSpans(m[1]).trim());
     }
     while ((m = urlRegex.exec(html)) !== null && urls.length < maxResults) {
       urls.push(m[1]);
     }
     while ((m = snippetRegex.exec(html)) !== null && snippets.length < maxResults) {
-      snippets.push((m[1] || m[2] || '').replace(/<[^>]*>/g, '').trim());
+      snippets.push(stripAngleSpans(m[1] || m[2] || '').trim());
     }
 
     const count = Math.min(titles.length, urls.length, snippets.length, maxResults);
@@ -215,20 +240,20 @@ export class WebSearchTool implements Tool {
       const fallbackRegex =
         /<a[^>]*class="[^"]*result[^"]*"[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/g;
       while ((m = fallbackRegex.exec(html)) !== null && results.length < maxResults) {
-        results.push({ title: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1], snippet: '' });
+        results.push({ title: stripAngleSpans(m[2]).trim(), url: m[1], snippet: '' });
       }
     }
     if (results.length === 0) {
       const headingLinkRegex =
         /<h[1-4][^>]*>.*?<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>.*?<\/h[1-4]>/gi;
       while ((m = headingLinkRegex.exec(html)) !== null && results.length < maxResults) {
-        results.push({ title: m[2].replace(/<[^>]*>/g, '').trim(), url: m[1], snippet: '' });
+        results.push({ title: stripAngleSpans(m[2]).trim(), url: m[1], snippet: '' });
       }
     }
     if (results.length === 0) {
       const anyLinkRegex = /<a[^>]*href="(https?:\/\/[^"]+)"[^>]*>([\s\S]*?)<\/a>/gi;
       while ((m = anyLinkRegex.exec(html)) !== null && results.length < maxResults) {
-        const text = m[2].replace(/<[^>]*>/g, '').trim();
+        const text = stripAngleSpans(m[2]).trim();
         if (text) results.push({ title: text, url: m[1], snippet: '' });
       }
     }
@@ -251,7 +276,7 @@ export class WebSearchTool implements Tool {
       if (results.length >= maxResults) break;
       const urlMatch = block.match(/<h2[^>]*><a[^>]*href="([^"]+)"[^>]*>(.*?)<\/a><\/h2>/);
       if (!urlMatch) continue;
-      let url = urlMatch[1].replace(/&amp;/g, '&');
+      let url = decodeAmpersands(urlMatch[1]);
       const redirectMatch = url.match(/[?&]u=([^&]+)/);
       if (redirectMatch) {
         try {
@@ -261,13 +286,12 @@ export class WebSearchTool implements Tool {
           reportSilentFailure(_silentE_, 'webSearchTool:259');
         }
       }
-      const title = urlMatch[2].replace(/<[^>]*>/g, '').trim();
+      const title = stripAngleSpans(urlMatch[2]).trim();
       const snipMatch =
         block.match(/<p[^>]*class="b_lineclamp[^"]*"[^>]*>([\s\S]*?)<\/p>/) ??
         block.match(/<p[^>]*>([\s\S]*?)<\/p>/);
       const snippet = snipMatch
-        ? snipMatch[1]
-            .replace(/<[^>]*>/g, '')
+        ? stripAngleSpans(snipMatch[1])
             .replace(/&nbsp;/g, ' ')
             .replace(/&#\d+;/g, '')
             .trim()
@@ -322,13 +346,7 @@ export class WebFetchTool implements Tool {
         },
       });
 
-      const text = html
-        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-        .replace(/<[^>]*>/g, ' ')
-        .replace(/&[^;]+;/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+      const text = stripMarkupToText(html).replace(/\s+/g, ' ').trim();
 
       let result = text.slice(0, maxChars);
       if (text.length > maxChars) result += '\n\n[Content truncated...]';

@@ -20,6 +20,7 @@
  *   // Then pass to bwrap: --seccomp 3 with fd 3 = tmpFile
  */
 
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -462,12 +463,16 @@ export function buildSeccompFilter(options: SeccompFilterOptions = {}): Buffer {
  */
 export function writeSeccompFilterToFile(options: SeccompFilterOptions = {}): string {
   const bpf = buildSeccompFilter(options);
-  const tmpDir = os.tmpdir();
   const tmpFile = path.join(
-    tmpDir,
-    `.cmd-seccomp-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.bpf`,
+    os.tmpdir(),
+    `.cmd-seccomp-${crypto.randomBytes(8).toString('hex')}.bpf`,
   );
-  fs.writeFileSync(tmpFile, bpf);
+  const fd = fs.openSync(tmpFile, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, bpf);
+  } finally {
+    fs.closeSync(fd);
+  }
   return tmpFile;
 }
 
