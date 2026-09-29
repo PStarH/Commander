@@ -19,6 +19,7 @@
 import * as crypto from 'node:crypto';
 import { getGlobalLogger } from '../logging';
 import { isProductionCryptoEnv } from './productionEnv.js';
+import { removeHtmlElement } from '../runtime/observationPurifier';
 
 // ══════════════════════════════════════════════════════════════════════════
 // 1. UniversalSanitizer
@@ -136,11 +137,6 @@ export class UniversalSanitizer {
     pattern: RegExp;
     replacement: string;
   }> = [
-    {
-      name: 'script_tag',
-      pattern: /<script\b[^<]*(?:(?!<\/script[^>]*>)<[^<]*)*<\/script[^>]*>/gi,
-      replacement: '',
-    },
     { name: 'event_handler', pattern: /\son\w+\s*=\s*"[^"]*"/gi, replacement: '' },
     { name: 'event_handler_single', pattern: /\son\w+\s*=\s*'[^']*'/gi, replacement: '' },
     { name: 'javascript_url', pattern: /javascript:/gi, replacement: '' },
@@ -360,7 +356,10 @@ export class UniversalSanitizer {
         break;
 
       case 'input':
-        // XSS prevention for inputs that may be rendered
+        if (result.toLowerCase().includes('<script')) {
+          patterns.push('script_tag');
+          result = removeHtmlElement(result, 'script');
+        }
         for (const rule of UniversalSanitizer.XSS_PATTERNS) {
           if (rule.pattern.test(result)) {
             patterns.push(rule.name);

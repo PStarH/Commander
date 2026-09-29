@@ -180,7 +180,10 @@ class LocalEmbeddingFunction {
 
   private extractNgrams(text: string): string[] {
     const ngrams: string[] = [];
-    const words = text.split(/\s+/).filter((w) => w.length > 0);
+    const words = text
+      .split(/\s+/)
+      .filter((w) => w.length > 0)
+      .slice(0, 2048);
 
     for (let n = 1; n <= Math.min(this.ngramSize, words.length); n++) {
       for (let i = 0; i <= words.length - n; i++) {
@@ -188,9 +191,10 @@ class LocalEmbeddingFunction {
       }
     }
 
-    if (text.length > 10) {
-      for (let i = 0; i <= text.length - 3; i++) {
-        ngrams.push(text.slice(i, i + 3));
+    const bounded = text.length > 8192 ? text.slice(0, 8192) : text;
+    if (bounded.length > 10) {
+      for (let i = 0; i <= bounded.length - 3; i++) {
+        ngrams.push(bounded.slice(i, i + 3));
       }
     }
     return ngrams;
@@ -212,9 +216,10 @@ class LocalEmbeddingFunction {
   }
 
   private fnv1a(str: string): number {
+    const bounded = str.length > 8192 ? str.slice(0, 8192) : str;
     let hash = 0x811c9dc5;
-    for (let i = 0; i < str.length; i++) {
-      hash ^= str.charCodeAt(i);
+    for (let i = 0; i < bounded.length; i++) {
+      hash ^= bounded.charCodeAt(i);
       hash = (hash * 0x01000193) >>> 0;
     }
     return hash;
@@ -332,6 +337,59 @@ export function chunkText(
   return chunks;
 }
 
+function removeHtmlElement(value: string, tag: string): string {
+  let text = value;
+  const open = `<${tag}`;
+  const close = `</${tag}`;
+  for (;;) {
+    const start = text.toLowerCase().indexOf(open);
+    if (start < 0) return text;
+    const openEnd = text.indexOf('>', start + open.length);
+    if (openEnd < 0) return text.slice(0, start);
+    const closeStart = text.toLowerCase().indexOf(close, openEnd + 1);
+    if (closeStart < 0) return text.slice(0, start);
+    const closeEnd = text.indexOf('>', closeStart + close.length);
+    if (closeEnd < 0) return text.slice(0, start);
+    text = text.slice(0, start) + text.slice(closeEnd + 1);
+  }
+}
+
+function stripAngleSpans(value: string): string {
+  let text = value;
+  for (;;) {
+    const start = text.indexOf('<');
+    if (start < 0) return text;
+    const end = text.indexOf('>', start + 1);
+    if (end < 0) return text.slice(0, start);
+    text = text.slice(0, start) + text.slice(end + 1);
+  }
+}
+
+function stripHtmlComments(value: string): string {
+  let text = value;
+  for (;;) {
+    const start = text.indexOf('<!--');
+    if (start < 0) return text;
+    const end = text.indexOf('-->', start + 4);
+    if (end < 0) return text.slice(0, start);
+    text = text.slice(0, start) + text.slice(end + 3);
+  }
+}
+
+function stripHtmlDocument(value: string): string {
+  let text = value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&');
+  text = stripHtmlComments(text);
+  text = removeHtmlElement(text, 'script');
+  text = removeHtmlElement(text, 'style');
+  return stripAngleSpans(text);
+}
+
 // ── Plain-text extraction ────────────────────────────────────────────────
 
 /**
@@ -358,18 +416,7 @@ export function extractPlainText(content: string, type: SupportedContentType): s
       }
     }
     case 'text/html': {
-      // Remove <script> and <style> blocks entirely, then strip remaining tags.
-      return content
-        .replace(/<script[\s\S]*?<\/script>/gi, '')
-        .replace(/<style[\s\S]*?<\/style>/gi, '')
-        .replace(/<!--[\s\S]*?-->/g, '')
-        .replace(/<[^>]+>/g, ' ')
-        .replace(/&nbsp;/gi, ' ')
-        .replace(/&amp;/gi, '&')
-        .replace(/&lt;/gi, '<')
-        .replace(/&gt;/gi, '>')
-        .replace(/&quot;/gi, '"')
-        .replace(/&#39;/gi, "'")
+      return stripHtmlDocument(content)
         .replace(/[ \t]+/g, ' ')
         .replace(/\n{3,}/g, '\n\n')
         .trim();

@@ -201,7 +201,9 @@ function validateCreate(
   if (input.headers && typeof input.headers === 'object') {
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(input.headers as Record<string, unknown>)) {
-      if (typeof v === 'string') headers[k] = v;
+      if (typeof v !== 'string' || !/^[A-Za-z][A-Za-z0-9-]{0,63}$/.test(k)) continue;
+      if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
+      headers[k] = v;
     }
     if (Object.keys(headers).length > 0) config.headers = headers;
   }

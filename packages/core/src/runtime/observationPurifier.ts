@@ -77,16 +77,77 @@ export function containsErrorSignal(content: string): boolean {
   return errorMarkers.some((m) => lower.includes(m));
 }
 
+function indexOfIgnoreCase(value: string, needle: string, from = 0): number {
+  return value.toLowerCase().indexOf(needle.toLowerCase(), from);
+}
+
+/** Drop one element, including a closing tag written as `</tag >`. */
+export function removeHtmlElement(value: string, tag: string): string {
+  let text = value;
+  const open = `<${tag}`;
+  const close = `</${tag}`;
+  for (;;) {
+    const start = indexOfIgnoreCase(text, open);
+    if (start < 0) return text;
+    const openEnd = text.indexOf('>', start + open.length);
+    if (openEnd < 0) return text.slice(0, start);
+    const closeStart = indexOfIgnoreCase(text, close, openEnd + 1);
+    if (closeStart < 0) return text.slice(0, start);
+    const closeEnd = text.indexOf('>', closeStart + close.length);
+    if (closeEnd < 0) return text.slice(0, start);
+    text = text.slice(0, start) + text.slice(closeEnd + 1);
+  }
+}
+
+/** Remove every `<...>` span. A `<` with no `>` drops the rest of the string. */
+export function stripAngleSpans(value: string): string {
+  let text = value;
+  for (;;) {
+    const start = text.indexOf('<');
+    if (start < 0) return text;
+    const end = text.indexOf('>', start + 1);
+    if (end < 0) return text.slice(0, start);
+    text = text.slice(0, start) + text.slice(end + 1);
+  }
+}
+
+/** One pass. `&amp;` is last so `&amp;lt;` stays `&lt;` instead of becoming `<`. */
+export function decodeEntitiesOnce(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&amp;/gi, '&');
+}
+
+export function stripHtmlComments(value: string): string {
+  let text = value;
+  for (;;) {
+    const start = text.indexOf('<!--');
+    if (start < 0) return text;
+    const end = text.indexOf('-->', start + 4);
+    if (end < 0) return text.slice(0, start);
+    text = text.slice(0, start) + text.slice(end + 3);
+  }
+}
+
+export function stripMarkupToText(value: string): string {
+  let text = decodeEntitiesOnce(value);
+  text = removeHtmlElement(text, 'script');
+  text = removeHtmlElement(text, 'style');
+  return stripAngleSpans(text);
+}
+
 /**
  * Strip HTML tags and convert common constructs to markdown.
  * Preserves links, headings, lists, and tables (crudely).
  */
 export function purifyHtml(content: string, maxChars = 0): string {
-  let text = content;
-
-  // Remove script/style blocks first
-  text = text.replace(/<script\b[^<]*>[\s\S]*?<\/script>/gi, '');
-  text = text.replace(/<style\b[^<]*>[\s\S]*?<\/style>/gi, '');
+  let text = decodeEntitiesOnce(content);
+  text = removeHtmlElement(text, 'script');
+  text = removeHtmlElement(text, 'style');
 
   // Convert headings
   text = text.replace(/<h1\b[^>]*>([\s\S]*?)<\/h1>/gi, '\n# $1\n');
@@ -102,17 +163,7 @@ export function purifyHtml(content: string, maxChars = 0): string {
   // Convert line breaks
   text = text.replace(/<br\s*\/?>/gi, '\n');
 
-  // Strip remaining tags
-  text = text.replace(/<[^>]+>/g, '');
-
-  // Decode common entities
-  text = text
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
-    .replace(/&nbsp;/g, ' ');
+  text = stripAngleSpans(text);
 
   // Collapse whitespace
   text = text

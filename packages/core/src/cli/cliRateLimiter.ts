@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../silentFailureReporter';
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
@@ -7,8 +8,9 @@ interface RateLimitFile {
   timestamps: number[];
 }
 
-const RATE_LIMIT_FILE = path.join(os.tmpdir(), '.commander-cli-ratelimit.json');
-const RATE_LIMIT_LOCK = path.join(os.tmpdir(), '.commander-cli-ratelimit.lock');
+const RATE_LIMIT_DIR = path.join(os.homedir(), '.commander');
+const RATE_LIMIT_FILE = path.join(RATE_LIMIT_DIR, 'cli-ratelimit.json');
+const RATE_LIMIT_LOCK = path.join(RATE_LIMIT_DIR, 'cli-ratelimit.lock');
 const MAX_RUNS_PER_MINUTE = 10;
 const WINDOW_MS = 60_000;
 const LOCK_MAX_RETRIES = 20;
@@ -30,9 +32,18 @@ function readRateLimitFile(): RateLimitFile {
  * prevents concurrent readers from observing a partially-written file.
  */
 function writeRateLimitFile(data: RateLimitFile): void {
-  const tmpFile = `${RATE_LIMIT_FILE}.${process.pid}.tmp`;
+  fs.mkdirSync(RATE_LIMIT_DIR, { recursive: true });
+  const tmpFile = path.join(
+    RATE_LIMIT_DIR,
+    `.cli-ratelimit.${crypto.randomBytes(8).toString('hex')}.tmp`,
+  );
   try {
-    fs.writeFileSync(tmpFile, JSON.stringify(data), 'utf-8');
+    const fd = fs.openSync(tmpFile, 'wx', 0o600);
+    try {
+      fs.writeFileSync(fd, JSON.stringify(data));
+    } finally {
+      fs.closeSync(fd);
+    }
     fs.renameSync(tmpFile, RATE_LIMIT_FILE);
   } catch (err) {
     reportSilentFailure(err, 'cliRateLimiter:27');
@@ -54,6 +65,7 @@ function writeRateLimitFile(data: RateLimitFile): void {
  * the same stale counter before either has written its update.
  */
 function acquireRateLimitLock(): () => void {
+  fs.mkdirSync(RATE_LIMIT_DIR, { recursive: true });
   for (let attempt = 0; attempt < LOCK_MAX_RETRIES; attempt++) {
     try {
       fs.writeFileSync(RATE_LIMIT_LOCK, String(process.pid), { flag: 'wx' });

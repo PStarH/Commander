@@ -91,8 +91,8 @@ export class ContentScanner {
       /<[^>]+style\s*=\s*["'][^"']*visibility\s*:\s*hidden[^"']*["'][^>]*>/gi,
       /<[^>]+hidden\s*=\s*["']true["'][^>]*>/gi,
       /<[^>]+aria-hidden\s*=\s*["']true["'][^>]*>/gi,
-      /<script[^>]*>[\s\S]*?<\/script>/gi,
-      /<iframe[^>]*>[\s\S]*?<\/iframe>/gi,
+      /<script[^>]*>[\s\S]*?<\/script\s*>/gi,
+      /<iframe[^>]*>[\s\S]*?<\/iframe\s*>/gi,
     ]);
 
     // Hidden CSS commands

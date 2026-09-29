@@ -54,6 +54,7 @@ export function sanitizeBody(body: unknown): unknown {
 
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
     if (SENSITIVE_BODY_KEYS.has(key.toLowerCase())) {
       out[key] = '[REDACTED]';
     } else {

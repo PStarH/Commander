@@ -441,10 +441,10 @@ function extractKeyPhrases(text: string): string[] {
   const phrases: string[] = [];
   // Simple noun phrase patterns
   const npPatterns = [
-    /\b(?:[A-Z][a-z]+\s+){2,}[A-Z][a-z]+\b/g, // Proper noun phrases
-    /\b(?:the|a|an)\s+(?:\w+\s+){1,3}(?:system|method|approach|algorithm|model|framework|library|function|API|database|server|process|module|component)\b/gi,
-    /\b\w+(?:_\w+){1,}\b/g, // snake_case identifiers
-    /\b\w+(?:\.\w+){1,}\b/g, // dot.separated.identifiers
+    /\b[A-Z][a-z]+(?: [A-Z][a-z]+){2,6}\b/g,
+    /\b(?:the|a|an) (?:\w+ ){1,3}(?:system|method|approach|algorithm|model|framework|library|function|API|database|server|process|module|component)\b/gi,
+    /\b\w+(?:_\w+){1,6}\b/g,
+    /\b\w+(?:\.\w+){1,6}\b/g,
   ];
 
   for (const pattern of npPatterns) {
