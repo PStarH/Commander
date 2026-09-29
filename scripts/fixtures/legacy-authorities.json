@@ -83,7 +83,7 @@
     },
     {
       "path": "apps/api/src/sagaEndpoints.ts",
-      "sourceSha256": "04c6cc951da33522201fc39345e87741588b515b5b484440b1eb448dfcf78749",
+      "sourceSha256": "920243339c204b4ccd730c2d6f292a2d90762d4b8d5b4796a0e279948a3e995b",
       "callersSha256": "c44322c7c1f939d2052176cff21dbddc2c2810e471323d81c3330901ff01cb0a",
       "owner": "@commander/api",
       "reason": "Legacy saga run controls pending gateway migration",
@@ -134,7 +134,7 @@
     {
       "path": "packages/core/src/atr/runLedger.ts",
       "sourceSha256": "6f6b4902e478bab67d13a2e509be4a311c507d5fc12a984aa288e5d0cedbec33",
-      "callersSha256": "00de01d17e383c1eb452c78c3ae7e1159d50a948672e44288bf7f219a6b44d72",
+      "callersSha256": "69199e1fa755017711c3f6a7053f36b52971f86a4db4276ef8c80b4f9aeaf9a1",
       "owner": "@commander/core",
       "reason": "Legacy local run ledger pending kernel repository migration",
       "expiresAt": "2026-10-31",
@@ -214,7 +214,7 @@
     {
       "path": "packages/core/src/commander/factory.ts",
       "sourceSha256": "5015ff724999668e91827b0e38e3045e5740f3fe0f430653ed82a1dd21b5d7de",
-      "callersSha256": "e866a960ecf50deed44e80fcc9e777c89e7cc0c5e38971d83669b1727f7adf31",
+      "callersSha256": "eeaac2b7116f3fb5ae7f92ec34ab173da4d5cd9e51a8b452978ff63637cc3abc",
       "owner": "@commander/core",
       "reason": "Legacy public runtime factory retained for local compatibility",
       "expiresAt": "2026-10-31",
@@ -303,7 +303,7 @@
     },
     {
       "path": "scripts/authority-closure-proof.ts",
-      "sourceSha256": "dba45e5184336555a1496817048cccf819939ce1077ecd0a447ad0e6a6a3ecc5",
+      "sourceSha256": "6d16747fd9f688defbc387b096b1085f11c9b7c78a75f0e1fe2bcb2c3f92e924",
       "callersSha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
       "owner": "repository-operations",
       "reason": "Live closure proof intentionally seeds challenged kernel rows",

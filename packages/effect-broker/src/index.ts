@@ -1294,7 +1294,6 @@ export class EffectBroker {
     const actionDigest = isClassAEffectType(input.type)
       ? grant.actionDigest!
       : (grant.actionDigest ?? canonicalRequestHash(input.request));
-    const createdAt = new Date().toISOString();
     const admitted = await this.kernel.admitEffect({
       id: input.effectId,
       runId: grant.runId,
@@ -1509,7 +1508,6 @@ export class EffectBroker {
         // COMPLETION_UNKNOWN instead of letting the deadline error escape with
         // no ledger state, which let retries spin on ADMITTED.
         await this.parkUnfinishedAdmission(admission, error.code);
-        parked = true;
         throw new EffectBrokerError('COMPLETION_UNKNOWN', {
           effectId: admission.kernelEffectId,
           code: error.code,
@@ -1538,7 +1536,6 @@ export class EffectBroker {
                 });
             if (!failed) {
               await this.parkUnfinishedAdmission(admission, error.code);
-              parked = true;
               throw new EffectBrokerError('COMPLETION_UNKNOWN', {
                 effectId: admission.kernelEffectId,
                 code: error.code,
@@ -1554,7 +1551,6 @@ export class EffectBroker {
             });
           }
           await this.parkUnfinishedAdmission(admission, error.code);
-          parked = true;
           throw new EffectBrokerError('COMPLETION_UNKNOWN', {
             effectId: admission.kernelEffectId,
             code: error.code,

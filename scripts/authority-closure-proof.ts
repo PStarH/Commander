@@ -1935,14 +1935,12 @@ async function checkAdapterOpsAuthority(input: {
   classAAdmissionRpcOnly: boolean;
   invalidAdapterOpsWorkerIdRejected: boolean;
 }> {
-  const { ownerPool, adapterOpsPool, workerPool, tenantId, failures } = input;
+  const { ownerPool, adapterOpsPool, tenantId, failures } = input;
   let adapterOpsRoleSeparated = false;
   let adapterOpsRpcOnly = false;
   let classAAdmissionRpcOnly = false;
   let invalidAdapterOpsWorkerIdRejected = false;
   const instanceId = `proof-${randomUUID().slice(0, 8)}`;
-  const reconcileId = `reconcile:${instanceId}`;
-  const compensationId = `compensation:${instanceId}`;
 
   const attrs = await ownerPool.query<{
     rolbypassrls: boolean;

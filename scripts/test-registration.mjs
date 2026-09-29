@@ -35,7 +35,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -506,7 +506,6 @@ export function extractWorkflowRunSteps(text) {
   const lines = text.split(/\r?\n/);
   const steps = [];
   let workingDirectory = '.';
-  let indentationStack = [];
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     const indent = line.match(/^\s*/)[0].length;
@@ -541,7 +540,6 @@ export function extractWorkflowRunSteps(text) {
     }
     steps.push({ command: body.join(' '), workingDirectory });
   }
-  indentationStack = [];
   return steps;
 }
 

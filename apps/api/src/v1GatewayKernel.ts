@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 
 import {
   createKernelRepository,
-  KernelInvariantError,
   type KernelRepository,
   type KernelRepositoryHandle,
   type AnswerInteractionRequest,

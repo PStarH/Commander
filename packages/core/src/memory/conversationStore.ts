@@ -23,11 +23,7 @@ import { getGlobalLogger } from '../logging';
 import { randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { walCheckpoint } from '../storage/walCheckpoint';
-import {
-  getCurrentTenantId,
-  tenantBucketOrThrow,
-  TenantIsolationError,
-} from '../runtime/tenantContext';
+import { tenantBucketOrThrow, TenantIsolationError } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 const nodeRequire = createRequire(import.meta.url);

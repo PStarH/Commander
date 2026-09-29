@@ -479,7 +479,7 @@ export class GdprComplianceManager {
    */
   private async anonymizeAuditLogs(userId: string): Promise<number> {
     const subjectHash = hashSubject(userId);
-    if (isAuditSubjectErased(userId)) {
+    if (isAuditSubjectErased(userId) === 'erased') {
       getGlobalLogger().info('GdprCompliance', 'Audit subject already erased (idempotent)', {
         subjectHash,
       });

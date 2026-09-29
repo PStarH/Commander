@@ -53,24 +53,6 @@ export function getSafeRoot(): string {
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }
 
-function looksLikeWindowsPath(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
-}
-
-function normalizeBoundaryPath(value: string, pathApi: typeof path): string {
-  const normalized = pathApi.normalize(value);
-  if (pathApi !== path.win32) return normalized;
-
-  // realpath() canonicalizes 8.3 aliases on Windows. Normalize the remaining
-  // case and namespace differences before using path.relative for containment.
-  const withoutNamespace = normalized.startsWith('\\\\?\\UNC\\')
-    ? `\\\\${normalized.slice('\\\\?\\UNC\\'.length)}`
-    : normalized.startsWith('\\\\?\\')
-      ? normalized.slice('\\\\?\\'.length)
-      : normalized;
-  return withoutNamespace.toLowerCase();
-}
-
 /** Check that a normalized path is within SAFE_ROOT (including its root). */
 function usesWindowsPaths(resolved: string, root: string): boolean {
   if (process.platform === 'win32') return true;

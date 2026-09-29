@@ -148,9 +148,7 @@ async function isLockedOut(ip: string): Promise<boolean> {
 // process even though authMiddleware is invoked per-request. Without
 // this gate, every authenticated request would re-emit the warning,
 // spamming stdout under any load.
-let _warnedAuthDisabledInProd = false;
-if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDisabledInProd) {
-  _warnedAuthDisabledInProd = true;
+if (isProductionEnv() && process.env.AUTH_DISABLED === 'true') {
   try {
     getGlobalLogger().warn(
       'AuthMiddleware',

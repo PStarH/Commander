@@ -72,7 +72,7 @@ import { installProcessCrashHandlers } from './processCrashSafety';
 import { RecoveryBootstrapper, type RecoveryResult } from '../atr/recoveryBootstrapper';
 import { getRunLedgerBundle } from '../atr/runLedger';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
-import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '../security/capabilityToken';
+import { getCapabilityTokenVerifier } from '../security/capabilityToken';
 import { getAgentLineage } from '../security/agentLineage';
 import {
   getReversibilityGate,

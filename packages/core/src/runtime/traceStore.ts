@@ -353,7 +353,7 @@ export class PersistentTraceStore implements TraceStore {
     try {
       await drain;
     } finally {
-      if (this.asyncFlushes.get(key) === drain) this.asyncFlushes.delete(key);
+      if (Object.is(this.asyncFlushes.get(key), drain)) this.asyncFlushes.delete(key);
     }
   }
 

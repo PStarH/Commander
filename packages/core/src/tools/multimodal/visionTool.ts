@@ -56,7 +56,7 @@ export class VisionAnalyzeTool implements Tool {
 
     try {
       let imageData: string;
-      let mediaType = 'image/png';
+      let mediaType: string;
       const maxSize = 20 * 1024 * 1024;
 
       if (source.startsWith('data:')) {

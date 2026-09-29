@@ -11,6 +11,8 @@
  * - Modal content hiding (images, iframes, objects)
  */
 
+import { removeHtmlElement } from './htmlStrip';
+
 export interface ScanResult {
   safe: boolean;
   threats: Threat[];
@@ -91,8 +93,8 @@ export class ContentScanner {
       /<[^>]+style\s*=\s*["'][^"']*visibility\s*:\s*hidden[^"']*["'][^>]*>/gi,
       /<[^>]+hidden\s*=\s*["']true["'][^>]*>/gi,
       /<[^>]+aria-hidden\s*=\s*["']true["'][^>]*>/gi,
-      /<script[^>]*>[\s\S]*?<\/script\s*>/gi,
-      /<iframe[^>]*>[\s\S]*?<\/iframe\s*>/gi,
+      /<script\b[^>]*>/gi,
+      /<iframe\b[^>]*>/gi,
     ]);
 
     // Hidden CSS commands
@@ -220,7 +222,7 @@ export class ContentScanner {
    * Sanitize content by removing or neutralizing threats
    */
   private sanitize(content: string, threats: Threat[]): string {
-    let sanitized = content;
+    let sanitized = removeHtmlElement(removeHtmlElement(content, 'script'), 'iframe');
 
     for (const threat of threats) {
       if (threat.pattern) {

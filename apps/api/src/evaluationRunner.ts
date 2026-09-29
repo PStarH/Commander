@@ -86,7 +86,6 @@ export class StringMatchGrader implements Grader {
     private options: {
       exact?: boolean;
       caseSensitive?: boolean;
-      regex?: boolean;
     } = {},
   ) {
     this.id = id;
@@ -105,15 +104,7 @@ export class StringMatchGrader implements Grader {
     const actual = String(trial.outcome.result);
     let passed = false;
 
-    if (this.options.regex) {
-      const source = this.expected.length > 128 ? this.expected.slice(0, 128) : this.expected;
-      if (/([+*]|\{\d+,?\d*\})\s*([+*]|\{\d+,?\d*\})/.test(source)) {
-        passed = false;
-      } else {
-        const regex = new RegExp(source, this.options.caseSensitive ? '' : 'i');
-        passed = regex.test(actual);
-      }
-    } else if (this.options.exact) {
+    if (this.options.exact) {
       passed = this.options.caseSensitive
         ? actual === this.expected
         : actual.toLowerCase() === this.expected.toLowerCase();

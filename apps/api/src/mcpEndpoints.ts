@@ -1,13 +1,7 @@
 import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { hashSecret } from '@commander/core/runtime';
-import {
-  MCPServer,
-  getModelRouter,
-  MCPClient,
-  createMCPClient,
-  reportSilentFailure,
-} from '@commander/core';
+import { MCPServer, getModelRouter, createMCPClient, reportSilentFailure } from '@commander/core';
 import type {
   MCPTool,
   MCPToolResult,

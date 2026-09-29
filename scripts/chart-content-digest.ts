@@ -5,7 +5,6 @@ import { join, relative, resolve, sep } from 'node:path';
 
 const PREFIX = Buffer.from('commander.chart-content/v1\0', 'utf8');
 const ANNOTATION = /^  commander\.io\/content-sha256: ([0-9a-f]{64})$/m;
-const ZERO_DIGEST = '0'.repeat(64);
 
 function fail(code: string): never {
   throw new Error(code);

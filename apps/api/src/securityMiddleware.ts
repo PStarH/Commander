@@ -71,7 +71,6 @@ export class PostgresRateLimitStore implements RateLimitStore {
         entries.push({ count: Number(row.count), resetAt: Number(row.resetAt) });
       }
       await client.query('COMMIT');
-      transactionStarted = false;
       return entries;
     } catch (error) {
       releaseError = error instanceof Error ? error : true;

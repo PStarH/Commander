@@ -395,14 +395,15 @@ export class Logger {
     const component = entry.component.padEnd(20);
     const icon = icons[entry.level];
 
-    let output = `${icon} [${levelName}] [${component}] ${entry.message}`;
+    const oneLine = (value: string): string => value.replace(/[\r\n]+/g, ' ');
+    let output = `${icon} [${levelName}] [${component}] ${oneLine(String(entry.message))}`;
 
     if (entry.context) {
       output += ` ${JSON.stringify(entry.context)}`;
     }
 
     if (entry.error) {
-      output += `\n   Error: ${entry.error.message}`;
+      output += `\n   Error: ${oneLine(String(entry.error.message))}`;
     }
 
     if (entry.level === 'error' || entry.level === 'critical') {
