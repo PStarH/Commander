@@ -70,7 +70,7 @@
     "@commander/contracts": "workspace:*",
     "@commander/effect-broker": "workspace:*",
     "@commander/postgres-runtime": "workspace:*",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "pg": "^8.15.0"
   },
   "devDependencies": {

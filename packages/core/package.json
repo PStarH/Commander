@@ -151,7 +151,7 @@
     "@commander/contracts": "workspace:*",
     "@commander/plugin-sdk": "workspace:*",
     "@commander/postgres-runtime": "workspace:*",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "blessed": "^0.1.81",
     "safe-regex": "^2.1.1"
   },

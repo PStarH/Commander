@@ -38,7 +38,7 @@
     "zod": "^3.25.76"
   },
   "peerDependencies": {
-    "better-sqlite3": "^12.11.1"
+    "better-sqlite3": "^13.0.3"
   },
   "peerDependenciesMeta": {
     "better-sqlite3": {
@@ -46,7 +46,7 @@
     }
   },
   "optionalDependencies": {
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.3",
     "pg": "^8.15.0"
   },
   "devDependencies": {
