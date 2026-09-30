@@ -1,9 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {
-  buildOIDCAuthorizationUrl,
-  discoverOIDCAuthorizationEndpoint,
-} from '../src/api.ts';
+import { buildOIDCAuthorizationUrl, discoverOIDCAuthorizationEndpoint } from '../src/api.ts';
 
 test('rejects a non-https issuer and a javascript authorization endpoint', async () => {
   await assert.rejects(() => discoverOIDCAuthorizationEndpoint('javascript:alert(1)'));
