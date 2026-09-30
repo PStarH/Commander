@@ -236,11 +236,12 @@ export class StdioClientTransport implements MCPTransport {
   }
 
   /**
-   * GAP-16: Filter environment variables to avoid leaking secrets.
-   * Only passes safe system variables. Secrets (API_KEY, TOKEN, SECRET, etc.) are excluded.
+   * GAP-16: pass only this allowlist into an MCP stdio child.
+   * Anything else in the parent environment (DATABASE_URL, KUBECONFIG,
+   * MYSQL_PWD, …) stays here. Extra variables belong in config.env.
    */
   private filterEnvironment(): Record<string, string> {
-    const safeVars = new Set([
+    const safeVars = [
       'PATH',
       'HOME',
       'USER',
@@ -251,18 +252,11 @@ export class StdioClientTransport implements MCPTransport {
       'TMPDIR',
       'NODE_PATH',
       'PYTHONPATH',
-    ]);
-    const denyPatterns = ['KEY', 'TOKEN', 'SECRET', 'PASSWORD', 'CREDENTIAL', 'AUTH', 'PRIVATE'];
+    ];
     const env: Record<string, string> = {};
-    for (const [k, v] of Object.entries(process.env)) {
-      if (v === undefined) continue;
-      if (safeVars.has(k)) {
-        env[k] = v;
-        continue;
-      }
-      const upper = k.toUpperCase();
-      if (denyPatterns.some((p) => upper.includes(p))) continue;
-      env[k] = v;
+    for (const key of safeVars) {
+      const value = process.env[key];
+      if (value !== undefined) env[key] = value;
     }
     return env;
   }

@@ -456,7 +456,11 @@ export class ExecuteScriptTool implements Tool {
           return undefined;
         }
         if (typeof prop === 'symbol') return undefined;
-        return Reflect.get(target, prop);
+        const value = Reflect.get(target, prop);
+        if (typeof value === 'function') {
+          return makeSafeFunction(value.bind(target) as (...args: unknown[]) => unknown);
+        }
+        return value;
       },
       apply(target, thisArg, args) {
         return Reflect.apply(target as unknown as (...args: unknown[]) => unknown, thisArg, args);
@@ -474,7 +478,7 @@ export class ExecuteScriptTool implements Tool {
     // This prevents `setTimeout.constructor('return process')()` and similar escapes.
     const rawSandbox = {
       tools: safeTools,
-      console: console_,
+      console: makeSafeProxy(console_),
       setTimeout: makeSafeFunction(setTimeout as unknown as (...args: unknown[]) => unknown),
       clearTimeout: makeSafeFunction(clearTimeout as unknown as (...args: unknown[]) => unknown),
       Promise: safePromise,
