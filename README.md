@@ -1,7 +1,6 @@
 <p align="center">
-  <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml?query=branch%3Acodex%2Ffirst-customer-trial-20260908"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?branch=codex/first-customer-trial-20260908&style=flat-square&label=CI&logo=github" /></a>
+  <a href="https://github.com/PStarH/Commander/actions/workflows/ci.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Commander/ci.yml?branch=master&style=flat-square&label=CI&logo=github" /></a>
   <img src="https://img.shields.io/github/license/PStarH/Commander?style=flat-square&color=EAB308" />
-  <a href="https://github.com/PStarH/Commander/releases"><img src="https://img.shields.io/github/v/release/PStarH/Commander?style=flat-square&label=release&color=22C55E" /></a>
 </p>
 
 <h1 align="center">Commander</h1>
@@ -43,9 +42,13 @@ production. Branch contents still need GitHub review and checks.
 - [Why not just GitHub permissions and Actions approval?](docs/pilot/github/native-controls.md): native controls are often enough; use Commander when shared action identity, recovery and evidence justify the integration.
 - [Security boundary and limitations](docs/pilot/github/threat-model.md): a correlation marker is not a signature, and external effects are not universally exactly-once.
 
-The adapter contracts and CLI have automated local tests. A complete live
-Gateway + GitHub + worker-restart demonstration is still pending; no adoption
-or production-readiness claim is implied. The existing local agent runtime and
+The adapter contracts and CLI have automated local tests. A manually
+dispatched CI job runs the real Gateway, worker and PostgreSQL against the
+real GitHub API for one sandbox repository: a test proxy drops or holds the
+create response, the worker is killed and restarted, and the new worker finds
+the existing PR instead of creating a second one. The lost response is
+injected by that proxy, not a natural network fault. No adoption or
+production-readiness claim is implied. The existing local agent runtime and
 read-only review tools are also available below.
 
 ---
@@ -369,11 +372,11 @@ Monitors: memory, circuit breakers, DLQ size, checkpoint staleness, pending comp
 
 ## Why Commander
 
-Existing agent frameworks treat you like a passenger. You write configuration, you wait, and you hope the output is correct. When it's wrong, you have no idea why.
+Once an agent's action reaches an external system, a timeout or crash can leave three questions open: did it happen, how many times, and with what payload. Retrying blindly can duplicate the write; giving up can lose it.
 
-Commander treats you like an **engineer**. You can inspect each decision and configured verification result. You ship faster because you're not guessing what your AI is doing.
+Commander records the approved request and its execution state outside the agent, looks up the outcome after an ambiguous response, and stops in an explicit unknown state when the evidence is not conclusive. Undoing an effect is a separate, separately approved action.
 
-The system uses familiar distributed-system patterns: circuit breakers, dead letter queues, SSE streaming, semantic caching, and provider fallback chains. Its workload is LLM calls rather than ordinary HTTP requests.
+Native controls such as GitHub permissions and Actions approvals are often enough. Commander is for teams that need one approval and recovery record across agents and workers.
 
 ---
 
@@ -397,7 +400,7 @@ The system uses familiar distributed-system patterns: circuit breakers, dead let
   [PRIVACY.md](PRIVACY.md) before entering sensitive data.
 - **Bugs:** open a [GitHub issue](https://github.com/PStarH/Commander/issues) and
   redact prompts, logs, configuration, PII, and secrets first.
-- **Questions and proposals:** use [GitHub Discussions](https://github.com/PStarH/Commander/discussions).
+- **Questions and proposals:** open a [GitHub issue](https://github.com/PStarH/Commander/issues).
 - **Security vulnerabilities:** follow [SECURITY.md](SECURITY.md); do not open a public issue.
 
 ---
@@ -409,5 +412,5 @@ MIT. See [LICENSE](LICENSE) and [COPYRIGHT.md](COPYRIGHT.md).
 ---
 
 <p align="center">
-  <sub>5 canonical topologies · 25 providers · 18 built-in tools · Built for engineers who want to see what their AI is actually doing.</sub>
+  <sub>Approval and recovery for agent actions that reach external systems.</sub>
 </p>
