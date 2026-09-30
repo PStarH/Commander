@@ -204,7 +204,7 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
     assert.equal(outcome.response?.prNumber, 1);
     assert.equal(createCount, 1, 'recovery must not issue a second create');
     assert.equal(
-      pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey)),
+      pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token')),
       true,
       'the committed body must carry the idempotency marker',
     );

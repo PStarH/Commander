@@ -197,6 +197,13 @@ const createWebhookSchema = z
         message: 'encodingAESKey is required for WeCom webhooks',
       });
     }
+    if (value.platform === 'wecom' && !value.receiveId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['receiveId'],
+        message: 'receiveId is required for WeCom webhooks',
+      });
+    }
   });
 
 // ── Router ────────────────────────────────────────────────────────────────
@@ -279,9 +286,21 @@ export function createWebhookRouter(): Router {
             ? body.type
             : '';
 
-      // Handle url_verification challenge — allowed without config because the
-      // platform needs to confirm the callback URL during setup.
-      if (eventType === 'url_verification' || body.challenge !== undefined) {
+      // URL verification echoes the challenge. Any other body that merely
+      // contains challenge still has to pass the token check below.
+      if (eventType === 'url_verification') {
+        if (config) {
+          const token =
+            typeof body.token === 'string'
+              ? body.token
+              : typeof header.token === 'string'
+                ? header.token
+                : '';
+          if (!token || !timingSafeEqualString(token, config.secret)) {
+            res.status(401).json({ error: 'Invalid verification token' });
+            return;
+          }
+        }
         const challenge = typeof body.challenge === 'string' ? body.challenge : '';
         res.json({ challenge });
         return;
@@ -385,6 +404,10 @@ export function createWebhookRouter(): Router {
           res.status(401).json({ error: 'Invalid msg_signature' });
           return;
         }
+        if (!config.receiveId) {
+          res.status(401).json({ error: 'WeCom receiveId is required' });
+          return;
+        }
         const decryptedEcho = config.encodingAESKey
           ? decryptWeComMessage(config.encodingAESKey, echostr, config.receiveId)
           : null;
@@ -409,6 +432,10 @@ export function createWebhookRouter(): Router {
       }
       if (!weComSignatureMatches(config.secret, timestamp, nonce, encrypt, msgSignature)) {
         res.status(401).json({ error: 'Invalid msg_signature' });
+        return;
+      }
+      if (!config.receiveId) {
+        res.status(401).json({ error: 'WeCom receiveId is required' });
         return;
       }
 
