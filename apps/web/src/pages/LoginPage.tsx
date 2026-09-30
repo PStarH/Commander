@@ -212,6 +212,11 @@ export function LoginPage() {
         setError('OIDC SSO is not configured');
         return;
       }
+      const redirect = new URL(config.redirectUri);
+      if (redirect.origin !== window.location.origin || redirect.pathname !== '/login') {
+        setError('OIDC redirect URI must be this site /login');
+        return;
+      }
       const authorizationEndpoint = await discoverOIDCAuthorizationEndpoint(config.issuer);
       const state = generateOIDCState();
       // Fail closed: without a stored non-empty state the callback could never

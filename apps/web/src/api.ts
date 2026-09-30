@@ -2063,25 +2063,41 @@ export interface OIDCDiscoveryDocument {
  * configuration document. Falls back to common issuer URL patterns when
  * discovery fails (e.g. due to missing CORS headers).
  */
+function requireOidcHttps(raw: string, label: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`${label} is not a URL`);
+  }
+  const local = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+  if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) {
+    throw new Error(`${label} must use https`);
+  }
+  return url;
+}
+
 export async function discoverOIDCAuthorizationEndpoint(issuer: string): Promise<string> {
-  const normalizedIssuer = issuer.replace(/\/$/, '');
+  const issuerUrl = requireOidcHttps(issuer, 'OIDC issuer');
+  const normalizedIssuer = issuerUrl.toString().replace(/\/$/, '');
   try {
     const response = await fetch(`${normalizedIssuer}/.well-known/openid-configuration`);
     if (response.ok) {
       const doc = (await response.json()) as OIDCDiscoveryDocument;
-      if (doc.authorization_endpoint) return doc.authorization_endpoint;
+      if (doc.authorization_endpoint) {
+        const endpoint = requireOidcHttps(doc.authorization_endpoint, 'OIDC authorization endpoint');
+        if (endpoint.origin !== issuerUrl.origin) {
+          throw new Error('OIDC authorization endpoint origin does not match the issuer');
+        }
+        return endpoint.toString();
+      }
     }
-  } catch {
-    /* discovery failed — fall through to heuristic URLs */
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith('OIDC ')) throw err;
+    /* discovery failed — fall through to the issuer's own authorize path */
   }
 
-  // Common provider patterns as a last resort.
-  const heuristics = [
-    `${normalizedIssuer}/oauth2/authorize`,
-    `${normalizedIssuer}/protocol/openid-connect/auth`,
-    `${normalizedIssuer}/authorize`,
-  ];
-  return heuristics[0];
+  return `${issuerUrl.origin}/oauth2/authorize`;
 }
 
 /**
@@ -2098,7 +2114,11 @@ export function buildOIDCAuthorizationUrl(
   state?: string,
   nonce?: string,
 ): string {
-  const url = new URL(authorizationEndpoint);
+  const url = requireOidcHttps(authorizationEndpoint, 'OIDC authorization endpoint');
+  const redirect = requireOidcHttps(redirectUri, 'OIDC redirect URI');
+  if (redirect.pathname !== '/login') {
+    throw new Error('OIDC redirect URI must use the /login path');
+  }
   url.searchParams.set('response_type', 'id_token');
   url.searchParams.set('response_mode', 'fragment');
   url.searchParams.set('client_id', clientId);
