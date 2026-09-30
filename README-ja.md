@@ -5,6 +5,8 @@
 <h1 align="center">Commander</h1>
 <p align="center"><strong>ローカルエージェントランタイムとアクション管理ゲートウェイ · Alpha</strong></p>
 
+> **注記：** この翻訳は最新版に追従していません。現在の位置づけ（Coding / DevOps エージェント向けの承認と復旧、GitHub パイロット）、証拠、制約は [英語版 README](README.md) を参照してください。
+
 > **Alpha 注意:** Commander は現在 alpha で、プロダクション対応ではありません。出力、ベンチマーク、POC
 > シナリオ、ダッシュボード値は開発またはデモ用の信号です。独自の確認なしに、無人の本番ワークロードや機密データに使用しないでください。
 
@@ -298,7 +300,7 @@ docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d
 
 - [PRIVACY.md](PRIVACY.md): provider への送信、trace/memory/audit の保存、保持と削除の境界。
 - 通常のバグは [GitHub Issues](https://github.com/PStarH/Commander/issues) に、prompt・ログ・設定・PII・秘密情報を必ずマスキングして報告してください。
-- 質問や提案は [GitHub Discussions](https://github.com/PStarH/Commander/discussions) を使用してください。
+- 質問や提案は [GitHub issue](https://github.com/PStarH/Commander/issues) で受け付けています。
 - セキュリティ脆弱性は [SECURITY.md](SECURITY.md) に従って非公開で報告し、公開 issue は作成しないでください。
 
 ## ライセンス
