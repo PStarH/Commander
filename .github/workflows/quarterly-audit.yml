@@ -35,10 +35,10 @@ jobs:
         run: pnpm install
 
       - name: Build
-        run: pnpm --filter @commander/core build
+        run: pnpm --filter @commander/core... build
 
       - name: Run quarterly audit
-        run: npx tsx packages/core/src/cli/commands/audit-quarterly.ts
+        run: pnpm exec tsx packages/core/src/cli/commands/audit-quarterly.ts
         env:
           COMMANDER_GAP_ENABLED: 'true'
 
