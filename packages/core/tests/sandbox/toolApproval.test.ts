@@ -92,20 +92,20 @@ describe('ToolApproval', () => {
   // ── Semi-auto approval tools ───────────────────────────────────────────────
 
   describe('semi-auto approval tools', () => {
-    it('auto-approves python_execute with timeout <= 10000', async () => {
+    it('auto-approves python_execute with timeout <= 10 seconds', async () => {
       const result = await approval.requestApproval('python_execute', {
         code: 'print(1)',
-        timeout: 5000,
+        timeout: 5,
       });
       assert.strictEqual(result.approved, true);
       assert.ok(result.reason.includes('conditions met'));
     });
 
-    it('does not auto-approve python_execute with timeout > 10000', async () => {
+    it('does not auto-approve python_execute with timeout > 10 seconds', async () => {
       approval = createApproval(false);
       const result = await approval.requestApproval('python_execute', {
         code: 'print(1)',
-        timeout: 30000,
+        timeout: 30,
       });
       assert.strictEqual(result.approved, false);
       assert.ok(lastRequest); // Callback was called

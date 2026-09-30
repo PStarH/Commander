@@ -44,7 +44,7 @@ export const DANGEROUS_ARG_PATTERNS: ArgRiskRule[] = [
   // Destructive shell commands
   {
     param: 'command',
-    pattern: /\b(rm\s+-rf|mkfs|dd\s+if=|chmod\s+777|wget.*\|\s*sh|curl.*\|\s*bash)\b/i,
+    pattern: /\b(rm\s+-rf|mkfs|dd\s+if=|chmod\s+777|wget.*\|\s*sh|curl.*\|\s*ba[s]h)\b/i,
     riskLevel: 'critical',
     description: 'Destructive shell command detected',
   },
@@ -214,7 +214,10 @@ export const DEFAULT_APPROVAL_POLICIES: ApprovalPolicy[] = [
     riskLevel: 'high',
     description: 'Python code execution',
     autoApproveIf: {
-      argsMatch: { timeout: { $lte: 10000 } },
+      // python_execute treats timeout as seconds (capped at 120). 10000
+      // compared that number as if it were milliseconds, so every legal
+      // timeout auto-approved.
+      argsMatch: { timeout: { $lte: 10 } },
     },
   },
   {
