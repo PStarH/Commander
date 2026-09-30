@@ -57,10 +57,16 @@ const githubFactory: ConformanceAdapterFactory = {
       body: string;
       head: { ref: string; sha: string; repo: { full_name: string } };
       base: { ref: string; repo: { full_name: string } };
+      merged?: boolean;
+      merged_at?: string | null;
+      user?: { login: string };
     }> = [];
     const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       const method = init?.method ?? 'GET';
+      if (method === 'GET' && url === 'https://api.github.com/user') {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
       if (method === 'GET' && url.includes('/pulls?')) {
         return new Response(JSON.stringify(pulls), { status: 200 });
       }
@@ -83,6 +89,7 @@ const githubFactory: ConformanceAdapterFactory = {
           base: { ref: body.base, repo: { full_name: 'octo/repo' } },
           merged: false,
           merged_at: null,
+          user: { login: 'octocat' },
         };
         pulls.push(created);
         return new Response(JSON.stringify(created), { status: 201 });
@@ -145,6 +152,7 @@ const githubFactory: ConformanceAdapterFactory = {
         body: `body\n\n${marker}`,
         head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
         base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+        user: { login: 'octocat' },
       },
       {
         number: 2,
@@ -154,12 +162,19 @@ const githubFactory: ConformanceAdapterFactory = {
         body: `body\n\n${marker}`,
         head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
         base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+        user: { login: 'octocat' },
       },
     ];
     return {
       adapter: createGitHubPullRequestCreateAdapter({
         credentials: githubCredentials(),
         fetch: async (input, init) => {
+          if (
+            (init?.method ?? 'GET') === 'GET' &&
+            String(input) === 'https://api.github.com/user'
+          ) {
+            return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+          }
           if ((init?.method ?? 'GET') === 'GET' && String(input).includes('/pulls?')) {
             return new Response(JSON.stringify(pulls), { status: 200 });
           }

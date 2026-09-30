@@ -33,6 +33,7 @@ interface MockPull {
   base: { ref: string; repo: { full_name: string } };
   merged: boolean;
   merged_at: string | null;
+  user?: { login: string };
 }
 
 function testCredentials(): AdapterCredentialProvider {
@@ -139,6 +140,9 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
     const backend = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       const method = init?.method ?? 'GET';
+      if (method === 'GET' && url === 'https://api.github.com/user') {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
       if (method === 'GET' && url.includes('/pulls?')) {
         return new Response(JSON.stringify(pulls), { status: 200 });
       }
@@ -160,6 +164,7 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
           base: { ref: body.base, repo: { full_name: 'octo/repo' } },
           merged: false,
           merged_at: null,
+          user: { login: 'octocat' },
         };
         pulls.push(created);
         return new Response(JSON.stringify(created), { status: 201 });

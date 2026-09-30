@@ -34,6 +34,8 @@ interface MockState {
     base: { ref: string; repo: { full_name: string } };
     merged: boolean;
     merged_at: string | null;
+    title?: string;
+    user?: { login: string };
   }>;
   createCount: number;
   writeCount: number;
@@ -41,10 +43,19 @@ interface MockState {
   injectCreateStatus?: number;
 }
 
+function githubActorResponse(): Response {
+  return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+}
+
+function isGitHubActorRequest(input: RequestInfo | URL, init?: RequestInit): boolean {
+  return (init?.method ?? 'GET') === 'GET' && String(input) === 'https://api.github.com/user';
+}
+
 function createMockFetch(state: MockState) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     const method = init?.method ?? 'GET';
+    if (isGitHubActorRequest(input, init)) return githubActorResponse();
     // Error injection must be evaluated before the success handlers, otherwise
     // the branch is unreachable (the previous `X-Mock-Status` check sat after the
     // catch-all POST handler, and the adapter never sends that header anyway).
@@ -73,6 +84,7 @@ function createMockFetch(state: MockState) {
         base: { ref: body.base, repo: { full_name: 'octo/repo' } },
         merged: false,
         merged_at: null,
+        user: { login: 'octocat' },
       };
       state.pulls.push(created);
       return new Response(JSON.stringify(created), { status: 201 });
@@ -227,6 +239,36 @@ describe('github.pullRequestCreate adapter', () => {
     assert.equal(receipt.prNumber, 2);
   });
 
+  it('does not claim a marker match opened by a different GitHub user', async () => {
+    const marker = githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token');
+    const state: MockState = {
+      pulls: [
+        {
+          number: 1,
+          html_url: 'https://github.com/octo/repo/pull/1',
+          state: 'open',
+          title: 'Test PR',
+          body: `body\n\n${marker}`,
+          head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
+          user: { login: 'intruder' },
+        },
+      ],
+      createCount: 0,
+      writeCount: 0,
+    };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+    const receipt = await adapter.execute(baseInput());
+    assert.equal(state.createCount, 1);
+    assert.equal(receipt.prNumber, 2);
+    assert.equal(state.pulls[1]?.user?.login, 'octocat');
+  });
+
   it('rejects same-key replay when the remote title is missing', async () => {
     const marker = githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token');
     const state: MockState = {
@@ -240,6 +282,7 @@ describe('github.pullRequestCreate adapter', () => {
           base: { ref: 'main', repo: { full_name: 'octo/repo' } },
           merged: false,
           merged_at: null,
+          user: { login: 'octocat' },
         },
       ],
       createCount: 0,
@@ -392,6 +435,7 @@ describe('github.pullRequestCreate adapter', () => {
           base: { ref: 'main', repo: { full_name: 'octo/repo' } },
           merged: false,
           merged_at: null,
+          user: { login: 'octocat' },
         },
         {
           number: 2,
@@ -402,6 +446,7 @@ describe('github.pullRequestCreate adapter', () => {
           base: { ref: 'main', repo: { full_name: 'octo/repo' } },
           merged: false,
           merged_at: null,
+          user: { login: 'octocat' },
         },
       ],
       createCount: 0,
@@ -444,6 +489,7 @@ describe('github.pullRequestCreate adapter', () => {
           html_url: 'https://github.com/octo/repo/pull/99',
           state: 'open',
           body: 'unrelated human PR',
+          user: { login: 'octocat' },
           head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
           base: { ref: 'main', repo: { full_name: 'octo/repo' } },
           merged: false,
@@ -488,6 +534,7 @@ describe('github.pullRequestCreate adapter', () => {
           html_url: 'https://github.com/octo/repo/pull/7',
           state: 'open',
           body: githubPrBodyMarker(tenantId, 'other-key', 'gh-test-token'),
+          user: { login: 'octocat' },
           head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
           base: { ref: 'main', repo: { full_name: 'octo/repo' } },
           merged: false,
@@ -530,10 +577,12 @@ describe('github.pullRequestCreate adapter', () => {
     ]) {
       const adapter = createGitHubPullRequestCreateAdapter({
         credentials: mockCredentials(),
-        fetch: async (input, init) =>
-          (init?.method ?? 'GET') === 'GET' && String(input).includes('/pulls?')
+        fetch: async (input, init) => {
+          if (isGitHubActorRequest(input, init)) return githubActorResponse();
+          return (init?.method ?? 'GET') === 'GET' && String(input).includes('/pulls?')
             ? new Response(JSON.stringify([]), { status: 200 })
-            : body,
+            : body;
+        },
       });
       await assert.rejects(
         () => adapter.execute(baseInput()),
@@ -562,6 +611,7 @@ describe('github.pullRequestCreate adapter — cancellation propagation', () => 
       const url = String(input);
       const method = init?.method ?? 'GET';
       seen.push(init?.signal ?? undefined);
+      if (isGitHubActorRequest(input, init)) return githubActorResponse();
       if (method === 'GET' && url.includes('/pulls?')) {
         const signal = init?.signal;
         // No signal => the request would hang forever; return promptly so a
@@ -660,6 +710,7 @@ describe('github.pullRequestCreate adapter — cancellation propagation', () => 
 describe('github compensation reconciliation via the registry', () => {
   it('reads the governed forwardResponse so compensation can converge', async () => {
     const fetchImpl = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      if (isGitHubActorRequest(input, init)) return githubActorResponse();
       if ((init?.method ?? 'GET') === 'GET' && /\/pulls\/42$/.test(String(input))) {
         return new Response(
           JSON.stringify({
@@ -671,6 +722,7 @@ describe('github compensation reconciliation via the registry', () => {
             base: { ref: 'main', repo: { full_name: 'octo/repo' } },
             merged: false,
             merged_at: null,
+            user: { login: 'octocat' },
           }),
           { status: 200 },
         );
@@ -714,6 +766,7 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
       base: { ref: 'main', repo: { full_name: 'octo/repo' } },
       merged: false,
       merged_at: null,
+      user: { login: 'octocat' },
       ...overrides,
     };
   }
@@ -828,7 +881,8 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     let writes = 0;
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
-      fetch: async (_url, init) => {
+      fetch: async (input, init) => {
+        if (isGitHubActorRequest(input, init)) return githubActorResponse();
         if (init?.method === 'PATCH') writes += 1;
         return new Response(
           JSON.stringify(
@@ -851,7 +905,8 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     let released = false;
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
-      fetch: async (_url, init) => {
+      fetch: async (input, init) => {
+        if (isGitHubActorRequest(input, init)) return githubActorResponse();
         if (init?.method === 'PATCH') {
           patched = true;
           return new Response(
@@ -876,7 +931,8 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     const methods: string[] = [];
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
-      fetch: async (_url, init) => {
+      fetch: async (input, init) => {
+        if (isGitHubActorRequest(input, init)) return githubActorResponse();
         methods.push(init?.method ?? 'GET');
         return new Response(
           JSON.stringify(
@@ -910,7 +966,8 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     const urls: URL[] = [];
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
-      fetch: async (input) => {
+      fetch: async (input, init) => {
+        if (isGitHubActorRequest(input, init)) return githubActorResponse();
         const url = new URL(String(input));
         urls.push(url);
         assert.equal(url.searchParams.get('head'), 'octo:approved-branch');
@@ -1079,7 +1136,8 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     let calls = 0;
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
-      fetch: async () => {
+      fetch: async (input, init) => {
+        if (isGitHubActorRequest(input, init)) return githubActorResponse();
         calls += 1;
         return new Response(JSON.stringify(calls === 1 ? [pull()] : []), {
           status: 200,
@@ -1122,6 +1180,7 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     let page = 0;
     return async (input, init) => {
       const url = String(input);
+      if (isGitHubActorRequest(input, init)) return githubActorResponse();
       onRequest?.(url, init);
       if ((init?.method ?? 'GET') === 'GET' && url.includes('/pulls?')) {
         const current = pages[Math.min(page++, pages.length - 1)]!;
@@ -1192,6 +1251,7 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
       fetch: async (input, init) => {
+        if (isGitHubActorRequest(input, init)) return githubActorResponse();
         if (init?.method === 'PATCH') {
           writes += 1;
           return new Response(JSON.stringify(pull({ state: 'closed' })), { status: 200 });
@@ -1226,13 +1286,15 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
   it('merged PR is never reported as compensated', async () => {
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
-      fetch: async () =>
-        new Response(
+      fetch: async (input, init) => {
+        if (isGitHubActorRequest(input, init)) return githubActorResponse();
+        return new Response(
           JSON.stringify(
             pull({ state: 'closed', merged: true, merged_at: '2026-09-23T00:00:00Z' }),
           ),
           { status: 200 },
-        ),
+        );
+      },
     });
     const outcome = await adapter.queryCompensationOutcome({
       tenantId,
