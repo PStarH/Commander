@@ -224,6 +224,7 @@ function verifyCompensationPull(
   pull: Record<string, unknown>,
   forward: GitHubCreateReceipt,
   tenantId: string,
+  token: string,
 ): GitHubCreateReceipt {
   const observed = receiptFor(pull, forward.destination, forward.idempotencyKey);
   if (
@@ -238,7 +239,7 @@ function verifyCompensationPull(
   }
   if (
     typeof pull.body !== 'string' ||
-    !pull.body.includes(githubPrBodyMarker(tenantId, forward.idempotencyKey))
+    !pull.body.includes(githubPrBodyMarker(tenantId, forward.idempotencyKey, token))
   ) {
     throw failure('GITHUB_COMPENSATE_MARKER_MISMATCH', 'Compensation refused: PR marker mismatch');
   }
@@ -390,9 +391,9 @@ export function createGitHubPullRequestCreateAdapter(
       const signal = operationSignal(input.signal);
       const args = parseArgs(input.args);
       const endpoint = pullsUrl(input.destination);
-      const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
-      const body = markedBody(args, marker);
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+      const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey, token);
+      const body = markedBody(args, marker);
       const existing = await listByMarker(input.destination, token, signal, marker, args);
       if (existing.length > 1)
         throw failure('GITHUB_MULTI_MARKER', 'Multiple PRs matched the marker', true);
@@ -402,6 +403,7 @@ export function createGitHubPullRequestCreateAdapter(
           throw failure(
             'GITHUB_IDEMPOTENCY_CONFLICT',
             'GitHub idempotency key was reused with a different pull-request request',
+            true,
           );
         }
         return receiptFor(pull, input.destination, input.idempotencyKey);
@@ -422,8 +424,8 @@ export function createGitHubPullRequestCreateAdapter(
       const signal = operationSignal(input.signal);
       try {
         const args = parseArgs(input.request.args);
-        const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
         const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+        const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey, token);
         const pulls = await listByMarker(input.destination, token, signal, marker, args);
         if (pulls.length !== 1) return unknownOutcome();
         const pull = pulls[0]!;
@@ -443,7 +445,7 @@ export function createGitHubPullRequestCreateAdapter(
       const forward = parseForwardReceipt(input.forwardResponse, input.destination);
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
       const existing = await getPull(input.destination, forward.prNumber, token, signal);
-      const observed = verifyCompensationPull(existing, forward, input.tenantId);
+      const observed = verifyCompensationPull(existing, forward, input.tenantId, token);
       if (observed.state === 'closed') return observed;
       const patched = await request(
         `${pullsUrl(input.destination)}/${forward.prNumber}`,
@@ -457,7 +459,7 @@ export function createGitHubPullRequestCreateAdapter(
       try {
         await patched.body?.cancel();
         const closed = await getPull(input.destination, forward.prNumber, token, signal);
-        const receipt = verifyCompensationPull(closed, forward, input.tenantId);
+        const receipt = verifyCompensationPull(closed, forward, input.tenantId, token);
         if (receipt.state !== 'closed')
           throw failure('GITHUB_COMPENSATE_NOT_CLOSED', 'PR is still open', true);
         return receipt;
@@ -476,7 +478,7 @@ export function createGitHubPullRequestCreateAdapter(
         const forward = parseForwardReceipt(input.request.forwardResponse, input.destination);
         const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
         const pull = await getPull(input.destination, forward.prNumber, token, signal);
-        const receipt = verifyCompensationPull(pull, forward, input.tenantId);
+        const receipt = verifyCompensationPull(pull, forward, input.tenantId, token);
         return receipt.state === 'closed'
           ? { status: 'APPLIED', response: receipt }
           : unknownOutcome();

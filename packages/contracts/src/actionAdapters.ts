@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 
 export type ActionGatewayEffect = 'allow' | 'deny' | 'require_approval';
 
@@ -130,12 +130,22 @@ export function evaluateManifestGatewayEffect(
   return manifest.defaultGatewayEffect;
 }
 
-export function commanderActionMarker(tenantId: string, idempotencyKey: string): string {
-  return createHash('sha256').update(`${tenantId}\0${idempotencyKey}`).digest('hex');
+export function commanderActionMarker(
+  tenantId: string,
+  idempotencyKey: string,
+  secret?: string,
+): string {
+  const payload = `${tenantId}\0${idempotencyKey}`;
+  if (secret === undefined) return createHash('sha256').update(payload).digest('hex');
+  return createHmac('sha256', secret).update(payload).digest('hex');
 }
 
-export function githubPrBodyMarker(tenantId: string, idempotencyKey: string): string {
-  return `<!-- commander-action:${commanderActionMarker(tenantId, idempotencyKey)} -->`;
+export function githubPrBodyMarker(
+  tenantId: string,
+  idempotencyKey: string,
+  secret?: string,
+): string {
+  return `<!-- commander-action:${commanderActionMarker(tenantId, idempotencyKey, secret)} -->`;
 }
 
 export function servicenowCorrelationId(tenantId: string, idempotencyKey: string): string {

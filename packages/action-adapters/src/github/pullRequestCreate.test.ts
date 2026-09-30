@@ -130,7 +130,10 @@ describe('github.pullRequestCreate adapter', () => {
     assert.equal(state.createCount, 1);
     assert.match(state.pulls[0]!.body, /<!-- commander-action:/);
     assert.equal(response.prNumber, 1);
-    assert.equal(state.pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey)), true);
+    assert.equal(
+      state.pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token')),
+      true,
+    );
   });
 
   it('double execute with same idempotency creates only one remote PR', async () => {
@@ -163,8 +166,8 @@ describe('github.pullRequestCreate adapter', () => {
       (error: unknown) => {
         assert.ok(error instanceof AdapterExecutionError);
         assert.equal(error.code, 'GITHUB_IDEMPOTENCY_CONFLICT');
-        assert.equal(error.commitState, 'NOT_COMMITTED');
-        assert.equal(error.retryMode, 'NEVER');
+        assert.equal(error.commitState, 'UNKNOWN');
+        assert.equal(error.retryMode, 'QUERY_FIRST');
         return true;
       },
     );
@@ -188,8 +191,8 @@ describe('github.pullRequestCreate adapter', () => {
         (error: unknown) => {
           assert.ok(error instanceof AdapterExecutionError);
           assert.equal(error.code, 'GITHUB_IDEMPOTENCY_CONFLICT');
-          assert.equal(error.commitState, 'NOT_COMMITTED');
-          assert.equal(error.retryMode, 'NEVER');
+          assert.equal(error.commitState, 'UNKNOWN');
+          assert.equal(error.retryMode, 'QUERY_FIRST');
           return true;
         },
       );
@@ -197,8 +200,35 @@ describe('github.pullRequestCreate adapter', () => {
     assert.equal(state.createCount, 1);
   });
 
+  it('creates the approved pull request when an existing PR only has the public marker', async () => {
+    const publicMarker = githubPrBodyMarker(tenantId, idempotencyKey);
+    const state: MockState = {
+      pulls: [
+        {
+          number: 1,
+          html_url: 'https://github.com/octo/repo/pull/1',
+          state: 'open',
+          body: `unapproved\n\n${publicMarker}`,
+          head: { ref: 'feature', sha: 'b'.repeat(40), repo: { full_name: 'octo/repo' } },
+          base: { ref: 'main', repo: { full_name: 'octo/repo' } },
+          merged: false,
+          merged_at: null,
+        },
+      ],
+      createCount: 0,
+      writeCount: 0,
+    };
+    const adapter = createGitHubPullRequestCreateAdapter({
+      credentials: mockCredentials(),
+      fetch: createMockFetch(state),
+    });
+    const receipt = await adapter.execute(baseInput());
+    assert.equal(state.createCount, 1);
+    assert.equal(receipt.prNumber, 2);
+  });
+
   it('rejects same-key replay when the remote title is missing', async () => {
-    const marker = githubPrBodyMarker(tenantId, idempotencyKey);
+    const marker = githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token');
     const state: MockState = {
       pulls: [
         {
@@ -225,8 +255,8 @@ describe('github.pullRequestCreate adapter', () => {
       (error: unknown) => {
         assert.ok(error instanceof AdapterExecutionError);
         assert.equal(error.code, 'GITHUB_IDEMPOTENCY_CONFLICT');
-        assert.equal(error.commitState, 'NOT_COMMITTED');
-        assert.equal(error.retryMode, 'NEVER');
+        assert.equal(error.commitState, 'UNKNOWN');
+        assert.equal(error.retryMode, 'QUERY_FIRST');
         return true;
       },
     );
@@ -350,7 +380,7 @@ describe('github.pullRequestCreate adapter', () => {
   });
 
   it('queryOutcome returns UNKNOWN with MULTI_MARKER_MATCH when multiple PRs share marker', async () => {
-    const marker = githubPrBodyMarker(tenantId, idempotencyKey);
+    const marker = githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token');
     const state: MockState = {
       pulls: [
         {
@@ -457,7 +487,7 @@ describe('github.pullRequestCreate adapter', () => {
           number: 7,
           html_url: 'https://github.com/octo/repo/pull/7',
           state: 'open',
-          body: githubPrBodyMarker(tenantId, 'other-key'),
+          body: githubPrBodyMarker(tenantId, 'other-key', 'gh-test-token'),
           head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
           base: { ref: 'main', repo: { full_name: 'octo/repo' } },
           merged: false,
@@ -636,7 +666,7 @@ describe('github compensation reconciliation via the registry', () => {
             number: 42,
             html_url: 'https://github.com/octo/repo/pull/42',
             state: 'closed',
-            body: githubPrBodyMarker(tenantId, idempotencyKey),
+            body: githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token'),
             head: { ref: 'feature', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
             base: { ref: 'main', repo: { full_name: 'octo/repo' } },
             merged: false,
@@ -679,7 +709,7 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
       html_url: 'https://github.com/octo/repo/pull/1',
       state: 'open',
       title: 'Approved title',
-      body: `Approved body\n\n${githubPrBodyMarker(tenantId, idempotencyKey)}`,
+      body: `Approved body\n\n${githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token')}`,
       head: { ref: 'approved-branch', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
       base: { ref: 'main', repo: { full_name: 'octo/repo' } },
       merged: false,
@@ -744,7 +774,7 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     { ...args, title: '' },
     { ...args, head: 'fork:branch' },
     { ...args, head: 'main' },
-    { ...args, body: githubPrBodyMarker(tenantId, 'injected') },
+    { ...args, body: githubPrBodyMarker(tenantId, 'injected', 'gh-test-token') },
   ]) {
     it(`refuses invalid create args before any I/O: ${JSON.stringify(invalidArgs)}`, async () => {
       let requests = 0;
@@ -964,7 +994,7 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
     { merged: undefined, merged_at: undefined },
     { head: { ref: 'other-branch', sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } } },
     { number: 2, html_url: 'https://github.com/octo/repo/pull/2' },
-    { body: githubPrBodyMarker(tenantId, 'other-key') },
+    { body: githubPrBodyMarker(tenantId, 'other-key', 'gh-test-token') },
   ]) {
     it(`compensation never closes or confirms an unproven receipt: ${JSON.stringify(changes)}`, async () => {
       let writes = 0;
@@ -993,7 +1023,9 @@ describe('github.pullRequestCreate adapter — launch contract boundaries', () =
   it('accepts an empty approved body with only the server-generated marker', async () => {
     const adapter = createGitHubPullRequestCreateAdapter({
       credentials: mockCredentials(),
-      fetch: listFetch([{ pulls: [pull({ body: githubPrBodyMarker(tenantId, idempotencyKey) })] }]),
+      fetch: listFetch([
+        { pulls: [pull({ body: githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token') })] },
+      ]),
     });
     const outcome = await adapter.queryOutcome({
       ...queryInput(),

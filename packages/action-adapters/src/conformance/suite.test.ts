@@ -133,6 +133,7 @@ const githubFactory: ConformanceAdapterFactory = {
         destination: 'github://octo/repo/pulls',
         args: { title: 'Conformance PR', body: 'body', head: 'feature', base: 'main' },
       }),
+      'gh-test-token',
     );
     const counters = { createCount: 0, writeCount: 0, compensateCount: 0 };
     const pulls = [

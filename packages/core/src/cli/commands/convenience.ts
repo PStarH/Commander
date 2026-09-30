@@ -12,6 +12,7 @@
  * 8. commander learn — Learn from codebase patterns
  */
 
+import * as path from 'node:path';
 import { reportSilentFailure } from '../../silentFailureReporter';
 import { $, warn } from '../util';
 import { createRequire } from 'node:module';
@@ -127,12 +128,13 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Fix${$.reset} — Auto-Fix Errors\n`);
 
   try {
-    const { execSync } = await import('child_process');
+    const { execFileSync } = await import('child_process');
+    const bin = (name: string) => path.join(process.cwd(), 'node_modules', '.bin', name);
 
     // Run ESLint fix
     console.log(`  ${$.bold}Running ESLint fix...${$.reset}`);
     try {
-      execSync('npx eslint --fix packages/core/src/ apps/api/src/ 2>&1', {
+      execFileSync(bin('eslint'), ['--fix', 'packages/core/src/', 'apps/api/src/'], {
         encoding: 'utf-8',
         stdio: 'pipe',
       });
@@ -145,10 +147,14 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
     // Run Prettier fix
     console.log(`  ${$.bold}Running Prettier fix...${$.reset}`);
     try {
-      execSync('npx prettier --write "packages/core/src/**/*.ts" "apps/api/src/**/*.ts"', {
-        encoding: 'utf-8',
-        stdio: 'pipe',
-      });
+      execFileSync(
+        bin('prettier'),
+        ['--write', 'packages/core/src/**/*.ts', 'apps/api/src/**/*.ts'],
+        {
+          encoding: 'utf-8',
+          stdio: 'pipe',
+        },
+      );
       console.log(`  ${$.green}✓${$.reset} Prettier formatting applied`);
     } catch (err) {
       reportSilentFailure(err, 'convenience:150');
@@ -158,7 +164,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
     // Check TypeScript
     console.log(`  ${$.bold}Checking TypeScript...${$.reset}`);
     try {
-      execSync('npx tsc --noEmit -p packages/core/tsconfig.json 2>&1', {
+      execFileSync(bin('tsc'), ['--noEmit', '-p', 'packages/core/tsconfig.json'], {
         encoding: 'utf-8',
         stdio: 'pipe',
       });
@@ -174,7 +180,7 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
     if (flags['--test']) {
       console.log(`  ${$.bold}Running tests...${$.reset}`);
       try {
-        execSync('pnpm test 2>&1', { encoding: 'utf-8', stdio: 'pipe' });
+        execFileSync('pnpm', ['test'], { encoding: 'utf-8', stdio: 'pipe' });
         console.log(`  ${$.green}✓${$.reset} Tests passed`);
       } catch (err) {
         reportSilentFailure(err, 'convenience:176');
