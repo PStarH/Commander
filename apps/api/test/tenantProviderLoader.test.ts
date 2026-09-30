@@ -115,10 +115,7 @@ test('throws on invalid tenant id', () => {
     tenants: [{ tenantId: 'invalid tenant!', tokenBudget: 1000 }],
   });
 
-  assert.throws(
-    () => loadTenantProvider(configPath),
-    /Invalid tenant id/,
-  );
+  assert.throws(() => loadTenantProvider(configPath), /Invalid tenant id/);
 });
 
 test('throws when optional numeric fields are not positive', () => {
@@ -127,10 +124,7 @@ test('throws when optional numeric fields are not positive', () => {
     tenants: [{ tenantId: 'bad-numbers', tokenBudget: 0, maxConcurrency: -1 }],
   });
 
-  assert.throws(
-    () => loadTenantProvider(configPath),
-    /must be a positive number when provided/,
-  );
+  assert.throws(() => loadTenantProvider(configPath), /must be a positive number when provided/);
 });
 
 test('respects TENANT_CONFIG_PATH environment variable', () => {

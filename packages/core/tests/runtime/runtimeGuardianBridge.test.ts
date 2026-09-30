@@ -79,7 +79,7 @@ describe('runtimeGuardianBridge', () => {
       expect(mockProvider.call).not.toHaveBeenCalled();
     });
 
-    it('should auto-approve when guardian is not available', async () => {
+    it('should auto-approve when the guardian is explicitly disabled', async () => {
       initializeRuntimeGuardian(() => null, { enabled: false });
 
       const decision = await reviewToolCall(dangerousToolCall, 'test');
@@ -88,13 +88,22 @@ describe('runtimeGuardianBridge', () => {
       expect(decision.reviewed).toBe(false);
     });
 
-    it('should auto-approve when provider is not available', async () => {
+    it('should deny when the enabled review has no provider (fail-closed)', async () => {
       initializeRuntimeGuardian(() => null, { enabled: true });
 
       const decision = await reviewToolCall(dangerousToolCall, 'test');
 
-      expect(decision.approved).toBe(true);
+      expect(decision.approved).toBe(false);
       expect(decision.reviewed).toBe(false);
+      expect(decision.reason).toContain('unavailable');
+    });
+
+    it('should deny when enabled but never initialized (fail-closed)', async () => {
+      // beforeEach() resets to the default config (enabled) with no factory.
+      const decision = await reviewToolCall(dangerousToolCall, 'test');
+
+      expect(decision.approved).toBe(false);
+      expect(decision.reason).toContain('unavailable');
     });
 
     it('should return LLM decision when provider approves', async () => {
@@ -118,17 +127,18 @@ describe('runtimeGuardianBridge', () => {
       expect(decision.reviewed).toBe(true);
     });
 
-    it('should fail-open on provider errors', async () => {
+    it('should fail closed on provider errors', async () => {
       const mockProvider = createFailingProvider();
       initializeRuntimeGuardian(() => mockProvider, { enabled: true });
 
       const decision = await reviewToolCall(dangerousToolCall, 'test task');
 
-      expect(decision.approved).toBe(true);
+      expect(decision.approved).toBe(false);
       expect(decision.reviewed).toBe(false);
+      expect(decision.reason).toContain('unavailable');
     });
 
-    it('should fail-open on timeout', async () => {
+    it('should fail closed on timeout', async () => {
       const mockProvider = createMockProvider(true, 10000); // 10s delay
       initializeRuntimeGuardian(() => mockProvider, {
         enabled: true,
@@ -137,25 +147,50 @@ describe('runtimeGuardianBridge', () => {
 
       const decision = await reviewToolCall(dangerousToolCall, 'test task');
 
-      expect(decision.approved).toBe(true);
+      expect(decision.approved).toBe(false);
       expect(decision.reviewed).toBe(false);
+      expect(decision.reason).toContain('unavailable');
     });
 
-    it('should cache decisions for repeated calls', async () => {
-      const mockProvider = createMockProvider(true);
+    it('should fail closed on an empty provider response', async () => {
+      const mockProvider = { call: vi.fn().mockResolvedValue({ content: '' }) };
       initializeRuntimeGuardian(() => mockProvider, { enabled: true });
 
-      // First call — should hit LLM
-      const decision1 = await reviewToolCall(dangerousToolCall, 'test task');
-      expect(mockProvider.call).toHaveBeenCalledTimes(1);
+      const decision = await reviewToolCall(dangerousToolCall, 'test task');
 
-      // Second call with same tool — should hit cache
-      const decision2 = await reviewToolCall(dangerousToolCall, 'test task');
-      expect(mockProvider.call).toHaveBeenCalledTimes(1); // Still 1, from cache
+      expect(decision.approved).toBe(false);
+      expect(decision.reviewed).toBe(false);
+      expect(decision.reason).toContain('unavailable');
+    });
 
-      expect(decision1.approved).toBe(true);
-      expect(decision2.approved).toBe(true);
-      expect(decision2.reason).toContain('cached');
+    it('should fail closed on an unparseable provider response', async () => {
+      const mockProvider = { call: vi.fn().mockResolvedValue({ content: 'Looks fine to me.' }) };
+      initializeRuntimeGuardian(() => mockProvider, { enabled: true });
+
+      const decision = await reviewToolCall(dangerousToolCall, 'test task');
+
+      expect(decision.approved).toBe(false);
+      expect(decision.reviewed).toBe(false);
+      expect(decision.reason).toContain('unavailable');
+    });
+
+    it('should not reuse an approval across a re-initialized runtime (no global cache)', async () => {
+      // Runtime A's provider approves a tool call...
+      const providerA = createMockProvider(true);
+      initializeRuntimeGuardian(() => providerA, { enabled: true });
+      const first = await reviewToolCall(dangerousToolCall, 'goal A');
+      expect(first.approved).toBe(true);
+
+      // ...runtime B, same tool + arguments but a different goal, provider and
+      // policy, must be reviewed on its own merits instead of reusing A's
+      // approval from a process-global cache.
+      const providerB = createMockProvider(false);
+      initializeRuntimeGuardian(() => providerB, { enabled: true });
+      const second = await reviewToolCall(dangerousToolCall, 'goal B');
+
+      expect(providerB.call).toHaveBeenCalledTimes(1);
+      expect(second.approved).toBe(false);
+      expect(second.reviewed).toBe(true);
     });
   });
 });

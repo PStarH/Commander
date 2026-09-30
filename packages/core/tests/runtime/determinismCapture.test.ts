@@ -10,7 +10,7 @@
  * 6. eventSourcingHealth includes p95 write latency
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 
 // This suite mutates shared global singletons and tmp WAL files; force
 // sequential execution within the file even when running multi-threaded.
@@ -50,6 +50,7 @@ beforeEach(async () => {
 afterEach(async () => {
   await resetGlobalEventSourcingEngine();
   resetGlobalDeterminismCapture();
+  vi.restoreAllMocks();
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
@@ -115,7 +116,8 @@ describe('DeterminismCapture.restoreFromWAL', () => {
     capture.captureLLMResponse('run-crash', 3, { content: 'llm-2' });
     expect(capture.hasCaptures('run-crash')).toBe(true);
 
-    await engine.flush();
+    // Simulate a crash only after the pre-crash records are persisted.
+    await getGlobalEventSourcingEngine().flush();
 
     // Phase 2: simulate crash — clear in-memory state
     capture.clearRun('run-crash');
@@ -217,7 +219,7 @@ describe('RunRecovery Path A (event replay)', () => {
 
   beforeEach(() => {
     checkpointer = new StateCheckpointer(tmpDir);
-    leaseManager = new LeaseManager({ ttlMs: 60000, maxPerRun: 4 });
+    leaseManager = new LeaseManager({ defaultTtlSeconds: 60 });
     recovery = new RunRecovery(checkpointer, leaseManager);
   });
 
@@ -230,7 +232,8 @@ describe('RunRecovery Path A (event replay)', () => {
     capture.captureLLMResponse('run-replay-1', 1, { content: 'resp' });
     capture.captureToolResponse('run-replay-1', 2, { output: 'result' });
 
-    await engine.flush();
+    // Wait for WAL persistence
+    await getGlobalEventSourcingEngine().flush();
 
     // Simulate crash: in-memory captures lost
     capture.clearRun('run-replay-1');
@@ -428,19 +431,27 @@ describe('Path A end-to-end replay correctness (chaos injection)', () => {
 
   it('recovered_via_replay result carries a usable replayContext', async () => {
     const checkpointer = new StateCheckpointer(tmpDir);
-    const leaseManager = new LeaseManager({ ttlMs: 60000, maxPerRun: 4 });
+    const leaseManager = new LeaseManager({ defaultTtlSeconds: 60 });
     const recovery = new RunRecovery(checkpointer, leaseManager);
 
     const capture = getGlobalDeterminismCapture();
     const engine = getGlobalEventSourcingEngine();
     await engine.init();
 
+    // Exercise slow serialized WAL I/O without changing the recovery assertions.
+    const appendFile = fs.promises.appendFile.bind(fs.promises);
+    let appendCount = 0;
+    vi.spyOn(fs.promises, 'appendFile').mockImplementation(async (...args) => {
+      if (++appendCount === 3) await new Promise((resolve) => setTimeout(resolve, 75));
+      return appendFile(...args);
+    });
+
     // Pre-crash: capture two LLM responses + one tool response
     capture.captureLLMResponse('run-chaos-5', 1, { content: 'step1' });
     capture.captureToolResponse('run-chaos-5', 2, { output: 'step2-tool' });
     capture.captureLLMResponse('run-chaos-5', 3, { content: 'step3' });
 
-    await engine.flush();
+    await getGlobalEventSourcingEngine().flush();
 
     // Crash — wipe in-memory state
     capture.clearRun('run-chaos-5');
@@ -488,7 +499,8 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureToolResponse('run-xproc-1', 2, { output: 'proc-A-tool-1' });
     captureA.captureLLMResponse('run-xproc-1', 3, { content: 'proc-A-llm-2' });
 
-    await engineA.flush();
+    // Wait for async WAL writes to flush to disk
+    await getGlobalEventSourcingEngine().flush();
 
     // Verify WAL file actually has content on disk
     const walStats = fs.statSync(crossProcessWalPath);
@@ -544,7 +556,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureLLMResponse('run-xproc-2', 1, { content: 'pre-crash-llm' });
     captureA.captureToolResponse('run-xproc-2', 2, { output: 'pre-crash-tool' });
 
-    await engineA.flush();
+    await getGlobalEventSourcingEngine().flush();
 
     // ── Process B: fresh process, same WAL ────────────────────────────
     await resetGlobalEventSourcingEngine();
@@ -555,7 +567,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
 
     // Process B's RunRecovery must activate Path A end-to-end
     const checkpointer = new StateCheckpointer(tmpDir);
-    const leaseManager = new LeaseManager({ ttlMs: 60000, maxPerRun: 4 });
+    const leaseManager = new LeaseManager({ defaultTtlSeconds: 60 });
     const recovery = new RunRecovery(checkpointer, leaseManager);
 
     const result = await recovery.attempt('run-xproc-2');
@@ -586,7 +598,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureToolResponse('run-multi-A', 2, { output: 'A-tool' });
     captureA.captureLLMResponse('run-multi-B', 2, { content: 'B-2' });
 
-    await engineA.flush();
+    await getGlobalEventSourcingEngine().flush();
 
     // ── Process B ─────────────────────────────────────────────────────
     await resetGlobalEventSourcingEngine();
@@ -631,7 +643,7 @@ describe('Cross-process WAL recovery (e2e)', () => {
     captureA.captureToolResponse('run-integ', 2, { output: 'b' });
     captureA.captureLLMResponse('run-integ', 3, { content: 'c' });
 
-    await engineA.flush();
+    await getGlobalEventSourcingEngine().flush();
 
     // Verify integrity on Process A
     expect(await engineA.verifyIntegrity()).toBe(true);

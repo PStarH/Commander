@@ -56,6 +56,23 @@ type MemoryEntryType = MemoryEntry['type'];
 const DOMAIN_TAG_PREFIX = 'memory-index-domain:';
 const TYPE_TAG_PREFIX = 'memory-index-type:';
 
+/**
+ * The six entry types the index recognises. Anything else (including a
+ * hand-crafted `memory-index-type:` tag supplied by a client) is not a type.
+ */
+const ENTRY_TYPES = [
+  'decision',
+  'context',
+  'pattern',
+  'preference',
+  'issue',
+  'lesson',
+] as const satisfies readonly MemoryEntryType[];
+
+export function isEntryType(value: unknown): value is MemoryEntryType {
+  return typeof value === 'string' && (ENTRY_TYPES as readonly string[]).includes(value);
+}
+
 function domainTag(domain: string): string {
   return `${DOMAIN_TAG_PREFIX}${domain}`;
 }
@@ -83,9 +100,21 @@ function typeToKind(type: MemoryEntryType): ProjectMemoryKind {
   }
 }
 
+/**
+ * Recover the entry type.
+ *
+ * The `memory-index-type:` tag is authoritative *only* when it carries one of
+ * the six declared types. A malformed tag (older writers, hand-edited store, or
+ * a forged client tag) must not invent a new type, and must not be silently
+ * rewritten as `context` either — we fall back to the stored `kind`, which is
+ * the pre-existing behaviour for untagged legacy entries.
+ */
 function kindToType(item: ProjectMemoryItem): MemoryEntryType {
   const taggedType = item.tags.find((tag) => tag.startsWith(TYPE_TAG_PREFIX));
-  if (taggedType) return taggedType.slice(TYPE_TAG_PREFIX.length) as MemoryEntryType;
+  if (taggedType) {
+    const candidate = taggedType.slice(TYPE_TAG_PREFIX.length);
+    if (isEntryType(candidate)) return candidate;
+  }
   switch (item.kind) {
     case 'DECISION':
       return 'decision';
@@ -96,6 +125,13 @@ function kindToType(item: ProjectMemoryItem): MemoryEntryType {
     case 'SUMMARY':
       return 'context';
   }
+}
+
+/** True when an item carries a `memory-index-type:` tag that is not a legal type. */
+function hasMalformedTypeTag(item: ProjectMemoryItem): boolean {
+  const taggedType = item.tags.find((tag) => tag.startsWith(TYPE_TAG_PREFIX));
+  if (!taggedType) return false;
+  return !isEntryType(taggedType.slice(TYPE_TAG_PREFIX.length));
 }
 
 function toMemoryEntry(item: ProjectMemoryItem): MemoryEntry {
@@ -174,7 +210,9 @@ export class MemoryIndexManager {
 
   async readDomain(domain: string): Promise<DomainMemory | null> {
     if (!this.getPointer(domain)) return null;
-    const items = await this.projectMemoryAdapter.search(this.projectId, {
+    // Index-internal read path: the `memory-index-type:` tag must survive the
+    // round trip or `pattern`/`preference` degrade to `context`.
+    const items = await this.projectMemoryAdapter.searchIndexEntries(this.projectId, {
       tags: [domainTag(domain)],
       limit: 500,
     });
@@ -187,6 +225,9 @@ export class MemoryIndexManager {
   ): Promise<MemoryEntry | null> {
     const pointer = this.getPointer(domain);
     if (!pointer) return null;
+    if (!isEntryType(entry.type)) {
+      throw new Error(`Unknown memory entry type: ${String(entry.type)}`);
+    }
 
     const current = await this.readDomain(domain);
     const existing = current?.entries.find(
@@ -194,25 +235,33 @@ export class MemoryIndexManager {
         candidate.type === entry.type &&
         candidate.title.toLowerCase().trim() === entry.title.toLowerCase().trim(),
     );
-    const tags = [...new Set([...(entry.tags ?? []), domainTag(domain), typeTag(entry.type)])];
+    // Client tags must never be able to forge the index's own classification
+    // keys: strip every reserved prefix, then append the server-owned domain and
+    // validated type tags.
+    const userTags = (entry.tags ?? []).filter((tag) => !isInternalTag(tag));
+    const tags = [...new Set([...userTags, domainTag(domain), typeTag(entry.type)])];
     const priority = Math.round((entry.importance ?? 0.5) * 100);
 
     if (existing) {
-      const updated = await this.projectMemoryAdapter.update(this.projectId, existing.id, {
-        title: entry.title,
-        content: entry.content,
-        tags,
-        priority,
-        confidence: 0.8,
-        expiresAt: undefined,
-      });
+      const updated = await this.projectMemoryAdapter.updateIndexEntry(
+        this.projectId,
+        existing.id,
+        {
+          title: entry.title,
+          content: entry.content,
+          tags,
+          priority,
+          confidence: 0.8,
+          expiresAt: undefined,
+        },
+      );
       if (updated) {
         pointer.lastUpdated = new Date().toISOString();
         return toMemoryEntry(updated);
       }
     }
 
-    const item = await this.projectMemoryAdapter.append({
+    const item = await this.projectMemoryAdapter.appendIndexEntry({
       projectId: this.projectId,
       kind: typeToKind(entry.type),
       title: entry.title,
@@ -242,7 +291,7 @@ export class MemoryIndexManager {
     const results: Array<{ domain: string; entry: MemoryEntry; score: number }> = [];
     for (const domain of domains) {
       if (!this.getPointer(domain)) continue;
-      const items = await this.projectMemoryAdapter.search(this.projectId, {
+      const items = await this.projectMemoryAdapter.searchIndexEntries(this.projectId, {
         query,
         tags: [domainTag(domain), ...(options?.tags ?? [])],
         limit: options?.limit ?? 20,
@@ -256,20 +305,45 @@ export class MemoryIndexManager {
     return results.sort((left, right) => right.score - left.score).slice(0, options?.limit ?? 20);
   }
 
-  async reconcile(): Promise<{ removed: number; merged: number }> {
-    let removed = 0;
+  /**
+   * Conservative reconciliation.
+   *
+   * The previous implementation deleted every later entry sharing a
+   * `type:title` key and returned `merged: removed` — reporting a merge that
+   * never happened, and destroying the later entry's content. Two entries that
+   * share a title are not necessarily the same memory (different content,
+   * different evidence), and this method has no authority to pick a winner.
+   *
+   * It is therefore non-destructive: nothing is deleted, nothing is merged.
+   * Duplicate groups and entries carrying an unparsable internal type tag are
+   * counted so they can be surfaced and resolved by a human/approved migration
+   * instead of being silently dropped.
+   */
+  async reconcile(): Promise<{
+    removed: number;
+    merged: number;
+    conflicts: number;
+    malformedTypeTags: number;
+  }> {
+    let conflicts = 0;
+    let malformedTypeTags = 0;
     for (const pointer of this.index.pointers) {
-      const domain = await this.readDomain(pointer.domain);
-      if (!domain) continue;
+      if (!this.getPointer(pointer.domain)) continue;
+      const items = await this.projectMemoryAdapter.searchIndexEntries(this.projectId, {
+        tags: [domainTag(pointer.domain)],
+        limit: 500,
+      });
       const seen = new Set<string>();
-      for (const entry of domain.entries) {
+      for (const item of items) {
+        if (hasMalformedTypeTag(item)) malformedTypeTags++;
+        const entry = toMemoryEntry(item);
         const key = `${entry.type}:${entry.title.toLowerCase().trim()}`;
-        if (seen.has(key) && (await this.deleteEntry(pointer.domain, entry.id))) removed++;
+        if (seen.has(key)) conflicts++;
         else seen.add(key);
       }
     }
     this.index.lastReconciled = new Date().toISOString();
-    return { removed, merged: removed };
+    return { removed: 0, merged: 0, conflicts, malformedTypeTags };
   }
 }
 

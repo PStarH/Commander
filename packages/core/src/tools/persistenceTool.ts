@@ -13,7 +13,10 @@ import {
   TenantIsolationError,
 } from '../runtime/tenantContext';
 
-const MEMORY_DIR = path.join(process.cwd(), '.commander_memory');
+const configuredMemoryDir = process.env.COMMANDER_MEMORY_DIR?.trim();
+const MEMORY_DIR = configuredMemoryDir
+  ? path.resolve(configuredMemoryDir)
+  : path.join(process.cwd(), '.commander_memory');
 const NO_FOLLOW = fs.constants.O_NOFOLLOW ?? 0;
 
 function unsafeMemoryPath(target: string): TenantIsolationError {

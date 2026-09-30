@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { MemoryManagerAgent } from '../../src/memory/memoryManagerAgent';
+import { MemoryManagerAgent, type MemoryItem } from '../../src/memory/memoryManagerAgent';
 import type { ISemanticStore, ISemanticEntity } from '../../src/contracts/pillarIV';
 
 function createFakeSemanticStore(): ISemanticStore {
@@ -46,7 +46,8 @@ describe('MemoryManagerAgent', () => {
     it('stores a memory item', async () => {
       const result = await agent.observe({ content: 'User prefers dark mode' });
       expect(result.action).toBe('store');
-      expect(result.result.id).toBeTruthy();
+      // `observe` returns `result: unknown`; narrow per the action under test.
+      expect((result.result as MemoryItem).id).toBeTruthy();
       const retrieved = await agent.retrieve({ content: 'dark mode' });
       expect(retrieved.length).toBeGreaterThan(0);
     });
@@ -69,7 +70,7 @@ describe('MemoryManagerAgent', () => {
 
     it('updates an existing item', async () => {
       const { result } = await agent.observe({ content: 'User prefers light mode' });
-      const updated = await agent.update(result.id, {
+      const updated = await agent.update((result as MemoryItem).id, {
         content: 'User prefers dark mode',
         importance: 0.9,
       });
@@ -81,9 +82,12 @@ describe('MemoryManagerAgent', () => {
     it('summarizes selected items into one memory', async () => {
       const a = await agent.observe({ content: 'Explored option A' });
       const b = await agent.observe({ content: 'Explored option B' });
-      const summary = await agent.summarize([a.result.id, b.result.id], {
-        title: 'Exploration summary',
-      });
+      const summary = await agent.summarize(
+        [(a.result as MemoryItem).id, (b.result as MemoryItem).id],
+        {
+          title: 'Exploration summary',
+        },
+      );
       expect(summary.content).toContain('Explored option A');
       expect(summary.content).toContain('Explored option B');
       expect(agent.retrieve({ content: 'Exploration summary' }).length).toBeGreaterThan(0);
@@ -91,7 +95,7 @@ describe('MemoryManagerAgent', () => {
 
     it('discards an item', async () => {
       const { result } = await agent.observe({ content: 'Temporary note' });
-      const ok = await agent.discard(result.id);
+      const ok = await agent.discard((result as MemoryItem).id);
       expect(ok).toBe(true);
       expect(agent.retrieve({ content: 'Temporary note' })).toHaveLength(0);
     });
@@ -102,7 +106,7 @@ describe('MemoryManagerAgent', () => {
       await agent.observe({ content: 'Remember the milk', tags: ['todo'] });
       const result = await agent.observe({ content: 'query: milk' });
       expect(result.action).toBe('retrieve');
-      expect(result.result.length).toBeGreaterThan(0);
+      expect((result.result as MemoryItem[]).length).toBeGreaterThan(0);
     });
 
     it('rule mode stores temporal relation input', async () => {

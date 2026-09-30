@@ -163,6 +163,13 @@ export class MemoryCurator {
         // Silent best-effort periodic cleanup. Errors should be logged by caller.
       }
     }, this.config.intervalMs);
+    // A periodic maintenance tick must not, by itself, keep the process alive.
+    // AgentRuntime starts the curator during construction, so without this any
+    // process that builds a runtime can never exit: a CLI hangs after its work
+    // is done, and `node --test` blocks forever because the runner has no
+    // `--test-force-exit`. The timer still fires while the process is alive for
+    // other reasons. Same treatment as OpenTelemetryExporter.start().
+    this.timer.unref();
   }
 
   stop(): void {

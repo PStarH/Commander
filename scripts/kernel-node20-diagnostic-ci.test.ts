@@ -45,11 +45,11 @@ describe('kernel Node 20 hang diagnostics workflow', () => {
 
     const steps = job.steps ?? [];
     assert.equal(
-      steps.find((step) => step.uses === 'actions/checkout@v6')?.uses,
-      'actions/checkout@v6',
+      steps.find((step) => step.uses?.startsWith('actions/checkout@'))?.uses,
+      'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803',
     );
     assert.equal(
-      steps.find((step) => step.uses === 'actions/setup-node@v7')?.with?.['node-version'],
+      steps.find((step) => step.uses?.startsWith('actions/setup-node@'))?.with?.['node-version'],
       20,
     );
     assert.match(
@@ -77,7 +77,10 @@ describe('kernel Node 20 hang diagnostics workflow', () => {
     }, 'diagnostic shell must remain syntactically valid');
 
     const artifact = steps.find((step) => step.name === 'Upload sanitized kernel diagnostics');
-    assert.equal(artifact?.uses, 'actions/upload-artifact@v4');
+    assert.equal(
+      artifact?.uses,
+      'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+    );
     assert.equal(artifact?.if, 'always()');
     assert.equal(artifact?.with?.name, 'kernel-node20-diagnostics');
     assert.match(String(artifact?.with?.path), /kernel-test-events\.ndjson/);

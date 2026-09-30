@@ -24,7 +24,8 @@ deploy/
 │       └── create-tenant.test.sh
 ├── docker/
 │   ├── silo.docker-compose.yml    # Silo 独立容器模板
-│   └── bridge.docker-compose.yml  # Bridge 共享容器模板
+│   ├── bridge.docker-compose.yml  # Bridge 共享容器模板
+│   └── kernel-tls/                # v2/cell 内核数据库 TLS 材料：生成脚本 + Postgres 入口包装
 ├── k8s/
 │   └── tenant-namespace.yaml      # Namespace + ConfigMap + Secret + PVC 模板
 └── README.md
@@ -101,9 +102,14 @@ Pool 租户仅移除配置；Silo / Bridge 会额外删除对应数据目录。
 
 ## 5. Docker 部署
 
+> **本节模板为不受支持的遗留拓扑示意，不是可用的部署路径。**
+> `deploy/docker/*.docker-compose.yml` 未提供六个必需的 API 启动凭据、kernel/Postgres DSN 与数据库 TLS 材料，容器会在启动校验阶段退出；`envsubst` 渲染到 `/tmp` 还会产生相对路径问题。
+> 受支持的部署方式请使用 [`docs/deploy.md`](../docs/deploy.md) 中的 Compose profile 与 Helm 分阶段生命周期；本节仅用于说明 Bridge/Silo 的拓扑差异。
+
 ### 5.1 Silo（每租户独立容器）
 
 ```bash
+# 遗留示意（不可直接启动生产服务）
 export TENANT_ID=demo-silo
 export COMMANDER_API_KEY=$(openssl rand -hex 32)
 export API_PORT=4000
@@ -123,6 +129,7 @@ docker compose -f /tmp/silo-${TENANT_ID}.yml up -d
 ### 5.2 Bridge（多租户共享容器）
 
 ```bash
+# 遗留示意（不可直接启动生产服务）
 export BRIDGE_GROUP=team-alpha
 export TENANT_IDS="tenant-a,tenant-b"
 export COMMANDER_API_KEY=$(openssl rand -hex 32)
@@ -141,6 +148,9 @@ docker compose -f /tmp/bridge-${BRIDGE_GROUP}.yml up -d
 共享卷 `bridge-data-${BRIDGE_GROUP}` 挂载到 `/data/bridge`，各租户按 `data/bridge/<tenantId>` 子目录写入。
 
 ## 6. Kubernetes 部署
+
+> **本节模板同样为不受支持的遗留示意。** `deploy/k8s/tenant-namespace.yaml` 只创建 Namespace / ConfigMap / Secret / PVC，不含工作负载（Deployment/StatefulSet）、镜像、健康检查或数据库材料；需自行在其上叠加，且 `envsubst` 会注入相对路径。
+> 受支持的 Kubernetes 部署请使用 [`docs/deploy.md`](../docs/deploy.md) 中的 `deploy/helm/commander` chart 与租户权威生命周期。
 
 模板位于 `deploy/k8s/tenant-namespace.yaml`，使用 `envsubst` 渲染后应用：
 

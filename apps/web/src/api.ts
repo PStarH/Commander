@@ -1,10 +1,9 @@
+import { apiRequestTargetsOrigin, resolveApiBase } from './lib/apiOrigin';
 import { reportSilentFailure } from './lib/silentFailure';
 import type {
   WarRoomSnapshot,
   ProjectMemoryItem,
   MemoryOverview,
-  CreateMissionPayload,
-  CreateLogPayload,
   MemoryKindFilter,
   ConfidenceReport,
   CostSummary,
@@ -22,7 +21,19 @@ import type {
   SLOStatus,
 } from './types';
 
-export const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
+/**
+ * API base URL for the running bundle.
+ *
+ * The production image builds with `VITE_API_BASE_URL=""` and is served
+ * same-origin by nginx, so an empty value resolves to the page's own origin —
+ * see src/lib/apiOrigin.ts. Falling back to the development API origin here
+ * would point a deployed browser at the end user's own machine, off the
+ * production `connect-src 'self'` CSP.
+ */
+export const API_BASE = resolveApiBase(
+  (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_API_BASE_URL,
+  globalThis.location,
+);
 export const PROJECT_ID = 'project-war-room';
 
 // ============================================================================
@@ -82,6 +93,16 @@ export function clearAuthToken(): void {
  *
  * Called once at module load. Idempotent — safe to call multiple times.
  */
+/**
+ * True when the request targets the configured API origin or is same-origin
+ * (relative paths). Cross-origin requests to any other host must never
+ * receive the session bearer token.
+ */
+export function isCommanderApiRequest(input: RequestInfo | URL): boolean {
+  const target = typeof input === 'string' || input instanceof URL ? input : input.url;
+  return apiRequestTargetsOrigin(API_BASE, target, globalThis.location);
+}
+
 let _interceptorInstalled = false;
 function installAuthInterceptor(): void {
   if (_interceptorInstalled) return;
@@ -89,16 +110,29 @@ function installAuthInterceptor(): void {
   const originalFetch = globalThis.fetch.bind(globalThis);
   globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const token = getAuthToken();
-    if (token) {
-      const headers = new Headers(init?.headers ?? undefined);
+    const apiRequest = isCommanderApiRequest(input);
+    if (token && apiRequest) {
+      // Audit: attach the bearer token ONLY to the configured API origin or
+      // same-origin requests. The previous unconditional attach leaked the
+      // session token to any external host fetched from the app.
+      //
+      // Header override follows Fetch semantics: an explicit `init.headers`
+      // replaces the Request's headers, otherwise the Request's own header list
+      // stays in force. Building from `init` alone dropped a Request's custom
+      // headers and overwrote an explicit caller Authorization.
+      const headers = new Headers(
+        init?.headers ?? (input instanceof Request ? input.headers : undefined),
+      );
       if (!headers.has('Authorization')) {
         headers.set('Authorization', `Bearer ${token}`);
       }
       init = { ...init, headers };
     }
     const response = await originalFetch(input, init);
-    // Auto-logout on 401 from an authenticated request (token was present).
-    if (response.status === 401 && token) {
+    // Auto-logout only for a 401 returned by an authenticated Commander API
+    // request, and only while the token that was sent is still the stored one:
+    // a delayed response from a previous session must not log out a newer one.
+    if (response.status === 401 && token && apiRequest && getAuthToken() === token) {
       clearAuthToken();
     }
     return response;
@@ -277,53 +311,6 @@ export async function fetchMemoryItems(filters?: {
 
 export async function fetchMemoryOverview(): Promise<MemoryOverview> {
   return apiFetch<MemoryOverview>(`/projects/${PROJECT_ID}/memory/overview`);
-}
-
-export async function createMission(payload: CreateMissionPayload): Promise<void> {
-  await apiFetch<void>(`/projects/${PROJECT_ID}/missions`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-}
-
-export async function updateMissionStatus(missionId: string, status: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/missions/${missionId}`, {
-    method: 'PATCH',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status }),
-  });
-  if (!response.ok) {
-    const message = await readError(response, 'Failed to update mission');
-    if (response.status === 409 && message.includes('requires approval')) {
-      throw new ApprovalRequiredError('该任务在 MANUAL 治理模式下，完成前需要在指挥台中走审批流。');
-    }
-    throw new Error(message);
-  }
-}
-
-export async function approveMission(missionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/missions/${missionId}/approve`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-  });
-  if (!response.ok) throw new Error(await readError(response, 'Failed to approve mission'));
-}
-
-export async function createLog(missionId: string, payload: CreateLogPayload): Promise<void> {
-  const response = await fetch(`${API_BASE}/missions/${missionId}/logs`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  if (!response.ok) throw new Error(await readError(response, 'Failed to write log'));
-}
-
-export class ApprovalRequiredError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'ApprovalRequiredError';
-  }
 }
 
 export async function fetchMissionConfidence(missionId: string): Promise<ConfidenceReport> {
@@ -622,7 +609,7 @@ export async function fetchLineage(runId: string): Promise<LineageSummaryRespons
 }
 
 // ============================================================================
-// Security Posture — real compliance report from GET /api/security/posture
+// Security Posture — self-assessed posture report from GET /api/security/posture
 // ============================================================================
 
 export async function fetchSecurityPosture(): Promise<ComplianceAuditReport> {
@@ -742,69 +729,6 @@ export async function fetchApprovalConfig(): Promise<UnifiedApprovalConfig> {
     throw new Error(await readError(response, 'Failed to load approval config'));
   }
   return response.json() as Promise<UnifiedApprovalConfig>;
-}
-
-export async function updateSandboxMode(
-  mode: ApprovalSandboxMode,
-): Promise<{ status: string; mode: ApprovalSandboxMode; description: string }> {
-  const response = await fetch(`${API_BASE}/api/approval/sandbox-mode`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ mode }),
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to update sandbox mode'));
-  }
-  return response.json() as Promise<{
-    status: string;
-    mode: ApprovalSandboxMode;
-    description: string;
-  }>;
-}
-
-export type ToolPolicyUpdate = Partial<
-  Pick<ToolPolicy, 'level' | 'riskLevel' | 'description' | 'autoApproveIf'>
->;
-
-export async function updateToolPolicy(
-  pattern: string,
-  updates: ToolPolicyUpdate,
-): Promise<{ status: string; policy: ToolPolicy }> {
-  const response = await fetch(`${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(updates),
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to update tool policy'));
-  }
-  return response.json() as Promise<{ status: string; policy: ToolPolicy }>;
-}
-
-export async function addToolPolicy(
-  policy: ToolPolicy,
-): Promise<{ status: string; policy: ToolPolicy }> {
-  const response = await fetch(`${API_BASE}/api/approval/policy`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(policy),
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to add tool policy'));
-  }
-  return response.json() as Promise<{ status: string; policy: ToolPolicy }>;
-}
-
-export async function removeToolPolicy(
-  pattern: string,
-): Promise<{ status: string; pattern: string }> {
-  const response = await fetch(`${API_BASE}/api/approval/policy/${encodeURIComponent(pattern)}`, {
-    method: 'DELETE',
-  });
-  if (!response.ok) {
-    throw new Error(await readError(response, 'Failed to remove tool policy'));
-  }
-  return response.json() as Promise<{ status: string; pattern: string }>;
 }
 
 export async function fetchApprovalAuditLog(
@@ -1465,16 +1389,20 @@ export interface OnboardingProviderTestResult {
 export interface OnboardingSaveConfigPayload {
   provider: OnboardingProvider;
   model: string;
-  apiKey?: string;
 }
 
-export interface OnboardingFirstTaskResult {
-  success: boolean;
-  result?: string;
-  error?: string;
-  provider?: string;
-  model?: string;
-}
+export type OnboardingFirstTaskResult =
+  | {
+      success: true;
+      source: 'real';
+      result?: string;
+      provider?: string;
+      model?: string;
+    }
+  | {
+      success: false;
+      error: string;
+    };
 
 export interface OnboardingCompleteResult {
   success: boolean;
@@ -1488,12 +1416,10 @@ export async function fetchOnboardingStatus(): Promise<OnboardingStatus> {
 export async function testProvider(
   provider?: OnboardingProvider,
   model?: string,
-  apiKey?: string,
 ): Promise<OnboardingProviderTestResult> {
   const body: Record<string, unknown> = {};
   if (provider) body.provider = provider;
   if (model) body.model = model;
-  if (apiKey) body.apiKey = apiKey;
   return apiFetch<OnboardingProviderTestResult>(`/api/onboarding/test-provider`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -2076,6 +2002,8 @@ export interface OIDCConfig {
   roleClaim: string;
   adminRoles: string[];
   operatorRoles: string[];
+  tenantClaim: string;
+  defaultTenantId?: string | null;
   redirectUri: string | null;
 }
 
@@ -2086,6 +2014,8 @@ export interface OIDCSettingsPayload {
   roleClaim: string;
   adminRoles: string[];
   operatorRoles: string[];
+  tenantClaim: string;
+  defaultTenantId?: string;
   redirectUri: string;
 }
 

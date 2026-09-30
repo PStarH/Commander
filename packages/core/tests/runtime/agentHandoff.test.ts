@@ -33,6 +33,20 @@ describe('AgentHandoff', () => {
     context: {
       missionId: 'mission-1',
       runId: 'run-1',
+      workOrder: {
+        goal: 'Complete the task',
+        completedSteps: [],
+        remainingTasks: ['Complete the task'],
+        artifacts: [],
+        constraints: [],
+      },
+      contextSummary: {
+        executedPlan: 'Complete the task',
+        findings: [],
+        decisions: [],
+        environmentSnapshot: 'test',
+        openQuestions: [],
+      },
       messages: [{ role: 'user', content: 'do it' }],
       intermediateResults: ['step 1 done'],
       availableTools: ['read_file'],

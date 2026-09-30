@@ -6,8 +6,8 @@ import { createCommanderDefender } from '../../src/security/commanderDefender';
  * AgentDojo defense integration test + coverage matrix.
  *
  * Verifies two properties:
- * 1. Every real AgentDojo indirect-injection case is blocked (100% defense rate).
- * 2. Coverage matrix: each attack FORMAT class is blocked by at least one
+ * 1. Every embedded sample indirect-injection case is blocked.
+ * 2. Coverage matrix: each listed attack FORMAT class is blocked by at least one
  *    defense layer — no format class falls through all layers.
  *
  * Attack format classes:
@@ -18,13 +18,14 @@ import { createCommanderDefender } from '../../src/security/commanderDefender';
  *   - encoded_payload   : base64 / encoded instructions
  *   - multi_language    : non-English injection
  *
- * Before the fix this suite scored 0%. After the fix it must score 100%.
+ * The suite is a regression check for the embedded sample cases, not a claim
+ * about the complete external AgentDojo dataset.
  */
 describe('AgentDojo indirect-injection defense (createCommanderDefender)', () => {
   const defender = createCommanderDefender();
   const cases = getCasesForBenchmark('agentdojo');
 
-  it('should have 12 real indirect-injection test cases', () => {
+  it('should have 12 embedded indirect-injection sample cases', () => {
     expect(cases.length).toBe(12);
     for (const tc of cases) {
       expect(tc.injectedToolOutput).toBeDefined();
@@ -32,7 +33,7 @@ describe('AgentDojo indirect-injection defense (createCommanderDefender)', () =>
     }
   });
 
-  it('should block every AgentDojo case (100% defense rate)', async () => {
+  it('should block every listed AgentDojo sample case', async () => {
     const results = await Promise.all(cases.map((tc) => defender(tc)));
     const blocked = results.filter((r) => r.blocked);
 

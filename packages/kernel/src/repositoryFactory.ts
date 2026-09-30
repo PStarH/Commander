@@ -1,7 +1,9 @@
 import type { Pool } from 'pg';
 import { createVerifiedPostgresPool } from './postgresRuntime.js';
 import type { KernelRepository } from './repository.js';
+import { isProductionEnvironment } from './productionSignal.js';
 import { PostgresKernelRepository } from './postgres.js';
+import { PostgresTenantContextAuthority } from './postgres.js';
 import { SqliteKernelRepository } from './sqlite.js';
 
 export type KernelBackend = 'postgres' | 'sqlite';
@@ -10,6 +12,8 @@ export interface KernelRepositoryFactoryOptions {
   env?: NodeJS.ProcessEnv;
   /** Test-only: allow :memory: — NEVER set by commander dev */
   sqlitePath?: string;
+  /** Dedicated adapter-ops runtime uses read-only owner RPCs unavailable to generic workers. */
+  adapterOpsMode?: boolean;
 }
 
 export interface KernelRepositoryHandle {
@@ -17,6 +21,8 @@ export interface KernelRepositoryHandle {
   backend: KernelBackend;
   /** Postgres pool when backend=postgres; closed by {@link close}. */
   postgresPool?: Pool;
+  /** Separate least-authority pool when the database-issued tenant protocol is enabled. */
+  postgresAuthorityPool?: Pool;
   close(): Promise<void>;
 }
 
@@ -45,7 +51,9 @@ export function resolveKernelBackend(env: NodeJS.ProcessEnv = process.env): Kern
 }
 
 function refusesSqlite(env: NodeJS.ProcessEnv): boolean {
-  return env.NODE_ENV === 'production' || env.COMMANDER_PROFILE === 'enterprise';
+  // AUDIT-K1: multi-signal production detection — NODE_ENV alone must not be
+  // the single point of failure for the "no sqlite kernel in production" gate.
+  return isProductionEnvironment(env);
 }
 
 export async function createKernelRepository(
@@ -92,16 +100,64 @@ export async function createKernelRepository(
     throw new KernelBackendMissingError('DATABASE_URL is required for postgres backend');
   }
 
-  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl, max: 8 }, env);
   const schedulerMode = env.COMMANDER_KERNEL_SCHEDULER_MODE === '1';
-  const repository = new PostgresKernelRepository(pool, { schedulerMode });
-  await repository.initialize();
-  return {
-    repository,
-    backend: 'postgres',
-    postgresPool: pool,
-    close: async () => {
-      await pool.end();
-    },
-  };
+  const configuredTenantContextPhase = env.COMMANDER_TENANT_CONTEXT_PHASE?.trim();
+  if (
+    configuredTenantContextPhase &&
+    configuredTenantContextPhase !== 'expand' &&
+    configuredTenantContextPhase !== 'enforce'
+  ) {
+    throw new KernelBackendMissingError('COMMANDER_TENANT_CONTEXT_PHASE must be expand or enforce');
+  }
+  // Adapter-ops authenticates as commander_adapter_ops and uses owner-owned
+  // aggregate RPCs. It must never enter the app-only tenant-context protocol,
+  // even when launched with a shared environment containing API settings.
+  const tenantContextPhase = options.adapterOpsMode ? undefined : configuredTenantContextPhase;
+  const authorityUrl = tenantContextPhase
+    ? env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL?.trim()
+    : undefined;
+  if (tenantContextPhase && !authorityUrl) {
+    throw new KernelBackendMissingError(
+      'COMMANDER_TENANT_AUTHORITY_DATABASE_URL is required when tenant context is enabled',
+    );
+  }
+  const pool = createVerifiedPostgresPool({ connectionString: databaseUrl, max: 8 }, env);
+  let authorityPool: Pool | undefined;
+  try {
+    authorityPool = tenantContextPhase
+      ? createVerifiedPostgresPool(
+          {
+            connectionString: authorityUrl!,
+            // API reads render an action from several tenant-scoped transactions
+            // concurrently. Keep enough authority sessions for that fan-out while
+            // retaining bounded connection and query waits during database faults.
+            max: 4,
+            connectionTimeoutMillis: 5_000,
+            query_timeout: 5_000,
+          },
+          env,
+        )
+      : undefined;
+    const repository = new PostgresKernelRepository(pool, {
+      schedulerMode,
+      adapterOpsMode: options.adapterOpsMode,
+      tenantContextPhase: tenantContextPhase as 'expand' | 'enforce' | undefined,
+      tenantContextAuthority: authorityPool
+        ? new PostgresTenantContextAuthority(authorityPool)
+        : undefined,
+    });
+    await repository.initialize();
+    return {
+      repository,
+      backend: 'postgres',
+      postgresPool: pool,
+      postgresAuthorityPool: authorityPool,
+      close: async () => {
+        await Promise.all([pool.end(), authorityPool?.end()]);
+      },
+    };
+  } catch (error) {
+    await Promise.allSettled([pool.end(), authorityPool?.end()]);
+    throw error;
+  }
 }

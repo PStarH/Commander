@@ -113,13 +113,13 @@ describe('ScimStore persistence', () => {
 
     assert.equal((await restarted.listUsers('tenant-a')).length, 1);
     assert.equal((await restarted.listUsers('tenant-b')).length, 1);
-    assert.equal((await restarted.getUser('tenant-a', userB.id)), null);
-    assert.equal((await restarted.getUser('tenant-b', userA.id)), null);
+    assert.equal(await restarted.getUser('tenant-a', userB.id), null);
+    assert.equal(await restarted.getUser('tenant-b', userA.id), null);
 
     assert.equal((await restarted.listGroups('tenant-a')).length, 1);
     assert.equal((await restarted.listGroups('tenant-b')).length, 1);
-    assert.equal((await restarted.getGroup('tenant-a', groupB.id)), null);
-    assert.equal((await restarted.getGroup('tenant-b', groupA.id)), null);
+    assert.equal(await restarted.getGroup('tenant-a', groupB.id), null);
+    assert.equal(await restarted.getGroup('tenant-b', groupA.id), null);
 
     // Files are physically separate.
     assert.ok(fs.existsSync(path.join(tmpDir, 'data', 'scim', 'tenant-a', 'users.json')));
@@ -152,14 +152,65 @@ describe('ScimStore persistence', () => {
     assert.equal(wrongTenant, null);
   });
 
-  it('does not store plaintext passwords even when provided in user payload', async () => {
+  it('does not persist a plaintext password supplied directly to the store', async () => {
     const user = sampleUser('secretive');
     const payload = { ...(user as unknown as Record<string, unknown>), password: 'super-secret' };
-    // The endpoint-level builder ignores password; the store never sees it.
+    // AUDIT F-B-22: the store's own defence-in-depth (ScimStore.createUser
+    // deletes `password`) is the control this case proves. The HTTP-level
+    // builder path is covered separately below.
     await store.createUser('acme', payload as ScimUser);
 
     const fetched = await store.getUser('acme', user.id);
     assert.ok(fetched);
     assert.ok(!('password' in fetched!));
+    assert.doesNotMatch(JSON.stringify(fetched), /super-secret/);
+  });
+
+  it('never persists a plaintext password supplied over the SCIM HTTP surface', async () => {
+    // AUDIT F-B-22 (endpoint half): drive the real router so the body builder
+    // and the store both run on a password-bearing payload.
+    const { createScimRouter } = await import('../src/scimEndpoints.js');
+    const express = (await import('express')).default;
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { user: unknown }).user = { id: 'admin', role: 'admin' };
+      (req as unknown as { tenantId: string }).tenantId = 'acme';
+      next();
+    });
+    app.use('/scim/v2', createScimRouter(store));
+    const server = app.listen(0, '127.0.0.1');
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const addr = server.address();
+    assert.ok(addr && typeof addr === 'object');
+    try {
+      const res = await fetch(`http://127.0.0.1:${addr.port}/scim/v2/Users`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          schemas: ['urn:ietf:params:scim:schemas:core:2.0:User'],
+          userName: 'http-secretive',
+          password: 'http-super-secret',
+          emails: [{ value: 'http-secretive@example.test', primary: true }],
+          active: true,
+        }),
+      });
+      assert.equal(res.status, 201);
+      const created = (await res.json()) as { id: string; password?: unknown };
+      assert.ok(!('password' in created));
+
+      // The router resolves the tenant from the ambient tenant context (not
+      // from a raw header), so read the user back through the same surface.
+      const read = await fetch(`http://127.0.0.1:${addr.port}/scim/v2/Users/${created.id}`);
+      assert.equal(read.status, 200);
+      const persisted = (await read.json()) as Record<string, unknown>;
+      assert.equal(persisted.userName, 'http-secretive');
+      assert.ok(!('password' in persisted));
+      assert.doesNotMatch(JSON.stringify(persisted), /http-super-secret/);
+    } finally {
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve())),
+      );
+    }
   });
 });

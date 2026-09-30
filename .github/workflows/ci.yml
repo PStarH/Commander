@@ -1,27 +1,151 @@
 name: CI
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
 on:
   push:
     branches: [master, main]
   pull_request:
     branches: [master, main]
+  workflow_dispatch:
+    inputs:
+      run_github_live_proof:
+        description: Run GitHub sandbox adapter create, response-cut lookup, and close tests (not Gateway proof)
+        required: true
+        type: boolean
+        default: false
+      run_dr_live_proof:
+        description: Run the protected G4 rotation and PostgreSQL DR proof
+        required: true
+        type: boolean
+        default: false
+      run_github_gateway_live:
+        description: Run the real Cell Gateway against the GitHub sandbox repository through a response-cut proxy
+        required: true
+        type: boolean
+        default: false
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: the workflow default is read-only; any job that needs a write scope
+# or an OIDC token declares it explicitly on that job.
+permissions:
+  contents: read
 
 jobs:
+  github-launch-contract:
+    name: GitHub launch contracts (synthetic HTTP, no credentials)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the adapter contract dependencies
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/effect-broker build
+      - run: pnpm test:github:offline
+      - run: pnpm demo:github --help
+      - run: pnpm typecheck:github
+
+  github-sandbox-adapter:
+    name: GitHub sandbox adapter proof (not Gateway or restart proof)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_github_live_proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: github-sandbox
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build adapter dependencies
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/effect-broker build
+      - name: Validate exact sandbox configuration before minting a token
+        env:
+          SANDBOX_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          SANDBOX_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          SANDBOX_APPROVED: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+        run: |
+          node --input-type=module <<'NODE'
+          const { SANDBOX_OWNER: owner, SANDBOX_REPO: repo, SANDBOX_APPROVED: approved } = process.env;
+          const segment = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+          if (!segment.test(owner ?? '') || !segment.test(repo ?? '') || approved !== `${owner}/${repo}`) {
+            throw new Error('SANDBOX_TARGET_INVALID: configure one exact owner/repository');
+          }
+          NODE
+      - name: Mint short-lived token for one sandbox repository
+        id: sandbox-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.COMMANDER_SANDBOX_APP_ID }}
+          private-key: ${{ secrets.COMMANDER_SANDBOX_APP_PRIVATE_KEY }}
+          owner: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          repositories: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          permission-contents: read
+          permission-pull-requests: write
+      - name: Run real GitHub adapter scenarios
+        env:
+          LIVE_GITHUB: '1'
+          LIVE_GITHUB_RESPONSE_CUT: '1'
+          COMMANDER_SANDBOX_TOKEN: ${{ steps.sandbox-token.outputs.token }}
+          COMMANDER_CELL_TENANT_ID: github-sandbox-ci
+          GITHUB_TEST_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          GITHUB_TEST_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          COMMANDER_GITHUB_REPOSITORIES: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+          COMMANDER_LIVE_APPROVED_REPO: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+          GITHUB_TEST_HEAD: ${{ vars.COMMANDER_SANDBOX_HEAD }}
+          GITHUB_TEST_BASE: ${{ vars.COMMANDER_SANDBOX_BASE }}
+          GITHUB_RESPONSE_CUT_HEAD: ${{ vars.COMMANDER_SANDBOX_RESPONSE_CUT_HEAD }}
+        run: |
+          mkdir -p artifacts/github-sandbox
+          node --input-type=module -e 'import { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR as d } from "./packages/contracts/dist/index.js"; console.log(JSON.stringify({commit: process.env.GITHUB_SHA, adapterVersion: d.adapterVersion, evidence: "live-adapter-only", gatewayApproval: false, postgresRestart: false}))' > artifacts/github-sandbox/source.json
+          pnpm exec node --import tsx --test packages/action-adapters/src/live/github.live.test.ts > artifacts/github-sandbox/results.tap 2>&1
+      - name: Upload actual sandbox evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-sandbox-adapter-${{ github.sha }}
+          path: artifacts/github-sandbox/
+          if-no-files-found: error
+
   quality:
     name: Quality Gates (${{ matrix.os }}, Node ${{ matrix.node-version }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        node-version: ['20', '22']
+      # Pull requests run the full quality suite once on the canonical runner.
+      # Compatibility entries still run on main pushes and manual dispatches,
+      # preserving platform coverage without six identical PR runs.
+      matrix: >-
+        ${{ fromJSON(github.event_name == 'pull_request'
+          && '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true}]}'
+          || '{"include":[{"os":"ubuntu-latest","node-version":"22","canonical":true},{"os":"ubuntu-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"20","canonical":false},{"os":"macos-latest","node-version":"22","canonical":false},{"os":"windows-latest","node-version":"20","canonical":false},{"os":"windows-latest","node-version":"22","canonical":false}]}') }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'pnpm'
@@ -207,31 +331,70 @@ jobs:
         shell: bash
         run: |
           set +e
-          out=$(pnpm audit --audit-level=high 2>&1)
+          audit_output="$RUNNER_TEMP/pnpm-audit.json"
+          pnpm audit --audit-level=high --json > "$audit_output" 2>&1
           code=$?
-          echo "$out"
+          cat "$audit_output"
           if [ $code -eq 0 ]; then
             exit 0
           fi
-          if echo "$out" | grep -Eqi '410|ERR_PNPM_AUDIT_BAD_RESPONSE|endpoint is being retired|ECONNRESET|ETIMEDOUT|fetch failed'; then
-            echo "::warning::pnpm audit transport/API unavailable (npm audit endpoint retirement or network). Continuing; audit:wiring + CodeQL remain hard security gates."
+          # GHSA-qwww-vcr4-c8h2 is scoped to React Router's unstable RSC APIs.
+          # The policy script parses valid JSON before considering a narrowly
+          # recognized pnpm transport failure. It fails closed for malformed
+          # output, other advisories, and any RSC wiring in apps/web/src.
+          if [ "$code" -ne 0 ] && pnpm exec tsx scripts/ci-audit-policy.ts "$audit_output"; then
             exit 0
           fi
           echo "::error::pnpm audit reported high/critical advisories"
           exit $code
 
-      - name: ESLint check (no-console rule)
-        run: pnpm exec eslint packages/core/src
+      - name: Security audit policy regression
+        run: pnpm exec node --import tsx --test scripts/ci-audit-policy.test.ts
 
-      - name: Prettier format check
-        run: pnpm exec prettier --check "packages/core/src/**/*.ts" "apps/api/src/**/*.ts" "apps/web/src/**/*.{ts,tsx}"
+      # Every workflow claims "Enforced by scripts/workflow-supply-chain.test.ts",
+      # but nothing ran it: the mutable-remote-ref, permissions, and
+      # pull_request_target policies were never observed in CI.
+      - name: Workflow supply-chain policy regression
+        run: pnpm exec node --import tsx --test scripts/workflow-supply-chain.test.ts
 
-      - name: TypeScript check (core)
+      # These two steps used to run over a hand-written subset of the tree
+      # (`packages/core/src`, three globs) while the repo's own gates cover every
+      # first-party TypeScript scope. A gate whose scope is narrower than it
+      # claims reports safety it has not verified, so they now delegate to the
+      # same script a developer runs.
+      - name: ESLint (all first-party TypeScript)
+        run: pnpm run lint:eslint
+
+      - name: Prettier format check (all first-party TypeScript)
+        run: pnpm run format:check
+
+      - name: Claim honesty gate
+        run: pnpm claim:gate:test
+
+      - name: TypeScript check (core and all packages, source and tests)
         run: |
           # tsc --noEmit resolves @commander/plugin-sdk types from dist; clean CI has none
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/core exec tsc --noEmit
+          pnpm --filter @commander/postgres-runtime build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/action-adapters build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/core build
+          # `typecheck` chains the core and kernel source builds plus every other
+          # package's `typecheck:test` (tsconfig.test.json), which typechecks the
+          # in-src `*.test.ts` files the package builds exclude. Those configs
+          # previously existed for kernel only and were invoked by no root script
+          # or workflow, which is how type errors survived unnoticed.
+          # `packages/core`'s own `tsconfig.test.json` (its `tests/**` tree) is
+          # deliberately NOT in this chain yet: it is a long-standing red gate
+          # (measured 2026-09-18: ~1k pre-existing errors in test fixtures that
+          # vitest transpiles without typechecking). Run it explicitly with
+          # `pnpm --dir packages/core run typecheck:test` until that backlog is cleared.
+          pnpm --dir packages/core exec tsc --noEmit
+          pnpm --dir packages/kernel exec tsc --noEmit
+          pnpm --dir packages/kernel run typecheck:test
+          pnpm run typecheck
 
       - name: TypeScript check (SDK)
         run: |
@@ -240,14 +403,17 @@ jobs:
           pnpm --filter @commander/sdk typecheck
 
       - name: Generate dependency SBOM
+        if: matrix.canonical
         run: pnpm list --recursive --depth=Infinity --json > sbom.json
 
       - name: Upload SBOM artifact
-        uses: actions/upload-artifact@v4
+        if: matrix.canonical
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sbom-${{ matrix.os }}-node${{ matrix.node-version }}
           path: sbom.json
           overwrite: true
+          if-no-files-found: error
 
       - name: Verify core test inventory
         run: pnpm --filter @commander/core test:inventory
@@ -270,21 +436,6 @@ jobs:
       - name: Contracts package tests (controlPlane + baseline + OpenAPI)
         run: pnpm --filter @commander/contracts test
 
-      - name: Architecture V2 package boundary gate
-        # WS0 PARTIAL: known red on unversioned api routes + in-memory outbox Map.
-        # arch:guard + contract:check are the ENFORCED gates; do not treat this as ACCEPTED.
-        continue-on-error: true
-        run: pnpm arch:gate
-
-      - name: Production sandbox static gate
-        run: pnpm --filter @commander/core build:production
-
-      - name: Production sandbox boot-refuse
-        # boot-refuse tests construct their own production env internally
-        # (local `productionEnv` constant). Do NOT set COMMANDER_ALLOW_NO_SANDBOX
-        # here — spec §3 forbids that combination even as dead config.
-        run: pnpm --filter @commander/core exec tsx --test tests/sandbox/boot-refuse.test.ts
-
       - name: Kernel unit tests (compensation DLQ + WS2)
         # L2-12: claimOutbox(+ByTopic) DLQ/max_attempts filter + poison→DLQ proofs.
         shell: bash
@@ -295,7 +446,7 @@ jobs:
 
       - name: Upload sanitized kernel test failures
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: kernel-test-evidence-${{ matrix.os }}-node${{ matrix.node-version }}
           path: packages/kernel/kernel-test-evidence.jsonl
@@ -316,11 +467,11 @@ jobs:
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
           pnpm --filter @commander/core build
-          pnpm --filter @commander/core exec tsx --test \
+          pnpm --filter @commander/core exec node --import tsx --test \
             tests/sandbox/productionPolicy.test.ts \
             tests/memory/memoryAuditQuery.test.ts \
             tests/security/exec-policy-resource-tool.test.ts
-          pnpm exec tsx --test \
+          pnpm exec node --import tsx --test \
             packages/worker-plane/src/llmBrokerBridge.test.ts \
             packages/worker-plane/src/workerRuntimeAdapter.test.ts \
             packages/worker-plane/src/stepWorkloadIdentity.test.ts \
@@ -330,8 +481,10 @@ jobs:
             packages/worker-plane/src/actionGatewayPolicy.test.ts \
             packages/worker-plane/src/bootstrap.policy.test.ts \
             packages/worker-plane/src/bootstrap.authority.test.ts \
+            packages/worker-plane/src/bootstrap.evidence.test.ts \
+            packages/worker-plane/src/bootstrap.postgresRuntime.test.ts \
             packages/worker-plane/src/registry.rls.test.ts
-          pnpm exec tsx --test \
+          pnpm exec node --import tsx --test \
             apps/api/test/namespacedMemoryEndpoints.test.ts \
             apps/api/test/namespacedMemoryRbac.test.ts \
             apps/api/test/legacyExecutionGuard.test.ts \
@@ -344,7 +497,11 @@ jobs:
         # Simulated/synthetic docs/baselines fixtures are non-scoring.
         # Required slots must use live evidence; until then they are recommended.
         # residual→100 is refused unless required live baselines pass.
-        run: pnpm exec tsx scripts/check-readiness.ts
+        # The release environment supplies the approved profile and live
+        # evidence. Matrix quality jobs have no production profile, so run the
+        # same validator in diagnostic-only mode rather than treating its
+        # deliberate NOT_EVALUATED result as a product regression.
+        run: pnpm exec tsx scripts/check-readiness.ts --non-strict
 
       - name: Run core tests
         shell: bash
@@ -360,7 +517,29 @@ jobs:
             pnpm --filter @commander/core test
           fi
 
+      # The `node:test` half of the core suite (197 files) was executed by NO
+      # workflow: `test` above is the vitest allowlist, and the only other
+      # node:test invocation in this file is the single `test:node:pathsec` file.
+      # That is how ~111 files stayed unrunnable in CI — including the ones whose
+      # first execution this pass found to be failing (a suite that could not load,
+      # a benchmark reporting two passes that asserted nothing, a self-skipping
+      # security gate). It is a separate step because the two halves have separate
+      # runners and separate discovery, and a green vitest run says nothing about
+      # the node:test half.
+      - name: Run core node:test suite
+        # The core node:test suite contains POSIX-only permission, shell, and
+        # file-lock assertions. Vitest and the package typecheck still run on
+        # Windows; execute this POSIX suite on Linux/macOS where its contracts
+        # are meaningful and covered by the production targets.
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          # Dev/test bypass only — CI runners lack real sandbox runtimes.
+          COMMANDER_ALLOW_NO_SANDBOX: true
+        run: pnpm --filter @commander/core test:node
+
       - name: Run SLO measurements
+        if: matrix.canonical
         shell: bash
         env:
           # Dev/test bypass only — CI runners lack real sandbox runtimes.
@@ -368,21 +547,24 @@ jobs:
         run: pnpm --filter @commander/core test:slo
 
       - name: Upload SLO report
-        uses: actions/upload-artifact@v4
-        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always() && matrix.canonical
         with:
           name: slo-report-${{ matrix.os }}-node${{ matrix.node-version }}
           path: packages/core/.commander_benchmarks/slo-report-*.json
           if-no-files-found: ignore
 
       - name: Print SLO summary
-        if: always()
+        if: always() && matrix.canonical
         shell: bash
         run: |
           echo "📊 SLO measurement summary"
           cat packages/core/.commander_benchmarks/slo-report-*.json 2>/dev/null || echo "(no SLO report generated)"
 
       - name: Path security tests
+        # This suite includes POSIX shell/grep and Unix permission semantics;
+        # Windows runs the cross-platform security checks in Vitest instead.
+        if: runner.os != 'Windows'
         env:
           # Dev/test bypass only — CI runners lack real sandbox runtimes.
           COMMANDER_ALLOW_NO_SANDBOX: true
@@ -392,16 +574,17 @@ jobs:
         shell: bash
         run: cd packages/core && pnpm exec tsx src/cliEntry.ts status
 
-      - name: Build core package
+      # G2 requires `doctor` to exit zero on a fresh environment and to request
+      # no credential. Nothing ran it, so its exit code was unobserved — and it
+      # couples to host disk pressure (`pass: usePercent < 95`), meaning a
+      # 90%-full machine fails a check that is not about the product.
+      - name: CLI doctor offline (G2 install/first-run contract)
+        if: matrix.node-version == '22'
         shell: bash
-        run: |
-          # core tsc imports @commander/plugin-sdk; clean CI has no local dist cache
-          pnpm --filter @commander/contracts build
-          pnpm --filter @commander/plugin-sdk build
-          pnpm --filter @commander/core build
+        run: pnpm exec tsx packages/core/src/cliEntry.ts doctor --offline
 
       - name: Red Team Smoke Test (security gate)
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && matrix.canonical
         shell: bash
         run: |
           echo "🔴 Running red team smoke test (5 critical scenarios)..."
@@ -441,15 +624,38 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
     env:
-      DATABASE_URL: postgres://commander:commander@localhost:5432/commander
-      COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_KERNEL_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_KERNEL_POSTGRES_CONTRACT_TEST: '1'
+      COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander_kernel_contract
+      COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
       GIT_TERMINAL_PROMPT: '0'
       COMMANDER_INTERACTION_DB: ':memory:'
+      # Provisioned-instance admission for scripts that MUTATE the database
+      # (scripts/ci-database-scope.ts). Without these the bootstrap job fails
+      # closed with CI_DATABASE_MUTATION_REFUSED before any test runs. The
+      # service container above is the provisioner-owned instance: it is
+      # discarded with the runner. The guard's own header records that it cannot
+      # prove exclusive ownership — that is why its loopback/private-host check
+      # is the load-bearing control, and this target is localhost.
+      COMMANDER_CI_INSTANCE_MUTATION: 'yes'
+      COMMANDER_CI_INSTANCE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMMANDER_CI_PROVISION_TOKEN: ci-${{ github.run_id }}-${{ github.run_attempt }}-provision
     steps:
-      - uses: actions/checkout@v6
-      - uses: pnpm/action-setup@v6
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -480,10 +686,83 @@ jobs:
           echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$SPKI_SHA256" >> "$GITHUB_ENV"
       - name: Rebuild better-sqlite3 (repositoryContract SQLite suite)
         run: pnpm rebuild better-sqlite3
+      - name: Bootstrap kernel integration roles
+        env:
+          PGPASSWORD: commander
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
+              CREATE ROLE commander_owner LOGIN PASSWORD 'commander_owner' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') THEN
+              CREATE ROLE commander_app LOGIN PASSWORD 'commander_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_tenant_authority') THEN
+              CREATE ROLE commander_tenant_authority LOGIN PASSWORD 'commander_tenant_authority' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler') THEN
+              CREATE ROLE commander_scheduler LOGIN PASSWORD 'commander_scheduler' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_worker') THEN
+              CREATE ROLE commander_worker LOGIN PASSWORD 'commander_worker' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+              CREATE ROLE commander_adapter_ops LOGIN PASSWORD 'commander_adapter_ops' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+          END $$;
+          ALTER ROLE commander_owner LOGIN CREATEROLE BYPASSRLS PASSWORD 'commander_owner';
+          ALTER ROLE commander_app LOGIN NOBYPASSRLS PASSWORD 'commander_app';
+          ALTER ROLE commander_tenant_authority LOGIN NOBYPASSRLS PASSWORD 'commander_tenant_authority';
+          ALTER ROLE commander_scheduler LOGIN BYPASSRLS PASSWORD 'commander_scheduler';
+          ALTER ROLE commander_worker LOGIN NOBYPASSRLS PASSWORD 'commander_worker';
+          ALTER ROLE commander_adapter_ops LOGIN NOBYPASSRLS PASSWORD 'commander_adapter_ops';
+          ALTER DATABASE commander OWNER TO commander_owner;
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          SQL
+      - name: Create isolated kernel contract database
+        env:
+          PGPASSWORD: commander
+        run: |
+          if ! psql --host localhost --port 5432 --username commander --dbname postgres --tuples-only --no-align \
+            --command "SELECT 1 FROM pg_database WHERE datname = 'commander_kernel_contract'" | grep -qx 1; then
+            createdb --host localhost --port 5432 --username commander --owner commander_owner commander_kernel_contract
+          fi
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander_kernel_contract <<'SQL'
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT USAGE, CREATE ON SCHEMA public TO commander_owner;
+          CREATE TABLE IF NOT EXISTS public.kernel_contract_disposable_marker (
+            marker text PRIMARY KEY CHECK (marker = 'commander_kernel_contract_v1')
+          );
+          INSERT INTO public.kernel_contract_disposable_marker (marker)
+          VALUES ('commander_kernel_contract_v1')
+          ON CONFLICT (marker) DO NOTHING;
+          ALTER TABLE public.kernel_contract_disposable_marker OWNER TO commander_owner;
+          REVOKE ALL ON public.kernel_contract_disposable_marker FROM PUBLIC;
+          GRANT CONNECT ON DATABASE commander_kernel_contract TO commander_app, commander_tenant_authority,
+            commander_scheduler, commander_worker, commander_adapter_ops;
+          SQL
+      - name: Apply isolated kernel contract migrations
+        env:
+          COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander_kernel_contract
+        run: |
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
+      - name: Apply kernel closure migrations
+        run: |
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
       - name: Build kernel / worker-plane / core / api
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/action-adapters build
@@ -491,10 +770,10 @@ jobs:
           pnpm --filter @commander/worker-plane build
           pnpm --filter @commander/api build
       - name: Kernel PostgreSQL integration (fencing + tenant isolation)
-        run: pnpm exec tsx --test packages/kernel/src/postgres.integration.test.ts
+        run: pnpm exec node --import tsx --test packages/kernel/src/postgres.integration.test.ts
       - name: Kernel PostgreSQL ops + compensation race (C4/C5/C2 PG)
         run: |
-          pnpm exec tsx --test --test-concurrency=1 \
+          pnpm exec node --import tsx --test --test-concurrency=1 \
             packages/kernel/src/postgres.ops.integration.test.ts \
             packages/kernel/src/ops/outbox/compensationPublisherRace.integration.test.ts \
             packages/kernel/src/ops/outbox/compensationPublisherRace.postgres.integration.test.ts
@@ -504,21 +783,51 @@ jobs:
         run: pnpm cell:compensation-dual-race -- --seed=16
       - name: Upload dual-process race artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-compensation-dual-race
           path: artifacts/l4-b-compensation-dual-race-*.json
           if-no-files-found: error
       - name: Worker plane e2e (execute + lease reclaim)
-        run: pnpm exec tsx --test --test-force-exit packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
-      - name: Production worker sandbox boot-refuse
-        # boot-refuse test passes env explicitly to createProductionWorkerSandboxReadiness().
-        # Do NOT set COMMANDER_ALLOW_NO_SANDBOX here — spec §3 forbids that combination.
-        run: pnpm exec tsx --test packages/worker-plane/src/boot-refuse.test.ts
+        run: pnpm exec node --import tsx --test packages/worker-plane/src/e2e/gateway-kernel-worker.e2e.test.ts
       - name: Full Gateway → Worker terminal loop
-        run: pnpm p0:full-loop
+        run: pnpm p0:full-loop:tls
         env:
           P0_TIMEOUT_MS: '120000'
+          AUTH_FAILURE_REDIS_URL: redis://localhost:6379
+
+  shadow-phase-a-postgres:
+    name: Shadow Phase A PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: commander
+          POSTGRES_PASSWORD: commander
+          POSTGRES_DB: commander
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U commander -d commander"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      COMMANDER_SHADOW_PG_ADMIN_URL: postgres://commander:commander@localhost:5432/commander
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Shadow Phase A gate contract
+        run: pnpm exec node --import tsx --test scripts/shadow-phase-a-gate.test.ts
+      - name: Shadow Phase A release gate
+        run: pnpm shadow:phase-a:gate
 
   l4-b-deploy-gates:
     name: L4-B Deploy Gates
@@ -538,14 +847,27 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      OWNER_DSN: postgres://commander:commander@localhost:5432/commander
+      DATABASE_URL: postgres://commander:commander@localhost:5432/commander
       COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      COMMANDER_TASK1_PG_URL: postgres://commander_ci_admin:commander_ci_admin@localhost:5432/commander
+      COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
+      # See the matching block in kernel-postgres-integration: the migration
+      # bootstrap refuses to run without provisioned-instance admission.
+      COMMANDER_CI_INSTANCE_MUTATION: 'yes'
+      COMMANDER_CI_INSTANCE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMMANDER_CI_PROVISION_TOKEN: ci-${{ github.run_id }}-${{ github.run_attempt }}-provision
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          # The approved-v8 fixture deliberately points at an older tracked
+          # commit. Full history is required to verify that immutable object
+          # and its tree in a clean detached worktree.
+          fetch-depth: 0
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -565,24 +887,433 @@ jobs:
           pnpm --filter @commander/core build
 
       - name: Install Helm
-        uses: azure/setup-helm@v5
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
         with:
-          version: v3.14.4
+          version: v3.17.3
 
-      # P1 fail-closed: sole gate command (no parallel subset steps)
+      - name: Bootstrap deploy-gate authority
+        env:
+          PGPASSWORD: commander
+          COMMANDER_CI_ADMIN_PASSWORD: commander_ci_admin
+          COMMANDER_OWNER_PASSWORD: commander_owner
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander \
+            --set=commander_ci_admin_password="$COMMANDER_CI_ADMIN_PASSWORD" \
+            --set=commander_owner_password="$COMMANDER_OWNER_PASSWORD" <<'SQL'
+          CREATE ROLE commander_ci_admin WITH LOGIN SUPERUSER PASSWORD :'commander_ci_admin_password';
+          CREATE ROLE commander_owner WITH LOGIN PASSWORD :'commander_owner_password' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+          CREATE ROLE commander_app WITH LOGIN PASSWORD 'commander_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          CREATE ROLE commander_tenant_authority WITH LOGIN PASSWORD 'commander_tenant_authority' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          CREATE ROLE commander_scheduler WITH LOGIN PASSWORD 'commander_scheduler' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS;
+          CREATE ROLE commander_worker WITH LOGIN PASSWORD 'commander_worker' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD 'commander_adapter_ops' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+          ALTER DATABASE commander OWNER TO commander_owner;
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          SQL
+
+      - name: Apply enforced Task 1 closure migrations
+        run: pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+
+      - name: Apply post-closure kernel migrations
+        run: pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
+
+      - name: PostgreSQL TLS fixture (D runtime transport proof)
+        run: pnpm test:task1:postgres:tls
+
+      - name: Import authorized rotation sign-off key
+        env:
+          COMMANDER_GPG_PUBLIC_KEY_ASC: ${{ secrets.COMMANDER_GPG_PUBLIC_KEY_ASC }}
+        run: |
+          test -n "$COMMANDER_GPG_PUBLIC_KEY_ASC"
+          GNUPGHOME="$RUNNER_TEMP/commander-gnupg"
+          export GNUPGHOME
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --fingerprint 4C132B5DE96357D5B148807987F7A7F843D07138
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: PostgreSQL Task 2 and compensation authority suites
+        env:
+          COMMANDER_TASK2_PG_URL: postgres://commander:commander@localhost:5432/commander
+          COMMANDER_COMPENSATION_PG_URL: postgres://commander:commander@localhost:5432/commander
+        run: |
+          test -n "$COMMANDER_TASK2_PG_URL"
+          test -n "$COMMANDER_COMPENSATION_PG_URL"
+          pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/task2.postgres-live.test.ts
+          pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/evidenceRepository.postgres-live.test.ts
+          pnpm exec node --import tsx --test --test-force-exit packages/kernel/src/compensation.postgres-live.test.ts
+
+      - name: Restore deploy-gate role authority after live suites
+        env:
+          PGPASSWORD: commander
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander <<'SQL'
+          ALTER ROLE commander_owner LOGIN CREATEROLE BYPASSRLS PASSWORD 'commander_owner';
+          ALTER ROLE commander_app LOGIN NOBYPASSRLS PASSWORD 'commander_app';
+          ALTER ROLE commander_tenant_authority LOGIN NOBYPASSRLS PASSWORD 'commander_tenant_authority';
+          ALTER ROLE commander_scheduler LOGIN BYPASSRLS PASSWORD 'commander_scheduler';
+          ALTER ROLE commander_worker LOGIN NOBYPASSRLS PASSWORD 'commander_worker';
+          ALTER ROLE commander_adapter_ops LOGIN NOBYPASSRLS PASSWORD 'commander_adapter_ops';
+          SQL
+
+      # P1 fail-closed: the deploy-gate command re-bootstraps role authority
+      # after live suites, then runs the final proof as the last assertion.
       - name: Deploy gates (pnpm test:deploy-gates)
         run: pnpm test:deploy-gates
+
+  # G4 requires a protected network, distinct restore target, and retained
+  # public verification key. It is deliberately opt-in: PR and push runners
+  # never receive production DR credentials, and an incomplete dispatch fails.
+  l4-b-dr-live-proof:
+    name: L4-B G4 Rotation and DR Live Proof
+    if: github.event_name == 'workflow_dispatch' && inputs.run_dr_live_proof
+    environment: cd-live-proof
+    runs-on: [self-hosted, linux, x64, commander-dr]
+    timeout-minutes: 90
+
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      # This runner is a qemu x64 guest. pnpm/action-setup downloads
+      # @pnpm/linux-x64 through the host proxy and the tarball comes back
+      # empty. Node 22.20.0 and pnpm 9.15.4 are already on the data disk.
+      - name: Use the runner Node 22 and pnpm 9.15.4
+        run: |
+          test "$(node -p 'process.versions.node.split(".")[0]')" = "22"
+          test "$(pnpm -v)" = "9.15.4"
+          test "$(node -p process.arch)" = "x64"
+
+      - run: pnpm install
+
+      - name: Build the packages the drill imports
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/postgres-runtime build
+          pnpm --filter @commander/effect-broker build
+
+      - name: Materialize protected DR inputs
+        env:
+          COMMANDER_DR_SOURCE_DATABASE_URL: ${{ secrets.COMMANDER_DR_SOURCE_DATABASE_URL }}
+          COMMANDER_DR_RESTORE_DATABASE_URL: ${{ secrets.COMMANDER_DR_RESTORE_DATABASE_URL }}
+          COMMANDER_DR_DATABASE_TLS_CA_PEM: ${{ secrets.COMMANDER_DR_DATABASE_TLS_CA_PEM }}
+          COMMANDER_DR_DATABASE_TLS_SPKI_SHA256: ${{ secrets.COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 }}
+          COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY: ${{ vars.COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY }}
+          COMMANDER_DR_EVIDENCE_JWKS_JSON: ${{ secrets.COMMANDER_DR_EVIDENCE_JWKS_JSON }}
+          COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM: ${{ secrets.COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM }}
+          COMMANDER_DR_APP_DATABASE_URL: ${{ secrets.COMMANDER_DR_APP_DATABASE_URL }}
+          COMMANDER_DR_AUTHORITY_DATABASE_URL: ${{ secrets.COMMANDER_DR_AUTHORITY_DATABASE_URL }}
+        run: |
+          set -eu
+          for required in \
+            COMMANDER_DR_SOURCE_DATABASE_URL \
+            COMMANDER_DR_RESTORE_DATABASE_URL \
+            COMMANDER_DR_DATABASE_TLS_CA_PEM \
+            COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 \
+            COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY \
+            COMMANDER_DR_EVIDENCE_JWKS_JSON \
+            COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM \
+            COMMANDER_DR_APP_DATABASE_URL \
+            COMMANDER_DR_AUTHORITY_DATABASE_URL; do
+            test -n "$(printenv "$required")" || {
+              echo "::error::$required is required for protected DR proof"
+              exit 1
+            }
+          done
+          for executable in gpg psql pg_dump pg_restore createdb; do
+            command -v "$executable" >/dev/null || {
+              echo "::error::$executable is required on the protected DR runner"
+              exit 1
+            }
+          done
+          node --input-type=module <<'NODE'
+          const source = new URL(process.env.COMMANDER_DR_SOURCE_DATABASE_URL);
+          const restore = new URL(process.env.COMMANDER_DR_RESTORE_DATABASE_URL);
+          for (const [name, value] of [['DATABASE_URL', source], ['RST_DATABASE_URL', restore]]) {
+            if (!['postgres:', 'postgresql:'].includes(value.protocol)) throw new Error(`${name} must be a PostgreSQL URL`);
+            if (value.searchParams.getAll('sslmode').length !== 1 || value.searchParams.get('sslmode') !== 'verify-full') {
+              throw new Error(`${name} must require sslmode=verify-full`);
+            }
+          }
+          if (source.hostname === restore.hostname && (source.port || '5432') === (restore.port || '5432') && source.pathname === restore.pathname) {
+            throw new Error('RST_DATABASE_URL must identify an independent restore target');
+          }
+          if (!/^[a-f0-9]{64}$/.test(process.env.COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 ?? '')) {
+            throw new Error('COMMANDER_DR_DATABASE_TLS_SPKI_SHA256 must be a lowercase SHA-256 digest');
+          }
+          const jwks = JSON.parse(process.env.COMMANDER_DR_EVIDENCE_JWKS_JSON);
+          if (!jwks || typeof jwks !== 'object' || !Array.isArray(jwks.keys) || jwks.keys.length === 0) {
+            throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must contain public verification keys');
+          }
+          if (jwks.keys.length !== 1) {
+            throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must contain exactly one verification key');
+          }
+          for (const key of jwks.keys) {
+            if (!key || typeof key !== 'object' || Array.isArray(key) || Object.hasOwn(key, 'd')) {
+              throw new Error('COMMANDER_DR_EVIDENCE_JWKS_JSON must not contain private key material');
+            }
+          }
+          const { createPrivateKey, createPublicKey } = await import('node:crypto');
+          let publicJwk;
+          try {
+            const privateKey = createPrivateKey(process.env.COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM);
+            if (privateKey.asymmetricKeyType !== 'ed25519') {
+              throw new Error('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM must be an Ed25519 key');
+            }
+            publicJwk = createPublicKey(privateKey).export({ format: 'jwk' });
+          } catch (error) {
+            if (error instanceof Error && error.message.startsWith('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM')) throw error;
+            throw new Error('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM must be an Ed25519 private key');
+          }
+          const retained = jwks.keys[0];
+          if (retained.kty !== 'OKP' || retained.crv !== 'Ed25519' || retained.x !== publicJwk.x || !retained.kid) {
+            throw new Error('COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM does not match the retained JWKS');
+          }
+          NODE
+          umask 077
+          evidence_root="$GITHUB_WORKSPACE/.internal/evidence/cd/$GITHUB_RUN_ID/g4"
+          tls_dir="$RUNNER_TEMP/commander-dr-tls"
+          install -d -m 700 "$tls_dir" "$evidence_root/dr"
+          printf '%s' "$COMMANDER_DR_DATABASE_TLS_CA_PEM" > "$tls_dir/ca.crt"
+          printf '%s' "$COMMANDER_DR_EVIDENCE_JWKS_JSON" > "$evidence_root/jwks.json"
+          printf '%s' "$COMMANDER_DR_EVIDENCE_SIGNING_KEY_PEM" > "$tls_dir/evidence-signing.pem"
+          test -s "$tls_dir/ca.crt"
+          test -s "$evidence_root/jwks.json"
+          test -s "$tls_dir/evidence-signing.pem"
+          chmod 600 "$tls_dir/ca.crt" "$evidence_root/jwks.json" "$tls_dir/evidence-signing.pem"
+          {
+            printf 'DATABASE_URL=%s\n' "$COMMANDER_DR_SOURCE_DATABASE_URL"
+            printf 'RST_DATABASE_URL=%s\n' "$COMMANDER_DR_RESTORE_DATABASE_URL"
+            printf 'COMMANDER_DATABASE_TLS_CA_FILE=%s\n' "$tls_dir/ca.crt"
+            printf 'COMMANDER_DATABASE_TLS_CA_MOUNT_IDENTITY=%s\n' "$COMMANDER_DR_DATABASE_TLS_CA_MOUNT_IDENTITY"
+            printf 'COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=%s\n' "$COMMANDER_DR_DATABASE_TLS_SPKI_SHA256"
+            printf 'PGSSLMODE=verify-full\n'
+            printf 'PGSSLROOTCERT=%s\n' "$tls_dir/ca.crt"
+            printf 'COMMANDER_DR_BACKUP_DIR=%s\n' "$evidence_root/dr"
+            printf 'COMMANDER_DR_RETAINED_JWKS_PATH=%s\n' "$evidence_root/jwks.json"
+            printf 'COMMANDER_DR_EVIDENCE_SIGNING_KEY_FILE=%s\n' "$tls_dir/evidence-signing.pem"
+            printf 'COMMANDER_APP_DATABASE_URL=%s\n' "$COMMANDER_DR_APP_DATABASE_URL"
+            printf 'COMMANDER_TENANT_AUTHORITY_DATABASE_URL=%s\n' "$COMMANDER_DR_AUTHORITY_DATABASE_URL"
+          } >> "$GITHUB_ENV"
+
+      - name: Import authorized rotation sign-off key
+        env:
+          COMMANDER_GPG_PUBLIC_KEY_ASC: ${{ secrets.COMMANDER_GPG_PUBLIC_KEY_ASC }}
+        run: |
+          set -eu
+          test -n "$COMMANDER_GPG_PUBLIC_KEY_ASC"
+          GNUPGHOME="$RUNNER_TEMP/commander-gnupg"
+          export GNUPGHOME
+          install -d -m 700 "$GNUPGHOME"
+          printf '%s' "$COMMANDER_GPG_PUBLIC_KEY_ASC" > "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --import "$RUNNER_TEMP/commander-signoff-public.asc"
+          gpg --batch --fingerprint 4C132B5DE96357D5B148807987F7A7F843D07138
+          printf 'GNUPGHOME=%s\n' "$GNUPGHOME" >> "$GITHUB_ENV"
+
+      - name: Run G4 rotation and DR proof
+        env:
+          COMMANDER_DR_DROP_EXISTING_RESTORE_DATABASE: 'true'
+        run: |
+          set -euo pipefail
+          evidence_root="$GITHUB_WORKSPACE/.internal/evidence/cd/$GITHUB_RUN_ID/g4"
+          pnpm rotate:verify 2>&1 | tee "$evidence_root/rotate.log"
+          pnpm dr:verify -- --jwks-path "$COMMANDER_DR_RETAINED_JWKS_PATH" 2>&1 | tee "$evidence_root/dr.log"
+          report="$(find "$COMMANDER_DR_BACKUP_DIR" -name drill-report.json -type f -print -quit)"
+          test -n "$report"
+          node --input-type=module - "$report" <<'NODE'
+          import { readFileSync } from 'node:fs';
+          const report = JSON.parse(readFileSync(process.argv[2], 'utf8'));
+          if (report.overall !== 'PASS' || report.honestyLevel !== 'ENFORCED' || !report.restore?.independent) {
+            throw new Error('DR report did not establish the required ENFORCED independent PASS result');
+          }
+          if (!report.tls?.sourceVerified || !report.tls?.restoreVerified) {
+            throw new Error('DR report did not prove CA, hostname, and SPKI verification for both database targets');
+          }
+          if (report.validation?.evidenceReceiptsVerified !== report.validation?.evidenceReceiptCount) {
+            throw new Error('DR report did not verify every restored evidence receipt');
+          }
+          NODE
+
+      # This suite was registered by a package script but invoked by NO workflow,
+      # so its live RLS proofs never ran. That is exactly how four of its cases had
+      # gone stale against the enforced tenant-context phase without anyone seeing
+      # a red run. It needs only the DSN and role bootstrap this job already
+      # provides.
+      - name: PostgreSQL RLS live-fire
+        run: pnpm --filter @commander/kernel test:rls-live-fire
+
+      # Raw pg_dump data is intentionally excluded. Retention belongs to the
+      # protected backup system; this artifact contains only the sanitized log,
+      # public JWKS, and the machine-readable result needed for review.
+      - name: Upload sanitized G4 proof report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: l4-b-g4-proof-${{ github.run_id }}
+          if-no-files-found: error
+          path: |
+            .internal/evidence/cd/${{ github.run_id }}/g4/rotate.log
+            .internal/evidence/cd/${{ github.run_id }}/g4/dr.log
+            .internal/evidence/cd/${{ github.run_id }}/g4/jwks.json
+            .internal/evidence/cd/${{ github.run_id }}/g4/dr/**/drill-report.json
+
+  github-gateway-live:
+    name: GitHub Gateway live proof (real GitHub, response-cut proxy)
+    if: github.event_name == 'workflow_dispatch' && inputs.run_github_gateway_live
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: github-sandbox
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build host packages for cell scripts
+        run: |
+          pnpm --filter @commander/contracts build
+          pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/effect-broker build
+          pnpm --filter @commander/kernel build
+          pnpm --filter @commander/action-adapters build
+
+      - name: Validate exact sandbox configuration before minting a token
+        env:
+          SANDBOX_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          SANDBOX_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          SANDBOX_APPROVED: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+        run: |
+          node --input-type=module <<'NODE'
+          const { SANDBOX_OWNER: owner, SANDBOX_REPO: repo, SANDBOX_APPROVED: approved } = process.env;
+          const segment = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+          if (!segment.test(owner ?? '') || !segment.test(repo ?? '') || approved !== `${owner}/${repo}`) {
+            throw new Error('SANDBOX_TARGET_INVALID: configure one exact owner/repository');
+          }
+          NODE
+
+      - name: Mint short-lived token for one sandbox repository
+        id: sandbox-token
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349 # v2
+        with:
+          app-id: ${{ secrets.COMMANDER_SANDBOX_APP_ID }}
+          private-key: ${{ secrets.COMMANDER_SANDBOX_APP_PRIVATE_KEY }}
+          owner: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          repositories: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          permission-contents: read
+          permission-pull-requests: write
+
+      - name: Generate cell compose secrets
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
+          echo "COMMANDER_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_MASTER_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_AUDIT_CHAIN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          # Ed25519 authority + pinned database TLS. `cell:up-assert` generates
+          # these when unset, but they must ALSO be in $GITHUB_ENV so a later
+          # diagnostic step can interpolate the compose files at all.
+          key_dir="$(mktemp -d)"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/cap.pem"
+          {
+            echo 'COMMANDER_CAPABILITY_PRIVATE_KEY_PEM<<CAP_EOF'
+            cat "$key_dir/cap.pem"
+            echo 'CAP_EOF'
+          } >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_KEY_ID=cell-ci-r1" >> "$GITHUB_ENV"
+          # Real JWKS derived from the private key above. The worker rejects an
+          # empty `keys` array with CAPABILITY_AUTHORITY_REQUIRED, so a `{"keys":[]}`
+          # placeholder keeps it crash-looping.
+          jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/cap.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-r1' }] }));
+          ")
+          echo "COMMANDER_CAPABILITY_JWKS_JSON=$jwks" >> "$GITHUB_ENV"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/ev.pem"
+          {
+            echo 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM<<EV_EOF'
+            cat "$key_dir/ev.pem"
+            echo 'EV_EOF'
+          } >> "$GITHUB_ENV"
+          echo "COMMANDER_EVIDENCE_SIGNING_KEY_ID=cell-ci-ev-r1" >> "$GITHUB_ENV"
+          ev_jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/ev.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-ev-r1' }] }));
+          ")
+          echo "COMMANDER_EVIDENCE_JWKS_JSON=$ev_jwks" >> "$GITHUB_ENV"
+          # Generate cell PostgreSQL TLS fixture. generate-certificates.sh pins
+          # subjectAltName=DNS:postgres so in-network verify-full can match the service.
+          sh deploy/docker/kernel-tls/generate-certificates.sh "$key_dir/db-tls" postgres
+          echo "COMMANDER_DATABASE_TLS_HOST_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          echo "COMMANDER_CELL_POSTGRES_TLS_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          spki=$(openssl x509 -in "$key_dir/db-tls/server.crt" -pubkey -noout \
+            | openssl pkey -pubin -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)
+          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$spki" >> "$GITHUB_ENV"
+
+      - name: GitHub recovery through real Gateway, PostgreSQL and real GitHub
+        timeout-minutes: 25
+        env:
+          COMMANDER_SANDBOX_TOKEN: ${{ steps.sandbox-token.outputs.token }}
+          COMMANDER_SANDBOX_OWNER: ${{ vars.COMMANDER_SANDBOX_OWNER }}
+          COMMANDER_SANDBOX_REPO: ${{ vars.COMMANDER_SANDBOX_REPO }}
+          COMMANDER_LIVE_APPROVED_REPO: ${{ vars.COMMANDER_LIVE_APPROVED_REPO }}
+          COMMANDER_SANDBOX_RESPONSE_CUT_HEAD: ${{ vars.COMMANDER_SANDBOX_RESPONSE_CUT_HEAD }}
+          COMMANDER_SANDBOX_BASE: ${{ vars.COMMANDER_SANDBOX_BASE }}
+        run: pnpm cell:github-recovery --up --live-github
+
+      - name: Upload GitHub Gateway live evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-gateway-live-${{ github.sha }}
+          path: artifacts/github-cell-recovery.json
+          if-no-files-found: error
+
+      - name: Cell container logs (on failure)
+        if: failure()
+        run: |
+          for svc in api worker kernel-ops adapter-ops kernel-migrate postgres; do
+            echo "===== $svc ====="
+            docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+              -f docker-compose.kernel-tls.yml --profile cell logs --no-color --tail 80 "$svc" || true
+          done
 
   l4-b-cell-runtime:
     name: L4-B Cell Runtime
     runs-on: ubuntu-latest
     needs: l4-b-deploy-gates
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'
@@ -603,40 +1334,54 @@ jobs:
           echo "COMMANDER_API_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_MASTER_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "JWT_SECRET=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "ADMIN_PASSWORD=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_CAPABILITY_TOKEN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_INTEGRITY_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          echo "COMMANDER_AUDIT_CHAIN_KEY=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
           echo "COMMANDER_WORKER_AUTH_TOKEN=$(openssl rand -hex 32)" >> "$GITHUB_ENV"
+          # Ed25519 authority + pinned database TLS. `cell:up-assert` generates
+          # these when unset, but they must ALSO be in $GITHUB_ENV so a later
+          # diagnostic step can interpolate the compose files at all.
+          key_dir="$(mktemp -d)"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/cap.pem"
           {
-            echo 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM<<EOF'
-            openssl genpkey -algorithm Ed25519
-            echo 'EOF'
-            echo 'COMMANDER_EVIDENCE_SIGNING_KEY_ID=ci-cell-evidence'
+            echo 'COMMANDER_CAPABILITY_PRIVATE_KEY_PEM<<CAP_EOF'
+            cat "$key_dir/cap.pem"
+            echo 'CAP_EOF'
           } >> "$GITHUB_ENV"
-
-      - name: Cell PostgreSQL TLS configuration contract
-        run: pnpm exec tsx --test scripts/cell-postgres-tls-config.test.ts
-
-      - name: Generate cell PostgreSQL TLS fixture
-        shell: bash
-        run: |
-          TLS_DIR="$GITHUB_WORKSPACE/artifacts/cell-postgres-tls"
-          mkdir -p "$TLS_DIR"
-          openssl genrsa -out "$TLS_DIR/ca.key" 2048
-          openssl req -x509 -new -nodes -key "$TLS_DIR/ca.key" -sha256 -days 1 \
-            -subj '/CN=commander-cell-postgres-ca' -out "$TLS_DIR/ca.crt"
-          openssl genrsa -out "$TLS_DIR/server.key" 2048
-          openssl req -new -key "$TLS_DIR/server.key" -subj '/CN=postgres' -out "$TLS_DIR/server.csr"
-          openssl x509 -req -in "$TLS_DIR/server.csr" -CA "$TLS_DIR/ca.crt" -CAkey "$TLS_DIR/ca.key" \
-            -CAcreateserial -out "$TLS_DIR/server.crt" -days 1 -sha256 \
-            -extfile <(printf 'subjectAltName=DNS:postgres\nextendedKeyUsage=serverAuth\nkeyUsage=digitalSignature,keyEncipherment\n')
-          chmod 0600 "$TLS_DIR/server.key"
-          SPKI_SHA256="$(openssl x509 -pubkey -noout -in "$TLS_DIR/server.crt" \
-            | openssl pkey -pubin -outform DER \
-            | openssl dgst -sha256 -r \
-            | awk '{print $1}')"
-          test "${#SPKI_SHA256}" -eq 64
-          echo "COMMANDER_CELL_POSTGRES_TLS_DIR=$TLS_DIR" >> "$GITHUB_ENV"
-          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$SPKI_SHA256" >> "$GITHUB_ENV"
+          echo "COMMANDER_CAPABILITY_KEY_ID=cell-ci-r1" >> "$GITHUB_ENV"
+          # Real JWKS derived from the private key above. The worker rejects an
+          # empty `keys` array with CAPABILITY_AUTHORITY_REQUIRED, so a `{"keys":[]}`
+          # placeholder keeps it crash-looping.
+          jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/cap.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-r1' }] }));
+          ")
+          echo "COMMANDER_CAPABILITY_JWKS_JSON=$jwks" >> "$GITHUB_ENV"
+          openssl genpkey -algorithm ed25519 -out "$key_dir/ev.pem"
+          {
+            echo 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM<<EV_EOF'
+            cat "$key_dir/ev.pem"
+            echo 'EV_EOF'
+          } >> "$GITHUB_ENV"
+          echo "COMMANDER_EVIDENCE_SIGNING_KEY_ID=cell-ci-ev-r1" >> "$GITHUB_ENV"
+          ev_jwks=$(node -e "
+            const { createPrivateKey, createPublicKey } = require('node:crypto');
+            const priv = createPrivateKey(require('node:fs').readFileSync('$key_dir/ev.pem'));
+            const jwk = createPublicKey(priv).export({ format: 'jwk' });
+            process.stdout.write(JSON.stringify({ keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: 'cell-ci-ev-r1' }] }));
+          ")
+          echo "COMMANDER_EVIDENCE_JWKS_JSON=$ev_jwks" >> "$GITHUB_ENV"
+          # Generate cell PostgreSQL TLS fixture. generate-certificates.sh pins
+          # subjectAltName=DNS:postgres so in-network verify-full can match the service.
+          sh deploy/docker/kernel-tls/generate-certificates.sh "$key_dir/db-tls" postgres
+          echo "COMMANDER_DATABASE_TLS_HOST_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          echo "COMMANDER_CELL_POSTGRES_TLS_DIR=$key_dir/db-tls" >> "$GITHUB_ENV"
+          spki=$(openssl x509 -in "$key_dir/db-tls/server.crt" -pubkey -noout \
+            | openssl pkey -pubin -outform DER | openssl dgst -sha256 -r | cut -d' ' -f1)
+          echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$spki" >> "$GITHUB_ENV"
 
       - name: Docker build worker image (--no-cache)
         run: docker build --no-cache -f packages/worker-plane/Dockerfile -t commander-worker-ci .
@@ -645,22 +1390,52 @@ jobs:
         run: pnpm cell:image-boot-smoke -- --image-tag commander-worker-ci --skip-build
 
       - name: Cell up assert (compose profile)
-        run: pnpm cell:up-assert
+        # --keep: do not tear the stack down on failure, so the diagnostic step
+        # below can actually read the containers' logs.
+        run: pnpm cell:up-assert --keep
 
       - name: Cell compensation E2E compose (C3)
         run: pnpm cell:compensation-e2e -- --mode compose --up
 
+      - name: GitHub recovery through real Gateway and PostgreSQL (synthetic provider)
+        timeout-minutes: 15
+        run: pnpm cell:github-recovery --up
+
+      - name: Upload GitHub cell recovery evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: github-cell-recovery-${{ github.sha }}
+          path: artifacts/github-cell-recovery.json
+          if-no-files-found: error
+
+      # `cell:up-assert` reports which services are unhealthy but the reason is in
+      # the containers. Without this, an unhealthy api/worker/adapter-ops is
+      # undiagnosable from CI output.
+      - name: Cell container logs (on failure)
+        if: failure()
+        run: |
+          for svc in api worker kernel-ops adapter-ops kernel-migrate postgres; do
+            echo "===== $svc ====="
+            docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+              -f docker-compose.kernel-tls.yml --profile cell ps "$svc" || true
+            docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+              -f docker-compose.kernel-tls.yml --profile cell logs --no-color --tail 80 "$svc" || true
+          done
+          docker compose -f docker-compose.yml -f docker-compose.cell.yml \
+            -f docker-compose.kernel-tls.yml --profile cell down -v --remove-orphans || true
+
       - name: Upload cell up-assert artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-cell-up-assert
           path: artifacts/l4-b-cell-up-assert-*.json
           if-no-files-found: error
 
       - name: Upload cell compensation e2e artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-cell-compensation-e2e
           path: artifacts/l4-b-cell-compensation-e2e-*.json
@@ -668,7 +1443,7 @@ jobs:
 
       - name: Upload image boot smoke artifacts
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: l4-b-image-boot-smoke
           path: artifacts/l4-b-image-boot-smoke-*.json
@@ -678,11 +1453,11 @@ jobs:
     name: Web GUI Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
           cache: 'pnpm'

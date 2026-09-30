@@ -1,0 +1,25 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - alert-rules.yml
+
+scrape_configs:
+  # ── Commander HTTP server ─────────────────────────────────────────────
+  # Standalone usage (deploy/observability/docker-compose.yml): scrapes a
+  # Commander instance running on the host. Port 4000 is the API default.
+  - job_name: 'commander'
+    scrape_interval: 10s
+    static_configs:
+      - targets: ['host.docker.internal:4000']
+    metrics_path: /metrics
+    params:
+      format: [openmetrics]
+
+  # ── Commander process metrics (if sidecar enabled) ────────────────────
+  - job_name: 'commander-process'
+    scrape_interval: 30s
+    static_configs:
+      - targets: ['host.docker.internal:9091']
+    metrics_path: /metrics

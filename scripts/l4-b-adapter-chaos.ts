@@ -11,14 +11,19 @@
  */
 
 import assert from 'node:assert/strict';
+import { generateKeyPairSync } from 'node:crypto';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
   EffectBroker,
   EffectBrokerError,
   canonicalRequestHash,
+  createEvidenceSigner,
 } from '@commander/effect-broker';
-import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import {
+  InMemoryKernelRepository,
+  seedFreshOperationsDrains,
+} from '@commander/kernel/testing/inMemoryRepository';
 import {
   ActionAdapterRegistry,
   createGitHubPullRequestCreateAdapter,
@@ -44,6 +49,8 @@ export interface L4BChaosResult {
 
 const tenantId = 'l4-b-chaos-tenant';
 const destination = 'github://octo/repo/pulls';
+const workerId = 'worker-chaos';
+const workerGeneration = 1;
 
 function chaosCredentials() {
   return {
@@ -62,8 +69,8 @@ export function createChaosMockFetch(counters: L4BChaosRemoteCounters) {
     html_url: string;
     state: string;
     body: string;
-    head: { ref: string };
-    base: { ref: string };
+    head: { ref: string; sha: string; repo: { full_name: string } };
+    base: { ref: string; repo: { full_name: string } };
   }> = [];
 
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
@@ -85,9 +92,12 @@ export function createChaosMockFetch(counters: L4BChaosRemoteCounters) {
         number: pulls.length + 1,
         html_url: `https://github.com/octo/repo/pull/${pulls.length + 1}`,
         state: 'open',
+        title: body.title,
         body: body.body,
-        head: { ref: body.head },
-        base: { ref: body.base },
+        head: { ref: body.head, sha: 'a'.repeat(40), repo: { full_name: 'octo/repo' } },
+        base: { ref: body.base, repo: { full_name: 'octo/repo' } },
+        merged: false,
+        merged_at: null,
       };
       pulls.push(created);
       return new Response(JSON.stringify(created), { status: 201 });
@@ -107,6 +117,27 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
   const registry = new ActionAdapterRegistry([adapter]);
   const executor = createActionAdapterEffectExecutor(registry);
   const kernel = new InMemoryKernelRepository();
+  // Kernel admission of Class A effects is fail-closed on operations readiness:
+  // without live reconcile/compensate drains it returns OPERATIONS_NOT_READY.
+  seedFreshOperationsDrains(kernel, tenantId);
+  const claimSecret = kernel.seedTestWorker(workerId, [tenantId], workerGeneration, {
+    capabilities: ['tool', 'effect.execute'],
+  });
+  // Reconcile mutations are fail-closed on worker claim authz (WORKER_FENCED without it),
+  // so the daemon needs its own registered adapter-ops reconcile drain identity.
+  const reconcileWorkerId = `reconcile:${tenantId}:chaos`;
+  const reconcileWorkerGeneration = 1;
+  const reconcileClaimSecret = kernel.seedTestWorker(
+    reconcileWorkerId,
+    [tenantId],
+    reconcileWorkerGeneration,
+    {
+      capabilities: ['effect.reconcile'],
+      identitySubject: 'db:commander_adapter_ops',
+      registeredAt: new Date(Date.now() - 1_000),
+      lastHeartbeatAt: new Date(),
+    },
+  );
 
   await kernel.createRun(
     {
@@ -120,7 +151,13 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     },
     'chaos',
   );
-  const step = await kernel.claimNextStep({ workerId: 'worker-chaos', leaseTtlMs: 60_000 });
+  const step = await kernel.claimNextStep({
+    workerId,
+    workerGeneration,
+    claimSecret,
+    capabilities: ['tool'],
+    leaseTtlMs: 60_000,
+  });
   assert.ok(step?.lease);
   await kernel.setAllowlistEntry(tenantId, 'connector.github.pull-request.create', true);
 
@@ -154,7 +191,7 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     kernel,
     executor,
     { append: async () => {} },
-    { localWorkerId: 'worker-chaos', requireRequestBinding: false },
+    { localWorkerId: workerId, requireRequestBinding: false },
   );
 
   const effectId = 'eff-chaos-1';
@@ -169,6 +206,8 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     // Class A fixtures must carry actionDigest (Task 2 gate — do not weaken broker).
     actionDigest: 'a'.repeat(64),
     policySnapshotId: 'chaos-policy',
+    workerId,
+    workerGeneration,
   });
 
   const originalComplete = kernel.completeEffect.bind(kernel);
@@ -184,7 +223,7 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
           request,
           idempotencyKey: request.idempotencyKey,
           lease: step.lease!,
-          actor: 'worker-chaos',
+          actor: workerId,
         }),
       (error: unknown) =>
         error instanceof EffectBrokerError && error.code === 'COMPLETION_UNCONFIRMED',
@@ -211,6 +250,16 @@ export async function runL4BAdapterChaos(): Promise<L4BChaosResult> {
     actor: 'reconciliation-daemon',
     pollIntervalMs: 60_000,
     batchSize: 10,
+    workerId: reconcileWorkerId,
+    workerGeneration: reconcileWorkerGeneration,
+    claimSecret: reconcileClaimSecret,
+    // Terminal reconcile evidence is fail-closed without a signer (EVIDENCE_SIGNING_KEY_REQUIRED).
+    evidenceSigner: createEvidenceSigner({
+      privateKeyPem: generateKeyPairSync('ed25519')
+        .privateKey.export({ format: 'pem', type: 'pkcs8' })
+        .toString(),
+      keyId: 'l4-b-chaos-evidence',
+    }),
     brokerFactory: (querier) =>
       new EffectBroker(
         tokens,

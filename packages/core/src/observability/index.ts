@@ -10,12 +10,8 @@ export { buildDecisions, decisionsSummary } from './decisionProvenance';
 export { eventToOtelAttrs, spanNameForEvent, SPAN_KIND_TO_OTEL_KIND } from './otelSemConv';
 export { dryReplay } from './replay';
 export { buildExecutiveSummary } from './executiveSummary';
-export {
-  handleObservabilityRequest,
-  OBSERVABILITY_HTTP_ROUTES,
-  type ObservabilityDeps,
-  type ObservabilityResult,
-} from './httpApi';
+export { handleObservabilityRequest, OBSERVABILITY_HTTP_ROUTES } from './httpApi';
+export type { ObservabilityDeps, ObservabilityResult } from './httpApi';
 // Shared scoring primitives — single source of truth for "is this dataset
 // expected value ungradable?" across evalScorer.ts and scripts/benchmark-gaia.ts.
 // See normalizeExpected.ts for the cross-file contract that prevents silent
@@ -25,16 +21,19 @@ export {
   classifyExpectedForSubstringMatch,
   isNormalizedSubstringMatch,
   normalizeForMatch,
-  type ExpectedClassification,
-  type GradedClassification,
-  type UngradedClassification,
-  type UngradedReason,
+} from './normalizeExpected';
+export type {
+  ExpectedClassification,
+  GradedClassification,
+  UngradedClassification,
+  UngradedReason,
 } from './normalizeExpected';
 // Shared offline-benchmark scoring primitives — the 3-way verdict (CORRECT /
 // INCORRECT / UNGRADED) that scripts/benchmark-gaia.ts and the vitest runtime
 // tests in evalScorer.test.ts both import. See score.ts for the cross-file
 // contract and the asymmetric parameter types invariant.
-export { score, type Verdict, type ScoreResult } from './score';
+export { score } from './score';
+export type { Verdict, ScoreResult } from './score';
 // PagerDuty alerting — SLO violation → PagerDuty Events API v2 bridge
 export {
   PagerDutyAlerter,
@@ -42,8 +41,10 @@ export {
   getPagerDutyAlerter,
   setPagerDutyAlerter,
   resetPagerDutyAlerter,
-  type PagerDutyAlert,
-  type PagerDutySeverity,
-  type SLOViolationEvent,
-  type SLOViolationCallback,
+} from './pagerDutyAlerting';
+export type {
+  PagerDutyAlert,
+  PagerDutySeverity,
+  SLOViolationEvent,
+  SLOViolationCallback,
 } from './pagerDutyAlerting';

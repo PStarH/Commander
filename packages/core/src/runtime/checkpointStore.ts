@@ -25,6 +25,8 @@ import type { LLMMessage } from './types/llm';
 import { walCheckpoint } from '../storage/walCheckpoint';
 import { getCurrentTenantId } from './tenantContext';
 
+const nodeRequire = createRequire(import.meta.url);
+
 // ============================================================================
 // SQLite Interface Types
 // ============================================================================
@@ -45,7 +47,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = createRequire(import.meta.url)('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (err) {
   reportSilentFailure(err, 'checkpointStore:48');
   /* better-sqlite3 not installed — operations throw at runtime */

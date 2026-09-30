@@ -22,6 +22,7 @@ import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
 import { atomicWriteFileSync, readJsonFileSafe, isPlainObjectJson } from './atomicWrite';
 import { hasRole } from './userStore';
+import { invalidateAuditLogCache } from './auditLogEndpoints';
 
 const APPROVAL_MODE_FILE = path.join(process.cwd(), '.commander', 'approval-mode.json');
 const AUDIT_LOG_FILE = path.join(process.cwd(), '.commander', 'security-audit.jsonl');
@@ -199,6 +200,24 @@ interface AuditEntry {
   reason?: string;
   riskLevel?: string;
   tenantId?: string;
+  userId?: string;
+  details?: Record<string, unknown>;
+}
+
+/**
+ * Raw line as written to `.commander/security-audit.jsonl`.
+ *
+ * Two shapes coexist:
+ *   - approval decisions: `{ timestamp, event, decision, ... }`
+ *   - configuration changes (LM-24): `{ timestamp, type, action, actor,
+ *     tenantId, ip, detail }` — flat fields, no `event`/`decision`.
+ */
+interface RawAuditLine extends AuditEntry {
+  type?: string;
+  action?: string;
+  actor?: string;
+  ip?: string;
+  detail?: Record<string, unknown>;
 }
 
 function requestTenant(req: Request): string | undefined {
@@ -228,28 +247,60 @@ function requireApprovalAuditReader(req: Request, res: Response, next: NextFunct
   next();
 }
 
-function readAuditLog(limit: number, tenantId: string): AuditEntry[] {
-  try {
-    const raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8');
-    const lines = raw.trim().split('\n').filter(Boolean);
-    const entries: AuditEntry[] = [];
-    for (const line of lines) {
-      try {
-        const parsed = JSON.parse(line) as AuditEntry;
-        if (
-          parsed.tenantId === tenantId &&
-          (parsed.event?.includes('approval') || parsed.decision)
-        ) {
-          entries.push(parsed);
-        }
-      } catch {
-        // Skip malformed lines
-      }
-    }
-    return entries.slice(-limit);
-  } catch {
-    return [];
+/** True for a well-formed `config_change` record written by auditConfigChange. */
+function isConfigChangeRecord(parsed: RawAuditLine): boolean {
+  return (
+    parsed.type === 'config_change' &&
+    typeof parsed.action === 'string' &&
+    parsed.action.length > 0 &&
+    typeof parsed.timestamp === 'string'
+  );
+}
+
+/**
+ * Map a raw line onto the approval-audit response shape.
+ *
+ * LM-24: `config_change` records were previously excluded entirely (the reader
+ * required `event` to contain 'approval' or a `decision` to be present), so
+ * approval-configuration changes were invisible to the approval audit reader.
+ * They are now normalised — `actor` → `userId`, `action`/`detail` → `details` —
+ * while legacy approval records pass through unchanged.
+ */
+function toApprovalAuditEntry(parsed: RawAuditLine): AuditEntry {
+  if (isConfigChangeRecord(parsed)) {
+    return {
+      timestamp: parsed.timestamp,
+      event: 'config_change',
+      tenantId: parsed.tenantId,
+      userId: parsed.actor,
+      details: { action: parsed.action, detail: parsed.detail },
+    };
   }
+  return parsed;
+}
+
+function readAuditLog(limit: number, tenantId: string): AuditEntry[] {
+  let raw: string;
+  try {
+    raw = fs.readFileSync(AUDIT_LOG_FILE, 'utf-8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw new Error('APPROVAL_AUDIT_UNAVAILABLE');
+  }
+  const entries: AuditEntry[] = [];
+  for (const line of raw.trim().split('\n').filter(Boolean)) {
+    let parsed: RawAuditLine;
+    try {
+      parsed = JSON.parse(line) as RawAuditLine;
+    } catch {
+      throw new Error('APPROVAL_AUDIT_INVALID');
+    }
+    if (parsed.tenantId !== tenantId) continue;
+    const isApprovalRecord = parsed.event?.includes('approval') || !!parsed.decision;
+    if (!isApprovalRecord && !isConfigChangeRecord(parsed)) continue;
+    entries.push(toApprovalAuditEntry(parsed));
+  }
+  return entries.slice(-limit);
 }
 
 // ── Schemas ─────────────────────────────────────────────────────────────
@@ -317,6 +368,10 @@ export function createApprovalConfigRouter(): Router {
       };
       fs.mkdirSync(path.dirname(AUDIT_LOG_FILE), { recursive: true });
       fs.appendFileSync(AUDIT_LOG_FILE, JSON.stringify(entry) + '\n');
+      // LM-24: the unified audit reader caches its merged view for a few
+      // seconds; drop it so this change is visible immediately rather than
+      // being hidden for the rest of the cache window.
+      invalidateAuditLogCache();
       return true;
     } catch {
       return false;

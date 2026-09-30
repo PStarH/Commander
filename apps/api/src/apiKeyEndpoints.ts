@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { z } from 'zod';
 import { getApiKeyStore, type ApiKeyRecord } from './apiKeyStore';
+import { isAuthAuthorityUnavailable, redactAuthErrorDetail } from './authDb';
 import { hasRole, type UserRole } from './userStore';
 
 /**
@@ -70,6 +71,35 @@ function redactHash(record: ApiKeyRecord): Omit<ApiKeyRecord, 'hash'> {
   return rest;
 }
 
+/**
+ * AUTH-07: API-key management used `String(error)` as the response body, which
+ * echoed internal exceptions — a pg connection failure embeds the DSN and its
+ * password — and turned an unavailable authority into a 500. The client now
+ * gets a stable code plus the request id; the (redacted) detail goes to the
+ * internal log only, and a down database maps to 503.
+ */
+function sendApiKeyAuthorityError(
+  req: Request,
+  res: Response,
+  operation: string,
+  error: unknown,
+): void {
+  const unavailable = isAuthAuthorityUnavailable(error);
+  const code = unavailable ? 'API_KEY_AUTHORITY_UNAVAILABLE' : 'API_KEY_OPERATION_FAILED';
+  process.stderr.write(
+    `[ApiKeyEndpoints] ${operation} failed code=${code} requestId=${
+      req.requestId ?? 'none'
+    } detail=${redactAuthErrorDetail(error)}\n`,
+  );
+  res.status(unavailable ? 503 : 500).json({
+    error: unavailable
+      ? 'API key authority unavailable. Retry later.'
+      : 'API key operation failed.',
+    code,
+    requestId: req.requestId,
+  });
+}
+
 const createKeySchema = z.object({
   name: z.string().min(1).max(128),
   scopes: z.array(z.enum(['read', 'write', 'admin'])).optional(),
@@ -84,92 +114,105 @@ export function createApiKeyRouter(): Router {
   const store = getApiKeyStore();
 
   // GET /api/admin/api-keys — list keys (no secrets); tenant-scoped for non-super_admin
-  router.get('/api/admin/api-keys', requireAuth, requireRole(), (req: Request, res: Response) => {
-    try {
-      const all = store.list();
-      if (isSuperAdmin(req)) {
-        res.json({ keys: all });
-        return;
+  router.get(
+    '/api/admin/api-keys',
+    requireAuth,
+    requireRole(),
+    async (req: Request, res: Response) => {
+      try {
+        if (isSuperAdmin(req)) {
+          res.json({ keys: await store.list() });
+          return;
+        }
+        const tenant = principalTenant(req);
+        if (!tenant) {
+          res.status(403).json({
+            error: 'Tenant-bound identity required to list API keys',
+          });
+          return;
+        }
+        res.json({ keys: await store.listByTenant(tenant) });
+      } catch (error) {
+        sendApiKeyAuthorityError(req, res, 'list', error);
       }
-      const tenant = principalTenant(req);
-      if (!tenant) {
-        res.status(403).json({
-          error: 'Tenant-bound identity required to list API keys',
-        });
-        return;
-      }
-      res.json({ keys: all.filter((k) => k.tenantId === tenant) });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
+    },
+  );
 
   // POST /api/admin/api-keys — create a new key (tenant forced for non-super_admin)
-  router.post('/api/admin/api-keys', requireAuth, requireRole(), (req: Request, res: Response) => {
-    const parsed = createKeySchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({
-        error: 'Validation error',
-        details: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
-      });
-      return;
-    }
-
-    let tenantId = parsed.data.tenantId;
-    if (!isSuperAdmin(req)) {
-      const principal = principalTenant(req);
-      if (!principal) {
-        res.status(403).json({
-          error: 'Tenant-bound identity required to mint API keys',
-          hint: 'Use a JWT/API key with a tenant binding, or a super_admin account.',
+  router.post(
+    '/api/admin/api-keys',
+    requireAuth,
+    requireRole(),
+    async (req: Request, res: Response) => {
+      const parsed = createKeySchema.safeParse(req.body);
+      if (!parsed.success) {
+        res.status(400).json({
+          error: 'Validation error',
+          details: parsed.error.issues.map((i) => ({ path: i.path.join('.'), message: i.message })),
         });
         return;
       }
-      if (tenantId && tenantId !== principal) {
-        res.status(403).json({
-          error: 'Cannot mint API keys for another tenant',
-          hint: 'Only super_admin may set tenantId to a different tenant.',
-        });
-        return;
-      }
-      tenantId = principal;
-    }
 
-    try {
-      const { record, key } = store.create(parsed.data.name, parsed.data.scopes, tenantId);
-      res.status(201).json({ key, record: redactHash(record) });
-    } catch (error) {
-      res.status(500).json({ error: String(error) });
-    }
-  });
+      let tenantId = parsed.data.tenantId;
+      if (!isSuperAdmin(req)) {
+        const principal = principalTenant(req);
+        if (!principal) {
+          res.status(403).json({
+            error: 'Tenant-bound identity required to mint API keys',
+            hint: 'Use a JWT/API key with a tenant binding, or a super_admin account.',
+          });
+          return;
+        }
+        if (tenantId && tenantId !== principal) {
+          res.status(403).json({
+            error: 'Cannot mint API keys for another tenant',
+            hint: 'Only super_admin may set tenantId to a different tenant.',
+          });
+          return;
+        }
+        tenantId = principal;
+      }
+
+      try {
+        const { record, key } = await store.create(parsed.data.name, parsed.data.scopes, tenantId);
+        res.status(201).json({ key, record: redactHash(record) });
+      } catch (error) {
+        sendApiKeyAuthorityError(req, res, 'create', error);
+      }
+    },
+  );
 
   // DELETE /api/admin/api-keys/:id — revoke a key (same-tenant unless super_admin)
   router.delete(
     '/api/admin/api-keys/:id',
     requireAuth,
     requireRole(),
-    (req: Request, res: Response) => {
+    async (req: Request, res: Response) => {
       const id = String(req.params.id);
-      // Locate first so we can enforce tenant before mutating.
-      const existing = store.list().find((k) => k.id === id);
-      if (!existing) {
+      const tenant = isSuperAdmin(req) ? undefined : principalTenant(req);
+      if (!isSuperAdmin(req) && !tenant) {
         res.status(404).json({ error: 'API key not found or already revoked' });
         return;
       }
-      if (!isSuperAdmin(req)) {
-        const principal = principalTenant(req);
-        if (!principal || existing.tenantId !== principal) {
-          // 404 to avoid cross-tenant existence oracle
+
+      // Locate first so we can enforce tenant before mutating.
+      try {
+        const existing = (
+          isSuperAdmin(req) ? await store.list() : await store.listByTenant(tenant!)
+        ).find((key) => key.id === id);
+        if (!existing) {
           res.status(404).json({ error: 'API key not found or already revoked' });
           return;
         }
+        const revoked = await store.revoke(id, tenant);
+        if (!revoked) {
+          res.status(404).json({ error: 'API key not found or already revoked' });
+          return;
+        }
+        res.json({ status: 'revoked', record: redactHash(revoked) });
+      } catch (error) {
+        sendApiKeyAuthorityError(req, res, 'revoke', error);
       }
-      const revoked = store.revoke(id);
-      if (!revoked) {
-        res.status(404).json({ error: 'API key not found or already revoked' });
-        return;
-      }
-      res.json({ status: 'revoked', record: redactHash(revoked) });
     },
   );
 

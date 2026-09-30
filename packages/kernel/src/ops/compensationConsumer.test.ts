@@ -1,215 +1,624 @@
-/**
- * Unit tests for the WS2 compensation consumer (§8).
- *
- * Proves the two audit findings are closed:
- *   1. Failures call retryOutbox (error recorded + immediate backoff) instead
- *      of silently waiting for claim expiry.
- *   2. Retries are bounded: once attempts reach maxAttempts the message stops
- *      being served (mirroring sweepOutboxDlq's move-to-DLQ, which runs every
- *      kernel-ops timer cycle) — no infinite poison-message loop.
- */
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { consumeCompensationBatch } from './compensationConsumer.js';
-import type { CompensationOutboxMessage, CompensationOutboxPort } from './compensationConsumer.js';
+import {
+  consumeCompensationBatch,
+  type ClaimedCompensationWork,
+  type CompensationOutboxPort,
+} from './compensationConsumer.js';
+import {
+  canonicalCompensationHash,
+  sealGovernedCompensationAuthorization,
+  type GovernedCompensationAuthorization,
+  type GovernedCompensationAuthorizationInput,
+} from './compensationAuthority.js';
+import type { ClaimedCompensationRequest, CompensationAuthorizationRecord } from '../types.js';
+import { deriveEffectIdempotencyKey } from '@commander/effect-broker';
 
-const PAYLOAD = {
-  tenantId: 'tenant-a',
-  runId: 'run-1',
-  stepId: 'step-1',
-  compensationAction: 'crm.compensate',
-  compensationPayload: { undo: true },
-};
+const WORKER = {
+  workerId: 'compensation:pod-a',
+  workerGeneration: 4,
+  claimSecret: 'claim-secret-pod-a',
+} as const;
 
-/** Fake outbox mirroring kernel semantics: claim bumps attempts, retryOutbox
- *  records the error, and messages at maxAttempts are no longer served
- *  (the sweeper would have moved them to the DLQ). */
-function makeOutbox(maxAttempts = 3) {
-  const message: CompensationOutboxMessage & {
-    errors: Array<{ code: string; message: string }>;
-    acked: boolean;
-  } = {
-    id: 'msg-1',
+function authorityInput(): GovernedCompensationAuthorizationInput {
+  return {
+    schema: 'commander.compensation/v1',
+    authorizationId: 'authorization-1',
+    requestId: 'request-1',
     tenantId: 'tenant-a',
-    topic: 'commander.kernel.compensation.requested',
-    key: 'run-1',
-    payload: PAYLOAD,
-    attempts: 0,
-    claimToken: undefined,
-    errors: [],
-    acked: false,
+    originalRunId: 'run-original',
+    originalEffectId: 'effect-original',
+    originalRunStateAtRequest: 'COMPENSATING',
+    compensationRunId: 'run-compensation',
+    compensationStepId: 'step-compensation',
+    compensationEffectId: 'effect-compensation',
+    compensationEffectType: 'compensate.kubernetes.deployment.rollback',
+    compensationRequest: {
+      originalEffectId: 'effect-original',
+      destination: 'k8s://cluster-a/default/deployments/api',
+      forwardResponse: { originalRevision: '7' },
+      compensationPatch: { targetRevision: '7', reason: 'rollback' },
+    },
+    idempotencyKey: 'cmp:effect-original:1.0.0',
+    forwardReceipt: { originalRevision: '7' },
+    adapterVersion: '1.0.0',
+    policyDecisionId: 'decision-1',
+    policySnapshotId: 'policy-42',
+    decisionEffect: 'allow',
+    authorizationExpiresAt: '2099-07-29T11:00:00.000Z',
+    approvalBinding: null,
   };
-  const port: CompensationOutboxPort = {
-    async claimOutboxByTopic(_topic, _limit) {
-      if (message.acked || message.attempts >= maxAttempts) return [];
-      message.attempts++;
-      message.claimToken = `claim-${message.attempts}`;
-      return [{ ...message }];
-    },
-    async markOutboxPublished(id, claimToken) {
-      if (id !== message.id || claimToken !== message.claimToken) return false;
-      message.acked = true;
-      return true;
-    },
-    async retryOutbox(id, claimToken, error) {
-      if (id !== message.id || claimToken !== message.claimToken) return false;
-      message.errors.push(error);
-      message.claimToken = undefined;
-      return true;
-    },
-  };
-  return { port, message };
 }
 
-const okBroker = {
-  admit: async () => ({ admitted: true, effectId: 'e1', replayed: false }),
-  executeAdmitted: async () => ({ effectId: 'e1', replayed: false, response: { ok: true } }),
+function claimed(): ClaimedCompensationRequest {
+  const governed = sealGovernedCompensationAuthorization(authorityInput());
+  const requestPayload = governed.compensationRequest;
+  const authorization: CompensationAuthorizationRecord = {
+    id: governed.authorizationId,
+    tenantId: governed.tenantId,
+    originalRunId: governed.originalRunId,
+    originalEffectId: governed.originalEffectId,
+    compensationEffectType: governed.compensationEffectType,
+    adapterVersion: governed.adapterVersion,
+    compensationPatch: requestPayload.compensationPatch as Record<string, unknown>,
+    forwardReceiptHash: governed.forwardReceiptHash,
+    policyDecisionId: governed.policyDecisionId,
+    policySnapshotId: governed.policySnapshotId,
+    decision: governed.decisionEffect,
+    actionDigest: canonicalCompensationHash({
+      type: governed.compensationEffectType,
+      originalEffectId: governed.originalEffectId,
+      adapterVersion: governed.adapterVersion,
+      destination: requestPayload.destination,
+      forwardResponse: governed.forwardReceipt,
+      compensationPatch: requestPayload.compensationPatch,
+    }),
+    expiresAt: governed.authorizationExpiresAt,
+  };
+  const request: ClaimedCompensationRequest['request'] = {
+    id: governed.requestId,
+    tenantId: governed.tenantId,
+    originalRunId: governed.originalRunId,
+    originalEffectId: governed.originalEffectId,
+    compensationRunId: governed.compensationRunId,
+    compensationStepId: governed.compensationStepId,
+    adapterVersion: governed.adapterVersion,
+    compensationEffectType: governed.compensationEffectType,
+    destination: String(requestPayload.destination),
+    compensationPatch: requestPayload.compensationPatch as Record<string, unknown>,
+    forwardReceiptHash: governed.forwardReceiptHash,
+    authorizationId: governed.authorizationId,
+    reconcilePolicy: {
+      maxAttempts: 3,
+      initialDelayMs: 1_000,
+      maxDelayMs: 5_000,
+      deadlineAt: governed.authorizationExpiresAt,
+    },
+    state: 'CLAIMED',
+    claimWorkerId: WORKER.workerId,
+    claimWorkerGeneration: WORKER.workerGeneration,
+    claimToken: 'outbox-claim-1',
+    compensationEffectId: governed.compensationEffectId,
+  };
+  return {
+    request,
+    forwardResponse: governed.forwardReceipt,
+    outboxMessageId: 'outbox-1',
+    outboxClaimToken: 'outbox-claim-1',
+    authorization,
+    lease: {
+      workerId: WORKER.workerId,
+      workerGeneration: WORKER.workerGeneration,
+      token: 'step-lease-1',
+      fencingEpoch: 12,
+      expiresAt: '2099-07-29T11:00:00.000Z',
+    },
+  };
+}
+
+function makePort(items: ClaimedCompensationWork[] = [claimed()]) {
+  const calls: Array<{ method: string; input: unknown }> = [];
+  let served = false;
+  const port: CompensationOutboxPort = {
+    async claimCompensationWork(input) {
+      calls.push({ method: 'claim', input });
+      if (served) return [];
+      served = true;
+      return items;
+    },
+    async parkCompensationUnknown(input) {
+      calls.push({ method: 'park', input });
+      return { applied: true, disposition: 'COMPLETION_UNKNOWN', replayed: false };
+    },
+    async finalizeCompensation(input) {
+      calls.push({ method: 'finalize', input });
+      return { applied: true, disposition: input.disposition, replayed: false };
+    },
+  };
+  return {
+    port,
+    calls,
+    resetClaim: () => {
+      served = false;
+    },
+  };
+}
+
+const registry = {
+  resolve: (effectType: string) =>
+    effectType === 'compensate.kubernetes.deployment.rollback'
+      ? { descriptor: { adapterVersion: '1.0.0' } }
+      : null,
 };
 
-describe('WS2 §8 compensation consumer', () => {
-  it('acks the message only after admit→execute succeeds', async () => {
-    const { port, message } = makeOutbox();
-    const result = await consumeCompensationBatch(port, okBroker, async () => 'token', {
-      workerId: 'w1',
-      fencingEpoch: 1,
-    });
-    assert.equal(result.succeeded, 1);
-    assert.equal(message.acked, true);
-    assert.equal(message.errors.length, 0);
-  });
-
-  it('records the error via retryOutbox when the token provider refuses', async () => {
-    const { port, message } = makeOutbox();
-    const result = await consumeCompensationBatch(port, okBroker, async () => null, {
-      workerId: 'w1',
-      fencingEpoch: 1,
-    });
-    assert.equal(result.failed, 1);
-    assert.equal(message.acked, false);
-    assert.equal(message.errors[0]?.code, 'COMPENSATION_TOKEN_REFUSED');
-  });
-
-  it('records the error via retryOutbox when admit rejects', async () => {
-    const { port, message } = makeOutbox();
-    const rejectBroker = {
-      ...okBroker,
-      admit: async () => ({
-        admitted: false,
-        effectId: '',
-        replayed: false,
-        reason: 'POLICY_DENIED',
-      }),
-    };
-    await consumeCompensationBatch(port, rejectBroker, async () => 'token', {
-      workerId: 'w1',
-      fencingEpoch: 1,
-    });
-    assert.equal(message.errors[0]?.code, 'COMPENSATION_ADMIT_REJECTED');
-    assert.equal(message.errors[0]?.message, 'POLICY_DENIED');
-  });
-
-  it('bounds poison-message retries at maxAttempts (no infinite loop)', async () => {
-    const maxAttempts = 3;
-    const { port, message } = makeOutbox(maxAttempts);
-    const throwBroker = {
-      ...okBroker,
-      executeAdmitted: async () => {
-        throw new Error('connector down');
-      },
-    };
-    // Drain far more rounds than maxAttempts; the message must stop being served.
-    for (let round = 0; round < maxAttempts * 3; round++) {
-      await consumeCompensationBatch(port, throwBroker, async () => 'token', {
-        workerId: 'w1',
-        fencingEpoch: 1,
-      });
-    }
-    assert.equal(message.attempts, maxAttempts, 'attempts must stop at maxAttempts');
-    assert.equal(message.errors.length, maxAttempts);
-    assert.ok(message.errors.every((e) => e.code === 'COMPENSATION_EXECUTE_FAILED'));
-    assert.equal(message.acked, false);
-  });
-
-  it('rejects when payload.tenantId diverges from outbox tenant_id', async () => {
-    const { port, message } = makeOutbox();
-    message.payload = { ...PAYLOAD, tenantId: 'tenant-evil' };
-    const result = await consumeCompensationBatch(port, okBroker, async () => 'token', {
-      workerId: 'w1',
-      fencingEpoch: 1,
-    });
-    assert.equal(result.failed, 1);
-    assert.equal(message.acked, false);
-    assert.equal(message.errors[0]?.code, 'COMPENSATION_TENANT_MISMATCH');
-  });
-
-  it('passes workloadBinding to broker.admit', async () => {
-    const { port } = makeOutbox();
-    let binding: Record<string, unknown> | undefined;
-    const broker = {
-      ...okBroker,
-      admit: async (input: { workloadBinding?: Record<string, unknown> }) => {
-        binding = input.workloadBinding;
-        return { admitted: true, effectId: 'e1', replayed: false };
-      },
-    };
-    await consumeCompensationBatch(port, broker, async () => 'token', {
-      workerId: 'compensation-daemon',
-      fencingEpoch: 1,
-    });
-    assert.deepEqual(binding, {
+describe('governed compensation consumer', () => {
+  it('accepts a durable action digest that binds the claimed destination', async () => {
+    const forwardResponse = { originalRevision: '7' };
+    const compensationPatch = { targetRevision: '7', reason: 'rollback' };
+    const destination = 'k8s://cluster-a/default/deployments/api';
+    const authorization: CompensationAuthorizationRecord = {
+      id: 'authorization-durable-destination',
       tenantId: 'tenant-a',
-      runId: 'run-1',
-      stepId: 'step-1',
-      workloadId: 'compensation-daemon',
-    });
-  });
-
-  it('fails closed (never invents epoch 1) when neither payload nor options carry a fencingEpoch', async () => {
-    const { port, message } = makeOutbox();
-    let admitCalled = false;
-    const broker = {
-      ...okBroker,
-      admit: async () => {
-        admitCalled = true;
-        return { admitted: true, effectId: 'e1', replayed: false };
+      originalRunId: 'run-original',
+      originalEffectId: 'effect-original',
+      compensationEffectType: 'compensate.kubernetes.deployment.rollback',
+      adapterVersion: '1.0.0',
+      compensationPatch,
+      forwardReceiptHash: canonicalCompensationHash(forwardResponse),
+      policyDecisionId: 'decision-durable',
+      policySnapshotId: 'policy-durable',
+      decision: 'allow',
+      actionDigest: canonicalCompensationHash({
+        type: 'compensate.kubernetes.deployment.rollback',
+        originalEffectId: 'effect-original',
+        adapterVersion: '1.0.0',
+        destination,
+        forwardResponse,
+        compensationPatch,
+      }),
+      expiresAt: '2099-07-29T11:00:00.000Z',
+    };
+    const request: ClaimedCompensationRequest['request'] = {
+      id: 'request-durable-destination',
+      tenantId: 'tenant-a',
+      originalRunId: 'run-original',
+      originalEffectId: 'effect-original',
+      compensationRunId: 'run-compensation',
+      compensationStepId: 'step-compensation',
+      adapterVersion: '1.0.0',
+      compensationEffectType: authorization.compensationEffectType,
+      destination,
+      compensationPatch,
+      forwardReceiptHash: authorization.forwardReceiptHash,
+      authorizationId: authorization.id,
+      reconcilePolicy: {
+        maxAttempts: 3,
+        initialDelayMs: 1_000,
+        maxDelayMs: 5_000,
+        deadlineAt: '2099-07-30T11:00:00.000Z',
+      },
+      state: 'CLAIMED',
+      claimToken: 'request-claim-token',
+      compensationEffectId: 'effect-compensation',
+    };
+    const work: ClaimedCompensationRequest = {
+      request,
+      forwardResponse,
+      authorization,
+      outboxMessageId: 'outbox-durable-destination',
+      outboxClaimToken: 'outbox-claim-token',
+      lease: {
+        workerId: WORKER.workerId,
+        workerGeneration: WORKER.workerGeneration,
+        token: 'step-lease-token',
+        fencingEpoch: 12,
+        expiresAt: '2099-07-29T11:00:00.000Z',
       },
     };
-    // No fencingEpoch option, and PAYLOAD.compensationPayload carries none either.
-    const result = await consumeCompensationBatch(port, broker, async () => 'token', {
-      workerId: 'w1',
-    });
-    assert.equal(result.failed, 1);
-    assert.equal(admitCalled, false, 'must never admit with an invented fencingEpoch');
-    assert.equal(message.errors[0]?.code, 'COMPENSATION_FENCING_EPOCH_MISSING');
-    assert.equal(message.acked, false);
-  });
-
-  it('uses the reclaim-stamped fencingEpoch from payload.compensationPayload over any caller default', async () => {
-    const { port } = makeOutbox();
-    port.claimOutboxByTopic = async () => [
+    const port: CompensationOutboxPort = {
+      async claimCompensationWork() {
+        return [work];
+      },
+      async parkCompensationUnknown() {
+        throw new Error('unexpected uncertainty park');
+      },
+      async finalizeCompensation(input) {
+        return { applied: true, disposition: input.disposition, replayed: false };
+      },
+    };
+    let admittedRequest: Record<string, unknown> | undefined;
+    let admittedIdempotencyKey: string | undefined;
+    const result = await consumeCompensationBatch(
+      port,
       {
-        id: 'msg-epoch',
-        tenantId: 'tenant-a',
-        topic: 'commander.kernel.compensation.requested',
-        key: 'run-1',
-        payload: { ...PAYLOAD, compensationPayload: { undo: true, fencingEpoch: 7 } },
-        attempts: 1,
-        claimToken: 'claim-1',
+        async admit(input) {
+          admittedRequest = input.request;
+          admittedIdempotencyKey = input.idempotencyKey;
+          return { admitted: true, effectId: request.compensationEffectId!, replayed: false };
+        },
+        async executeAdmitted() {
+          return {
+            effectId: request.compensationEffectId!,
+            replayed: false,
+            response: { ok: true },
+          };
+        },
       },
-    ];
-    let capturedEpoch: number | undefined;
+      async () => 'durable-token',
+      { ...WORKER, registry },
+    );
+
+    assert.equal(result.succeeded, 1);
+    assert.deepEqual(admittedRequest, {
+      originalEffectId: request.originalEffectId,
+      destination,
+      forwardResponse,
+      compensationPatch,
+    });
+    assert.equal(
+      admittedIdempotencyKey,
+      deriveEffectIdempotencyKey({
+        tenantId: authorization.tenantId,
+        runId: request.compensationRunId,
+        stepId: request.compensationStepId,
+        effectId: request.compensationEffectId!,
+        request: admittedRequest!,
+      }),
+    );
+  });
+
+  it('uses persisted authorization, effect identity, and a real claimed step lease', async () => {
+    const work = claimed();
+    const { port, calls } = makePort([work]);
+    let tokenInput: unknown;
+    let admitInput: unknown;
+    const result = await consumeCompensationBatch(
+      port,
+      {
+        async admit(input) {
+          admitInput = input;
+          return {
+            admitted: true,
+            effectId: work.request.compensationEffectId!,
+            replayed: false,
+          };
+        },
+        async executeAdmitted() {
+          return {
+            effectId: work.request.compensationEffectId!,
+            replayed: false,
+            response: { status: 'rolled-back' },
+          };
+        },
+      },
+      async (input) => {
+        tokenInput = input;
+        return 'governed-token';
+      },
+      { ...WORKER, registry, limit: 10 },
+    );
+
+    assert.deepEqual(result, {
+      consumed: 1,
+      succeeded: 1,
+      handedOff: 0,
+      escalated: 0,
+      replayed: 0,
+    });
+    assert.deepEqual(tokenInput, {
+      authorization: work.authorization,
+      request: work.request,
+      forwardResponse: work.forwardResponse,
+    });
+    assert.deepEqual(admitInput, {
+      effectId: work.request.compensationEffectId!,
+      token: 'governed-token',
+      type: work.authorization.compensationEffectType,
+      request: {
+        originalEffectId: work.request.originalEffectId,
+        destination: work.request.destination,
+        forwardResponse: work.forwardResponse,
+        compensationPatch: work.request.compensationPatch,
+      },
+      idempotencyKey: deriveEffectIdempotencyKey({
+        tenantId: work.request.tenantId,
+        runId: work.request.compensationRunId,
+        stepId: work.request.compensationStepId,
+        effectId: work.request.compensationEffectId!,
+        request: {
+          originalEffectId: work.request.originalEffectId,
+          destination: work.request.destination,
+          forwardResponse: work.forwardResponse,
+          compensationPatch: work.request.compensationPatch,
+        },
+      }),
+      lease: work.lease,
+      actor: WORKER.workerId,
+      workloadBinding: {
+        tenantId: work.authorization.tenantId,
+        runId: work.request.compensationRunId,
+        stepId: work.request.compensationStepId,
+        workloadId: WORKER.workerId,
+      },
+      compensationClaim: {
+        requestId: work.request.id,
+        requestClaimToken: work.request.claimToken,
+        outboxMessageId: work.outboxMessageId,
+        outboxClaimToken: work.outboxClaimToken,
+      },
+    });
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['claim', 'finalize'],
+    );
+    assert.deepEqual(calls[1]?.input, {
+      ...WORKER,
+      tenantId: work.request.tenantId,
+      requestId: work.request.id,
+      effectId: work.request.compensationEffectId!,
+      disposition: 'COMPLETED',
+      actor: WORKER.workerId,
+      outboxMessageId: work.outboxMessageId,
+      outboxClaimToken: work.outboxClaimToken,
+      response: { status: 'rolled-back' },
+      evidence: undefined,
+    });
+  });
+
+  it('atomically hands off completion uncertainty and never retries the write', async () => {
+    const work = claimed();
+    const { port, calls } = makePort([work]);
+    let executeCalls = 0;
+    const result = await consumeCompensationBatch(
+      port,
+      {
+        async admit() {
+          return {
+            admitted: true,
+            effectId: work.request.compensationEffectId!,
+            replayed: false,
+          };
+        },
+        async executeAdmitted() {
+          executeCalls += 1;
+          throw Object.assign(new Error('response lost'), { code: 'COMPLETION_UNKNOWN' });
+        },
+      },
+      async () => 'token',
+      { ...WORKER, registry },
+    );
+
+    assert.equal(executeCalls, 1);
+    assert.deepEqual(result, {
+      consumed: 1,
+      succeeded: 0,
+      handedOff: 1,
+      escalated: 0,
+      replayed: 0,
+    });
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['claim', 'park'],
+    );
+    assert.deepEqual(calls[1]?.input, {
+      ...WORKER,
+      tenantId: work.request.tenantId,
+      requestId: work.request.id,
+      effectId: work.request.compensationEffectId!,
+      actor: WORKER.workerId,
+      outboxMessageId: work.outboxMessageId,
+      outboxClaimToken: work.outboxClaimToken,
+      error: { code: 'COMPLETION_UNKNOWN', message: 'Compensation completion is uncertain' },
+    });
+  });
+
+  it('escalates mutated authorization before token issuance or adapter invocation', async () => {
+    const valid = claimed();
+    const mutated = {
+      ...valid,
+      authorization: {
+        ...valid.authorization,
+        compensationPatch: { targetRevision: '8', reason: 'caller mutation' },
+      },
+    } satisfies ClaimedCompensationWork;
+    const { port, calls } = makePort([mutated]);
+    let tokenCalls = 0;
+    let brokerCalls = 0;
+    const result = await consumeCompensationBatch(
+      port,
+      {
+        async admit() {
+          brokerCalls += 1;
+          throw new Error('must not admit');
+        },
+        async executeAdmitted() {
+          brokerCalls += 1;
+          throw new Error('must not execute');
+        },
+      },
+      async () => {
+        tokenCalls += 1;
+        return 'token';
+      },
+      { ...WORKER, registry },
+    );
+
+    assert.equal(tokenCalls, 0);
+    assert.equal(brokerCalls, 0);
+    assert.equal(result.escalated, 1);
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['claim', 'finalize'],
+    );
+    assert.equal(
+      (calls[1]?.input as { response: { reason: string } }).response.reason,
+      'COMPENSATION_ACTION_DIGEST_MISMATCH',
+    );
+  });
+
+  it('escalates adapter-version drift before token issuance or adapter invocation', async () => {
+    const { port, calls } = makePort();
+    let tokenCalls = 0;
+    let brokerCalls = 0;
+    const result = await consumeCompensationBatch(
+      port,
+      {
+        async admit() {
+          brokerCalls += 1;
+          throw new Error('must not admit');
+        },
+        async executeAdmitted() {
+          brokerCalls += 1;
+          throw new Error('must not execute');
+        },
+      },
+      async () => {
+        tokenCalls += 1;
+        return 'token';
+      },
+      {
+        ...WORKER,
+        registry: {
+          resolve: () => ({ descriptor: { adapterVersion: '2.0.0' } }),
+        },
+      },
+    );
+
+    assert.equal(tokenCalls, 0);
+    assert.equal(brokerCalls, 0);
+    assert.equal(result.escalated, 1);
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['claim', 'finalize'],
+    );
+    assert.equal(
+      (calls[1]?.input as { response: { reason: string } }).response.reason,
+      'COMPENSATION_ADAPTER_VERSION_MISMATCH',
+    );
+  });
+
+  it('fails the tick without a second mutation when atomic completion loses its claim', async () => {
+    const work = claimed();
+    const { port, calls } = makePort([work]);
+    port.finalizeCompensation = async (input) => {
+      calls.push({ method: 'finalize', input });
+      return { applied: false, reason: 'CLAIM_NOT_OWNED' };
+    };
+
+    await assert.rejects(
+      () =>
+        consumeCompensationBatch(
+          port,
+          {
+            async admit() {
+              return {
+                admitted: true,
+                effectId: work.request.compensationEffectId!,
+                replayed: false,
+              };
+            },
+            async executeAdmitted() {
+              return {
+                effectId: work.request.compensationEffectId!,
+                replayed: false,
+                response: {},
+              };
+            },
+          },
+          async () => 'token',
+          { ...WORKER, registry },
+        ),
+      { code: 'COMPENSATION_CLAIM_NOT_OWNED' },
+    );
+    assert.deepEqual(
+      calls.map((call) => call.method),
+      ['claim', 'finalize'],
+    );
+  });
+
+  it('allows only one of two concurrent workers to own and execute a claim', async () => {
+    const work = claimed();
+    let available = true;
+    let executeCalls = 0;
+    const port = makePort([]).port;
+    port.claimCompensationWork = async (input) => {
+      if (!available || input.workerId !== WORKER.workerId) return [];
+      available = false;
+      return [work];
+    };
     const broker = {
-      ...okBroker,
-      admit: async (input: { lease: { fencingEpoch: number } }) => {
-        capturedEpoch = input.lease.fencingEpoch;
-        return { admitted: true, effectId: 'e1', replayed: false };
+      async admit() {
+        return {
+          admitted: true,
+          effectId: work.request.compensationEffectId!,
+          replayed: false,
+        };
+      },
+      async executeAdmitted() {
+        executeCalls += 1;
+        return { effectId: work.request.compensationEffectId!, replayed: false, response: {} };
       },
     };
-    // Caller supplies a different default (1) — the payload-carried epoch (7) must win.
-    await consumeCompensationBatch(port, broker, async () => 'token', {
-      workerId: 'w1',
-      fencingEpoch: 1,
+
+    const [owner, other] = await Promise.all([
+      consumeCompensationBatch(port, broker, async () => 'token', { ...WORKER, registry }),
+      consumeCompensationBatch(port, broker, async () => 'token', {
+        workerId: 'compensation:pod-b',
+        workerGeneration: 9,
+        claimSecret: 'claim-secret-pod-b',
+        registry,
+      }),
+    ]);
+
+    assert.equal(owner.consumed + other.consumed, 1);
+    assert.equal(executeCalls, 1);
+  });
+
+  it('replays the same durable effect after a post-commit finalize crash without a second remote write', async () => {
+    const work = claimed();
+    const { port, resetClaim } = makePort([work]);
+    let finalizeCalls = 0;
+    port.finalizeCompensation = async () => {
+      finalizeCalls += 1;
+      if (finalizeCalls === 1)
+        throw Object.assign(new Error('database disconnected'), { code: 'DB_LOST' });
+      return { applied: true, disposition: 'COMPLETED', replayed: false };
+    };
+    let remoteWrites = 0;
+    let committed = false;
+    const broker = {
+      async admit() {
+        return {
+          admitted: true,
+          effectId: work.request.compensationEffectId!,
+          replayed: committed,
+        };
+      },
+      async executeAdmitted() {
+        if (!committed) {
+          remoteWrites += 1;
+          committed = true;
+        }
+        return {
+          effectId: work.request.compensationEffectId!,
+          replayed: committed,
+          response: { status: 'rolled-back' },
+        };
+      },
+    };
+
+    await assert.rejects(
+      () => consumeCompensationBatch(port, broker, async () => 'token', { ...WORKER, registry }),
+      { code: 'DB_LOST' },
+    );
+    resetClaim();
+    const replay = await consumeCompensationBatch(port, broker, async () => 'token', {
+      ...WORKER,
+      registry,
     });
-    assert.equal(capturedEpoch, 7);
+
+    assert.equal(replay.succeeded, 1);
+    assert.equal(remoteWrites, 1);
+    assert.equal(finalizeCalls, 2);
   });
 });

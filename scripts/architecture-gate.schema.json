@@ -1,0 +1,69 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/PStarH/Commander/scripts/architecture-gate.schema.json",
+  "title": "Architecture V2 gate configuration",
+  "description": "Shape of scripts/architecture-gate.config.json. The gate validates its configuration against the same rules at startup (see scripts/architecture-gate-config.ts) and fails closed on any unknown key or wrong type: a typo used to disable a whole gate family silently, because the config was only cast to its TypeScript interface and never checked at runtime.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "v2Packages",
+    "forbiddenCoreImports",
+    "v2ImportExceptions",
+    "api",
+    "authorityExceptions"
+  ],
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Path to this schema, relative to the config file. Must resolve to an existing file."
+    },
+    "comment": {
+      "type": "string",
+      "description": "Human-readable justification for the exception lists. Not consumed by the gate."
+    },
+    "v2Packages": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Packages that must not import @commander/core at all. Each entry must exist on disk with a src/ directory, otherwise the gate would silently check nothing.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "forbiddenCoreImports": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Forbidden module specifiers. Matching is prefix-aware (a specifier matches when it equals the entry or continues it with '/'), so `@commander/core-extra` is not caught by `@commander/core`.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "v2ImportExceptions": {
+      "type": "array",
+      "description": "Repo-relative paths of v2 files allowed to import @commander/core, or a bare basename matched as a path suffix.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "api": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "legacyImportExceptions", "unversionedRouteExceptions"],
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Repo-relative directory holding the API source."
+        },
+        "legacyImportExceptions": {
+          "type": "array",
+          "description": "Basenames under api.path that predate the boundary and may still import @commander/core.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "unversionedRouteExceptions": {
+          "type": "array",
+          "description": "Basenames under api.path that register routes but are exempt from the /v1/* versioning rule.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "authorityExceptions": {
+      "type": "array",
+      "description": "Repo-relative paths exempt from the in-process-authority rule, or a bare basename matched as a path suffix.",
+      "items": { "type": "string", "minLength": 1 }
+    }
+  }
+}

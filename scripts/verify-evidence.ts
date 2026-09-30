@@ -2,17 +2,15 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { actionEvidenceSchema } from '../packages/contracts/src/actionEvidenceSchema.js';
+import { actionEvidenceSchema } from '../packages/contracts/src/index.js';
 import {
   assertTerminalEvidence,
   canonicalEvidenceBody,
-  verifySignedEvidenceBundle,
-  type SignedEvidenceBundle,
-} from '../packages/effect-broker/src/signedEvidence.js';
-import {
+  verifyEvidenceBundle,
   verifyEvidenceSignature,
+  type EvidenceBundle,
   type EvidenceJwks,
-} from '../packages/effect-broker/src/evidenceSigner.js';
+} from '../packages/effect-broker/src/index.js';
 
 export interface EvidenceVerificationResult {
   ok: boolean;
@@ -99,7 +97,7 @@ function matchesPublishedSchema(value: unknown, schema: PublishedJsonSchema): bo
   return true;
 }
 
-function isReceipt(value: unknown): value is SignedEvidenceBundle {
+function isReceipt(value: unknown): value is EvidenceBundle {
   return matchesPublishedSchema(value, publishedReceiptSchema);
 }
 
@@ -113,11 +111,11 @@ function isJwks(value: unknown): value is EvidenceJwks {
 }
 
 export function verifyEvidenceReceipt(
-  receipt: SignedEvidenceBundle,
+  receipt: EvidenceBundle,
   jwks: EvidenceJwks,
 ): EvidenceVerificationResult {
   if (!isReceipt(receipt)) return { ok: false, reason: 'EVIDENCE_SCHEMA_INVALID' };
-  const structural = verifySignedEvidenceBundle(receipt);
+  const structural = verifyEvidenceBundle(receipt);
   if (!structural.ok) return { ok: false, reason: structural.reason ?? 'EVIDENCE_INVALID' };
   try {
     assertTerminalEvidence(receipt);
@@ -166,6 +164,6 @@ export function runVerifyEvidence(argv: string[]): { exitCode: 0 | 1 | 2; result
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const outcome = runVerifyEvidence(process.argv.slice(2));
-  process.stdout.write(JSON.stringify(outcome.result) + '\n');
+  process.stdout.write(`${JSON.stringify(outcome.result)}\n`);
   process.exitCode = outcome.exitCode;
 }

@@ -6,8 +6,8 @@ import asyncio
 import json
 import os
 import random
-from datetime import datetime, timezone
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -26,12 +26,12 @@ from ._types import (
     AgentState,
     ApiKeyCreateResult,
     ApiKeyList,
-    AppSettings,
     ApprovalAuditLog,
     ApprovalMode,
     ApprovalModeUpdated,
     ApprovalPatternRemoved,
     ApprovalPolicyResult,
+    AppSettings,
     AuditLogs,
     AuditSourceInfo,
     AuditStats,
@@ -42,14 +42,16 @@ from ._types import (
     ChatStreamEvent,
     Checkpoint,
     CheckpointList,
+    ConfidenceReport,
+    ConfidenceThresholdInfo,
     ConflictDetectionResult,
     ConflictSummary,
     CostBudget,
     CostDashboardResponse,
     CostRecords,
-    CostTimeRange,
     CostReport,
     CostSummary,
+    CostTimeRange,
     DlqEntry,
     DlqReplayResult,
     DlqStats,
@@ -94,8 +96,8 @@ from ._types import (
     ProjectMemoryItem,
     RagQueryResult,
     ReactiveConflictResult,
-    ReportingStatus,
     ReplayResult,
+    ReportingStatus,
     ResumeResponse,
     RollbackResponse,
     SDKReliabilityStats,
@@ -122,13 +124,16 @@ from ._types import (
     WorkflowDefinition,
     WorkflowExecution,
     WorkflowList,
-    ConfidenceReport,
-    ConfidenceThresholdInfo,
 )
 
 _DEFAULT_BASE_URL = "http://localhost:3001"
 _DEFAULT_TIMEOUT = 300.0
 _DEFAULT_MAX_RETRIES = 3
+
+# Methods that may be retried after a ReadTimeout, where the server may already
+# have applied the request. Everything else (notably POST) is retried only when
+# the connection was never established.
+_IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 
 _agent_id_counter = 0
 
@@ -227,7 +232,7 @@ class CommanderClient:
     # Lifecycle
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> CommanderClient:
+    async def __aenter__(self) -> CommanderClient:  # noqa: PYI034 - typing.Self needs Python 3.11
         return self
 
     async def __aexit__(self, *args: object) -> None:
@@ -499,7 +504,7 @@ class CommanderClient:
                     },
                 )
             )
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - agent failures must be captured, not propagated
             error = str(exc)
             handle.status = "failed"
             handle.completed_at = datetime.now(timezone.utc).isoformat()
@@ -543,7 +548,7 @@ class CommanderClient:
         for handler in list(self._event_handlers):
             try:
                 handler(event)
-            except Exception:
+            except Exception:  # noqa: BLE001, S110 - one failing handler must not disrupt the others
                 # One failing handler must not disrupt the others.
                 pass
 
@@ -622,20 +627,20 @@ class CommanderClient:
         try:
             dlq_stats = await self.get_dlq_stats()
             dlq_total_entries = dlq_stats.total_entries
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         try:
             compensation = await self._request("GET", "/api/v1/compensation")
             if isinstance(compensation, dict):
                 pending_compensations = int(compensation.get("pending", 0) or 0)
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         try:
             checkpoints = await self.list_checkpoints()
             checkpoint_count = checkpoints.count
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         try:
@@ -649,7 +654,7 @@ class CommanderClient:
                         circuit_state = component["status"].upper()
                     if name == "circuit_breaker" and "failures" in component:
                         circuit_failures = int(component["failures"])
-        except Exception:
+        except Exception:  # noqa: BLE001, S110 - stats are best-effort
             pass
 
         return SDKReliabilityStats(
@@ -878,7 +883,7 @@ class CommanderClient:
         agent_id: str | None = None,
         mission_id: str | None = None,
         project_id: str | None = None,
-    ) -> "_ChatSSEStream":
+    ) -> _ChatSSEStream:
         """Send a streaming chat message to an agent.
 
         Returns:
@@ -1732,7 +1737,7 @@ class CommanderClient:
     # ------------------------------------------------------------------
 
     async def get_security_posture(self) -> SecurityPostureReport:
-        """Get the latest full compliance report."""
+        """Get the latest self-assessed security posture report."""
         data = await self._request("GET", "/api/security/posture")
         return SecurityPostureReport(**data)
 
@@ -2437,7 +2442,15 @@ class CommanderClient:
                 raise map_status_to_error(exc.response.status_code, body) from exc
             except (httpx.ConnectError, httpx.ReadTimeout) as exc:
                 last_exception = exc
-                if attempt < self._max_retries - 1:
+                # A ConnectError means nothing reached the server, so any method
+                # is safe to retry. A ReadTimeout means the server may already
+                # have applied the request: retrying a non-idempotent method
+                # there can duplicate the side effect (the server mints a new id
+                # per POST), so only explicitly idempotent methods are retried.
+                retryable = isinstance(exc, httpx.ConnectError) or (
+                    method.upper() in _IDEMPOTENT_METHODS
+                )
+                if retryable and attempt < self._max_retries - 1:
                     # Exponential backoff with full jitter.
                     delay = (2**attempt) * (0.5 + random.random())
                     await asyncio.sleep(delay)
@@ -2499,7 +2512,7 @@ class _ChatSSEStream:
         ) as response:
             response.raise_for_status()
             async for line in response.aiter_lines():
-                if line.startswith(":") or line.startswith("id:"):
+                if line.startswith((":", "id:")):
                     continue
                 if line.startswith("event:"):
                     current_event = line[len("event:") :].strip()

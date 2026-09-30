@@ -6,17 +6,22 @@ Architecture V2 operational runbook for Commander kernel + control-plane data.
 
 | Asset | Default location | Notes |
 |---|---|---|
-| ATR RunLedger | `.commander/atr_ledger.db` (+ `-wal`/`-shm`) | Source of truth for run state / actions |
+| Kernel PostgreSQL | configured kernel database | Source of truth for run, step, effect, interaction, and compensation state |
+| Evidence receipts and anchors | kernel evidence tables plus retained public JWKS | Terminal proof; restore and independently verify |
+| ATR RunLedger | `.commander/atr_ledger.db` (+ `-wal`/`-shm`) | Legacy local-only state; never enterprise authority |
 | State checkpoints | `.commander_state/` | Agent-loop snapshots |
-| Event sourcing WAL | configured OTel / event store path | Replay / audit |
+| Event sourcing WAL | `COMMANDER_EVENT_SOURCING_WAL` (default `.commander_state/event-sourcing.wal`) | Replay / audit; not the OTel exporter |
 | Memory stores | `.commander_memory/` or Postgres | Tenant-scoped |
 | Secrets vault | encrypted vault file | Never back up plaintext keys |
-| API store | sqlite/postgres per `API_STORE_BACKEND` | War Room / projects |
+| API store | sqlite/postgres per `API_STORE_BACKEND` | Non-authoritative presentation data |
 
 ## Backup (SQLite)
 
 ```bash
-# Consistent online backup via SQLite backup API / .backup
+# Back up an existing ledger; do not accidentally create an empty database.
+test -f .commander/atr_ledger.db || { printf '%s\n' 'Ledger not found' >&2; exit 1; }
+mkdir -p .commander/backups
+# Consistent online backup via SQLite backup API / .backup (includes committed WAL data).
 sqlite3 .commander/atr_ledger.db ".backup '.commander/backups/atr_ledger-$(date -u +%Y%m%dT%H%M%SZ).db'"
 
 # Checkpoint directories (quiesce workers first for crash-consistent copy)
@@ -42,18 +47,41 @@ pg_basebackup -D /backup/commander-base -Fp -Xs -P
 5. Run `RecoveryBootstrapper` (automatic on boot) and verify:
    - No unexpected ABORTED zombies that should have been PAUSED.
    - `claimRunnableRun` only wakes eligible `resume_at` rows.
-6. Record restore in the audit chain / incident ticket.
+6. Verify every restored terminal receipt, evidence anchor, action digest,
+   policy snapshot, effect disposition, and compensation link against the
+   retained public JWKS.
+7. Record measured RPO/RTO and the restore in the audit chain / incident ticket.
 
 ## Verification checklist
 
-- [ ] `GET /health` and `GET /readyz` green
+- [ ] `GET /health` and `GET /ready` green
 - [ ] Sample run resume from `waiting_for_human` succeeds
 - [ ] Cross-tenant fuzz / isolation smoke passes
 - [ ] OTel traces resume with prior `traceId` correlation where applicable
+- [ ] Restored signed receipts and anchors verify independently
+- [ ] Active and terminal actions retain identity and outcome accounting
+
+## Automated drill gate
+
+Run the full drill from a protected runner with the source and restore
+PostgreSQL TLS settings present:
+
+```bash
+pnpm --silent dr:verify --full --backup-path ./dr-backups --jwks-path ./dr-backups/jwks.json
+```
+
+Treat the generated `drill-report.json` as PASS only when all of these are
+true: `overall` is `PASS`, `honestyLevel` is `ENFORCED`, `restore.independent`
+is true, `tls.sourceVerified` and `tls.restoreVerified` are true, and
+`validation.evidenceReceiptsVerified` equals `validation.evidenceReceiptCount`.
+The TLS fields mean the verified pool completed CA, hostname, and SPKI checks
+for the source and restore targets; a libpq command succeeding without those
+preflights is not sufficient evidence. Missing `DATABASE_URL`, CA, SPKI, or
+retained JWKS fails closed rather than producing a PASS report.
 
 ## RPO / RTO targets (enterprise default)
 
-- RPO: 15 minutes (WAL / frequent SQLite backup)
+- RPO: 5 minutes (WAL / frequent SQLite backup; verified by `scripts/dr-backup-verify.ts`)
 - RTO: 1 hour (documented restore + bootstrap)
 
 Adjust per customer contract; never claim stronger numbers without drill evidence.
@@ -77,7 +105,7 @@ The governing rule for V2:
 
 | Path (default) | Class | On disk loss | Backup needed? |
 |---|---|---|---|
-| `.commander/otel_queue/`, `.commander/repl_history`, `*cache*`, `.commander/shadow/` | **Ephemeral** | Regenerated / re-emitted | No |
+| `.commander/otel_queue/`, `.commander/repl_history`, `*cache*` | **Ephemeral** | Regenerated / re-emitted | No |
 | `.commander/settings.json`, `.commander/execpolicy.json`, `.commander/locales/`, `.commander/skills/`, `.commander/plugins/` | **Config** | Redeploy from git / IaC | No (in VCS) |
 | `.commander/api_keys.json`, `.commander/auth.json`, secrets vault | **Secrets** | Re-provision from secret manager | No — never back up plaintext |
 | `.commander/audit/user-actions.ndjson`, `.commander/security/*.ndjson`, `.commander/gdpr-erasures.ndjson` | **Audit (append-only)** | Gap in local audit trail | Yes — ship to central log/WORM continuously |
@@ -125,4 +153,3 @@ fresh replica, and assert that (a) in-flight runs resume from the kernel, (b) no
 duplicate external effects execute (kernel idempotency), and (c) no pending
 approval is lost. Record the measured edge RPO/RTO; never claim 0 without this
 drill passing.
-

@@ -207,8 +207,8 @@ export class ThreeLayerMemory {
   save(): number {
     if (!this.persistPath) return 0;
     try {
-      const fs = require('fs');
-      const path = require('path');
+      const fs = nodeRequire('fs');
+      const path = nodeRequire('path');
       const dir = path.dirname(this.persistPath);
       fs.mkdirSync(dir, { recursive: true });
 
@@ -235,7 +235,7 @@ export class ThreeLayerMemory {
   load(): number {
     if (!this.persistPath) return 0;
     try {
-      const fs = require('fs');
+      const fs = nodeRequire('fs');
       if (!fs.existsSync(this.persistPath)) return 0;
 
       const raw = fs.readFileSync(this.persistPath, 'utf-8');
@@ -873,6 +873,12 @@ export class ThreeLayerMemory {
     const entry = this.memories.get(id);
     if (!entry) return false;
 
+    // ET-05 (batchE-core-top): delete is a *write* path, so it must enforce the
+    // same class-level tenant filter as every read path. Without it, a caller
+    // holding a foreign entry id could destroy another tenant's memory while
+    // `get()` on the same id correctly returned undefined.
+    if (this.filterByTenant([entry]).length === 0) return false;
+
     this.memories.delete(id);
     // GAP-18: Also clean up the embedding store to prevent orphaned entries
     this.embedStore.delete(id);
@@ -893,7 +899,11 @@ export class ThreeLayerMemory {
     // context is active, deny the promotion if entry.metadata.tenantId
     // (if set) does not match currentTenantId. Untagged entries are also
     // denied in a tenant context (no implicit cross-tenant trust).
-    const ctx = this.currentTenantId;
+    // AUDIT-CORE5: guard must resolve the tenant the same way reads/writes
+    // do (effectiveTenantId) — this.currentTenantId is never set in production
+    // (setTenantContext has no production callers), so the guard was inert and
+    // ambient tenant X could promote tenant Y's entries.
+    const ctx = this.effectiveTenantId();
     if (ctx !== null) {
       const tid = entry.metadata?.tenantId;
       if (tid !== ctx) return false;
@@ -914,7 +924,8 @@ export class ThreeLayerMemory {
     // Cross-tenant defense (parity with promoteToLongTerm): deny cross-tenant
     // archival when a tenant context is active and entry.metadata.tenantId
     // (if set) does not match.
-    const ctx = this.currentTenantId;
+    // AUDIT-CORE5: same fix as promoteToLongTerm — use effectiveTenantId.
+    const ctx = this.effectiveTenantId();
     if (ctx !== null) {
       const tid = entry.metadata?.tenantId;
       if (tid !== ctx) return false;
@@ -1029,7 +1040,9 @@ export class ThreeLayerMemory {
    * 获取统计信息
    */
   getStats(): MemoryStats {
-    const entries = Array.from(this.memories.values());
+    // ET-05: aggregate counts are a read path — an unfiltered walk leaks other
+    // tenants' entry counts, layer distribution and byte totals.
+    const entries = this.filterByTenant(Array.from(this.memories.values()));
 
     const byLayer: Record<MemoryLayer, number> = {
       working: 0,
@@ -1063,8 +1076,11 @@ export class ThreeLayerMemory {
    */
   searchRelated(content: string, limit: number = 5): MemoryEntry[] {
     if (!content || !content.trim()) {
-      // Empty query → return most recent important entries
-      return Array.from(this.memories.values())
+      // Empty query → return most recent important entries.
+      // ET-05: this early-return path walked the raw map and so returned every
+      // tenant's entries, unlike the keyword path below which inherits the
+      // querySync tenant filter.
+      return this.filterByTenant(Array.from(this.memories.values()))
         .sort((a, b) => b.importance - a.importance || b.createdAt.localeCompare(a.createdAt))
         .slice(0, limit);
     }
@@ -1119,10 +1135,43 @@ export class ThreeLayerMemory {
   }
 
   /**
+   * Remove only the entries explicitly attributed to one data subject
+   * (`metadata.subjectId === subjectId`), across the layers the caller names.
+   *
+   * GDPR Art.17 erasure must not clear a whole layer: entries with no subject
+   * attribution cannot be proven to belong to the erased subject, so deleting
+   * them would destroy another subject's memory in the same tenant. The caller
+   * receives the untouched count and must report it instead of claiming a
+   * complete erasure.
+   */
+  deleteBySubject(
+    subjectId: string,
+    layers: MemoryLayer[],
+  ): { deleted: number; unattributed: number } {
+    let deleted = 0;
+    let unattributed = 0;
+    for (const layer of layers) {
+      const entries = this.getByLayer(layer);
+      for (const entry of entries) {
+        if (entry.metadata?.subjectId === subjectId) {
+          if (this.delete(entry.id)) deleted += 1;
+        } else {
+          unattributed += 1;
+        }
+      }
+    }
+    return { deleted, unattributed };
+  }
+
+  /**
    * 清除特定层的所有记忆
    */
   clearLayer(layer: MemoryLayer): number {
-    const entries = Array.from(this.memories.values()).filter((m) => m.layer === layer);
+    // ET-05: the previous implementation deleted every entry of the layer
+    // regardless of tenant — one call could wipe another tenant's whole layer.
+    const entries = this.filterByTenant(
+      Array.from(this.memories.values()).filter((m) => m.layer === layer),
+    );
     for (const entry of entries) {
       this.delete(entry.id);
     }
@@ -1133,7 +1182,8 @@ export class ThreeLayerMemory {
    * 获取所有记忆 (调试用)
    */
   getAll(): MemoryEntry[] {
-    return Array.from(this.memories.values());
+    // ET-05: even a debug accessor must not expose other tenants' entries.
+    return this.filterByTenant(Array.from(this.memories.values()));
   }
 
   /**
@@ -1220,6 +1270,9 @@ export class ThreeLayerMemory {
 // ========================================
 
 import { createTenantAwareSingleton } from './runtime/tenantAwareSingleton';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 const memorySingleton = createTenantAwareSingleton(() => new ThreeLayerMemory(), {});
 

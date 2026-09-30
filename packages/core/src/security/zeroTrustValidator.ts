@@ -549,11 +549,13 @@ export class ZeroTrustValidator {
     header: string,
   ): { t: number; v1: string; nonce: string; kid: string } | null {
     try {
+      const allowed = new Set(['t', 'v1', 'nonce', 'kid']);
       const parts: Record<string, string> = {};
       for (const part of header.split(',')) {
         const [key, ...valueParts] = part.trim().split('=');
-        if (key && valueParts.length > 0) {
-          parts[key.trim()] = valueParts.join('=').trim();
+        const name = key?.trim();
+        if (name && allowed.has(name) && valueParts.length > 0) {
+          parts[name] = valueParts.join('=').trim();
         }
       }
 

@@ -66,7 +66,6 @@ describe('DynamicCostGuardian', () => {
 
   it('constructs with custom config', () => {
     const custom: Partial<DynamicCostConfig> = {
-      hourlyBudgetUsd: 5,
       anomalySigmaThreshold: 2,
       minDataPointsForFingerprint: 3,
     };
@@ -230,7 +229,7 @@ describe('DynamicCostGuardian', () => {
     guardian.setManualOverride(tenantA, 2);
     const response = guardian.respondToCostAnomaly(tenantA, {
       detected: true,
-      attackType: 'test',
+      attackType: 'unknown_deviation',
       confidence: 0.5,
       estimatedCostImpact: 1,
       deviationSigma: 2,
@@ -401,7 +400,7 @@ describe('DynamicCostGuardian', () => {
       const guardian = new DynamicCostGuardian();
       const response = guardian.respondToCostAnomaly(tenantA, {
         detected: true,
-        attackType: 'test',
+        attackType: 'unknown_deviation',
         confidence: 0.5,
         estimatedCostImpact: 0,
         deviationSigma: 0.5,
@@ -420,7 +419,7 @@ describe('DynamicCostGuardian', () => {
       const guardian = new DynamicCostGuardian();
       const response = guardian.respondToCostAnomaly(tenantA, {
         detected: true,
-        attackType: 'test',
+        attackType: 'unknown_deviation',
         confidence: 0.5,
         estimatedCostImpact: 1,
         deviationSigma: 2,
@@ -438,7 +437,7 @@ describe('DynamicCostGuardian', () => {
       const guardian = new DynamicCostGuardian();
       const response = guardian.respondToCostAnomaly(tenantA, {
         detected: true,
-        attackType: 'test',
+        attackType: 'unknown_deviation',
         confidence: 0.5,
         estimatedCostImpact: 1,
         deviationSigma: 5,
@@ -456,7 +455,7 @@ describe('DynamicCostGuardian', () => {
       const guardian = new DynamicCostGuardian();
       const response = guardian.respondToCostAnomaly(tenantA, {
         detected: true,
-        attackType: 'test',
+        attackType: 'unknown_deviation',
         confidence: 0.9,
         estimatedCostImpact: 1,
         deviationSigma: 10,
@@ -475,7 +474,7 @@ describe('DynamicCostGuardian', () => {
       guardian.recordTransaction(makeRecord());
       const response = guardian.respondToCostAnomaly(tenantA, {
         detected: true,
-        attackType: 'test',
+        attackType: 'unknown_deviation',
         confidence: 0.9,
         estimatedCostImpact: 1,
         deviationSigma: 10,
@@ -493,7 +492,7 @@ describe('DynamicCostGuardian', () => {
       const guardian = new DynamicCostGuardian({ autoResponseEnabled: false });
       const response = guardian.respondToCostAnomaly(tenantA, {
         detected: true,
-        attackType: 'test',
+        attackType: 'unknown_deviation',
         confidence: 0.9,
         estimatedCostImpact: 1,
         deviationSigma: 10,
@@ -514,7 +513,7 @@ describe('DynamicCostGuardian', () => {
       vi.setSystemTime?.(startTime);
       guardian.respondToCostAnomaly(tenantA, {
         detected: true,
-        attackType: 'test',
+        attackType: 'unknown_deviation',
         confidence: 0.5,
         estimatedCostImpact: 1,
         deviationSigma: 5,
@@ -553,7 +552,7 @@ describe('DynamicCostGuardian', () => {
       expect(() =>
         guardian.respondToCostAnomaly(tenantA, {
           detected: true,
-          attackType: 'x',
+          attackType: 'unknown_deviation',
           confidence: 0.5,
           estimatedCostImpact: 0,
           deviationSigma: 0,

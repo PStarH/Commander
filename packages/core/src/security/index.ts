@@ -96,7 +96,7 @@ export { AgentLineage, getAgentLineage, resetAgentLineage } from './agentLineage
 
 export type { LineageNode, LineageEventType, LineageSummary, LineageQuery } from './agentLineage';
 
-// SupplyChainScanner — enterprise-grade skill/tool pre-load security scanning
+// SupplyChainScanner — skill/tool pre-load security scanning
 export {
   SupplyChainScanner,
   getSupplyChainScanner,
@@ -190,7 +190,7 @@ export type {
   AgentSocConfig,
 } from './agentSoc';
 
-// EuAiActCompliance — EU AI Act Article 12/13/14 automated compliance reporting
+// EuAiActCompliance — EU AI Act Article 12/13/14 self-assessment reporting
 export {
   EuAiActComplianceReporter,
   getEuAiActComplianceReporter,
@@ -223,7 +223,7 @@ export type {
   StandbyStatus,
 } from './agentStandbyManager';
 
-// RedTeamBaseline — regression detection for continuous red team CI/CD
+// RedTeamBaseline — regression detection for configured red-team CI/CD
 export {
   RedTeamBaselineManager,
   getRedTeamBaseline,
@@ -941,12 +941,8 @@ export type {
 } from './ttsrEngine';
 
 // UniversalSanitizer & ResourceGovernor — unified sanitization and outbound-call governance
-export {
-  UniversalSanitizer,
-  ResourceGovernor,
-  IntegrityLayer,
-  type SignedEntry,
-} from './securityPrimitives';
+export { UniversalSanitizer, ResourceGovernor, IntegrityLayer } from './securityPrimitives';
+export type { SignedEntry } from './securityPrimitives';
 
 // WS9 audit-chain integrity (manifest + fail-closed persistor).
 // Runtime wiring: installAuditChainIntegrity() when COMMANDER_AUDIT_MANIFEST_DIR is set.
@@ -955,6 +951,7 @@ export {
   FailClosedPersistor,
   AsymmetricChainSigner,
   InMemoryKeyProvider,
+  FileKeyProvider,
   verifyWithManifest,
   startVerifyTimer,
   installAuditChainIntegrity,

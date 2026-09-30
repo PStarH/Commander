@@ -4,25 +4,51 @@ import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 import express from 'express';
 import {
-  buildEffectScopedEvidenceRecord,
+  ACTION_STATES_V1,
+  evaluateActionGatewayPolicy,
+  type ActionStateV1,
+} from '@commander/contracts';
+import {
+  buildRunEvidenceBundle,
+  canonicalEvidenceBody,
   createEvidenceSigner,
-  EffectBroker,
-  verifyEvidenceReceipt,
+  verifyEvidenceBundle,
 } from '@commander/effect-broker';
-import { GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR } from '@commander/contracts';
-import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
+import {
+  InMemoryKernelRepository,
+  seedFreshOperationsDrains,
+} from '@commander/kernel/testing/inMemoryRepository';
 import type { KillSwitchScope } from '@commander/kernel';
-import { ActionAdapterRegistry } from '../../../packages/action-adapters/src/registry.js';
-import { ReconciliationDaemon } from '../../../packages/adapter-ops/src/reconciliationDaemon.js';
-import type { V1KernelGateway } from '../src/v1GatewayKernel.js';
+import type {
+  ActionReconcileRequestResult,
+  GatewayEvidenceRecord,
+  V1KernelGateway,
+} from '../src/v1GatewayKernel.js';
 import { GatewayIdempotencyConflictError } from '../src/v1GatewayKernel.js';
+import { projectCanonicalActionState } from '../src/actionGatewayEndpoints.js';
 import { createV1GatewayRouter } from '../src/v1GatewayEndpoints.js';
 
 class InMemoryGateway implements V1KernelGateway {
   readonly repository = new InMemoryKernelRepository();
   private readonly submissions = new Map<string, string>();
+  readonly evidence = new Map<string, GatewayEvidenceRecord>();
   killSwitchLookupError: Error | null = null;
-  reconcileError: Error | null = null;
+  operationsReady = true;
+  evidenceReady = true;
+
+  getOperationsReadiness(_tenantId: string, now = new Date()) {
+    return Promise.resolve({
+      ready: this.operationsReady,
+      ...(this.operationsReady ? {} : { reason: 'RECONCILIATION_DRAIN_UNAVAILABLE' as const }),
+      reconciliationWorkers: this.operationsReady ? 1 : 0,
+      compensationWorkers: this.operationsReady ? 1 : 0,
+      checkedAt: now.toISOString(),
+    });
+  }
+
+  getEvidenceRepositoryAvailability() {
+    return Promise.resolve({ ready: this.evidenceReady });
+  }
 
   async submit(input: Parameters<V1KernelGateway['submit']>[0]) {
     const runId = `run_${createHash('sha256')
@@ -68,6 +94,12 @@ class InMemoryGateway implements V1KernelGateway {
   listInteractions(runId: string, tenantId: string) {
     return this.repository.listInteractions(runId, tenantId);
   }
+  createInteraction(
+    input: Parameters<InMemoryKernelRepository['createInteraction']>[0],
+    actor: string,
+  ) {
+    return this.repository.createInteraction(input, actor);
+  }
   answerInteraction(input: Parameters<InMemoryKernelRepository['answerInteraction']>[0]) {
     return this.repository.answerInteraction(input);
   }
@@ -77,12 +109,44 @@ class InMemoryGateway implements V1KernelGateway {
   getEffect(effectId: string, tenantId: string) {
     return this.repository.getEffect(effectId, tenantId);
   }
-  requestReconcile(input: { effectId: string; tenantId: string; actor: string }) {
-    if (this.reconcileError) throw this.reconcileError;
-    return this.repository.requestReconcile(input);
+  createCompensationAuthorization(
+    input: Parameters<InMemoryKernelRepository['createCompensationAuthorization']>[0],
+  ) {
+    return this.repository.createCompensationAuthorization(input);
   }
-  getEvidence(binding: Parameters<InMemoryKernelRepository['getEvidence']>[0]) {
-    return this.repository.getEvidence(binding);
+  getCompensationAuthorization(authorizationId: string, tenantId: string) {
+    return this.repository.getCompensationAuthorization(authorizationId, tenantId);
+  }
+  requestCompensation(input: Parameters<InMemoryKernelRepository['requestCompensation']>[0]) {
+    return this.repository.requestCompensation(input);
+  }
+  getEvidence(runId: string, tenantId: string) {
+    return Promise.resolve(this.evidence.get(`${tenantId}\u0000${runId}`) ?? null);
+  }
+  async requestReconcile(
+    effectId: string,
+    tenantId: string,
+    actor: string,
+  ): Promise<ActionReconcileRequestResult> {
+    const current = await this.repository.getEffect(effectId, tenantId);
+    if (!current) return { scheduled: false, reason: 'NOT_FOUND' };
+    if (current.state !== 'COMPLETION_UNKNOWN' || !current.reconcilePolicy) {
+      return { scheduled: false, reason: 'NOT_UNKNOWN' };
+    }
+    if (current.reconcileEscalatedAt) return { scheduled: false, reason: 'ESCALATED' };
+    if (Date.parse(current.reconcilePolicy.deadlineAt) <= Date.now()) {
+      return { scheduled: false, reason: 'DEADLINE_EXPIRED' };
+    }
+    const alreadyScheduled = Date.parse(current.reconcileAfter ?? '') <= Date.now();
+    const expedited = await this.repository.requestReconcile({ effectId, tenantId, actor });
+    if (!expedited?.reconcileAfter) return { scheduled: false, reason: 'NOT_UNKNOWN' };
+    return {
+      scheduled: true,
+      effectId: expedited.id,
+      state: 'COMPLETION_UNKNOWN',
+      reconcileAfter: expedited.reconcileAfter,
+      alreadyScheduled,
+    };
   }
   pauseRun(runId: string, tenantId: string, actor: string) {
     return this.repository.pauseRun(runId, tenantId, actor);
@@ -125,7 +189,7 @@ const baseAction = {
 async function withGateway(
   gateway: InMemoryGateway,
   action: (baseUrl: string) => Promise<void>,
-  evidenceJwks?: ReturnType<typeof evidenceSigner>['jwks'],
+  evidenceJwks?: { keys: readonly unknown[] },
 ): Promise<void> {
   const previousEvidenceJwks = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
   if (evidenceJwks) process.env.COMMANDER_EVIDENCE_JWKS_JSON = JSON.stringify(evidenceJwks);
@@ -139,6 +203,9 @@ async function withGateway(
     if (principal === 'api-approver') {
       req.apiKeyId = 'test-key';
       req.apiScopes = ['actions:approve'];
+    } else if (principal === 'api-reconcile') {
+      req.apiKeyId = 'reconcile-key';
+      req.apiScopes = ['actions:reconcile'];
     } else if (principal === 'api-read') {
       req.apiKeyId = 'read-key';
       req.apiScopes = ['read'];
@@ -174,12 +241,15 @@ async function withGateway(
   }
 }
 
-function evidenceSigner() {
-  const { privateKey } = generateKeyPairSync('ed25519');
-  return createEvidenceSigner({
-    privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
-    keyId: 'action-gateway-evidence-test',
-  });
+async function withEvidenceJwks(jwks: unknown, action: () => Promise<void>): Promise<void> {
+  const previous = process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+  process.env.COMMANDER_EVIDENCE_JWKS_JSON = JSON.stringify(jwks);
+  try {
+    await action();
+  } finally {
+    if (previous === undefined) delete process.env.COMMANDER_EVIDENCE_JWKS_JSON;
+    else process.env.COMMANDER_EVIDENCE_JWKS_JSON = previous;
+  }
 }
 
 async function postJson(
@@ -342,55 +412,241 @@ describe('L4-04 kill switch matrix', () => {
   });
 });
 
-describe('Kubernetes rollback policy wiring', () => {
-  it('requires approval for a registered Kubernetes rollback destination', async () => {
+describe('Action Gateway shared policy parity', () => {
+  it('returns the shared policy decision from the public simulation endpoint', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
-      const response = await postJson(baseUrl, '/v1/actions/simulate', {
+      const action = {
         ...baseAction,
-        tool: 'kubernetes.deployment.rollback',
-        destination: 'k8s://kind/commander/deployments/api',
-        effectType: 'mutate.kubernetes.deployment.rollback',
-        idempotencyKey: 'k8s-policy-red-1',
-      });
-      assert.equal(response.status, 200);
-      const payload = (await response.json()) as {
-        simulation: { effect: string; decisionId: string };
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-shared-policy-parity',
       };
-      assert.equal(payload.simulation.effect, 'require_approval');
-      assert.equal(payload.simulation.decisionId, 'action-gateway-require_approval');
-    });
-  });
-
-  it('denies malformed Kubernetes rollback envelopes', async () => {
-    const cases = [
-      { effectType: 'connector.kubernetes.deployment.rollback' },
-      { destination: 'k8s://kind/other%2Ftenant/deployments/api' },
-      { destination: 'k8s://kind/commander/services/api' },
-      { destination: 'k8s://kind/commander/deployments/api/extra' },
-    ] as const;
-    const gateway = new InMemoryGateway();
-    await withGateway(gateway, async (baseUrl) => {
-      for (const invalid of cases) {
-        const response = await postJson(baseUrl, '/v1/actions/simulate', {
-          ...baseAction,
-          tool: 'kubernetes.deployment.rollback',
-          destination: 'k8s://kind/commander/deployments/api',
-          effectType: 'mutate.kubernetes.deployment.rollback',
-          ...invalid,
-        });
-        assert.equal(response.status, 200);
-        const payload = (await response.json()) as {
-          simulation: { effect: string; decisionId: string };
-        };
-        assert.equal(payload.simulation.effect, 'deny');
-        assert.equal(payload.simulation.decisionId, 'action-gateway-deny');
-      }
+      const response = await postJson(baseUrl, '/v1/actions/simulate', action);
+      assert.equal(response.status, 200);
+      const simulation = ((await response.json()) as { simulation: Record<string, unknown> })
+        .simulation;
+      const shared = evaluateActionGatewayPolicy(action);
+      assert.deepEqual(
+        {
+          effect: simulation.effect,
+          decisionId: simulation.decisionId,
+          reason: simulation.reason,
+          policySnapshotId: simulation.policySnapshotId,
+        },
+        {
+          effect: shared.effect,
+          decisionId: shared.decisionId,
+          reason: shared.reason,
+          policySnapshotId: shared.policySnapshotId,
+        },
+      );
     });
   });
 });
 
 describe('L4-01 governed action HTTP API', () => {
+  it('projects every internal lifecycle state onto the canonical action enum', () => {
+    type ProjectionInput = Parameters<typeof projectCanonicalActionState>[0];
+    const baseline: ProjectionInput = {
+      decisionEffect: 'allow',
+      runState: 'PENDING',
+    };
+    const cases: Array<{
+      name: string;
+      input: ProjectionInput;
+      expected: ActionStateV1;
+    }> = [
+      { name: 'policy deny', input: { ...baseline, decisionEffect: 'deny' }, expected: 'FAILED' },
+      {
+        name: 'approval pending',
+        input: { ...baseline, decisionEffect: 'require_approval' },
+        expected: 'AWAITING_APPROVAL',
+      },
+      {
+        name: 'approval rejected',
+        input: { ...baseline, decisionEffect: 'require_approval', approval: false },
+        expected: 'FAILED',
+      },
+      {
+        name: 'approval admitted',
+        input: {
+          ...baseline,
+          decisionEffect: 'require_approval',
+          approval: true,
+          stepState: 'RETRY_WAIT',
+        },
+        expected: 'ADMITTED',
+      },
+      { name: 'run pending', input: baseline, expected: 'ADMITTED' },
+      {
+        name: 'run running',
+        input: { ...baseline, runState: 'RUNNING' },
+        expected: 'RUNNING',
+      },
+      {
+        name: 'run paused',
+        input: { ...baseline, runState: 'PAUSED' },
+        expected: 'ADMITTED',
+      },
+      {
+        name: 'run succeeded',
+        input: { ...baseline, runState: 'SUCCEEDED' },
+        expected: 'SUCCEEDED',
+      },
+      { name: 'run failed', input: { ...baseline, runState: 'FAILED' }, expected: 'FAILED' },
+      {
+        name: 'run cancelled',
+        input: { ...baseline, runState: 'CANCELLED' },
+        expected: 'FAILED',
+      },
+      {
+        name: 'run compensating',
+        input: { ...baseline, runState: 'COMPENSATING' },
+        expected: 'RUNNING',
+      },
+      {
+        name: 'run compensated',
+        input: { ...baseline, runState: 'COMPENSATED' },
+        expected: 'SUCCEEDED',
+      },
+      {
+        name: 'step pending',
+        input: { ...baseline, stepState: 'PENDING' },
+        expected: 'ADMITTED',
+      },
+      {
+        name: 'step running',
+        input: { ...baseline, stepState: 'RUNNING' },
+        expected: 'RUNNING',
+      },
+      {
+        name: 'step waiting for human',
+        input: { ...baseline, stepState: 'WAITING_FOR_HUMAN' },
+        expected: 'ADMITTED',
+      },
+      {
+        name: 'step waiting for reconciliation',
+        input: { ...baseline, stepState: 'WAITING_FOR_RECONCILIATION' },
+        expected: 'COMPLETION_UNKNOWN',
+      },
+      {
+        name: 'step retry wait',
+        input: { ...baseline, stepState: 'RETRY_WAIT' },
+        expected: 'ADMITTED',
+      },
+      {
+        name: 'step succeeded',
+        input: { ...baseline, stepState: 'SUCCEEDED' },
+        expected: 'SUCCEEDED',
+      },
+      {
+        name: 'step failed',
+        input: { ...baseline, stepState: 'FAILED' },
+        expected: 'FAILED',
+      },
+      {
+        name: 'step cancelled',
+        input: { ...baseline, stepState: 'CANCELLED' },
+        expected: 'FAILED',
+      },
+      {
+        name: 'step skipped',
+        input: { ...baseline, stepState: 'SKIPPED' },
+        expected: 'FAILED',
+      },
+      {
+        name: 'effect admitted',
+        input: { ...baseline, effectState: 'ADMITTED' },
+        expected: 'ADMITTED',
+      },
+      {
+        name: 'effect completion unknown',
+        input: { ...baseline, effectState: 'COMPLETION_UNKNOWN' },
+        expected: 'COMPLETION_UNKNOWN',
+      },
+      {
+        name: 'effect confirmed not applied',
+        input: { ...baseline, effectState: 'CONFIRMED_NOT_APPLIED' },
+        expected: 'FAILED',
+      },
+      {
+        name: 'effect completed',
+        input: { ...baseline, effectState: 'COMPLETED' },
+        expected: 'SUCCEEDED',
+      },
+      {
+        name: 'effect failed',
+        input: { ...baseline, effectState: 'FAILED' },
+        expected: 'FAILED',
+      },
+      {
+        name: 'effect escalation timestamp',
+        input: { ...baseline, effectState: 'COMPLETION_UNKNOWN', reconcileEscalatedAt: 'now' },
+        expected: 'ESCALATED',
+      },
+      {
+        name: 'effect escalation disposition',
+        input: {
+          ...baseline,
+          effectState: 'COMPLETION_UNKNOWN',
+          reconcileDisposition: 'ESCALATED',
+        },
+        expected: 'ESCALATED',
+      },
+    ];
+
+    for (const entry of cases) {
+      const actual = projectCanonicalActionState(entry.input);
+      assert.equal(actual, entry.expected, entry.name);
+      assert.ok(ACTION_STATES_V1.includes(actual), `${entry.name}: ${actual}`);
+    }
+  });
+
+  it('rejects Class A with 503 before creating any run when operations are not ready', async () => {
+    const gateway = new InMemoryGateway();
+    gateway.operationsReady = false;
+    await withGateway(gateway, async (baseUrl) => {
+      const response = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'operations-not-ready',
+      });
+      assert.equal(response.status, 503);
+      assert.equal(((await response.json()) as any).error.code, 'OPERATIONS_NOT_READY');
+      assert.deepEqual(await gateway.repository.listRuns('tenant-a'), []);
+    });
+  });
+
+  it('rejects Class A with 503 when the evidence repository is unavailable', async () => {
+    const gateway = new InMemoryGateway();
+    gateway.evidenceReady = false;
+    await withGateway(gateway, async (baseUrl) => {
+      const response = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'evidence-not-ready',
+      });
+      const payload = (await response.json()) as {
+        error: {
+          code: string;
+          details?: { evidenceRepository?: { ready: boolean } };
+        };
+      };
+      assert.equal(response.status, 503);
+      assert.equal(payload.error.code, 'OPERATIONS_NOT_READY');
+      assert.deepEqual(payload.error.details.evidenceRepository, { ready: false });
+      assert.deepEqual(await gateway.repository.listRuns('tenant-a'), []);
+    });
+  });
+
+  it('admits Class A when operations and the evidence repository are ready', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const response = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'evidence-ready',
+      });
+      assert.equal(response.status, 202);
+    });
+  });
   it('requires an authenticated principal on every action endpoint', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
@@ -665,6 +921,162 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
+  it('authorizes reconciliation before any action or effect lookup', async () => {
+    const gateway = new InMemoryGateway();
+    let getRunCalls = 0;
+    let requestReconcileCalls = 0;
+    const getRun = gateway.getRun.bind(gateway);
+    gateway.getRun = async (...args) => {
+      getRunCalls += 1;
+      return getRun(...args);
+    };
+    gateway.requestReconcile = async () => {
+      requestReconcileCalls += 1;
+      return { scheduled: false, reason: 'NOT_FOUND' };
+    };
+
+    await withGateway(gateway, async (baseUrl) => {
+      for (const principal of ['api-read', 'api-approver', 'user-operator']) {
+        const response = await postJson(
+          baseUrl,
+          '/v1/actions/not-visible/reconcile',
+          {},
+          'tenant-a',
+          principal,
+        );
+        assert.equal(response.status, 403, principal);
+        assert.equal(((await response.json()) as any).error.code, 'ACTION_RECONCILE_FORBIDDEN');
+      }
+      assert.equal(getRunCalls, 0);
+      assert.equal(requestReconcileCalls, 0);
+    });
+  });
+
+  it('returns 202 for both a new expedite and its idempotent replay using only owner calls', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-reconcile-idempotent',
+      });
+      const action = ((await proposed.json()) as any).action;
+      const reconcileAfter = '2026-07-29T10:00:00.000Z';
+      const results = [
+        {
+          scheduled: true,
+          effectId: action.effectId,
+          state: 'COMPLETION_UNKNOWN',
+          reconcileAfter,
+          alreadyScheduled: false,
+        },
+        {
+          scheduled: true,
+          effectId: action.effectId,
+          state: 'COMPLETION_UNKNOWN',
+          reconcileAfter,
+          alreadyScheduled: true,
+        },
+      ] as const;
+      const calls: Array<{ effectId: string; tenantId: string; actor: string }> = [];
+      gateway.requestReconcile = async (effectId, tenantId, actor) => {
+        calls.push({ effectId, tenantId, actor });
+        const result = results[calls.length - 1];
+        assert.ok(result);
+        return result;
+      };
+      gateway.listEffects = async () => {
+        assert.fail('the API expedite path must not inspect effects or invoke an adapter query');
+      };
+      gateway.getEffect = async () => {
+        assert.fail('the API expedite path must not read the effect directly');
+      };
+
+      for (const [index, expected] of results.entries()) {
+        const response = await postJson(
+          baseUrl,
+          `/v1/actions/${action.runId}/reconcile`,
+          {},
+          'tenant-a',
+          index === 0 ? 'api-reconcile' : 'user-admin',
+        );
+        assert.equal(response.status, 202);
+        assert.deepEqual(await response.json(), expected);
+      }
+      assert.deepEqual(calls, [
+        { effectId: action.effectId, tenantId: 'tenant-a', actor: 'reconcile-key' },
+        { effectId: action.effectId, tenantId: 'tenant-a', actor: 'user-admin' },
+      ]);
+    });
+  });
+
+  it('maps owner reconciliation dispositions without calling an in-process adapter', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-reconcile-mappings',
+      });
+      const action = ((await proposed.json()) as any).action;
+      const cases = [
+        { reason: 'NOT_FOUND', status: 404, code: 'ACTION_NOT_FOUND' },
+        { reason: 'NOT_UNKNOWN', status: 409, code: 'NO_RECONCILABLE_EFFECT' },
+        { reason: 'ESCALATED', status: 409, code: 'RECONCILIATION_ESCALATED' },
+        { reason: 'DEADLINE_EXPIRED', status: 410, code: 'RECONCILIATION_DEADLINE_EXPIRED' },
+      ] as const;
+      let resultIndex = 0;
+      gateway.requestReconcile = async () => {
+        const result = cases[resultIndex++];
+        assert.ok(result);
+        return { scheduled: false, reason: result.reason };
+      };
+      gateway.listEffects = async () => {
+        assert.fail('the owner result is the only reconciliation state authority');
+      };
+      gateway.getEffect = async () => {
+        assert.fail('the API must not query effects or adapters after loading the action binding');
+      };
+
+      for (const expected of cases) {
+        const response = await postJson(
+          baseUrl,
+          `/v1/actions/${action.runId}/reconcile`,
+          {},
+          'tenant-a',
+          'api-reconcile',
+        );
+        assert.equal(response.status, expected.status, expected.reason);
+        assert.equal(((await response.json()) as any).error.code, expected.code);
+      }
+    });
+  });
+
+  it('conceals a cross-tenant reconciliation target before requesting an expedite', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-reconcile-cross-tenant',
+      });
+      const action = ((await proposed.json()) as any).action;
+      let requestReconcileCalls = 0;
+      gateway.requestReconcile = async () => {
+        requestReconcileCalls += 1;
+        return { scheduled: false, reason: 'NOT_FOUND' };
+      };
+
+      const response = await postJson(
+        baseUrl,
+        `/v1/actions/${action.runId}/reconcile`,
+        {},
+        'tenant-b',
+        'api-reconcile',
+      );
+      assert.equal(response.status, 404);
+      assert.equal(((await response.json()) as any).error.code, 'ACTION_NOT_FOUND');
+      assert.equal(requestReconcileCalls, 0);
+    });
+  });
+
   it('limits approve and reject to admin users or approval-scoped API keys', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
@@ -722,6 +1134,52 @@ describe('L4-01 governed action HTTP API', () => {
     });
   });
 
+  it('refuses a rejection that records no reason', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        destination: 'demo://tickets/approval',
+        idempotencyKey: 'action-reject-reason-required',
+      });
+      assert.equal(proposed.status, 202);
+      const runId = ((await proposed.json()) as { action: { runId: string } }).action.runId;
+      assert.ok(runId, 'a proposal must yield a run id');
+
+      // The published contract (`actionRejectionRequestSchema` in
+      // packages/contracts/src/schemas.ts) requires `reason`: a rejection is an
+      // operator decision recorded for audit, and a reason-less rejection
+      // carries no accountability. The API schema must not accept less than the
+      // contract promises.
+      const missing = await postJson(
+        baseUrl,
+        `/v1/actions/${runId}/reject`,
+        {},
+        'tenant-a',
+        'user-admin',
+      );
+      assert.equal(missing.status, 400);
+
+      const blank = await postJson(
+        baseUrl,
+        `/v1/actions/${runId}/reject`,
+        { reason: '' },
+        'tenant-a',
+        'user-admin',
+      );
+      assert.equal(blank.status, 400);
+
+      const accepted = await postJson(
+        baseUrl,
+        `/v1/actions/${runId}/reject`,
+        { reason: 'policy mismatch' },
+        'tenant-a',
+        'user-admin',
+      );
+      assert.equal(accepted.status, 200);
+    });
+  });
+
   it('simulates and durably proposes one allowed action as one tool step', async () => {
     const gateway = new InMemoryGateway();
     await withGateway(gateway, async (baseUrl) => {
@@ -763,6 +1221,7 @@ describe('L4-01 governed action HTTP API', () => {
       assert.equal(proposed.status, 202);
       const payload = (await proposed.json()) as any;
       assert.equal(payload.action.decision.effect, 'allow');
+      assert.equal(payload.action.state, 'ADMITTED');
       assert.deepEqual(Object.keys(payload.action.decision).sort(), [
         'decisionId',
         'effect',
@@ -792,6 +1251,7 @@ describe('L4-01 governed action HTTP API', () => {
       assert.equal(denied.status, 403);
       const payload = (await denied.json()) as any;
       assert.equal(payload.action.decision.effect, 'deny');
+      assert.equal(payload.action.state, 'FAILED');
       const claimed = await gateway.repository.claimNextStep({
         workerId: 'deny-worker',
         workerGeneration: 1,
@@ -800,6 +1260,27 @@ describe('L4-01 governed action HTTP API', () => {
         leaseTtlMs: 30_000,
       });
       assert.equal(claimed, null, 'no claimable PENDING tool step on deny');
+    });
+  });
+
+  it('admits the registered Kubernetes rollback only behind exact approval', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        tool: 'kubernetes.deployment.rollback',
+        destination: 'k8s://kind/commander/deployments/api',
+        effectType: 'connector.kubernetes.deployment.rollback',
+        args: { targetRevision: '7', reason: 'controlled rollback proof' },
+        idempotencyKey: 'kubernetes-rollback-approval',
+      });
+
+      assert.equal(proposed.status, 202);
+      const payload = (await proposed.json()) as any;
+      assert.equal(payload.action.decision.effect, 'require_approval');
+      assert.equal(payload.action.state, 'AWAITING_APPROVAL');
+      const step = await gateway.repository.getStep(payload.action.stepId, 'tenant-a');
+      assert.equal(step?.input.effectType, 'connector.kubernetes.deployment.rollback');
     });
   });
 
@@ -832,7 +1313,7 @@ describe('L4-01 governed action HTTP API', () => {
       assert.equal(proposed.status, 202);
       const payload = (await proposed.json()) as any;
       assert.equal(payload.action.decision.effect, 'require_approval');
-      assert.equal(payload.action.state, 'WAITING_FOR_APPROVAL');
+      assert.equal(payload.action.state, 'AWAITING_APPROVAL');
 
       const approved = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/approve`, {
         actionDigest: payload.action.simulation.actionDigest,
@@ -840,7 +1321,7 @@ describe('L4-01 governed action HTTP API', () => {
         policySnapshotId: payload.action.simulation.policySnapshotId,
       });
       assert.equal(approved.status, 200);
-      assert.equal(((await approved.json()) as any).action.state, 'APPROVED');
+      assert.equal(((await approved.json()) as any).action.state, 'ADMITTED');
 
       const run = await gateway.repository.getRun(payload.action.runId, 'tenant-a');
       const metadata = run!.metadata.actionGateway as any;
@@ -925,7 +1406,7 @@ describe('L4-01 governed action HTTP API', () => {
       const unknown = await proposeApproval('action-status-unknown');
       const unknownStep = await claim();
       assert.ok(unknownStep?.lease);
-      await gateway.repository.admitEffect({
+      const unknownEffectRequest = {
         id: unknown.metadata.effectId,
         runId: unknown.action.runId,
         stepId: unknownStep.id,
@@ -938,7 +1419,14 @@ describe('L4-01 governed action HTTP API', () => {
         request: unknown.metadata.envelope,
         lease: unknownStep.lease,
         actor: 'status-worker',
-      });
+      };
+      assert.deepEqual(
+        await gateway.repository.admitEffect(unknownEffectRequest),
+        { admitted: false, reason: 'OPERATIONS_NOT_READY' },
+        'the old fixture must not bypass Class A admission readiness',
+      );
+      seedFreshOperationsDrains(gateway.repository, 'tenant-a');
+      assert.equal((await gateway.repository.admitEffect(unknownEffectRequest)).admitted, true);
       await gateway.repository.markEffectCompletionUnknown({
         effectId: unknown.metadata.effectId,
         tenantId: 'tenant-a',
@@ -953,7 +1441,7 @@ describe('L4-01 governed action HTTP API', () => {
       const terminal = await proposeApproval('action-status-terminal');
       const terminalStep = await claim();
       assert.ok(terminalStep?.lease);
-      await gateway.repository.admitEffect({
+      const terminalEffectRequest = {
         id: terminal.metadata.effectId,
         runId: terminal.action.runId,
         stepId: terminalStep.id,
@@ -966,7 +1454,9 @@ describe('L4-01 governed action HTTP API', () => {
         request: terminal.metadata.envelope,
         lease: terminalStep.lease,
         actor: 'status-worker',
-      });
+      };
+      seedFreshOperationsDrains(gateway.repository, 'tenant-a');
+      assert.equal((await gateway.repository.admitEffect(terminalEffectRequest)).admitted, true);
       await gateway.repository.completeEffect(
         terminal.metadata.effectId,
         'tenant-a',
@@ -985,7 +1475,15 @@ describe('L4-01 governed action HTTP API', () => {
       const terminalGet = await fetch(`${baseUrl}/v1/actions/${terminal.action.runId}`, {
         headers: { 'x-test-tenant': 'tenant-a' },
       });
-      assert.equal(((await terminalGet.json()) as any).action.state, 'SUCCEEDED');
+      const terminalBody = (await terminalGet.json()) as {
+        action: { state: string; forwardReceiptHash?: string };
+      };
+      assert.equal(terminalBody.action.state, 'SUCCEEDED');
+      assert.equal(
+        terminalBody.action.forwardReceiptHash,
+        createHash('sha256').update('{"status":"ok"}').digest('hex'),
+        'clients need the durable receipt hash to request compensation without reading the database',
+      );
     });
   });
 
@@ -1002,7 +1500,7 @@ describe('L4-01 governed action HTTP API', () => {
         reason: 'not authorized',
       });
       assert.equal(rejected.status, 200);
-      assert.equal(((await rejected.json()) as any).action.state, 'REJECTED');
+      assert.equal(((await rejected.json()) as any).action.state, 'FAILED');
       const rejectedStep = await gateway.repository.getStep(payload.action.stepId, 'tenant-a');
       assert.equal(rejectedStep?.state, 'CANCELLED');
       assert.equal(
@@ -1058,183 +1556,13 @@ describe('L4-01 governed action HTTP API', () => {
 
   it('returns the persisted signed receipt for a completed compensation effect', async () => {
     const gateway = new InMemoryGateway();
-    const signer = evidenceSigner();
-    await withGateway(
-      gateway,
-      async (baseUrl) => {
-        const proposed = await postJson(baseUrl, '/v1/actions', {
-          ...baseAction,
-          tool: 'ticket.compensate',
-          effectType: 'compensate.demo.ticket.create',
-          args: { targetIdempotencyKey: 'action-key-0001' },
-          idempotencyKey: 'action-evidence-completed-compensation',
-        });
-        assert.equal(proposed.status, 202);
-        const action = ((await proposed.json()) as any).action;
-        const run = await gateway.repository.getRun(action.runId, 'tenant-a');
-        const metadata = run!.metadata.actionGateway as any;
-        const claimed = await gateway.repository.claimNextStep({
-          workerId: 'evidence-completion-worker',
-          workerGeneration: 1,
-          tenantId: 'tenant-a',
-          capabilities: ['tool'],
-          leaseTtlMs: 30_000,
-        });
-        assert.ok(claimed?.lease);
-        const admitted = await gateway.repository.admitEffect({
-          id: metadata.effectId,
-          runId: action.runId,
-          stepId: claimed.id,
-          tenantId: 'tenant-a',
-          type: metadata.envelope.effectType,
-          idempotencyKey: metadata.envelope.idempotencyKey,
-          policyDecisionId: metadata.decision.decisionId,
-          policySnapshotId: metadata.policySnapshotId,
-          actionDigest: metadata.actionDigest,
-          request: metadata.envelope,
-          lease: claimed.lease,
-          actor: 'evidence-completion-worker',
-        });
-        assert.equal(admitted.admitted, true);
-        if (!admitted.admitted) return;
-        const record = await buildEffectScopedEvidenceRecord({
-          effect: admitted.effect,
-          projectedState: 'COMPLETED',
-          response: { status: 'compensated' },
-          auditEvents: [],
-          terminalEvent: {
-            type: 'compensation.completed',
-            severity: 'low',
-            details: { effectId: admitted.effect.id },
-          },
-          signer,
-          recordedAt: '2026-08-11T00:00:01.000Z',
-          retentionUntil: '2027-08-11T00:00:01.000Z',
-        });
-        await gateway.repository.completeEffectWithEvidence(
-          admitted.effect.id,
-          'tenant-a',
-          claimed.lease,
-          { status: 'compensated' },
-          'evidence-completion-worker',
-          record,
-        );
-
-        const response = await fetch(`${baseUrl}/v1/actions/${action.runId}/evidence`, {
-          headers: { 'x-test-tenant': 'tenant-a' },
-        });
-        assert.equal(response.status, 200);
-        const payload = (await response.json()) as any;
-        assert.deepEqual(Object.keys(payload).sort(), ['receipt', 'verification']);
-        assert.equal(payload.receipt.scope.effectId, metadata.effectId);
-        assert.equal(payload.receipt.actionDigest, metadata.actionDigest);
-        assert.equal(payload.receipt.terminalDisposition, 'SUCCEEDED');
-        assert.deepEqual(verifyEvidenceReceipt(payload.receipt, signer.jwks), payload.verification);
-      },
-      signer.jwks,
-    );
-  });
-
-  it('returns the persisted signed receipt for an escalated completion-unknown effect', async () => {
-    const gateway = new InMemoryGateway();
-    const signer = evidenceSigner();
-    await withGateway(
-      gateway,
-      async (baseUrl) => {
-        const proposed = await postJson(baseUrl, '/v1/actions', {
-          ...baseAction,
-          idempotencyKey: 'action-evidence-escalated-unknown',
-        });
-        assert.equal(proposed.status, 202);
-        const action = ((await proposed.json()) as any).action;
-        const run = await gateway.repository.getRun(action.runId, 'tenant-a');
-        const metadata = run!.metadata.actionGateway as any;
-        const claimedStep = await gateway.repository.claimNextStep({
-          workerId: 'evidence-escalation-worker',
-          workerGeneration: 1,
-          tenantId: 'tenant-a',
-          capabilities: ['tool'],
-          leaseTtlMs: 30_000,
-        });
-        assert.ok(claimedStep?.lease);
-        const admitted = await gateway.repository.admitEffect({
-          id: metadata.effectId,
-          runId: action.runId,
-          stepId: claimedStep.id,
-          tenantId: 'tenant-a',
-          type: metadata.envelope.effectType,
-          idempotencyKey: metadata.envelope.idempotencyKey,
-          policyDecisionId: metadata.decision.decisionId,
-          policySnapshotId: metadata.policySnapshotId,
-          actionDigest: metadata.actionDigest,
-          request: metadata.envelope,
-          lease: claimedStep.lease,
-          actor: 'evidence-escalation-worker',
-        });
-        assert.equal(admitted.admitted, true);
-        if (!admitted.admitted) return;
-        await gateway.repository.markEffectCompletionUnknown({
-          effectId: admitted.effect.id,
-          tenantId: 'tenant-a',
-          reason: 'remote outcome unknown',
-          actor: 'evidence-escalation-worker',
-        });
-        const [claimedEffect] = await gateway.repository.claimReconcileEffects({
-          tenantId: 'tenant-a',
-          limit: 1,
-          now: new Date(Date.now() + 60_000),
-          workerId: 'evidence-escalation-worker',
-          workerGeneration: 1,
-        });
-        assert.ok(claimedEffect);
-        const record = await buildEffectScopedEvidenceRecord({
-          effect: claimedEffect.effect,
-          projectedState: 'COMPLETION_UNKNOWN',
-          response: { errorCode: 'REMOTE_OUTCOME_UNKNOWN' },
-          auditEvents: [],
-          terminalEvent: {
-            type: 'effect.reconcile_escalated',
-            severity: 'high',
-            details: { reason: 'unregistered_adapter' },
-          },
-          signer,
-          recordedAt: '2026-08-11T00:00:02.000Z',
-          retentionUntil: '2027-08-11T00:00:02.000Z',
-        });
-        assert.equal(
-          await gateway.repository.escalateReconcileWithEvidence(
-            {
-              effectId: admitted.effect.id,
-              tenantId: 'tenant-a',
-              claimToken: claimedEffect.claimToken,
-              reason: 'unregistered_adapter',
-            },
-            record,
-          ),
-          true,
-        );
-
-        const response = await fetch(`${baseUrl}/v1/actions/${action.runId}/evidence`, {
-          headers: { 'x-test-tenant': 'tenant-a' },
-        });
-        assert.equal(response.status, 200);
-        const payload = (await response.json()) as any;
-        assert.deepEqual(Object.keys(payload).sort(), ['receipt', 'verification']);
-        assert.equal(payload.receipt.scope.effectId, metadata.effectId);
-        assert.equal(payload.receipt.actionDigest, metadata.actionDigest);
-        assert.equal(payload.receipt.terminalDisposition, 'ESCALATED');
-        assert.deepEqual(verifyEvidenceReceipt(payload.receipt, signer.jwks), payload.verification);
-      },
-      signer.jwks,
-    );
-  });
-
-  it('does not synthesize evidence when a completed effect has no persisted receipt', async () => {
-    const gateway = new InMemoryGateway();
-    const signer = evidenceSigner();
-    await withGateway(
-      gateway,
-      async (baseUrl) => {
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const signer = createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId: 'cell-test-1',
+    });
+    await withEvidenceJwks(signer.jwks, () =>
+      withGateway(gateway, async (baseUrl) => {
         const proposed = await postJson(baseUrl, '/v1/actions', {
           ...baseAction,
           destination: 'demo://tickets/approval',
@@ -1261,7 +1589,7 @@ describe('L4-01 governed action HTTP API', () => {
         assert.ok(claimed?.lease);
         const run = await gateway.repository.getRun(payload.action.runId, 'tenant-a');
         const metadata = run!.metadata.actionGateway as any;
-        const admission = await gateway.repository.admitEffect({
+        const effectRequest = {
           id: metadata.effectId,
           runId: run!.id,
           stepId: claimed.id,
@@ -1274,7 +1602,14 @@ describe('L4-01 governed action HTTP API', () => {
           request: metadata.envelope,
           lease: claimed.lease,
           actor: 'evidence-worker',
-        });
+        };
+        assert.deepEqual(
+          await gateway.repository.admitEffect(effectRequest),
+          { admitted: false, reason: 'OPERATIONS_NOT_READY' },
+          'the old fixture must not bypass Class A admission readiness',
+        );
+        seedFreshOperationsDrains(gateway.repository, 'tenant-a');
+        const admission = await gateway.repository.admitEffect(effectRequest);
         assert.equal(admission.admitted, true);
         await gateway.repository.completeEffect(
           metadata.effectId,
@@ -1295,48 +1630,416 @@ describe('L4-01 governed action HTTP API', () => {
           output: { status: 'ok' },
           actor: 'evidence-worker',
         });
+        const body = buildRunEvidenceBundle({
+          tenantId: 'tenant-a',
+          runId: run!.id,
+          actionDigest: metadata.actionDigest,
+          intentHash: run!.intentHash,
+          workGraphHash: run!.workGraphHash,
+          workGraphVersion: run!.workGraphVersion,
+          policySnapshotId: run!.policySnapshotId,
+          kernelApiVersion: 'v1',
+          effects: await gateway.repository.listEffectsForRun(run!.id, 'tenant-a'),
+          exportedAt: '2026-07-17T06:00:02.000Z',
+          bundleId: 'bundle-persisted-evidence',
+        });
+        const signature = await signer.sign(canonicalEvidenceBody(body));
+        gateway.evidence.set(`tenant-a\u0000${run!.id}`, {
+          tenantId: 'tenant-a',
+          runId: run!.id,
+          bundleId: body.bundleId,
+          actionDigest: body.actionDigest,
+          body,
+          contentHash: body.contentHash,
+          signature,
+          createdAt: body.exportedAt,
+          anchoredAt: '2026-07-17T06:00:04.000Z',
+          retentionUntil: '2027-07-17T06:00:04.000Z',
+        });
         const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
           headers: { 'x-test-tenant': 'tenant-a' },
         });
-        assert.equal(evidence.status, 404);
-        assert.equal(((await evidence.json()) as any).error.code, 'EVIDENCE_NOT_FOUND');
+        assert.equal(evidence.status, 200);
+        const evidenceText = await evidence.text();
+        const evidencePayload = JSON.parse(evidenceText) as any;
+        assert.equal(evidencePayload.receipt.schemaVersion, 'l3-11.v0');
+        assert.equal(evidencePayload.receipt.scope.runId, payload.action.runId);
+        assert.equal(evidencePayload.receipt.signature.keyId, 'cell-test-1');
+        assert.equal(evidencePayload.verification.ok, true);
+        assert.equal(verifyEvidenceBundle(evidencePayload.receipt).ok, true);
+        assert.equal(evidenceText.includes('SENSITIVE_TOOL_ARGUMENT'), false);
+        assert.equal(evidenceText.includes('SENSITIVE_AUTH_TOKEN'), false);
+        assert.equal(evidenceText.includes('SENSITIVE_EFFECT_RESPONSE'), false);
+        assert.equal(evidenceText.includes('SENSITIVE_RESPONSE_TOKEN'), false);
+        assert.equal(evidenceText.includes('Approve demo.ticket.create'), false);
+        assert.equal(evidencePayload.receipt.effects[0].responseSummary.status, 'ok');
+
+        gateway.evidence.set(`tenant-a\u0000${run!.id}`, {
+          ...gateway.evidence.get(`tenant-a\u0000${run!.id}`)!,
+          signature: { ...signature, value: 'forged-signature' },
+        });
+        const forged = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(forged.status, 503);
+        assert.equal(
+          ((await forged.json()) as { error: { code: string } }).error.code,
+          'EVIDENCE_INVALID',
+        );
 
         const reconcile = await postJson(
           baseUrl,
           `/v1/actions/${payload.action.runId}/reconcile`,
           {},
+          'tenant-a',
+          'api-admin',
         );
         assert.equal(reconcile.status, 409);
-      },
-      signer.jwks,
+      }),
     );
   });
 
-  it('does not synthesize evidence for a rejected action without an effect receipt', async () => {
+  it('does not reconstruct evidence from transient interaction events', async () => {
     const gateway = new InMemoryGateway();
-    const signer = evidenceSigner();
-    await withGateway(
-      gateway,
-      async (baseUrl) => {
-        const proposed = await postJson(baseUrl, '/v1/actions', {
-          ...baseAction,
-          destination: 'demo://tickets/approval',
-          idempotencyKey: 'action-key-reject-evidence',
-        });
-        const payload = (await proposed.json()) as any;
-        const rejected = await postJson(baseUrl, `/v1/actions/${payload.action.runId}/reject`, {
-          reason: 'Bearer USER_CONTROLLED_REJECT_SECRET',
-        });
-        assert.equal(rejected.status, 200);
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-evidence-escalated-unknown',
+      });
+      assert.equal(proposed.status, 202);
+      const action = ((await proposed.json()) as any).action;
+      const run = await gateway.repository.getRun(action.runId, 'tenant-a');
+      const metadata = run!.metadata.actionGateway as any;
+      const claimedStep = await gateway.repository.claimNextStep({
+        workerId: 'evidence-escalation-worker',
+        workerGeneration: 1,
+        tenantId: 'tenant-a',
+        capabilities: ['tool'],
+        leaseTtlMs: 30_000,
+      });
+      assert.ok(claimedStep?.lease);
+      const admitted = await gateway.repository.admitEffect({
+        id: metadata.effectId,
+        runId: action.runId,
+        stepId: claimedStep.id,
+        tenantId: 'tenant-a',
+        type: metadata.envelope.effectType,
+        idempotencyKey: metadata.envelope.idempotencyKey,
+        policyDecisionId: metadata.decision.decisionId,
+        policySnapshotId: metadata.policySnapshotId,
+        actionDigest: metadata.actionDigest,
+        request: metadata.envelope,
+        lease: claimedStep.lease,
+        actor: 'evidence-escalation-worker',
+      });
+      assert.equal(admitted.admitted, true);
+      if (!admitted.admitted) return;
+      await gateway.repository.markEffectCompletionUnknown({
+        effectId: admitted.effect.id,
+        tenantId: 'tenant-a',
+        reason: 'remote outcome unknown',
+        actor: 'evidence-escalation-worker',
+      });
+      const [claimedEffect] = await gateway.repository.claimReconcileEffects({
+        tenantId: 'tenant-a',
+        limit: 1,
+        now: new Date(Date.now() + 60_000),
+        workerId: 'evidence-escalation-worker',
+        workerGeneration: 1,
+      });
+      assert.ok(claimedEffect);
+      assert.equal(
+        await gateway.repository.escalateReconcile({
+          effectId: admitted.effect.id,
+          tenantId: 'tenant-a',
+          claimToken: claimedEffect.claimToken,
+          reason: 'unregistered_adapter',
+        }),
+        true,
+      );
 
-        const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+        headers: { 'x-test-tenant': 'tenant-a' },
+      });
+      assert.equal(evidence.status, 503);
+      const evidenceText = await evidence.text();
+      const evidencePayload = JSON.parse(evidenceText) as any;
+      assert.equal(evidenceText.includes('USER_CONTROLLED_REJECT_SECRET'), false);
+      assert.equal(evidencePayload.error.code, 'EVIDENCE_NOT_READY');
+    });
+  });
+
+  it('exports signed evidence for compensation runs without forward action metadata', async () => {
+    const gateway = new InMemoryGateway();
+    const compensationRunId = 'compensation-run-evidence';
+    const compensationEffectId = 'effect-compensation-evidence';
+    const compensationActionDigest = 'c'.repeat(64);
+    const authorization = {
+      schema: 'commander.compensation/v1',
+      tenantId: 'tenant-a',
+      originalRunId: 'forward-run-evidence',
+      originalEffectId: 'effect-forward-evidence',
+      compensationRunId,
+      compensationEffectId,
+      actionDigest: compensationActionDigest,
+    };
+    const compensationRun = {
+      id: compensationRunId,
+      tenantId: 'tenant-a',
+      intentHash: 'compensation-intent',
+      workGraphHash: 'compensation-graph',
+      workGraphVersion: 'compensation/v1',
+      state: 'SUCCEEDED' as const,
+      version: 1,
+      policySnapshotId: 'action-gateway-mvp-v1',
+      createdAt: '2026-07-17T06:00:00.000Z',
+      updatedAt: '2026-07-17T06:00:04.000Z',
+      terminalAt: '2026-07-17T06:00:04.000Z',
+      metadata: { compensation: { authorization } },
+    };
+    const originalGetRun = gateway.getRun.bind(gateway);
+    gateway.getRun = async (runId, tenantId) =>
+      runId === compensationRunId && tenantId === 'tenant-a'
+        ? compensationRun
+        : originalGetRun(runId, tenantId);
+    const originalGetEffect = gateway.getEffect.bind(gateway);
+    const compensationEffect = {
+      id: compensationEffectId,
+      runId: compensationRunId,
+      stepId: 'step-compensation-evidence',
+      tenantId: 'tenant-a',
+      type: 'compensate.demo.ticket.create',
+      idempotencyKey: 'cmp:effect-forward-evidence:1.0.0',
+      requestHash: 'r'.repeat(64),
+      policyDecisionId: 'compensation-allow',
+      policySnapshotId: compensationRun.policySnapshotId,
+      actionDigest: compensationActionDigest,
+      leaseWorkerId: 'worker-compensation-evidence',
+      leaseWorkerGeneration: 1,
+      leaseFencingEpoch: 1,
+      state: 'COMPLETED' as const,
+      request: {},
+      response: {},
+      createdAt: compensationRun.createdAt,
+      completedAt: compensationRun.updatedAt,
+      reconcileAttempts: 0,
+      governedActionDeadlineAt: null,
+      reconcilePolicy: null,
+      reconcileDisposition: null,
+      reconcileAfter: null,
+      reconcileObservedAt: null,
+      reconcileClaimToken: null,
+      reconcileClaimExpiresAt: null,
+      reconcileClaimedAt: null,
+      reconcileClaimWorkerId: null,
+      reconcileClaimWorkerGeneration: null,
+      reconcileLastError: null,
+      reconcileEscalatedAt: null,
+      reconcileEscalationCode: null,
+    };
+    gateway.getEffect = async (effectId, tenantId) =>
+      effectId === compensationEffectId && tenantId === 'tenant-a'
+        ? compensationEffect
+        : originalGetEffect(effectId, tenantId);
+    const originalListEffects = gateway.listEffects.bind(gateway);
+    gateway.listEffects = async (runId, tenantId) =>
+      runId === compensationRunId && tenantId === 'tenant-a'
+        ? [compensationEffect]
+        : originalListEffects(runId, tenantId);
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const signer = createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId: 'cell-compensation-evidence-1',
+    });
+    const body = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId: compensationRunId,
+      actionDigest: compensationActionDigest,
+      policySnapshotId: compensationRun.policySnapshotId,
+      effects: [],
+      exportedAt: '2026-07-17T06:00:02.000Z',
+      bundleId: 'bundle-compensation-evidence',
+    });
+    const signature = await signer.sign(canonicalEvidenceBody(body));
+    gateway.evidence.set(`tenant-a\u0000${compensationRunId}`, {
+      tenantId: 'tenant-a',
+      runId: compensationRunId,
+      bundleId: body.bundleId,
+      actionDigest: body.actionDigest,
+      body,
+      contentHash: body.contentHash,
+      signature,
+      createdAt: body.exportedAt,
+      anchoredAt: '2026-07-17T06:00:04.000Z',
+      retentionUntil: '2027-07-17T06:00:04.000Z',
+    });
+
+    await withEvidenceJwks(signer.jwks, () =>
+      withGateway(gateway, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/v1/actions/${compensationRunId}/evidence`, {
           headers: { 'x-test-tenant': 'tenant-a' },
         });
-        assert.equal(evidence.status, 404);
-        assert.equal(((await evidence.json()) as any).error.code, 'EVIDENCE_NOT_FOUND');
-      },
-      signer.jwks,
+        assert.equal(response.status, 200);
+        const payload = (await response.json()) as any;
+        assert.equal(payload.receipt.scope.runId, compensationRunId);
+        assert.equal(payload.verification.ok, true);
+      }),
     );
+  });
+
+  it('does not expose evidence for a run without governed compensation binding', async () => {
+    const gateway = new InMemoryGateway();
+    const runId = 'unbound-evidence-run';
+    const run = {
+      id: runId,
+      tenantId: 'tenant-a',
+      intentHash: 'intent-unbound',
+      workGraphHash: 'graph-unbound',
+      workGraphVersion: 'generic/v1',
+      state: 'SUCCEEDED' as const,
+      version: 1,
+      policySnapshotId: 'action-gateway-mvp-v1',
+      createdAt: '2026-07-17T06:00:00.000Z',
+      updatedAt: '2026-07-17T06:00:04.000Z',
+      terminalAt: '2026-07-17T06:00:04.000Z',
+      metadata: { compensationRequestId: 'unbound-request' },
+    };
+    const originalGetRun = gateway.getRun.bind(gateway);
+    gateway.getRun = async (requestedRunId, tenantId) =>
+      requestedRunId === runId && tenantId === 'tenant-a'
+        ? run
+        : originalGetRun(requestedRunId, tenantId);
+    const { privateKey } = generateKeyPairSync('ed25519');
+    const signer = createEvidenceSigner({
+      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      keyId: 'cell-unbound-evidence-1',
+    });
+    const body = buildRunEvidenceBundle({
+      tenantId: 'tenant-a',
+      runId,
+      actionDigest: 'd'.repeat(64),
+      policySnapshotId: run.policySnapshotId,
+      effects: [],
+      exportedAt: '2026-07-17T06:00:02.000Z',
+      bundleId: 'bundle-unbound-evidence',
+    });
+    const signature = await signer.sign(canonicalEvidenceBody(body));
+    gateway.evidence.set(`tenant-a\u0000${runId}`, {
+      tenantId: 'tenant-a',
+      runId,
+      bundleId: body.bundleId,
+      actionDigest: body.actionDigest,
+      body,
+      contentHash: body.contentHash,
+      signature,
+      createdAt: body.exportedAt,
+      anchoredAt: '2026-07-17T06:00:04.000Z',
+      retentionUntil: '2027-07-17T06:00:04.000Z',
+    });
+
+    await withEvidenceJwks(signer.jwks, () =>
+      withGateway(gateway, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/v1/actions/${runId}/evidence`, {
+          headers: { 'x-test-tenant': 'tenant-a' },
+        });
+        assert.equal(response.status, 404);
+        assert.deepEqual(await response.json(), {
+          error: { code: 'ACTION_NOT_FOUND', message: 'Action was not found.' },
+        });
+      }),
+    );
+  });
+
+  it('rejects persisted evidence whose body scope is not bound to the requested tenant', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-key-cross-scope-evidence',
+      });
+      const payload = (await proposed.json()) as { action: { runId: string } };
+      const body = buildRunEvidenceBundle({
+        tenantId: 'tenant-b',
+        runId: payload.action.runId,
+        actionDigest: 'a'.repeat(64),
+        policySnapshotId: 'action-gateway-mvp-v1',
+        effects: [],
+        exportedAt: '2026-07-17T06:00:02.000Z',
+        bundleId: 'bundle-cross-scope-evidence',
+      });
+      gateway.evidence.set(`tenant-a\u0000${payload.action.runId}`, {
+        tenantId: 'tenant-a',
+        runId: payload.action.runId,
+        bundleId: body.bundleId,
+        actionDigest: body.actionDigest,
+        body,
+        contentHash: body.contentHash,
+        signature: {
+          algorithm: 'Ed25519',
+          keyId: 'cell-test-1',
+          signedAt: '2026-07-17T06:00:03.000Z',
+          value: 'persisted-signature',
+        },
+        createdAt: body.exportedAt,
+        anchoredAt: '2026-07-17T06:00:04.000Z',
+        retentionUntil: '2027-07-17T06:00:04.000Z',
+      });
+
+      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+        headers: { 'x-test-tenant': 'tenant-a' },
+      });
+      assert.equal(evidence.status, 503);
+      assert.equal(
+        ((await evidence.json()) as { error: { code: string } }).error.code,
+        'EVIDENCE_INVALID',
+      );
+    });
+  });
+
+  it('returns EVIDENCE_INVALID for a malformed persisted evidence body', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const proposed = await postJson(baseUrl, '/v1/actions', {
+        ...baseAction,
+        idempotencyKey: 'action-key-malformed-evidence',
+      });
+      const payload = (await proposed.json()) as { action: { runId: string } };
+      const body = buildRunEvidenceBundle({
+        tenantId: 'tenant-a',
+        runId: payload.action.runId,
+        actionDigest: 'b'.repeat(64),
+        policySnapshotId: 'action-gateway-mvp-v1',
+        effects: [],
+        exportedAt: '2026-07-17T06:00:02.000Z',
+        bundleId: 'bundle-malformed-evidence',
+      });
+      gateway.evidence.set(`tenant-a\u0000${payload.action.runId}`, {
+        tenantId: 'tenant-a',
+        runId: payload.action.runId,
+        bundleId: body.bundleId,
+        actionDigest: body.actionDigest,
+        body: { ...body, effects: null } as unknown as GatewayEvidenceRecord['body'],
+        contentHash: body.contentHash,
+        signature: {
+          algorithm: 'Ed25519',
+          keyId: 'cell-test-1',
+          signedAt: '2026-07-17T06:00:03.000Z',
+          value: 'persisted-signature',
+        },
+        createdAt: body.exportedAt,
+        anchoredAt: '2026-07-17T06:00:04.000Z',
+        retentionUntil: '2027-07-17T06:00:04.000Z',
+      });
+
+      const evidence = await fetch(`${baseUrl}/v1/actions/${payload.action.runId}/evidence`, {
+        headers: { 'x-test-tenant': 'tenant-a' },
+      });
+      assert.equal(evidence.status, 503);
+      assert.equal(
+        ((await evidence.json()) as { error: { code: string } }).error.code,
+        'EVIDENCE_INVALID',
+      );
+    });
   });
 
   it('blocks generic run submissions from spoofing Action Gateway external work', async () => {
@@ -1433,6 +2136,202 @@ describe('L4-01 governed action HTTP API', () => {
       const response = await postJson(baseUrl, '/v1/actions/simulate', baseAction);
       assert.equal(response.status, 503);
       assert.equal(((await response.json()) as any).error.code, 'KILL_SWITCH_LOOKUP_FAILED');
+    });
+  });
+});
+
+describe('canonical compensation HTTP retries', () => {
+  async function fixture(baseUrl: string, gateway: InMemoryGateway) {
+    const proposed = await postJson(baseUrl, '/v1/actions', {
+      ...baseAction,
+      destination: 'demo://tickets/approval',
+      idempotencyKey: 'compensation-http-retry',
+    });
+    const { action } = (await proposed.json()) as {
+      action: {
+        runId: string;
+        simulation: { actionDigest: string; simulationId: string; policySnapshotId: string };
+      };
+    };
+    assert.equal(
+      (
+        await postJson(baseUrl, `/v1/actions/${action.runId}/approve`, {
+          actionDigest: action.simulation.actionDigest,
+          simulationId: action.simulation.simulationId,
+          policySnapshotId: action.simulation.policySnapshotId,
+        })
+      ).status,
+      200,
+    );
+    const step = await gateway.repository.claimNextStep({
+      workerId: 'retry-worker',
+      workerGeneration: 1,
+      tenantId: 'tenant-a',
+      capabilities: ['tool'],
+      leaseTtlMs: 30000,
+    });
+    assert.ok(step?.lease);
+    const run = await gateway.getRun(action.runId, 'tenant-a');
+    const metadata = run!.metadata.actionGateway as {
+      effectId: string;
+      envelope: Record<string, unknown>;
+    };
+    seedFreshOperationsDrains(gateway.repository, 'tenant-a');
+    assert.equal(
+      (
+        await gateway.repository.admitEffect({
+          id: metadata.effectId,
+          runId: action.runId,
+          stepId: step.id,
+          tenantId: 'tenant-a',
+          type: 'demo.ticket.create',
+          idempotencyKey: 'compensation-http-retry',
+          policyDecisionId: 'decision',
+          policySnapshotId: action.simulation.policySnapshotId,
+          actionDigest: action.simulation.actionDigest,
+          request: metadata.envelope,
+          lease: step.lease,
+          actor: 'retry-worker',
+        })
+      ).admitted,
+      true,
+    );
+    const receipt = { ticketId: 'ticket-retry' };
+    await gateway.repository.completeEffect(
+      metadata.effectId,
+      'tenant-a',
+      step.lease,
+      receipt,
+      'retry-worker',
+    );
+    const path = `/v1/actions/${action.runId}/compensations`;
+    const body = {
+      originalEffectId: metadata.effectId,
+      adapterVersion: '1.0.0',
+      compensationEffectType: 'compensate.demo.ticket.create',
+      compensationPatch: {},
+      forwardReceiptHash: createHash('sha256').update(JSON.stringify(receipt)).digest('hex'),
+    };
+    const response = await postJson(baseUrl, path, body);
+    assert.equal(response.status, 202, await response.clone().text());
+    const { authorization } = (await response.json()) as {
+      authorization: {
+        id: string;
+        expiresAt: string;
+        actionDigest: string;
+        policySnapshotId: string;
+        approvalInteractionId: string;
+      };
+    };
+    assert.ok(authorization);
+    return {
+      path,
+      body,
+      authorization,
+      approvalPath: `${path}/${authorization.id}/approve`,
+      binding: {
+        actionDigest: authorization.actionDigest,
+        policySnapshotId: authorization.policySnapshotId,
+      },
+    };
+  }
+
+  it('preserves authorization TTL and returns the same request on approval retries', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const f = await fixture(baseUrl, gateway);
+      const retry = await postJson(baseUrl, f.path, f.body);
+      assert.equal(retry.status, 202);
+      const repeated = (await retry.json()) as {
+        authorization: { expiresAt: string };
+        replayed: boolean;
+      };
+      assert.equal(repeated.authorization.expiresAt, f.authorization.expiresAt);
+      assert.equal(repeated.replayed, true);
+      const first = await postJson(baseUrl, f.approvalPath, f.binding);
+      assert.equal(first.status, 202, await first.clone().text());
+      const original = (await first.json()) as { request: { id: string }; interaction: unknown };
+      const again = await postJson(baseUrl, f.approvalPath, f.binding);
+      assert.equal(again.status, 202);
+      const replay = (await again.json()) as {
+        request: { id: string };
+        interaction: unknown;
+        replayed: boolean;
+      };
+      assert.equal(replay.request.id, original.request.id);
+      assert.deepEqual(replay.interaction, original.interaction);
+      assert.equal(replay.replayed, true);
+      assert.equal(
+        (await postJson(baseUrl, f.approvalPath, { ...f.binding, actionDigest: '0'.repeat(64) }))
+          .status,
+        409,
+      );
+    });
+  });
+
+  it('concurrent identical approvals converge on one durable request', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const f = await fixture(baseUrl, gateway);
+      const answer = gateway.answerInteraction.bind(gateway);
+      let arrivals = 0;
+      let release!: () => void;
+      const bothArrived = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      gateway.answerInteraction = async (input) => {
+        arrivals += 1;
+        if (arrivals === 2) release();
+        await bothArrived;
+        return answer(input);
+      };
+      const responses = await Promise.all([
+        postJson(baseUrl, f.approvalPath, f.binding),
+        postJson(baseUrl, f.approvalPath, f.binding),
+      ]);
+      assert.deepEqual(
+        responses.map((response) => response.status),
+        [202, 202],
+      );
+      const bodies = await Promise.all(
+        responses.map(
+          async (response) =>
+            (await response.json()) as { request: { id: string }; replayed: boolean },
+        ),
+      );
+      assert.equal(bodies[0]!.request.id, bodies[1]!.request.id);
+      assert.equal(bodies.filter((body) => body.replayed).length, 1);
+      assert.equal(arrivals, 2, 'exercise the pending-to-answered CAS race');
+    });
+  });
+
+  it('recovers after an answered approval whose request write failed, and rejects tampered persisted answers', async () => {
+    const gateway = new InMemoryGateway();
+    await withGateway(gateway, async (baseUrl) => {
+      const f = await fixture(baseUrl, gateway);
+      const request = gateway.requestCompensation.bind(gateway);
+      let failOnce = true;
+      gateway.requestCompensation = (input) => {
+        if (failOnce) {
+          failOnce = false;
+          throw new Error('injected request persistence failure');
+        }
+        return request(input);
+      };
+      assert.equal((await postJson(baseUrl, f.approvalPath, f.binding)).status, 500);
+      const retry = await postJson(baseUrl, f.approvalPath, f.binding);
+      assert.equal(retry.status, 202, await retry.clone().text());
+      const list = gateway.listInteractions.bind(gateway);
+      gateway.listInteractions = async (runId, tenantId) =>
+        (await list(runId, tenantId)).map((interaction) =>
+          interaction.id === f.authorization.approvalInteractionId
+            ? {
+                ...interaction,
+                response: { ...interaction.response, originalEffectId: 'tampered' },
+              }
+            : interaction,
+        );
+      assert.equal((await postJson(baseUrl, f.approvalPath, f.binding)).status, 409);
     });
   });
 });

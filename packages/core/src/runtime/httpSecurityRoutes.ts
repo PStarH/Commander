@@ -12,6 +12,10 @@ import { parseBody, sendJson } from './httpUtils';
 import { assertBodyTenant } from './httpTenantGate';
 import { requireMinRole, resolveHttpAuthContext } from './httpRbacGate';
 
+function readAccessContext(req: IncomingMessage, deps: HttpSecurityRouteDeps) {
+  return resolveHttpAuthContext(req, deps.tenantApiKeyHashes);
+}
+
 export interface HttpSecurityRouteDeps {
   maxBodyBytes: number;
   tenantApiKeyHashes: ReadonlyMap<string, string>;
@@ -36,7 +40,7 @@ export async function handleSecurityRoutes(
     if (method === 'GET') {
       const tenantId = deps.requireTenant(req, res);
       if (res.writableEnded) return true;
-      const authCtx = resolveHttpAuthContext(req, deps.tenantApiKeyHashes);
+      const authCtx = readAccessContext(req, deps);
       if (!requireMinRole(res, authCtx, 'auditor', 'GET /api/v1/security/owasp-agentic-ai-top10')) {
         return true;
       }
@@ -57,7 +61,7 @@ export async function handleSecurityRoutes(
       }
       const tenantId = deps.requireTenant(req, res);
       if (res.writableEnded) return true;
-      const authCtx = resolveHttpAuthContext(req, deps.tenantApiKeyHashes);
+      const authCtx = readAccessContext(req, deps);
       if (!requireMinRole(res, authCtx, 'admin', 'POST /api/v1/security/owasp-agentic-ai-top10')) {
         return true;
       }
@@ -103,7 +107,7 @@ export async function handleSecurityRoutes(
   if (sub === 'compliance-audit' && method === 'GET') {
     const tenantId = deps.requireTenant(req, res);
     if (res.writableEnded) return true;
-    const authCtx = resolveHttpAuthContext(req, deps.tenantApiKeyHashes);
+    const authCtx = readAccessContext(req, deps);
     if (!requireMinRole(res, authCtx, 'auditor', 'GET /api/v1/security/compliance-audit')) {
       return true;
     }
@@ -117,7 +121,7 @@ export async function handleSecurityRoutes(
   if (sub === 'eu-ai-act' && method === 'GET') {
     const tenantId = deps.requireTenant(req, res);
     if (res.writableEnded) return true;
-    const authCtx = resolveHttpAuthContext(req, deps.tenantApiKeyHashes);
+    const authCtx = readAccessContext(req, deps);
     if (!requireMinRole(res, authCtx, 'auditor', 'GET /api/v1/security/eu-ai-act')) {
       return true;
     }

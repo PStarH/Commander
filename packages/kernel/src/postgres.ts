@@ -1,10 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { TerminalEvidenceRecord } from '@commander/effect-broker';
 import type { KernelRepository } from './repository.js';
+import { mustRefuseMissingAppRole } from './productionSignal.js';
 import {
-  assertEvidenceRecordBinding,
   assertEvidenceRecordBoundToEffect,
-  type EvidenceLookup,
+  type AdapterOpsCompensationTerminalEvidenceBinding,
+  type AdapterOpsEvidenceContext,
+  type AdapterOpsEvidenceContextRequest,
+  type KernelEvidenceRecord,
+  type KernelEvidenceSignature,
 } from './evidenceRepository.js';
 import type {
   AdmitEffectRequest,
@@ -28,28 +31,55 @@ import type {
   KernelStepState,
   KernelTimer,
   MarkEffectCompletionUnknownRequest,
+  ParkEffectCompletionUnknownInput,
+  ParkEffectCompletionUnknownResult,
   ReconcileEffectRequest,
   RequestReconcileInput,
+  RequestReconcileResult,
   ClaimReconcileEffectsInput,
   ClaimedReconcileEffect,
   RescheduleReconcileInput,
   EscalateReconcileInput,
+  ReconcileClaimAuth,
+  ReconcileMutationResult,
+  ReconcileQueryError,
   FailEffectRequest,
   RequestCompensationInput,
   RequestCompensationResult,
+  CompensationAuthorizationRecord,
+  KernelCompensationRequest,
+  ClaimCompensationRequestInput,
+  ClaimedCompensationRequest,
+  FinalizeCompensationInput,
+  ParkCompensationUnknownInput as ParkCompensationRequestUnknownInput,
+  CompensationMutationResult,
   TenantExecutionControl,
   KillSwitch,
   KillSwitchMatchDims,
   PutKillSwitchInput,
   RemoveKillSwitchInput,
+  OperationsReadiness,
 } from './types.js';
-import { KernelInvariantError } from './types.js';
+import { KernelInvariantError, OPERATIONS_HEARTBEAT_TTL_MS } from './types.js';
+import { isClassAEffectType } from '@commander/contracts';
 import {
   KERNEL_COMPENSATION_TOPIC,
   LEGACY_COMPENSATION_TOPIC,
+  type ClaimedCompensationWork,
+  type CompensationClaimAuth,
 } from './ops/compensationConsumer.js';
 import { findMatchingKillSwitchWithLookup } from './killSwitchMatching.js';
+import { createReconcilePolicy } from './reconcilePolicy.js';
 import { assertRunTransition, assertStepTransition } from './transitionValidation.js';
+import {
+  BEGIN_APP_TENANT_TRANSACTION_SQL,
+  READ_APP_TENANT_TRANSACTION_TARGET_SQL,
+  buildBindAppTenantContextQuery,
+  buildCloseAppTenantContextQuery,
+  buildIssueAppTenantContextQuery,
+  buildSetLegacyTenantScopeQuery,
+  type AppTenantTransactionTarget,
+} from './task1TenantContext.js';
 
 /** Minimal pg-compatible interfaces; callers can inject pg.Pool without a hard runtime coupling. */
 export interface SqlQueryResult<T = Record<string, unknown>> {
@@ -61,10 +91,64 @@ export interface SqlClient {
     sql: string,
     values?: readonly unknown[],
   ): Promise<SqlQueryResult<T>>;
-  release(): void | Promise<void>;
+  release(error?: Error | boolean): void | Promise<void>;
 }
 export interface SqlPool {
   connect(): Promise<SqlClient>;
+}
+
+export interface TenantContextAuthority {
+  issue(
+    tenantId: string,
+    target: AppTenantTransactionTarget,
+  ): Promise<{ contextId: string; expiresAt: Date | string }>;
+}
+
+function unknownConnectionStateError(error: unknown): Error {
+  return error instanceof Error ? error : new Error('POSTGRES_CONNECTION_STATE_UNKNOWN');
+}
+
+export class PostgresTenantContextAuthority implements TenantContextAuthority {
+  constructor(private readonly pool: SqlPool) {}
+
+  usesPool(pool: SqlPool): boolean {
+    return this.pool === pool;
+  }
+
+  async issue(
+    tenantId: string,
+    target: AppTenantTransactionTarget,
+  ): Promise<{
+    contextId: string;
+    expiresAt: Date | string;
+  }> {
+    const client = await this.pool.connect();
+    let issued: { contextId: string; expiresAt: Date | string };
+    try {
+      const query = buildIssueAppTenantContextQuery(tenantId, target);
+      const result = await client.query<{ context_id: string; expires_at: Date | string }>(
+        query.text,
+        query.values,
+      );
+      const row = result.rows[0];
+      if (
+        result.rowCount !== 1 ||
+        !row ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+          row.context_id,
+        ) ||
+        Number.isNaN(new Date(row.expires_at).getTime())
+      ) {
+        throw new Error('TENANT_CONTEXT_INVALID');
+      }
+      issued = { contextId: row.context_id, expiresAt: row.expires_at };
+    } catch (error) {
+      await client.release(unknownConnectionStateError(error));
+      throw error;
+    }
+    await client.release();
+    return issued;
+  }
 }
 
 /**
@@ -87,88 +171,97 @@ function enforceAppRole(pool: SqlPool): SqlPool {
   let warned = false;
 
   /** Runtime roles that must keep their LOGIN identity (NOBYPASSRLS). */
-  const KEEP_IDENTITY = new Set(['commander_app', 'commander_worker']);
+  const KEEP_IDENTITY = new Set(['commander_app', 'commander_worker', 'commander_adapter_ops']);
 
   return {
     connect: async () => {
       const client = await pool.connect();
+      // KC-02: every failure after a successful connect() must return the slot to
+      // the pool exactly once. Identity lookup / SET ROLE failures used to leak
+      // the client, and repeated failures could exhaust the pool while the
+      // caller's withTransaction never saw the underlying handle.
+      try {
+        // Prefer session_user (LOGIN identity). Alias as login_role — never AS current_user /
+        // AS session_user: node-pg row field names can collide with SQL keyword accessors.
+        const identity = await client.query<{ login_role: string }>(
+          'SELECT session_user::text AS login_role',
+        );
+        const loginRole = identity.rows[0]?.login_role;
+        if (loginRole && KEEP_IDENTITY.has(loginRole)) {
+          // Already least-privilege LOGIN (worker/app) — do not SET ROLE.
+          return {
+            query: client.query.bind(client),
+            release: async (error?: Error | boolean) => {
+              await client.release(error);
+            },
+          };
+        }
 
-      // Prefer session_user (LOGIN identity). Alias as login_role — never AS current_user /
-      // AS session_user: node-pg row field names can collide with SQL keyword accessors.
-      const identity = await client.query<{ login_role: string }>(
-        'SELECT session_user::text AS login_role',
-      );
-      const loginRole = identity.rows[0]?.login_role;
-      if (loginRole && KEEP_IDENTITY.has(loginRole)) {
-        // Already least-privilege LOGIN (worker/app) — do not SET ROLE.
+        if (state === 'unchecked') {
+          try {
+            const result = await client.query<{ exists: boolean }>(
+              "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') AS exists",
+            );
+            state = result.rows[0]?.exists ? 'exists' : 'missing';
+          } catch {
+            state = 'missing';
+          }
+        }
+
+        if (state === 'exists') {
+          try {
+            await client.query('SET ROLE commander_app');
+          } catch (err) {
+            throw new Error(
+              `PostgresKernelRepository failed to SET ROLE commander_app: ${(err as Error).message}`,
+            );
+          }
+        } else if (state === 'missing') {
+          // AUTH-7: without the commander_app downgrade, application queries run as
+          // the (BYPASSRLS) migration owner and tenant isolation is silently off.
+          // Fail closed in production rather than degrade to a cross-tenant read.
+          // COMMANDER_ALLOW_RLS_BYPASS=1 is an explicit, documented escape hatch
+          // for single-tenant/legacy deployments that intentionally lack the role.
+          // AUDIT-K1: production is detected by the shared multi-signal check —
+          // losing NODE_ENV alone must not silently re-enable the bypass.
+          if (mustRefuseMissingAppRole(process.env)) {
+            throw new Error(
+              '[PostgresKernelRepository] commander_app role not found in production. ' +
+                'Refusing to run application queries as the migration owner (RLS would be bypassed). ' +
+                'Create the commander_app role, or set COMMANDER_ALLOW_RLS_BYPASS=1 to explicitly accept the risk.',
+            );
+          }
+          if (!warned) {
+            warned = true;
+            console.warn(
+              '[PostgresKernelRepository] commander_app role not found; continuing without role downgrade. ' +
+                'Application queries may bypass RLS if connected as the migration owner.',
+            );
+          }
+        }
+
         return {
           query: client.query.bind(client),
-          release: async () => {
-            client.release();
+          release: async (error?: Error | boolean) => {
+            if (error) {
+              await client.release(error);
+              return;
+            }
+            if (state === 'exists') {
+              try {
+                await client.query('SET ROLE NONE');
+              } catch (resetError) {
+                await client.release(unknownConnectionStateError(resetError));
+                return;
+              }
+            }
+            await client.release();
           },
         };
+      } catch (error) {
+        await client.release(error instanceof Error ? error : undefined);
+        throw error;
       }
-
-      if (state === 'unchecked') {
-        try {
-          const result = await client.query<{ exists: boolean }>(
-            "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') AS exists",
-          );
-          state = result.rows[0]?.exists ? 'exists' : 'missing';
-        } catch {
-          state = 'missing';
-        }
-      }
-
-      if (state === 'exists') {
-        try {
-          await client.query('SET ROLE commander_app');
-        } catch (err) {
-          throw new Error(
-            `PostgresKernelRepository failed to SET ROLE commander_app: ${(err as Error).message}`,
-          );
-        }
-      } else if (state === 'missing') {
-        // AUTH-7: without the commander_app downgrade, application queries run as
-        // the (BYPASSRLS) migration owner and tenant isolation is silently off.
-        // Fail closed in production rather than degrade to a cross-tenant read.
-        // COMMANDER_ALLOW_RLS_BYPASS=1 is an explicit, documented escape hatch
-        // for single-tenant/legacy deployments that intentionally lack the role.
-        const bypassAllowed =
-          process.env.NODE_ENV !== 'production' ||
-          ['1', 'true', 'yes'].includes(
-            (process.env.COMMANDER_ALLOW_RLS_BYPASS ?? '').toLowerCase(),
-          );
-        if (!bypassAllowed) {
-          await client.release();
-          throw new Error(
-            '[PostgresKernelRepository] commander_app role not found in production. ' +
-              'Refusing to run application queries as the migration owner (RLS would be bypassed). ' +
-              'Create the commander_app role, or set COMMANDER_ALLOW_RLS_BYPASS=1 to explicitly accept the risk.',
-          );
-        }
-        if (!warned) {
-          warned = true;
-          console.warn(
-            '[PostgresKernelRepository] commander_app role not found; continuing without role downgrade. ' +
-              'Application queries may bypass RLS if connected as the migration owner.',
-          );
-        }
-      }
-
-      return {
-        query: client.query.bind(client),
-        release: async () => {
-          if (state === 'exists') {
-            try {
-              await client.query('SET ROLE NONE');
-            } catch {
-              // Ignore reset errors; the connection is being released anyway.
-            }
-          }
-          client.release();
-        },
-      };
     },
   };
 }
@@ -215,10 +308,18 @@ type DbEffect = Omit<
   | 'createdAt'
   | 'completedAt'
   | 'reconcileAfter'
+  | 'governedActionDeadlineAt'
+  | 'reconcilePolicy'
+  | 'reconcileDisposition'
+  | 'reconcileObservedAt'
   | 'reconcileClaimToken'
   | 'reconcileClaimExpiresAt'
+  | 'reconcileClaimedAt'
+  | 'reconcileClaimWorkerId'
+  | 'reconcileClaimWorkerGeneration'
   | 'reconcileLastError'
   | 'reconcileEscalatedAt'
+  | 'reconcileEscalationCode'
 > & {
   run_id: string;
   step_id: string;
@@ -234,11 +335,22 @@ type DbEffect = Omit<
   created_at: string | Date;
   completed_at: string | Date | null;
   reconcile_attempts: number | string;
+  governed_action_deadline_at: string | Date | null;
+  reconcile_max_attempts: number | string | null;
+  reconcile_initial_delay_ms: number | string | null;
+  reconcile_max_delay_ms: number | string | null;
+  reconcile_deadline_at: string | Date | null;
+  reconcile_disposition: KernelEffect['reconcileDisposition'];
   reconcile_after: string | Date | null;
+  reconcile_observed_at: string | Date | null;
   reconcile_claim_token: string | null;
   reconcile_claim_expires_at: string | Date | null;
-  reconcile_last_error: Record<string, unknown> | null;
+  reconcile_claimed_at: string | Date | null;
+  reconcile_claim_worker_id: string | null;
+  reconcile_claim_worker_generation: number | string | null;
+  reconcile_last_error: KernelEffect['reconcileLastError'];
   reconcile_escalated_at: string | Date | null;
+  reconcile_escalation_code: KernelEffect['reconcileEscalationCode'];
 };
 type DbTenantExecutionControl = {
   tenant_id: string;
@@ -254,8 +366,11 @@ type DbEvidence = {
   run_id: string;
   bundle_id: string;
   action_digest: string;
-  receipt: TerminalEvidenceRecord['receipt'];
-  anchored_at: string | Date;
+  body: Record<string, unknown>;
+  content_hash: string;
+  signature: KernelEvidenceSignature;
+  created_at: string | Date;
+  anchored_at: string | Date | null;
   retention_until: string | Date;
 };
 
@@ -275,6 +390,20 @@ function canonical(value: unknown): string {
 }
 function requestHash(value: Record<string, unknown>): string {
   return createHash('sha256').update(canonical(value)).digest('hex');
+}
+function fromEvidence(row: DbEvidence): KernelEvidenceRecord {
+  return {
+    tenantId: row.tenant_id,
+    runId: row.run_id,
+    bundleId: row.bundle_id,
+    actionDigest: row.action_digest,
+    body: row.body,
+    contentHash: row.content_hash,
+    signature: row.signature,
+    createdAt: iso(row.created_at),
+    anchoredAt: row.anchored_at ? iso(row.anchored_at) : null,
+    retentionUntil: iso(row.retention_until),
+  };
 }
 function fromTenantExecutionControl(row: DbTenantExecutionControl): TenantExecutionControl {
   return {
@@ -356,27 +485,65 @@ function fromEffect(row: DbEffect): KernelEffect {
     createdAt: iso(row.created_at),
     completedAt: row.completed_at ? iso(row.completed_at) : undefined,
     reconcileAttempts: Number(row.reconcile_attempts ?? 0),
+    governedActionDeadlineAt: row.governed_action_deadline_at
+      ? iso(row.governed_action_deadline_at)
+      : null,
+    reconcilePolicy:
+      row.reconcile_max_attempts == null ||
+      row.reconcile_initial_delay_ms == null ||
+      row.reconcile_max_delay_ms == null ||
+      row.reconcile_deadline_at == null
+        ? null
+        : {
+            maxAttempts: Number(row.reconcile_max_attempts) as 8,
+            initialDelayMs: Number(row.reconcile_initial_delay_ms) as 30_000,
+            maxDelayMs: Number(row.reconcile_max_delay_ms) as 900_000,
+            deadlineAt: iso(row.reconcile_deadline_at),
+          },
+    reconcileDisposition: row.reconcile_disposition ?? null,
     reconcileAfter: row.reconcile_after ? iso(row.reconcile_after) : null,
+    reconcileObservedAt: row.reconcile_observed_at ? iso(row.reconcile_observed_at) : null,
     reconcileClaimToken: row.reconcile_claim_token ?? null,
     reconcileClaimExpiresAt: row.reconcile_claim_expires_at
       ? iso(row.reconcile_claim_expires_at)
       : null,
+    reconcileClaimedAt: row.reconcile_claimed_at ? iso(row.reconcile_claimed_at) : null,
+    reconcileClaimWorkerId: row.reconcile_claim_worker_id ?? null,
+    reconcileClaimWorkerGeneration:
+      row.reconcile_claim_worker_generation == null
+        ? null
+        : Number(row.reconcile_claim_worker_generation),
     reconcileLastError: row.reconcile_last_error ?? null,
     reconcileEscalatedAt: row.reconcile_escalated_at ? iso(row.reconcile_escalated_at) : null,
+    reconcileEscalationCode: row.reconcile_escalation_code ?? null,
   };
 }
-function fromEvidence(row: DbEvidence): TerminalEvidenceRecord {
-  const effectId = row.receipt.scope.effectId;
-  if (!effectId) throw new Error('EVIDENCE_RECORD_BINDING_INVALID');
+
+function fromCompensationRequest(row: Record<string, unknown>): KernelCompensationRequest {
   return {
-    tenantId: row.tenant_id,
-    runId: row.run_id,
-    effectId,
-    bundleId: row.bundle_id,
-    actionDigest: row.action_digest,
-    receipt: row.receipt,
-    anchoredAt: iso(row.anchored_at),
-    retentionUntil: iso(row.retention_until),
+    id: String(row.id),
+    tenantId: String(row.tenant_id),
+    originalRunId: String(row.original_run_id),
+    originalEffectId: String(row.original_effect_id),
+    compensationRunId: String(row.compensation_run_id),
+    compensationStepId: String(row.compensation_step_id),
+    adapterVersion: String(row.adapter_version),
+    compensationEffectType: String(row.compensation_effect_type),
+    destination: typeof row.destination === 'string' ? row.destination : '',
+    compensationPatch: row.compensation_patch as Record<string, unknown>,
+    forwardReceiptHash: String(row.forward_receipt_hash),
+    authorizationId: String(row.authorization_id),
+    reconcilePolicy: row.reconcile_policy as KernelCompensationRequest['reconcilePolicy'],
+    state: row.state as KernelCompensationRequest['state'],
+    ...(row.claim_worker_id ? { claimWorkerId: String(row.claim_worker_id) } : {}),
+    ...(row.claim_worker_generation != null
+      ? { claimWorkerGeneration: Number(row.claim_worker_generation) }
+      : {}),
+    ...(row.claim_token ? { claimToken: String(row.claim_token) } : {}),
+    ...(row.claim_expires_at ? { claimExpiresAt: iso(row.claim_expires_at as Date | string) } : {}),
+    ...(row.compensation_effect_id
+      ? { compensationEffectId: String(row.compensation_effect_id) }
+      : {}),
   };
 }
 
@@ -388,16 +555,35 @@ export interface PostgresKernelRepositoryOptions {
    * role, which has BYPASSRLS. API replicas must leave this false.
    */
   schedulerMode?: boolean;
+  /** Dedicated adapter-ops LOGIN: use owner-owned aggregate readiness RPC. */
+  adapterOpsMode?: boolean;
+  /** Separate commander_tenant_authority pool/port used only by app transactions. */
+  tenantContextAuthority?: TenantContextAuthority;
+  /** Expand sets the legacy scope after database-authenticated binding; enforce never does. */
+  tenantContextPhase?: 'expand' | 'enforce';
 }
 
 /** Shared PostgreSQL implementation. No fallback exists: inability to connect is an operational failure. */
 export class PostgresKernelRepository implements KernelRepository {
   protected readonly pool: SqlPool;
 
+  protected enforceAtomicOperationsReadiness(): boolean {
+    return true;
+  }
+
   constructor(
     pool: SqlPool,
     protected readonly options: PostgresKernelRepositoryOptions = {},
   ) {
+    if (
+      options.tenantContextAuthority instanceof PostgresTenantContextAuthority &&
+      options.tenantContextAuthority.usesPool(pool)
+    ) {
+      throw new Error('TENANT_CONTEXT_AUTHORITY_POOL_MUST_BE_SEPARATE');
+    }
+    if (options.tenantContextAuthority && !options.tenantContextPhase) {
+      throw new Error('TENANT_CONTEXT_PHASE_REQUIRED');
+    }
     // Scheduler/recovery pools are assumed to authenticate as commander_scheduler
     // (BYPASSRLS). Non-scheduler pools: privileged LOGINs are downgraded to
     // commander_app; connections already logged in as commander_app/worker keep
@@ -409,6 +595,78 @@ export class PostgresKernelRepository implements KernelRepository {
     // Migrations are applied by the dedicated migration job (packages/kernel/src/migrate.ts)
     // or by test harnesses that explicitly call runKernelMigrations(). API replicas must not
     // bootstrap the schema, so this method is intentionally a no-op.
+  }
+
+  private async admitCompensationEffectViaRpc(
+    client: SqlClient,
+    request: AdmitEffectRequest,
+  ): Promise<AdmitEffectResult> {
+    const result = await client.query<{
+      result:
+        | {
+            admitted: boolean;
+            replayed?: boolean;
+            reason?: Extract<AdmitEffectResult, { admitted: false }>['reason'];
+            effect?: DbEffect;
+          }
+        | string;
+    }>('SELECT admit_compensation_effect_v1($1::jsonb) AS result', [json(request)]);
+    const raw = result.rows[0]?.result;
+    const value = (typeof raw === 'string' ? JSON.parse(raw) : raw) ?? {};
+    if (!value.admitted || !value.effect) {
+      return {
+        admitted: false,
+        reason: value.reason ?? 'COMPENSATION_ADMISSION_UNAVAILABLE',
+      };
+    }
+    return {
+      admitted: true,
+      replayed: value.replayed === true,
+      effect: fromEffect(value.effect),
+    };
+  }
+
+  /**
+   * Resolve the governed compensation authorization from durable evidence — the
+   * `commander_compensation_requests` row the producer wrote, its
+   * `commander_compensation_authorizations` row and the completed forward effect —
+   * exactly like the SQLite / in-memory repositories. The legacy
+   * `admit_compensation_effect_v1` RPC instead reads a sealed authorization from run
+   * metadata and the outbox payload, which the active `request_compensation`
+   * producer never writes.
+   */
+  private async admitCompensationEffectViaDurableEvidence(
+    client: SqlClient,
+    input: AdmitEffectRequest & {
+      requestId: string;
+      requestClaimToken: string;
+      outboxMessageId: string;
+      outboxClaimToken: string;
+    },
+  ): Promise<AdmitEffectResult> {
+    const result = await client.query<{
+      result:
+        | {
+            admitted: boolean;
+            replayed?: boolean;
+            reason?: Extract<AdmitEffectResult, { admitted: false }>['reason'];
+            effect?: DbEffect;
+          }
+        | string;
+    }>('SELECT admit_compensation_effect($1::jsonb) AS result', [json(input)]);
+    const raw = result.rows[0]?.result;
+    const value = (typeof raw === 'string' ? JSON.parse(raw) : raw) ?? {};
+    if (!value.admitted || !value.effect) {
+      return {
+        admitted: false,
+        reason: value.reason ?? 'COMPENSATION_ADMISSION_UNAVAILABLE',
+      };
+    }
+    return {
+      admitted: true,
+      replayed: value.replayed === true,
+      effect: fromEffect(value.effect),
+    };
   }
 
   async createRun(command: CreateKernelRun, actor: string): Promise<KernelRun> {
@@ -616,8 +874,10 @@ export class PostgresKernelRepository implements KernelRepository {
            JOIN commander_tenant_execution_usage u ON u.tenant_id=s.tenant_id
            JOIN commander_tenant_execution_control c ON c.tenant_id=s.tenant_id
            LEFT JOIN commander_tenant_execution_limits l ON l.tenant_id=s.tenant_id
-           WHERE s.state IN ('PENDING','RETRY_WAIT') AND s.scheduled_at <= $1
-             AND r.state IN ('PENDING','RUNNING') AND (cardinality($2::text[]) = 0 OR s.tenant_id = ANY($2::text[]))
+             WHERE s.state IN ('PENDING','RETRY_WAIT') AND s.scheduled_at <= $1
+             AND r.state IN ('PENDING','RUNNING')
+             AND r.metadata->>'compensationRequestId' IS NULL
+             AND (cardinality($2::text[]) = 0 OR s.tenant_id = ANY($2::text[]))
              AND c.paused=false
              AND (cardinality($3::text[]) = 0 OR s.kind = ANY($3::text[]))
              AND u.running_steps < COALESCE(l.max_concurrent_steps, 2147483647)
@@ -752,13 +1012,30 @@ export class PostgresKernelRepository implements KernelRepository {
     return this.withTransaction(async (client) => {
       const result = await client.query<DbStep>(
         `WITH expired AS (
-           SELECT id FROM commander_steps WHERE state='RUNNING' AND lease_expires_at <= $1
-           ORDER BY lease_expires_at ASC FOR UPDATE SKIP LOCKED LIMIT $2
+           SELECT s.id,
+                  EXISTS (
+                    SELECT 1 FROM commander_effects e
+                     WHERE e.step_id=s.id AND e.tenant_id=s.tenant_id AND e.state='ADMITTED'
+                  ) AS has_admitted_effect
+             FROM commander_steps s
+            WHERE s.state='RUNNING' AND s.lease_expires_at <= $1
+            ORDER BY s.lease_expires_at ASC FOR UPDATE OF s SKIP LOCKED LIMIT $2
          )
          UPDATE commander_steps s SET
-           state=CASE WHEN s.attempt < s.max_attempts THEN 'RETRY_WAIT' ELSE 'FAILED' END,
-           scheduled_at=CASE WHEN s.attempt < s.max_attempts THEN $1 ELSE s.scheduled_at END,
-           error=jsonb_build_object('code','LEASE_EXPIRED','message','Worker lease expired before terminal transition','retryable', s.attempt < s.max_attempts),
+           state=CASE
+             WHEN expired.has_admitted_effect THEN 'WAITING_FOR_RECONCILIATION'
+             WHEN s.attempt < s.max_attempts THEN 'RETRY_WAIT'
+             ELSE 'FAILED'
+           END,
+           scheduled_at=CASE
+             WHEN NOT expired.has_admitted_effect AND s.attempt < s.max_attempts THEN $1
+             ELSE s.scheduled_at
+           END,
+           error=jsonb_build_object(
+             'code','LEASE_EXPIRED',
+             'message','Worker lease expired before terminal transition',
+             'retryable', NOT expired.has_admitted_effect AND s.attempt < s.max_attempts
+           ),
            version=s.version+1, updated_at=$1, lease_worker_id=NULL, lease_worker_generation=0, lease_token=NULL, lease_expires_at=NULL
          FROM expired WHERE s.id=expired.id RETURNING s.*`,
         [now.toISOString(), limit],
@@ -766,6 +1043,7 @@ export class PostgresKernelRepository implements KernelRepository {
       const reclaimed = result.rows.map(fromStep);
       for (const step of reclaimed) {
         assertStepTransition('RUNNING', step.state);
+        const awaitingReconciliation = step.state === 'WAITING_FOR_RECONCILIATION';
         await this.releaseTenantSlot(client, step.tenantId);
         const retryable = step.state === 'RETRY_WAIT';
         await this.appendEvent(client, {
@@ -780,7 +1058,7 @@ export class PostgresKernelRepository implements KernelRepository {
           payload: { attempt: step.attempt },
         });
         await this.parkOrphanAdmittedEffects(client, step, 'lease_expired', 'kernel.recovery');
-        if (!retryable) {
+        if (!retryable && !awaitingReconciliation) {
           const source = result.rows.find((row) => row.id === step.id);
           const compensated = await this.requestCompensationIfNeeded(
             client,
@@ -1092,7 +1370,11 @@ export class PostgresKernelRepository implements KernelRepository {
         );
         for (const row of cancelledSteps.rows) {
           const step = fromStep(row);
-          await this.releaseTenantSlot(client, step.tenantId);
+          const previousState = previousStepStates.get(step.id);
+          // Only a step that was actually occupying a tenant slot may release one.
+          // Cancelling PENDING/RETRY_WAIT/WAITING_* steps must not decrement the
+          // shared running_steps counter (it would let the tenant exceed its limit).
+          if (previousState === 'RUNNING') await this.releaseTenantSlot(client, step.tenantId);
           await this.parkOrphanAdmittedEffects(client, step, 'run_cancelled', actor);
           await this.appendEvent(client, {
             aggregateType: 'step',
@@ -1103,7 +1385,7 @@ export class PostgresKernelRepository implements KernelRepository {
             runId: step.runId,
             stepId: step.id,
             actor,
-            payload: { previousState: previousStepStates.get(step.id) },
+            payload: { previousState },
           });
         }
         await this.appendEvent(client, {
@@ -1242,6 +1524,118 @@ export class PostgresKernelRepository implements KernelRepository {
     );
   }
 
+  async getOperationsReadiness(tenantId: string, at = new Date()): Promise<OperationsReadiness> {
+    if (this.options.adapterOpsMode) {
+      return this.withTransaction(
+        async (client) => {
+          const result = await client.query<{
+            reconciliation_workers: string | number;
+            compensation_workers: string | number;
+            checked_at: string | Date;
+          }>('SELECT * FROM get_operations_readiness($1)', [tenantId]);
+          const row = result.rows[0];
+          const reconciliationWorkers = Number(row?.reconciliation_workers ?? 0);
+          const compensationWorkers = Number(row?.compensation_workers ?? 0);
+          return {
+            ready: reconciliationWorkers > 0 && compensationWorkers > 0,
+            ...(reconciliationWorkers === 0
+              ? { reason: 'RECONCILIATION_DRAIN_UNAVAILABLE' as const }
+              : compensationWorkers === 0
+                ? { reason: 'COMPENSATION_DRAIN_UNAVAILABLE' as const }
+                : {}),
+            reconciliationWorkers,
+            compensationWorkers,
+            checkedAt: iso(row?.checked_at ?? at),
+          };
+        },
+        [tenantId],
+      );
+    }
+    if (this.options.tenantContextAuthority) {
+      return this.withTransaction(
+        async (client) => {
+          const result = await client.query<{
+            reconciliation_workers: string | number;
+            compensation_workers: string | number;
+            checked_at: string | Date;
+          }>('SELECT * FROM get_api_operations_readiness($1)', [tenantId]);
+          const row = result.rows[0];
+          const reconciliationWorkers = Number(row?.reconciliation_workers ?? 0);
+          const compensationWorkers = Number(row?.compensation_workers ?? 0);
+          return {
+            ready: reconciliationWorkers > 0 && compensationWorkers > 0,
+            ...(reconciliationWorkers === 0
+              ? { reason: 'RECONCILIATION_DRAIN_UNAVAILABLE' as const }
+              : compensationWorkers === 0
+                ? { reason: 'COMPENSATION_DRAIN_UNAVAILABLE' as const }
+                : {}),
+            reconciliationWorkers,
+            compensationWorkers,
+            checkedAt: iso(row?.checked_at ?? at),
+          };
+        },
+        [tenantId],
+      );
+    }
+    return this.withTransaction(
+      async (client) => this.readOperationsReadiness(client, tenantId, at, false),
+      [tenantId],
+    );
+  }
+
+  private async readOperationsReadiness(
+    client: SqlClient,
+    tenantId: string,
+    at: Date,
+    lockRows: boolean,
+  ): Promise<OperationsReadiness> {
+    const threshold = new Date(at.getTime() - OPERATIONS_HEARTBEAT_TTL_MS);
+    const result = lockRows
+      ? await client.query<{ capability: string; count: string | number }>(
+          `SELECT w.capabilities->>0 AS capability, 1 AS count
+         FROM commander_workers w
+         WHERE w.status='ACTIVE'
+           AND w.identity_subject='db:commander_adapter_ops'
+           AND w.tenant_ids ? $1
+           AND jsonb_array_length(w.capabilities)=1
+           AND w.capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+           AND w.last_heartbeat_at > w.registered_at
+           AND w.last_heartbeat_at >= $2
+         FOR UPDATE`,
+          [tenantId, threshold.toISOString()],
+        )
+      : await client.query<{ capability: string; count: string | number }>(
+          `SELECT w.capabilities->>0 AS capability, COUNT(*) AS count
+       FROM commander_workers w
+       WHERE w.status='ACTIVE'
+         AND w.identity_subject='db:commander_adapter_ops'
+         AND w.tenant_ids ? $1
+         AND jsonb_array_length(w.capabilities)=1
+         AND w.capabilities IN ('["effect.reconcile"]'::jsonb, '["effect.compensate"]'::jsonb)
+         AND w.last_heartbeat_at > w.registered_at
+         AND w.last_heartbeat_at >= $2
+       GROUP BY w.capabilities`,
+          [tenantId, threshold.toISOString()],
+        );
+    const count = (capability: string) =>
+      result.rows
+        .filter((row) => row.capability === capability)
+        .reduce((total, row) => total + Number(row.count), 0);
+    const reconciliationWorkers = count('effect.reconcile');
+    const compensationWorkers = count('effect.compensate');
+    return {
+      ready: reconciliationWorkers > 0 && compensationWorkers > 0,
+      ...(reconciliationWorkers === 0
+        ? { reason: 'RECONCILIATION_DRAIN_UNAVAILABLE' as const }
+        : compensationWorkers === 0
+          ? { reason: 'COMPENSATION_DRAIN_UNAVAILABLE' as const }
+          : {}),
+      reconciliationWorkers,
+      compensationWorkers,
+      checkedAt: at.toISOString(),
+    };
+  }
+
   async admitEffect(request: AdmitEffectRequest): Promise<AdmitEffectResult> {
     // Fail-closed: never let a blank policySnapshotId / lease.workerId slip
     // through to storage where it would otherwise coerce to 'legacy-unbound'.
@@ -1251,59 +1645,171 @@ export class PostgresKernelRepository implements KernelRepository {
     if (!request.lease.workerId || !request.lease.workerId.trim()) {
       return { admitted: false, reason: 'LEASE_WORKER_ID_REQUIRED' };
     }
-    return this.withTransaction(
-      async (client) => {
-        let step = await client.query<DbStep>(
-          `SELECT * FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='RUNNING' AND lease_worker_id=$4 AND lease_worker_generation=$5 AND lease_token=$6 AND fencing_epoch=$7 AND lease_expires_at > now()
+    try {
+      return await this.withTransaction(
+        async (client) => {
+          const isCompensation = request.type.toLowerCase().startsWith('compensate.');
+          if (!this.options.schedulerMode) {
+            if (isCompensation && this.options.adapterOpsMode) {
+              // Route to the durable-evidence RPC whenever the binding carries the
+              // request/outbox identifiers it resolves from. The legacy RPC stays
+              // reachable for callers that still supply the sealed authorization in
+              // run metadata and the outbox payload.
+              const binding = request.compensationBinding;
+              const requestClaimToken = binding?.requestClaimToken ?? binding?.claimToken;
+              const outboxClaimToken = binding?.outboxClaimToken ?? binding?.claimToken;
+              if (
+                binding?.requestId &&
+                binding.outboxMessageId &&
+                requestClaimToken &&
+                outboxClaimToken
+              ) {
+                return this.admitCompensationEffectViaDurableEvidence(client, {
+                  ...request,
+                  requestId: binding.requestId,
+                  requestClaimToken,
+                  outboxMessageId: binding.outboxMessageId,
+                  outboxClaimToken,
+                });
+              }
+              return this.admitCompensationEffectViaRpc(client, request);
+            }
+            const fingerprint = requestHash(request.request);
+            const admissionSql = isClassAEffectType(request.type)
+              ? `SELECT * FROM admit_class_a_effect(
+               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb
+             )`
+              : `SELECT * FROM admit_non_class_a_effect(
+               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb
+             )`;
+            const admitted = await client.query<{
+              admitted: boolean;
+              reason: string | null;
+              replayed: boolean;
+              effect: DbEffect | null;
+            }>(admissionSql, [
+              request.id,
+              request.runId,
+              request.stepId,
+              request.tenantId,
+              request.type,
+              request.idempotencyKey,
+              fingerprint,
+              request.policyDecisionId,
+              request.policySnapshotId,
+              request.actionDigest,
+              request.lease.workerId,
+              request.lease.workerGeneration ?? -1,
+              request.lease.token,
+              request.lease.fencingEpoch,
+              json(request.request),
+            ]);
+            const outcome = admitted.rows[0];
+            if (!outcome?.admitted || !outcome.effect) {
+              return {
+                admitted: false,
+                reason:
+                  outcome?.reason === 'OPERATIONS_NOT_READY'
+                    ? 'OPERATIONS_NOT_READY'
+                    : outcome?.reason === 'IDEMPOTENCY_CONFLICT'
+                      ? 'IDEMPOTENCY_CONFLICT'
+                      : 'LEASE_LOST',
+              };
+            }
+            const effect = fromEffect(outcome.effect);
+            if (!outcome.replayed) {
+              await this.appendEvent(client, {
+                aggregateType: 'effect',
+                aggregateId: effect.id,
+                sequence: 1,
+                type: 'effect.admitted',
+                tenantId: effect.tenantId,
+                runId: effect.runId,
+                stepId: effect.stepId,
+                actor: request.actor,
+                payload: {
+                  type: effect.type,
+                  policyDecisionId: effect.policyDecisionId,
+                  policySnapshotId: effect.policySnapshotId,
+                  actionDigest: effect.actionDigest,
+                },
+              });
+            }
+            return { admitted: true, replayed: outcome.replayed, effect };
+          }
+
+          let step = await client.query<DbStep>(
+            `SELECT * FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='RUNNING' AND lease_worker_id=$4 AND lease_worker_generation=$5 AND lease_token=$6 AND fencing_epoch=$7 AND lease_expires_at > now()
            AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
          FOR UPDATE`,
-          [
-            request.stepId,
-            request.runId,
-            request.tenantId,
-            request.lease.workerId,
-            request.lease.workerGeneration ?? -1,
-            request.lease.token,
-            request.lease.fencingEpoch,
-          ],
-        );
-        if (!step.rows[0] && request.type.startsWith('compensate.')) {
-          // Compensation effects run after the forward step lease is gone; require COMPENSATING run.
-          const run = await client.query<{ state: string }>(
-            `SELECT state FROM commander_runs WHERE id=$1 AND tenant_id=$2 FOR UPDATE`,
-            [request.runId, request.tenantId],
+            [
+              request.stepId,
+              request.runId,
+              request.tenantId,
+              request.lease.workerId,
+              request.lease.workerGeneration ?? -1,
+              request.lease.token,
+              request.lease.fencingEpoch,
+            ],
           );
-          if (run.rows[0]?.state === 'COMPENSATING') {
-            step = await client.query<DbStep>(
-              `SELECT * FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3 FOR UPDATE`,
-              [request.stepId, request.runId, request.tenantId],
+          if (!step.rows[0] && request.type.startsWith('compensate.')) {
+            // Compensation effects run after the forward step lease is gone; require COMPENSATING run.
+            const run = await client.query<{ state: string }>(
+              `SELECT state FROM commander_runs WHERE id=$1 AND tenant_id=$2 FOR UPDATE`,
+              [request.runId, request.tenantId],
             );
+            if (run.rows[0]?.state === 'COMPENSATING') {
+              step = await client.query<DbStep>(
+                `SELECT * FROM commander_steps WHERE id=$1 AND run_id=$2 AND tenant_id=$3 FOR UPDATE`,
+                [request.stepId, request.runId, request.tenantId],
+              );
+            }
           }
-        }
-        if (!step.rows[0]) return { admitted: false, reason: 'LEASE_LOST' };
-        const fingerprint = requestHash(request.request);
-        const existing = await client.query<DbEffect>(
-          'SELECT * FROM commander_effects WHERE tenant_id=$1 AND idempotency_key=$2',
-          [request.tenantId, request.idempotencyKey],
-        );
-        if (existing.rows[0]) {
-          const prior = existing.rows[0];
-          if (
-            prior.run_id !== request.runId ||
-            prior.step_id !== request.stepId ||
-            prior.type !== request.type ||
-            prior.request_hash !== fingerprint ||
-            prior.policy_decision_id !== request.policyDecisionId ||
-            prior.policy_snapshot_id !== request.policySnapshotId ||
-            prior.action_digest !== request.actionDigest
-          ) {
-            return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
+          if (!step.rows[0]) return { admitted: false, reason: 'LEASE_LOST' };
+          const fingerprint = requestHash(request.request);
+          const existing = await client.query<DbEffect>(
+            'SELECT * FROM commander_effects WHERE tenant_id=$1 AND idempotency_key=$2',
+            [request.tenantId, request.idempotencyKey],
+          );
+          if (existing.rows[0]) {
+            const prior = existing.rows[0];
+            if (
+              prior.run_id !== request.runId ||
+              prior.step_id !== request.stepId ||
+              prior.type !== request.type ||
+              prior.request_hash !== fingerprint ||
+              prior.policy_decision_id !== request.policyDecisionId ||
+              prior.policy_snapshot_id !== request.policySnapshotId ||
+              prior.action_digest !== request.actionDigest
+            ) {
+              return { admitted: false, reason: 'IDEMPOTENCY_CONFLICT' };
+            }
+            if (
+              isClassAEffectType(request.type) &&
+              !isCompensation &&
+              prior.state !== 'COMPLETED'
+            ) {
+              if (this.enforceAtomicOperationsReadiness()) {
+                return { admitted: false, reason: 'OPERATIONS_NOT_READY' };
+              }
+              if (!(await this.getOperationsReadiness(request.tenantId)).ready) {
+                return { admitted: false, reason: 'OPERATIONS_NOT_READY' };
+              }
+            }
+            return { admitted: true, replayed: true, effect: fromEffect(prior) };
           }
-          return { admitted: true, replayed: true, effect: fromEffect(prior) };
-        }
-        const leaseWorkerGeneration = request.lease.workerGeneration ?? -1;
-        const inserted = await client.query<DbEffect>(
-          `INSERT INTO commander_effects (
+          if (isClassAEffectType(request.type) && !isCompensation) {
+            if (this.enforceAtomicOperationsReadiness()) {
+              // Scheduler/recovery repositories are not an effect-admission authority.
+              return { admitted: false, reason: 'OPERATIONS_NOT_READY' };
+            }
+            if (!(await this.getOperationsReadiness(request.tenantId)).ready) {
+              return { admitted: false, reason: 'OPERATIONS_NOT_READY' };
+            }
+          }
+          const leaseWorkerGeneration = request.lease.workerGeneration ?? -1;
+          const inserted = await client.query<DbEffect>(
+            `INSERT INTO commander_effects (
            id, run_id, step_id, tenant_id, type, idempotency_key, request_hash,
            policy_decision_id, policy_snapshot_id, action_digest,
            lease_worker_id, lease_worker_generation, lease_fencing_epoch,
@@ -1311,44 +1817,53 @@ export class PostgresKernelRepository implements KernelRepository {
          ) VALUES (
            $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,'ADMITTED',$14::jsonb
          ) RETURNING *`,
-          [
-            request.id,
-            request.runId,
-            request.stepId,
-            request.tenantId,
-            request.type,
-            request.idempotencyKey,
-            fingerprint,
-            request.policyDecisionId,
-            request.policySnapshotId,
-            request.actionDigest,
-            request.lease.workerId,
-            leaseWorkerGeneration,
-            request.lease.fencingEpoch,
-            json(request.request),
-          ],
-        );
-        const effect = fromEffect(inserted.rows[0]!);
-        await this.appendEvent(client, {
-          aggregateType: 'effect',
-          aggregateId: effect.id,
-          sequence: 1,
-          type: 'effect.admitted',
-          tenantId: effect.tenantId,
-          runId: effect.runId,
-          stepId: effect.stepId,
-          actor: request.actor,
-          payload: {
-            type: effect.type,
-            policyDecisionId: effect.policyDecisionId,
-            policySnapshotId: effect.policySnapshotId,
-            actionDigest: effect.actionDigest,
-          },
-        });
-        return { admitted: true, replayed: false, effect };
-      },
-      [request.tenantId],
-    );
+            [
+              request.id,
+              request.runId,
+              request.stepId,
+              request.tenantId,
+              request.type,
+              request.idempotencyKey,
+              fingerprint,
+              request.policyDecisionId,
+              request.policySnapshotId,
+              request.actionDigest,
+              request.lease.workerId,
+              leaseWorkerGeneration,
+              request.lease.fencingEpoch,
+              json(request.request),
+            ],
+          );
+          const effect = fromEffect(inserted.rows[0]!);
+          await this.appendEvent(client, {
+            aggregateType: 'effect',
+            aggregateId: effect.id,
+            sequence: 1,
+            type: 'effect.admitted',
+            tenantId: effect.tenantId,
+            runId: effect.runId,
+            stepId: effect.stepId,
+            actor: request.actor,
+            payload: {
+              type: effect.type,
+              policyDecisionId: effect.policyDecisionId,
+              policySnapshotId: effect.policySnapshotId,
+              actionDigest: effect.actionDigest,
+            },
+          });
+          return { admitted: true, replayed: false, effect };
+        },
+        [request.tenantId],
+      );
+    } catch (error) {
+      // Generic app/worker repositories use the class-bound admission RPCs;
+      // compensation is reserved for the adapter-ops lifecycle RPC. Preserve
+      // the repository result contract when the database wrapper rejects it.
+      if (error instanceof Error && error.message.includes('COMPENSATION_ADMISSION_UNAVAILABLE')) {
+        return { admitted: false, reason: 'COMPENSATION_ADMISSION_UNAVAILABLE' };
+      }
+      throw error;
+    }
   }
 
   private async completeEffectInTransaction(
@@ -1361,10 +1876,10 @@ export class PostgresKernelRepository implements KernelRepository {
   ): Promise<KernelEffect | null> {
     let result = await client.query<DbEffect>(
       `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
-         WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED'
-           AND EXISTS (SELECT 1 FROM commander_steps s WHERE s.id=e.step_id AND s.run_id=e.run_id AND s.tenant_id=e.tenant_id AND s.state='RUNNING' AND s.lease_worker_id=$4 AND s.lease_worker_generation=$5 AND s.lease_token=$6 AND s.fencing_epoch=$7 AND s.lease_expires_at > now())
-           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
-         RETURNING e.*`,
+       WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED'
+         AND EXISTS (SELECT 1 FROM commander_steps s WHERE s.id=e.step_id AND s.run_id=e.run_id AND s.tenant_id=e.tenant_id AND s.state='RUNNING' AND s.lease_worker_id=$4 AND s.lease_worker_generation=$5 AND s.lease_token=$6 AND s.fencing_epoch=$7 AND s.lease_expires_at > now())
+         AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
+       RETURNING e.*`,
       [
         json(response),
         effectId,
@@ -1379,10 +1894,19 @@ export class PostgresKernelRepository implements KernelRepository {
       // compensate.* may complete while the run is COMPENSATING and the step lease is gone.
       result = await client.query<DbEffect>(
         `UPDATE commander_effects e SET state='COMPLETED', response=$1::jsonb, completed_at=now()
-           WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED' AND e.type LIKE 'compensate.%'
-             AND EXISTS (SELECT 1 FROM commander_runs r WHERE r.id=e.run_id AND r.tenant_id=e.tenant_id AND r.state='COMPENSATING')
-           RETURNING e.*`,
-        [json(response), effectId, tenantId],
+         WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED' AND e.type LIKE 'compensate.%'
+           AND EXISTS (SELECT 1 FROM commander_runs r WHERE r.id=e.run_id AND r.tenant_id=e.tenant_id AND r.state='COMPENSATING')
+           AND e.lease_worker_id=$4 AND e.lease_worker_generation=$5 AND e.lease_fencing_epoch=$6
+           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
+         RETURNING e.*`,
+        [
+          json(response),
+          effectId,
+          tenantId,
+          lease.workerId,
+          lease.workerGeneration ?? -1,
+          lease.fencingEpoch,
+        ],
       );
     }
     if (!result.rows[0]) return null;
@@ -1421,11 +1945,11 @@ export class PostgresKernelRepository implements KernelRepository {
     lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
     response: Record<string, unknown>,
     actor: string,
-    evidence: TerminalEvidenceRecord,
+    evidence: KernelEvidenceRecord,
   ): Promise<KernelEffect | null> {
     return this.withTransaction(
       async (client) => {
-        const completed = await this.completeEffectInTransaction(
+        const effect = await this.completeEffectInTransaction(
           client,
           effectId,
           tenantId,
@@ -1433,66 +1957,12 @@ export class PostgresKernelRepository implements KernelRepository {
           response,
           actor,
         );
-        if (!completed) return null;
-        assertEvidenceRecordBoundToEffect(evidence, completed);
+        if (!effect) return null;
+        assertEvidenceRecordBoundToEffect(evidence, effect);
         await this.appendEvidenceInTransaction(client, evidence);
-        return completed;
+        return effect;
       },
       [tenantId],
-    );
-  }
-
-  private async appendEvidenceInTransaction(
-    client: SqlClient,
-    record: TerminalEvidenceRecord,
-  ): Promise<{ inserted: boolean }> {
-    assertEvidenceRecordBinding(record);
-    const inserted = await client.query<DbEvidence>(
-      `INSERT INTO commander_evidence_receipts
-         (tenant_id, run_id, bundle_id, action_digest, receipt, anchored_at, retention_until)
-       VALUES ($1,$2,$3,$4,$5::jsonb,$6::timestamptz,$7::timestamptz)
-       ON CONFLICT (tenant_id, bundle_id) DO NOTHING
-       RETURNING *`,
-      [
-        record.tenantId,
-        record.runId,
-        record.bundleId,
-        record.actionDigest,
-        json(record.receipt),
-        record.anchoredAt,
-        record.retentionUntil,
-      ],
-    );
-    if (inserted.rows[0]) return { inserted: true };
-    const existing = await client.query<DbEvidence>(
-      `SELECT * FROM commander_evidence_receipts WHERE tenant_id=$1 AND bundle_id=$2`,
-      [record.tenantId, record.bundleId],
-    );
-    if (!existing.rows[0] || canonical(fromEvidence(existing.rows[0])) !== canonical(record)) {
-      throw new Error('EVIDENCE_CONFLICT');
-    }
-    return { inserted: false };
-  }
-
-  async appendEvidence(record: TerminalEvidenceRecord): Promise<{ inserted: boolean }> {
-    return this.withTransaction(
-      (client) => this.appendEvidenceInTransaction(client, record),
-      [record.tenantId],
-    );
-  }
-
-  async getEvidence(binding: EvidenceLookup): Promise<TerminalEvidenceRecord | null> {
-    return this.withTransaction(
-      async (client) => {
-        const result = await client.query<DbEvidence>(
-          `SELECT * FROM commander_evidence_receipts
-         WHERE tenant_id=$1 AND run_id=$2 AND bundle_id=$3 AND action_digest=$4
-         LIMIT 1`,
-          [binding.tenantId, binding.runId, `evidence_${binding.effectId}`, binding.actionDigest],
-        );
-        return result.rows[0] ? fromEvidence(result.rows[0]) : null;
-      },
-      [binding.tenantId],
     );
   }
 
@@ -1501,17 +1971,105 @@ export class PostgresKernelRepository implements KernelRepository {
   ): Promise<KernelEffect | null> {
     return this.withTransaction(
       async (client) => {
+        const unknownAt = new Date().toISOString();
+        const policy = createReconcilePolicy({
+          unknownAt,
+          governedActionDeadlineAt: request.governedActionDeadlineAt,
+        });
+        const leasePredicate = request.lease
+          ? `
+           AND EXISTS (
+             SELECT 1 FROM commander_runs r
+              WHERE r.id=commander_effects.run_id
+                AND r.tenant_id=commander_effects.tenant_id
+                AND r.state='RUNNING'
+           )
+           AND EXISTS (
+             SELECT 1 FROM commander_steps s
+              WHERE s.id=commander_effects.step_id
+                AND s.run_id=commander_effects.run_id
+                AND s.tenant_id=commander_effects.tenant_id
+                AND s.state='RUNNING'
+                AND s.lease_worker_id=$10
+                AND s.lease_worker_generation=$11
+                AND s.lease_token=$12
+                AND s.fencing_epoch=$13
+                AND s.lease_expires_at > now()
+           )
+           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$10 AND w.generation=$11)`
+          : '';
         const result = await client.query<DbEffect>(
           `UPDATE commander_effects
          SET state='COMPLETION_UNKNOWN',
-             response=jsonb_build_object('reason',$1::text),
-             reconcile_after=now(),
-             reconcile_attempts=0
-         WHERE id=$2 AND tenant_id=$3 AND state='ADMITTED' RETURNING *`,
-          [request.reason, request.effectId, request.tenantId],
+             response=jsonb_build_object('completionUnknownReason',$1::text),
+             governed_action_deadline_at=$4::timestamptz,
+             reconcile_max_attempts=$5,
+             reconcile_initial_delay_ms=$6,
+             reconcile_max_delay_ms=$7,
+             reconcile_deadline_at=$8::timestamptz,
+             reconcile_disposition='PENDING',
+             reconcile_after=$9::timestamptz,
+             reconcile_observed_at=NULL,
+             reconcile_attempts=0,
+             reconcile_last_error=NULL,
+             reconcile_escalated_at=NULL,
+             reconcile_escalation_code=NULL,
+             reconcile_claim_token=NULL,
+             reconcile_claim_expires_at=NULL,
+             reconcile_claimed_at=NULL,
+             reconcile_claim_worker_id=NULL,
+             reconcile_claim_worker_generation=NULL
+         WHERE id=$2 AND tenant_id=$3 AND state='ADMITTED'${leasePredicate} RETURNING *`,
+          request.lease
+            ? [
+                request.reason,
+                request.effectId,
+                request.tenantId,
+                request.governedActionDeadlineAt ?? null,
+                policy.maxAttempts,
+                policy.initialDelayMs,
+                policy.maxDelayMs,
+                policy.deadlineAt,
+                unknownAt,
+                request.lease.workerId,
+                request.lease.workerGeneration ?? -1,
+                request.lease.token,
+                request.lease.fencingEpoch,
+              ]
+            : [
+                request.reason,
+                request.effectId,
+                request.tenantId,
+                request.governedActionDeadlineAt ?? null,
+                policy.maxAttempts,
+                policy.initialDelayMs,
+                policy.maxDelayMs,
+                policy.deadlineAt,
+                unknownAt,
+              ],
         );
         if (!result.rows[0]) return null;
         const effect = fromEffect(result.rows[0]);
+        const releasedStep = await client.query(
+          `UPDATE commander_steps
+              SET state='WAITING_FOR_RECONCILIATION',
+                  version=version+1,
+                  lease_worker_id=NULL,
+                  lease_worker_generation=0,
+                  lease_token=NULL,
+                  lease_expires_at=NULL,
+                  updated_at=$1::timestamptz
+            WHERE id=$2 AND run_id=$3 AND tenant_id=$4 AND state='RUNNING'`,
+          [unknownAt, effect.stepId, effect.runId, request.tenantId],
+        );
+        if ((releasedStep.rowCount ?? 0) === 1) {
+          await client.query(
+            `UPDATE commander_tenant_execution_usage
+                SET running_steps=GREATEST(0,running_steps-1), updated_at=$1::timestamptz
+              WHERE tenant_id=$2`,
+            [unknownAt, request.tenantId],
+          );
+        }
         await this.appendEvent(client, {
           aggregateType: 'effect',
           aggregateId: effect.id,
@@ -1527,6 +2085,74 @@ export class PostgresKernelRepository implements KernelRepository {
       },
       [request.tenantId],
     );
+  }
+
+  async parkEffectCompletionUnknown(
+    input: ParkEffectCompletionUnknownInput,
+  ): Promise<ParkEffectCompletionUnknownResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<{ result: unknown }>(
+        `SELECT park_effect_completion_unknown_v1(
+           $1::text,$2::text,$3::jsonb,$4::text,$5::bigint,$6::text,$7::text,$8::bigint,$9::timestamptz
+         ) AS result`,
+        [
+          input.tenantId,
+          input.effectId,
+          json(input.error),
+          input.workerId,
+          input.workerGeneration,
+          input.claimSecret,
+          input.leaseToken,
+          input.fencingEpoch,
+          input.governedActionDeadlineAt ?? null,
+        ],
+      );
+      const raw = result.rows[0]?.result;
+      if (raw == null) {
+        await client.query('COMMIT');
+        return { parked: false, reason: 'NOT_FOUND' };
+      }
+      const value = (typeof raw === 'string' ? JSON.parse(raw) : raw) as {
+        parked?: boolean;
+        replayed?: boolean;
+        reason?: ParkEffectCompletionUnknownResult extends { parked: false; reason: infer R }
+          ? R
+          : never;
+        effect?: DbEffect;
+      };
+      if (value.parked && value.effect && value.replayed !== true) {
+        await client.query("SELECT set_config('app.tenant_scope',$1,true)", [input.tenantId]);
+        await client.query(
+          `UPDATE commander_tenant_execution_usage
+              SET running_steps=GREATEST(0,running_steps-1), updated_at=now()
+            WHERE tenant_id=$1`,
+          [input.tenantId],
+        );
+      }
+      await client.query('COMMIT');
+      if (!value.parked || !value.effect) {
+        return {
+          parked: false,
+          reason: value.reason ?? 'NOT_ADMITTED_OR_UNKNOWN',
+        };
+      }
+      return {
+        parked: true,
+        replayed: value.replayed === true,
+        effect: fromEffect(value.effect),
+      };
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* preserve authority failure */
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
@@ -1556,7 +2182,7 @@ export class PostgresKernelRepository implements KernelRepository {
         await this.appendEvent(client, {
           aggregateType: 'effect',
           aggregateId: effect.id,
-          sequence: await this.nextEventSequence(client, 'effect', effect.id),
+          sequence: 3,
           type:
             request.state === 'COMPLETED'
               ? 'effect.reconciled_completed'
@@ -1573,30 +2199,16 @@ export class PostgresKernelRepository implements KernelRepository {
     );
   }
 
-  async requestReconcile(input: RequestReconcileInput): Promise<KernelEffect | null> {
+  async requestReconcile(input: RequestReconcileInput): Promise<RequestReconcileResult> {
     return this.withTransaction(
       async (client) => {
-        const result = await client.query<DbEffect>(
-          `UPDATE commander_effects
-         SET reconcile_after=COALESCE($1::timestamptz, now())
-         WHERE id=$2 AND tenant_id=$3 AND state='COMPLETION_UNKNOWN'
-         RETURNING *`,
-          [input.reconcileAfter ?? null, input.effectId, input.tenantId],
+        const result = await client.query<{ result: RequestReconcileResult | string | null }>(
+          'SELECT request_reconcile_effect($1::text, $2::text, $3::text) AS result',
+          [input.tenantId, input.effectId, input.actor],
         );
-        if (!result.rows[0]) return null;
-        const effect = fromEffect(result.rows[0]);
-        await this.appendEvent(client, {
-          aggregateType: 'effect',
-          aggregateId: effect.id,
-          sequence: await this.nextEventSequence(client, 'effect', effect.id),
-          type: 'effect.reconcile_requested',
-          tenantId: effect.tenantId,
-          runId: effect.runId,
-          stepId: effect.stepId,
-          actor: input.actor,
-          payload: { reconcileAfter: effect.reconcileAfter },
-        });
-        return effect;
+        const raw = result.rows[0]?.result;
+        if (raw == null) return { scheduled: false, reason: 'NOT_FOUND' };
+        return typeof raw === 'string' ? (JSON.parse(raw) as RequestReconcileResult) : raw;
       },
       [input.tenantId],
     );
@@ -1630,7 +2242,10 @@ export class PostgresKernelRepository implements KernelRepository {
          )
          UPDATE commander_effects e
          SET reconcile_claim_token=$3,
-             reconcile_claim_expires_at=$4::timestamptz
+             reconcile_claim_expires_at=$4::timestamptz,
+             reconcile_claimed_at=$1::timestamptz,
+             reconcile_claim_worker_id='scheduler',
+             reconcile_claim_worker_generation=1
          FROM candidate
          WHERE e.id=candidate.id
          RETURNING e.*`,
@@ -1664,14 +2279,12 @@ export class PostgresKernelRepository implements KernelRepository {
     if (!claimSecret) {
       throw new Error('claimReconcileEffects requires claimSecret on the worker LOGIN path');
     }
-    const at = input.now ?? new Date();
-    const claimTtlMs = input.claimTtlMs ?? 60_000;
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
       const result = await client.query<{ claim_reconcile_effects: unknown }>(
-        'SELECT claim_reconcile_effects($1::text, $2::bigint, $3::integer, $4::timestamptz, $5::integer, $6::text) AS claim_reconcile_effects',
-        [workerId, workerGeneration, input.limit, at.toISOString(), claimTtlMs, claimSecret],
+        'SELECT claim_reconcile_effects($1::text, $2::bigint, $3::integer, $4::text) AS claim_reconcile_effects',
+        [workerId, workerGeneration, input.limit, claimSecret],
       );
       await client.query('COMMIT');
       const raw = result.rows[0]?.claim_reconcile_effects;
@@ -1690,6 +2303,82 @@ export class PostgresKernelRepository implements KernelRepository {
         await client.query('ROLLBACK');
       } catch {
         /* preserve claim error */
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async completeReconcileEffect(
+    input: ReconcileClaimAuth & { response: Record<string, unknown> },
+  ): Promise<ReconcileMutationResult> {
+    return this.callReconcileMutationRpc('complete_reconcile_effect', input, input.response);
+  }
+
+  async confirmEffectNotApplied(
+    input: ReconcileClaimAuth & { response: Record<string, unknown> },
+  ): Promise<ReconcileMutationResult> {
+    return this.callReconcileMutationRpc('confirm_effect_not_applied', input, input.response);
+  }
+
+  async rescheduleReconcileEffect(
+    input: ReconcileClaimAuth & { lastError: ReconcileQueryError },
+  ): Promise<ReconcileMutationResult> {
+    return this.callReconcileMutationRpc('reschedule_reconcile_effect', input, input.lastError);
+  }
+
+  async escalateReconcileEffect(
+    input: ReconcileClaimAuth & {
+      reason:
+        | 'RECONCILE_ADAPTER_NOT_FOUND'
+        | 'RECONCILE_QUERY_UNSUPPORTED'
+        | 'COMPENSATION_QUERY_UNSUPPORTED'
+        | 'RECONCILE_POLICY_BACKFILL_REVIEW_REQUIRED';
+    },
+  ): Promise<ReconcileMutationResult> {
+    return this.callReconcileMutationRpc('escalate_reconcile_effect', input, input.reason);
+  }
+
+  private async callReconcileMutationRpc(
+    functionName:
+      | 'complete_reconcile_effect'
+      | 'confirm_effect_not_applied'
+      | 'reschedule_reconcile_effect'
+      | 'escalate_reconcile_effect',
+    input: ReconcileClaimAuth,
+    payload: Record<string, unknown> | ReconcileQueryError | string,
+  ): Promise<ReconcileMutationResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await client.query<{ result: ReconcileMutationResult | string }>(
+        `SELECT ${functionName}(
+           $1::text,$2::text,$3::text,$4::bigint,$5::text,$6::text,$7::jsonb,$8::jsonb
+         ) AS result`,
+        [
+          input.tenantId,
+          input.effectId,
+          input.workerId,
+          input.workerGeneration,
+          input.claimSecret,
+          input.claimToken,
+          json(payload),
+          input.evidence ? json(input.evidence) : null,
+        ],
+      );
+      await client.query('COMMIT');
+      const raw = result.rows[0]?.result;
+      if (raw == null) return { applied: false, reason: 'NOT_FOUND' };
+      return typeof raw === 'string' ? (JSON.parse(raw) as ReconcileMutationResult) : raw;
+    } catch (error) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* preserve mutation error */
+      }
+      if (error instanceof Error && error.message.includes('TERMINAL_EVIDENCE_REQUIRED')) {
+        return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
       }
       throw error;
     } finally {
@@ -1723,12 +2412,11 @@ export class PostgresKernelRepository implements KernelRepository {
     );
   }
 
-  private async escalateReconcileInTransaction(
-    client: SqlClient,
-    input: EscalateReconcileInput,
-  ): Promise<KernelEffect | null> {
-    const result = await client.query<DbEffect>(
-      `UPDATE commander_effects
+  async escalateReconcile(input: EscalateReconcileInput): Promise<boolean> {
+    return this.withTransaction(
+      async (client) => {
+        const result = await client.query<DbEffect>(
+          `UPDATE commander_effects
          SET reconcile_escalated_at=now(),
              reconcile_claim_token=NULL,
              reconcile_claim_expires_at=NULL,
@@ -1736,41 +2424,21 @@ export class PostgresKernelRepository implements KernelRepository {
          WHERE id=$2 AND tenant_id=$3 AND state='COMPLETION_UNKNOWN'
            AND reconcile_claim_token=$4
          RETURNING *`,
-      [input.reason, input.effectId, input.tenantId, input.claimToken],
-    );
-    if (!result.rows[0]) return null;
-    const effect = fromEffect(result.rows[0]);
-    await this.appendEvent(client, {
-      aggregateType: 'effect',
-      aggregateId: effect.id,
-      sequence: 100 + effect.reconcileAttempts,
-      type: 'effect.reconcile_escalated',
-      tenantId: effect.tenantId,
-      runId: effect.runId,
-      stepId: effect.stepId,
-      actor: 'reconciliation-daemon',
-      payload: { reason: input.reason },
-    });
-    return effect;
-  }
-
-  async escalateReconcile(input: EscalateReconcileInput): Promise<boolean> {
-    return this.withTransaction(
-      async (client) => (await this.escalateReconcileInTransaction(client, input)) !== null,
-      [input.tenantId],
-    );
-  }
-
-  async escalateReconcileWithEvidence(
-    input: EscalateReconcileInput,
-    evidence: TerminalEvidenceRecord,
-  ): Promise<boolean> {
-    return this.withTransaction(
-      async (client) => {
-        const effect = await this.escalateReconcileInTransaction(client, input);
-        if (!effect) return false;
-        assertEvidenceRecordBoundToEffect(evidence, effect);
-        await this.appendEvidenceInTransaction(client, evidence);
+          [input.reason, input.effectId, input.tenantId, input.claimToken],
+        );
+        if (!result.rows[0]) return false;
+        const effect = fromEffect(result.rows[0]);
+        await this.appendEvent(client, {
+          aggregateType: 'effect',
+          aggregateId: effect.id,
+          sequence: 100 + effect.reconcileAttempts,
+          type: 'effect.reconcile_escalated',
+          tenantId: effect.tenantId,
+          runId: effect.runId,
+          stepId: effect.stepId,
+          actor: 'reconciliation-daemon',
+          payload: { reason: input.reason },
+        });
         return true;
       },
       [input.tenantId],
@@ -1841,121 +2509,192 @@ export class PostgresKernelRepository implements KernelRepository {
     );
   }
 
-  async requestCompensation(
-    input: RequestCompensationInput,
-  ): Promise<RequestCompensationResult | null> {
+  async failEffectWithEvidence(
+    request: FailEffectRequest & { evidence: KernelEvidenceRecord },
+  ): Promise<KernelEffect | null> {
     return this.withTransaction(
       async (client) => {
-        const runResult = await client.query<DbRun>(
-          'SELECT * FROM commander_runs WHERE id=$1 AND tenant_id=$2',
-          [input.originalRunId, input.tenantId],
-        );
-        const originalRun = runResult.rows[0];
-        if (!originalRun) return null;
-        if (!['SUCCEEDED', 'FAILED', 'CANCELLED', 'COMPENSATED'].includes(originalRun.state)) {
-          return null;
-        }
-        const effectsResult = await client.query<DbEffect>(
-          `SELECT * FROM commander_effects
-         WHERE run_id=$1 AND tenant_id=$2 AND state='COMPLETED' AND type NOT LIKE 'compensate.%'
-         ORDER BY created_at ASC`,
-          [input.originalRunId, input.tenantId],
-        );
-        if (effectsResult.rows.length === 0) return null;
-        const target = input.originalEffectId
-          ? effectsResult.rows.find((row) => row.id === input.originalEffectId)
-          : effectsResult.rows[effectsResult.rows.length - 1];
-        if (!target) return null;
-        const targetEffect = fromEffect(target);
-        const idempotencyKey = `cmp:${targetEffect.id}:${input.adapterVersion}`;
-        const compensationRunId = `run_${createHash('sha256')
-          .update(`${input.tenantId}:compensation:${idempotencyKey}`)
-          .digest('hex')
-          .slice(0, 40)}`;
-        const existingRun = await client.query<DbRun>(
-          'SELECT id FROM commander_runs WHERE id=$1 AND tenant_id=$2',
-          [compensationRunId, input.tenantId],
-        );
-        if (existingRun.rows[0]) {
-          return {
-            compensationRunId,
-            originalEffectId: targetEffect.id,
-            originalRunId: input.originalRunId,
-          };
-        }
-        const stepId = `step_${createHash('sha256').update(`${compensationRunId}:tool`).digest('hex').slice(0, 32)}`;
-        await client.query(
-          `INSERT INTO commander_runs (id, tenant_id, intent_hash, work_graph_hash, work_graph_version, policy_snapshot_id, state, metadata)
-         VALUES ($1,$2,$3,$4,$5,$6,'PENDING',$7::jsonb)`,
+        const result = await client.query<DbEffect>(
+          `UPDATE commander_effects e
+         SET state='FAILED', response=$1::jsonb, completed_at=now()
+         WHERE e.id=$2 AND e.tenant_id=$3 AND e.state='ADMITTED'
+           AND EXISTS (
+             SELECT 1 FROM commander_steps s
+             WHERE s.id=e.step_id AND s.run_id=e.run_id AND s.tenant_id=e.tenant_id
+               AND s.state='RUNNING' AND s.lease_worker_id=$4
+               AND s.lease_worker_generation=$5 AND s.lease_token=$6
+               AND s.fencing_epoch=$7 AND s.lease_expires_at > now()
+           )
+           AND EXISTS (SELECT 1 FROM commander_workers w WHERE w.id=$4 AND w.generation=$5)
+         RETURNING e.*`,
           [
-            compensationRunId,
-            input.tenantId,
-            createHash('sha256').update(`compensate:${targetEffect.id}`).digest('hex'),
-            createHash('sha256').update(stepId).digest('hex'),
-            'action-gateway-compensation/v1',
-            'compensation-enqueue-v1',
-            json({
-              compensation: {
-                originalRunId: input.originalRunId,
-                originalEffectId: targetEffect.id,
-                adapterVersion: input.adapterVersion,
-              },
-            }),
+            json(request.error),
+            request.effectId,
+            request.tenantId,
+            request.lease.workerId,
+            request.lease.workerGeneration ?? -1,
+            request.lease.token,
+            request.lease.fencingEpoch,
           ],
         );
-        await client.query(
-          `INSERT INTO commander_steps (id, run_id, tenant_id, kind, state, max_attempts, priority, dependencies, input, scheduled_at)
-         VALUES ($1,$2,$3,'tool','PENDING',1,0,'[]'::jsonb,$4::jsonb,now())`,
-          [
-            stepId,
-            compensationRunId,
-            input.tenantId,
-            json({
-              effectType: input.compensationEffectType,
-              originalEffectId: targetEffect.id,
-              idempotencyKey,
-            }),
-          ],
-        );
-        const compensationKey = `${input.tenantId}/${compensationRunId}/${targetEffect.id}`;
-        await this.appendEvent(
-          client,
-          {
-            aggregateType: 'effect',
-            aggregateId: `compensation:${compensationKey}`,
-            sequence: 1,
-            type: 'kernel.compensation.requested',
-            tenantId: input.tenantId,
-            runId: compensationRunId,
-            stepId,
-            actor: input.actor,
-            payload: {
-              type: 'kernel.compensation.requested',
-              tenantId: input.tenantId,
-              runId: compensationRunId,
-              stepId,
-              originalEffectId: targetEffect.id,
-              compensationAction: input.compensationEffectType,
-              compensationPayload: {
-                originalEffectId: targetEffect.id,
-                forwardResponse: targetEffect.response ?? {},
-                // Derived from the original effect's own lease fencing — never invent
-                // a literal epoch for the compensation consumer's admit lease.
-                fencingEpoch: targetEffect.leaseFencingEpoch,
-              },
-              idempotencyKey,
-            },
-          },
-          compensationKey,
-        );
+        if (!result.rows[0]) return null;
+        const effect = fromEffect(result.rows[0]);
+        assertEvidenceRecordBoundToEffect(request.evidence, effect);
+        await this.appendEvidenceInTransaction(client, request.evidence);
+        await this.appendEvent(client, {
+          aggregateType: 'effect',
+          aggregateId: effect.id,
+          sequence: 2,
+          type: 'effect.failed',
+          tenantId: request.tenantId,
+          runId: effect.runId,
+          stepId: effect.stepId,
+          actor: request.actor,
+          payload: { error: request.error },
+        });
+        return effect;
+      },
+      [request.tenantId],
+    );
+  }
+
+  async createCompensationAuthorization(
+    authorization: CompensationAuthorizationRecord,
+  ): Promise<{ authorization: CompensationAuthorizationRecord; replayed: boolean }> {
+    return this.withTransaction(
+      async (client) => {
+        const result = await client.query<{
+          result: { authorization: CompensationAuthorizationRecord; replayed: boolean } | string;
+        }>('SELECT create_compensation_authorization($1::jsonb) AS result', [json(authorization)]);
+        const raw = result.rows[0]?.result;
+        if (!raw) throw new Error('COMPENSATION_AUTHORIZATION_PERSISTENCE_FAILED');
+        return typeof raw === 'string' ? JSON.parse(raw) : raw;
+      },
+      [authorization.tenantId],
+    );
+  }
+
+  async getCompensationAuthorization(
+    authorizationId: string,
+    tenantId: string,
+  ): Promise<CompensationAuthorizationRecord | null> {
+    return this.withTransaction(
+      async (client) => {
+        const result = await client.query<{
+          authorization: CompensationAuthorizationRecord | string | null;
+        }>('SELECT get_compensation_authorization($1::text,$2::text) AS authorization', [
+          authorizationId,
+          tenantId,
+        ]);
+        const raw = result.rows[0]?.authorization;
+        if (!raw) return null;
+        const authorization =
+          typeof raw === 'string' ? (JSON.parse(raw) as CompensationAuthorizationRecord) : raw;
         return {
-          compensationRunId,
-          originalEffectId: targetEffect.id,
-          originalRunId: input.originalRunId,
+          ...authorization,
+          expiresAt: iso(authorization.expiresAt),
+        };
+      },
+      [tenantId],
+    );
+  }
+
+  async requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult> {
+    return this.withTransaction(
+      async (client) => {
+        const result = await client.query<{ result: RequestCompensationResult | string }>(
+          'SELECT request_compensation($1::text,$2::text,$3::text) AS result',
+          [input.tenantId, input.authorizationId, input.actor],
+        );
+        const raw = result.rows[0]?.result;
+        if (!raw) throw new Error('COMPENSATION_REQUEST_PERSISTENCE_FAILED');
+        const value = (
+          typeof raw === 'string' ? JSON.parse(raw) : raw
+        ) as RequestCompensationResult;
+        if (!value.accepted) return value;
+        return {
+          ...value,
+          request: fromCompensationRequest(value.request as unknown as Record<string, unknown>),
         };
       },
       [input.tenantId],
     );
+  }
+
+  async claimCompensationRequest(
+    input: ClaimCompensationRequestInput,
+  ): Promise<ClaimedCompensationRequest | null> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ result: ClaimedCompensationRequest | string | null }>(
+        `SELECT claim_compensation_request_v2($1::text,$2::text,$3::text,$4::bigint,$5::text) AS result`,
+        [
+          input.requestId,
+          input.outboxMessageId,
+          input.workerId,
+          input.workerGeneration,
+          input.claimSecret,
+        ],
+      );
+      const raw = result.rows[0]?.result;
+      return raw == null ? null : typeof raw === 'string' ? JSON.parse(raw) : raw;
+    } finally {
+      client.release();
+    }
+  }
+
+  async admitCompensationEffect(
+    input: AdmitEffectRequest & {
+      requestId: string;
+      requestClaimToken: string;
+      outboxMessageId: string;
+      outboxClaimToken: string;
+    },
+  ): Promise<AdmitEffectResult> {
+    const client = await this.pool.connect();
+    try {
+      return await this.admitCompensationEffectViaDurableEvidence(client, input);
+    } finally {
+      client.release();
+    }
+  }
+
+  async parkCompensationUnknown(
+    input: ParkCompensationRequestUnknownInput,
+  ): Promise<CompensationMutationResult> {
+    return this.callTask3CompensationMutation('park_compensation_unknown', input);
+  }
+
+  async finalizeCompensation(
+    input: FinalizeCompensationInput,
+  ): Promise<CompensationMutationResult> {
+    return this.callTask3CompensationMutation('finalize_compensation', input);
+  }
+
+  private async callTask3CompensationMutation(
+    functionName: 'park_compensation_unknown' | 'finalize_compensation',
+    input: ParkCompensationRequestUnknownInput | FinalizeCompensationInput,
+  ): Promise<CompensationMutationResult> {
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ result: CompensationMutationResult | string }>(
+        `SELECT ${functionName}($1::jsonb) AS result`,
+        [json(input)],
+      );
+      const raw = result.rows[0]?.result;
+      return raw
+        ? typeof raw === 'string'
+          ? JSON.parse(raw)
+          : raw
+        : { applied: false, reason: 'NOT_FOUND' };
+    } catch (error) {
+      if (error instanceof Error && error.message.includes('TERMINAL_EVIDENCE_REQUIRED')) {
+        return { applied: false, reason: 'TERMINAL_EVIDENCE_REQUIRED' };
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   async claimOutbox(limit: number, now = new Date()): Promise<KernelOutboxMessage[]> {
@@ -2084,6 +2823,40 @@ export class PostgresKernelRepository implements KernelRepository {
     });
   }
 
+  async claimCompensationWork(
+    input: CompensationClaimAuth & { topic: typeof KERNEL_COMPENSATION_TOPIC; limit: number },
+  ): Promise<ClaimedCompensationWork[]> {
+    if (input.topic !== KERNEL_COMPENSATION_TOPIC) return [];
+    const claimed: ClaimedCompensationWork[] = [];
+    // A concurrent publisher/consumer can transiently hold the next eligible
+    // outbox/request row. Do not treat one SKIP LOCKED miss as exhaustion: it
+    // caused the race test to consume only the first batch and strand the rest.
+    let misses = 0;
+    const maxMisses = Math.max(3, input.limit);
+    let attempts = 0;
+    while (
+      claimed.length < input.limit &&
+      misses < maxMisses &&
+      attempts < input.limit + maxMisses
+    ) {
+      attempts += 1;
+      const result = await this.claimCompensationRequest({
+        requestId: '',
+        outboxMessageId: '',
+        workerId: input.workerId,
+        workerGeneration: input.workerGeneration,
+        claimSecret: input.claimSecret,
+      });
+      if (!result) {
+        misses += 1;
+        continue;
+      }
+      misses = 0;
+      claimed.push(result);
+    }
+    return claimed;
+  }
+
   /** Worker LOGIN outbox claim via SECURITY DEFINER claim_outbox_by_topic. */
   private async claimOutboxByTopicViaRpc(
     topic: string,
@@ -2163,6 +2936,14 @@ export class PostgresKernelRepository implements KernelRepository {
   async isCapabilityRevoked(jti: string, tenantId: string): Promise<boolean> {
     return this.withTransaction(
       async (client) => {
+        if (this.options.adapterOpsMode) {
+          const result = await client.query<{ read_capability_revocation_v1: boolean }>(
+            `SELECT public.read_capability_revocation_v1($1::text, $2::text)
+               AS read_capability_revocation_v1`,
+            [tenantId, jti],
+          );
+          return result.rows[0]?.read_capability_revocation_v1 === true;
+        }
         const result = await client.query(
           `SELECT 1 FROM commander_capability_revocations WHERE jti=$1 AND tenant_id=$2 AND expires_at > now()`,
           [jti, tenantId],
@@ -2183,7 +2964,7 @@ export class PostgresKernelRepository implements KernelRepository {
       async (client) => {
         await client.query(
           `INSERT INTO commander_capability_revocations (jti, tenant_id, expires_at, reason) VALUES ($1, $2, $3, $4)
-         ON CONFLICT (tenant_id, jti) DO UPDATE SET expires_at = EXCLUDED.expires_at, reason = EXCLUDED.reason`,
+           ON CONFLICT (tenant_id, jti) DO UPDATE SET expires_at = EXCLUDED.expires_at, reason = EXCLUDED.reason`,
           [input.jti, input.tenantId, input.expiresAt, input.reason ?? null],
         );
       },
@@ -2199,6 +2980,15 @@ export class PostgresKernelRepository implements KernelRepository {
   }): Promise<boolean> {
     return this.withTransaction(
       async (client) => {
+        if (this.options.adapterOpsMode) {
+          const result = await client.query<{ consume_capability_replay_v1: boolean }>(
+            `SELECT public.consume_capability_replay_v1(
+               $1::text, $2::text, $3::text, $4::timestamptz
+             ) AS consume_capability_replay_v1`,
+            [input.tenantId, input.jti, input.nonce, input.expiresAt],
+          );
+          return result.rows[0]?.consume_capability_replay_v1 === true;
+        }
         const result = await client.query<{ jti: string }>(
           `INSERT INTO commander_capability_replays (tenant_id, jti, nonce, expires_at)
          VALUES ($1, $2, $3, $4)
@@ -2434,34 +3224,6 @@ export class PostgresKernelRepository implements KernelRepository {
     );
   }
 
-  async appendFaultControlAudit(
-    record: import('./repository.js').FaultControlAuditRecord,
-  ): Promise<void> {
-    const aggregateId = `${record.runId}:${record.effectId}`;
-    await this.withTransaction(
-      async (client) => {
-        const current = await client.query<{ sequence: number | string }>(
-          `SELECT COALESCE(MAX(sequence), 0) AS sequence
-         FROM commander_events
-         WHERE aggregate_type='fault-control' AND aggregate_id=$1`,
-          [aggregateId],
-        );
-        await this.appendEvent(client, {
-          aggregateType: 'fault-control',
-          aggregateId,
-          sequence: Number(current.rows[0]?.sequence ?? 0) + 1,
-          type: record.type,
-          tenantId: record.tenantId,
-          runId: record.runId,
-          stepId: record.effectId,
-          actor: record.actor,
-          payload: record.payload,
-        });
-      },
-      [record.tenantId],
-    );
-  }
-
   async listEffectsForRun(runId: string, tenantId: string): Promise<KernelEffect[]> {
     return this.withTransaction(
       async (client) => {
@@ -2473,6 +3235,291 @@ export class PostgresKernelRepository implements KernelRepository {
       },
       [tenantId],
     );
+  }
+
+  async getAdapterOpsEvidenceContext(
+    input: AdapterOpsEvidenceContextRequest,
+  ): Promise<AdapterOpsEvidenceContext> {
+    if (!this.options.adapterOpsMode) {
+      throw new Error('ADAPTER_OPS_EVIDENCE_AUTHORITY_REQUIRED');
+    }
+    if (
+      !input.workerId.trim() ||
+      !Number.isSafeInteger(input.workerGeneration) ||
+      input.workerGeneration <= 0 ||
+      !input.claimSecret ||
+      !input.tenantId ||
+      !input.runId ||
+      !input.effectId ||
+      !input.claimToken
+    ) {
+      throw new Error('ADAPTER_OPS_EVIDENCE_CONTEXT_INVALID');
+    }
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{
+        result:
+          | {
+              effect: AdapterOpsEvidenceContext['effect'];
+              events: Array<{
+                type: string;
+                tenant_id: string;
+                run_id: string;
+                step_id: string | null;
+                aggregate_id: string;
+                occurred_at: Date | string;
+                payload: Record<string, unknown> | null;
+              }>;
+              evidence: DbEvidence | null;
+            }
+          | string
+          | null;
+      }>(
+        `SELECT read_adapter_ops_evidence_context(
+           $1::text,$2::bigint,$3::text,$4::text,$5::text,$6::text,$7::text
+         ) AS result`,
+        [
+          input.workerId,
+          input.workerGeneration,
+          input.claimSecret,
+          input.tenantId,
+          input.runId,
+          input.effectId,
+          input.claimToken,
+        ],
+      );
+      const raw = result.rows[0]?.result;
+      if (raw == null) throw new Error('ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED');
+      const context =
+        typeof raw === 'string'
+          ? (JSON.parse(raw) as {
+              effect: AdapterOpsEvidenceContext['effect'];
+              events: Array<{
+                type: string;
+                tenant_id: string;
+                run_id: string;
+                step_id: string | null;
+                aggregate_id: string;
+                occurred_at: Date | string;
+                payload: Record<string, unknown> | null;
+              }>;
+              evidence: DbEvidence | null;
+            })
+          : raw;
+      if (!context?.effect || !Array.isArray(context.events)) {
+        throw new Error('ADAPTER_OPS_EVIDENCE_CONTEXT_INVALID');
+      }
+      return {
+        effect: {
+          ...context.effect,
+          createdAt: iso(context.effect.createdAt),
+          ...(context.effect.completedAt ? { completedAt: iso(context.effect.completedAt) } : {}),
+        },
+        events: context.events.map((event) => ({
+          type: event.type,
+          tenantId: event.tenant_id,
+          runId: event.run_id,
+          ...(event.step_id ? { stepId: event.step_id } : {}),
+          aggregateId: event.aggregate_id,
+          occurredAt: iso(event.occurred_at),
+          payload: event.payload ?? {},
+        })),
+        evidence: context.evidence ? fromEvidence(context.evidence) : null,
+      };
+    } finally {
+      client.release();
+    }
+  }
+
+  async completeCompensationEffectWithEvidence(
+    input: AdapterOpsCompensationTerminalEvidenceBinding & {
+      response: Record<string, unknown>;
+    },
+  ): Promise<KernelEffect | null> {
+    return this.callAdapterOpsCompensationTerminalEvidence(
+      'complete_compensation_effect_with_evidence',
+      input,
+    );
+  }
+
+  async failCompensationEffectWithEvidence(
+    input: AdapterOpsCompensationTerminalEvidenceBinding & {
+      error: {
+        code: string;
+        message: string;
+        retryable: boolean;
+        details?: Record<string, unknown>;
+      };
+    },
+  ): Promise<KernelEffect | null> {
+    return this.callAdapterOpsCompensationTerminalEvidence(
+      'fail_compensation_effect_with_evidence',
+      input,
+    );
+  }
+
+  private async callAdapterOpsCompensationTerminalEvidence(
+    rpc: 'complete_compensation_effect_with_evidence' | 'fail_compensation_effect_with_evidence',
+    input: AdapterOpsCompensationTerminalEvidenceBinding & {
+      response?: Record<string, unknown>;
+      error?: {
+        code: string;
+        message: string;
+        retryable: boolean;
+        details?: Record<string, unknown>;
+      };
+    },
+  ): Promise<KernelEffect | null> {
+    if (!this.options.adapterOpsMode) {
+      throw new Error('ADAPTER_OPS_COMPENSATION_TERMINAL_AUTHORITY_REQUIRED');
+    }
+    if (
+      !input.workerId.trim() ||
+      !Number.isSafeInteger(input.workerGeneration) ||
+      input.workerGeneration <= 0 ||
+      !input.claimSecret ||
+      !input.tenantId ||
+      !input.runId ||
+      !input.stepId ||
+      !input.effectId ||
+      !input.requestId ||
+      !input.requestClaimToken ||
+      !input.outboxMessageId ||
+      !input.outboxClaimToken ||
+      !input.lease.workerId ||
+      !Number.isSafeInteger(input.lease.workerGeneration) ||
+      (input.lease.workerGeneration ?? 0) <= 0 ||
+      !input.lease.token ||
+      !Number.isSafeInteger(input.lease.fencingEpoch) ||
+      input.lease.fencingEpoch <= 0 ||
+      input.actor !== input.workerId
+    ) {
+      throw new Error('ADAPTER_OPS_COMPENSATION_TERMINAL_INPUT_INVALID');
+    }
+    const client = await this.pool.connect();
+    try {
+      const result = await client.query<{ result: DbEffect | string | null }>(
+        `SELECT ${rpc}($1::jsonb) AS result`,
+        [json(input)],
+      );
+      const raw = result.rows[0]?.result;
+      if (raw == null) return null;
+      return fromEffect(typeof raw === 'string' ? JSON.parse(raw) : raw);
+    } finally {
+      client.release();
+    }
+  }
+
+  private async appendEvidenceInTransaction(
+    client: SqlClient,
+    record: KernelEvidenceRecord,
+  ): Promise<{ inserted: boolean }> {
+    const inserted = await client.query<DbEvidence>(
+      `INSERT INTO commander_evidence_receipts
+           (tenant_id, run_id, bundle_id, action_digest, body, content_hash, signature,
+            created_at, anchored_at, retention_until)
+         VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb,$8::timestamptz,$9::timestamptz,$10::timestamptz)
+         ON CONFLICT (tenant_id, bundle_id) DO NOTHING
+         RETURNING *`,
+      [
+        record.tenantId,
+        record.runId,
+        record.bundleId,
+        record.actionDigest,
+        json(record.body),
+        record.contentHash,
+        json(record.signature),
+        record.createdAt,
+        record.anchoredAt,
+        record.retentionUntil,
+      ],
+    );
+    if (inserted.rows[0]) return { inserted: true };
+
+    const existing = await client.query<DbEvidence>(
+      `SELECT * FROM commander_evidence_receipts
+       WHERE tenant_id=$1 AND bundle_id=$2`,
+      [record.tenantId, record.bundleId],
+    );
+    if (!existing.rows[0] || canonical(fromEvidence(existing.rows[0])) !== canonical(record)) {
+      throw new Error('EVIDENCE_CONFLICT');
+    }
+    return { inserted: false };
+  }
+
+  async appendEvidence(record: KernelEvidenceRecord): Promise<{ inserted: boolean }> {
+    return this.withTransaction(
+      (client) => this.appendEvidenceInTransaction(client, record),
+      [record.tenantId],
+    );
+  }
+
+  async getEvidence(runId: string, tenantId: string): Promise<KernelEvidenceRecord | null> {
+    return this.withTransaction(
+      async (client) => {
+        const result = await client.query<DbEvidence>(
+          `SELECT * FROM commander_evidence_receipts
+         WHERE run_id=$1 AND tenant_id=$2
+         ORDER BY created_at DESC, bundle_id DESC
+         LIMIT 1`,
+          [runId, tenantId],
+        );
+        return result.rows[0] ? fromEvidence(result.rows[0]) : null;
+      },
+      [tenantId],
+    );
+  }
+
+  async listEvidence(tenantId: string): Promise<KernelEvidenceRecord[]> {
+    return this.withTransaction(
+      async (client) => {
+        const result = await client.query<DbEvidence>(
+          `SELECT * FROM commander_evidence_receipts
+         WHERE tenant_id=$1 ORDER BY created_at, bundle_id`,
+          [tenantId],
+        );
+        return result.rows.map(fromEvidence);
+      },
+      [tenantId],
+    );
+  }
+
+  async checkEvidenceRepositoryAvailability(): Promise<{ ready: boolean }> {
+    let client: SqlClient | null = null;
+    try {
+      // This is a global catalog probe used before a tenant is known. Keep it
+      // outside withTransaction: that helper intentionally rejects an empty
+      // tenant scope for API-role repositories.
+      client = await this.pool.connect();
+      const result = await client.query<{
+        available: boolean;
+        context_rpc?: boolean;
+        terminal_complete_rpc?: boolean;
+        terminal_fail_rpc?: boolean;
+      }>(
+        this.options.adapterOpsMode
+          ? `SELECT
+               to_regclass('public.commander_evidence_receipts') IS NOT NULL AS available,
+               to_regprocedure('public.read_adapter_ops_evidence_context(text,bigint,text,text,text,text,text)') IS NOT NULL AS context_rpc,
+               to_regprocedure('public.complete_compensation_effect_with_evidence(jsonb)') IS NOT NULL AS terminal_complete_rpc,
+               to_regprocedure('public.fail_compensation_effect_with_evidence(jsonb)') IS NOT NULL AS terminal_fail_rpc`
+          : "SELECT to_regclass('public.commander_evidence_receipts') IS NOT NULL AS available",
+      );
+      const row = result.rows[0];
+      return {
+        ready:
+          result.rowCount === 1 &&
+          row?.available === true &&
+          (!this.options.adapterOpsMode ||
+            (row.context_rpc === true &&
+              row.terminal_complete_rpc === true &&
+              row.terminal_fail_rpc === true)),
+      };
+    } catch {
+      return { ready: false };
+    } finally {
+      if (client) await client.release();
+    }
   }
 
   // ── Durable Timers ─────────────────────────────────────────────────────────
@@ -2603,7 +3650,7 @@ export class PostgresKernelRepository implements KernelRepository {
     request: CreateInteractionRequest,
     actor: string,
   ): Promise<KernelInteraction> {
-    const id = `itr_${randomUUID()}`;
+    const id = request.id ?? `itr_${randomUUID()}`;
     return this.withTransaction(
       async (client) => {
         const step = await client.query<{ id: string }>(
@@ -2681,9 +3728,9 @@ export class PostgresKernelRepository implements KernelRepository {
           JOIN commander_steps s
             ON s.id=i.step_id AND s.run_id=i.run_id AND s.tenant_id=i.tenant_id
           WHERE i.id=$1 AND i.run_id=$2 AND i.tenant_id=$3
-            AND i.status='pending' AND s.state='WAITING_FOR_HUMAN'
+            AND i.status='pending' AND ($4::boolean OR s.state='WAITING_FOR_HUMAN')
           FOR UPDATE OF i, s`,
-          [request.interactionId, request.runId, request.tenantId],
+          [request.interactionId, request.runId, request.tenantId, request.releaseStep === false],
         );
         const interaction = locked.rows[0];
         if (!interaction) {
@@ -2692,12 +3739,26 @@ export class PostgresKernelRepository implements KernelRepository {
             `Interaction ${request.interactionId} not found or already answered`,
           );
         }
+        // KTO-01: an interaction past its expiry must not be answerable. The
+        // check runs under the same row lock as the answer, before the step is
+        // released or any answer event is appended; an unparseable expiry is
+        // treated as expired rather than silently ignored.
+        if (interaction.expires_at !== null) {
+          const expiry = new Date(interaction.expires_at).getTime();
+          if (!Number.isFinite(expiry) || expiry <= Date.now()) {
+            throw new KernelInvariantError(
+              'INTERACTION_EXPIRED',
+              `Interaction ${request.interactionId} expired at ${String(interaction.expires_at)}`,
+            );
+          }
+        }
         let released: { rows: DbStep[] };
         if (request.releaseStep === false) {
           const current = await client.query<DbStep>(
             `SELECT * FROM commander_steps
-           WHERE id=$1 AND run_id=$2 AND tenant_id=$3 AND state='WAITING_FOR_HUMAN'`,
-            [interaction.step_id, request.runId, request.tenantId],
+           WHERE id=$1 AND run_id=$2 AND tenant_id=$3
+             AND ($4::boolean OR state='WAITING_FOR_HUMAN')`,
+            [interaction.step_id, request.runId, request.tenantId, request.releaseStep === false],
           );
           if (!current.rows[0]) {
             throw new KernelInvariantError(
@@ -3166,6 +4227,15 @@ export class PostgresKernelRepository implements KernelRepository {
       'SELECT state FROM commander_steps WHERE run_id=$1 AND tenant_id=$2 FOR UPDATE',
       [runId, tenantId],
     );
+    const terminalCandidate =
+      states.rows.some((row) => row.state === 'FAILED') ||
+      (states.rows.length > 0 &&
+        states.rows.every((row) => ['SUCCEEDED', 'SKIPPED'].includes(row.state)));
+    if (
+      terminalCandidate &&
+      (await this.hasUnreceiptedConsequentialEffect(client, runId, tenantId))
+    )
+      return;
     if (states.rows.some((row) => row.state === 'FAILED')) {
       if (previousState === 'FAILED') return;
       assertRunTransition(previousState, 'FAILED');
@@ -3208,6 +4278,36 @@ export class PostgresKernelRepository implements KernelRepository {
         });
     }
   }
+  protected async hasUnreceiptedConsequentialEffect(
+    client: SqlClient,
+    runId: string,
+    tenantId: string,
+  ): Promise<boolean> {
+    const effects = await client.query<DbEffect>(
+      'SELECT * FROM commander_effects WHERE run_id=$1 AND tenant_id=$2',
+      [runId, tenantId],
+    );
+    for (const row of effects.rows) {
+      const effect = fromEffect(row);
+      if (!isClassAEffectType(effect.type)) continue;
+      if (!(await this.hasEvidenceForEffect(client, effect))) return true;
+    }
+    return false;
+  }
+  protected async hasEvidenceForEffect(client: SqlClient, effect: KernelEffect): Promise<boolean> {
+    const receipt = await client.query<DbEvidence>(
+      `SELECT * FROM commander_evidence_receipts
+       WHERE tenant_id=$1 AND run_id=$2 AND bundle_id=$3 LIMIT 1`,
+      [effect.tenantId, effect.runId, `evidence_${effect.id}`],
+    );
+    if (!receipt.rows[0]) return false;
+    try {
+      assertEvidenceRecordBoundToEffect(fromEvidence(receipt.rows[0]), effect);
+      return true;
+    } catch {
+      return false;
+    }
+  }
   private async releaseTenantSlot(client: SqlClient, tenantId: string): Promise<void> {
     await client.query(
       `UPDATE commander_tenant_execution_usage
@@ -3221,15 +4321,40 @@ export class PostgresKernelRepository implements KernelRepository {
     reason: string,
     actor: string,
   ): Promise<void> {
+    const unknownAt = new Date().toISOString();
+    const policy = createReconcilePolicy({ unknownAt });
     const uncertain = await client.query<{ id: string }>(
       `UPDATE commander_effects SET
          state='COMPLETION_UNKNOWN',
          response=jsonb_build_object('reason',$1::text),
-         reconcile_after=now(),
-         reconcile_attempts=0
+         reconcile_max_attempts=$5,
+         reconcile_initial_delay_ms=$6,
+         reconcile_max_delay_ms=$7,
+         reconcile_deadline_at=LEAST($8::timestamptz, COALESCE(governed_action_deadline_at, $8::timestamptz)),
+         reconcile_disposition='PENDING',
+         reconcile_after=$4::timestamptz,
+         reconcile_attempts=0,
+         reconcile_observed_at=NULL,
+         reconcile_last_error=NULL,
+         reconcile_escalated_at=NULL,
+         reconcile_escalation_code=NULL,
+         reconcile_claim_token=NULL,
+         reconcile_claim_expires_at=NULL,
+         reconcile_claimed_at=NULL,
+         reconcile_claim_worker_id=NULL,
+         reconcile_claim_worker_generation=NULL
        WHERE step_id=$2 AND tenant_id=$3 AND state='ADMITTED'
        RETURNING id`,
-      [reason, step.id, step.tenantId],
+      [
+        reason,
+        step.id,
+        step.tenantId,
+        unknownAt,
+        policy.maxAttempts,
+        policy.initialDelayMs,
+        policy.maxDelayMs,
+        policy.deadlineAt,
+      ],
     );
     for (const effect of uncertain.rows) {
       await this.appendEvent(client, {
@@ -3244,19 +4369,6 @@ export class PostgresKernelRepository implements KernelRepository {
         payload: { reason },
       });
     }
-  }
-  protected async nextEventSequence(
-    client: SqlClient,
-    aggregateType: import('./types.js').KernelEvent['aggregateType'],
-    aggregateId: string,
-  ): Promise<number> {
-    const result = await client.query<{ sequence: number | string }>(
-      `SELECT COALESCE(MAX(sequence), 0) AS sequence
-       FROM commander_events
-       WHERE aggregate_type=$1 AND aggregate_id=$2`,
-      [aggregateType, aggregateId],
-    );
-    return Number(result.rows[0]?.sequence ?? 0) + 1;
   }
   protected async appendEvent(
     client: SqlClient,
@@ -3325,23 +4437,69 @@ export class PostgresKernelRepository implements KernelRepository {
         'Kernel write must explicitly carry tenant scope (or use a scheduler-mode repository)',
       );
     }
+    if (this.options.tenantContextAuthority && tenantIds.length !== 1) {
+      throw new Error('TENANT_CONTEXT_EXACTLY_ONE_TENANT_REQUIRED');
+    }
     const scope = tenantIds.length > 0 ? tenantIds.join(',') : '*';
     const client = await this.pool.connect();
+    let released = false;
     try {
+      if (this.options.tenantContextAuthority) {
+        await client.query(BEGIN_APP_TENANT_TRANSACTION_SQL);
+        const targetResult = await client.query<{
+          database_oid: number;
+          backend_pid: number;
+          xid: string;
+        }>(READ_APP_TENANT_TRANSACTION_TARGET_SQL);
+        const targetRow = targetResult.rows[0];
+        if (
+          targetResult.rowCount !== 1 ||
+          !targetRow ||
+          !Number.isInteger(Number(targetRow.database_oid)) ||
+          !Number.isInteger(Number(targetRow.backend_pid)) ||
+          !/^[1-9][0-9]*$/.test(String(targetRow.xid))
+        ) {
+          throw new Error('TENANT_CONTEXT_INVALID');
+        }
+        const target: AppTenantTransactionTarget = {
+          databaseOid: Number(targetRow.database_oid),
+          backendPid: Number(targetRow.backend_pid),
+          xid: String(targetRow.xid),
+        };
+        const issued = await this.options.tenantContextAuthority.issue(tenantIds[0]!, target);
+        const bind = buildBindAppTenantContextQuery(issued.contextId);
+        const bound = await client.query<{ tenant_id: string }>(bind.text, bind.values);
+        if (bound.rowCount !== 1 || bound.rows[0]?.tenant_id !== tenantIds[0]) {
+          throw new Error('TENANT_CONTEXT_INVALID');
+        }
+        if (this.options.tenantContextPhase === 'expand') {
+          const compatibility = buildSetLegacyTenantScopeQuery(bound.rows[0].tenant_id);
+          await client.query(compatibility.text, compatibility.values);
+        }
+        const value = await fn(client);
+        const close = buildCloseAppTenantContextQuery(issued.contextId);
+        await client.query(close.text, close.values);
+        await client.query('COMMIT');
+        return value;
+      }
+
       await client.query('BEGIN');
       await client.query("SELECT set_config('app.tenant_scope',$1,true)", [scope]);
       const value = await fn(client);
       await client.query('COMMIT');
       return value;
     } catch (error) {
+      let connectionError = unknownConnectionStateError(error);
       try {
         await client.query('ROLLBACK');
-      } catch {
-        /* preserve root cause */
+      } catch (rollbackError) {
+        connectionError = unknownConnectionStateError(rollbackError);
       }
+      await client.release(connectionError);
+      released = true;
       throw error;
     } finally {
-      await client.release();
+      if (!released) await client.release();
     }
   }
 }

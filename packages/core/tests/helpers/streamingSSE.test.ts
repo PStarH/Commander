@@ -290,16 +290,16 @@ describe('createGate', () => {
 
   it('creates a rejectable gate', async () => {
     const gate = createGate();
-    let error: Error | null = null;
+    const captured: { error: Error | null } = { error: null };
 
     gate.promise.catch((err) => {
-      error = err;
+      captured.error = err;
     });
 
     gate.reject(new Error('test error'));
     await new Promise((r) => setTimeout(r, 10));
-    assert.ok(error);
-    assert.strictEqual(error!.message, 'test error');
+    assert.ok(captured.error);
+    assert.strictEqual(captured.error.message, 'test error');
   });
 });
 

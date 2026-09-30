@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { reportSilentFailure } from '../silentFailureReporter';
 export interface CompensableAction {
   /** Unique identifier for this specific action instance */
@@ -23,6 +24,8 @@ export type CompensationHandler = (
 ) => Promise<{ success: boolean; error?: string }>;
 
 import type { CompensationQueue } from '../atr/compensationQueue';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export class CompensationRegistry {
   private handlers = new Map<string, CompensationHandler>();
@@ -140,7 +143,7 @@ export class CompensationRegistry {
 
       for (const runId of runIds) {
         try {
-          const { getRunLedgerBundle } = require('../atr/runLedger');
+          const { getRunLedgerBundle } = nodeRequire('../atr/runLedger');
           const bundle = getRunLedgerBundle();
           if (bundle?.ledger) {
             // Delegate to RunLedger — SQLite-backed, crash-safe compensation
@@ -245,11 +248,27 @@ export class CompensationRegistry {
       const item = this.queue.claimNext();
       if (!item) break;
 
+      // AR-03: every queue mutation is a CAS bound to the tenant that owns the
+      // row plus the claim generation issued by claimNext(). Without both the
+      // write is refused, so a claim that carries no owner cannot be advanced —
+      // report it and stop rather than spinning on it.
+      if (!item.tenantId) {
+        reportSilentFailure(
+          new Error(
+            `Compensation queue claim ${item.id} carries no tenant; refusing to mutate an unowned row`,
+          ),
+          'compensationRegistry:unowned-claim',
+        );
+        break;
+      }
+      const claim = { tenantId: item.tenantId, claimGeneration: item.claimGeneration };
+
       const handler = this.handlers.get(item.compensationHandlerKey);
       if (!handler) {
         this.queue.markEscalated(
           item.id,
           `No handler registered for "${item.compensationHandlerKey}"`,
+          claim,
         );
         processed++;
         continue;
@@ -268,13 +287,9 @@ export class CompensationRegistry {
         };
         const result = await handler(action);
         if (result.success) {
-          this.queue.markCompleted(item.id);
+          this.queue.markCompleted(item.id, claim);
         } else {
-          const outcome = this.queue.markFailed(
-            item.id,
-            result.error ?? 'unknown',
-            item.attemptCount,
-          );
+          const outcome = this.queue.markFailed(item.id, result.error ?? 'unknown', claim);
           if (outcome === 'escalated') {
             try {
               this.observability?.onExhausted?.(
@@ -289,7 +304,7 @@ export class CompensationRegistry {
         }
       } catch (err) {
         const errStr = err instanceof Error ? err.message : String(err);
-        const outcome = this.queue.markFailed(item.id, errStr, item.attemptCount);
+        const outcome = this.queue.markFailed(item.id, errStr, claim);
         if (outcome === 'escalated') {
           try {
             this.observability?.onExhausted?.(

@@ -15,6 +15,8 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { Worker, type WorkerOptions } from 'worker_threads';
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import { getDirname } from '../esmCompat';
+const __dirname = getDirname(import.meta.url);
 
 // ============================================================================
 // Types
@@ -42,10 +44,22 @@ export interface PendingTask {
 function resolveWorkerScript(explicit?: string): string {
   if (explicit) return explicit;
   const dir = __dirname;
-  // Prefer TypeScript source when running under tsx; fall back to compiled JS.
-  const tsPath = path.join(dir, 'cpuWorker.ts');
-  if (fs.existsSync(tsPath)) return tsPath;
-  return path.join(dir, 'cpuWorker.js');
+  // Prefer JavaScript so worker_threads do not depend on a parent TypeScript
+  // loader. The build emits this file alongside the TypeScript source.
+  const jsPath = path.join(dir, 'cpuWorker.js');
+  if (fs.existsSync(jsPath)) return jsPath;
+  return path.join(dir, 'cpuWorker.ts');
+}
+
+function workerExecArgv(): string[] {
+  // run-node-tests launches Node with a file URL to tsx's loader. That loader
+  // is not reliably applied to worker threads on Node 20; use tsx's supported
+  // package entry point for workers instead. Built production processes have
+  // no tsx arguments and keep their normal execArgv unchanged.
+  if (process.execArgv.some((arg) => arg.includes('tsx'))) {
+    return ['--import', 'tsx/esm'];
+  }
+  return process.execArgv;
 }
 
 // ============================================================================
@@ -84,6 +98,10 @@ export class CPUWorkerPool {
   private async createWorker(index: number): Promise<Worker> {
     const worker = new Worker(this.workerScript, {
       name: `cpu-worker-${index}`,
+      // When the parent is running from TypeScript (tsx in the node:test
+      // runner), workers need the same loader to execute cpuWorker.ts.
+      // Production builds resolve cpuWorker.js and process.execArgv is empty.
+      execArgv: workerExecArgv(),
     } as WorkerOptions);
 
     worker.on('message', (msg: { id: string; result?: unknown; error?: string }) => {

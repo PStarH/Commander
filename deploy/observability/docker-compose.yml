@@ -35,7 +35,10 @@ services:
       - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # Overridable so the repo-wide placeholder gate in scripts/deploy.sh and
+      # the rotation policy in docs/security/keys-rotation.md apply here too;
+      # a hardcoded password can be neither rotated nor scanned.
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH=/var/lib/grafana/dashboards/developer-overview.json
     depends_on:

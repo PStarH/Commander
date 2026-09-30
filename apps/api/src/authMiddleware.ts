@@ -1,14 +1,18 @@
 import type { Request, Response, NextFunction } from 'express';
-import * as crypto from 'node:crypto';
+import { getGlobalLogger } from '@commander/core';
+import { hashSecret } from '@commander/core/runtime';
 import { isProductionEnv, describeProdSignal } from './envSignal';
 import { getApiKeyStore } from './apiKeyStore';
+import { getAuthFailureStore } from './authFailureStore';
+import { redactAuthErrorDetail } from './authDb';
+import { resolvePositiveSafeInteger } from './startupConfig';
 
 declare global {
   namespace Express {
     interface Request {
       apiKeyId?: string;
       apiScopes?: string[];
-      /** Tenant associated with the authenticated API key or static key mapping. */
+      /** Tenant associated with the authenticated API key. */
       tenantId?: string;
     }
   }
@@ -31,158 +35,57 @@ const PUBLIC_PATHS = new Set([
   '/api/auth/logout',
 ]);
 
-// ── Timing-safe API key storage ──────────────────────────────────────────────
-//
-// SECURITY FIX: Previous implementation stored raw API keys in a Map and used
-// Map.has() for lookup. While Map.has() is hash-based, the keys were stored in
-// plaintext in memory, making them extractable via memory dumps. Additionally,
-// the comparison path leaked timing information through early-exit branching.
-//
-// New approach:
-// 1. Keys are SHA-256 hashed at parse time; plaintext is never retained.
-// 2. Lookup uses timingSafeEqual on hashes — constant-time comparison.
-// 3. Auth-failure lockout: after MAX_AUTH_FAILURES within the window, the
-//    source IP is locked out for LOCKOUT_DURATION_MS, preventing brute-force.
-// 4. All auth failures are logged to stderr for SIEM ingestion.
-
 interface StoredKey {
-  hash: Buffer; // SHA-256 hash of the raw key
+  /** Stable key id (`ak_…`) — used for the rate-limit principal bucket. */
+  id: string;
   name: string;
   scopes: string[];
   tenantId?: string;
 }
 
-const MAX_AUTH_FAILURES = parseInt(process.env.AUTH_MAX_FAILURES ?? '5', 10);
-const LOCKOUT_DURATION_MS = parseInt(process.env.AUTH_LOCKOUT_MS ?? '300000', 10); // 5 min
+// AUTH-05: a lockout/quota config that parses to NaN silently disables the
+// limit; a non-finite or non-positive value must abort startup instead.
+const MAX_AUTH_FAILURES = resolvePositiveSafeInteger(process.env, 'AUTH_MAX_FAILURES', 5);
+const LOCKOUT_DURATION_MS = resolvePositiveSafeInteger(process.env, 'AUTH_LOCKOUT_MS', 300000); // 5 min
 const AUTH_FAILURE_WINDOW_MS = 60_000; // 1 minute sliding window
 
-const authFailureTracker = new Map<
-  string,
-  { count: number; firstFailureAt: number; lockedUntil: number }
->();
-
 // Cleanup old entries every 5 minutes
+function reportAuthFailureCleanupError(error: unknown): void {
+  // AUTH-06: cleanup failures must be observable, and the detail must not echo
+  // credentials a driver may embed in a connection error (AUTH-07).
+  const message = redactAuthErrorDetail(error);
+  try {
+    getGlobalLogger().warn('AuthMiddleware', `Auth-failure cleanup failed: ${message}`);
+  } catch {
+    process.stderr.write(`[Auth] Failed to cleanup auth failure entries: ${message}\n`);
+  }
+}
+
 setInterval(() => {
-  const now = Date.now();
-  for (const [ip, entry] of authFailureTracker) {
-    if (entry.lockedUntil < now && entry.firstFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-      authFailureTracker.delete(ip);
-    }
+  try {
+    void getAuthFailureStore()
+      .cleanup(Date.now(), AUTH_FAILURE_WINDOW_MS)
+      .catch(reportAuthFailureCleanupError);
+  } catch (error) {
+    // `getAuthFailureStore()` constructs the pool lazily and can throw
+    // synchronously (missing/invalid DSN) — an uncaught throw here would crash
+    // the process from a timer callback.
+    reportAuthFailureCleanupError(error);
   }
 }, 300_000).unref();
 
-function sha256(input: string): Buffer {
-  return crypto.createHash('sha256').update(input).digest();
-}
-
-function parseApiKeys(raw: string | undefined): Map<string, StoredKey> {
-  const keys = new Map<string, StoredKey>();
-  if (!raw) return keys;
-  for (const entry of raw.split(',')) {
-    const [rawKey, configuredName, ...scopeParts] = entry.trim().split(':');
-    if (rawKey) {
-      const name = configuredName || rawKey.slice(0, 8);
-      const scopeSpec = scopeParts.join(':');
-      const scopes = scopeSpec ? scopeSpec.split(';').filter(Boolean) : ['read', 'write'];
-      // Store only the hash — plaintext key is discarded after hashing
-      keys.set(sha256(rawKey).toString('hex'), { hash: sha256(rawKey), name, scopes });
-    }
+/** PostgreSQL is the sole authority for API-key authentication. */
+async function findKey(token: string): Promise<StoredKey | null> {
+  const storeRecord = await getApiKeyStore().findByHash(hashSecret(token));
+  if (storeRecord) {
+    return {
+      id: storeRecord.id,
+      name: storeRecord.name,
+      scopes: storeRecord.scopes,
+      tenantId: storeRecord.tenantId,
+    };
   }
-  return keys;
-}
-
-// Tenant-scoped static API keys: TENANT_API_KEYS=tenantId:key1,key2;tenantId2:key3
-const TENANT_ID_RE = /^[a-zA-Z0-9._:-]{1,128}$/;
-
-function parseTenantApiKeys(raw: string | undefined): Map<string, StoredKey> {
-  const keys = new Map<string, StoredKey>();
-  if (!raw) return keys;
-  for (const entry of raw.split(';')) {
-    const trimmed = entry.trim();
-    if (!trimmed) continue;
-    const parts = trimmed.split(':');
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue;
-    const tenantId = parts[0];
-    if (!TENANT_ID_RE.test(tenantId)) continue;
-    const rawKeys = parts[1].split(',');
-    for (const rawKey of rawKeys) {
-      const key = rawKey.trim();
-      if (!key) continue;
-      keys.set(sha256(key).toString('hex'), {
-        hash: sha256(key),
-        name: `${tenantId}:${key.slice(0, 8)}`,
-        scopes: ['read', 'write'],
-        tenantId,
-      });
-    }
-  }
-  return keys;
-}
-
-// ── API key parse cache ──────────────────────────────────────────────────────
-//
-// PERFORMANCE FIX: parseApiKeys() performs two SHA-256 hashes per configured
-// key. Calling it on every request wastes CPU under load. We cache the parsed
-// result at module scope and only re-parse when the raw API_KEYS env var
-// changes value (e.g. hot-reload of configuration), so the expensive hashing
-// happens at most once per distinct configuration.
-let cachedApiKeys: Map<string, StoredKey> | null = null;
-let cachedApiKeysRaw: string | undefined = undefined;
-let cachedTenantApiKeysRaw: string | undefined = undefined;
-
-function getCachedKeys(): Map<string, StoredKey> {
-  const raw = process.env.API_KEYS;
-  const tenantRaw = process.env.TENANT_API_KEYS;
-  if (cachedApiKeys === null || raw !== cachedApiKeysRaw || tenantRaw !== cachedTenantApiKeysRaw) {
-    cachedApiKeysRaw = raw;
-    cachedTenantApiKeysRaw = tenantRaw;
-    cachedApiKeys = parseApiKeys(raw);
-    for (const [hash, tenantBinding] of parseTenantApiKeys(tenantRaw)) {
-      const configured = cachedApiKeys.get(hash);
-      cachedApiKeys.set(
-        hash,
-        configured ? { ...configured, tenantId: tenantBinding.tenantId } : tenantBinding,
-      );
-    }
-  }
-  return cachedApiKeys;
-}
-
-/**
- * Timing-safe key lookup. Hashes the provided token and compares against
- * all stored hashes using crypto.timingSafeEqual. The loop always iterates
- * over ALL entries (no early exit) to prevent timing side-channels.
- */
-function findKey(token: string, storedKeys: Map<string, StoredKey>): StoredKey | null {
-  const tokenHash = sha256(token);
-  let match: StoredKey | null = null;
-  // Iterate over ALL keys — no early exit to maintain constant time
-  for (const stored of storedKeys.values()) {
-    try {
-      if (
-        stored.hash.length === tokenHash.length &&
-        crypto.timingSafeEqual(stored.hash, tokenHash)
-      ) {
-        match = stored;
-        // Do NOT break — continue iterating to prevent timing leak
-      }
-    } catch {
-      // Length mismatch or other error — continue
-    }
-  }
-  // Fallback to the persistent API key store (created via /api/admin/api-keys).
-  if (!match) {
-    const storeRecord = getApiKeyStore().findByHash(tokenHash.toString('hex'));
-    if (storeRecord) {
-      match = {
-        hash: Buffer.from(storeRecord.hash, 'hex'),
-        name: storeRecord.name,
-        scopes: storeRecord.scopes,
-        tenantId: storeRecord.tenantId,
-      };
-    }
-  }
-  return match;
+  return null;
 }
 
 function isPublicPath(path: string): boolean {
@@ -197,24 +100,45 @@ function getClientIp(req: Request): string {
   return req.ip ?? req.socket.remoteAddress ?? 'unknown';
 }
 
-function recordAuthFailure(ip: string): void {
-  const now = Date.now();
-  let entry = authFailureTracker.get(ip);
-  if (!entry || entry.firstFailureAt < now - AUTH_FAILURE_WINDOW_MS) {
-    entry = { count: 0, firstFailureAt: now, lockedUntil: 0 };
-  }
-  entry.count++;
-  if (entry.count >= MAX_AUTH_FAILURES) {
-    entry.lockedUntil = now + LOCKOUT_DURATION_MS;
-    process.stderr.write(
-      `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
-    );
-  }
-  authFailureTracker.set(ip, entry);
+async function noteRejectedCredential(ip: string): Promise<void> {
+  await recordAuthFailure(ip);
 }
 
-function isLockedOut(ip: string): boolean {
-  const entry = authFailureTracker.get(ip);
+async function recordAuthFailure(ip: string): Promise<void> {
+  const authFailureStore = getAuthFailureStore();
+  const now = Date.now();
+  // Single atomic upsert: increment + window reset + lockout threshold are
+  // decided inside PostgreSQL so concurrent failures across replicas cannot
+  // race the lockout decision.
+  const entry = await authFailureStore.recordFailure(
+    ip,
+    now,
+    MAX_AUTH_FAILURES,
+    AUTH_FAILURE_WINDOW_MS,
+    LOCKOUT_DURATION_MS,
+  );
+  if (entry.count >= MAX_AUTH_FAILURES && entry.lockedUntil > now) {
+    try {
+      getGlobalLogger().warn(
+        'AuthMiddleware',
+        `IP ${ip} locked out after ${entry.count} failures`,
+        {
+          ip,
+          count: entry.count,
+          lockoutDurationSeconds: LOCKOUT_DURATION_MS / 1000,
+        },
+      );
+    } catch {
+      process.stderr.write(
+        `[Auth] IP ${ip} locked out after ${entry.count} failures for ${LOCKOUT_DURATION_MS / 1000}s\n`,
+      );
+    }
+  }
+}
+
+async function isLockedOut(ip: string): Promise<boolean> {
+  const authFailureStore = getAuthFailureStore();
+  const entry = await authFailureStore.get(ip);
   if (!entry) return false;
   return entry.lockedUntil > Date.now();
 }
@@ -224,16 +148,78 @@ function isLockedOut(ip: string): boolean {
 // process even though authMiddleware is invoked per-request. Without
 // this gate, every authenticated request would re-emit the warning,
 // spamming stdout under any load.
-let _warnedAuthDisabledInProd = false;
-if (isProductionEnv() && process.env.AUTH_DISABLED === 'true' && !_warnedAuthDisabledInProd) {
-  _warnedAuthDisabledInProd = true;
-  // eslint-disable-next-line no-console
-  console.warn(
-    `[authMiddleware] AUTH_DISABLED=true in production (signal=${describeProdSignal()}) — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.`,
-  );
+if (isProductionEnv() && process.env.AUTH_DISABLED === 'true') {
+  try {
+    getGlobalLogger().warn(
+      'AuthMiddleware',
+      'AUTH_DISABLED=true in production — admin endpoints are publicly accessible. This is a security risk; remove the env var before deployment.',
+      { signal: describeProdSignal() },
+    );
+  } catch {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[authMiddleware] AUTH_DISABLED=true in production (signal=${describeProdSignal()}) — admin endpoints (e.g. /api/v1/hub) are publicly accessible. This is a security risk; remove the env var before deployment.`,
+    );
+  }
 }
 
-export function authMiddleware(req: Request, res: Response, next: NextFunction) {
+export async function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  try {
+    await authMiddlewareInternal(req, res, next);
+  } catch (err) {
+    process.stderr.write(`[Auth] Unhandled error in auth middleware: ${String(err)}\n`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Internal server error' });
+    }
+  }
+}
+
+/**
+ * AUTH-02: resolve the API-key rate-limit identity BEFORE `rateLimitMiddleware`,
+ * because `authMiddleware` runs after it and therefore cannot feed the limiter.
+ *
+ * This runs the canonical validation (`findKey` — the same SHA-256 lookup
+ * `authMiddleware` uses) and publishes the result only on the dedicated
+ * `req.rateLimitApiKey` field. It never sets authorization identity
+ * (`req.apiKeyId` / `req.tenantId`), never records an auth failure and never
+ * rejects: an invalid/revoked key simply gets no identity here, so it falls
+ * back to the early anonymous-IP bucket and `authMiddleware` still returns 401.
+ * A JWT-authenticated request is skipped entirely, so it cannot be charged
+ * twice. A database failure leaves the request anonymous; the limiter's own
+ * authority call then fails closed with 503.
+ */
+export async function apiKeyIdentityMiddleware(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  if (req.user) {
+    next();
+    return;
+  }
+  const apiKeyHeader = readHeader(req.headers['x-api-key']);
+  const authHeader = readHeader(req.headers.authorization);
+  const token =
+    apiKeyHeader ?? (authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined);
+  if (!token) {
+    next();
+    return;
+  }
+  try {
+    const matched = await findKey(token);
+    if (matched) {
+      req.rateLimitApiKey = {
+        id: matched.id,
+        ...(matched.tenantId ? { tenantId: matched.tenantId } : {}),
+      };
+    }
+  } catch {
+    // Fail closed downstream: no identity is granted from an unverified key.
+  }
+  next();
+}
+
+async function authMiddlewareInternal(req: Request, res: Response, next: NextFunction) {
   // Security: In production, AUTH_DISABLED must never be honored.
   // Per security best practice: authentication bypass is a critical risk;
   // fail hard rather than silently allowing unauthenticated access.
@@ -290,18 +276,27 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   const clientIp = getClientIp(req);
 
   // Check lockout BEFORE processing auth — fail fast for locked IPs
-  if (isLockedOut(clientIp)) {
-    const entry = authFailureTracker.get(clientIp)!;
-    const retryAfter = Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-    res.setHeader('Retry-After', String(retryAfter));
-    res.status(429).json({
-      error: 'Too many authentication failures. Try again later.',
-      retryAfter,
-    });
-    return;
+  if (await isLockedOut(clientIp)) {
+    try {
+      const authFailureStore = getAuthFailureStore();
+      const entry = await authFailureStore.get(clientIp);
+      const lockedUntil = entry?.lockedUntil ?? 0;
+      const retryAfter = Math.max(0, Math.ceil((lockedUntil - Date.now()) / 1000));
+      res.setHeader('Retry-After', String(retryAfter));
+      res.status(429).json({
+        error: 'Too many authentication failures. Try again later.',
+        retryAfter,
+      });
+      return;
+    } catch (err) {
+      process.stderr.write(`[Auth] Failed to read lockout entry: ${String(err)}\n`);
+      res.status(429).json({
+        error: 'Too many authentication failures. Try again later.',
+      });
+      return;
+    }
   }
 
-  const apiKeys = getCachedKeys();
   const authHeader = readHeader(req.headers.authorization);
   const apiKeyHeader = readHeader(req.headers['x-api-key']);
 
@@ -310,10 +305,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
   let matchedKey: StoredKey | null = null;
 
   if (apiKeyHeader) {
-    const matched = findKey(apiKeyHeader, apiKeys);
+    const matched = await findKey(apiKeyHeader);
     if (!matched) {
-      recordAuthFailure(clientIp);
-      process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
+      await noteRejectedCredential(clientIp);
+      try {
+        getGlobalLogger().warn('AuthMiddleware', 'Invalid API key', { ip: clientIp, path });
+      } catch {
+        process.stderr.write(`[Auth] Invalid API key from IP=${clientIp} path=${path}\n`);
+      }
       res.status(401).json({ error: 'Invalid API key' });
       return;
     }
@@ -322,10 +321,14 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     matchedKey = matched;
   } else if (authHeader?.startsWith('Bearer ')) {
     const token = authHeader.slice(7);
-    const matched = findKey(token, apiKeys);
+    const matched = await findKey(token);
     if (!matched) {
-      recordAuthFailure(clientIp);
-      process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
+      await noteRejectedCredential(clientIp);
+      try {
+        getGlobalLogger().warn('AuthMiddleware', 'Invalid bearer token', { ip: clientIp, path });
+      } catch {
+        process.stderr.write(`[Auth] Invalid bearer token from IP=${clientIp} path=${path}\n`);
+      }
       res.status(401).json({ error: 'Invalid bearer token' });
       return;
     }
@@ -333,17 +336,15 @@ export function authMiddleware(req: Request, res: Response, next: NextFunction) 
     matchedScopes = matched.scopes;
     matchedKey = matched;
   } else if (
-    apiKeys.size > 0 ||
     isProductionEnv() ||
-    getApiKeyStore().list().length > 0 ||
+    (await getApiKeyStore().list()).length > 0 ||
     // Non-production with no keys previously fell open. Require an explicit
     // opt-in so local/dev deploys are not anonymously writable by default.
     process.env.COMMANDER_ALLOW_ANON !== '1'
   ) {
-    // Default-deny: require authentication whenever any API key is configured —
-    // in the env cache OR the persistent store — or whenever we are in
-    // production. Outside production, anonymous access is only allowed when
-    // COMMANDER_ALLOW_ANON=1 is set explicitly (dev escape hatch).
+    // Default-deny: require authentication whenever PostgreSQL contains an
+    // API key or when running in production. Outside production, anonymous
+    // access is only allowed when COMMANDER_ALLOW_ANON=1 is set explicitly.
     res.status(401).json({
       error: 'Authentication required',
       hint: 'Provide X-API-Key header or Authorization: Bearer <token>',

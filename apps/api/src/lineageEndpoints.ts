@@ -17,7 +17,7 @@ import { reportSilentFailure } from '@commander/core';
 import { Router } from 'express';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
-import { tenantPathSegment } from '@commander/core/runtime/tenantContext';
+import { resolveConfiguredTraceBase, resolveTraceDir } from '@commander/core/runtime/traceStore';
 import { toErrorMessage } from './routeHelpers';
 
 // ── Types ─────────────────────────────────────────────────────────────────
@@ -64,29 +64,47 @@ interface TraceEvent {
 // ── Helpers ───────────────────────────────────────────────────────────────
 
 function findTracesDir(tenantId?: string): string {
-  const baseDir = path.join(process.cwd(), '.commander_traces');
-  return tenantId ? path.join(baseDir, tenantPathSegment(tenantId)) : baseDir;
+  // Single-owner resolution: the same rule the trace writer uses. Reading a
+  // hard-coded cwd path here while the writer honoured COMMANDER_TRACE_DIR made
+  // the lineage tree silently empty (or, worse, served a stale local directory)
+  // in any deployment that configured a trace directory.
+  return resolveTraceDir(resolveConfiguredTraceBase(), tenantId);
 }
 
-async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
-  try {
-    await fsp.access(filePath);
-    const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
-    if (!raw) return [];
-    const events: TraceEvent[] = [];
-    for (const line of raw.split('\n')) {
-      try {
-        events.push(JSON.parse(line) as TraceEvent);
-      } catch (err) {
-        reportSilentFailure(err, 'lineageEndpoints:readNdjson');
-        /* skip corrupt lines */
-      }
-    }
-    return events;
-  } catch (err) {
-    reportSilentFailure(err, 'lineageEndpoints:readNdjsonFile');
-    return [];
+/**
+ * Read a trace NDJSON file.
+ *
+ * Fail-closed: only a genuinely absent file yields an empty result. A read that
+ * fails for any other reason (EACCES/EIO/…) propagates so the handler can
+ * answer non-2xx — a permission error must never be reported as "this run has
+ * no lineage".
+ */
+async function readNdjsonFile(tracesDir: string, runId: string): Promise<TraceEvent[]> {
+  const root = path.resolve(tracesDir);
+  const filePath = path.resolve(root, `${runId}.ndjson`);
+  const prefix = root.endsWith(path.sep) ? root : root + path.sep;
+  if (!filePath.startsWith(prefix)) {
+    throw new Error('TRACE_PATH_ESCAPE');
   }
+  let raw: string;
+  try {
+    raw = await fsp.readFile(filePath, 'utf-8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return [];
+  const events: TraceEvent[] = [];
+  for (const line of trimmed.split('\n')) {
+    try {
+      events.push(JSON.parse(line) as TraceEvent);
+    } catch (err) {
+      reportSilentFailure(err, 'lineageEndpoints:readNdjson');
+      throw new Error(`TRACE_DATA_INVALID: malformed NDJSON in ${filePath}`);
+    }
+  }
+  return events;
 }
 
 const RUN_ID_PATTERN = /^[a-zA-Z0-9_-]+$/;
@@ -387,10 +405,11 @@ export function createLineageRouter(): Router {
 
       const tenantId = (req as typeof req & { tenantId?: string }).tenantId;
       const tracesDir = findTracesDir(tenantId);
-      const events = await readNdjsonFile(path.join(tracesDir, `${runId}.ndjson`));
+      const events = await readNdjsonFile(tracesDir, runId);
       const summary = buildLineageSummary(runId, events);
       res.json(summary);
     } catch (error) {
+      reportSilentFailure(error, 'lineageEndpoints:readTrace');
       res.status(500).json({ error: toErrorMessage(error) });
     }
   });

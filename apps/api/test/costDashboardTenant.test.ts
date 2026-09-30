@@ -88,17 +88,23 @@ describe('cost dashboard tenant filtering', () => {
     };
   }
 
-  function writeEvents(events: TraceEvent[]) {
-    const file = path.join(tmpDir, '.commander_traces', 'test.ndjson');
+  function writeEvents(events: TraceEvent[], tenantId?: string) {
+    // Traces are tenant-scoped on disk: the writer resolves
+    // `<base>/tenant_<id>/` and the dashboard must read the same directory.
+    const dir = tenantId
+      ? path.join(tmpDir, '.commander_traces', `tenant_${tenantId}`)
+      : path.join(tmpDir, '.commander_traces');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, 'test.ndjson');
     fs.writeFileSync(file, events.map((e) => JSON.stringify(e)).join('\n') + '\n');
   }
 
   it('returns only the requested tenant cost data', async () => {
-    writeEvents([
-      makeLLMCallEvent('tenant-a', 1000, 200),
-      makeLLMCallEvent('tenant-b', 500, 100),
-      makeLLMCallEvent(undefined, 900, 100),
-    ]);
+    // Each tenant's traces live in that tenant's own directory. A foreign
+    // tenant's data present in the shared base must not be counted.
+    writeEvents([makeLLMCallEvent('tenant-a', 1000, 200)], 'tenant-a');
+    writeEvents([makeLLMCallEvent('tenant-b', 500, 100)], 'tenant-b');
+    writeEvents([makeLLMCallEvent(undefined, 900, 100)]);
 
     const resA = await fetch(`${baseUrl}/api/cost/dashboard`, {
       headers: { 'X-Tenant-ID': 'tenant-a' },
@@ -115,6 +121,21 @@ describe('cost dashboard tenant filtering', () => {
     const bodyB = (await resB.json()) as { summary: { totalCalls: number; totalTokens: number } };
     assert.equal(bodyB.summary.totalCalls, 1);
     assert.equal(bodyB.summary.totalTokens, 600);
+  });
+
+  it('does not fall back to the shared trace base when a tenant is bound', async () => {
+    // A tenant directory that exists but holds no llm_call events must report
+    // zero — never the legacy shared-root records of another scope.
+    writeEvents([makeLLMCallEvent(undefined, 900, 100)]);
+    writeEvents([makeLLMCallEvent('tenant-a', 10, 10)], 'tenant-a');
+
+    const res = await fetch(`${baseUrl}/api/cost/dashboard`, {
+      headers: { 'X-Tenant-ID': 'tenant-c' },
+    });
+    assert.equal(res.status, 200);
+    const body = (await res.json()) as { summary: { totalCalls: number; totalTokens: number } };
+    assert.equal(body.summary.totalCalls, 0);
+    assert.equal(body.summary.totalTokens, 0);
   });
 
   it('falls back to single-tenant mode without a tenant header', async () => {

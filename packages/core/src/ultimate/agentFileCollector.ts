@@ -50,37 +50,18 @@ export interface CollectAgentFilesParams {
  * write/create a file. Returns the file path or null.
  */
 export function extractOutputFilePath(goal: string): string | null {
-  const extRe =
-    '(?:' +
-    [
-      'md',
-      'txt',
-      'json',
-      'ts',
-      'js',
-      'py',
-      'html',
-      'css',
-      'yaml',
-      'yml',
-      'csv',
-      'xml',
-      'sh',
-      'sql',
-      'go',
-      'rs',
-      'java',
-      'c',
-      'cpp',
-      'h',
-    ].join('|') +
-    ')';
-  const pathPrefix = '(?:[A-Za-z]:[\\\\/]|[/\\\\]{2}|[/.])';
-  const pathExpression = pathPrefix + '\\S+?\\.' + extRe;
+  const extRe = `(?:md|txt|json|ts|js|py|html|css|yaml|yml|csv|xml|sh|sql|go|rs|java|c|cpp|h)`;
+  const pathStart = String.raw`(?:[\\/.]|[A-Za-z]:[\\/])`;
+  const windowsPattern = new RegExp(
+    String.raw`(?:write|create|generate|output|produce|save)\b[^\n]*?\bto\b\s+([A-Za-z]:[\\/][^\s]+\.${extRe})`,
+    'i',
+  );
+  const windowsMatch = goal.match(windowsPattern);
+  if (windowsMatch) return windowsMatch[1];
 
   // Pattern 1: verb + any words + "to" + path
   const toPattern = new RegExp(
-    '(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+(' + pathExpression + ')',
+    `(?:write|create|generate|output|produce|save)\\b[^.]*?\\bto\\b\\s+(${pathStart}[\\S]+\\.${extRe})`,
     'i',
   );
   const toMatch = goal.match(toPattern);
@@ -88,14 +69,14 @@ export function extractOutputFilePath(goal: string): string | null {
 
   // Pattern 2: verb + path directly (e.g., "write /tmp/file.md")
   const directPattern = new RegExp(
-    '(?:write|create|generate|output|produce|save)\\s+(' + pathExpression + ')',
+    `(?:write|create|generate|output|produce|save)\\s+(${pathStart}[\\S]+\\.${extRe})`,
     'i',
   );
   const directMatch = goal.match(directPattern);
   if (directMatch) return directMatch[1];
 
   // Pattern 3: any absolute path with known extension at end of sentence/line
-  const pathPattern = new RegExp('(' + pathExpression + ')(?:\\s|$|[.])', 'i');
+  const pathPattern = new RegExp(`((?:[\\/]|[A-Za-z]:[\\\\/])[\\S]+\\.${extRe})(?:\\s|$|[.])`, 'i');
   const pathMatch = goal.match(pathPattern);
   if (pathMatch) return pathMatch[1];
 

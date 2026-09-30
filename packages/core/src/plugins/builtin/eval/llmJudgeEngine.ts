@@ -9,7 +9,7 @@
 // - Cost circuit breaker: token bucket rate limiting + per-evaluation token hard cap
 //
 // Builds on the existing EvalScorer pattern but adds multi-dimensional scoring
-// and enterprise-grade cost protection.
+// and deployment-scoped cost protection.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { getGlobalLogger } from '../../../logging';

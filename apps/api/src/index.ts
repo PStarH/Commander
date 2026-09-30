@@ -1,5 +1,6 @@
 import {
   reportSilentFailure,
+  getGlobalLogger,
   getMetricsCollector,
   HealthCollector,
   buildHealthSources,
@@ -8,9 +9,6 @@ import {
   getIMProviderRegistry,
   registerBuiltinPlugins,
   zeroTrustMiddleware,
-  ShadowProxy,
-  loadShadowConfig,
-  type ShadowConfig,
   type MemoryStore,
   createMemoryStore,
   resolveMemoryStoreType,
@@ -57,7 +55,9 @@ import {
   initRateLimitStore,
   closeRateLimitStore,
 } from './securityMiddleware';
-import { authMiddleware } from './authMiddleware';
+import { bootstrapDefaultAdminAccount } from './userStore';
+import { authMiddleware, apiKeyIdentityMiddleware } from './authMiddleware';
+import { initAuthFailureStore } from './authFailureStore';
 import { tenantContextMiddleware } from './tenantContextMiddleware';
 import { loadTenantProvider } from './tenantProviderLoader';
 import { jwtMiddleware } from './jwtMiddleware';
@@ -104,6 +104,7 @@ import { v1TenantGuard } from './v1TenantGuard';
 import { probeReadiness } from './healthProbes';
 import { createV1GatewayRouter } from './v1GatewayEndpoints';
 import {
+  closeV1KernelGateway,
   getKernelDatabaseUrl,
   getV1KernelGateway,
   initializeV1KernelGateway,
@@ -112,6 +113,11 @@ import {
 } from './v1GatewayKernel';
 import { isLegacyExecutionAllowed } from './legacyExecutionGuard';
 import { isEnterpriseProfile } from './profileSignal';
+import { isProductionEnv } from './envSignal';
+import { resolveApiStartupConfig, assertRateLimitConfiguration } from './startupConfig';
+import { resolveTrustProxySetting, TrustProxyConfigError } from './trustProxyConfig';
+import { assertDurableStoreConfigured } from './storeBackendGate';
+import { startTask1ReadinessService, type Task1ReadinessService } from './task1ReadinessRuntime';
 
 import { getDirname, getRequire } from './esmCompat';
 const __dirname = getDirname(import.meta.url);
@@ -135,7 +141,7 @@ try {
  * In development/test mode, warnings are emitted and sensible defaults are used.
  */
 function validateEnvironment(): void {
-  const isProduction = process.env.NODE_ENV === 'production';
+  const isProduction = isProductionEnv();
 
   const criticalSecrets = [
     { name: 'COMMANDER_MASTER_KEY', purpose: 'encryption of sensitive tenant data' },
@@ -153,22 +159,29 @@ function validateEnvironment(): void {
         console.error(message);
         missingCritical.push(name);
       } else {
-        console.warn(
-          `${message} Using development fallback. Set ${name} before deploying to production.`,
-        );
+        getGlobalLogger().warn('Startup', message, { envVar: name });
       }
     }
   }
 
   if (missingCritical.length > 0) {
-    console.error(
-      `[env] Aborting startup: the following required environment variables are missing: ${missingCritical.join(', ')}`,
-    );
+    getGlobalLogger().error('Startup', `Aborting startup: missing ${missingCritical.join(', ')}`);
+    process.stderr.write('COMMANDER_API_STARTUP_FAILED: missing required environment variables\n');
+    process.exit(1);
+  }
+
+  try {
+    resolveApiStartupConfig(process.env);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    getGlobalLogger().error('Startup', `Aborting startup: ${message}`);
+    process.stderr.write(`COMMANDER_API_STARTUP_FAILED: ${message}\n`);
     process.exit(1);
   }
 
   if (!process.env.CORS_ORIGINS) {
-    console.warn(
+    getGlobalLogger().warn(
+      'Startup',
       `[env] CORS_ORIGINS not set — only localhost origins are allowed. ` +
         `For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com`,
     );
@@ -176,14 +189,21 @@ function validateEnvironment(): void {
 
   const storeBackend = process.env.API_STORE_BACKEND;
   if (!storeBackend && !process.env.DATABASE_URL) {
-    console.warn(
-      `[env] Neither API_STORE_BACKEND nor DATABASE_URL is set. The API will fall back to an in-memory store, ` +
-        `which is ephemeral and only suitable for single-node development/testing. Set DATABASE_URL for production persistence.`,
+    // AUDIT-K2 (api leg): fail closed in production — an ephemeral in-memory
+    // store must never be a silent fallback for a production deployment.
+    assertDurableStoreConfigured(process.env);
+    getGlobalLogger().warn(
+      'Startup',
+      'Neither API_STORE_BACKEND nor DATABASE_URL is set. The API will fall back to an in-memory store, which is ephemeral and only suitable for single-node development/testing. Set DATABASE_URL for production persistence.',
     );
   }
 }
 
 validateEnvironment();
+const apiStartupConfig = resolveApiStartupConfig(process.env);
+// AUTH-05: refuse to start on a mistyped quota / window / lockout instead of
+// letting NaN comparisons silently disable rate limiting and lockout.
+assertRateLimitConfiguration(process.env);
 
 // ── Shared state ────────────────────────────────────────────────────────────
 // Missions/UI store — not the /v1 run authority (kernel owns durable runs).
@@ -200,8 +220,12 @@ const confidenceReporter = new ConfidenceReporter(actionRationaleStore);
 const agentCardRegistry = new AgentCardRegistry();
 const evaluator = new LLMEvaluator();
 const smoother = new ScoreSmoother();
-// Security: Use real LLM provider for LLM-as-Judge evaluation.
-// Mock is only used when COMMANDER_EVAL_MOCK=true is explicitly set.
+// LM-28: no governed judge adapter is wired, so the evaluation execution path
+// is retired here. `createProductionLLMCall()` fails closed with
+// EVALUATION_NOT_AVAILABLE and performs zero network I/O, rather than calling a
+// paid provider directly with no deadline and no cost authority. Wiring a
+// governed adapter (provider + cost reservation + settlement) is a separate,
+// product-owner-approved change.
 const productionLLMCall = createProductionLLMCall();
 const evaluationRouter = createEvaluationRouter(evaluator, smoother, productionLLMCall);
 const checkpointManager = new CheckpointManager();
@@ -217,9 +241,27 @@ const scimStore = getDefaultScimStore();
 app.disable('x-powered-by');
 
 // Security: Configure trust proxy for reverse proxy deployments.
-// Per Express behind-proxies docs: set to hop count or trusted IP range.
-// '1' trusts the first proxy (typical Nginx/ALB setup). Set via env for flexibility.
-app.set('trust proxy', process.env.TRUST_PROXY_HOPS ?? '1');
+// AUDIT-E2: no proxy is trusted by default. A default of '1' trusted one hop
+// even when the API is directly exposed, making req.ip (auth-failure lockout,
+// per-IP rate bucket) spoofable via client-controlled X-Forwarded-For.
+// Deployments behind a proxy MUST set TRUST_PROXY_HOPS explicitly; malformed
+// values abort startup instead of silently meaning something else.
+try {
+  app.set('trust proxy', resolveTrustProxySetting(process.env));
+} catch (err) {
+  if (err instanceof TrustProxyConfigError) {
+    process.stderr.write(`[startup] ${err.message}\n`);
+    throw err;
+  }
+  throw err;
+}
+if (process.env.TRUST_PROXY_HOPS === undefined && isProductionEnv()) {
+  process.stderr.write(
+    '[startup] TRUST_PROXY_HOPS is unset — no proxy trusted (client X-Forwarded-For is ignored). ' +
+      'Set it to your proxy hop count when deploying behind a reverse proxy, or auth-failure ' +
+      'lockout and per-IP rate limits will key on the proxy address.\n',
+  );
+}
 
 // 1. Request ID tracking
 app.use(requestIdMiddleware);
@@ -238,6 +280,13 @@ app.use((_req, res, next) => {
 // identity. Public paths (health, login, register) are skipped.
 app.use(jwtMiddleware);
 
+// 4a. API-key rate-limit identity (AUTH-02). authMiddleware runs *after* the
+// limiter, so API-key callers previously had no key/tenant identity at
+// limiting time and got only the anonymous-IP bucket. This runs the canonical
+// API-key validation and publishes `req.rateLimitApiKey` only; authorization
+// identity stays unset until authMiddleware validates the key again.
+app.use(apiKeyIdentityMiddleware);
+
 // 5. Rate limiting — now aware of tenant → user → IP identity.
 app.use(rateLimitMiddleware);
 
@@ -255,9 +304,9 @@ const ALLOWED_ORIGINS = new Set([
 // Local-first default: only localhost origins are allowed when CORS_ORIGINS
 // is unset. Surface this at startup so production deployments know to set it.
 if (!process.env.CORS_ORIGINS) {
-  console.warn(
-    `[commander] CORS_ORIGINS not set — only localhost origins are allowed. ` +
-      `For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com`,
+  getGlobalLogger().warn(
+    'Startup',
+    'CORS_ORIGINS not set — only localhost origins are allowed. For production/browser access from other hosts, set CORS_ORIGINS=https://your-ui-host.example.com',
   );
 }
 
@@ -301,7 +350,7 @@ app.use('/api/runs', (req, res, next) => {
   });
 });
 
-// 7. Authentication (skipped when AUTH_DISABLED=true or no API_KEYS configured)
+// 7. Authentication (skipped only by the explicit non-production anonymous mode)
 // JWT was already parsed in step 4 for rate-limit identity. API-key auth runs
 // here and skips requests already authenticated via JWT (req.user set).
 app.use(authMiddleware);
@@ -342,13 +391,6 @@ app.use(
   }),
 );
 
-// 9b. Shadow traffic mirroring. Loads config from .commander/shadow-config.json;
-// disabled by default. When enabled, a sampled subset of requests is scrubbed
-// (PII/auth headers removed) and sent to the shadow endpoint for drift detection.
-const shadowConfig: ShadowConfig = loadShadowConfig();
-const shadowProxy = new ShadowProxy(shadowConfig);
-app.use(shadowProxy.expressMiddleware());
-
 // ── System ──────────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => {
   const memUsage = process.memoryUsage();
@@ -385,6 +427,13 @@ app.get('/health', (_req, res) => {
 app.get('/ready', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
+    evidenceRepository: async () => {
+      const gateway = getV1KernelGateway();
+      if (!gateway?.getEvidenceRepositoryAvailability) throw new Error('unavailable');
+      if (!(await gateway.getEvidenceRepositoryAvailability()).ready)
+        throw new Error('unavailable');
+      return 'ok';
+    },
     warRoomStore: () => store !== null,
     memoryHeap: () => {
       const mem = process.memoryUsage();
@@ -399,11 +448,19 @@ app.get('/ready', async (_req, res) => {
 app.get('/v1/health', async (_req, res) => {
   const result = await probeReadiness({
     kernel: () => getV1KernelGateway(),
+    evidenceRepository: async () => {
+      const gateway = getV1KernelGateway();
+      if (!gateway?.getEvidenceRepositoryAvailability) throw new Error('unavailable');
+      if (!(await gateway.getEvidenceRepositoryAvailability()).ready)
+        throw new Error('unavailable');
+      return 'ok';
+    },
   });
   res.status(result.status === 'ready' ? 200 : 503).json({
     status: result.status,
     checks: {
       kernel: result.checks.kernel,
+      evidenceRepository: result.checks.evidenceRepository,
     },
     timestamp: result.timestamp,
   });
@@ -567,12 +624,17 @@ registerRouter({
   },
 });
 
-// V2 live benchmark harness routes (in-memory ledger for Layer B topology tests)
-registerRouter({
-  name: 'v2-bench',
-  mountPath: '/v2',
-  factory: () => createV2BenchRouter(),
-});
+// V2 live benchmark harness routes (in-memory ledger for Layer B topology tests).
+// AUDIT-R4F1: opt-in only — the harness ledger is tenant-spoofable,
+// unauthenticated-role-accessible and in-memory; it must never be mounted in a
+// production topology by default.
+if (process.env.COMMANDER_V2_BENCH_HARNESS === '1') {
+  registerRouter({
+    name: 'v2-bench',
+    mountPath: '/v2',
+    factory: () => createV2BenchRouter(),
+  });
+}
 
 // Observability routes must be mounted before the legacy execution routers
 // (pipeline/orchestrator) because those routers' compatibility middleware
@@ -741,7 +803,7 @@ getPluginLoader()
   .loadAll()
   .then((loaded) => {
     if (loaded.length > 0) {
-      console.log(`[commander] Loaded ${loaded.length} external plugin(s)`);
+      getGlobalLogger().info('PluginLoader', `Loaded ${loaded.length} external plugin(s)`);
     }
   })
   .catch((err: unknown) => reportSilentFailure(err, 'index:pluginLoader.loadAll'));
@@ -855,12 +917,17 @@ app.get('/api/openapi.json', (_req, res) => {
 // ── Startup + Graceful Shutdown ──────────────────────────────────────────────
 const port = Number(process.env.PORT || 4000);
 
-// initRateLimitStore() opens the persistent SQLite store and hydrates the
-// in-memory Map BEFORE listen() so the first request after boot doesn't see
-// an empty rate-limit cache (which would defeat the auth-reset bypass
-// mitigation this persistence layer was added for). Server reference is
-// captured so gracefulShutdown can drain it.
+// Auth authorities are initialized before listen. They require PostgreSQL and
+// fail closed instead of allowing a process-local fallback. Server reference
+// is captured so gracefulShutdown can drain it.
 let httpServer: { close: (cb?: () => void) => void } | null = null;
+let task1ReadinessService: Task1ReadinessService | undefined;
+
+async function closeTask1ReadinessService(): Promise<void> {
+  const service = task1ReadinessService;
+  task1ReadinessService = undefined;
+  await service?.close();
+}
 
 async function startServer(): Promise<void> {
   // Load tenant configuration before any routers or shared singletons are
@@ -871,6 +938,10 @@ async function startServer(): Promise<void> {
   // Auto-on when production / V2 mode / DSN present (see isCommanderKernelEnabled).
   // /v1 never falls back to WarRoomStore; missing kernel → KERNEL_UNAVAILABLE.
   await initializeV1KernelGateway();
+
+  // Context-aware releases expose compatibility proof on a separate TLS 1.3
+  // listener. The request never traverses generic API middleware.
+  task1ReadinessService = await startTask1ReadinessService();
 
   if (process.env.NODE_ENV === 'production') {
     // Fail closed at startup rather than booting a production replica that would
@@ -895,6 +966,8 @@ async function startServer(): Promise<void> {
   }
 
   await initRateLimitStore();
+  initAuthFailureStore();
+  await bootstrapDefaultAdminAccount();
 
   // Memory backend selection:
   // - Non-production: Local-First via resolveMemoryStoreType (in-memory without DSN).
@@ -925,6 +998,8 @@ async function startServer(): Promise<void> {
   try {
     const canonicalStore = await createMemoryStore(memoryType, {
       connectionString: process.env.COMMANDER_POSTGRES_URL ?? process.env.DATABASE_URL,
+      manageSchema:
+        memoryType === 'postgres' && process.env.NODE_ENV === 'production' ? false : undefined,
     });
     canonicalMemoryStore = canonicalStore;
     projectMemoryAdapter = new ProjectMemoryStoreAdapter(canonicalStore);
@@ -962,10 +1037,9 @@ async function startServer(): Promise<void> {
   }
 
   // Mount routers after shared state (including memoryIndexManager) is initialized.
-  console.log(
-    '[mount] registered routers:',
-    listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`),
-  );
+  getGlobalLogger().info('Mount', 'registered routers', {
+    routers: listRegisteredRouters().map((r) => `${r.name}@${r.mountPath}`),
+  });
 
   // WS3 §2/§3/§8 — Enterprise gateway middleware (mounted BEFORE product
   // routers so non-/v1 paths are blocked/tagged before any handler runs):
@@ -1021,8 +1095,8 @@ async function startServer(): Promise<void> {
     }
   }
 
-  httpServer = app.listen(port, () => {
-    process.stdout.write(`API listening on http://localhost:${port}\n`);
+  httpServer = app.listen(port, apiStartupConfig.host, () => {
+    process.stdout.write(`API listening on http://${apiStartupConfig.host}:${port}\n`);
     process.stdout.write(
       `[Architecture V2] apps/api is the sole Gateway — do not expose core CommanderHttpServer in production\n`,
     );
@@ -1030,65 +1104,96 @@ async function startServer(): Promise<void> {
   });
 }
 
-startServer().catch((err: Error) => {
-  process.stderr.write(`[startup] Failed to start API server: ${err.message}\n`);
+startServer().catch(async (err: Error) => {
+  process.stderr.write('COMMANDER_API_STARTUP_FAILED: ' + err.message + '\n');
+  try {
+    await closeTask1ReadinessService();
+  } catch (closeErr) {
+    process.stderr.write(`[startup] Failed to close tenant-authority proof service: ${closeErr}\n`);
+  }
+  try {
+    await closeV1KernelGateway();
+  } catch (closeErr) {
+    process.stderr.write(`[startup] Failed to close kernel gateway: ${closeErr}\n`);
+  }
   process.exit(1);
 });
 
 // P1: Graceful shutdown — drain connections, flush state, then exit
 let shuttingDown = false;
+async function finishGracefulShutdown(): Promise<void> {
+  try {
+    getWebhookDispatcher().stop();
+  } catch (dispatcherErr) {
+    process.stderr.write(`[shutdown] Failed to stop webhook dispatcher: ${dispatcherErr}\n`);
+  }
+
+  try {
+    await closeTask1ReadinessService();
+  } catch (closeErr) {
+    process.stderr.write(
+      `[shutdown] Failed to close tenant-authority proof service: ${closeErr}\n`,
+    );
+  }
+
+  try {
+    await closeV1KernelGateway();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close kernel gateway: ${closeErr}\n`);
+  }
+
+  // Close database connections (no-op for JSON store)
+  try {
+    store.close();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close store: ${closeErr}\n`);
+  }
+
+  // Close the A2A API store (PostgresPool-backed when API_STORE_BACKEND=postgres)
+  try {
+    await apiStoreInstance.close();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close API store: ${closeErr}\n`);
+  }
+
+  // Close the rate-limit persistent store (audit MED item 3 follow-up).
+  // Idempotent — safe even if init failed.
+  closeRateLimitStore();
+
+  // Close the optional memory-index adapter store (sqlite/json backend).
+  try {
+    await projectMemoryAdapter?.close();
+  } catch (closeErr) {
+    process.stderr.write(`[shutdown] Failed to close memory-index adapter: ${closeErr}\n`);
+  }
+
+  // Log loaded tenant count for multi-tenant deployments.
+  const tenantProvider = getGlobalTenantProvider();
+  if (tenantProvider instanceof SimpleTenantProvider) {
+    const tenantCount = tenantProvider.getKnownTenants().length;
+    process.stdout.write(`[shutdown] Loaded ${tenantCount} tenant(s)\n`);
+  }
+
+  process.stdout.write('[shutdown] Complete\n');
+  process.exit(0);
+}
+
 function gracefulShutdown(signal: string) {
   if (shuttingDown) return;
   shuttingDown = true;
   process.stdout.write(`\n[${signal}] Shutting down gracefully...\n`);
 
-  // Stop accepting new connections.
-  httpServer?.close(async () => {
-    process.stdout.write('[shutdown] HTTP server closed\n');
-
-    // Stop the outgoing webhook dispatcher to prevent in-flight retries
-    // from keeping the process alive after shutdown is requested.
-    try {
-      getWebhookDispatcher().stop();
-    } catch (dispatcherErr) {
-      process.stderr.write(`[shutdown] Failed to stop webhook dispatcher: ${dispatcherErr}\n`);
-    }
-
-    // Close database connections (no-op for JSON store)
-    try {
-      store.close();
-    } catch (closeErr) {
-      process.stderr.write(`[shutdown] Failed to close store: ${closeErr}\n`);
-    }
-
-    // Close the A2A API store (PostgresPool-backed when API_STORE_BACKEND=postgres)
-    try {
-      await apiStoreInstance.close();
-    } catch (closeErr) {
-      process.stderr.write(`[shutdown] Failed to close API store: ${closeErr}\n`);
-    }
-
-    // Close the rate-limit persistent store (audit MED item 3 follow-up).
-    // Idempotent — safe even if init failed.
-    closeRateLimitStore();
-
-    // Close the optional memory-index adapter store (sqlite/json backend).
-    try {
-      await projectMemoryAdapter?.close();
-    } catch (closeErr) {
-      process.stderr.write(`[shutdown] Failed to close memory-index adapter: ${closeErr}\n`);
-    }
-
-    // Log loaded tenant count for multi-tenant deployments.
-    const tenantProvider = getGlobalTenantProvider();
-    if (tenantProvider instanceof SimpleTenantProvider) {
-      const tenantCount = tenantProvider.getKnownTenants().length;
-      process.stdout.write(`[shutdown] Loaded ${tenantCount} tenant(s)\n`);
-    }
-
-    process.stdout.write('[shutdown] Complete\n');
-    process.exit(0);
-  });
+  const finish = (): void => {
+    void finishGracefulShutdown();
+  };
+  if (httpServer) {
+    httpServer.close(() => {
+      process.stdout.write('[shutdown] HTTP server closed\n');
+      finish();
+    });
+  } else {
+    finish();
+  }
 
   // Force exit after 10s if graceful shutdown hangs
   setTimeout(() => {

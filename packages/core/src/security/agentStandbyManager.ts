@@ -1,7 +1,7 @@
 /**
  * AgentStandbyManager — Hot Standby Agent Architecture
  *
- * Enterprise-grade agent instance failover: Active → Hot Standby → Cold Standby.
+ * Deployment-scoped agent instance failover: Active → Hot Standby → Cold Standby.
  * When the active agent fails (crash, attack, degradation, cost anomaly), the
  * hot standby takes over within seconds.
  *
@@ -41,6 +41,9 @@ import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getGlobalLogger, getGlobalMetrics } from '../logging';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -624,7 +627,7 @@ export class AgentStandbyManager {
 
       // Create SOC incident for the switch
       try {
-        const { getAgentSoc } = require('./agentSoc');
+        const { getAgentSoc } = nodeRequire('./agentSoc');
         const soc = getAgentSoc();
         soc.createIncident({
           event: {

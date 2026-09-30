@@ -19,9 +19,13 @@
  *     tail-truncation, and foreign (unregistered) chains.
  *   - {@link AsymmetricChainSigner} + {@link KeyProvider}: L2 RSA-PSS signing
  *     of chain heads. In production the private key is injected via Vault/KMS
- *     (not co-located with logs); {@link InMemoryKeyProvider} is CI-only and
- *     self-declares `evidenceLevel=ci-worm-sim` so it can never fill a live/SOC
- *     evidence slot (WS9 §9 honesty rule).
+ *     (not co-located with logs); {@link FileKeyProvider} persists a durable
+ *     on-host key so the signing identity survives process restarts, and
+ *     {@link InMemoryKeyProvider} is CI-only and self-declares
+ *     `evidenceLevel=ci-worm-sim` so it can never fill a live/SOC evidence slot
+ *     (WS9 §9 honesty rule). The install path never uses the in-memory
+ *     provider: an ephemeral key fails every reloaded head after a restart and
+ *     raises a permanent false `kms_sig_invalid` alarm (SF-BOUND-AUDITCHAIN).
  *   - {@link verifyWithManifest}: combines ledger.verify() with manifest
  *     cross-check and DERIVES `tamperProof` from the live result — never
  *     hardcoded.
@@ -148,6 +152,92 @@ export class InMemoryKeyProvider implements KeyProvider {
 }
 
 /**
+ * Durable file-backed RSA-PSS key provider.
+ *
+ * The keypair is persisted at `keyPath` (PKCS#8 PEM, mode 0600) and re-read on
+ * every construction, so the L2 signing identity is stable across process
+ * restarts. The previous default — a fresh {@link InMemoryKeyProvider} per
+ * process — made every reloaded chain head fail `verifyEntry` after a restart,
+ * which the verify timer then reported as a permanent false `kms_sig_invalid`
+ * tamper alarm (SF-BOUND-AUDITCHAIN).
+ *
+ * The private key still lives on the log host rather than in KMS/HSM, so this
+ * self-declares `evidenceLevel=ci-worm-sim` (same honesty rule as the in-memory
+ * provider); inject a KMS/HSM-backed KeyProvider to reach `live`.
+ */
+export class FileKeyProvider implements KeyProvider {
+  readonly evidenceLevel = 'ci-worm-sim' as const;
+  readonly keyId: string;
+  private readonly publicKey: crypto.KeyObject;
+  private readonly privateKey: crypto.KeyObject;
+
+  constructor(keyPath: string) {
+    if (!keyPath || keyPath.trim().length === 0) {
+      throw new Error(
+        'AUDIT_SIGNING_KEY_REQUIRED: no durable audit signing key path configured — pass ' +
+          'options.signer (Vault/KMS/HSM KeyProvider) or set COMMANDER_AUDIT_SIGNING_KEY_FILE.',
+      );
+    }
+    let publicKey: crypto.KeyObject;
+    let privateKey: crypto.KeyObject;
+    try {
+      if (fs.existsSync(keyPath)) {
+        const pem = fs.readFileSync(keyPath, 'utf-8');
+        privateKey = crypto.createPrivateKey(pem);
+        // Node derives the public key when handed a private PEM.
+        publicKey = crypto.createPublicKey({ key: pem, format: 'pem' });
+      } else {
+        const generated = crypto.generateKeyPairSync('rsa', { modulusLength: 3072 });
+        privateKey = generated.privateKey;
+        publicKey = generated.publicKey;
+        const dir = path.dirname(keyPath);
+        if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }) as string, {
+          mode: 0o600,
+        });
+      }
+    } catch (err) {
+      throw new Error(
+        `AUDIT_SIGNING_KEY_UNAVAILABLE: cannot load or persist the durable audit signing key at ` +
+          `${keyPath} — ${(err as Error)?.message ?? String(err)}. Refusing to fall back to an ` +
+          'ephemeral in-memory key: it would fail every reloaded chain head after restart.',
+      );
+    }
+    this.privateKey = privateKey;
+    this.publicKey = publicKey;
+    this.keyId = `file:${crypto
+      .createHash('sha256')
+      .update(publicKey.export({ type: 'spki', format: 'der' }))
+      .digest('hex')
+      .slice(0, 16)}`;
+  }
+
+  sign(data: Buffer): string {
+    const sig = crypto.sign('sha256', data, {
+      key: this.privateKey,
+      padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+    });
+    return sig.toString('base64');
+  }
+
+  verify(data: Buffer, signature: string): boolean {
+    try {
+      return crypto.verify(
+        'sha256',
+        data,
+        {
+          key: this.publicKey,
+          padding: crypto.constants.RSA_PKCS1_PSS_PADDING,
+        },
+        Buffer.from(signature, 'base64'),
+      );
+    } catch {
+      return false;
+    }
+  }
+}
+
+/**
  * Asymmetric chain-head signer. Wraps a {@link KeyProvider} to produce L2
  * signatures over canonical chain heads. In production, inject a KMS/HSM-backed
  * KeyProvider so the private key never resides on the log host (KC-5c).
@@ -157,6 +247,11 @@ export class AsymmetricChainSigner {
 
   get evidenceLevel(): 'live' | 'ci-worm-sim' {
     return this.keyProvider.evidenceLevel;
+  }
+
+  /** Backing key identifier — persisted with the manifest to pin the identity. */
+  get keyId(): string {
+    return this.keyProvider.keyId;
   }
 
   signHead(head: ChainHead): string {
@@ -176,8 +271,10 @@ const MANIFEST_VERSION = 1;
 
 interface ManifestFile {
   version: number;
+  /** keyId of the L2 signer that produced the entries — pins the identity. */
+  signerKeyId: string;
   entries: ManifestEntry[];
-  /** HMAC-SHA256 over canonical {version, entries}, using the manifest key. */
+  /** HMAC-SHA256 over canonical {version, signerKeyId, entries}, using the manifest key. */
   hmac: string;
 }
 
@@ -193,8 +290,15 @@ export class ChainManifest {
     manifestDir: string;
     /** Manifest HMAC key. Must be distinct from the audit-chain master key. */
     manifestKey?: string;
-    /** Asymmetric signer for L2 head signatures. Defaults to in-memory (CI-only). */
+    /** Asymmetric signer for L2 head signatures (KMS/HSM-backed in prod). */
     signer?: AsymmetricChainSigner;
+    /**
+     * Durable key file backing the L2 signer. Defaults to
+     * COMMANDER_AUDIT_SIGNING_KEY_FILE, then `<manifestDir>/chain-signing-key.pem`.
+     * An ephemeral in-memory key is never used: it cannot verify a reloaded head
+     * after a restart (SF-BOUND-AUDITCHAIN).
+     */
+    signerKeyFile?: string;
   }) {
     this.manifestDir = options.manifestDir;
     this.manifestFile = path.join(this.manifestDir, 'chain-manifest.json');
@@ -213,7 +317,15 @@ export class ChainManifest {
     } else {
       this.manifestKey = crypto.createHash('sha256').update(rawKey).digest();
     }
-    this.signer = options.signer ?? new AsymmetricChainSigner(new InMemoryKeyProvider());
+    this.signer =
+      options.signer ??
+      new AsymmetricChainSigner(
+        new FileKeyProvider(
+          options.signerKeyFile ??
+            process.env.COMMANDER_AUDIT_SIGNING_KEY_FILE ??
+            path.join(this.manifestDir, 'chain-signing-key.pem'),
+        ),
+      );
     if (fs.existsSync(this.manifestFile)) {
       this.reload();
     }
@@ -256,13 +368,20 @@ export class ChainManifest {
     this.dirty = false;
   }
 
-  /** Reload from disk, verifying the HMAC signature. Throws on tamper. */
+  /** Reload from disk, verifying the HMAC signature and the signer identity. */
   reload(): void {
     const raw = fs.readFileSync(this.manifestFile, 'utf-8');
     const parsed = JSON.parse(raw) as ManifestFile;
     if (!this.verifyManifestHmac(parsed)) {
       throw new Error(
         'INTEGRITY_VIOLATION: chain manifest HMAC signature mismatch — tamper detected',
+      );
+    }
+    if (parsed.signerKeyId !== this.signer.keyId) {
+      throw new Error(
+        `AUDIT_SIGNING_IDENTITY_MISMATCH: manifest at ${this.manifestFile} was signed by ` +
+          `${parsed.signerKeyId} but the configured signer is ${this.signer.keyId}. Refusing to ` +
+          'verify — the L2 anchoring identity changed across restart; restore the original key.',
       );
     }
     this.entries = new Map(parsed.entries.map((e) => [e.chainId, e]));
@@ -277,13 +396,19 @@ export class ChainManifest {
 
   private serialize(): ManifestFile {
     const entries = this.getEntries();
-    const hmac = computeManifestHmac(this.manifestKey, { version: MANIFEST_VERSION, entries });
-    return { version: MANIFEST_VERSION, entries, hmac };
+    const signerKeyId = this.signer.keyId;
+    const hmac = computeManifestHmac(this.manifestKey, {
+      version: MANIFEST_VERSION,
+      signerKeyId,
+      entries,
+    });
+    return { version: MANIFEST_VERSION, signerKeyId, entries, hmac };
   }
 
   private verifyManifestHmac(file: ManifestFile): boolean {
     const expected = computeManifestHmac(this.manifestKey, {
       version: file.version,
+      signerKeyId: file.signerKeyId,
       entries: file.entries,
     });
     if (expected.length !== file.hmac.length) return false;
@@ -559,6 +684,13 @@ let installedLedger: AuditChainLedger | null = null;
  * Enabled when `COMMANDER_AUDIT_MANIFEST_DIR` is set (WS9 compose mounts
  * `/var/lib/commander/manifest`). Idempotent per process. Returns a stop
  * function that clears the timer and unhooks the ledger.
+ *
+ * Requires a durable signing identity: either `options.signer` (Vault/KMS/HSM
+ * KeyProvider) or a persisted key file via `options.signerKeyFile` /
+ * `COMMANDER_AUDIT_SIGNING_KEY_FILE`. It fails closed with
+ * `AUDIT_SIGNING_KEY_REQUIRED` otherwise — an ephemeral in-memory key makes
+ * every reloaded chain head fail `verifyEntry` after a restart and raises a
+ * permanent false `kms_sig_invalid` alarm (SF-BOUND-AUDITCHAIN).
  */
 export function installAuditChainIntegrity(
   ledger: AuditChainLedger,
@@ -566,6 +698,10 @@ export function installAuditChainIntegrity(
     manifestDir?: string;
     manifestKey?: string;
     intervalMs?: number;
+    /** Durable L2 signing identity (Vault/KMS/HSM-backed KeyProvider). */
+    signer?: AsymmetricChainSigner;
+    /** Durable key file backing the L2 signer. */
+    signerKeyFile?: string;
     onFailure?: (result: VerifyWithManifestResult) => void;
   },
 ): () => void {
@@ -580,10 +716,22 @@ export function installAuditChainIntegrity(
     options?.manifestDir ??
     process.env.COMMANDER_AUDIT_MANIFEST_DIR ??
     path.join(ledger.persistDirectory, 'manifest');
+  const signerKeyFile = options?.signerKeyFile ?? process.env.COMMANDER_AUDIT_SIGNING_KEY_FILE;
+
+  if (!options?.signer && !signerKeyFile) {
+    throw new Error(
+      'AUDIT_SIGNING_KEY_REQUIRED: installAuditChainIntegrity needs a durable signing identity — ' +
+        'pass options.signer (Vault/KMS/HSM KeyProvider) or set COMMANDER_AUDIT_SIGNING_KEY_FILE ' +
+        'to a persisted key file. Refusing to install with an ephemeral in-memory key that would ' +
+        'produce a false kms_sig_invalid tamper alarm after every restart.',
+    );
+  }
 
   const manifest = new ChainManifest({
     manifestDir,
     manifestKey: options?.manifestKey ?? process.env.COMMANDER_MANIFEST_KEY,
+    signer: options?.signer,
+    signerKeyFile,
   });
 
   ledger.setOnPersisted((entry) => {
@@ -658,12 +806,13 @@ function canonicalHead(head: ChainHead): string {
  */
 function computeManifestHmac(
   key: Buffer,
-  payload: { version: number; entries: ManifestEntry[] },
+  payload: { version: number; signerKeyId: string; entries: ManifestEntry[] },
 ): string {
   const canonicalEntries = payload.entries.map((e) => canonicalEntry(e));
   // Build canonical string with sorted top-level keys.
   const parts: string[] = [];
   parts.push('"entries":' + '[' + canonicalEntries.join(',') + ']');
+  parts.push('"signerKeyId":' + JSON.stringify(payload.signerKeyId));
   parts.push('"version":' + JSON.stringify(payload.version));
   const canonical = '{' + parts.sort().join(',') + '}';
   return crypto.createHmac('sha256', key).update(canonical).digest('hex');

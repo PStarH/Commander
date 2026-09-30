@@ -43,11 +43,27 @@ interface SchemaProperty {
   required?: boolean;
   type?: string;
   description?: string;
+  properties?: Record<string, SchemaProperty>;
+  items?: SchemaProperty;
+  enum?: unknown[];
+  additionalProperties?: boolean;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
 }
 
 interface SchemaDefinition {
+  type?: string;
   properties?: Record<string, SchemaProperty>;
   required?: string[];
+  items?: SchemaProperty;
+  enum?: unknown[];
+  additionalProperties?: boolean;
+  minimum?: number;
+  maximum?: number;
+  minItems?: number;
+  maxItems?: number;
 }
 
 // ============================================================================
@@ -322,7 +338,6 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
   if (!ctx.schema) return { signals: [], confidence: 1.0 };
 
   const signals: VerificationSignal[] = [];
-  let confidence = 1.0;
 
   let parsed: unknown;
   try {
@@ -358,47 +373,161 @@ function runStage1(ctx: UVPTaskContext): { signals: VerificationSignal[]; confid
   }
 
   const schema = ctx.schema as SchemaDefinition;
-  if (!schema.properties) return { signals, confidence: 1.0 };
+  validateSchemaValue(parsed, schema, '', signals);
+  const penalty = signals.reduce(
+    (total, signal) => total + (signal.severity === 'high' ? 0.3 : 0.15),
+    0,
+  );
+  return { signals, confidence: Math.max(0, 1 - penalty) };
+}
 
-  const obj = parsed as Record<string, unknown>;
-  for (const [key, def] of Object.entries(schema.properties)) {
-    const defObj = def as Record<string, unknown>;
-    if (defObj.required && obj[key] === undefined) {
-      signals.push({
-        stage: 1,
-        source: 'schema',
-        severity: 'high',
-        location: key,
-        message: `Missing required field: "${key}"`,
-        suggestion: `Add "${key}" to the output`,
-      });
-      confidence -= 0.3;
-    }
-    if (obj[key] !== undefined && defObj.type) {
-      const typeMap: Record<string, string> = {
-        string: 'string',
-        number: 'number',
-        integer: 'number',
-        boolean: 'boolean',
-        array: 'object',
-        object: 'object',
-      };
-      const expected = typeMap[defObj.type as string];
-      if (expected && typeof obj[key] !== expected) {
-        signals.push({
-          stage: 1,
-          source: 'schema',
-          severity: 'medium',
-          location: key,
-          message: `"${key}": expected ${defObj.type}, got ${typeof obj[key]}`,
-          suggestion: `Change "${key}" to type ${defObj.type}`,
-        });
-        confidence -= 0.15;
-      }
+function schemaPath(path: string, key: string): string {
+  return path ? `${path}.${key}` : key;
+}
+
+function schemaValueType(value: unknown): string {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  return typeof value;
+}
+
+function addSchemaSignal(
+  signals: VerificationSignal[],
+  severity: 'medium' | 'high',
+  location: string,
+  message: string,
+  suggestion: string,
+): void {
+  signals.push({
+    stage: 1,
+    source: 'schema',
+    severity,
+    ...(location ? { location } : {}),
+    message,
+    suggestion,
+  });
+}
+
+function validateSchemaValue(
+  value: unknown,
+  schema: SchemaDefinition | SchemaProperty,
+  path: string,
+  signals: VerificationSignal[],
+): void {
+  const type = schema.type;
+  if (schema.enum && !schema.enum.some((candidate) => Object.is(candidate, value))) {
+    addSchemaSignal(
+      signals,
+      'medium',
+      path,
+      `${path || 'Output'} must be one of ${schema.enum.map((candidate) => JSON.stringify(candidate)).join(', ')}`,
+      'Use one of the values declared by the schema',
+    );
+  }
+
+  if (type) {
+    const actual = schemaValueType(value);
+    const validType =
+      (type === 'number' && actual === 'number' && Number.isFinite(value)) ||
+      (type === 'integer' && actual === 'number' && Number.isInteger(value)) ||
+      (type !== 'number' && type !== 'integer' && actual === type);
+    if (!validType) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'}: expected ${type}, got ${actual}`,
+        `Change ${path || 'the output'} to type ${type}`,
+      );
+      return;
     }
   }
 
-  return { signals, confidence: Math.max(0, confidence) };
+  if (typeof value === 'number') {
+    if (schema.minimum !== undefined && value < schema.minimum) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must be >= ${schema.minimum}`,
+        'Increase the numeric value to satisfy the schema',
+      );
+    }
+    if (schema.maximum !== undefined && value > schema.maximum) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must be <= ${schema.maximum}`,
+        'Decrease the numeric value to satisfy the schema',
+      );
+    }
+  }
+
+  if (Array.isArray(value)) {
+    if (schema.minItems !== undefined && value.length < schema.minItems) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must contain at least ${schema.minItems} items`,
+        'Add items required by the schema',
+      );
+    }
+    if (schema.maxItems !== undefined && value.length > schema.maxItems) {
+      addSchemaSignal(
+        signals,
+        'medium',
+        path,
+        `${path || 'Output'} must contain at most ${schema.maxItems} items`,
+        'Remove items until the schema limit is met',
+      );
+    }
+    if (schema.items) {
+      value.forEach((item, index) =>
+        validateSchemaValue(item, schema.items!, `${path}[${index}]`, signals),
+      );
+    }
+  }
+
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return;
+  const obj = value as Record<string, unknown>;
+  const properties = schema.properties ?? {};
+  const required = new Set<string>(Array.isArray(schema.required) ? schema.required : []);
+  for (const [key, definition] of Object.entries(properties)) {
+    if (definition.required === true) required.add(key);
+  }
+  for (const key of required) {
+    if (obj[key] === undefined) {
+      addSchemaSignal(
+        signals,
+        'high',
+        schemaPath(path, key),
+        `Missing required field: "${schemaPath(path, key)}"`,
+        `Add "${key}" to the output`,
+      );
+    }
+  }
+  if (schema.additionalProperties === false) {
+    for (const key of Object.keys(obj)) {
+      // VT-02: own-property check — `key in properties` walks the prototype
+      // chain, so inherited names such as "toString" satisfied the schema.
+      if (!Object.prototype.hasOwnProperty.call(properties, key)) {
+        addSchemaSignal(
+          signals,
+          'high',
+          schemaPath(path, key),
+          `Unexpected field: "${schemaPath(path, key)}"`,
+          'Remove fields that are not declared by the schema',
+        );
+      }
+    }
+  }
+  for (const [key, definition] of Object.entries(properties)) {
+    if (obj[key] !== undefined) {
+      validateSchemaValue(obj[key], definition, schemaPath(path, key), signals);
+    }
+  }
 }
 
 // ============================================================================
@@ -578,9 +707,26 @@ export class UnifiedVerificationPipeline {
     const stagesRun: number[] = [];
     let tokensUsed = 0;
     let overallConfidence = 1.0;
+    // VT-01: every REQUIRED check that actually executed must pass for the
+    // report to pass. Optional/heuristic stages only contribute confidence.
+    let requiredChecksPassed = true;
 
-    // Stage 0: Zero-cost pattern checks
-    const s0 = runStage0(ctx, taskType);
+    // Stage 0: Zero-cost pattern checks. Required: if it cannot execute, the
+    // output is unverified rather than passed.
+    let s0: { signals: VerificationSignal[]; confidence: number };
+    try {
+      s0 = runStage0(ctx, taskType);
+    } catch (err) {
+      return this.buildUnavailableReport(
+        'stage0_pattern_checks',
+        0,
+        err,
+        allSignals,
+        tokensUsed,
+        stagesRun,
+        taskType,
+      );
+    }
     allSignals.push(...s0.signals);
     overallConfidence = Math.min(overallConfidence, s0.confidence);
     stagesRun.push(0);
@@ -592,10 +738,40 @@ export class UnifiedVerificationPipeline {
 
     // Stage 1: Schema validation (always run when schema provided — zero cost, high value)
     if (ctx.schema) {
-      const s1 = runStage1(ctx);
+      // A supplied JSON Schema is a required, executable contract: an exception
+      // while evaluating it means the contract could not be enforced.
+      let s1: { signals: VerificationSignal[]; confidence: number };
+      try {
+        s1 = runStage1(ctx);
+      } catch (err) {
+        return this.buildUnavailableReport(
+          'stage1_schema_contract',
+          1,
+          err,
+          allSignals,
+          tokensUsed,
+          stagesRun,
+          taskType,
+        );
+      }
       allSignals.push(...s1.signals);
       overallConfidence = Math.min(overallConfidence, s1.confidence);
       stagesRun.push(1);
+      // A supplied JSON Schema is an executable contract. Any Stage 1
+      // violation must fail verification even when the remaining confidence
+      // score would otherwise clear the generic threshold (for example, one
+      // unexpected field only reduces confidence to 0.7).
+      if (s1.signals.length > 0) {
+        return this.buildReport(
+          false,
+          s1.confidence,
+          allSignals,
+          tokensUsed,
+          stagesRun,
+          taskType,
+          'schema_invalid',
+        );
+      }
     }
 
     // Task-aware confidence adjustment: calculation tasks need stricter verification
@@ -640,9 +816,14 @@ export class UnifiedVerificationPipeline {
       );
     }
 
+    // VT-01b: resolve the evaluator that will ACTUALLY be used. `setEvaluatorProvider`
+    // only writes `config.evaluatorProvider`, so gating Stage 2 on the constructor
+    // provider alone meant a configured evaluator never enabled Stage 2.
+    const resolvedEvaluatorProvider = this.config.evaluatorProvider ?? this.provider;
+
     // Stage 2: LLM verification (only when ambiguous)
     const shouldRunLLM =
-      this.provider &&
+      !!resolvedEvaluatorProvider &&
       overallConfidence < 0.7 &&
       overallConfidence >= 0.2 &&
       budgetRemaining >= this.config.budgetFloorTokens;
@@ -662,11 +843,10 @@ export class UnifiedVerificationPipeline {
       }
 
       const model = this.config.llmVerificationModel ?? 'gpt-4o-mini';
-      const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider!;
       const s2 = await runStage2(
         ctx,
         taskType,
-        effectiveEvalProvider,
+        resolvedEvaluatorProvider,
         model,
         Math.min(this.config.llmVerificationBudget, budgetRemaining),
         allSignals,
@@ -694,9 +874,8 @@ export class UnifiedVerificationPipeline {
     if (shouldRunJudge) {
       try {
         const goalJudge = getGoalJudge();
-        const effectiveEvalProvider = this.config.evaluatorProvider ?? this.provider;
-        if (effectiveEvalProvider) {
-          goalJudge.setProvider(effectiveEvalProvider);
+        if (resolvedEvaluatorProvider) {
+          goalJudge.setProvider(resolvedEvaluatorProvider);
         }
         if (this.runtime) {
           goalJudge.setRuntime(this.runtime);
@@ -720,6 +899,11 @@ export class UnifiedVerificationPipeline {
         };
 
         if (!verdict.passed) {
+          // VT-01: a judge rejection is an independent HARD result. The score
+          // merge below only keeps the reported confidence honest; it must not
+          // be the thing that decides pass/fail, or a high pre-existing
+          // confidence would outvote the rejection.
+          requiredChecksPassed = false;
           allSignals.push({
             stage: 3,
             source: 'goal_judge',
@@ -733,14 +917,30 @@ export class UnifiedVerificationPipeline {
           overallConfidence = Math.min(1, overallConfidence + 0.05);
         }
       } catch (err) {
-        getGlobalLogger().warn('UnifiedVerification', 'Goal judge failed (best-effort)', {
+        // The judge gate is a required check once it is enabled and triggered:
+        // if it cannot produce a verdict, the run is unverified, never passed.
+        getGlobalLogger().warn('UnifiedVerification', 'Goal judge gate unavailable', {
           error: (err as Error).message,
         });
-        // Judge failure is non-blocking
+        return this.buildUnavailableReport(
+          'stage3_goal_judge',
+          3,
+          err,
+          allSignals,
+          tokensUsed,
+          stagesRun,
+          taskType,
+        );
       }
     }
 
-    const passed = overallConfidence >= 0.5 && !allSignals.some((s) => s.severity === 'critical');
+    // VT-01: `passed` requires that every REQUIRED check that actually executed
+    // passed; the confidence score and the critical-signal scan are additional
+    // conditions, not substitutes for a hard check result.
+    const passed =
+      requiredChecksPassed &&
+      overallConfidence >= 0.5 &&
+      !allSignals.some((s) => s.severity === 'critical');
 
     if (this.config.enableLearning) {
       this.memory.record({
@@ -801,6 +1001,40 @@ export class UnifiedVerificationPipeline {
 
   getTotalTokensUsed(): number {
     return this.totalTokensUsed;
+  }
+
+  /**
+   * VT-01: a required check that could not be executed makes the run
+   * unverified. Report it as a failure (never as a pass) and record why.
+   */
+  private buildUnavailableReport(
+    checkName: string,
+    stage: 0 | 1 | 3,
+    err: unknown,
+    signals: VerificationSignal[],
+    tokensUsed: number,
+    stagesRun: number[],
+    taskType: TaskType,
+  ): VerificationReport {
+    stagesRun.push(stage);
+    signals.push({
+      stage,
+      source: 'check_unavailable',
+      severity: 'critical',
+      message: `Required check "${checkName}" could not be executed: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      suggestion: 'Fix the verification failure before treating the output as verified',
+    });
+    return this.buildReport(
+      false,
+      0,
+      signals,
+      tokensUsed,
+      stagesRun,
+      taskType,
+      'check_unavailable',
+    );
   }
 
   private buildReport(

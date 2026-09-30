@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { randomUUID } from 'node:crypto';
 import { SequentialPipeline } from '@commander/core';
 import { PatternStateMachineFactory, PatternStateMachine } from './patternStateMachine';
@@ -58,13 +58,33 @@ export interface CreatePipelineRouterOptions {
   agentExecutor?: AgentExecutor;
 }
 
+/**
+ * Path prefixes owned by this router.
+ *
+ * The legacy-execution guard below is scoped to exactly these prefixes, and
+ * that scoping is load-bearing rather than cosmetic. This router is mounted at
+ * `'/'` (`index.ts` registers `{ name: 'pipeline', mountPath: '/' }`), *before*
+ * workflow, namespaced-memory, a2a, a2a-v2, mcp, mcp-client, stream, cost,
+ * replay, team, dlq, approval-config, hallucination and everything registered
+ * after them. An unscoped `router.use` therefore answered **410 for every one
+ * of those routes** whenever legacy execution was disabled — which is the
+ * default, since `isLegacyExecutionAllowed()` requires an explicit
+ * `COMMANDER_LEGACY_EXECUTION=1`. The guard must reject only the legacy
+ * pipeline/state-machine surface it exists to replace.
+ */
+const LEGACY_PIPELINE_PATHS = ['/api/state-machine', '/api/pipeline'] as const;
+
 export function createPipelineRouter(options: CreatePipelineRouterOptions = {}): Router {
   const router = Router();
 
   // The old pipeline and in-memory state-machine routes are not a second
   // execution authority. They remain available only in explicit local
   // compatibility mode; V2/production callers must use /v1/runs.
-  router.use((_req, res, next) => {
+  //
+  // Registered once per owned prefix (not as a bare `router.use`) so the guard
+  // cannot answer for routes this router does not own — see
+  // LEGACY_PIPELINE_PATHS.
+  const legacyGuard: RequestHandler = (_req, res, next) => {
     if (!isLegacyExecutionAllowed()) {
       res.status(410).json({
         error: {
@@ -76,7 +96,10 @@ export function createPipelineRouter(options: CreatePipelineRouterOptions = {}):
       return;
     }
     next();
-  });
+  };
+  for (const prefix of LEGACY_PIPELINE_PATHS) {
+    router.use(prefix, legacyGuard);
+  }
 
   // Pattern State Machine
   const activeMachines = new Map<string, OwnedResource<PatternStateMachine>>();

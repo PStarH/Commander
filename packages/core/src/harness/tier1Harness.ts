@@ -1,5 +1,5 @@
 /**
- * Tier1Harness — Production-grade harness built on Tier1AgentLoop.
+ * Tier1Harness — configured harness built on Tier1AgentLoop.
  *
  * Combines the best patterns from:
  *   - Codex CLI: parallel tool execution, structured errors, content sanitization,
@@ -9,7 +9,7 @@
  *   - Industry best practices: prompt-cache-friendly message structure,
  *     append-only context, dependency-aware execution, content scanning
  *
- * This harness is the default for all production runs. It delegates the actual
+ * This harness is the default for configured runs. It delegates the actual
  * agent loop to Tier1AgentLoop and adds:
  *   - Tool whitelist enforcement
  *   - Approval mode integration
@@ -50,7 +50,7 @@ export const TIER1_HARNESS_CAPABILITIES: HarnessCapabilities = {
   maxConcurrentTools: 8,
   maxToolCallsPerTurn: 30,
   description:
-    'Tier-1 production harness — parallel execution, structured errors, sanitization, loop guards, Guardian approval',
+    'Tier-1 configured harness — parallel execution, structured errors, sanitization, loop guards, Guardian approval',
 };
 
 export class Tier1Harness extends BaseHarness {

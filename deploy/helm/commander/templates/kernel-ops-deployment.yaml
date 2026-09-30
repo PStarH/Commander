@@ -1,3 +1,4 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander — Kernel Ops Deployment
 # =============================================================================
@@ -26,6 +27,10 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.kernelOps.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "commander.postgresBackend" . }}
+      initContainers:
+        {{- include "commander.runtimeMigrationGate" (dict "root" . "key" (include "commander.databaseSchedulerSecretKey" .)) | nindent 8 }}
+      {{- end }}
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets: {{ toYaml . | nindent 8 }}
       {{- end }}
@@ -54,6 +59,7 @@ spec:
                   key: {{ include "commander.databaseSchedulerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             {{- range $key, $value := .Values.kernelOps.env }}
             - name: {{ $key }}
@@ -77,7 +83,14 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if include "commander.postgresBackend" . }}
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if include "commander.postgresBackend" . }}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
+        {{- end }}
+{{- end }}
 {{- end }}

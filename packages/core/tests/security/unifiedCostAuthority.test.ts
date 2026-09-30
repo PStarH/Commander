@@ -470,4 +470,92 @@ describe('UnifiedCostAuthority', () => {
       });
     });
   });
+  // ── Invalid cost measurement must not corrupt the budget ──────────────
+  describe('invalid cost inputs', () => {
+    it('rejects a negative actual cost instead of crediting the budget', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () => localUca.postCall({ runId: 'neg-run', tenantId: 'tenant-neg' }, { costUsd: -5 }),
+        /invalid costUsd/i,
+      );
+    });
+
+    it('rejects a NaN actual cost instead of poisoning cap comparisons', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () => localUca.postCall({ runId: 'nan-run', tenantId: 'tenant-nan' }, { costUsd: NaN }),
+        /invalid costUsd/i,
+      );
+    });
+
+    it('rejects a non-finite estimated token count in preCall', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () =>
+          localUca.preCall({
+            runId: 'tok-run',
+            tenantId: 'tenant-tok',
+            model: 'gpt-4o',
+            estimatedTokens: Number.NaN,
+          }),
+        /invalid estimatedTokens/i,
+      );
+      assert.throws(
+        () =>
+          localUca.preCall({
+            runId: 'tok-run-2',
+            tenantId: 'tenant-tok',
+            model: 'gpt-4o',
+            estimatedTokens: -10,
+          }),
+        /invalid estimatedTokens/i,
+      );
+      // Zero is an estimation failure, not a measured free call: a real model
+      // call always consumes tokens. Allowing it billed the call at $0 and it
+      // therefore never counted against any budget.
+      assert.throws(
+        () =>
+          localUca.preCall({
+            runId: 'tok-run-3',
+            tenantId: 'tenant-tok',
+            model: 'gpt-4o',
+            estimatedTokens: 0,
+          }),
+        /invalid estimatedTokens/i,
+      );
+    });
+
+    it('rejects an omitted token estimate instead of treating a model call as free', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () =>
+          localUca.preCall({
+            runId: 'missing-token-run',
+            tenantId: 'tenant-missing-token',
+            model: 'gpt-4o',
+          }),
+        /estimatedTokens is required/i,
+      );
+    });
+
+    it('rejects a NaN cap instead of silently disabling the limit', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(() => localUca.updateConfig({ perRunUsd: Number.NaN }), /invalid cap/i);
+      // The previous cap must survive the rejected patch, so the limit still bites.
+      const snapshot = localUca.getSnapshot('cap-run', 'tenant-cap');
+      assert.equal(snapshot.perRun.cap, DEFAULT_UCA_CONFIG.perRunUsd);
+    });
+
+    it('rejects an undefined or negative cap instead of disabling the limit', () => {
+      const localUca = new UnifiedCostAuthority();
+      assert.throws(
+        () => localUca.updateConfig({ perTenantDailyUsd: undefined as unknown as number }),
+        /invalid cap/i,
+      );
+      assert.throws(() => localUca.updateConfig({ globalDailyUsd: -1 }), /invalid cap/i);
+      const snapshot = localUca.getSnapshot('cap-run-2', 'tenant-cap-2');
+      assert.equal(snapshot.perTenantDaily.cap, DEFAULT_UCA_CONFIG.perTenantDailyUsd);
+      assert.equal(snapshot.globalDaily.cap, DEFAULT_UCA_CONFIG.globalDailyUsd);
+    });
+  });
 });

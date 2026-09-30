@@ -260,8 +260,6 @@ const TRUST_THRESHOLD_FACTOR: Record<TrustLevel, number> = {
 // Layer 1: 内容净化模式
 // ============================================================================
 
-/** HTML 注释（可藏匿指令）。 */
-const HTML_COMMENT_RE = /<!--[\s\S]*?-->/g;
 /** 零宽 Unicode 字符（可作隐蔽通道 / 隐写）。 */
 const ZERO_WIDTH_RE = /[\u200B-\u200F\u202A-\u202E\u2060-\u2064\u2066-\u206F\uFEFF]/g;
 /** RTL / LTR 覆盖字符（可掩盖真实文本语义）。 */
@@ -557,12 +555,24 @@ export class SemanticFirewall {
     const removed: Array<{ type: string; detail: string }> = [];
     let sanitized = content;
 
-    // HTML 注释 —— 移除
+    // HTML 注释 —— 移除。循环切掉每一段，避免一次替换后仍留下 `<!--`。
     const htmlBefore = sanitized;
-    sanitized = sanitized.replace(HTML_COMMENT_RE, (match) => {
-      removed.push({ type: 'html_comment', detail: `removed ${match.length} chars` });
-      return '';
-    });
+    let commentChars = 0;
+    for (;;) {
+      const start = sanitized.indexOf('<!--');
+      if (start < 0) break;
+      const end = sanitized.indexOf('-->', start + 4);
+      if (end < 0) {
+        commentChars += sanitized.length - start;
+        sanitized = sanitized.slice(0, start);
+        break;
+      }
+      commentChars += end + 3 - start;
+      sanitized = sanitized.slice(0, start) + sanitized.slice(end + 3);
+    }
+    if (commentChars > 0) {
+      removed.push({ type: 'html_comment', detail: `removed ${commentChars} chars` });
+    }
     void htmlBefore;
 
     // 零宽字符 —— 移除
@@ -887,7 +897,16 @@ export class SemanticFirewall {
     if (s.startsWith('tool:') || s.startsWith('verified_tool:')) return 'verified_tool';
     if (s.startsWith('tool_output:') || s.includes('tool_output')) return 'tool_output';
     if (s.startsWith('user:') || s === 'user_input') return 'user_input';
-    if (s.startsWith('agent:') || s.includes('agent_generated')) return 'agent_generated';
+    // `agent:` and `agent_generated` were recognised but the bare form was not, so
+    // `source: 'agent'` — the canonical value — fell through to `unknown` and was
+    // treated as UNTRUSTED. Under AI-6 (:811-825) that made the semantic gate fail
+    // closed for every agent-originated write when no analyzer is injected, and
+    // tightened the threshold factor from 0.9 to 0.6 when one is. The sibling
+    // branches already accept bare forms (`s === 'user_input'`, `s.includes(
+    // 'tool_output')`); this makes the agent branch consistent.
+    if (s.startsWith('agent:') || s === 'agent' || s.includes('agent_generated')) {
+      return 'agent_generated';
+    }
     return 'unknown';
   }
 

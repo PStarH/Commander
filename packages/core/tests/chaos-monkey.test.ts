@@ -417,9 +417,9 @@ describe('Chaos Monkey — Multi-Tenant Isolation', () => {
       `Expected rate limit error, got: ${r2.error}`,
     );
 
-    // Note: in test we cannot easily advance time, but the rate window logic
-    // is verified by the implementation: resetAt = now + 60_000, and a new
-    // window resets the count.
-    assert.ok(true, 'Rate limit window enforcement verified');
+    // NOTE: the *window reset* path (resetAt = now + 60_000, counter reset on a
+    // fresh window) is deliberately NOT asserted here — this test cannot advance
+    // the clock. Only the in-window rejection above is verified. The reset path
+    // requires a fake clock and is not currently covered.
   });
 });

@@ -21,6 +21,7 @@ import {
   validateBaseline,
   type BaselineBinding,
   type BaselineDocument,
+  type BaselineEnv,
   type BaselineSummary,
 } from '../packages/core/src/benchmarks/baselineSchema.ts';
 import { collectBenchmarkEnv } from './benchmarkEnv';
@@ -611,6 +612,15 @@ export async function run(
 
   const env = collectBenchmarkEnv({ evidence: opts.mode });
 
+  // `BenchmarkEnv.evidence` also admits 'source' (a run that executed nothing).
+  // The baseline schema deliberately does not: a baseline document must record
+  // an executed tier. This script only runs simulated or live, so narrow here
+  // and refuse rather than widening the schema's evidence vocabulary.
+  if (env.evidence === 'source') {
+    throw new Error('bench-v2-live: a baseline cannot be emitted at source evidence');
+  }
+  const baselineEnv: BaselineEnv = { ...env, evidence: env.evidence };
+
   const summary: BaselineSummary = {
     passed,
     errors: anomalyErrors,
@@ -644,12 +654,19 @@ export async function run(
     datasetVersion: env.datasetVersion ?? 'unknown',
   };
 
-  const baseline: BaselineDocument = {
+  // `measurements` and `runAt` are emitted with the document but are not part of
+  // the baseline schema's type (nothing in the repo reads them back). Widening
+  // the literal locally keeps the emitted JSON intact without adding fields the
+  // shared schema does not model.
+  const baseline: BaselineDocument & {
+    measurements: BenchMeasurements;
+    runAt: string;
+  } = {
     schemaVersion: 2,
     evidenceLevel: opts.mode,
     baseline: baselineBinding,
     summary,
-    env,
+    env: baselineEnv,
     measurements,
     runAt: new Date().toISOString(),
   };

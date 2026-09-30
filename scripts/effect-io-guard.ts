@@ -3,7 +3,8 @@
  * Static scan for external I/O bypass outside registered action-adapters.
  */
 import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { FIXED_ACTION_ADAPTER_MANIFESTS } from '../packages/contracts/src/actionAdapters.js';
 
@@ -29,15 +30,175 @@ const EXCLUDE_PATTERNS = [
   /\/fixtures\//,
 ];
 
-const IO_PATTERNS = [
+function escapedIdentifier(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * A `require`-like module load: the bare CommonJS `require(...)` plus the
+ * ESM-safe helpers this repository uses instead of it (`nodeRequire` /
+ * `optionalRequire` from packages/core/src/esmCompat.ts and optionalImport.ts).
+ *
+ * Matching only the bare `require` is a silent blind spot: 13 of 14 packages are
+ * `"type": "module"`, so the bare form is forbidden and the codebase migrated to
+ * the helpers. A case-sensitive `require\s*\(` never matches `nodeRequire(`, so
+ * the migration made real subprocess/HTTP I/O invisible to this guard — the
+ * exception went stale (CI failure) and the I/O itself stopped being reported.
+ */
+const REQUIRE_LIKE = '(?:nodeRequire|optionalRequire|require)';
+
+function hasHttpOutbound(source: string, moduleName: 'http' | 'https'): boolean {
+  const modulePattern = `(?:node:)?${moduleName}`;
+  const methods = '(?:get|request)';
+
+  if (
+    new RegExp(
+      `(?:${REQUIRE_LIKE}|import)\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)\\s*\\.\\s*${methods}\\s*\\(`,
+    ).test(source) ||
+    new RegExp(
+      `\\(\\s*await\\s+import\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)\\s*\\)\\s*\\.\\s*${methods}\\s*\\(`,
+    ).test(source)
+  ) {
+    return true;
+  }
+
+  const objectBindings: string[] = [];
+  const objectBindingPatterns = [
+    new RegExp(
+      `import\\s+\\*\\s+as\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*['\"]${modulePattern}['\"]`,
+      'g',
+    ),
+    new RegExp(`import\\s+([A-Za-z_$][\\w$]*)\\s+from\\s*['\"]${modulePattern}['\"]`, 'g'),
+    new RegExp(
+      `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
+      'g',
+    ),
+    new RegExp(
+      `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:await\\s+)?import\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
+      'g',
+    ),
+  ];
+  for (const pattern of objectBindingPatterns) {
+    for (const match of source.matchAll(pattern)) {
+      if (match[1]) objectBindings.push(match[1]);
+    }
+  }
+  if (
+    objectBindings.some((name) =>
+      new RegExp(`\\b${escapedIdentifier(name)}\\s*\\.\\s*${methods}\\s*\\(`).test(source),
+    )
+  ) {
+    return true;
+  }
+
+  const namedBindingPatterns = [
+    new RegExp(`import\\s*\\{([^}]*)\\}\\s*from\\s*['\"]${modulePattern}['\"]`, 'g'),
+    new RegExp(
+      `(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
+      'g',
+    ),
+    new RegExp(
+      `(?:const|let|var)\\s*\\{([^}]*)\\}\\s*=\\s*(?:await\\s+)?import\\s*\\(\\s*['\"]${modulePattern}['\"]\\s*\\)`,
+      'g',
+    ),
+  ];
+  for (const pattern of namedBindingPatterns) {
+    for (const match of source.matchAll(pattern)) {
+      for (const member of (match[1] ?? '').split(',')) {
+        const binding = member.trim().match(/^(get|request)\s*(?:(?:as|:)\s*([A-Za-z_$][\w$]*))?$/);
+        const localName = binding?.[2] ?? binding?.[1];
+        if (localName && new RegExp(`\\b${escapedIdentifier(localName)}\\s*\\(`).test(source)) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
+}
+
+function hasNetOutbound(source: string): boolean {
+  if (
+    new RegExp(
+      `import\\s*\\{[^}]*\\b(?:connect|createConnection)\\b[^}]*\\}\\s*from\\s*['"](?:node:)?net['"]`,
+    ).test(source) ||
+    new RegExp(
+      `(?:const|let|var)\\s*\\{[^}]*\\b(?:connect|createConnection)\\b[^}]*\\}\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?net['"]\\s*\\)`,
+    ).test(source) ||
+    new RegExp(
+      `${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?net['"]\\s*\\)\\s*\\.\\s*(?:connect|createConnection)\\s*\\(`,
+    ).test(source)
+  ) {
+    return true;
+  }
+
+  const bindings = [
+    ...source.matchAll(/import\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"](?:node:)?net['"]/g),
+    ...source.matchAll(
+      new RegExp(
+        `(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?net['"]\\s*\\)`,
+        'g',
+      ),
+    ),
+  ];
+  return bindings.some((match) => {
+    const binding = escapedIdentifier(match[1] ?? '');
+    return new RegExp(
+      `\\b${binding}\\s*\\.\\s*(?:connect|createConnection)\\s*\\(|new\\s+${binding}\\s*\\.\\s*Socket\\s*\\([^)]*\\)\\s*\\.\\s*connect\\s*\\(`,
+    ).test(source);
+  });
+}
+
+function hasChildProcessExecution(source: string): boolean {
+  const execMembers = '(?:exec|execSync|execFile|execFileSync|spawn|spawnSync|fork)';
+  if (
+    new RegExp(
+      `import\\s*\\{[^}]*\\b${execMembers}\\b[^}]*\\}\\s*from\\s*['"](?:node:)?child_process['"]`,
+    ).test(source) ||
+    new RegExp(
+      `(?:const|let|var)\\s*\\{[^}]*\\b${execMembers}\\b[^}]*\\}\\s*=\\s*${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?child_process['"]\\s*\\)`,
+    ).test(source)
+  ) {
+    return true;
+  }
+  const importsChildProcess =
+    /\bfrom\s*['"](?:node:)?child_process['"]/.test(source) ||
+    new RegExp(`${REQUIRE_LIKE}\\s*\\(\\s*['"](?:node:)?child_process['"]\\s*\\)`).test(source) ||
+    /\bimport\s*\(\s*['"](?:node:)?child_process['"]\s*\)/.test(source);
+  return importsChildProcess && new RegExp(`\\b${execMembers}\\s*\\(`).test(source);
+}
+
+interface IoPattern {
+  name: string;
+  regex: RegExp;
+  detect?: (source: string) => boolean;
+}
+
+const IO_PATTERNS: IoPattern[] = [
   { name: 'fetch', regex: /\bfetch\s*\(/ },
   { name: 'axios', regex: /\baxios\b/ },
   { name: 'undici', regex: /\bundici\b/ },
-  { name: 'node:http', regex: /\bnode:http\b|\bfrom\s+['"]http['"]/ },
-  { name: 'node:https', regex: /\bnode:https\b|\bfrom\s+['"]https['"]/ },
-  { name: 'net', regex: /\bnode:net\b|\bfrom\s+['"]net['"]/ },
+  {
+    name: 'node:http',
+    regex: /\b(?:get|request)\b/,
+    detect: (source) => hasHttpOutbound(source, 'http'),
+  },
+  {
+    name: 'node:https',
+    regex: /\b(?:get|request)\b/,
+    detect: (source) => hasHttpOutbound(source, 'https'),
+  },
+  {
+    name: 'net',
+    regex: /\b(?:connect|createConnection)\b/,
+    detect: hasNetOutbound,
+  },
   { name: 'WebSocket', regex: /\bWebSocket\b|\bnew\s+WebSocket\s*\(/ },
-  { name: 'child_process', regex: /\bchild_process\b|\bexecSync\s*\(|\bspawn\s*\(/ },
+  {
+    name: 'child_process',
+    regex: /\bchild_process\b/,
+    detect: hasChildProcessExecution,
+  },
 ];
 
 interface ExceptionEntry {
@@ -48,9 +209,17 @@ interface ExceptionEntry {
 }
 
 interface AllowlistEntry {
+  id: string;
   path: string;
+  sourceSha256: string;
+  owner: string;
+  reason: string;
+  expiresAt: string;
   patterns: string[];
 }
+
+const SHA256 = /^[a-f0-9]{64}$/;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 function loadJson<T>(path: string): T {
   return JSON.parse(readFileSync(path, 'utf-8')) as T;
@@ -60,19 +229,48 @@ function isExcluded(relPath: string): boolean {
   return EXCLUDE_PATTERNS.some((p) => p.test(relPath));
 }
 
-function walk(dir: string, files: string[] = []): string[] {
+function walk(dir: string, root: string, files: string[] = []): string[] {
   if (!existsSync(dir)) return files;
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
-    const rel = relative(ROOT, full).split('\\').join('/');
+    const rel = relative(root, full).split('\\').join('/');
     if (statSync(full).isDirectory()) {
       if (entry === 'node_modules' || entry === 'dist') continue;
-      walk(full, files);
+      walk(full, root, files);
     } else if (entry.endsWith('.ts') && !isExcluded(rel)) {
       files.push(full);
     }
   }
   return files;
+}
+
+function sha256(source: string): string {
+  return createHash('sha256').update(source).digest('hex');
+}
+
+function validIsoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !ISO_DATE.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function validAllowlistMetadata(entry: AllowlistEntry): boolean {
+  return Boolean(
+    entry &&
+    typeof entry.id === 'string' &&
+    entry.id.length > 0 &&
+    typeof entry.path === 'string' &&
+    entry.path.length > 0 &&
+    SHA256.test(entry.sourceSha256) &&
+    typeof entry.owner === 'string' &&
+    entry.owner.length > 0 &&
+    typeof entry.reason === 'string' &&
+    entry.reason.length >= 10 &&
+    validIsoDate(entry.expiresAt) &&
+    Array.isArray(entry.patterns) &&
+    entry.patterns.length > 0 &&
+    entry.patterns.every((pattern) => typeof pattern === 'string' && pattern.length > 0),
+  );
 }
 
 function registeredAdapterPrefixes(): string[] {
@@ -93,7 +291,80 @@ function sourceMatchesPattern(source: string, pattern: string): boolean {
 }
 
 function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+  const moduleSpecifiers = new Set([
+    'http',
+    'https',
+    'net',
+    'child_process',
+    'node:http',
+    'node:https',
+    'node:net',
+    'node:child_process',
+  ]);
+  let output = '';
+  for (let index = 0; index < source.length;) {
+    const char = source[index];
+    const next = source[index + 1];
+    if (char === '/' && next === '/') {
+      while (index < source.length && source[index] !== '\n') {
+        output += ' ';
+        index += 1;
+      }
+      continue;
+    }
+    if (char === '/' && next === '*') {
+      while (index < source.length) {
+        const current = source[index];
+        const after = source[index + 1];
+        if (current === '\r' || current === '\n') output += current;
+        else output += ' ';
+        index += 1;
+        if (current === '*' && after === '/') {
+          output += ' ';
+          index += 1;
+          break;
+        }
+      }
+      continue;
+    }
+    if (char === '"' || char === "'") {
+      const quote = char;
+      let literal = quote;
+      index += 1;
+      while (index < source.length) {
+        const current = source[index];
+        literal += current;
+        index += 1;
+        if (current === '\\' && index < source.length) {
+          literal += source[index];
+          index += 1;
+        } else if (current === quote) {
+          break;
+        }
+      }
+      output += moduleSpecifiers.has(literal.slice(1, -1)) ? literal : `${quote}${quote}`;
+      continue;
+    }
+    if (char === '`') {
+      output += char;
+      index += 1;
+      while (index < source.length) {
+        const current = source[index];
+        output += current;
+        index += 1;
+        if (current === '\\' && index < source.length) {
+          output += source[index];
+          index += 1;
+        } else if (current === '`') {
+          break;
+        }
+      }
+      continue;
+    }
+    output += char;
+    index += 1;
+  }
+  return output;
 }
 
 function stripTypeOnlyImports(source: string): string {
@@ -109,7 +380,9 @@ function analyzableSource(source: string): string {
 
 function detectedIoTypes(source: string): string[] {
   const body = analyzableSource(source);
-  return IO_PATTERNS.filter(({ regex }) => regex.test(body)).map(({ name }) => name);
+  return IO_PATTERNS.filter(({ regex, detect }) => (detect ? detect(body) : regex.test(body))).map(
+    ({ name }) => name,
+  );
 }
 
 function allowlistCoversAll(source: string, allow: AllowlistEntry): boolean {
@@ -119,7 +392,9 @@ function allowlistCoversAll(source: string, allow: AllowlistEntry): boolean {
     const io = IO_PATTERNS.find((p) => p.name === ioName);
     if (!io) return false;
     // Pattern must itself name/target this IO type (not merely co-exist in the file).
-    return allow.patterns.some((p) => io.regex.test(p) && sourceMatchesPattern(source, p));
+    return allow.patterns.some(
+      (p) => (p === ioName || io.regex.test(p)) && sourceMatchesPattern(source, p),
+    );
   });
 }
 
@@ -129,7 +404,9 @@ function exceptionCoversAll(source: string, exception: ExceptionEntry): boolean 
   return detected.every((ioName) => {
     const io = IO_PATTERNS.find((p) => p.name === ioName);
     if (!io) return false;
-    return exception.patterns.some((p) => io.regex.test(p) && sourceMatchesPattern(source, p));
+    return exception.patterns.some(
+      (p) => (p === ioName || io.regex.test(p)) && sourceMatchesPattern(source, p),
+    );
   });
 }
 
@@ -144,7 +421,7 @@ export function scanEffectIo(root = ROOT): string[] {
   const adapterPrefixes = registeredAdapterPrefixes();
   const today = new Date().toISOString().slice(0, 10);
   const exceptionByPath = new Map(exceptionsConfig.exceptions.map((e) => [e.path, e]));
-  const allowlistByPath = new Map(allowlistConfig.paths.map((e) => [e.path, e]));
+  const validAllowlist: AllowlistEntry[] = [];
 
   if (exceptionsConfig.exceptions.length > exceptionsConfig.baselineCount) {
     errors.push(
@@ -153,28 +430,67 @@ export function scanEffectIo(root = ROOT): string[] {
   }
 
   for (const ex of exceptionsConfig.exceptions) {
-    if (ex.expiresAt < today && existsSync(join(root, ex.path))) {
+    const sourcePath = join(root, ex.path);
+    if (!existsSync(sourcePath)) {
+      errors.push(
+        `Stale effect-io exception '${ex.id}' (${ex.path}) references a deleted source file`,
+      );
+    } else if (ex.expiresAt < today) {
       errors.push(`Expired effect-io exception '${ex.id}' (${ex.path})`);
+    } else if (detectedIoTypes(readFileSync(sourcePath, 'utf-8')).length === 0) {
+      errors.push(
+        `Stale effect-io exception '${ex.id}' (${ex.path}) no longer matches its approved I/O`,
+      );
     }
   }
 
-  const currentMatches = new Set<string>();
+  for (const allow of allowlistConfig.paths) {
+    const label = allow?.id || allow?.path || '<unknown>';
+    if (!validAllowlistMetadata(allow)) {
+      errors.push(`Invalid effect-io allowlist '${label}'`);
+      continue;
+    }
+    const sourcePath = join(root, allow.path);
+    if (!existsSync(sourcePath)) {
+      errors.push(
+        `Stale effect-io allowlist '${allow.id}' (${allow.path}) references a deleted source file`,
+      );
+      continue;
+    }
+    if (allow.expiresAt < today) {
+      errors.push(`Expired effect-io allowlist '${allow.id}' (${allow.path})`);
+      continue;
+    }
+    const source = readFileSync(sourcePath, 'utf-8');
+    if (sha256(source) !== allow.sourceSha256) {
+      errors.push(`Source drift in effect-io allowlist '${allow.id}' (${allow.path})`);
+      continue;
+    }
+    if (!allowlistCoversAll(source, allow)) {
+      errors.push(`Unnecessary or incomplete effect-io allowlist '${allow.id}' (${allow.path})`);
+      continue;
+    }
+    validAllowlist.push(allow);
+  }
+
+  const allowlistByPath = new Map(validAllowlist.map((entry) => [entry.path, entry]));
 
   for (const scanRoot of SCAN_ROOTS) {
-    for (const file of walk(join(root, scanRoot))) {
+    for (const file of walk(join(root, scanRoot), root)) {
       const rel = relative(root, file).split('\\').join('/');
       const source = readFileSync(file, 'utf-8');
       const ioTypes = detectedIoTypes(source);
       if (ioTypes.length === 0) continue;
 
-      if (adapterPrefixes.some((p) => rel.startsWith(p))) continue;
+      if (adapterPrefixes.some((prefix) => rel === prefix || rel.startsWith(`${prefix}/`))) {
+        continue;
+      }
 
       const allow = allowlistByPath.get(rel);
       if (allow && allowlistCoversAll(source, allow)) continue;
 
       const exception = exceptionByPath.get(rel);
       if (exception && exceptionCoversAll(source, exception)) {
-        currentMatches.add(rel);
         continue;
       }
 

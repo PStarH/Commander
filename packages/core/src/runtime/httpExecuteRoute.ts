@@ -3,7 +3,7 @@ import type { AgentRuntimeInterface } from './agentRuntimeInterface';
 import { runWithTenant } from './tenantContext';
 import { validateOrThrow, Schemas } from './apiValidation';
 import { parseBody, sendJson } from './httpUtils';
-import { assertBodyTenant } from './httpTenantGate';
+import { assertBodyTenant, assertTenantAccess } from './httpTenantGate';
 import { acquireRuntimeAdmission, releaseRuntimeAdmission } from './runtimeAdmission';
 import { requireMinRole, resolveHttpAuthContext, type HttpAuthContext } from './httpRbacGate';
 
@@ -28,6 +28,7 @@ const DEFAULT_EXECUTE_TOOLS = [
 export interface RuntimeSessionEntry {
   runtime: AgentRuntimeInterface;
   lastAccessedAt: number;
+  tenantId?: string;
 }
 
 export interface HttpExecuteRouteDeps {
@@ -84,24 +85,30 @@ export async function handleExecuteRoute(
     return true;
   }
 
-  const sessionId = body.sessionId ?? `session_${Date.now()}`;
-  let entry = deps.runtimes.get(sessionId);
-  if (!entry) {
-    if (deps.runtimes.size >= deps.maxSessions) deps.evictStaleSessions();
-    if (deps.runtimes.size >= deps.maxSessions) {
-      releaseRuntimeAdmission();
-      sendJson(res, 429, {
-        error: 'Maximum sessions reached. Please reuse an existing session.',
-      });
+  // EH-02: every post-acquire path must be inside one try/finally. Previously
+  // `finally` started only around `execute()`, so a throwing runtime factory or
+  // eviction left the admission slot leaked forever.
+  try {
+    const sessionId = body.sessionId ?? `session_${Date.now()}`;
+    let entry = deps.runtimes.get(sessionId);
+    if (!entry) {
+      if (deps.runtimes.size >= deps.maxSessions) deps.evictStaleSessions();
+      if (deps.runtimes.size >= deps.maxSessions) {
+        sendJson(res, 429, {
+          error: 'Maximum sessions reached. Please reuse an existing session.',
+        });
+        return true;
+      }
+      const runtime = deps.createRuntime(body.provider ?? 'openai');
+      entry = { runtime, lastAccessedAt: Date.now(), tenantId };
+      deps.runtimes.set(sessionId, entry);
+    } else if (
+      !assertTenantAccess(res, tenantId, entry.tenantId, req.url ?? '', deps.tenantApiKeyHashes)
+    ) {
       return true;
     }
-    const runtime = deps.createRuntime(body.provider ?? 'openai');
-    entry = { runtime, lastAccessedAt: Date.now() };
-    deps.runtimes.set(sessionId, entry);
-  }
-  entry.lastAccessedAt = Date.now();
+    entry.lastAccessedAt = Date.now();
 
-  try {
     const result = await runWithTenant(tenantId, async () =>
       entry!.runtime.execute({
         agentId: `http-${sessionId}`,

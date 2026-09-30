@@ -205,6 +205,27 @@ const DEFAULT_MODELS: ModelConfig[] = [
     supportsJSONMode: false,
     supportsStructuredOutput: false,
   },
+  {
+    id: 'agnes-2.5-flash',
+    provider: 'agnes',
+    tier: 'eco',
+    costPer1MInput: 0,
+    costPer1MOutput: 0,
+    capabilities: [
+      'code',
+      'reasoning',
+      'analysis',
+      'fast',
+      'low_cost',
+      'streaming',
+      'function_calling',
+    ],
+    contextWindow: 524_288,
+    priority: 9,
+    supportsJSONMode: false,
+    supportsStructuredOutput: false,
+    maxOutputTokens: 65_536,
+  },
 
   // ===== Standard tier — balanced quality/cost =====
   {
@@ -509,7 +530,7 @@ export interface ProviderTierConfig {
 
 export const RECOMMENDED_TIERS: Record<ProviderTier, ProviderTierConfig> = {
   essential: {
-    description: 'Covers 95% of use cases with top 3 providers',
+    description: 'Default provider set for common workloads; customize as needed',
     providers: ['openai', 'anthropic', 'google'],
     minModels: 3,
   },
@@ -519,7 +540,7 @@ export const RECOMMENDED_TIERS: Record<ProviderTier, ProviderTierConfig> = {
     minModels: 2,
   },
   enterprise: {
-    description: 'SOC2/compliance requirements with managed services',
+    description: 'Managed-service provider options for deployments with compliance requirements',
     providers: ['bedrock', 'azure'],
     minModels: 2,
   },
@@ -917,6 +938,7 @@ export class ModelRouter {
     const estimatedOutputTokens = Math.min(
       ctx.tokenBudget,
       model.contextWindow - estimatedInputTokens,
+      model.maxOutputTokens ?? Number.POSITIVE_INFINITY,
     );
     const estimatedCost =
       (estimatedInputTokens / 1_000_000) * model.costPer1MInput +
@@ -1118,6 +1140,7 @@ export class ModelRouter {
     const estimatedOutputTokens = Math.min(
       ctx.tokenBudget,
       cheapest.contextWindow - estimatedInputTokens,
+      cheapest.maxOutputTokens ?? Number.POSITIVE_INFINITY,
     );
 
     const initial: RoutingDecision = {
@@ -1472,8 +1495,19 @@ export class ModelRouter {
           ]
         : walkDown;
       for (const t of order) {
-        candidates = [...(this.tierIndex.get(t) ?? [])];
-        if (candidates.length > 0) break;
+        // Re-apply the registeredProviders filter on every tier of the walk.
+        // Without this, a single-provider deployment (e.g. only `agnes`
+        // registered) with an empty requested tier silently fell through to
+        // foreign-provider models, producing provider-side 503 model_not_found
+        // for models the caller cannot execute.
+        let tierCandidates = [...(this.tierIndex.get(t) ?? [])];
+        if (registeredProviders && registeredProviders.size > 0) {
+          tierCandidates = tierCandidates.filter((m) => registeredProviders.has(m.provider));
+        }
+        if (tierCandidates.length > 0) {
+          candidates = tierCandidates;
+          break;
+        }
       }
     }
 

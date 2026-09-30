@@ -31,6 +31,75 @@ const grantBase = {
 };
 
 describe('L3-08a InMemoryTicketAdapter chaos', () => {
+  it('WP02 isolates create and retries for colon-colliding tenant/key tuples', async () => {
+    const tickets = new InMemoryTicketAdapter();
+    const firstInput = { tenantId: 'a:b', idempotencyKey: 'c', title: 'First tenant' };
+    const secondInput = { tenantId: 'a', idempotencyKey: 'b:c', title: 'Second tenant' };
+    const first = await tickets.create(firstInput);
+    const second = await tickets.create(secondInput);
+
+    assert.notEqual(first.ticketId, second.ticketId);
+    assert.deepEqual(first, { ...firstInput, ticketId: first.ticketId, status: 'open' });
+    assert.deepEqual(second, { ...secondInput, ticketId: second.ticketId, status: 'open' });
+    assert.deepEqual(await tickets.create({ ...firstInput, title: 'Retry' }), first);
+    assert.deepEqual(await tickets.create({ ...secondInput, title: 'Retry' }), second);
+  });
+
+  it('WP02 query cannot see a colon-colliding tuple from another tenant', async () => {
+    const tickets = new InMemoryTicketAdapter();
+    const first = await tickets.create({
+      tenantId: 'a:b',
+      idempotencyKey: 'c',
+      title: 'First tenant',
+    });
+    const query = { effectId: 'query', type: 'demo.ticket.create', request: {} };
+    assert.deepEqual(
+      await tickets.queryOutcome({ ...query, tenantId: 'a', idempotencyKey: 'b:c' }),
+      { status: 'NOT_APPLIED', response: {} },
+    );
+    const second = await tickets.create({
+      tenantId: 'a',
+      idempotencyKey: 'b:c',
+      title: 'Second tenant',
+    });
+    for (const record of [first, second]) {
+      assert.deepEqual(await tickets.queryOutcome({ ...query, ...record }), {
+        status: 'APPLIED',
+        response: { ticketId: record.ticketId, title: record.title, status: 'open' },
+      });
+    }
+    assert.equal(tickets.createInvocations, 2);
+    assert.equal(tickets.compensateInvocations, 0);
+  });
+
+  it('WP02 compensation cannot close a colon-colliding tuple from another tenant', async () => {
+    const tickets = new InMemoryTicketAdapter();
+    const first = await tickets.create({
+      tenantId: 'a:b',
+      idempotencyKey: 'c',
+      title: 'First tenant',
+    });
+    await assert.rejects(
+      tickets.compensate({ tenantId: 'a', idempotencyKey: 'b:c' }),
+      /DEMO_TICKET_NOT_FOUND/,
+    );
+    const second = await tickets.create({
+      tenantId: 'a',
+      idempotencyKey: 'b:c',
+      title: 'Second tenant',
+    });
+    assert.deepEqual(await tickets.compensate(second), { ...second, status: 'closed' });
+    assert.deepEqual(await tickets.create(first), first);
+    const query = { effectId: 'query', type: 'demo.ticket.create', request: {} };
+    const firstOutcome = await tickets.queryOutcome({ ...query, ...first });
+    assert.ok(firstOutcome.status === 'APPLIED', 'first tenant query must report APPLIED');
+    assert.equal(firstOutcome.response?.status, 'open');
+    const secondOutcome = await tickets.queryOutcome({ ...query, ...second });
+    assert.ok(secondOutcome.status === 'APPLIED', 'second tenant query must report APPLIED');
+    assert.equal(secondOutcome.response?.status, 'closed');
+    assert.deepEqual(await tickets.compensate(first), { ...first, status: 'closed' });
+  });
+
   it('compensates a created ticket by idempotency key without deleting its audit identity', async () => {
     const tickets = new InMemoryTicketAdapter();
     const created = await tickets.create({
@@ -54,7 +123,7 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
       request: {},
       tenantId: 'tenant',
     });
-    assert.equal(outcome.status, 'COMPLETED');
+    assert.equal(outcome.status, 'APPLIED');
     assert.equal(outcome.response?.status, 'closed');
   });
 
@@ -185,14 +254,18 @@ describe('L3-08a InMemoryTicketAdapter chaos', () => {
     assert.equal(effects.get('eff-ticket')?.state, 'COMPLETION_UNKNOWN');
 
     const reconciled = await broker.reconcileUnknown({
-      effectId: 'eff-ticket',
-      tenantId: 'tenant',
-      actor: 'reconciler',
+      effect: {
+        ...effects.get('eff-ticket')!,
+        state: 'COMPLETION_UNKNOWN',
+      },
       querier: tickets,
     });
-    assert.equal(reconciled.status, 'COMPLETED');
-    assert.equal(reconciled.invokedExecutor, false);
+    assert.equal(reconciled.status, 'APPLIED');
     assert.equal(tickets.createInvocations, 1, 'chaos: no second remote write');
-    assert.equal(effects.get('eff-ticket')?.state, 'COMPLETED');
+    assert.equal(
+      effects.get('eff-ticket')?.state,
+      'COMPLETION_UNKNOWN',
+      'EffectBroker is snapshot-only; the repository owner applies the disposition',
+    );
   });
 });

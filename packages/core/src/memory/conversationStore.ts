@@ -20,9 +20,13 @@
 
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
+import { randomBytes } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { walCheckpoint } from '../storage/walCheckpoint';
-import { getCurrentTenantId } from '../runtime/tenantContext';
+import { tenantBucketOrThrow, TenantIsolationError } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -115,7 +119,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = require('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (err) {
   reportSilentFailure(err, 'conversationStore:117');
   // better-sqlite3 not installed
@@ -290,7 +294,7 @@ export class ConversationStore {
   }
 
   private getTenantId(): string {
-    return getCurrentTenantId() ?? '__default__';
+    return tenantBucketOrThrow();
   }
 
   private prepareStatements(): void {
@@ -301,9 +305,17 @@ export class ConversationStore {
       VALUES (@id, @projectId, @agentId, @userId, @goal, @startedAt, @tags, @metadata, @tenantId)
     `);
 
+    // MEM-C09: a turn row has no tenant column of its own — ownership is
+    // derived from conversation_sessions. The INSERT...SELECT therefore only
+    // fires when the target session belongs to the ambient tenant, so a foreign
+    // sessionId cannot be used as a write handle. Zero changes means the session
+    // is unknown or owned by another tenant; the caller refuses (fail closed).
     this.stmtInsertTurn = d.prepare(`
       INSERT INTO conversation_turns (id, session_id, role, content, tool_name, tool_call_id, token_count, importance, created_at)
-      VALUES (@id, @sessionId, @role, @content, @toolName, @toolCallId, @tokenCount, @importance, @createdAt)
+      SELECT @id, @sessionId, @role, @content, @toolName, @toolCallId, @tokenCount, @importance, @createdAt
+      WHERE EXISTS (
+        SELECT 1 FROM conversation_sessions WHERE id = @sessionId AND tenant_id = @tenantId
+      )
     `);
 
     this.stmtGetSession = d.prepare(
@@ -381,7 +393,7 @@ export class ConversationStore {
     await this.init();
 
     const session: ConversationSession = {
-      id: `conv-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      id: `conv-${Date.now()}-${randomBytes(4).toString('hex')}`,
       projectId: params.projectId,
       agentId: params.agentId,
       userId: params.userId,
@@ -477,7 +489,7 @@ export class ConversationStore {
       createdAt: new Date().toISOString(),
     };
 
-    this.stmtInsertTurn.run({
+    const result = this.stmtInsertTurn.run({
       id: turn.id,
       sessionId: turn.sessionId,
       role: turn.role,
@@ -487,7 +499,14 @@ export class ConversationStore {
       tokenCount: turn.tokenCount ?? null,
       importance: turn.importance,
       createdAt: turn.createdAt,
+      tenantId: this.getTenantId(),
     });
+
+    if (result.changes === 0) {
+      throw new TenantIsolationError(
+        `Conversation session not found in the current tenant: ${params.sessionId}`,
+      );
+    }
 
     return turn;
   }
@@ -796,6 +815,15 @@ export class ConversationStore {
       this.db = null;
       this.initialized = false;
     }
+    // `init()` short-circuits on a non-null `initPromise` (`if (this.initPromise)
+    // return this.initPromise`). Leaving the already-resolved promise in place
+    // made a close-then-reuse cycle silently skip re-initialisation: `this.db`
+    // stayed null while the cached statements kept pointing at the *closed*
+    // connection, so every subsequent call threw
+    // `TypeError: The database connection is not open` instead of reopening.
+    // Clearing it lets the next operation rebuild the connection, and
+    // `prepareStatements()` then rebinds all 11 cached statements.
+    this.initPromise = null;
   }
 }
 

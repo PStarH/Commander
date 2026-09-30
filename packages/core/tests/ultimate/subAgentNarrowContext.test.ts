@@ -25,7 +25,6 @@ describe('sub-agent narrow context memory recall', () => {
       projectId: 'proj-1',
       content: 'Prior decision: use SQLite for persistence',
       kind: 'DECISION',
-      title: 'storage choice',
       importance: 0.9,
     });
 

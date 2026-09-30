@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import type { Request } from 'express';
 import type { IWarRoomStore } from './store';
 import {
   proactiveConflictCheck,
@@ -7,12 +8,36 @@ import {
   Agent as ConflictAgent,
   ProposedAction,
 } from './conflictDetection';
+import { canAccessProject } from './projectEndpoints';
+
+/**
+ * AUDIT api-remaining#L7 (LM-20): all three conflict entry points read project
+ * agents/missions straight out of the WarRoom snapshot after checking only that
+ * the project *exists*. That made the whole conflict surface a cross-tenant /
+ * cross-owner read primitive: any authenticated principal could enumerate
+ * another tenant's agents, mission ids, workloads and governance modes.
+ *
+ * The three handlers now share one resolution helper so they cannot drift apart
+ * again. It reuses the same `canAccessProject` predicate the project router
+ * uses (no second role model) and deliberately collapses "no such project" and
+ * "not yours" into the same 404 so the response does not disclose existence.
+ */
+function resolveAccessibleSnapshot(
+  store: IWarRoomStore,
+  req: Request,
+  projectId: string,
+): ReturnType<IWarRoomStore['getProjectSnapshot']> | undefined {
+  const snapshot = store.getProjectSnapshot(projectId);
+  if (!snapshot) return undefined;
+  if (!canAccessProject(req, (snapshot as { project?: unknown }).project)) return undefined;
+  return snapshot;
+}
 
 export function createConflictRouter(store: IWarRoomStore): Router {
   const router = Router();
 
   router.post('/projects/:projectId/conflict-detection/proactive', (req, res) => {
-    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    const snapshot = resolveAccessibleSnapshot(store, req, req.params.projectId);
     if (!snapshot) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -63,7 +88,7 @@ export function createConflictRouter(store: IWarRoomStore): Router {
   });
 
   router.post('/projects/:projectId/conflict-detection/reactive', (req, res) => {
-    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    const snapshot = resolveAccessibleSnapshot(store, req, req.params.projectId);
     if (!snapshot) {
       return res.status(404).json({ error: 'Project not found' });
     }
@@ -92,7 +117,7 @@ export function createConflictRouter(store: IWarRoomStore): Router {
   });
 
   router.get('/projects/:projectId/conflict-detection/summary', (req, res) => {
-    const snapshot = store.getProjectSnapshot(req.params.projectId);
+    const snapshot = resolveAccessibleSnapshot(store, req, req.params.projectId);
     if (!snapshot) {
       return res.status(404).json({ error: 'Project not found' });
     }

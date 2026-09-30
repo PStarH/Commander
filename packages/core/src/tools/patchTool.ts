@@ -2,6 +2,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { execSandboxed } from './sandboxedExec';
 import { getGlobalLogger } from '../logging';
@@ -9,7 +10,10 @@ import { safePath } from './fileSystemTool';
 import { pathExists } from './_utils/pathExists';
 
 /** Reject paths containing shell metacharacters that could enable injection. */
-const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\\\x00-\x1f]/;
+// Paths are passed to execFileSync as argv, never through a shell. Windows
+// separators and drive-letter colons are therefore safe; reject only actual
+// shell metacharacters/control bytes that should never be part of a filename.
+const SHELL_UNSAFE_RE = /[;&|`$(){}[\]!#~<>*\n\t'"\x00-\x1f]/;
 
 function assertShellSafePath(filePath: string, label: string): void {
   if (SHELL_UNSAFE_RE.test(filePath)) {
@@ -67,7 +71,14 @@ export class ApplyPatchTool implements Tool {
     if (!patchContent) return 'Error: No patch content provided.';
 
     const cwd = process.cwd();
-    const patchFile = path.join(cwd, `.tmp-patch-${Date.now()}.diff`);
+    // The patch file is scratch *input* for the `patch` CLI — it is never an
+    // artifact of the edit itself. Writing it into `process.cwd()` means any
+    // crash, kill, or aborted test run leaves `.tmp-patch-*.diff` behind inside
+    // the user's checkout; because the name is dot-prefixed but not gitignored,
+    // `git add -A` will happily commit it. A private directory under the OS
+    // temp root cannot pollute the repository no matter how the process exits.
+    const patchDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'commander-patch-'));
+    const patchFile = path.join(patchDir, 'change.diff');
 
     try {
       // Write patch to temp file (async — no event-loop blocking)
@@ -172,23 +183,10 @@ export class ApplyPatchTool implements Tool {
             outputLines.push(
               `❌ Verification failed:\n${stderr || stdout || 'Exit code ' + verifyResult.exitCode}`,
             );
-            // Auto-revert on failure
-            try {
-              const revertRes = await execSandboxed(`git checkout -- "${fileToPatch}"`, 10, cwd);
-              if (revertRes.exitCode === 0) {
-                outputLines.push('\n↩️  Patch reverted automatically.');
-              } else {
-                outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
-                getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert failed', {
-                  stderr: revertRes.stderr,
-                });
-              }
-            } catch (e) {
-              outputLines.push('\n⚠️  Could not auto-revert. Manual restore needed.');
-              getGlobalLogger().warn('ApplyPatchTool', 'Auto-revert exception', {
-                error: (e as Error)?.message,
-              });
-            }
+            // No auto-revert: `git checkout -- <file>` restores the *index*
+            // version, which is not this patch's pre-image, so it silently
+            // discarded the user's pre-existing unstaged changes. The file is
+            // left exactly as the patch produced it.
           }
         } catch (err: unknown) {
           outputLines.push(
@@ -203,7 +201,7 @@ export class ApplyPatchTool implements Tool {
       return `Patch failed: ${msg.slice(0, 300)}`;
     } finally {
       try {
-        await fs.promises.unlink(patchFile);
+        await fs.promises.rm(patchDir, { recursive: true, force: true });
       } catch (e) {
         getGlobalLogger().warn('ApplyPatchTool', 'Temp patch cleanup failed', {
           error: (e as Error)?.message,

@@ -72,6 +72,12 @@ async function readResponse(
     if (err instanceof Error && err.name === 'AbortError') {
       throw new SafeFetchError('aborted', `Request to ${url} was aborted`);
     }
+    // A destination rejected by the outbound policy (not allowlisted, not
+    // authorized, or resolving to a private address) is a policy denial, not a
+    // transport failure — surface it as such instead of a generic network error.
+    if (err instanceof Error && err.name === 'OutboundNetworkPolicyError') {
+      throw new SafeFetchError('unsafe_url', `URL blocked: ${err.message}`);
+    }
     throw new SafeFetchError('network', `Network error: ${(err as Error).message}`);
   }
 
@@ -161,6 +167,10 @@ export async function safeFetch(
     const response = await readResponse(
       currentUrl,
       options,
+      // Authorization-aware egress: the policy requires the destination to be
+      // allowlisted (or to hold a registered tenant-bound authorization) AND to
+      // pass the SSRF/private-address check with an IP pin. Every redirect hop
+      // is re-checked because this loop re-enters readResponse per hop.
       (requestUrl, init) => getOutboundNetworkPolicy().ssrfCheckedFetch(requestUrl, init),
       'manual',
     );

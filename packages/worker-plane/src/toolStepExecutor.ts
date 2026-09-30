@@ -11,10 +11,16 @@
 
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
 import { WorkerExecutionError } from './types.js';
-import type { CapabilityTokenIssuer, WorkloadBinding } from '@commander/effect-broker';
+import {
+  deriveEffectIdempotencyKey,
+  type CapabilityTokenIssuer,
+  type WorkloadBinding,
+} from '@commander/effect-broker';
 import {
   assertEffectBrokerForProduction,
+  isProductionEffectGate,
   mustRouteExternalEffectThroughBroker,
+  workerExecutionErrorFromEffectFailure,
 } from './effectGate.js';
 import type { ToolEffectCatalog } from './toolEffectCatalog.js';
 import { DENY_ALL_TOOL_EFFECT_CATALOG } from './toolEffectCatalog.js';
@@ -125,19 +131,27 @@ export class ToolStepExecutor implements StepExecutor {
           retryable: false,
         });
       }
-      if (!step.lease || !input.effectId || !input.idempotencyKey) {
+      if (!step.lease || !input.effectId) {
         throw new WorkerExecutionError(
-          'External tool execution requires effectId, idempotencyKey, and a live step lease',
+          'External tool execution requires effectId and a live step lease',
           { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
         );
       }
       const request = input.actionEnvelope ?? input.args ?? {};
       const effectType = input.effectType ?? input.toolName;
+      const idempotencyKey = deriveEffectIdempotencyKey({
+        tenantId: step.tenantId,
+        runId: step.runId,
+        stepId: step.id,
+        effectId: input.effectId,
+        request,
+      });
       let capabilityToken = input.capabilityToken;
-      const production =
-        process.env.NODE_ENV === 'production' ||
-        process.env.COMMANDER_PROFILE === 'enterprise' ||
-        process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1';
+      // The production gate must be the shared one (effectGate.isProductionEffectGate()).
+      // A locally re-derived predicate that omitted COMMANDER_REQUIRE_EFFECT_BROKER let a
+      // deployment that had switched the broker gate on fall back to the step's own
+      // caller-supplied capabilityToken instead of demanding the step-bound mint.
+      const production = isProductionEffectGate();
       let workloadBinding = getStepWorkloadBinding();
       if (this.capabilityIssuer) {
         workloadBinding = requireStepWorkloadBinding();
@@ -164,7 +178,7 @@ export class ToolStepExecutor implements StepExecutor {
           token: capabilityToken,
           type: effectType,
           request,
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey,
           lease: step.lease,
           actor: context.worker.id,
           timeoutMs: input.timeoutMs,
@@ -177,12 +191,9 @@ export class ToolStepExecutor implements StepExecutor {
           toolName: input.toolName,
         };
       } catch (error) {
-        if (error instanceof WorkerExecutionError) throw error;
-        const message = error instanceof Error ? error.message : String(error);
-        throw new WorkerExecutionError(message, {
-          code: 'EFFECT_EXECUTION_FAILED',
-          retryable: false,
-          details: { toolName: input.toolName, stepId: step.id },
+        throw workerExecutionErrorFromEffectFailure(error, {
+          toolName: input.toolName,
+          stepId: step.id,
         });
       }
     }

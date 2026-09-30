@@ -51,8 +51,7 @@ export class GoogleProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://generativelanguage.googleapis.com/v1beta';
     this.defaultModel = config.defaultModel ?? 'gemini-2.0-flash';
-    // MCP-11: the API key is sent as a query param, so a plaintext/off-allowlist
-    // base URL leaks it. Fail closed at construction.
+    // MCP-11: fail closed before sending credentials to a plaintext/off-allowlist base URL.
     assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
@@ -61,7 +60,7 @@ export class GoogleProvider implements LLMProvider {
     const contents = this.buildContents(request);
     const systemInstruction = this.buildSystemInstruction(request);
 
-    const url = `${this.baseUrl}/models/${model}:generateContent?key=${this.apiKey}`;
+    const url = `${this.baseUrl}/models/${model}:generateContent`;
 
     const generationConfig: Record<string, unknown> = {
       maxOutputTokens: request.maxTokens ?? 8192,
@@ -114,7 +113,7 @@ export class GoogleProvider implements LLMProvider {
 
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.apiKey },
       body: JSON.stringify(body),
     });
 

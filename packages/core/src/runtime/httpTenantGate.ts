@@ -1,10 +1,8 @@
-import * as crypto from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { hashSecret } from './apiCredentialHash';
 import { sendJson } from './httpUtils';
 
-export function hashSecret(secret: string): string {
-  return crypto.createHash('sha256').update(secret).digest('hex');
-}
+export { hashSecret };
 
 export function extractAuthKey(req: IncomingMessage): string | undefined {
   const auth = req.headers.authorization;

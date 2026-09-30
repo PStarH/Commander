@@ -138,7 +138,7 @@ describe('A2AClient outbound security', () => {
   it('rejects a private DNS answer before opening an A2A connection', async () => {
     dns.promises.lookup = (async () => [
       { address: '127.0.0.1', family: 4 },
-    ]) as typeof dns.promises.lookup;
+    ]) as unknown as typeof dns.promises.lookup;
     const client = new A2AClient('https://rebind.example.test', AUTH_TOKEN);
 
     await expect(client.getAgentCard()).rejects.toThrow(/OUTBOUND_BLOCKED.*private IP/i);

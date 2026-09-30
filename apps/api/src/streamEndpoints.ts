@@ -19,7 +19,6 @@ import { reportSilentFailure } from '@commander/core';
 import { Router, Request, Response } from 'express';
 import { getMessageBus } from '@commander/core';
 import type { MessageBusTopic, BusMessage } from '@commander/core';
-import { verifyToken } from './jwtMiddleware';
 import { hasRole } from './userStore';
 
 const DEFAULT_TOPICS: MessageBusTopic[] = [
@@ -46,6 +45,32 @@ const MAX_SSE_CONNECTIONS =
   Number.parseInt(process.env.COMMANDER_SSE_MAX_CONNECTIONS ?? '', 10) || 1000;
 const MAX_BUFFERED_BYTES =
   Number.parseInt(process.env.COMMANDER_SSE_MAX_BUFFER_BYTES ?? '', 10) || 1024 * 1024;
+
+// Heartbeat interval bounds for the `?heartbeatMs=` override.
+//
+// A floor alone does not bound the resource cost, which is what the previous
+// comment claimed. `setInterval` coerces any delay above 2^31-1 to **1ms**, so
+// `?heartbeatMs=2147483648` satisfied a `>= 5000` check and then scheduled a
+// ~1000 writes/second loop — the opposite of the intended protection. Bound both
+// ends, and keep the ceiling far below the timer-overflow threshold.
+export const HEARTBEAT_FLOOR_MS = 5_000;
+/** 5 minutes — beyond any realistic proxy idle timeout, far below the overflow. */
+export const HEARTBEAT_CEILING_MS = 300_000;
+export const HEARTBEAT_DEFAULT_MS = 25_000;
+
+/**
+ * Resolve the SSE heartbeat interval from a raw `?heartbeatMs=` value.
+ *
+ * Returns the default for anything non-numeric, non-finite, below the floor, or
+ * of the wrong type (e.g. a repeated query parameter arrives as an array), and
+ * clamps the upper end. Never returns a value outside
+ * `[HEARTBEAT_FLOOR_MS, HEARTBEAT_CEILING_MS]`.
+ */
+export function resolveHeartbeatMs(raw: unknown): number {
+  const parsed = typeof raw === 'string' ? Number.parseInt(raw, 10) : Number.NaN;
+  if (!Number.isFinite(parsed) || parsed < HEARTBEAT_FLOOR_MS) return HEARTBEAT_DEFAULT_MS;
+  return Math.min(parsed, HEARTBEAT_CEILING_MS);
+}
 
 let activeConnections = 0;
 
@@ -86,70 +111,29 @@ function canAccessTenantWideStream(req: Request): boolean {
 export function createStreamRouter(options: CreateStreamRouterOptions = {}): Router {
   const router = Router();
 
-  const handleStream = (req: Request, res: Response): void => {
-    // EventSource cannot set Authorization headers. Prefer a cookie
-    // (`commander_access_token`); fall back to ?access_token=. Always strip
-    // access_token from req.url so access/proxy logs do not retain the secret.
-    const redactAccessTokenFromUrl = (): void => {
-      if ('access_token' in req.query) {
-        delete (req.query as Record<string, unknown>).access_token;
-      }
+  const handleStream = async (req: Request, res: Response): Promise<void> => {
+    // Authentication is composed at the application boundary. This router
+    // consumes the identity established by the normal Bearer/API-key middleware;
+    // it must not create a second cookie/query-token authority just because the
+    // native EventSource API cannot set headers. The web client uses the
+    // authenticated fetch-stream helper instead.
+    //
+    // Remove a legacy query token before any downstream access logging, but never
+    // use it as a credential. A token in a URL is a secret disclosure, not auth.
+    if ('access_token' in req.query) {
+      delete (req.query as Record<string, unknown>).access_token;
       const scrub = (u: string) =>
         u
           .replace(/([?&])access_token=[^&]*&?/g, '$1')
           .replace(/[?&]$/, '')
           .replace(/\?&/, '?');
-      if (req.url.includes('access_token=')) {
-        req.url = scrub(req.url);
-      }
-      if (typeof req.originalUrl === 'string' && req.originalUrl.includes('access_token=')) {
-        req.originalUrl = scrub(req.originalUrl);
-      }
-    };
-
-    if (!req.user) {
-      let token: string | undefined;
-
-      const cookieHeader = req.headers.cookie;
-      if (typeof cookieHeader === 'string') {
-        const match = cookieHeader.match(/(?:^|;\s*)commander_access_token=([^;]+)/);
-        if (match?.[1]) {
-          try {
-            token = decodeURIComponent(match[1]);
-          } catch {
-            token = match[1];
-          }
-        }
-      }
-
-      if (!token) {
-        const raw = req.query.access_token;
-        if (typeof raw === 'string') {
-          token = raw;
-        } else if (Array.isArray(raw) && typeof raw[0] === 'string') {
-          token = raw[0];
-        }
-      }
-
-      redactAccessTokenFromUrl();
-
-      if (typeof token === 'string' && token.length > 0) {
-        const decoded = verifyToken(token);
-        if (decoded && decoded.type !== 'refresh') {
-          req.user = {
-            id: decoded.id,
-            username: decoded.username,
-            role: decoded.role,
-            tenantId: decoded.tenant_id,
-            scopes: decoded.scopes,
-          };
-        }
-      }
-    } else {
-      redactAccessTokenFromUrl();
+      req.url = scrub(req.url);
+      if (typeof req.originalUrl === 'string') req.originalUrl = scrub(req.originalUrl);
     }
 
-    // Require JWT user or API-key identity before opening an SSE stream.
+    // Require the identity produced by the normal Bearer/API-key middleware
+    // before opening an SSE stream.
+
     if (!req.user && !req.apiKeyId) {
       res.status(401).json({ error: 'Authentication required' });
       return;
@@ -246,14 +230,10 @@ export function createStreamRouter(options: CreateStreamRouterOptions = {}): Rou
 
     const unsubscribe = bus.subscribeMany(watchTopics, handleBusMessage);
 
-    // 4. Heartbeat — overrides via ?heartbeatMs= are clamped to a 5-second floor
-    //    so a malicious client can't pin the server's event loop.
-    const heartbeatMsParam = parseInt(
-      typeof req.query.heartbeatMs === 'string' ? req.query.heartbeatMs : '25000',
-      10,
-    );
-    const heartbeatMs =
-      Number.isFinite(heartbeatMsParam) && heartbeatMsParam >= 5000 ? heartbeatMsParam : 25000;
+    // 4. Heartbeat — overrides via ?heartbeatMs= are clamped into a bounded range
+    //    so a malicious client can't pin the server's event loop. See
+    //    `resolveHeartbeatMs` for why a floor alone is not sufficient.
+    const heartbeatMs = resolveHeartbeatMs(req.query.heartbeatMs);
     const heartbeat = setInterval(() => {
       try {
         res.write(': heartbeat\n\n');

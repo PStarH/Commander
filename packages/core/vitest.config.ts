@@ -1,6 +1,21 @@
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    alias: [
+      // `tests/ws9/_evidence.ts` binds evidence through the repo-root WS9
+      // orchestrator, which lives outside this package. Vite refuses to resolve
+      // a specifier that escapes the package root, so without this alias all six
+      // registered `tests/ws9/*.test.ts` suites fail to load with
+      // "Cannot find module '../../../scripts/ws9-livefire'" — a suite that is
+      // registered but unloadable is a green-looking hole.
+      {
+        find: /^(?:\.\.\/){3}scripts\/ws9-livefire$/,
+        replacement: fileURLToPath(new URL('../../scripts/ws9-livefire.ts', import.meta.url)),
+      },
+    ],
+  },
   test: {
     // Serial execution. The suite has ~220 test files, many of which exercise
     // full AgentRuntime loops, share SQLite WAL paths, open HTTP servers, or
@@ -19,12 +34,27 @@ export default defineConfig({
     hookTimeout: 60000,
     // Prevent open handles from hanging CI after the suite finishes (seen on Ubuntu).
     forceExit: true,
+    // NOT free: a global retry converts a nondeterministic failure into a pass,
+    // so a test that is green here may be green *only* because it was retried.
+    // Vitest reports retried tests but still exits 0, which means the suite's
+    // verdict does not distinguish "passed" from "passed on the third attempt".
+    // Kept at 2 because the serial-execution reasons above (EADDRNOTAVAIL /
+    // EMFILE races) are infrastructure, not logic — but this is a deliberate,
+    // audit-visible tradeoff, not a default worth copying. Removing it requires
+    // a full-suite run to separate genuine flakes from genuine fixes.
     retry: 2,
     setupFiles: ['tests/setup.ts'],
     include: [
       'tests/cli/envLoader.test.ts',
       'tests/cli/action.test.ts',
+      'tests/cli/firstUserReadiness.test.ts',
+      'tests/cli/nodeSupport.test.ts',
       'tests/planner/workGraphPlanner.test.ts',
+      // Tenant Bridge/Silo deployment scripts. Tracked and green, but absent
+      // from this explicit list — so the `pnpm --filter @commander/core test
+      // tests/deployment/tenantDeployment.test.ts` command documented in
+      // deploy/README.md failed with "No test files found".
+      'tests/deployment/tenantDeployment.test.ts',
       // --- atr ---
       'tests/atr/recoveryBootstrapper.test.ts',
       'tests/atr/taskQueue.test.ts',
@@ -37,6 +67,11 @@ export default defineConfig({
       'tests/recovery/kill9.test.ts',
       // --- runtime ---
       'tests/runtime/agentHandoff.test.ts',
+      'tests/runtime/tenantManagerFailClosed.test.ts',
+      'tests/runtime/tenantBucketFailClosed.test.ts',
+      'tests/security/productionKeyGate.test.ts',
+      'tests/security/pluginSandboxTraversal.test.ts',
+      'tests/security/workspaceRootIsolation.test.ts',
       'tests/runtime/incrementalSCC.integration.test.ts',
       'tests/runtime/agentInbox.test.ts',
       'tests/runtime/agentRuntime.test.ts',
@@ -120,6 +155,7 @@ export default defineConfig({
       'tests/selfEvolution/trajectoryAnalyzer.test.ts',
       'tests/runtime/openTelemetryExporter.test.ts',
       'tests/runtime/promptCacheSavings.test.ts',
+      'tests/runtime/llmCaller.test.ts',
       'tests/runtime/providerFallbackChain.test.ts',
       'tests/runtime/reflexionInjector.test.ts',
       'tests/runtime/runRecovery.test.ts',
@@ -145,6 +181,10 @@ export default defineConfig({
       'tests/runtime/toolPlanner.test.ts',
       'tests/runtime/toolResultCache.test.ts',
       'tests/runtime/toolGateHelper.test.ts',
+      // RUN-02: denial provenance + cause bound to call identity (A denied /
+      // B retried must not cross-contaminate; hook/policy never relabelled
+      // GUARDIAN_BLOCKED). Zero tool execution in every case.
+      'tests/runtime/toolDenialProvenance.test.ts',
       'tests/runtime/resilience-integration.test.ts',
       'tests/runtime/toolRetriever.test.ts',
       'tests/runtime/vcrProvider.test.ts',
@@ -158,8 +198,17 @@ export default defineConfig({
       'tests/runtime/tokenGovernor.test.ts',
       // V2 SideEffectGate PEP — fail-closed invariants for every external effect
       'tests/runtime/sideEffectGate.test.ts',
+      // LM-03: composed gate → ToolExecutionService boundary. Uses the REAL
+      // gate (0 tool-body calls on denial, exactly 1 on an explicit grant) so a
+      // regression in the production admission path cannot hide behind the
+      // always-admit unit fixture.
+      'tests/runtime/productionBoundaryComposition.test.ts',
       // V2 InMemoryCompensationQueue — test-friendly compensation queue core
       'src/atr/__tests__/inMemoryCompensationQueue.test.ts',
+      // AR-03 parity: ONE shared scenario table drives BOTH compensation queue
+      // implementations (better-sqlite3 CompensationQueue + the native-module-free
+      // double) and asserts identical observable outcomes — measured, not claimed.
+      'src/atr/__tests__/compensationQueueParity.test.ts',
       // async-I/O migration regression suite — guards the no-event-loop-blocking,
       // no-TOCTOU-probes, no-missed-visibility contract of the 5 hotspot files
       // (healthCheck/checkpoint, compensationService/mkdir, freezeDry/round-trip,
@@ -180,7 +229,7 @@ export default defineConfig({
       'tests/sandbox/teeEnclave.test.ts',
       'tests/sandbox/sshBackendExecPolicy.test.ts',
       'tests/sandbox/localBackendExecPolicy.test.ts',
-      'tests/runtime/observationPurifier.test.ts',
+      'tests/sandbox/localBackendTimeout.test.ts',
       // --- tools ---
       // async-I/O regression tests added alongside the safePath/pathExists
       // async refactor; they guard the "no event-loop blocking, no TOCTOU
@@ -211,8 +260,9 @@ export default defineConfig({
       'tests/plugins/observability/evalScorer.test.ts',
       'tests/plugins/observability/experimentRunner.test.ts',
       'tests/plugins/observability/normalizeExpected.test.ts',
-      // 'tests/plugins/observability/otelExporter.test.ts',        // skipped: requires src/plugins/builtin/observability/otelExporter (not yet extracted from core)
-      // 'tests/plugins/observability/retryRuleOnRealTraces.test.ts', // skipped: same — depends on plugin otelExporter
+      // Not run: tests/plugins/observability/{otelExporter,retryRuleOnRealTraces}.test.ts
+      // depend on the plugin otelExporter module, which has not been extracted
+      // from core yet. Declared in scripts/test-manifest.mjs DECLARED_NOT_RUN.
       'tests/plugins/observability/samplingPolicy.test.ts',
       'tests/plugins/observability/sloOperations.test.ts',
       'tests/plugins/observability/traceContext.test.ts',
@@ -228,7 +278,6 @@ export default defineConfig({
       'tests/plugins/builtin/registerBuiltinPlugins.test.ts',
       'tests/plugins/builtin/consensus/adaptiveStopping.test.ts',
       'tests/plugins/builtin/consensus/sacProtocol.test.ts',
-      'tests/plugins/builtin/registerBuiltinPlugins.test.ts',
       // --- security (3-layer defense regression — reversible gate, anomaly
       // detector, universal sanitizer, tenancy boundary, plugin supply) ---
       'tests/security/adversarial.test.ts',
@@ -245,20 +294,22 @@ export default defineConfig({
       'tests/security/securityPrimitives.test.ts',
       'src/security/fetchGovernor.test.ts',
       'tests/security/tenancy.test.ts',
-      // --- shadow (drift detection / proxy / scrubber / types) ---
-      'tests/shadow/drift.test.ts',
-      'tests/shadow/proxy.test.ts',
+      // --- request data scrubbing ---
       'tests/shadow/scrubber.test.ts',
-      'tests/shadow/types.test.ts',
+      'tests/architecture/shadow-replay-removal.test.ts',
       // --- storage (cached driver regression) ---
       'tests/storage/cachedDriver.test.ts',
       // --- runtime (LLM caller refactor regression) ---
-      // 'tests/runtime/llmCaller.test.ts', // skipped: FallbackChainExhaustedError doesn't record fallback_exhausted sample — real bug in LLMCaller phase-1 helper
+      // Not run: tests/runtime/llmCaller.test.ts — FallbackChainExhaustedError
+      // does not record a fallback_exhausted sample (real defect in the
+      // LLMCaller phase-1 helper). Declared in scripts/test-manifest.mjs.
       // --- chaos (types only — chaos suites themselves are opt-in
       // because they require orchestrated fault injection) ---
       'tests/chaos/types.test.ts',
       // --- ultimate (checkpoint + resume + taskPool regression) ---
-      // 'tests/ultimate/checkpoint.roundTrip.test.ts', // skipped: orchestrator checkpoint emission for Goal+Swarm not wired into ReliabilityEngine persistence — see test failures
+      // Not run: tests/ultimate/checkpoint.roundTrip.test.ts — orchestrator
+      // checkpoint emission for Goal+Swarm is not wired into ReliabilityEngine
+      // persistence. Declared in scripts/test-manifest.mjs DECLARED_NOT_RUN.
       'tests/ultimate/checkpointAdapters.test.ts',
       'tests/ultimate/artifactSystem.test.ts',
       'tests/ultimate/subAgentNarrowContext.test.ts',
@@ -282,9 +333,15 @@ export default defineConfig({
       'tests/memory/memoryMigration.test.ts',
       'tests/memory/utils.test.ts',
       'tests/memory/l3-10a-productWrite.test.ts',
+      // --- memory persistence (bare-require regression: save()/load() wrote nothing) ---
+      'tests/memory/threeLayerMemoryPersistence.test.ts',
+      // --- cross-tenant isolation on the write paths (ET-05) ---
+      'tests/memory/threeLayerMemoryTenantIsolation.test.ts',
 
       // --- GDPR compliance + AdaptiveHITL weight learning ---
       'tests/architecture/gdprCompliance.test.ts',
+      // --- governance risk level is measured, not asserted (ET-02) ---
+      'tests/architecture/governanceRiskLevel.test.ts',
       // --- 4 architecture gap fixes (HNSW, TEE workers, Distributed bus, Petri scheduler) ---
       'tests/architecture/gapFixes.test.ts',
       // --- V2 architecture integrity tests ---
@@ -315,6 +372,7 @@ export default defineConfig({
       'tests/enterprise-security.test.ts',
       'tests/hallucinationDetector.test.ts',
       'tests/security/guardianAgent.test.ts',
+      'tests/security/securityGuardianFacade.test.ts',
       'tests/security/guardianDangerousToolCall.test.ts',
       'tests/security/capabilityToken.test.ts',
       'tests/security/biscuitCapabilityAdapter.test.ts',
@@ -325,7 +383,8 @@ export default defineConfig({
       'tests/security/agentLineage.test.ts',
       'tests/security/federatedIdentity.test.ts',
       'tests/security/outputSanitizer.test.ts',
-      'tests/security/costGuard.test.ts',
+      // NOTE: tests/security/costGuard.test.ts was removed from this list — the
+      // file does not exist on disk. Do not re-add it to satisfy a stale entry.
       // UnifiedCostAuthority (UCA) — single source of truth for cost control.
       // Replaces the legacy BillExplosionGuard + CostGuard + TokenSentinel overlap.
       'tests/security/unifiedCostAuthority.test.ts',
@@ -333,6 +392,9 @@ export default defineConfig({
       'tests/security/euAiActCompliance.test.ts',
       'tests/security/agentStandbyManager.test.ts',
       'tests/security/redTeamBaseline.test.ts',
+      // Fail-closed contract for the red team battery gate, plus the stdout
+      // layout that .github/workflows/red-team.yml parses.
+      'tests/security/redTeamGate.test.ts',
       'tests/security/edgeSecurityProfile.test.ts',
       'tests/security/complianceAuditReport.test.ts',
       'tests/security/d25-api-key-grep.test.ts',
@@ -379,23 +441,22 @@ export default defineConfig({
       // --- harness ---
       'tests/harness/tier1AgentLoop.test.ts',
       'tests/harness/tier1Harness.test.ts',
-      // Note: commander-rotate integration tests spawn the CLI via tsx. They
-      // pass when invoked directly but fail inside the vitest worker because
-      // the sandboxed environment cannot resolve /bin/sh or the node binary.
-      // The CLI itself is verified manually; these tests are excluded from
-      // the automated gate until the runner environment supports spawnSync.
-      // 'tests/security/commander-rotate.test.ts',
+      // H-03 fail-closed regression: unsafe final content (any length) is not success.
+      'tests/harness/contentScanFailClosed.test.ts',
+      // commander-rotate integration tests exercise the real CLI subprocess,
+      // argv parser, persisted audit chain, and receipt contract.
+      'tests/security/commander-rotate.test.ts',
       'tests/security/d25-precommit-hook.test.ts',
       'tests/security/supplyChainScanner.sourceMode.test.ts',
       // --- http ---
       // --- ultimate ---
-      // 'tests/ultimate/coordinationPolicy.test.ts', // skipped: legacy topology alias names incompatible with D3.2 canonical types
-      // 'tests/ultimate/coordinationPolicyLearned.test.ts', // skipped: legacy topology alias names incompatible with D3.2 canonical types
+      // Not run: tests/ultimate/{coordinationPolicy,coordinationPolicyLearned,
+      // learnedWeights,learnedWeightsTenant}.test.ts use legacy topology alias
+      // names incompatible with the D3.2 canonical types. Declared in
+      // scripts/test-manifest.mjs DECLARED_NOT_RUN.
       'tests/ultimate/epsilonExploration.test.ts',
       'tests/ultimate/epsilonStore.test.ts',
       'tests/ultimate/explorationEventLog.test.ts',
-      // 'tests/ultimate/learnedWeights.test.ts', // skipped: legacy topology alias names incompatible with D3.2 canonical types
-      // 'tests/ultimate/learnedWeightsTenant.test.ts', // skipped: legacy topology alias names incompatible with D3.2 canonical types
       'tests/ultimate/orchestrationLabels.test.ts',
       'tests/ultimate/routingDashboard.test.ts',
       'tests/ultimate/subAgentGuard.test.ts',
@@ -425,14 +486,11 @@ export default defineConfig({
       'tests/e2e/chaos.test.ts',
       'tests/e2e/mock-api.test.ts',
       // --- benchmark ---
-      // 'tests/benchmark/performanceBenchmark.test.ts', // skipped: environment-dependent latency assertion
-      // 'tests/benchmark/loadBenchmark.test.ts', // skipped: intermittent timeout in CI
+      // Not run: benchmark suites that assert wall-clock latency budgets, need
+      // the external StepFun API, or intermittently time out in CI. Declared in
+      // scripts/test-manifest.mjs DECLARED_NOT_RUN.
       'tests/benchmark/costBenchmark.test.ts',
       'tests/benchmark/reliabilityBenchmark.test.ts',
-      // 'tests/benchmark/comparisonBenchmark.test.ts', // skipped: environment-dependent latency assertion
-      // 'tests/benchmark/advancedPerformanceBenchmark.test.ts', // skipped: environment-dependent latency assertion
-      // 'tests/benchmark/realWorldBenchmark.test.ts', // skipped: requires external StepFun API and times out in CI
-      // 'tests/benchmark/multiAgentBenchmark.metrics.test.ts', // src/benchmark/multiAgentBenchmark missing on this branch
       'tests/benchmark/webarena-agentbench.test.ts',
       // --- algorithmic effectiveness benchmarks ---
       'tests/benchmarks/algorithmicEffectiveness/types.test.ts',

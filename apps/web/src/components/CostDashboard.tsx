@@ -1,5 +1,5 @@
 /**
- * CostDashboard — Enterprise-grade cost analytics dashboard.
+ * CostDashboard — cost analytics dashboard.
  *
  * Addresses "cost anxiety" — the #1 pain point for enterprise users who worry
  * about runaway LLM API costs. Provides granular cost reporting aggregated by

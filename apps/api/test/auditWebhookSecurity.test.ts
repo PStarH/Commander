@@ -22,25 +22,6 @@ const securityFile = path.join(tmpDir, '.commander', 'security', 'events.ndjson'
 const approvalAuditFile = path.join(tmpDir, '.commander', 'security-audit.jsonl');
 const wecomEncodingAESKey = Buffer.alloc(32, 0x42).toString('base64').replace(/=$/, '');
 const wecomReceiveId = 'ww-security-test';
-const runtimeGoals: string[] = [];
-
-function mockRuntimeProvider() {
-  return {
-    execute: async (ctx: { agentId: string; goal: string }) => {
-      runtimeGoals.push(ctx.goal);
-      return {
-        runId: 'mock-run',
-        agentId: ctx.agentId,
-        status: 'success' as const,
-        summary: 'mock agent reply',
-        steps: [],
-        totalTokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-        totalDurationMs: 0,
-      };
-    },
-  };
-}
-
 function encryptWeComMessage(message: string, receiveId = wecomReceiveId): string {
   const key = Buffer.from(`${wecomEncodingAESKey}=`, 'base64');
   const messageBuffer = Buffer.from(message);
@@ -114,7 +95,6 @@ function headers(role: 'viewer' | 'auditor' | 'admin', tenantId: string) {
 }
 
 beforeEach(() => {
-  runtimeGoals.length = 0;
   fs.mkdirSync(path.dirname(webhookFile), { recursive: true });
   fs.mkdirSync(path.dirname(userActionsFile), { recursive: true });
   fs.mkdirSync(path.dirname(securityFile), { recursive: true });
@@ -469,7 +449,7 @@ describe('webhook endpoint security', () => {
     const decrypted =
       '<xml><MsgType><![CDATA[image]]></MsgType><Content><![CDATA[encrypted metadata]]></Content></xml>';
     const encrypted = encryptWeComMessage(decrypted);
-    const server = await startServer(createWebhookRouter(mockRuntimeProvider));
+    const server = await startServer(createWebhookRouter());
     try {
       const response = await postWeCom(
         server.baseUrl,
@@ -480,7 +460,6 @@ describe('webhook endpoint security', () => {
       );
       assert.equal(response.status, 200);
       assert.match(await response.text(), /<Content><!\[CDATA\[OK\]\]><\/Content>/);
-      assert.deepEqual(runtimeGoals, []);
     } finally {
       await server.close();
     }
@@ -490,7 +469,7 @@ describe('webhook endpoint security', () => {
     const encrypted = encryptWeComMessage(
       '<xml><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[secret message]]></Content></xml>',
     );
-    const server = await startServer(createWebhookRouter(mockRuntimeProvider));
+    const server = await startServer(createWebhookRouter());
     try {
       const response = await postWeCom(
         server.baseUrl,
@@ -500,17 +479,16 @@ describe('webhook endpoint security', () => {
       );
       assert.equal(response.status, 401);
       assert.match(await response.text(), /decryption unavailable/);
-      assert.deepEqual(runtimeGoals, []);
     } finally {
       await server.close();
     }
   });
 
-  it('accepts a legitimate encrypted text callback and passes only decrypted content to runtime', async () => {
+  it('validates a legitimate encrypted text callback without restoring in-process execution', async () => {
     const encrypted = encryptWeComMessage(
       '<xml><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[legitimate encrypted task]]></Content></xml>',
     );
-    const server = await startServer(createWebhookRouter(mockRuntimeProvider));
+    const server = await startServer(createWebhookRouter());
     try {
       const response = await postWeCom(
         server.baseUrl,
@@ -519,9 +497,12 @@ describe('webhook endpoint security', () => {
         encrypted,
         'forged outer plaintext',
       );
-      assert.equal(response.status, 200);
-      assert.match(await response.text(), /mock agent reply/);
-      assert.deepEqual(runtimeGoals, ['legitimate encrypted task']);
+      assert.equal(response.status, 410);
+      const body = (await response.json()) as {
+        error?: { code?: string; replacement?: string };
+      };
+      assert.equal(body.error?.code, 'LEGACY_EXECUTION_DISABLED');
+      assert.equal(body.error?.replacement, 'POST /v1/actions');
     } finally {
       await server.close();
     }

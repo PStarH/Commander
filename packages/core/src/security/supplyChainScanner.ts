@@ -1,5 +1,5 @@
 /**
- * SupplyChainScanner — Enterprise-grade skill/tool/configuration pre-load security scanner.
+ * SupplyChainScanner — skill/tool/configuration pre-load security scanner.
  *
  * Goes beyond the existing skillSecurityScanner.ts (which only scans at creation time
  * with regex patterns) to provide:
@@ -88,9 +88,8 @@ export interface SupplyChainScanRequest {
   /** Tenant that owns this scan */
   tenantId?: string;
   /**
-   * Skip the skill-content pre-scan heuristics (backtick/$( )/exec()/spawn()
-   * shell-injection regexes). The malware signature scan still runs. Use for
-   * scanning regular source files, where those patterns are legitimate.
+   * Skip skill-content syntax heuristics for regular source files. Malware
+   * signature scanning remains enabled.
    */
   skipPreScanHeuristics?: boolean;
 }

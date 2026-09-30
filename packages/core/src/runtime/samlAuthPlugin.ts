@@ -85,7 +85,7 @@ interface ParsedAssertion {
   /** The Assertion's own ID attribute — the signature must reference exactly this. */
   id: string;
   nameId: string;
-  attributes: Record<string, string | string[]>;
+  attributes: ReadonlyMap<string, string | string[]>;
   issuer: string;
   notBefore?: string;
   notOnOrAfter?: string;
@@ -103,6 +103,23 @@ interface ParsedAssertion {
 /**
  * Zero-dependency SAML 2.0 Service Provider.
  */
+function noteSamlRejection(
+  audit: ReturnType<typeof getSecurityAuditLogger>,
+  message: string,
+  details?: Record<string, unknown>,
+): void {
+  audit.logAuthFailure('SAMLAuthPlugin', message, details);
+}
+
+function detachedSignatureMatches(
+  algorithm: string,
+  data: Buffer,
+  key: crypto.KeyLike,
+  signature: Buffer,
+): boolean {
+  return crypto.verify(algorithm, data, key, signature);
+}
+
 export class SAMLAuthPlugin implements AuthPlugin {
   readonly name = 'saml';
   private config: Required<
@@ -203,12 +220,12 @@ export class SAMLAuthPlugin implements AuthPlugin {
       }
     } catch (err) {
       reportSilentFailure(err, 'samlAuthPlugin:decode');
-      audit.logAuthFailure('SAMLAuthPlugin', 'Failed to decode SAMLResponse', {});
+      noteSamlRejection(audit, 'Failed to decode SAMLResponse', {});
       return null;
     }
 
     if (!xml.includes('Response') || !xml.includes('<')) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'Decoded bytes are not valid SAML XML', {});
+      noteSamlRejection(audit, 'Decoded bytes are not valid SAML XML', {});
       return null;
     }
 
@@ -217,8 +234,8 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const responseInResponseTo = extractAttribute(xml, 'Response', 'InResponseTo');
     const responseDestination = extractAttribute(xml, 'Response', 'Destination');
 
-    if (responseDestination && responseDestination !== this.config.spAcsUrl) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Response Destination mismatch', {
+    if (responseDestination !== this.config.spAcsUrl) {
+      noteSamlRejection(audit, 'SAML Response Destination mismatch', {
         expected: this.config.spAcsUrl,
         actual: responseDestination,
       });
@@ -230,7 +247,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
       options.inResponseTo &&
       responseInResponseTo !== options.inResponseTo
     ) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML InResponseTo mismatch', {
+      noteSamlRejection(audit, 'SAML InResponseTo mismatch', {
         expected: options.inResponseTo,
         actual: responseInResponseTo,
       });
@@ -238,14 +255,14 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     if (!responseInResponseTo && !options.allowIdpInitiated) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'IdP-initiated SAML Response rejected', {});
+      noteSamlRejection(audit, 'IdP-initiated SAML Response rejected', {});
       return null;
     }
 
     // Extract and validate assertion.
     const assertion = this.extractAssertion(xml);
     if (!assertion) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'No usable Assertion found in SAMLResponse', {
+      noteSamlRejection(audit, 'No usable Assertion found in SAMLResponse', {
         responseId,
       });
       return null;
@@ -258,21 +275,21 @@ export class SAMLAuthPlugin implements AuthPlugin {
     // consumed Assertion to carry a document-unique ID that the signature can bind to.
     const assertionCount = (xml.match(/<(?:saml:)?Assertion\b/g) ?? []).length;
     if (assertionCount !== 1) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML response must contain exactly one Assertion', {
+      noteSamlRejection(audit, 'SAML response must contain exactly one Assertion', {
         responseId,
         assertionCount,
       });
       return null;
     }
     if (!assertion.id) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion is missing an ID', { responseId });
+      noteSamlRejection(audit, 'SAML Assertion is missing an ID', { responseId });
       return null;
     }
     const idOccurrences = (
       xml.match(new RegExp(`\\bID=(?:"|')${escapeRegex(assertion.id)}(?:"|')`, 'g')) ?? []
     ).length;
     if (idOccurrences !== 1) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion ID is not unique (possible XSW)', {
+      noteSamlRejection(audit, 'SAML Assertion ID is not unique (possible XSW)', {
         responseId,
         assertionId: assertion.id,
         idOccurrences,
@@ -281,15 +298,15 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     if (assertion.issuer !== this.config.idpEntityId) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion issuer mismatch', {
+      noteSamlRejection(audit, 'SAML Assertion issuer mismatch', {
         expected: this.config.idpEntityId,
         actual: assertion.issuer,
       });
       return null;
     }
 
-    if (assertion.recipient && assertion.recipient !== this.config.spAcsUrl) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML SubjectConfirmation Recipient mismatch', {
+    if (assertion.recipient !== this.config.spAcsUrl) {
+      noteSamlRejection(audit, 'SAML SubjectConfirmation Recipient mismatch', {
         expected: this.config.spAcsUrl,
         actual: assertion.recipient,
       });
@@ -302,14 +319,14 @@ export class SAMLAuthPlugin implements AuthPlugin {
 
     if (this.config.wantAssertionsSigned) {
       if (!assertion.signatureXml) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'Assertion signature required but missing', {
+        noteSamlRejection(audit, 'Assertion signature required but missing', {
           responseId,
         });
         return null;
       }
-      const valid = this.verifyAssertionSignature(assertion);
+      const valid = this.assertionSignatureMatches(assertion);
       if (!valid) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'Assertion signature verification failed', {
+        noteSamlRejection(audit, 'Assertion signature verification failed', {
           responseId,
         });
         return null;
@@ -317,7 +334,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     // Map roles from attributes.
-    const rawRole = assertion.attributes[this.config.roleAttribute];
+    const rawRole = assertion.attributes.get(this.config.roleAttribute);
     const roleValues: string[] = rawRole ? (Array.isArray(rawRole) ? rawRole : [rawRole]) : [];
     let role: AuthRole = 'viewer';
     if (roleValues.some((r) => this.config.adminRoles.includes(r))) {
@@ -326,14 +343,18 @@ export class SAMLAuthPlugin implements AuthPlugin {
       role = 'operator';
     }
 
+    const emailAttr = assertion.attributes.get('email');
+    const emailAddressAttr = assertion.attributes.get('emailAddress');
     const username =
-      (assertion.attributes['email'] as string | undefined) ||
-      (assertion.attributes['emailAddress'] as string | undefined) ||
+      (typeof emailAttr === 'string' ? emailAttr : undefined) ||
+      (typeof emailAddressAttr === 'string' ? emailAddressAttr : undefined) ||
       assertion.nameId;
 
+    const tenantSnake = assertion.attributes.get('tenant_id');
+    const tenantCamel = assertion.attributes.get('tenantId');
     const tenantId =
-      (assertion.attributes['tenant_id'] as string | undefined) ||
-      (assertion.attributes['tenantId'] as string | undefined);
+      (typeof tenantSnake === 'string' ? tenantSnake : undefined) ||
+      (typeof tenantCamel === 'string' ? tenantCamel : undefined);
 
     audit.logAuthSuccess('SAMLAuthPlugin', `SAML user authenticated: ${assertion.nameId}`, {
       nameId: assertion.nameId,
@@ -347,7 +368,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
       username,
       role,
       tenantId,
-      claims: { ...assertion.attributes, issuer: assertion.issuer },
+      claims: samlClaims(assertion.attributes, assertion.issuer),
     };
   }
 
@@ -378,25 +399,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const issuer = extractText(inner, 'Issuer') ?? '';
     const nameId = extractText(inner, 'NameID') ?? extractText(inner, 'NameIdentifier') ?? '';
 
-    const attributes: Record<string, string | string[]> = {};
-    const attrRegex = /<(saml:|)Attribute\b[^>]*?Name="([^"]+)"[^>]*>([\s\S]*?)<\/\1Attribute>/g;
-    let attrMatch: RegExpExecArray | null;
-    while ((attrMatch = attrRegex.exec(inner)) !== null) {
-      const attrName = attrMatch[2];
-      const attrBody = attrMatch[3];
-      const values: string[] = [];
-      const valueRegex = /<(saml:|)AttributeValue\b[^>]*>([\s\S]*?)<\/\1AttributeValue>/g;
-      let valueMatch: RegExpExecArray | null;
-      while ((valueMatch = valueRegex.exec(attrBody)) !== null) {
-        const raw = valueMatch[2].trim();
-        // Strip optional nested XML tags (e.g. <xs:type> wrappers).
-        const text = raw.replace(/<[^>]+>/g, '').trim();
-        values.push(unescapeXml(text));
-      }
-      if (values.length > 0) {
-        attributes[attrName] = values.length === 1 ? values[0] : values;
-      }
-    }
+    const attributes = readSamlAttributes(inner);
 
     const conditions = inner.match(/<(saml:|)Conditions\b([^>]*)>([\s\S]*?)<\/\1Conditions>/);
     const notBefore = conditions
@@ -408,9 +411,8 @@ export class SAMLAuthPlugin implements AuthPlugin {
     const audienceXml = conditions ? conditions[3] : '';
     const audiences: string[] = [];
     const audRegex = /<(saml:|)Audience>([^<]+)<\/\1Audience>/g;
-    let audMatch: RegExpExecArray | null;
-    while ((audMatch = audRegex.exec(audienceXml)) !== null) {
-      audiences.push(unescapeXml(audMatch[2].trim()));
+    for (const audMatch of audienceXml.matchAll(audRegex)) {
+      audiences.push(unescapeXml((audMatch[2] ?? '').trim()));
     }
 
     const subjectConfirmation = inner.match(
@@ -448,7 +450,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     if (assertion.notBefore) {
       const notBefore = Date.parse(assertion.notBefore);
       if (!isNaN(notBefore) && now < notBefore - skewMs) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion not yet valid', {
+        noteSamlRejection(audit, 'SAML Assertion not yet valid', {
           notBefore: assertion.notBefore,
           now: new Date(now).toISOString(),
         });
@@ -459,7 +461,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     if (assertion.notOnOrAfter) {
       const notOnOrAfter = Date.parse(assertion.notOnOrAfter);
       if (!isNaN(notOnOrAfter) && now > notOnOrAfter + skewMs) {
-        audit.logAuthFailure('SAMLAuthPlugin', 'SAML Assertion expired', {
+        noteSamlRejection(audit, 'SAML Assertion expired', {
           notOnOrAfter: assertion.notOnOrAfter,
           now: new Date(now).toISOString(),
         });
@@ -468,7 +470,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     }
 
     if (assertion.audiences.length > 0 && !assertion.audiences.includes(this.config.spEntityId)) {
-      audit.logAuthFailure('SAMLAuthPlugin', 'SAML AudienceRestriction mismatch', {
+      noteSamlRejection(audit, 'SAML AudienceRestriction mismatch', {
         expected: this.config.spEntityId,
         actual: assertion.audiences,
       });
@@ -478,7 +480,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
     return true;
   }
 
-  private verifyAssertionSignature(assertion: ParsedAssertion): boolean {
+  private assertionSignatureMatches(assertion: ParsedAssertion): boolean {
     if (!assertion.signatureXml) return false;
 
     try {
@@ -531,7 +533,7 @@ export class SAMLAuthPlugin implements AuthPlugin {
       // 2. Verify the signature over the canonicalized SignedInfo.
       const canonicalizedSignedInfo = approximateC14n(signedInfo);
       const signatureBuf = Buffer.from(signatureValue, 'base64');
-      return crypto.verify(
+      return detachedSignatureMatches(
         sigAlg,
         Buffer.from(canonicalizedSignedInfo, 'utf-8'),
         publicKey,
@@ -665,13 +667,83 @@ function approximateC14n(xml: string): string {
     });
 }
 
+function xmlInnerText(value: string): string {
+  const parts: string[] = [];
+  let index = 0;
+  while (index < value.length) {
+    const open = value.indexOf('<', index);
+    if (open < 0) {
+      parts.push(value.slice(index));
+      break;
+    }
+    parts.push(value.slice(index, open));
+    const close = value.indexOf('>', open + 1);
+    if (close < 0) break;
+    index = close + 1;
+  }
+  return parts.join('').trim();
+}
+
+function readSamlAttributes(inner: string): Map<string, string | string[]> {
+  const attributes = new Map<string, string | string[]>();
+  const attrRegex = /<(saml:|)Attribute\b[^>]*?Name="([^"]+)"[^>]*>([\s\S]*?)<\/\1Attribute>/g;
+  for (const attrMatch of inner.matchAll(attrRegex)) {
+    const attrName = attrMatch[2] ?? '';
+    if (
+      attrName.length === 0 ||
+      attrName === '__proto__' ||
+      attrName === 'constructor' ||
+      attrName === 'prototype'
+    ) {
+      continue;
+    }
+    const values: string[] = [];
+    const valueRegex = /<(saml:|)AttributeValue\b[^>]*>([\s\S]*?)<\/\1AttributeValue>/g;
+    for (const valueMatch of (attrMatch[3] ?? '').matchAll(valueRegex)) {
+      const raw = (valueMatch[2] ?? '').trim();
+      values.push(xmlInnerText(unescapeXml(raw)));
+    }
+    if (values.length === 1) {
+      const only = values[0];
+      if (only !== undefined) attributes.set(attrName, only);
+    } else if (values.length > 1) {
+      attributes.set(attrName, values);
+    }
+  }
+  return attributes;
+}
+
+function samlClaims(
+  attributes: ReadonlyMap<string, string | string[]>,
+  issuer: string,
+): Record<string, unknown> {
+  const claims: Record<string, unknown> = { issuer };
+  const email = attributes.get('email');
+  if (email !== undefined) claims.email = email;
+  const emailAddress = attributes.get('emailAddress');
+  if (emailAddress !== undefined) claims.emailAddress = emailAddress;
+  const tenantSnake = attributes.get('tenant_id');
+  if (tenantSnake !== undefined) claims.tenant_id = tenantSnake;
+  const tenantCamel = attributes.get('tenantId');
+  if (tenantCamel !== undefined) claims.tenantId = tenantCamel;
+  const role = attributes.get('role');
+  if (role !== undefined) claims.role = role;
+  const roles = attributes.get('roles');
+  if (roles !== undefined) claims.roles = roles;
+  return claims;
+}
+
 function unescapeXml(value: string): string {
-  return value
+  let current = value
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&amp;/g, '&');
+    .replace(/&apos;/g, "'");
+  for (;;) {
+    const next = current.replace(/&amp;/g, '&');
+    if (next === current) return current;
+    current = next;
+  }
 }
 
 function escapeRegex(value: string): string {

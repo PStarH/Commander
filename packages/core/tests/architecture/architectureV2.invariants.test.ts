@@ -119,7 +119,11 @@ describe('Architecture V2 invariants', () => {
     assert.match(read('.github/workflows/ci.yml'), /pnpm --filter @commander\/contracts test/);
     assert.match(
       read('.github/workflows/ci.yml'),
-      /Architecture V2 package boundary gate[\s\S]*continue-on-error:\s*true[\s\S]*pnpm arch:gate/,
+      /Architecture V2 invariant gates[\s\S]*run: pnpm test:arch/,
+    );
+    assert.match(
+      read('.github/workflows/ci.yml'),
+      /Architecture constitution guard \(repository\)[\s\S]*run: pnpm arch:guard/,
     );
   });
 

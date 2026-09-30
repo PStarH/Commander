@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { getConversationStore } from '../../src/memory/conversationStore';
+import { optionalRequire } from '../../src/optionalImport';
 import {
   SearchConversationsTool,
   searchConversationsCLI,
@@ -21,12 +22,11 @@ import {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function canUseSqlite(): boolean {
-  try {
-    require('better-sqlite3');
-    return true;
-  } catch {
-    return false;
-  }
+  // `optionalRequire` returns null for an absent optional peer instead of
+  // throwing. A bare `require` here raised `ReferenceError: require is not
+  // defined` in this ES module, which the surrounding catch read as "the
+  // optional dependency is missing" — so every case below skipped silently.
+  return optionalRequire('better-sqlite3') !== null;
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────

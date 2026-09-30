@@ -47,21 +47,24 @@ function approximateC14n(xml: string): string {
     .replace(/>\s+</g, '><')
     .replace(/\s+/g, ' ')
     .replace(/\s*\/\s*>/g, '/>')
-    .replace(/<(\/?)([\w:]+)([^>]*)>/g, (_full, slash, name, attrs) => {
-      const trimmed = attrs.trim();
-      if (!trimmed) return `<${slash}${name}>`;
-      const attrList = trimmed
-        .split(/(\w+(?::\w+)?="[^"]*")/g)
-        .filter((s: string) => s.trim() && s.includes('='))
-        .map((s: string) => s.trim());
-      const unique = Array.from(new Set(attrList));
-      unique.sort((a, b) => {
-        const nameA = a.split('=')[0].toLowerCase();
-        const nameB = b.split('=')[0].toLowerCase();
-        return nameA.localeCompare(nameB);
-      });
-      return `<${slash}${name} ${unique.join(' ')}>`;
-    });
+    .replace(
+      /<(\/?)([\w:]+)([^>]*)>/g,
+      (_full: string, slash: string, name: string, attrs: string) => {
+        const trimmed = attrs.trim();
+        if (!trimmed) return `<${slash}${name}>`;
+        const attrList = trimmed
+          .split(/(\w+(?::\w+)?="[^"]*")/g)
+          .filter((s: string) => s.trim() && s.includes('='))
+          .map((s: string) => s.trim());
+        const unique = Array.from(new Set(attrList));
+        unique.sort((a, b) => {
+          const nameA = a.split('=')[0].toLowerCase();
+          const nameB = b.split('=')[0].toLowerCase();
+          return nameA.localeCompare(nameB);
+        });
+        return `<${slash}${name} ${unique.join(' ')}>`;
+      },
+    );
 }
 
 interface SamlResponseOptions {
@@ -69,11 +72,14 @@ interface SamlResponseOptions {
   email?: string;
   roles?: string | string[];
   tenantId?: string;
+  extraAttributeName?: string;
+  extraAttributeValue?: string;
   notBefore?: string;
   notOnOrAfter?: string;
   audience?: string;
   inResponseTo?: string;
   recipient?: string;
+  omitRecipient?: boolean;
   issuer?: string;
   wantSigned?: boolean;
   tamperDigest?: boolean;
@@ -94,7 +100,9 @@ function createSignedSamlResponse(
   const roles = options.roles ?? 'operator';
   const audience = options.audience ?? config.spEntityId;
   const issuer = options.issuer ?? config.idpEntityId;
-  const recipient = options.recipient ?? config.spAcsUrl;
+  const recipientAttribute = options.omitRecipient
+    ? ''
+    : ` Recipient="${options.recipient ?? config.spAcsUrl}"`;
   const assertionId = `_assertion_${crypto.randomUUID()}`;
   const responseId = `_response_${crypto.randomUUID()}`;
   const inResponseTo = options.inResponseTo;
@@ -105,8 +113,8 @@ function createSignedSamlResponse(
     .join('');
 
   const subjectConfirmationData = inResponseTo
-    ? `<saml:SubjectConfirmationData Recipient="${recipient}" InResponseTo="${inResponseTo}" NotOnOrAfter="${notOnOrAfter}"/>`
-    : `<saml:SubjectConfirmationData Recipient="${recipient}" NotOnOrAfter="${notOnOrAfter}"/>`;
+    ? `<saml:SubjectConfirmationData${recipientAttribute} InResponseTo="${inResponseTo}" NotOnOrAfter="${notOnOrAfter}"/>`
+    : `<saml:SubjectConfirmationData${recipientAttribute} NotOnOrAfter="${notOnOrAfter}"/>`;
 
   let assertionXml =
     `<saml:Assertion xmlns:saml="urn:oasis:names:tc:SAML:2.0:assertion" ID="${assertionId}" IssueInstant="${issueInstant}" Version="2.0">` +
@@ -127,6 +135,9 @@ function createSignedSamlResponse(
     `<saml:Attribute Name="role">${roleAttributeXml}</saml:Attribute>` +
     (options.tenantId
       ? `<saml:Attribute Name="tenant_id"><saml:AttributeValue>${options.tenantId}</saml:AttributeValue></saml:Attribute>`
+      : '') +
+    (options.extraAttributeName && options.extraAttributeValue
+      ? `<saml:Attribute Name="${options.extraAttributeName}"><saml:AttributeValue>${options.extraAttributeValue}</saml:AttributeValue></saml:Attribute>`
       : '') +
     `</saml:AttributeStatement>` +
     `</saml:Assertion>`;
@@ -374,6 +385,43 @@ describe('SAMLAuthPlugin', () => {
       });
       expect(result).not.toBeNull();
       expect(result!.userId).toBe('alice@example.com');
+    });
+
+    it('rejects a signed assertion that omits Recipient', async () => {
+      const response = createSignedSamlResponse(config, keys, { omitRecipient: true });
+      const result = await plugin.authenticate(response);
+      expect(result).toBeNull();
+    });
+
+    it('rejects a response that omits Destination', async () => {
+      const response = createSignedSamlResponse(config, keys);
+      const xml = Buffer.from(response, 'base64').toString('utf-8');
+      const stripped = xml.replace(` Destination="${config.spAcsUrl}"`, '');
+      const result = await plugin.authenticate(Buffer.from(stripped).toString('base64'));
+      expect(result).toBeNull();
+    });
+
+    it('removes nested markup from an attribute before using it as the username', async () => {
+      const response = createSignedSamlResponse(config, keys, {
+        nameId: 'alice',
+        email: 'alice&lt;script&gt;alert(1)&lt;/script&gt;@example.com',
+      });
+      const result = await plugin.authenticate(response);
+      expect(result).not.toBeNull();
+      expect(result!.username).toBe('alicealert(1)@example.com');
+      expect(result!.username.includes('<')).toBe(false);
+    });
+
+    it('ignores attribute names that would pollute an object prototype', async () => {
+      const response = createSignedSamlResponse(config, keys, {
+        extraAttributeName: '__proto__',
+        extraAttributeValue: 'polluted',
+      });
+      const result = await plugin.authenticate(response);
+      expect(result).not.toBeNull();
+      expect(result!.role).toBe('operator');
+      expect(Object.hasOwn(result!.claims ?? {}, '__proto__')).toBe(false);
+      expect((Object.prototype as { polluted?: string }).polluted).toBeUndefined();
     });
 
     it('rejects IdP-initiated response when not allowed', async () => {

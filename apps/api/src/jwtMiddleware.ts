@@ -1,8 +1,7 @@
 import type { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import jwt, { type JwtPayload } from 'jsonwebtoken';
-import type { UserRole } from './userStore';
-import { isProductionEnv } from './envSignal';
+import { findUserById, type User, type UserRole } from './userStore';
 import { persist as persistRefreshJti } from './refreshTokenStore';
 import { isEnterpriseProfile } from './profileSignal';
 
@@ -26,6 +25,7 @@ export interface AuthUser {
   id: string;
   username: string;
   role: UserRole;
+  authVersion: number;
   /**
    * Tenant binding carried by the JWT (WS3 §3.1). Present on enterprise access
    * tokens; absent on legacy/dev tokens. The /v1 tenant guard treats this as
@@ -41,6 +41,7 @@ export interface CommanderJwtPayload extends JwtPayload {
   id: string;
   username: string;
   role: UserRole;
+  auth_version?: number;
   type?: 'access' | 'refresh';
   /** Unique id for refresh tokens — used for rotation / revocation. */
   jti?: string;
@@ -52,32 +53,15 @@ export interface CommanderJwtPayload extends JwtPayload {
 
 // ── JWT configuration ───────────────────────────────────────────────────────
 
-const DEV_SECRET = 'commander-dev-secret-change-in-production';
-
 /**
  * The HMAC secret used to sign/verify JWTs.
  *
- * In production this MUST be set via the JWT_SECRET environment variable.
- * The dev fallback is only acceptable for local development — a warning is
- * emitted at module load when it is in use.
+ * Startup validates that this is an explicit, non-public secret before the API
+ * accepts requests. Keep the empty value here so importing middleware in unit
+ * tests does not manufacture an authentication authority.
  */
-export const JWT_SECRET: string = process.env.JWT_SECRET ?? DEV_SECRET;
-
-if (!process.env.JWT_SECRET) {
-  if (isProductionEnv()) {
-    // Fail closed. With no secret, JWTs are signed/verified with a public source
-    // constant, so anyone can forge a signed { role: 'super_admin' } access token
-    // and, combined with header-based tenant selection, act as super_admin in any
-    // tenant (KC-1). Mirror capabilityToken's boot refusal.
-    throw new Error(
-      '[jwtMiddleware] JWT_SECRET must be set in production. Refusing to start with the ' +
-        'insecure dev default (an unset secret permits forged super_admin tokens).',
-    );
-  }
-  process.stderr.write(
-    '[jwtMiddleware] WARNING: JWT_SECRET is not set — using insecure dev default. ' +
-      'Set JWT_SECRET before deploying to production.\n',
-  );
+function jwtSecret(): string {
+  return process.env.JWT_SECRET?.trim() ?? '';
 }
 
 const ACCESS_TOKEN_EXPIRES_IN = '24h';
@@ -104,6 +88,7 @@ export function signAccessToken(user: AuthUser): string {
     id: user.id,
     username: user.username,
     role: user.role,
+    auth_version: user.authVersion,
     type: 'access',
   };
   if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
@@ -112,23 +97,40 @@ export function signAccessToken(user: AuthUser): string {
   if (Array.isArray(user.scopes) && user.scopes.length > 0) {
     payload.scopes = user.scopes;
   }
-  return jwt.sign(payload, JWT_SECRET, {
+  return jwt.sign(payload, jwtSecret(), {
     expiresIn: ACCESS_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
 }
 
 /**
- * Signs a long-lived refresh token (7d) used to obtain new access tokens.
- * Each token carries a unique `jti` that is persisted so it can be rotated
- * and revoked (see refreshTokenStore / /api/auth/refresh).
+ * A refresh token plus the jti/expiry that must be registered for it.
+ * AUTH-03: rotation must mint *without* persisting, so the caller can consume
+ * the old jti and insert the new one inside one version-fenced transaction.
  */
-export function signRefreshToken(user: AuthUser): string {
+export interface MintedRefreshToken {
+  token: string;
+  jti: string;
+  /** Unix expiry (seconds). */
+  exp: number;
+}
+
+/**
+ * Signs a long-lived refresh token (7d) used to obtain new access tokens.
+ * Each token carries a unique `jti` and the user's `auth_version`, so rotation
+ * can be fenced against a password reset or role change. This does NOT persist
+ * the jti — use `signRefreshToken` for a self-contained issue, or
+ * `rotate` in refreshTokenStore for the rotation path.
+ */
+export function mintRefreshToken(user: AuthUser): MintedRefreshToken {
   const jti = randomUUID();
   const payload: CommanderJwtPayload = {
     id: user.id,
     username: user.username,
     role: user.role,
+    // AUTH-03: the version fence. Without it a refresh token minted before a
+    // reset stayed exchangeable afterwards.
+    auth_version: user.authVersion,
     type: 'refresh',
     jti,
   };
@@ -137,15 +139,24 @@ export function signRefreshToken(user: AuthUser): string {
   if (typeof user.tenantId === 'string' && user.tenantId.length > 0) {
     payload.tenant_id = user.tenantId;
   }
-  const token = jwt.sign(payload, JWT_SECRET, {
+  const token = jwt.sign(payload, jwtSecret(), {
     expiresIn: REFRESH_TOKEN_EXPIRES_IN,
     algorithm: 'HS256',
   });
   const decoded = jwt.decode(token) as CommanderJwtPayload | null;
   const exp =
     typeof decoded?.exp === 'number' ? decoded.exp : Math.floor(Date.now() / 1000) + 7 * 24 * 3600;
-  persistRefreshJti(jti, user.id, exp);
-  return token;
+  return { token, jti, exp };
+}
+
+/**
+ * Signs a refresh token and persists its jti. Used for login/register/OIDC,
+ * where there is no existing jti to rotate.
+ */
+export async function signRefreshToken(user: AuthUser): Promise<string> {
+  const minted = mintRefreshToken(user);
+  await persistRefreshJti(minted.jti, user.id, minted.exp);
+  return minted.token;
 }
 
 /**
@@ -154,7 +165,7 @@ export function signRefreshToken(user: AuthUser): string {
  */
 export function verifyToken(token: string): CommanderJwtPayload | null {
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, jwtSecret(), {
       algorithms: ['HS256'],
     });
     if (typeof decoded === 'string') {
@@ -164,6 +175,35 @@ export function verifyToken(token: string): CommanderJwtPayload | null {
   } catch {
     return null;
   }
+}
+
+export type AccessTokenUserLookup = (id: string) => Promise<User | undefined>;
+
+/** Verify signature and bind mutable authorization claims to PostgreSQL authority. */
+export async function authenticateAccessToken(
+  token: string,
+  lookupUser: AccessTokenUserLookup = findUserById,
+): Promise<AuthUser | null> {
+  const decoded = verifyToken(token);
+  if (!decoded || decoded.type === 'refresh' || !Number.isSafeInteger(decoded.auth_version)) {
+    return null;
+  }
+  const currentUser = await lookupUser(decoded.id);
+  if (
+    !currentUser ||
+    currentUser.authVersion !== decoded.auth_version ||
+    currentUser.role !== decoded.role
+  ) {
+    return null;
+  }
+  return {
+    id: decoded.id,
+    username: decoded.username,
+    role: decoded.role,
+    authVersion: decoded.auth_version,
+    tenantId: decoded.tenant_id,
+    scopes: decoded.scopes,
+  };
 }
 
 // ── Paths exempt from JWT parsing ───────────────────────────────────────────
@@ -230,55 +270,60 @@ function isV1ProductPath(reqPath: string): boolean {
  *    used instead), `req.user` stays null and the existing API-key
  *    authMiddleware handles authentication.
  */
-export function jwtMiddleware(req: Request, res: Response, next: NextFunction): void {
-  // Default: no authenticated user.
-  req.user = null;
+export function createJwtMiddleware(
+  lookupUser: AccessTokenUserLookup = findUserById,
+): (req: Request, res: Response, next: NextFunction) => Promise<void> {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    // Default: no authenticated user.
+    req.user = null;
 
-  if (isJwtPublicPath(req.path)) {
-    next();
-    return;
-  }
+    if (isJwtPublicPath(req.path)) {
+      next();
+      return;
+    }
 
-  const authHeader = req.headers.authorization;
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    // No Bearer token — fall through to the existing API-key authMiddleware.
-    next();
-    return;
-  }
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      // No Bearer token — fall through to the existing API-key authMiddleware.
+      next();
+      return;
+    }
 
-  const token = authHeader.slice('Bearer '.length).trim();
-  if (!token) {
-    next();
-    return;
-  }
+    const token = authHeader.slice('Bearer '.length).trim();
+    if (!token) {
+      next();
+      return;
+    }
 
-  const decoded = verifyToken(token);
-  if (decoded && decoded.type !== 'refresh') {
-    // Valid access token — inject the user identity + enterprise claims.
-    req.user = {
-      id: decoded.id,
-      username: decoded.username,
-      role: decoded.role,
-      tenantId: decoded.tenant_id,
-      scopes: decoded.scopes,
-    };
+    let authenticated: AuthUser | null;
+    try {
+      authenticated = await authenticateAccessToken(token, lookupUser);
+    } catch {
+      res.status(503).json({ error: { code: 'AUTHORITY_UNAVAILABLE' } });
+      return;
+    }
+    if (authenticated) {
+      req.user = authenticated;
+      next();
+      return;
+    }
+    // Verification failed, or a refresh token was presented where an access
+    // token is required. In the enterprise profile on /v1 product paths this
+    // is fail-closed: reject immediately so the downstream /v1 tenant guard
+    // never observes an unauthenticated Bearer. Elsewhere we preserve the
+    // legacy fail-open behaviour (authMiddleware may still accept the token as
+    // an API key, or reject per its own default-deny rules).
+    if (isEnterpriseProfile() && isV1ProductPath(req.path)) {
+      res.status(401).json({
+        error: {
+          code: 'INVALID_TOKEN',
+          message: 'Bearer token is invalid, expired, or not an access token.',
+        },
+      });
+      return;
+    }
     next();
-    return;
-  }
-  // Verification failed, or a refresh token was presented where an access
-  // token is required. In the enterprise profile on /v1 product paths this
-  // is fail-closed: reject immediately so the downstream /v1 tenant guard
-  // never observes an unauthenticated Bearer. Elsewhere we preserve the
-  // legacy fail-open behaviour (authMiddleware may still accept the token as
-  // an API key, or reject per its own default-deny rules).
-  if (isEnterpriseProfile() && isV1ProductPath(req.path)) {
-    res.status(401).json({
-      error: {
-        code: 'INVALID_TOKEN',
-        message: 'Bearer token is invalid, expired, or not an access token.',
-      },
-    });
-    return;
-  }
-  next();
+  };
 }
+
+export const jwtMiddleware = createJwtMiddleware();

@@ -781,7 +781,7 @@ export class GoalHijackDetector {
       const override: HijackDetectionResult = this.detectDirectOverride(ctx);
       results.push(override);
     } catch (err) {
-      reportSilentFailure(err, 'goalHijackDetector:checkContext:detectDirectOverride');
+      results.push(this.detectorFailure('detectDirectOverride', err));
     }
 
     // 2. 间接指令注入检测
@@ -790,7 +790,7 @@ export class GoalHijackDetector {
         const injection: HijackDetectionResult = this.detectIndirectInjection(ctx);
         results.push(injection);
       } catch (err) {
-        reportSilentFailure(err, 'goalHijackDetector:checkContext:detectIndirectInjection');
+        results.push(this.detectorFailure('detectIndirectInjection', err));
       }
     }
 
@@ -799,7 +799,7 @@ export class GoalHijackDetector {
       const drift: HijackDetectionResult = this.monitorGoalDrift(ctx);
       results.push(drift);
     } catch (err) {
-      reportSilentFailure(err, 'goalHijackDetector:checkContext:monitorGoalDrift');
+      results.push(this.detectorFailure('monitorGoalDrift', err));
     }
 
     // 4. 递归目标修改检测
@@ -807,7 +807,7 @@ export class GoalHijackDetector {
       const recursive: HijackDetectionResult = this.detectRecursiveModification(ctx);
       results.push(recursive);
     } catch (err) {
-      reportSilentFailure(err, 'goalHijackDetector:checkContext:detectRecursiveModification');
+      results.push(this.detectorFailure('detectRecursiveModification', err));
     }
 
     // 返回最严重的检测结果
@@ -844,6 +844,25 @@ export class GoalHijackDetector {
     }
 
     return worst;
+  }
+
+  /**
+   * Fail-closed result for a detector that threw.
+   *
+   * Returning "not detected" when a detector errors would let a single internal
+   * fault silently disable hijack defense. A throwing detector is therefore
+   * reported as a high-severity hijack with a blocking recommendation, so the
+   * caller fails closed instead of observing a clean run.
+   */
+  private detectorFailure(detector: string, err: unknown): HijackDetectionResult {
+    reportSilentFailure(err, `goalHijackDetector:checkContext:${detector}`);
+    return {
+      detected: true,
+      severity: 'high',
+      confidence: 0.5,
+      reason: `${detector} 检测器内部错误 — 保守阻断（fail-closed）`,
+      recommendation: 'block',
+    };
   }
 
   // ── 检测方法 1: 直接目标覆盖 ─────────────────────────────────────

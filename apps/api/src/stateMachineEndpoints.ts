@@ -105,7 +105,13 @@ function refuseDuplicateDestination(req: Request, res: Response, taskId: string)
     return true;
   }
   const inMemory = stateMachines.get(taskId);
-  const stateFile = path.resolve(STATE_MACHINE_DIR, `${taskId}.json`);
+  const root = path.resolve(STATE_MACHINE_DIR);
+  const stateFile = path.resolve(root, `${taskId}.json`);
+  const fromRoot = path.relative(root, stateFile);
+  if (fromRoot.startsWith('..') || path.isAbsolute(fromRoot)) {
+    res.status(400).json({ error: 'Invalid taskId format' });
+    return true;
+  }
   const persisted =
     !inMemory && fs.existsSync(stateFile)
       ? readJsonFileSafe<AgentState | null>(stateFile, null)
@@ -192,6 +198,22 @@ router.post('/create', validateBody(stateMachineCreateBody), (req, res) => {
     );
     res.status(500).json({ error: 'Failed to create state machine' });
   }
+});
+
+/**
+ * GET /api/state-machine/types
+ * Get available state machine types
+ *
+ * LM-23 / API-C03: this must be registered BEFORE the dynamic `/:taskId` route.
+ * When it sat after, `GET /types` matched `/:taskId` with `taskId === 'types'`,
+ * `getMachine()` found no such machine, and the catalogue was answered with a
+ * 404 "State machine not found" — the static route was unreachable.
+ */
+router.get('/types', (req, res) => {
+  res.json({
+    success: true,
+    types: StateMachineFactory.getAvailableTypes(),
+  });
 });
 
 /**
@@ -480,17 +502,6 @@ router.post('/:taskId/resume', validateBody(resumeFromCheckpointBody), (req, res
     );
     res.status(500).json({ error: 'Failed to resume from checkpoint' });
   }
-});
-
-/**
- * GET /api/state-machine/types
- * Get available state machine types
- */
-router.get('/types', (req, res) => {
-  res.json({
-    success: true,
-    types: StateMachineFactory.getAvailableTypes(),
-  });
 });
 
 /**

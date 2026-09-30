@@ -60,11 +60,13 @@ async function startServer(apiDir: string): Promise<ServerContext> {
         env: {
           ...process.env,
           PORT: String(port),
+          JWT_SECRET:
+            process.env.JWT_SECRET || 'spawned-api-test-jwt-secret-at-least-32-characters',
+          ADMIN_PASSWORD: process.env.ADMIN_PASSWORD || 'spawned-api-test-admin-password',
           AUTH_DISABLED: 'true',
           COMMANDER_ALLOW_ANON: '1',
           // Anon bypass needs a tenant ALS id (MemoryStoreFacade fails closed otherwise).
-          COMMANDER_DEFAULT_TENANT_ID:
-            process.env.COMMANDER_DEFAULT_TENANT_ID || 'test-tenant',
+          COMMANDER_DEFAULT_TENANT_ID: process.env.COMMANDER_DEFAULT_TENANT_ID || 'test-tenant',
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       });

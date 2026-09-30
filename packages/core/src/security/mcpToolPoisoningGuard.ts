@@ -78,6 +78,7 @@ import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
+import { stripHtmlComments } from '../runtime/observationPurifier';
 
 // ============================================================================
 // 类型定义
@@ -761,9 +762,7 @@ function stripHiddenUnicode(description: string): string {
  * @returns 清除后的描述
  */
 function stripHtmlAndComments(description: string): string {
-  let result = description;
-  // 移除 HTML 注释（<!-- ... -->）
-  result = result.replace(/<!--[\s\S]*?-->/g, '');
+  let result = stripHtmlComments(description);
   // 移除内联 style 属性中的隐藏样式
   result = result.replace(
     /style\s*=\s*"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|opacity\s*:\s*0)[^"]*"/gi,

@@ -6,14 +6,27 @@ import {
   AgentFileCollector,
   extractOutputFilePath,
   writeSynthesisOutput,
-} from '.././../src/ultimate/agentFileCollector';
-import type { TaskTreeNode } from '.././../src/ultimate/types';
-import type { ArtifactReference } from '.././../src/shared/types';
-import type { AgentRuntimeInterface } from '.././../src/runtime';
+} from '../../src/ultimate/agentFileCollector';
+import type { TaskTreeNode } from '../../src/ultimate/types';
+import type { ArtifactReference } from '../../src/shared/types';
+import type { AgentRuntimeInterface } from '../../src/runtime';
 import {
   OrchestratorOutputCollector,
   extractOutputFilePath as extractLegacyOutputFilePath,
-} from '.././../src/ultimate/orchestratorOutput';
+} from '../../src/ultimate/orchestratorOutput';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file drives output-collector tool loops and asserts nothing about
+// SideEffectGate admission, so it opts in explicitly to the always-admit unit
+// fixture. The global default is now the real, fail-closed gate.
+// This is a unit convenience, NOT an admission proof.
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -124,6 +137,12 @@ describe('extractOutputFilePath', () => {
     const result = extractOutputFilePath('The output is at /var/log/output.md.');
     expect(result).toBe('/var/log/output.md');
   });
+
+  it('extracts a Windows drive-qualified path', () => {
+    expect(extractOutputFilePath(String.raw`Write the report to C:\tmp\report.md`)).toBe(
+      String.raw`C:\tmp\report.md`,
+    );
+  });
 });
 
 describe('legacy extractOutputFilePath', () => {
@@ -151,7 +170,9 @@ describe('writeSynthesisOutput', () => {
   it('writes a relative output beneath the workspace', async () => {
     const writtenPath = await writeSynthesisOutput('Write the report to ./reports/result.md', 'ok');
 
-    expect(writtenPath).toBe(path.join(workspace, 'reports', 'result.md'));
+    expect(fs.realpathSync.native(writtenPath!)).toBe(
+      path.join(fs.realpathSync.native(workspace), 'reports', 'result.md'),
+    );
     expect(fs.readFileSync(writtenPath!, 'utf-8')).toBe('ok');
   });
 
@@ -240,7 +261,11 @@ describe('writeSynthesisOutput', () => {
   });
 
   it('keeps the legacy output collector inside the same workspace root', async () => {
-    const outside = path.join(path.dirname(workspace), path.basename(workspace) + '-legacy.md');
+    const canonicalWorkspace = fs.realpathSync.native(workspace);
+    const outside = path.join(
+      path.dirname(canonicalWorkspace),
+      `${path.basename(canonicalWorkspace)}-legacy.md`,
+    );
     const reasoning: string[] = [];
     const collector = new OrchestratorOutputCollector(makeRuntime());
 

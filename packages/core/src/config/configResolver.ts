@@ -10,6 +10,9 @@ import {
   PROVIDER_ORDER,
   resolveApiKey,
 } from './commanderConfig';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export type ExecutionMode = 'fast' | 'balanced' | 'thorough';
 /**
@@ -250,7 +253,7 @@ export class ConfigResolver {
   }
 
   detectAvailableProviders(): Array<{ name: string; displayName: string; apiKey: boolean }> {
-    const { DISPLAY_NAMES } = require('./commanderConfig');
+    const { DISPLAY_NAMES } = nodeRequire('./commanderConfig');
     const available: Array<{ name: string; displayName: string; apiKey: boolean }> = [];
 
     for (const type of PROVIDER_ORDER) {

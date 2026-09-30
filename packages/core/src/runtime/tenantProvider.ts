@@ -7,18 +7,21 @@
  *  - SimpleTenantProvider: static config map for multi-tenant deployments
  */
 import * as path from 'node:path';
+import { createRequire } from 'node:module';
 // NOTE: ThreeLayerMemory is imported lazily to break a value-import cycle:
 // threeLayerMemory → tenantProvider → tenantContext → tenantAwareSingleton →
 // tenantContext → tenantProvider. Loading it at module load time creates a
 // circular dependency. The lazy wrappers below resolve it on first use.
 import { getCurrentTenantId as readCurrentTenantId, setMultiTenantEnabled } from './tenantContext';
 
+const nodeRequire = createRequire(import.meta.url);
+
 let _ThreeLayerMemory: typeof import('../threeLayerMemory').ThreeLayerMemory | null = null;
 let _getGlobalThreeLayerMemory:
   typeof import('../threeLayerMemory').getGlobalThreeLayerMemory | null = null;
 function lazyThreeLayerMemoryClass(): typeof import('../threeLayerMemory').ThreeLayerMemory {
   if (!_ThreeLayerMemory) {
-    const mod = require('../threeLayerMemory');
+    const mod = nodeRequire('../threeLayerMemory');
     _ThreeLayerMemory = mod.ThreeLayerMemory;
     _getGlobalThreeLayerMemory = mod.getGlobalThreeLayerMemory;
   }
@@ -122,7 +125,14 @@ export class SimpleTenantProvider implements TenantProvider {
 
   validateWorkspacePath(tenantId: string, filePath: string): boolean {
     const config = this.tenants.get(tenantId);
-    if (!config?.workspacePath) return true;
+    // ET-03 (batchE-core-top): `if (!config?.workspacePath) return true` was an
+    // allow-all default inside a security primitive — an unknown tenant could
+    // reach any path, and the enterprise wiring installs this provider with an
+    // empty config list. `getSafeRoot()` already refuses (throws
+    // TenantIsolationError) in exactly this situation when multi-tenant mode is
+    // on, so the two disagreed. Fail closed for both the unknown tenant and the
+    // known tenant without a configured workspace.
+    if (!config?.workspacePath) return false;
     const resolved = path.resolve(filePath);
     const workspace = path.resolve(config.workspacePath);
     return resolved === workspace || resolved.startsWith(workspace + path.sep);

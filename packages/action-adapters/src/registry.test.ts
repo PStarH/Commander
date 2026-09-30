@@ -12,13 +12,25 @@ function stubAdapter(effectType: string): ActionAdapter {
       return {};
     },
     async queryOutcome() {
-      return { status: 'UNKNOWN' };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     },
     async compensate() {
       return {};
     },
     async queryCompensationOutcome() {
-      return { status: 'UNKNOWN' };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     },
   };
 }
@@ -36,6 +48,8 @@ describe('ActionAdapterRegistry', () => {
         server: 'https://kubernetes.example',
         token: 'token',
       }),
+      getToken: async () => 'token',
+      getServer: () => new URL('https://kubernetes.example'),
     };
     const registry = ActionAdapterRegistry.production(credentials);
     assert.equal(
@@ -69,7 +83,7 @@ describe('ActionAdapterRegistry', () => {
   it('outcomeQuerierFor bridges adapter queryOutcome', async () => {
     const adapter = stubAdapter('connector.github.pull-request.create');
     adapter.queryOutcome = async () => ({
-      status: 'COMPLETED',
+      status: 'APPLIED',
       response: { prNumber: 42 },
     });
     const registry = new ActionAdapterRegistry([adapter]);
@@ -82,7 +96,7 @@ describe('ActionAdapterRegistry', () => {
       request: { destination: 'github://octo/repo/pulls' },
       tenantId: 'tenant-a',
     });
-    assert.deepEqual(outcome, { status: 'COMPLETED', response: { prNumber: 42 } });
+    assert.deepEqual(outcome, { status: 'APPLIED', response: { prNumber: 42 } });
   });
 
   it('outcomeQuerierFor forwards abort signal to adapter', async () => {
@@ -90,7 +104,13 @@ describe('ActionAdapterRegistry', () => {
     const adapter = stubAdapter('connector.github.pull-request.create');
     adapter.queryOutcome = async (input) => {
       assert.equal(input.signal, controller.signal);
-      return { status: 'UNKNOWN' };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     };
     const registry = new ActionAdapterRegistry([adapter]);
     const querier = registry.outcomeQuerierFor('connector.github.pull-request.create');
@@ -105,10 +125,70 @@ describe('ActionAdapterRegistry', () => {
     });
   });
 
+  it('outcomeQuerierFor routes compensation effects to compensation queries', async () => {
+    const adapter = stubAdapter('connector.github.pull-request.create');
+    let forwardQueries = 0;
+    let compensationQueries = 0;
+    adapter.queryOutcome = async () => {
+      forwardQueries += 1;
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
+    };
+    adapter.queryCompensationOutcome = async () => {
+      compensationQueries += 1;
+      return { status: 'APPLIED', response: { state: 'closed' } };
+    };
+    const registry = new ActionAdapterRegistry([adapter]);
+    const querier = registry.outcomeQuerierFor('compensate.github.pull-request.create');
+    assert.ok(querier);
+    const outcome = await querier.queryOutcome({
+      effectId: 'cmp-effect-1',
+      idempotencyKey: 'cmp:effect-1:1.0.0',
+      type: 'compensate.github.pull-request.create',
+      request: { destination: 'github://octo/repo/pulls' },
+      tenantId: 'tenant-a',
+    });
+    assert.equal(outcome.status, 'APPLIED');
+    assert.equal(forwardQueries, 0);
+    assert.equal(compensationQueries, 1);
+  });
+
   it('listDescriptors returns registered descriptor list', () => {
     const adapter = stubAdapter('connector.github.pull-request.create');
     const registry = new ActionAdapterRegistry([adapter]);
     assert.equal(registry.listDescriptors().length, 1);
     assert.equal(registry.listDescriptors()[0]?.effectType, 'connector.github.pull-request.create');
+  });
+
+  it('refuses a compensation effect type that collides with another adapter key', () => {
+    const forward = stubAdapter('connector.a.create');
+    const collides: ActionAdapter = {
+      ...stubAdapter('connector.b.create'),
+      descriptor: {
+        ...GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+        effectType: 'connector.b.create',
+        compensationEffectType: 'connector.a.create',
+      },
+    };
+    assert.throws(
+      () => new ActionAdapterRegistry([forward, collides]),
+      /Duplicate action adapter effect type registration: connector\.a\.create/,
+    );
+  });
+
+  it('refuses a duplicate forward effect type registration', () => {
+    assert.throws(
+      () =>
+        new ActionAdapterRegistry([
+          stubAdapter('connector.a.create'),
+          stubAdapter('connector.a.create'),
+        ]),
+      /Duplicate action adapter effect type registration: connector\.a\.create/,
+    );
   });
 });

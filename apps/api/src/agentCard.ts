@@ -313,6 +313,8 @@ function assertCardTenant(card: AgentCard): void {
  * Manages known agent cards for discovery
  */
 export class AgentCardRegistry {
+  /** AUDIT-API3: hard cap on registered cards (memory bound). */
+  static readonly MAX_ENTRIES = 1000;
   private cards: Map<string, AgentCard> = new Map();
 
   /**
@@ -340,6 +342,13 @@ export class AgentCardRegistry {
     }
 
     card.tenantId = owner;
+    // AUDIT-API3: bound the registry — an unbounded Map plus 1MB bodies was a
+    // memory-exhaustion path. Evict-free hard cap; registration refuses.
+    if (!this.cards.has(card.id) && this.cards.size >= AgentCardRegistry.MAX_ENTRIES) {
+      throw new Error(
+        `Agent card registry is full (${AgentCardRegistry.MAX_ENTRIES} entries); refusing registration`,
+      );
+    }
     this.cards.set(card.id, card);
   }
 

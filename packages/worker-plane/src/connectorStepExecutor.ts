@@ -18,10 +18,12 @@
 import type { StepExecutor, ClaimedStep, WorkerRecord } from './types.js';
 import { WorkerExecutionError } from './types.js';
 import type { ExternalEffectBroker } from './toolStepExecutor.js';
-import type { CapabilityTokenIssuer } from '@commander/effect-broker';
+import { deriveEffectIdempotencyKey, type CapabilityTokenIssuer } from '@commander/effect-broker';
 import {
   assertEffectBrokerForProduction,
+  isProductionEffectGate,
   mustRouteExternalEffectThroughBroker,
+  workerExecutionErrorFromEffectFailure,
 } from './effectGate.js';
 import type { ToolEffectCatalog } from './toolEffectCatalog.js';
 import { DENY_ALL_TOOL_EFFECT_CATALOG } from './toolEffectCatalog.js';
@@ -143,19 +145,27 @@ export class ConnectorStepExecutor implements StepExecutor {
           retryable: false,
         });
       }
-      if (!step.lease || !input.effectId || !input.idempotencyKey) {
+      if (!step.lease || !input.effectId) {
         throw new WorkerExecutionError(
-          'External connector execution requires effectId, idempotencyKey, and a live step lease',
+          'External connector execution requires effectId and a live step lease',
           { code: 'EFFECT_AUTHORIZATION_REQUIRED', retryable: false },
         );
       }
       const request = input.args ?? {};
       const effectType = input.connectorName + '.' + input.operation;
+      const idempotencyKey = deriveEffectIdempotencyKey({
+        tenantId: step.tenantId,
+        runId: step.runId,
+        stepId: step.id,
+        effectId: input.effectId,
+        request,
+      });
       let capabilityToken = input.capabilityToken;
-      const production =
-        process.env.NODE_ENV === 'production' ||
-        process.env.COMMANDER_PROFILE === 'enterprise' ||
-        process.env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1';
+      // WP-09: use the shared production gate. A locally re-derived predicate that
+      // omitted COMMANDER_REQUIRE_EFFECT_BROKER let a deployment which had turned
+      // the broker gate on fall back to the step's caller-supplied capability
+      // token instead of demanding the step-bound mint.
+      const production = isProductionEffectGate();
       let workloadBinding = getStepWorkloadBinding();
       if (this.capabilityIssuer) {
         workloadBinding = requireStepWorkloadBinding();
@@ -182,7 +192,7 @@ export class ConnectorStepExecutor implements StepExecutor {
           token: capabilityToken,
           type: effectType,
           request,
-          idempotencyKey: input.idempotencyKey,
+          idempotencyKey,
           lease: step.lease,
           actor: context.worker.id,
           timeoutMs: input.timeoutMs,
@@ -196,15 +206,10 @@ export class ConnectorStepExecutor implements StepExecutor {
           operation: input.operation,
         };
       } catch (error) {
-        if (error instanceof WorkerExecutionError) throw error;
-        throw new WorkerExecutionError(error instanceof Error ? error.message : String(error), {
-          code: 'EFFECT_EXECUTION_FAILED',
-          retryable: false,
-          details: {
-            connectorName: input.connectorName,
-            operation: input.operation,
-            stepId: step.id,
-          },
+        throw workerExecutionErrorFromEffectFailure(error, {
+          connectorName: input.connectorName,
+          operation: input.operation,
+          stepId: step.id,
         });
       }
     }

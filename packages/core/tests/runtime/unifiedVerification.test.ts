@@ -206,19 +206,63 @@ describe('UnifiedVerificationPipeline', () => {
     assert.ok(report.signals.some((s) => s.message.includes('count')));
   });
 
+  it('enforces top-level JSON Schema required, enum, array, and additionalProperties', async () => {
+    const pipeline = new UnifiedVerificationPipeline({
+      enabled: true,
+      confidenceSkipThreshold: 0.99,
+    });
+    const report = await pipeline.verify({
+      goal: 'Return a structured incident report',
+      output: JSON.stringify({
+        severity: 'SEV-9',
+        evidence: ['ok', 42],
+        unexpected: true,
+      }),
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          incidentId: { type: 'string' },
+          severity: { type: 'string', enum: ['SEV-1', 'SEV-2', 'SEV-3'] },
+          evidence: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['incidentId', 'severity'],
+      },
+    });
+    assert.ok(report.signals.some((s) => s.message.includes('incidentId')));
+    assert.ok(report.signals.some((s) => s.message.includes('SEV-1')));
+    assert.ok(report.signals.some((s) => s.message.includes('evidence[1]')));
+    assert.ok(report.signals.some((s) => s.message.includes('Unexpected field')));
+    assert.equal(report.passed, false);
+  });
+
   it('adjusts relevance threshold by task type', async () => {
+    // RTC-16: the old body asserted only inside `if (relevanceSignal)`, and the
+    // fixture could never produce that signal: the goal was 7 words against a
+    // `goalWords > 10` gate. The signal was therefore never exercised and the
+    // test passed no matter what the pipeline did.
     const pipeline = createPipeline();
-    // Code tasks allow longer output
-    const longCodeOutput = 'x '.repeat(2000);
-    const ctx: UVPTaskContext = {
-      goal: 'Write a Python function to process data',
-      output: longCodeOutput,
-    };
-    const report = await pipeline.verify(ctx);
-    // Should not penalize as heavily as it would for a search task
-    const relevanceSignal = report.signals.find((s) => s.source === 'relevance');
-    if (relevanceSignal) {
-      assert.equal(relevanceSignal.severity, 'low');
-    }
+    const output = Array.from({ length: 120 }, (_, i) => `w${i}`).join(' ');
+
+    // `search` tasks use a 6x multiplier: 120 words beats 15 * 6 = 90.
+    const searchReport = await pipeline.verify({
+      goal: 'Search the web for information about the current state of the art in climate modeling',
+      output,
+    });
+    const searchSignal = searchReport.signals.find((s) => s.source === 'relevance');
+    assert.ok(searchSignal, 'a search task must flag output far longer than the goal');
+    assert.equal(searchSignal!.severity, 'low');
+
+    // `code` tasks use a 15x multiplier: the same 120 words is below 15 * 15,
+    // so the identical output must not be flagged there.
+    const codeReport = await pipeline.verify({
+      goal: 'Write a Python function to process the data and return a sorted list of results',
+      output,
+    });
+    assert.equal(
+      codeReport.signals.find((s) => s.source === 'relevance'),
+      undefined,
+      'a code task must tolerate output that a search task would flag',
+    );
   });
 });

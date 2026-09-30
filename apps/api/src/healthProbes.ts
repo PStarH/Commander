@@ -34,6 +34,8 @@ export type ProbeStatus = 'ok' | 'fail' | 'unknown' | 'degraded';
 export interface ReadinessProbeDeps {
   /** Database liveness probe (e.g. `SELECT 1`). Returns 'ok' or throws. */
   database?: () => Promise<'ok'>;
+  /** Durable evidence repository availability; throws when not ready. */
+  evidenceRepository?: () => Promise<'ok'>;
   /** Kernel gateway resolver; non-null = ok, null = fail. */
   kernel: () => unknown | null;
   /**
@@ -53,6 +55,17 @@ export async function probeDatabase(fn: (() => Promise<'ok'>) | undefined): Prom
   try {
     const result = await fn();
     return result === 'ok' ? 'ok' : 'unknown';
+  } catch {
+    return 'fail';
+  }
+}
+
+export async function probeEvidenceRepository(
+  fn: (() => Promise<'ok'>) | undefined,
+): Promise<ProbeStatus> {
+  if (!fn) return 'unknown';
+  try {
+    return (await fn()) === 'ok' ? 'ok' : 'unknown';
   } catch {
     return 'fail';
   }
@@ -112,11 +125,15 @@ export async function probeReadiness(deps: ReadinessProbeDeps): Promise<Readines
     warRoomStore: probeWarRoomStore(deps.warRoomStore),
     memoryHeap: probeMemoryHeap(deps.memoryHeap),
   };
+  if (deps.evidenceRepository !== undefined) {
+    checks.evidenceRepository = await probeEvidenceRepository(deps.evidenceRepository);
+  }
   if (deps.effectBroker !== undefined) {
     checks.effectBroker = probeEffectBroker(deps.effectBroker);
   }
 
-  const anyHardGateFailed = HARD_GATES.some((gate) => checks[gate] === 'fail');
+  const anyHardGateFailed =
+    HARD_GATES.some((gate) => checks[gate] === 'fail') || checks.evidenceRepository === 'fail';
   return {
     status: anyHardGateFailed ? 'not_ready' : 'ready',
     checks,

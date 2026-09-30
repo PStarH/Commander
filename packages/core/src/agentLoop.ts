@@ -14,6 +14,7 @@ import { A2ADiscoveryManager } from './mcp/a2aClient';
 import { A2ADelegateTool } from './tools/a2aDelegateTool';
 import type { A2AAgentCard } from './mcp/a2aCompliance';
 import { getGlobalLogger } from './logging';
+import { assessGovernanceRiskLevel } from './ultimate/riskAssessor';
 
 export interface AgentLoopConfig {
   projectRoot: string;
@@ -437,7 +438,7 @@ export class CommanderAgentLoop {
               {
                 id: 'tool-execution',
                 name: 'Tool Execution',
-                description: 'Execute 25+ built-in tools and any MCP-compatible external tools',
+                description: 'Execute the 18 built-in tools and any MCP-compatible external tools',
                 tags: ['tools', 'mcp'],
               },
             ],
@@ -606,7 +607,10 @@ export class CommanderAgentLoop {
         goal: task.goal,
         contextData: {
           availableTools: this.config.tools,
-          governanceProfile: { riskLevel: 'LOW' },
+          // Risk is measured from the goal, never asserted. This used to be a
+          // hardcoded `'LOW'`, which made telosOrchestrator compute
+          // `requiresApproval: false` for every goal — see assessGovernanceRiskLevel.
+          governanceProfile: { riskLevel: assessGovernanceRiskLevel(task.goal, this.config.tools) },
         },
       });
 

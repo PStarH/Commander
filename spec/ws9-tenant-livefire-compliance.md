@@ -4,7 +4,9 @@
 **范围：Phase 1 Spec → Phase 2 Build → Phase 3 Review & Audit**
 **证据等级目标：`evidenceLevel=live`（built image + real PostgreSQL + non-owner role + multi-process/container + 真实 failover/篡改）**
 
-> 本文档是 WS9 的唯一验收基线。评审通过后才能进入代码与测试改造。所有验收项在 Phase 3 审计产生 live 证据后，状态方可改为 `ACCEPTED`。本产出拟作为 $50M 技术尽调的核心安全证据。
+> 本文档定义 WS9 的技术验收目标，不代表已经通过验收。所有验收项在 Phase 3 审计产生 live 证据后，状态方可改为 `ACCEPTED`。
+
+> 历史范围说明：下文评审引文、分支状态和缺陷描述记录的是 2026 年 7 月的设计背景，不是当前版本审计结论。内部材料不随仓库发布；读者应以当前代码、指定 SHA 的测试与公开验收证据为准，不应据历史状态推断现有功能缺失。当前企业试用见 [Shadow Phase A](../docs/pilot/shadow/README.md)，不执行外部 rollback。
 
 ---
 
@@ -28,7 +30,7 @@ Final Verdict 中本任务必须关闭的核心断言：
 
 发布就绪评审 Final Verdict：
 
-> `Commander … 当前仓库不可作为 enterprise production release，也不可作为 5000 万收购的技术完工证明。` — `architecture-v2-release-readiness-review-2026-07-13.md:254-258`
+该历史评审未批准 enterprise production release；当前状态应以指定发布版本的测试与保留证据为准。
 
 信任审计总判定：
 
@@ -403,4 +405,4 @@ day-over-day drift gate：今天 `verdict=FAIL` 或新增穿越用例即阻断 C
 
 ### 流程
 - [ ] 外部安全审计 review 记录入档。
-- [ ] 审计完成后本文档标记 `ACCEPTED`，作为 $50M 尽调核心安全证据。
+- [ ] 只有审计和必需的 live 证据均通过后，本文档才可标记 `ACCEPTED`。

@@ -14,7 +14,8 @@
  *   - PR smoke test: Compare 5-scenario smoke run against baseline smoke subset.
  *     Fail if any critical regression detected.
  *   - Main full battery: Run all 44 scenarios, update baseline on success.
- *   - Baseline is stored as tamper-proof JSON via AuditChainLedger.
+ *   - Baseline is stored as tamper-evident JSON via AuditChainLedger; external
+ *     WORM/KMS anchoring is required before making a tamper-proof claim.
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';

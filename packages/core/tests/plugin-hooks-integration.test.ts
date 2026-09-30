@@ -465,14 +465,25 @@ describe('Hook error isolation', () => {
   });
 
   it('hook errors are caught and logged without propagating', async () => {
+    let laterHookRan = false;
+
     await hm.register({
       name: 'throws',
       onStepStart: async () => {
         throw new Error('step error');
       },
     });
+    // Registered after the throwing plugin. hookManager only rethrows when the
+    // plugin is `required`; otherwise it records the failure and continues the
+    // chain. If the error were not isolated this hook would never run.
+    await hm.register({
+      name: 'after-throws',
+      onStepStart: async () => {
+        laterHookRan = true;
+      },
+    });
 
-    // Should not throw
+    // Must resolve rather than reject.
     await hm.fireOnStepStart({
       runId: 'r1',
       agentId: 'a1',
@@ -480,8 +491,7 @@ describe('Hook error isolation', () => {
       type: 'thought',
     });
 
-    // If we got here, error was isolated
-    assert.ok(true);
+    assert.strictEqual(laterHookRan, true, 'a failing hook must not abort the hook chain');
   });
 
   it('plugin timeout does not crash the hook chain', async () => {

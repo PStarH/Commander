@@ -90,3 +90,28 @@ describe('CostModel', () => {
     assert.notStrictEqual(a, c);
   });
 });
+
+describe('CostModel prefix pricing resolution', () => {
+  beforeEach(() => resetCostModel());
+
+  it('resolves a dated model id to the longest matching pricing prefix', () => {
+    const m = new CostModel();
+    const dated = m.getPricing('openai', 'gpt-4o-mini-2024-07-18');
+    const exactMini = m.getPricing('openai', 'gpt-4o-mini');
+    assert.strictEqual(dated.model, 'gpt-4o-mini');
+    assert.strictEqual(dated.inputPer1k, exactMini.inputPer1k);
+    assert.strictEqual(dated.outputPer1k, exactMini.outputPer1k);
+  });
+
+  it('does not price a mini model at the larger model rate', () => {
+    const m = new CostModel();
+    const r = m.calculate('openai', 'gpt-4o-mini-2024-07-18', {
+      input: 1000,
+      output: 0,
+      cached: 0,
+      reasoning: 0,
+      total: 1000,
+    });
+    assert.strictEqual(r.inputCostUsd, 0.00015);
+  });
+});

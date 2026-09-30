@@ -15,7 +15,6 @@ const JSON_COLUMNS = new Set([
   'tenant_ids',
   'reconcile_last_error',
   'last_error',
-  'receipt',
 ]);
 
 function parseJsonFields<T extends Record<string, unknown>>(row: T): T {
@@ -27,7 +26,9 @@ function parseJsonFields<T extends Record<string, unknown>>(row: T): T {
       try {
         (out as Record<string, unknown>)[key] = JSON.parse(value);
       } catch {
-        /* keep string */
+        process.stderr.write(
+          `[kernel:sqlite] JSON parse error in column ${key}: corrupted data, keeping string\n`,
+        );
       }
     }
   }
@@ -67,6 +68,7 @@ export function adaptPostgresSqlToSqlite(
     (_, num) => `datetime($${num}, '-60 seconds')`,
   );
   out = out.replace(/\bGREATEST\b/g, 'MAX');
+  out = out.replace(/\bLEAST\b/g, 'MIN');
   out = out.replace(
     /\bnow\(\)\s*\+\s*\(POWER\(2,\s*attempts\)\s*\*\s*INTERVAL\s+'1 second'\)/g,
     "strftime('%Y-%m-%dT%H:%M:%fZ', datetime('now', printf('+%d seconds', CAST((POWER(2, attempts)) AS INTEGER))))",

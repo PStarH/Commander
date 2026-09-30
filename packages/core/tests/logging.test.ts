@@ -1047,4 +1047,160 @@ describe('Logger + LegacyMetricsAdapter integration', () => {
 
     metrics.dispose();
   });
+
+  // ---------------------------------------------------------------------------
+  // LOG-01: credentials must not reach any log sink
+  // ---------------------------------------------------------------------------
+  describe('Logger credential redaction (LOG-01)', () => {
+    it('redacts credential-named fields in context before storage, listeners and persistence', () => {
+      const logger = new Logger({ enableConsole: false, enableStorage: true });
+      const seen: LogEntry[] = [];
+      logger.onLog((entry) => seen.push(entry));
+
+      logger.info('probe', 'synthetic', {
+        authorization: 'Bearer SYNTHETIC-abc123',
+        headers: { 'x-api-key': 'sk-live-SYNTHETIC', accept: 'application/json' },
+        nested: [{ password: 'SYNTHETIC-pw' }],
+        apiKey: 'SYNTHETIC-key',
+        runId: 'run-1',
+      });
+
+      const stored = logger.getRecent()[0]!;
+      assert.strictEqual(stored.context?.authorization, '[REDACTED]');
+      assert.strictEqual(stored.context?.apiKey, '[REDACTED]');
+      assert.deepStrictEqual(
+        (stored.context?.headers as Record<string, unknown>)['x-api-key'],
+        '[REDACTED]',
+      );
+      assert.deepStrictEqual(
+        (stored.context?.nested as Array<Record<string, unknown>>)[0]!.password,
+        '[REDACTED]',
+      );
+      // Non-credential keys survive, so the log is still useful.
+      assert.strictEqual(stored.context?.runId, 'run-1');
+      assert.deepStrictEqual(
+        (stored.context?.headers as Record<string, unknown>).accept,
+        'application/json',
+      );
+      // The listener receives the same sanitized entry as storage.
+      assert.strictEqual(seen[0]?.context?.authorization, '[REDACTED]');
+
+      const serialized = JSON.stringify(stored);
+      assert.ok(!serialized.includes('SYNTHETIC'), `raw secret leaked: ${serialized}`);
+    });
+
+    it('does not mutate the caller object and survives circular or exotic values', () => {
+      const logger = new Logger({ enableConsole: false, enableStorage: true });
+      const context: Record<string, unknown> = { token: 'SYNTHETIC-token', keep: 'value' };
+      context.self = context; // circular
+      context.err = new Error('SYNTHETIC-error-message');
+
+      logger.info('probe', 'synthetic', context);
+
+      // The caller's object is untouched.
+      assert.strictEqual(context.token, 'SYNTHETIC-token');
+      const stored = logger.getRecent()[0]!;
+      assert.strictEqual(stored.context?.token, '[REDACTED]');
+      assert.strictEqual(stored.context?.keep, 'value');
+      assert.strictEqual(stored.context?.self, '[CIRCULAR]');
+      assert.deepStrictEqual(stored.context?.err, {
+        name: 'Error',
+        message: 'SYNTHETIC-error-message',
+      });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Diagnostics sink selection
+//
+// Regression guard for a defect that silently swallowed test results: the
+// logger used to emit every non-error line with `console.log`, i.e. to
+// **stdout**. Under `node --test` the runner spawns one child per test file and
+// frames test results on that child's stdout as length-prefixed v8-serialized
+// messages. A raw log line is not a frame — the runner reads its first four
+// bytes as a declared length and then stalls, so every result that follows is
+// dropped and the file is reported as failed with the opaque
+// "Unable to deserialize cloned data due to invalid or unsupported version."
+//
+// Observed before the fix: `tests/httpServer.test.ts` ran 12 of 35 tests and
+// exited 1. After routing info lines to stderr when the runner owns stdout:
+// 35/35, exit 0. No assertion was relaxed to get there.
+// ---------------------------------------------------------------------------
+describe('Logger — diagnostics sink under a test runner', () => {
+  const savedContext = process.env.NODE_TEST_CONTEXT;
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalWarn = console.warn;
+  let logLines: string[];
+  let errorLines: string[];
+  let warnLines: string[];
+
+  beforeEach(() => {
+    logLines = [];
+    errorLines = [];
+    warnLines = [];
+    console.log = (...args: unknown[]) => {
+      logLines.push(args.map((a) => String(a)).join(' '));
+    };
+    console.error = (...args: unknown[]) => {
+      errorLines.push(args.map((a) => String(a)).join(' '));
+    };
+    console.warn = (...args: unknown[]) => {
+      warnLines.push(args.map((a) => String(a)).join(' '));
+    };
+  });
+
+  afterEach(() => {
+    console.log = originalLog;
+    console.error = originalError;
+    console.warn = originalWarn;
+    if (savedContext === undefined) delete process.env.NODE_TEST_CONTEXT;
+    else process.env.NODE_TEST_CONTEXT = savedContext;
+  });
+
+  it('keeps info lines off stdout while node --test owns the channel', () => {
+    process.env.NODE_TEST_CONTEXT = 'child-v8';
+    new Logger({ level: 'info' }).info('SinkProbe', 'must not reach the protocol stream');
+
+    assert.deepStrictEqual(
+      logLines,
+      [],
+      'a log line on stdout corrupts the runner protocol and drops every later test result',
+    );
+    assert.ok(
+      errorLines.some((l) => l.includes('must not reach the protocol stream')),
+      'the line must still be observable, on stderr',
+    );
+  });
+
+  it('keeps JSON-formatted info lines off stdout too', () => {
+    process.env.NODE_TEST_CONTEXT = 'child-v8';
+    new Logger({ level: 'info', logFormat: 'json' }).info('SinkProbe', 'json line');
+
+    assert.deepStrictEqual(logLines, []);
+    assert.ok(errorLines.some((l) => l.includes('"message":"json line"')));
+  });
+
+  it('still writes info lines to stdout when no test runner owns it', () => {
+    delete process.env.NODE_TEST_CONTEXT;
+    new Logger({ level: 'info' }).info('SinkProbe', 'ordinary console output');
+
+    assert.ok(
+      logLines.some((l) => l.includes('ordinary console output')),
+      'outside a test runner the console behaviour must be unchanged',
+    );
+    assert.deepStrictEqual(errorLines, []);
+  });
+
+  it('leaves warn and error routing untouched', () => {
+    process.env.NODE_TEST_CONTEXT = 'child-v8';
+    const logger = new Logger({ level: 'info' });
+    logger.warn('SinkProbe', 'a warning');
+    logger.error('SinkProbe', 'a failure');
+
+    assert.ok(warnLines.some((l) => l.includes('a warning')));
+    assert.ok(errorLines.some((l) => l.includes('a failure')));
+    assert.deepStrictEqual(logLines, []);
+  });
 });

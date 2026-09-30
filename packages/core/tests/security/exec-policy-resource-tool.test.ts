@@ -17,6 +17,7 @@ import {
   resetExecPolicyEngine,
 } from '../../src/sandbox/execPolicy';
 import { CodeSearchTool } from '../../src/tools/codeSearchTool';
+import type { Tool } from '../../src/runtime/types';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import * as fs from 'node:fs';
@@ -427,7 +428,7 @@ describe('ExecResourceTool nested script map', () => {
     const exec = new ExecResourceTool();
     const file = new FileResourceTool();
     exec.setTools(
-      new Map([
+      new Map<string, Tool>([
         ['file', file],
         ['exec', exec],
         [
@@ -442,7 +443,7 @@ describe('ExecResourceTool nested script map', () => {
     process.env.COMMANDER_ALLOW_EXEC_SCRIPT = '1';
     // Re-set tools after opt-in; shell-equivalent must still be excluded from nested map.
     exec.setTools(
-      new Map([
+      new Map<string, Tool>([
         ['file', file],
         ['exec', exec],
       ]),

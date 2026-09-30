@@ -9,8 +9,8 @@
  * - Tier 1 tools (active): Full schema available immediately
  * - Tier 2 tools (registry): Listed in system prompt, schema available via request_tool
  *
- * Research basis (arXiv:2604.21816): This approach reduces per-turn tool tokens
- * from ~47k to ~2.4k (95% reduction) while maintaining tool availability.
+ * Research basis (arXiv:2604.21816) reports lower per-turn tool-token usage for
+ * this approach. Those published results are not a Commander benchmark.
  */
 
 import type { Tool, ToolDefinition } from '../runtime/types';

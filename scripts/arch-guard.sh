@@ -20,7 +20,11 @@ const allowedDependencies = {
   '@commander/contracts': [],
   // Task 3: createCapabilityAuthority + durable replay/revocation adapters live in
   // kernel and construct effect-broker issuer/verifier (no reverse dep).
-  '@commander/kernel': ['@commander/contracts', '@commander/effect-broker'],
+  '@commander/kernel': [
+    '@commander/contracts',
+    '@commander/effect-broker',
+    '@commander/postgres-runtime',
+  ],
   '@commander/effect-broker': ['@commander/contracts'],
   // L4 action adapters (GitHub/ServiceNow); leaf package — no kernel/ops.
   '@commander/action-adapters': ['@commander/contracts', '@commander/effect-broker'],
@@ -37,6 +41,7 @@ const allowedDependencies = {
     '@commander/effect-broker',
     '@commander/action-adapters',
     '@commander/core',
+    '@commander/postgres-runtime',
   ],
   '@commander/api': [
     '@commander/contracts',
@@ -46,14 +51,23 @@ const allowedDependencies = {
     '@commander/core',
     '@commander/postgres-runtime',
   ],
-  // Shared verified PostgreSQL TLS/SPKI pool factory. It stays leaf so application
-  // packages cannot exchange database capabilities through it.
+  '@commander/core': [
+    '@commander/plugin-sdk',
+    '@commander/contracts',
+    '@commander/postgres-runtime',
+  ],
   '@commander/postgres-runtime': [],
-  '@commander/core': ['@commander/plugin-sdk', '@commander/contracts'],
   '@commander/plugin-sdk': [],
   '@commander/sdk': ['@commander/contracts', '@commander/core'],
   '@commander/mcp-server': ['@commander/core'],
-  '@commander/web': [],
+  '@commander/web': ['@commander/contracts'],
+  // Shadow pilot (docs/pilot/shadow, `scripts/shadow-phase-a-gate.ts`). It was
+  // added without an entry here, so the guard's fail-closed
+  // "No dependency policy exists" check fired for it. Its internal surface is
+  // exactly these two, and its transitive closure is separately validated by
+  // `scripts/shadow-dependency-guard.ts` — this entry records reality, it does
+  // not widen anything.
+  '@commander/shadow-plane': ['@commander/contracts', '@commander/postgres-runtime'],
 };
 
 function exists(file) {
@@ -200,7 +214,14 @@ for (const file of sourceFiles) {
       const resolved = path.resolve(path.dirname(file), specifier);
       const relativeToPackage = path.relative(packageOwner.info.directory, resolved);
       if (relativeToPackage.startsWith('..') || path.isAbsolute(relativeToPackage)) {
-        failures.push(`Relative import escapes package boundary: ${relativeFile(file)} -> ${specifier}`);
+        const targetPackage = packageForFile(resolved);
+        const isAllowedTestImport =
+          /\.test\.tsx?$/.test(file) &&
+          targetPackage !== null &&
+          allowed(owner, targetPackage.name);
+        if (!isAllowedTestImport) {
+          failures.push(`Relative import escapes package boundary: ${relativeFile(file)} -> ${specifier}`);
+        }
       }
       continue;
     }

@@ -9,17 +9,19 @@
  * must still key their data by tenant. The helpers below make that easier.
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createRequire } from 'node:module';
 // NOTE: getGlobalTenantProvider is imported lazily to break a value-import
 // cycle: tenantProvider → tenantContext → tenantProvider. Loading it at
 // module load time creates a circular dependency. The lazy wrapper resolves
 // it on first use.
 let _getGlobalTenantProvider: typeof import('./tenantProvider').getGlobalTenantProvider | null =
   null;
+const nodeRequire = createRequire(import.meta.url);
 function getGlobalTenantProviderLazy(): ReturnType<
   typeof import('./tenantProvider').getGlobalTenantProvider
 > {
   if (!_getGlobalTenantProvider) {
-    _getGlobalTenantProvider = require('./tenantProvider').getGlobalTenantProvider;
+    _getGlobalTenantProvider = nodeRequire('./tenantProvider').getGlobalTenantProvider;
   }
   return _getGlobalTenantProvider!();
 }
@@ -112,6 +114,23 @@ export function setMultiTenantEnabled(enabled: boolean): void {
  */
 export function isMultiTenantEnabled(): boolean {
   return _multiTenantEnabled;
+}
+
+/**
+ * AUDIT-CORE3: tenant bucket for store persistence with fail-closed
+ * semantics. Unlike requireCurrentTenantId (which throws whenever no context
+ * is active), this preserves the implicit `__default__` bucket in single-tenant
+ * mode — multi-tenant mode must never silently share it.
+ */
+export function tenantBucketOrThrow(): string {
+  const current = getCurrentTenantId();
+  if (current) return current;
+  if (isMultiTenantEnabled()) {
+    throw new TenantIsolationError(
+      'Tenant context required in multi-tenant mode; refusing the shared default bucket',
+    );
+  }
+  return '__default__';
 }
 
 /**

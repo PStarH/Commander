@@ -7,10 +7,10 @@ import { describe, it } from 'node:test';
 import { PostgresKernelRepository } from './postgres.js';
 import type { SqlClient, SqlPool, SqlQueryResult } from './postgres.js';
 
-function ok<T extends Record<string, unknown>>(
-  rows: T[] = [],
+function ok(
+  rows: Record<string, unknown>[] = [],
   rowCount = rows.length,
-): SqlQueryResult<T> {
+): SqlQueryResult<Record<string, unknown>> {
   return { rows, rowCount };
 }
 
@@ -19,17 +19,17 @@ function createWorkerFakePool(
 ): SqlPool {
   return {
     connect: async (): Promise<SqlClient> => ({
-      query: async <T extends Record<string, unknown> = Record<string, unknown>>(
+      query: async <T = Record<string, unknown>>(
         sql: string,
         params?: unknown[],
       ): Promise<SqlQueryResult<T>> => {
         if (/session_user/i.test(sql)) {
-          return ok([{ login_role: 'commander_worker' }]) as SqlQueryResult<T>;
+          return ok([{ login_role: 'commander_worker' }]) as unknown as SqlQueryResult<T>;
         }
         if (/^BEGIN/i.test(sql) || /^COMMIT/i.test(sql) || /^ROLLBACK/i.test(sql)) {
-          return ok() as SqlQueryResult<T>;
+          return ok() as unknown as SqlQueryResult<T>;
         }
-        return (await onQuery(sql, params)) as SqlQueryResult<T>;
+        return (await onQuery(sql, params)) as unknown as SqlQueryResult<T>;
       },
       release: async () => undefined,
     }),

@@ -7,6 +7,7 @@ import type {
   ConflictReport,
 } from './types';
 import { analyzeConflicts } from './conflictAnalyzer';
+import { defaultBuiltins } from './builtins';
 
 export interface ParseResult {
   pack: PolicyPackAst;
@@ -29,6 +30,17 @@ const KEYWORDS = new Set([
 ]);
 
 const EFFECT_KEYWORDS = new Set(['allow', 'deny', 'require_approval', 'deny_class']);
+
+/**
+ * Reserved namespace for the builtin function pack. The supported import
+ * (`import data.atr.builtins as <alias>`) may bind an additional alias, but
+ * `b` is always bound so a pack that omits the import cannot silently mis-parse
+ * a dotted call into an unbound reference.
+ */
+const BUILTIN_NAMESPACE = 'b';
+
+/** The only module a pack may import. */
+const BUILTIN_MODULE = 'data.atr.builtins';
 
 type Token =
   | { kind: 'ident'; value: string; pos: number }
@@ -134,6 +146,13 @@ export function tokenize(src: string): Token[] {
   return out;
 }
 
+interface ParsedPack {
+  rules: PolicyRuleAst[];
+  defaults: { allow: boolean; require_approval: boolean };
+  packageName: string;
+  importAliases: string[];
+}
+
 class Parser {
   private pos = 0;
   constructor(
@@ -164,13 +183,10 @@ class Parser {
     return this.advance();
   }
 
-  parse(): {
-    rules: PolicyRuleAst[];
-    defaults: { allow: boolean; require_approval: boolean };
-    packageName: string;
-  } {
+  parse(): ParsedPack {
     let packageName = 'atr.policy';
     const rules: PolicyRuleAst[] = [];
+    const importAliases: string[] = [];
     const defaults = { allow: false, require_approval: false };
 
     while (!this.match('eof')) {
@@ -187,30 +203,27 @@ class Parser {
         continue;
       }
       if (t.kind === 'punc' && t.value === 'import') {
-        this.advance();
-        while (true) {
-          const cur = this.peek();
-          if (cur.kind === 'eof') break;
-          if (cur.kind === 'punc' && (cur.value === 'package' || cur.value === 'default')) break;
-          if (cur.kind === 'ident') {
-            const next = this.tokens[this.pos + 1];
-            if (next && next.kind === 'punc' && next.value === '{') break;
-            if (next && next.kind === 'punc' && next.value === '=') break;
-          }
-          this.advance();
-        }
+        const alias = this.parseImport();
+        if (alias) importAliases.push(alias);
         continue;
       }
       if (t.kind === 'punc' && t.value === 'default') {
         this.advance();
-        const effTok = this.advance();
-        const effVal = effTok.kind === 'eof' ? null : effTok.value;
+        const effTok = this.peek();
+        const effVal = effTok.kind === 'eof' ? null : String(tokValue(effTok) ?? '');
+        if (effTok.kind !== 'eof') this.advance();
+        if (effVal !== 'allow' && effVal !== 'require_approval') {
+          this.errors.push(`unknown_default at ${t.pos}: ${effVal}`);
+        }
         this.expect('punc', '=');
-        const valTok = this.advance();
-        const truthy =
-          valTok.kind === 'bool' ? valTok.value : valTok.kind === 'punc' && valTok.value === 'true';
-        if (effVal === 'allow') defaults.allow = Boolean(truthy);
-        else if (effVal === 'require_approval') defaults.require_approval = Boolean(truthy);
+        const valTok = this.peek();
+        if (valTok.kind !== 'bool') {
+          this.errors.push(`invalid_default_value at ${valTok.pos}: expected true or false`);
+        } else {
+          this.advance();
+          if (effVal === 'allow') defaults.allow = valTok.value;
+          else if (effVal === 'require_approval') defaults.require_approval = valTok.value;
+        }
         continue;
       }
       if (t.kind === 'ident') {
@@ -218,9 +231,58 @@ class Parser {
         if (rule) rules.push(rule);
         continue;
       }
+      this.errors.push(
+        `unexpected_token at ${t.pos}: ${(t as { value?: string }).value ?? t.kind}`,
+      );
       this.advance();
     }
-    return { rules, defaults, packageName };
+    return { rules, defaults, packageName, importAliases };
+  }
+
+  /**
+   * The only supported import is `import data.atr.builtins as <alias>`.
+   * Anything else is rejected at load instead of being skipped.
+   */
+  private parseImport(): string | null {
+    const start = this.advance();
+    const parts: string[] = [];
+    const first = this.peek();
+    if (first.kind !== 'ident') {
+      this.errors.push(`unsupported_import at ${start.pos}: expected module path`);
+      return null;
+    }
+    parts.push(String(tokValue(this.advance())));
+    while (this.match('punc', '.')) {
+      this.advance();
+      const seg = this.peek();
+      if (seg.kind !== 'ident') {
+        this.errors.push(`unsupported_import at ${start.pos}: malformed module path`);
+        return null;
+      }
+      parts.push(String(tokValue(this.advance())));
+    }
+
+    const asTok = this.peek();
+    if (asTok.kind !== 'ident' || tokValue(asTok) !== 'as') {
+      this.errors.push(
+        `unsupported_import at ${start.pos}: only "import ${BUILTIN_MODULE} as <alias>" is supported`,
+      );
+      return null;
+    }
+    this.advance();
+    const aliasTok = this.peek();
+    if (aliasTok.kind !== 'ident') {
+      this.errors.push(`unsupported_import at ${start.pos}: expected alias identifier`);
+      return null;
+    }
+    const alias = String(tokValue(this.advance()));
+    if (parts.join('.') !== BUILTIN_MODULE) {
+      this.errors.push(
+        `unsupported_import at ${start.pos}: ${parts.join('.')} is not a supported module`,
+      );
+      return null;
+    }
+    return alias;
   }
 
   private parseRule(): PolicyRuleAst | null {
@@ -274,11 +336,21 @@ class Parser {
     }
     this.expect('punc', '}');
 
+    let condition: PolicyExpr | undefined;
     if (this.match('punc', 'if')) {
-      this.advance();
-      this.expect('punc', '{');
-      const _cond = this.parseExpr();
-      this.expect('punc', '}');
+      const ifTok = this.advance();
+      if (!this.match('punc', '{')) {
+        this.errors.push(`unsupported_if at ${ifTok.pos}: expected "{ <condition> }"`);
+      } else {
+        this.advance();
+        condition = this.parseExpr();
+        this.expect('punc', '}');
+      }
+      if (this.match('punc', 'if')) {
+        this.errors.push(
+          `unsupported_if at ${this.peek().pos}: at most one if clause is supported`,
+        );
+      }
     }
 
     if (effect === null) {
@@ -295,6 +367,7 @@ class Parser {
       effect,
       denyClass: denyClass as PolicyRuleAst['denyClass'],
       body,
+      condition,
       priority: 50,
     };
   }
@@ -354,12 +427,25 @@ class Parser {
   private parsePostfix(): PolicyExpr {
     let expr = this.parsePrimary();
     while (this.match('punc', '.')) {
-      this.advance();
-      const seg = String(tokValue(this.expect('ident')) ?? '');
-      if (expr.kind === 'ref') {
+      const dot = this.advance();
+      const segTok = this.expect('ident');
+      const seg = String(tokValue(segTok) ?? '');
+      if (expr.kind === 'ref' && expr.path.length === 1 && this.match('punc', '(')) {
+        // `<namespace>.<builtin>(...)` is a call, not a reference followed by a
+        // parenthesised expression. The namespace is validated at load.
+        this.advance();
+        const args: PolicyExpr[] = [];
+        while (!this.match('punc', ')') && !this.match('eof')) {
+          args.push(this.parseExpr());
+          if (this.match('punc', ',')) this.advance();
+        }
+        this.expect('punc', ')');
+        expr = { kind: 'call', ns: expr.path[0], name: seg, args };
+      } else if (expr.kind === 'ref') {
         expr = { kind: 'ref', path: [...expr.path, seg] };
       } else {
-        expr = { kind: 'ref', path: [(expr as unknown as { value: string }).value ?? '', seg] };
+        this.errors.push(`unsupported_member_access at ${dot.pos}`);
+        expr = { kind: 'ref', path: [seg] };
       }
     }
     return expr;
@@ -434,11 +520,107 @@ class Parser {
   }
 }
 
+/**
+ * Load-time validation. A silent mis-parse is the defect this closes: an
+ * unbound reference or unknown function is rejected here rather than evaluating
+ * to `null` (and therefore "did not fire") at policy-decision time.
+ */
+function validatePack(parsed: ParsedPack, errors: string[]): void {
+  const ruleNames = new Set(parsed.rules.map((r) => r.name));
+  const namespaces = new Set<string>([BUILTIN_NAMESPACE, ...parsed.importAliases]);
+  for (const rule of parsed.rules) {
+    validateExpr(rule.body, rule.name, ruleNames, namespaces, errors);
+    if (rule.condition) {
+      validateExpr(rule.condition, rule.name, ruleNames, namespaces, errors);
+    }
+  }
+}
+
+function validateExpr(
+  expr: PolicyExpr,
+  ruleName: string,
+  ruleNames: Set<string>,
+  namespaces: Set<string>,
+  errors: string[],
+): void {
+  switch (expr.kind) {
+    case 'literal':
+      return;
+    case 'ref':
+      validateRef(expr.path, ruleName, ruleNames, namespaces, errors);
+      return;
+    case 'call': {
+      if (expr.ns !== undefined && !namespaces.has(expr.ns)) {
+        errors.push(
+          `unsupported_call_namespace in rule "${ruleName}": "${expr.ns}" is not a bound builtins alias`,
+        );
+      }
+      if (!(expr.name in defaultBuiltins)) {
+        errors.push(
+          `unknown_function in rule "${ruleName}": ${expr.ns ? `${expr.ns}.` : ''}${expr.name}`,
+        );
+      }
+      for (const arg of expr.args) {
+        validateExpr(arg, ruleName, ruleNames, namespaces, errors);
+      }
+      return;
+    }
+    case 'unary':
+      validateExpr(expr.arg, ruleName, ruleNames, namespaces, errors);
+      return;
+    case 'binary':
+      validateExpr(expr.left, ruleName, ruleNames, namespaces, errors);
+      validateExpr(expr.right, ruleName, ruleNames, namespaces, errors);
+      return;
+    case 'list':
+      for (const item of expr.items) {
+        validateExpr(item, ruleName, ruleNames, namespaces, errors);
+      }
+      return;
+    case 'object':
+      for (const field of expr.fields) {
+        validateExpr(field.value, ruleName, ruleNames, namespaces, errors);
+      }
+      return;
+  }
+}
+
+function validateRef(
+  path: string[],
+  ruleName: string,
+  ruleNames: Set<string>,
+  namespaces: Set<string>,
+  errors: string[],
+): void {
+  const rendered = path.join('.');
+  if (path.length === 0) {
+    errors.push(`invalid_ref in rule "${ruleName}": empty path`);
+    return;
+  }
+  const root = path[0];
+  if (root === 'input') return;
+  if (root === 'data') {
+    if (path.length === 3 && path[1] === 'policy' && ruleNames.has(path[2])) return;
+    errors.push(
+      `unbound_ref in rule "${ruleName}": ${rendered} (only data.policy.<existing-rule> is supported)`,
+    );
+    return;
+  }
+  if (namespaces.has(root) || root in defaultBuiltins) {
+    errors.push(
+      `unsupported_builtin_reference in rule "${ruleName}": ${rendered} — builtins must be called, e.g. ${root}(...)`,
+    );
+    return;
+  }
+  errors.push(`unbound_ref in rule "${ruleName}": ${rendered}`);
+}
+
 export function parsePolicyPack(source: string, name: string, version: number): ParseResult {
   const tokens = tokenize(source);
   const errors: string[] = [];
   const parser = new Parser(tokens, errors);
   const parsed = parser.parse();
+  validatePack(parsed, errors);
   const pack: PolicyPackAst = {
     name,
     version,

@@ -38,6 +38,11 @@ const longOutputTool: Tool = {
   async execute() {
     return hugeOutput;
   },
+  // Declare read-only so the ATR policy engine allows this custom adapter
+  // (unknown tools are classified destructive and denied by default).
+  isReadOnly: true,
+  riskLevel: 'low',
+  isIdempotent: true,
 };
 
 async function main() {

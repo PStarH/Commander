@@ -592,4 +592,171 @@ describe('ExecutionScheduler', () => {
       }
     });
   });
+
+  // ── AS-04: terminal read-only, intent binding, exclusive claim ───────────
+  describe('AS-04 run-state and ownership guards', () => {
+    it('a terminal run cannot begin again', () => {
+      const { scheduler, close } = makeScheduler();
+      try {
+        const h = scheduler.beginRun({ runId: 'r-term', goal: 'g' });
+        assert.strictEqual(
+          scheduler.commitRun({
+            runId: h.runId,
+            leaseToken: h.leaseToken,
+            fencingEpoch: h.fencingEpoch,
+          }).committed,
+          true,
+        );
+        assert.throws(
+          () => scheduler.beginRun({ runId: 'r-term', goal: 'g' }),
+          /terminal/,
+          'beginRun must refuse a committed run',
+        );
+      } finally {
+        close();
+      }
+    });
+
+    it('refuses the same run id with a different intent', () => {
+      const { scheduler, close } = makeScheduler();
+      try {
+        scheduler.beginRun({ runId: 'r-intent', goal: 'goal one' });
+        assert.throws(
+          () => scheduler.beginRun({ runId: 'r-intent', goal: 'goal two' }),
+          /different intent/,
+        );
+      } finally {
+        close();
+      }
+    });
+
+    it('surfaces a beginExecuting failure instead of reporting EXECUTING', () => {
+      const { scheduler, bundle, close } = makeScheduler();
+      try {
+        bundle.ledger.beginExecuting = () => false;
+        assert.throws(
+          () => scheduler.beginRun({ runId: 'r-beginfail', goal: 'g' }),
+          /beginExecuting failed/,
+        );
+        // The handle is never fabricated.
+        assert.strictEqual(bundle.ledger.getTransaction('r-beginfail')!.state, 'PENDING');
+      } finally {
+        close();
+      }
+    });
+
+    it('an exclusive claim has exactly one winner', () => {
+      const { scheduler, bundle, close } = makeScheduler();
+      try {
+        const { tx } = bundle.ledger.start({ runId: 'p-excl', intentHash: hashIntent('g') });
+        const first = scheduler.claimNextRun();
+        assert.ok(first);
+        assert.strictEqual(first!.runId, 'p-excl');
+        assert.strictEqual(scheduler.claimNextRun(), null, 'second claimer must lose');
+
+        // Same credentials, same source state, straight at the ledger: the
+        // conditional update can only match once.
+        assert.strictEqual(
+          bundle.ledger.beginExecuting('p-excl', tx.leaseToken, tx.fencingEpoch, {
+            from: ['PENDING'],
+          }),
+          false,
+        );
+      } finally {
+        close();
+      }
+    });
+
+    it('claimRunnableRun wakes a PAUSED run exactly once', () => {
+      const { scheduler, close } = makeScheduler();
+      try {
+        const h = scheduler.beginRun({ runId: 'r-wake-once', goal: 'g' });
+        const past = new Date(Date.now() - 1000).toISOString();
+        assert.strictEqual(
+          scheduler.scheduleResume({
+            runId: h.runId,
+            leaseToken: h.leaseToken,
+            fencingEpoch: h.fencingEpoch,
+            resumeAt: past,
+          }).scheduled,
+          true,
+        );
+        const first = scheduler.claimRunnableRun();
+        assert.ok(first);
+        assert.strictEqual(first!.runId, 'r-wake-once');
+        assert.strictEqual(scheduler.claimRunnableRun(), null);
+      } finally {
+        close();
+      }
+    });
+
+    it('refuses writes after kill and never re-hands the released token', () => {
+      const { scheduler, bundle, close } = makeScheduler();
+      try {
+        const h = scheduler.beginRun({ runId: 'r-kill', goal: 'g' });
+        assert.strictEqual(
+          scheduler.killRun({
+            runId: h.runId,
+            leaseToken: h.leaseToken,
+            fencingEpoch: h.fencingEpoch,
+          }).killed,
+          true,
+        );
+        assert.strictEqual(
+          scheduler.scheduleAction({
+            runId: h.runId,
+            leaseToken: h.leaseToken,
+            fencingEpoch: h.fencingEpoch,
+            toolName: 't',
+            externalSystem: 's',
+            args: {},
+            idempotencyKey: 'k-after-kill',
+            compensable: true,
+          }),
+          null,
+        );
+        assert.strictEqual(
+          scheduler.heartbeat({ runId: h.runId, leaseToken: h.leaseToken }),
+          false,
+        );
+        assert.strictEqual(scheduler.resumeRun({ runId: h.runId }), null);
+        // The run row's stored credentials were revoked, not reused.
+        assert.strictEqual(bundle.ledger.getTransaction(h.runId)!.state, 'EXECUTING');
+        assert.strictEqual(
+          bundle.ledger.syncLeaseCredentials(h.runId, h.leaseToken, h.fencingEpoch),
+          false,
+        );
+      } finally {
+        close();
+      }
+    });
+
+    it('refuses to record an action on a committed run', () => {
+      const { scheduler, bundle, close } = makeScheduler();
+      try {
+        const h = scheduler.beginRun({ runId: 'r-post', goal: 'g' });
+        scheduler.commitRun({
+          runId: h.runId,
+          leaseToken: h.leaseToken,
+          fencingEpoch: h.fencingEpoch,
+        });
+        assert.strictEqual(
+          scheduler.scheduleAction({
+            runId: h.runId,
+            leaseToken: h.leaseToken,
+            fencingEpoch: h.fencingEpoch,
+            toolName: 't',
+            externalSystem: 's',
+            args: {},
+            idempotencyKey: 'k-post-commit',
+            compensable: true,
+          }),
+          null,
+        );
+        assert.strictEqual(bundle.ledger.getTransaction(h.runId)!.actions.length, 0);
+      } finally {
+        close();
+      }
+    });
+  });
 });

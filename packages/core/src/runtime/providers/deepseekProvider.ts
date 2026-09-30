@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -49,6 +50,7 @@ export class DeepSeekProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.deepseek.com';
     this.defaultModel = config.defaultModel ?? 'deepseek-v4-flash';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {

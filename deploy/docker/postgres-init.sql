@@ -9,14 +9,18 @@
 -- PostgreSQL .sql init files cannot expand ${ENV}. Before first boot, substitute
 -- the placeholders below (or generate this file from a secret manager), e.g.:
 --
---   COMMANDER_OWNER_PASSWORD / COMMANDER_APP_PASSWORD / COMMANDER_SCHEDULER_PASSWORD /
+--   COMMANDER_OWNER_PASSWORD / COMMANDER_APP_PASSWORD / COMMANDER_TENANT_AUTHORITY_PASSWORD /
+--   COMMANDER_SCHEDULER_PASSWORD /
 --   COMMANDER_WORKER_PASSWORD
+--   COMMANDER_ADAPTER_OPS_PASSWORD
 --
 --   sed \
 --     -e "s/__COMMANDER_OWNER_PASSWORD__/${COMMANDER_OWNER_PASSWORD}/g" \
 --     -e "s/__COMMANDER_APP_PASSWORD__/${COMMANDER_APP_PASSWORD}/g" \
+--     -e "s/__COMMANDER_TENANT_AUTHORITY_PASSWORD__/${COMMANDER_TENANT_AUTHORITY_PASSWORD}/g" \
 --     -e "s/__COMMANDER_SCHEDULER_PASSWORD__/${COMMANDER_SCHEDULER_PASSWORD}/g" \
 --     -e "s/__COMMANDER_WORKER_PASSWORD__/${COMMANDER_WORKER_PASSWORD}/g" \
+--     -e "s/__COMMANDER_ADAPTER_OPS_PASSWORD__/${COMMANDER_ADAPTER_OPS_PASSWORD}/g" \
 --     postgres-init.sql | psql ...
 --
 -- After migrations complete, long-running API/worker processes MUST connect as
@@ -32,9 +36,19 @@
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
-    CREATE ROLE commander_owner WITH LOGIN PASSWORD '__COMMANDER_OWNER_PASSWORD__' BYPASSRLS CREATEROLE;
+    CREATE ROLE commander_owner WITH LOGIN PASSWORD '__COMMANDER_OWNER_PASSWORD__' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
   ELSE
-    ALTER ROLE commander_owner WITH LOGIN PASSWORD '__COMMANDER_OWNER_PASSWORD__' BYPASSRLS CREATEROLE;
+    ALTER ROLE commander_owner WITH LOGIN PASSWORD '__COMMANDER_OWNER_PASSWORD__' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+  END IF;
+END $$;
+
+-- Dedicated action-operations login. It receives RPC EXECUTE only in kernel migrations.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+    CREATE ROLE commander_adapter_ops WITH LOGIN PASSWORD '__COMMANDER_ADAPTER_OPS_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE commander_adapter_ops WITH LOGIN PASSWORD '__COMMANDER_ADAPTER_OPS_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
 END $$;
 
@@ -43,9 +57,20 @@ END $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') THEN
-    CREATE ROLE commander_app WITH LOGIN PASSWORD '__COMMANDER_APP_PASSWORD__' NOBYPASSRLS NOCREATEROLE;
+    CREATE ROLE commander_app WITH LOGIN PASSWORD '__COMMANDER_APP_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   ELSE
-    ALTER ROLE commander_app WITH LOGIN PASSWORD '__COMMANDER_APP_PASSWORD__' NOBYPASSRLS NOCREATEROLE;
+    ALTER ROLE commander_app WITH LOGIN PASSWORD '__COMMANDER_APP_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  END IF;
+END $$;
+ALTER ROLE commander_app SET statement_timeout = '55s';
+ALTER ROLE commander_app SET idle_in_transaction_session_timeout = '10s';
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_tenant_authority') THEN
+    CREATE ROLE commander_tenant_authority WITH LOGIN PASSWORD '__COMMANDER_TENANT_AUTHORITY_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+  ELSE
+    ALTER ROLE commander_tenant_authority WITH LOGIN PASSWORD '__COMMANDER_TENANT_AUTHORITY_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
 END $$;
 
@@ -54,45 +79,52 @@ END $$;
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler') THEN
-    CREATE ROLE commander_scheduler WITH LOGIN PASSWORD '__COMMANDER_SCHEDULER_PASSWORD__' BYPASSRLS NOCREATEROLE;
+    CREATE ROLE commander_scheduler WITH LOGIN PASSWORD '__COMMANDER_SCHEDULER_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS;
   ELSE
-    ALTER ROLE commander_scheduler WITH LOGIN PASSWORD '__COMMANDER_SCHEDULER_PASSWORD__' BYPASSRLS NOCREATEROLE;
+    ALTER ROLE commander_scheduler WITH LOGIN PASSWORD '__COMMANDER_SCHEDULER_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION BYPASSRLS;
   END IF;
 END $$;
 
--- Worker/adapter-ops role: least-privilege runtime login for workers and
--- adapter-ops. Subject to RLS (NOBYPASSRLS), no CREATEROLE — DML only, granted
--- by the kernel roles migration.
+-- Worker role: least-privilege runtime login for forward-step execution.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_worker') THEN
-    CREATE ROLE commander_worker WITH LOGIN PASSWORD '__COMMANDER_WORKER_PASSWORD__' NOBYPASSRLS NOCREATEROLE;
+    CREATE ROLE commander_worker WITH LOGIN PASSWORD '__COMMANDER_WORKER_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   ELSE
-    ALTER ROLE commander_worker WITH LOGIN PASSWORD '__COMMANDER_WORKER_PASSWORD__' NOBYPASSRLS NOCREATEROLE;
+    ALTER ROLE commander_worker WITH LOGIN PASSWORD '__COMMANDER_WORKER_PASSWORD__' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
   END IF;
 END $$;
 
 -- Grant the owner enough privileges to create and own the kernel schema.
-GRANT ALL PRIVILEGES ON DATABASE commander TO commander_owner;
-GRANT CREATE ON SCHEMA public TO commander_owner;
+ALTER DATABASE commander OWNER TO commander_owner;
+ALTER SCHEMA public OWNER TO commander_owner;
+REVOKE ALL ON DATABASE commander FROM PUBLIC;
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
 -- The owner must be able to re-grant these roles to itself in the roles migration.
-GRANT commander_app TO commander_owner WITH ADMIN OPTION;
-GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION;
-GRANT commander_worker TO commander_owner WITH ADMIN OPTION;
+GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
 
 -- Application, scheduler, and worker roles still need to connect and use the schema.
 -- Table-level privileges are granted by the kernel roles migration.
 GRANT CONNECT ON DATABASE commander TO commander_app;
 GRANT USAGE ON SCHEMA public TO commander_app;
+GRANT CONNECT ON DATABASE commander TO commander_tenant_authority;
+GRANT USAGE ON SCHEMA public TO commander_tenant_authority;
 
 GRANT CONNECT ON DATABASE commander TO commander_scheduler;
 GRANT USAGE ON SCHEMA public TO commander_scheduler;
 
 GRANT CONNECT ON DATABASE commander TO commander_worker;
 GRANT USAGE ON SCHEMA public TO commander_worker;
+GRANT CONNECT ON DATABASE commander TO commander_adapter_ops;
+GRANT USAGE ON SCHEMA public TO commander_adapter_ops;
 
 -- Claim / worker-register RPC EXECUTE parity (functions created by kernel migrations).
--- Only commander_worker may EXECUTE claim/register RPCs; commander_app must not.
+-- Generic claims/register stay with commander_worker; reconciliation claims are
+-- reserved for the dedicated commander_adapter_ops LOGIN.
 -- Claim secrets issue only via register_worker (not register_worker_claim_secret).
 DO $$
 BEGIN
@@ -126,7 +158,8 @@ BEGIN
     BEGIN
       REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM PUBLIC;
       REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM commander_app;
-      GRANT EXECUTE ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) TO commander_worker;
+      REVOKE ALL ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) FROM commander_worker;
+      GRANT EXECUTE ON FUNCTION claim_reconcile_effects(text, bigint, integer, timestamptz, integer, text) TO commander_adapter_ops;
     EXCEPTION WHEN undefined_function THEN NULL;
     END;
   END IF;

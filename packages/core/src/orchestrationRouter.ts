@@ -374,11 +374,15 @@ export async function runSwarmRouter(
       // Router 只做拓扑判定，不重写 Sequential 执行器，避免重复实现。
       // 调用方拿到 pattern='sequential' 的 run，自行调用现有 runSequentialPipeline。
       // 这里我们返回一个轻量提示 run，避免循环依赖。
+      //
+      // status 必须是 PENDING，不能是 COMPLETED：这个分支没有执行任何步骤
+      // (stepResults 为空)。报 COMPLETED 会把「尚未运行」变成「已成功完成」，
+      // 而按项目语义，未执行不等于成功。调用方应据 finalOutput.hint 委派。
       run = {
         pattern: 'sequential',
         runId: `router-sequential-${projectId}-${Date.now()}`,
         projectId,
-        status: 'COMPLETED',
+        status: 'PENDING',
         stepResults: [],
         finalOutput: {
           hint: 'delegate_to_sequential',
@@ -386,7 +390,6 @@ export async function runSwarmRouter(
           input,
         },
         startedAt: new Date().toISOString(),
-        completedAt: new Date().toISOString(),
         metrics: {
           totalSteps: 0,
           completedSteps: 0,

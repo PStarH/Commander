@@ -11,6 +11,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from '../logging';
 import { getSecurityAuditLogger } from '../security/securityAuditLogger';
+import { hashSecret } from './apiCredentialHash';
 
 // ── Types ──────────────────────────────────────────────────────────
 
@@ -145,7 +146,7 @@ export class AuthManager {
     if (!user.enabled) throw new Error(`User disabled: ${username}`);
 
     const rawKey = `cmdr_${crypto.randomBytes(KEY_BYTES).toString('base64url')}`;
-    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const keyHash = hashSecret(rawKey);
     const now = new Date().toISOString();
 
     const entry: ApiKeyEntry = {
@@ -224,7 +225,7 @@ export class AuthManager {
       this.failedAttempts.delete(rateLimitKey);
     }
 
-    const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+    const keyHash = hashSecret(rawKey);
     const keyHashBuf = Buffer.from(keyHash, 'hex');
     for (const user of this.users.values()) {
       if (!user.enabled) continue;

@@ -3,22 +3,32 @@
  * P0 full loop: start Gateway (API dist) + mock worker, submit /v1/runs, wait for terminal.
  *
  * Requires:
- *   - Postgres with kernel migrations reachable via DATABASE_URL
+ *   - PostgreSQL with kernel migrations reachable via a verified TLS DSN
+ *     (`?sslmode=verify-full`, `COMMANDER_DATABASE_TLS_CA_FILE`, and
+ *     `COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256`)
+ *   - `AUTH_FAILURE_REDIS_URL` for the production API auth-failure authority
  *   - Built apps/api/dist and packages (worker-plane, kernel, core)
  *
  * Usage:
- *   export DATABASE_URL=postgres://commander:commander@127.0.0.1:5433/commander
- *   export COMMANDER_KERNEL_DATABASE_URL=$DATABASE_URL
+ *   pnpm p0:full-loop:tls
+ *   # Or invoke directly after exporting the verified TLS/Redis variables:
  *   pnpm p0:full-loop
  *
  * Exit: 0 terminal success, 2 config, 3 timeout/non-success, 1 error
  */
 import { spawn, type ChildProcess } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { resolve } from 'node:path';
-import { Pool } from 'pg';
-import { runKernelMigrations, seedWorkerAllowedTenants } from '@commander/kernel';
+import {
+  runKernelMigrations,
+  runTask1ClosureMigrations,
+  seedTenantAuthorityAllowedTenants,
+  seedWorkerAllowedTenants,
+} from '@commander/kernel';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
+import { hashSecret } from '../packages/core/src/runtime/apiCredentialHash';
+import { buildP0RuntimeDatabaseUrls } from './p0-runtime-config.js';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const PORT = Number(process.env.P0_PORT ?? 4012);
@@ -65,27 +75,58 @@ async function waitHealth(ms: number): Promise<void> {
 
 async function main(): Promise<void> {
   log('migrate kernel schema');
-  const pool = new Pool({ connectionString: DB, max: 2 });
+  const pool = createVerifiedPostgresPool({ connectionString: DB, max: 2 });
   const appPassword = `p0-${randomUUID()}`;
+  const authorityPassword = `p0-${randomUUID()}`;
   const workerPassword = `p0-${randomUUID()}`;
   try {
     await runKernelMigrations(pool);
+    await runTask1ClosureMigrations(pool, 'enforce');
+    // The first kernel pass intentionally stops at the pre-closure baseline.
+    // Once the authenticated tenant closure is recorded, run the canonical
+    // migration set again so post-closure schemas (including API auth
+    // persistence) are installed before the production API starts.
+    await runKernelMigrations(pool);
+    // Production API-key authentication is PostgreSQL-authoritative. Seed the
+    // harness key explicitly; API_KEYS is intentionally not a legacy bypass.
+    await pool.query(
+      `INSERT INTO commander_auth_api_keys
+         (id, name, prefix, key_hash, scopes, tenant_id, enabled, revoked_at)
+       VALUES ($1, $2, $3, $4, $5, $6, true, NULL)
+       ON CONFLICT (key_hash) DO UPDATE
+         SET enabled = true, revoked_at = NULL, tenant_id = EXCLUDED.tenant_id`,
+      [
+        'ak_p0_full_loop',
+        'p0-full-loop',
+        API_KEY.slice(0, 8),
+        hashSecret(API_KEY),
+        ['read', 'write'],
+        TENANT,
+      ],
+    );
     await seedWorkerAllowedTenants(pool, [TENANT]);
+    await seedTenantAuthorityAllowedTenants(pool, [TENANT]);
     await pool.query(`ALTER ROLE commander_app WITH LOGIN PASSWORD '${appPassword}'`);
+    await pool.query(
+      `ALTER ROLE commander_tenant_authority WITH LOGIN PASSWORD '${authorityPassword}'`,
+    );
     await pool.query(`ALTER ROLE commander_worker WITH LOGIN PASSWORD '${workerPassword}'`);
   } finally {
     await pool.end();
   }
-  const appDatabaseUrl = new URL(DB);
-  appDatabaseUrl.username = 'commander_app';
-  appDatabaseUrl.password = appPassword;
-  const workerDatabaseUrl = new URL(DB);
-  workerDatabaseUrl.username = 'commander_worker';
-  workerDatabaseUrl.password = workerPassword;
+  const runtimeDatabaseUrls = buildP0RuntimeDatabaseUrls(DB, {
+    app: appPassword,
+    authority: authorityPassword,
+    worker: workerPassword,
+  });
+  const appDatabaseUrl = new URL(runtimeDatabaseUrls.app);
+  const workerDatabaseUrl = new URL(runtimeDatabaseUrls.worker);
   if (process.env.COMMANDER_DATABASE_TLS_CA_FILE) {
     appDatabaseUrl.searchParams.set('sslmode', 'verify-full');
     workerDatabaseUrl.searchParams.set('sslmode', 'verify-full');
   }
+  runtimeDatabaseUrls.app = appDatabaseUrl.toString();
+  runtimeDatabaseUrls.worker = workerDatabaseUrl.toString();
 
   const apiEnv = {
     ...process.env,
@@ -94,16 +135,21 @@ async function main(): Promise<void> {
     API_KEYS: API_KEY,
     TENANT_API_KEYS: `${TENANT}:${API_KEY}`,
     COMMANDER_API_KEY: API_KEY,
-    COMMANDER_MASTER_KEY:
-      process.env.COMMANDER_MASTER_KEY ?? 'dev-master-key-change-me-in-production',
-    JWT_SECRET: process.env.JWT_SECRET ?? 'dev-jwt-secret-change-me-in-production',
+    COMMANDER_MASTER_KEY: process.env.COMMANDER_MASTER_KEY ?? randomBytes(32).toString('hex'),
+    JWT_SECRET: process.env.JWT_SECRET ?? randomBytes(32).toString('hex'),
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD ?? randomBytes(32).toString('hex'),
     COMMANDER_CAPABILITY_TOKEN_KEY:
-      process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? 'dev-capability-token-key-32bytes-min',
-    COMMANDER_INTEGRITY_KEY:
-      process.env.COMMANDER_INTEGRITY_KEY ?? 'dev-integrity-key-32-bytes-minimum!!',
+      process.env.COMMANDER_CAPABILITY_TOKEN_KEY ?? randomBytes(32).toString('hex'),
+    COMMANDER_INTEGRITY_KEY: process.env.COMMANDER_INTEGRITY_KEY ?? randomBytes(32).toString('hex'),
+    // Harness-local audit-chain key: this env is NODE_ENV=production, where the
+    // ledger refuses the public dev key, so generate one per run instead.
+    COMMANDER_AUDIT_CHAIN_KEY:
+      process.env.COMMANDER_AUDIT_CHAIN_KEY ?? randomBytes(32).toString('hex'),
     COMMANDER_KERNEL_ENABLED: '1',
-    DATABASE_URL: appDatabaseUrl.toString(),
-    COMMANDER_KERNEL_DATABASE_URL: appDatabaseUrl.toString(),
+    DATABASE_URL: runtimeDatabaseUrls.app,
+    COMMANDER_KERNEL_DATABASE_URL: runtimeDatabaseUrls.app,
+    COMMANDER_TENANT_CONTEXT_PHASE: 'enforce',
+    COMMANDER_TENANT_AUTHORITY_DATABASE_URL: runtimeDatabaseUrls.authority,
     COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID:
       process.env.COMMANDER_DEFAULT_POLICY_SNAPSHOT_ID ?? 'policy-default-v1',
     COMMANDER_DEFAULT_TENANT_ID: TENANT,
@@ -136,9 +182,11 @@ async function main(): Promise<void> {
       cwd: ROOT,
       env: {
         ...process.env,
-        DATABASE_URL: workerDatabaseUrl.toString(),
-        COMMANDER_KERNEL_DATABASE_URL: workerDatabaseUrl.toString(),
-        COMMANDER_WORKER_DATABASE_URL: workerDatabaseUrl.toString(),
+        DATABASE_URL: runtimeDatabaseUrls.worker,
+        COMMANDER_KERNEL_DATABASE_URL: runtimeDatabaseUrls.worker,
+        COMMANDER_WORKER_DATABASE_URL: runtimeDatabaseUrls.worker,
+        COMMANDER_TENANT_CONTEXT_PHASE: '',
+        COMMANDER_TENANT_AUTHORITY_DATABASE_URL: '',
         COMMANDER_WORKER_BOOTSTRAP: resolve(ROOT, 'scripts/p0-worker-bootstrap.ts'),
         COMMANDER_WORKER_AUTH_TOKEN: 'worker-token',
         COMMANDER_WORKER_TENANTS: TENANT,

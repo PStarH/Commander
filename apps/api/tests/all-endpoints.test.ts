@@ -1,19 +1,39 @@
 /**
  * Comprehensive API Endpoint Tests
  *
- * Tests ALL API endpoints with:
+ * Tests the mounted endpoints with:
  * - Happy path
  * - Error handling
  * - Input validation
  * - Security headers
  * - Rate limiting
  * - CORS
+ *
+ * Credentials: a real super_admin principal (test/_helpers/liveServerCredential.ts)
+ * is attached to every request; routes that require a principal reject
+ * anonymous callers by design (apps/api/src/authMiddleware.ts:272-287).
  */
 
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
+import { requireLiveServer } from '../test/_helpers/requireLiveServer.mjs';
+import {
+  provisionLiveServerCredential,
+  revokeLiveServerCredential,
+  type LiveServerCredential,
+} from '../test/_helpers/liveServerCredential';
 
-const BASE_URL = process.env.TEST_API_URL ?? 'http://localhost:4000';
+const BASE_URL = requireLiveServer();
+
+let credential: LiveServerCredential;
+
+before(async () => {
+  credential = await provisionLiveServerCredential();
+});
+
+after(async () => {
+  await revokeLiveServerCredential();
+});
 
 async function fetchJSON(
   path: string,
@@ -21,8 +41,12 @@ async function fetchJSON(
 ): Promise<{ status: number; body: any; headers: Headers }> {
   try {
     const res = await fetch(`${BASE_URL}${path}`, {
-      headers: { 'Content-Type': 'application/json', ...options?.headers },
       ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        ...credential.headers,
+        ...options?.headers,
+      },
     });
     const body = await res.json().catch(() => null);
     return { status: res.status, body, headers: res.headers };
@@ -79,9 +103,11 @@ describe('Security Headers', () => {
     assert.strictEqual(headers.get('x-frame-options'), 'DENY');
   });
 
-  it('X-XSS-Protection: 1; mode=block', async () => {
+  it('X-XSS-Protection: 0 (legacy auditor deliberately disabled)', async () => {
+    // apps/api/src/securityMiddleware.ts:162 sets '0' on purpose: the legacy
+    // XSS auditor is itself an XSS vector.
     const { headers } = await fetchJSON('/health');
-    assert.strictEqual(headers.get('x-xss-protection'), '1; mode=block');
+    assert.strictEqual(headers.get('x-xss-protection'), '0');
   });
 
   it('Referrer-Policy: strict-origin-when-cross-origin', async () => {
@@ -111,18 +137,19 @@ describe('Input Validation', () => {
   it('Rejects malformed JSON (400)', async () => {
     const res = await fetch(`${BASE_URL}/projects`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...credential.headers },
       body: '{invalid json',
     });
     assert.strictEqual(res.status, 400);
   });
 
   it('Rejects missing required fields (400)', async () => {
-    const { status } = await fetchJSON('/projects/project-war-room/memory', {
+    const { status, body } = await fetchJSON('/projects/project-war-room/memory', {
       method: 'POST',
       body: JSON.stringify({}),
     });
-    assert.ok([400, 422].includes(status));
+    assert.strictEqual(status, 400);
+    assert.match(String(body.error), /title is required/);
   });
 
   it('Accepts valid JSON', async () => {
@@ -130,12 +157,12 @@ describe('Input Validation', () => {
       method: 'POST',
       body: JSON.stringify({
         kind: 'LESSON',
-        title: 'Test',
+        title: `Test ${Date.now()}`,
         content: 'Test content',
         tags: ['test'],
       }),
     });
-    assert.ok([200, 201].includes(status));
+    assert.strictEqual(status, 201);
   });
 });
 
@@ -153,20 +180,24 @@ describe('Project Endpoints', () => {
   it('GET /projects/:id/war-room — returns war room', async () => {
     const { status, body } = await fetchJSON('/projects/project-war-room/war-room');
     assert.strictEqual(status, 200);
-    assert.ok(body);
+    assert.ok(body.project);
   });
 
-  it('GET /projects/:id/missions — returns missions', async () => {
-    const { status, body } = await fetchJSON('/projects/project-war-room/missions');
-    assert.ok([200, 404].includes(status));
+  it('GET /projects/:id/missions — route is not mounted', async () => {
+    const { status } = await fetchJSON('/projects/project-war-room/missions');
+    assert.strictEqual(status, 404);
   });
 
-  it('POST /projects/:id/missions — creates mission', async () => {
-    const { status } = await fetchJSON('/projects/project-war-room/missions', {
+  it('POST /projects/:id/missions — route is not mounted (memory router owns the path)', async () => {
+    // There is no missions collection route; the POST falls through to the
+    // memory router, which rejects the missing title/content with 400
+    // (apps/api/src/projectEndpoints.ts:553-568).
+    const { status, body } = await fetchJSON('/projects/project-war-room/missions', {
       method: 'POST',
       body: JSON.stringify({ name: 'test-mission', description: 'test' }),
     });
-    assert.ok([200, 201, 400].includes(status));
+    assert.strictEqual(status, 400);
+    assert.match(String(body.error), /title is required/);
   });
 });
 
@@ -191,7 +222,7 @@ describe('Memory Endpoints', () => {
         tags: ['test'],
       }),
     });
-    assert.ok([200, 201].includes(status));
+    assert.strictEqual(status, 201);
     assert.ok(body);
   });
 
@@ -253,7 +284,7 @@ describe('Quality Endpoints', () => {
       method: 'POST',
       body: JSON.stringify({ input: 'test', output: '' }),
     });
-    assert.ok([400, 422].includes(status));
+    assert.strictEqual(status, 400);
   });
 });
 
@@ -271,21 +302,15 @@ describe('Namespaced Memory Endpoints', () => {
   it('GET /api/namespaced-memory/acl — returns ACL rules', async () => {
     const { status, body } = await fetchJSON('/api/namespaced-memory/acl');
     assert.strictEqual(status, 200);
-    assert.ok(Array.isArray(body));
+    assert.ok(Array.isArray(body.rules));
   });
 
   it('POST /api/namespaced-memory/:ns/write — writes memory', async () => {
     const { status } = await fetchJSON('/api/namespaced-memory/shared/write', {
       method: 'POST',
-      body: JSON.stringify({
-        projectId: 'test',
-        kind: 'SUMMARY',
-        title: 'Test',
-        content: 'Test content',
-        namespace: 'shared',
-      }),
+      body: JSON.stringify({ key: `test-${Date.now()}`, value: 'test content', projectId: 'test' }),
     });
-    assert.ok([200, 201, 403].includes(status));
+    assert.strictEqual(status, 200);
   });
 
   it('GET /api/namespaced-memory/:ns/search — searches', async () => {
@@ -296,13 +321,13 @@ describe('Namespaced Memory Endpoints', () => {
 
   it('GET /api/namespaced-memory/:ns/read/:id — reads item', async () => {
     const { status } = await fetchJSON('/api/namespaced-memory/shared/read/nonexistent');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
   it('GET /api/namespaced-memory/:ns/audit — returns audit log', async () => {
     const { status, body } = await fetchJSON('/api/namespaced-memory/shared/audit');
     assert.strictEqual(status, 200);
-    assert.ok(Array.isArray(body));
+    assert.ok(Array.isArray(body.entries));
   });
 });
 
@@ -317,18 +342,18 @@ describe('A2A Endpoints', () => {
     assert.ok(body);
   });
 
-  it('GET /a2a/agent-cards — returns list', async () => {
+  it('GET /a2a/agent-cards — fails closed without a configured authToken', async () => {
     const { status, body } = await fetchJSON('/a2a/agent-cards');
-    assert.strictEqual(status, 200);
-    assert.ok(Array.isArray(body));
+    assert.strictEqual(status, 500);
+    assert.match(String(body.error), /authToken is not configured/);
   });
 
-  it('POST /a2a/tasks — creates task', async () => {
+  it('POST /a2a/tasks — fails closed without a configured authToken', async () => {
     const { status } = await fetchJSON('/a2a/tasks', {
       method: 'POST',
       body: JSON.stringify({ name: 'test-task' }),
     });
-    assert.ok([200, 201, 400].includes(status));
+    assert.strictEqual(status, 500);
   });
 });
 
@@ -338,13 +363,14 @@ describe('A2A Endpoints', () => {
 
 describe('MCP Endpoints', () => {
   it('GET /mcp/status — returns status', async () => {
-    const { status } = await fetchJSON('/mcp/status');
-    assert.ok([200, 404].includes(status));
+    const { status, body } = await fetchJSON('/mcp/status');
+    assert.strictEqual(status, 200);
+    assert.ok(body);
   });
 
-  it('GET /mcp/client/status — returns client status', async () => {
+  it('GET /mcp/client/status — route is not mounted', async () => {
     const { status } = await fetchJSON('/mcp/client/status');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -366,17 +392,23 @@ describe('Governance Endpoints', () => {
   });
 
   it('GET /projects/:id/governance/weekly-report — returns report', async () => {
-    const { status, body } = await fetchJSON('/projects/project-war-room/governance/weekly-report');
-    assert.strictEqual(status, 200);
-    assert.ok(body);
+    // The route answers with markdown, not JSON
+    // (apps/api/src/projectEndpoints.ts:659-673), so it must be read as text.
+    const res = await fetch(`${BASE_URL}/projects/project-war-room/governance/weekly-report`, {
+      headers: credential.headers,
+    });
+    assert.strictEqual(res.status, 200);
+    assert.match(res.headers.get('content-type') ?? '', /text\/markdown/);
+    assert.ok((await res.text()).length > 0);
   });
 
   it('POST /api/agents/:id/self-assess — returns assessment', async () => {
-    const { status } = await fetchJSON('/api/agents/test-agent/self-assess', {
+    const { status, body } = await fetchJSON('/api/agents/test-agent/self-assess', {
       method: 'POST',
       body: JSON.stringify({ taskType: 'general' }),
     });
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 200);
+    assert.ok(body);
   });
 });
 
@@ -386,16 +418,20 @@ describe('Governance Endpoints', () => {
 
 describe('Self-Assessment Endpoints', () => {
   it('POST /api/agents/:id/self-assess — returns assessment', async () => {
-    const { status } = await fetchJSON('/api/agents/test-agent/self-assess', {
+    const { status, body } = await fetchJSON('/api/agents/test-agent/self-assess', {
       method: 'POST',
       body: JSON.stringify({ taskType: 'general' }),
     });
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 200);
+    assert.ok(body);
   });
 
   it('GET /api/agents/:id/self-model — returns self model', async () => {
-    const { status } = await fetchJSON('/api/agents/test-agent/self-model');
-    assert.ok([200, 404].includes(status));
+    // The preceding case ran a self-assessment for this agent, and the assessor
+    // map is process-lifetime (apps/api/src/selfAssessmentEndpoints.ts:7-11).
+    const { status, body } = await fetchJSON('/api/agents/test-agent/self-model');
+    assert.strictEqual(status, 200);
+    assert.strictEqual(body.agentId, 'test-agent');
   });
 });
 
@@ -405,21 +441,22 @@ describe('Self-Assessment Endpoints', () => {
 
 describe('Evaluation Endpoints', () => {
   it('GET /api/evaluation/health — returns health', async () => {
-    const { status } = await fetchJSON('/api/evaluation/health');
-    assert.ok([200, 404].includes(status));
+    const { status, body } = await fetchJSON('/api/evaluation/health');
+    assert.strictEqual(status, 200);
+    assert.strictEqual(body.status, 'ok');
   });
 
-  it('POST /api/evaluation/run — runs evaluation', async () => {
+  it('POST /api/evaluation/run — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/evaluation/run', {
       method: 'POST',
       body: JSON.stringify({ tasks: [] }),
     });
-    assert.ok([200, 201, 400].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('GET /api/evaluation/results — returns results', async () => {
+  it('GET /api/evaluation/results — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/evaluation/results');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -428,17 +465,17 @@ describe('Evaluation Endpoints', () => {
 // ============================================================================
 
 describe('Orchestrator Endpoints', () => {
-  it('GET /api/orchestrator/status — returns status', async () => {
+  it('GET /api/orchestrator/status — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/orchestrator/status');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('POST /api/orchestrator/run — runs orchestrator', async () => {
+  it('POST /api/orchestrator/run — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/orchestrator/run', {
       method: 'POST',
       body: JSON.stringify({ task: 'test' }),
     });
-    assert.ok([200, 201, 400].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -447,22 +484,22 @@ describe('Orchestrator Endpoints', () => {
 // ============================================================================
 
 describe('Pipeline Endpoints', () => {
-  it('GET /api/pipeline/status — returns status', async () => {
+  it('GET /api/pipeline/status — route is not mounted (legacy execution retired)', async () => {
     const { status } = await fetchJSON('/api/pipeline/status');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('POST /api/pipeline/run — runs pipeline', async () => {
+  it('POST /api/pipeline/run — route is not mounted (legacy execution retired)', async () => {
     const { status } = await fetchJSON('/api/pipeline/run', {
       method: 'POST',
       body: JSON.stringify({ steps: [] }),
     });
-    assert.ok([200, 201, 400].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('GET /api/pipeline/results — returns results', async () => {
+  it('GET /api/pipeline/results — route is not mounted (legacy execution retired)', async () => {
     const { status } = await fetchJSON('/api/pipeline/results');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -471,19 +508,19 @@ describe('Pipeline Endpoints', () => {
 // ============================================================================
 
 describe('Runtime Endpoints', () => {
-  it('GET /api/runtime/status — returns status', async () => {
+  it('GET /api/runtime/status — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/runtime/status');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('GET /api/runtime/config — returns config', async () => {
+  it('GET /api/runtime/config — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/runtime/config');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('GET /api/runtime/metrics — returns metrics', async () => {
+  it('GET /api/runtime/metrics — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/runtime/metrics');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -494,13 +531,13 @@ describe('Runtime Endpoints', () => {
 describe('Agent Card Endpoints', () => {
   it('GET /api/agent-cards — returns cards', async () => {
     const { status, body } = await fetchJSON('/api/agent-cards');
-    assert.ok([200, 404].includes(status));
-    if (status === 200) assert.ok(Array.isArray(body));
+    assert.strictEqual(status, 200);
+    assert.ok(Array.isArray(body));
   });
 
   it('GET /api/agent-cards/:id — returns specific card', async () => {
     const { status } = await fetchJSON('/api/agent-cards/test');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -509,17 +546,17 @@ describe('Agent Card Endpoints', () => {
 // ============================================================================
 
 describe('Reasoning Config Endpoints', () => {
-  it('GET /api/reasoning/config — returns config', async () => {
+  it('GET /api/reasoning/config — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/reasoning/config');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('PUT /api/reasoning/config — updates config', async () => {
+  it('PUT /api/reasoning/config — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/reasoning/config', {
       method: 'PUT',
       body: JSON.stringify({ enabled: true }),
     });
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -528,17 +565,17 @@ describe('Reasoning Config Endpoints', () => {
 // ============================================================================
 
 describe('Evaluation Runner Endpoints', () => {
-  it('GET /api/evaluation-runner/status — returns status', async () => {
+  it('GET /api/evaluation-runner/status — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/evaluation-runner/status');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('POST /api/evaluation-runner/run — runs evaluation', async () => {
+  it('POST /api/evaluation-runner/run — route is not mounted', async () => {
     const { status } = await fetchJSON('/api/evaluation-runner/run', {
       method: 'POST',
       body: JSON.stringify({ tasks: [] }),
     });
-    assert.ok([200, 201, 400].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -547,17 +584,17 @@ describe('Evaluation Runner Endpoints', () => {
 // ============================================================================
 
 describe('State Machine Endpoints', () => {
-  it('GET /api/state-machine/status — returns status', async () => {
+  it('GET /api/state-machine/status — unknown machine', async () => {
     const { status } = await fetchJSON('/api/state-machine/status');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('POST /api/state-machine/create — creates machine', async () => {
+  it('POST /api/state-machine/create — validates required fields', async () => {
     const { status } = await fetchJSON('/api/state-machine/create', {
       method: 'POST',
       body: JSON.stringify({ pattern: 'sequential' }),
     });
-    assert.ok([200, 201, 400].includes(status));
+    assert.strictEqual(status, 400);
   });
 });
 
@@ -566,17 +603,17 @@ describe('State Machine Endpoints', () => {
 // ============================================================================
 
 describe('Conflict Endpoints', () => {
-  it('GET /projects/:id/conflicts — returns conflicts', async () => {
+  it('GET /projects/:id/conflicts — route is not mounted', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/conflicts');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('POST /projects/:id/conflicts/detect — detects conflicts', async () => {
+  it('POST /projects/:id/conflicts/detect — route is not mounted', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/conflicts/detect', {
       method: 'POST',
       body: JSON.stringify({ memories: [] }),
     });
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -585,17 +622,17 @@ describe('Conflict Endpoints', () => {
 // ============================================================================
 
 describe('Confidence Endpoints', () => {
-  it('GET /projects/:id/confidence — returns confidence', async () => {
+  it('GET /projects/:id/confidence — route is not mounted', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/confidence');
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 
-  it('POST /projects/:id/confidence/report — reports confidence', async () => {
+  it('POST /projects/:id/confidence/report — route is not mounted', async () => {
     const { status } = await fetchJSON('/projects/project-war-room/confidence/report', {
       method: 'POST',
       body: JSON.stringify({ score: 0.8 }),
     });
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 404);
   });
 });
 
@@ -604,22 +641,6 @@ describe('Confidence Endpoints', () => {
 // ============================================================================
 
 describe('Security Endpoints', () => {
-  it('POST /api/memory/assess-credibility — assesses credibility', async () => {
-    const { status, body } = await fetchJSON('/api/memory/assess-credibility', {
-      method: 'POST',
-      body: JSON.stringify({
-        source: {
-          id: 'test',
-          content: 'test content',
-          timestamp: new Date().toISOString(),
-          source: 'https://example.com',
-        },
-      }),
-    });
-    assert.strictEqual(status, 200);
-    assert.ok(body);
-  });
-
   it('POST /api/memory/detect-poisoning — detects poisoning', async () => {
     const { status, body } = await fetchJSON('/api/memory/detect-poisoning', {
       method: 'POST',
@@ -640,11 +661,20 @@ describe('Security Endpoints', () => {
   });
 
   it('POST /api/security/scan — scans content', async () => {
-    const { status } = await fetchJSON('/api/security/scan', {
+    const { status, body } = await fetchJSON('/api/security/scan', {
       method: 'POST',
       body: JSON.stringify({ content: 'test content' }),
     });
-    assert.ok([200, 404].includes(status));
+    assert.strictEqual(status, 200);
+    assert.ok(body);
+  });
+
+  it('POST /api/memory/assess-credibility — rejects a malformed source', async () => {
+    const { status } = await fetchJSON('/api/memory/assess-credibility', {
+      method: 'POST',
+      body: JSON.stringify({ source: { id: 'test' } }),
+    });
+    assert.strictEqual(status, 400);
   });
 });
 
@@ -658,6 +688,16 @@ describe('CORS', () => {
       headers: { Origin: 'http://localhost:3000' },
     });
     assert.strictEqual(res.headers.get('access-control-allow-origin'), 'http://localhost:3000');
+  });
+
+  it('Withholds the allow-origin header from a non-whitelisted origin', async () => {
+    // The CORS middleware only echoes origins in its allowlist
+    // (apps/api/src/index.ts:284-321); an unlisted origin gets no
+    // Access-Control-Allow-Origin at all (never a wildcard).
+    const res = await fetch(`${BASE_URL}/health`, {
+      headers: { Origin: 'https://attacker.example' },
+    });
+    assert.strictEqual(res.headers.get('access-control-allow-origin'), null);
   });
 
   it('Handles OPTIONS preflight', async () => {

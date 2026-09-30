@@ -69,9 +69,11 @@ import {
 import { bootstrapRuntimeAdmission } from './runtimeAdmission';
 import { startAuditAggregatorBridge } from '../security/auditAggregatorBridge';
 import { installProcessCrashHandlers } from './processCrashSafety';
-import { RecoveryBootstrapper } from '../atr/recoveryBootstrapper';
+import { RecoveryBootstrapper, type RecoveryResult } from '../atr/recoveryBootstrapper';
+import { getRunLedgerBundle } from '../atr/runLedger';
 import { onCircuitBreakerOpen } from './dlqReplayWorker';
-import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '../security/capabilityToken';
+import { getCapabilityTokenVerifier } from '../security/capabilityToken';
+import { getAgentLineage } from '../security/agentLineage';
 import {
   getReversibilityGate,
   resetReversibilityGate,
@@ -85,6 +87,8 @@ import { getOTelExporter } from './openTelemetryExporter';
 import { getGlobalEventSourcingEngine } from './eventSourcingEngine';
 import { getGlobalEventSourcingSubscriber } from './eventSourcingSubscriber';
 import { bootstrapMemoryPersistence, resolveMemoryStoreType } from '../memory/utils';
+import { registerDefaultInvariants } from '../security/securityInvariantVerifier';
+import { getSupervisionTreeRegistry } from './supervisionTree';
 
 import type { StateCheckpointer } from './stateCheckpointer';
 import type { DeadLetterQueue } from './deadLetterQueue';
@@ -104,8 +108,16 @@ interface ServiceInitializerConfig {
     tenantId?: string;
   } | null;
   getActiveRuns: () => Set<string>;
+  isRunPaused?: (runId: string) => boolean;
   getPromotedTools: () => Set<string>;
   generateActionId: () => string;
+}
+
+/** Keep the process-wide fetch timeout at least as long as the LLM step timeout. */
+export function resolveResourceGovernorTimeout(
+  config: Pick<AgentRuntimeConfig, 'llmTimeoutMs' | 'resourceGovernor'>,
+): number {
+  return config.resourceGovernor?.timeoutMs ?? config.llmTimeoutMs ?? 120_000;
 }
 
 export interface InitializedServices {
@@ -146,14 +158,30 @@ export interface InitializedServices {
   conversationStore: import('../memory/conversationStore').ConversationStore | null;
   otelExporter: import('./openTelemetryExporter').OpenTelemetryExporter | null;
   supervisor: import('./supervisionTree').Supervisor | null;
+  /**
+   * Settlement of the startup zombie-run recovery scan. Callers MUST await this
+   * before admitting work: recovery fences and reclaims runs left EXECUTING by a
+   * previous process, so starting a run before it settles can race the scan.
+   */
+  recoverySettled: Promise<RecoverySettlement>;
 }
+
+/** Outcome of the startup recovery scan; failures stay explicit, never silent. */
+export type RecoverySettlement = { ok: true; result: RecoveryResult } | { ok: false; error: Error };
 
 export function initializeServices(
   svcConfig: ServiceInitializerConfig,
   tools: Map<string, import('./types').Tool>,
 ): InitializedServices {
-  const { config, getRunHandle, getLedgerCtx, getActiveRuns, getPromotedTools, generateActionId } =
-    svcConfig;
+  const {
+    config,
+    getRunHandle,
+    getLedgerCtx,
+    getActiveRuns,
+    isRunPaused,
+    getPromotedTools,
+    generateActionId,
+  } = svcConfig;
 
   // Reset any prior global fetch governor from previous tests/benchmarks.
   resetGlobalFetchGovernor();
@@ -175,10 +203,15 @@ export function initializeServices(
 
   const slidingWindow = new SlidingWindowOrchestrator();
 
+  // The scheduler and checkpoint authorization must share the same lease
+  // authority. Constructing a second LeaseManager breaks fencing in memory
+  // mode and can reject every checkpoint written by an active run.
+  const leaseManager = getRunLedgerBundle().lease;
   const reliabilityEngine = new ReliabilityEngine({
     circuitThreshold: CIRCUIT_BREAKER_THRESHOLD,
     circuitRecoveryMs: CIRCUIT_BREAKER_RECOVERY_MS,
     circuitProviderName: 'agentRuntime',
+    leaseManager,
     circuitTransitionHandler: (from, to, provider) => {
       try {
         getIntentLog(undefined).write({
@@ -301,9 +334,19 @@ export function initializeServices(
 
   const samplesStore = new SamplesStore();
   const resolvedTraceStore = new PersistentTraceStore();
-  const leaseManager = new LeaseManager();
   const stepTimeout = new StepTimeoutManager();
-  const fallbackChain = new ProviderFallbackChain<import('./types').LLMResponse>();
+  const fallbackChain = new ProviderFallbackChain<import('./types').LLMResponse>({
+    // Buyer-visible failover signal: the golden-path demo-qa suite (and the
+    // viral demo) assert the `[Fallback] <from> 切换至 <to>` marker on stdout.
+    onProviderSkipped: (from, to) => {
+      // eslint-disable-next-line no-console
+      console.log(`[Fallback] ${from} 切换至 ${to ?? '(none left)'}`);
+      getGlobalLogger().warn('ProviderFallbackChain', `Provider ${from} failed; falling back`, {
+        from,
+        to: to ?? 'exhausted',
+      });
+    },
+  });
 
   const compensationService = new CompensationService({
     dlq: resolvedDlq,
@@ -466,7 +509,8 @@ export function initializeServices(
   if (resourceGovernorEnabled) {
     try {
       installGlobalFetchGovernor({
-        timeoutMs: config.resourceGovernor?.timeoutMs ?? 30_000,
+        timeoutMs: resolveResourceGovernorTimeout(config),
+        maxPayloadBytes: config.resourceGovernor?.maxPayloadBytes,
       });
     } catch (err) {
       getGlobalLogger().warn('ServiceInitializer', 'Failed to install global fetch governor', {
@@ -479,7 +523,6 @@ export function initializeServices(
   // These invariants are checked at every critical execution point (tool execution,
   // LLM call, agent spawn) to ensure security properties always hold.
   try {
-    const { registerDefaultInvariants } = require('../security/securityInvariantVerifier');
     registerDefaultInvariants();
     getGlobalLogger().info(
       'ServiceInitializer',
@@ -511,6 +554,7 @@ export function initializeServices(
     cacheManager,
     dlq: resolvedDlq,
     getRunHandle,
+    isRunPaused,
     config,
     reflexionGenerator,
     stepTimeout,
@@ -625,17 +669,34 @@ export function initializeServices(
   try {
     registerResponseCallbacks({
       terminateSession: (agentId, reason) => {
-        getGlobalLogger().warn('SecurityResponseEngine', 'Terminate session requested', {
+        const count = getAgentLineage().revokeByAgentId(agentId, `terminate: ${reason}`);
+        if (count === 0) {
+          getGlobalLogger().warn(
+            'SecurityResponseEngine',
+            'No live lineage session matched termination',
+            {
+              agentId,
+              reason,
+            },
+          );
+          return false;
+        }
+        getGlobalLogger().warn('SecurityResponseEngine', 'Agent lineage terminated', {
           agentId,
           reason,
+          revokedNodes: count,
         });
+        return true;
       },
-      revokeTokens: () => {
-        try {
-          getCapabilityTokenIssuer();
-        } catch {
-          // best-effort — issuer may be unavailable in stripped-down runtimes
-        }
+      revokeTokens: (agentId) => {
+        // AgentLineage.revokeByAgentId revokes every tracked capability JTI for
+        // the agent and its descendants. A boolean result is required so the
+        // response engine cannot claim success when no registry entry existed.
+        const count = getAgentLineage().revokeByAgentId(
+          agentId,
+          'security response token revocation',
+        );
+        return count > 0;
       },
     });
     startSecurityResponseEngine();
@@ -712,21 +773,32 @@ export function initializeServices(
   // in EXECUTING/VERIFYING/PAUSED by a previously crashed process. Fences
   // zombies (bumps fencing epoch), then aborts+compensates or reclaims
   // for resume. Idempotent — safe to call even if no zombies exist.
-  try {
-    const recoveryResult = RecoveryBootstrapper.bootstrap();
-    if (recoveryResult.scanned > 0) {
-      getGlobalLogger().info('AgentRuntime', 'Recovery bootstrap scan completed', {
-        scanned: recoveryResult.scanned,
-        recovered: recoveryResult.recovered,
-        aborted: recoveryResult.aborted,
-        skipped: recoveryResult.skipped,
+  //
+  // `bootstrap()` is async and only settles once compensation has actually
+  // settled, so the scan is exposed as `recoverySettled` rather than awaited
+  // here: `initializeServices` is called from a synchronous constructor. The
+  // runtime awaits it before admitting work (see AgentRuntime.execute), and a
+  // failed scan is reported as `{ ok: false }` — never silently dropped.
+  const recoverySettled: Promise<RecoverySettlement> = RecoveryBootstrapper.bootstrap().then(
+    (result) => {
+      if (result.scanned > 0) {
+        getGlobalLogger().info('AgentRuntime', 'Recovery bootstrap scan completed', {
+          scanned: result.scanned,
+          recovered: result.recovered,
+          aborted: result.aborted,
+          skipped: result.skipped,
+        });
+      }
+      return { ok: true, result } as const;
+    },
+    (e: unknown) => {
+      const error = e instanceof Error ? e : new Error(String(e));
+      getGlobalLogger().warn('AgentRuntime', 'Recovery bootstrap scan failed', {
+        error: error.message,
       });
-    }
-  } catch (e) {
-    getGlobalLogger().warn('AgentRuntime', 'Recovery bootstrap scan failed', {
-      error: (e as Error)?.message,
-    });
-  }
+      return { ok: false, error } as const;
+    },
+  );
 
   // ── Supervision Tree (Erlang/OTP "Let It Crash") ──────────────────────
   // Create a root supervisor for agent runtime instances. The supervisor
@@ -737,7 +809,6 @@ export function initializeServices(
   // makes restart decisions, never contains business logic.
   let supervisor: import('./supervisionTree').Supervisor | null = null;
   try {
-    const { getSupervisionTreeRegistry } = require('./supervisionTree');
     const registry = getSupervisionTreeRegistry();
     supervisor = registry.createSupervisor({
       id: `sup_root_${getGlobalTenantProvider().getCurrentTenantId() ?? 'default'}`,
@@ -848,5 +919,6 @@ export function initializeServices(
     conversationStore,
     otelExporter,
     supervisor,
+    recoverySettled,
   };
 }

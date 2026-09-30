@@ -1,14 +1,8 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
-import {
-  ReflexionGenerator,
-  type ReflexionContext,
-  type LLMProvider,
-  type LLMRequest,
-  type LLMResponse,
-} from '../src/runtime/reflexionGenerator';
+import { ReflexionGenerator, type ReflexionContext } from '../src/runtime/reflexionGenerator';
+import type { LLMProvider, LLMRequest, LLMResponse } from '../src/runtime/types';
 import { StepErrorBoundary } from '../src/runtime/stepErrorBoundary';
-import type { DeadLetterEntry, DeadLetterQueue } from '../src/runtime/deadLetterQueue';
 
 const baseCtx: ReflexionContext = {
   goal: 'fix the login bug',
@@ -18,21 +12,6 @@ const baseCtx: ReflexionContext = {
   errorClass: 'permanent',
   attemptNumber: 1,
 };
-
-/** A no-op DLQ stub for boundary tests. */
-function makeStubDLQ(): DeadLetterQueue {
-  return {
-    record(_entry: DeadLetterEntry): void {
-      /* no-op */
-    },
-    drain(): DeadLetterEntry[] {
-      return [];
-    },
-    size(): number {
-      return 0;
-    },
-  };
-}
 
 describe('ReflexionGenerator', () => {
   describe('heuristic matching', () => {
@@ -131,8 +110,9 @@ describe('ReflexionGenerator', () => {
           return {
             content:
               '```json\n{"whatFailed":"novel error","whyFailed":"unknown cause","whatToTryNext":"check logs"}\n```',
-            tokenUsage: { prompt: 10, completion: 20, total: 30 },
             model: 'fake',
+            usage: { promptTokens: 10, completionTokens: 20, totalTokens: 30 },
+            finishReason: 'stop',
           };
         },
       };
@@ -166,8 +146,9 @@ describe('ReflexionGenerator', () => {
         async call(): Promise<LLMResponse> {
           return {
             content: 'not json at all',
-            tokenUsage: { prompt: 5, completion: 5, total: 10 },
             model: 'bad',
+            usage: { promptTokens: 5, completionTokens: 5, totalTokens: 10 },
+            finishReason: 'stop',
           };
         },
       };

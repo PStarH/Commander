@@ -15,7 +15,11 @@ import { getInternalUrlRouter, isInternalUrl } from '../runtime/internalUrls';
 import { atomicWriteFile } from './_utils/atomicWrite';
 import { pathExists } from './_utils/pathExists';
 import { getGlobalTenantProvider } from '../runtime/tenantProvider';
-import { getCurrentTenantId } from '../runtime/tenantContext';
+import {
+  getCurrentTenantId,
+  isMultiTenantEnabled,
+  TenantIsolationError,
+} from '../runtime/tenantContext';
 
 /** Get the safe root directory. Dynamic to support runtime COMMANDER_WORKSPACE changes. */
 export function getSafeRoot(): string {
@@ -30,37 +34,55 @@ export function getSafeRoot(): string {
     if (tenantCfg?.workspacePath) {
       return path.resolve(tenantCfg.workspacePath);
     }
+    // AUDIT-CORE2: a tenant without a configured workspace must never fall
+    // through to the shared global root — that hole let tenant A read and
+    // write tenant B's files whenever per-tenant config was incomplete.
+    // Fail closed (mirrors persistenceTool.resolveTenantMemoryRoot).
+    if (isMultiTenantEnabled()) {
+      throw new TenantIsolationError(
+        `No workspacePath configured for tenant ${tenantId} in multi-tenant mode; ` +
+          'refusing to fall back to the shared workspace root.',
+      );
+    }
+  } else if (isMultiTenantEnabled()) {
+    // Contextless file access in multi-tenant mode has no safe root either.
+    throw new TenantIsolationError(
+      'File tools require a tenant context in multi-tenant mode; no tenant bound to this request.',
+    );
   }
   return path.resolve(process.env.COMMANDER_WORKSPACE || process.cwd());
 }
 
-function looksLikeWindowsPath(value: string): boolean {
-  return /^[a-zA-Z]:[\\/]/.test(value) || /^\\\\/.test(value);
-}
-
-function normalizeBoundaryPath(value: string, pathApi: typeof path): string {
-  const normalized = pathApi.normalize(value);
-  if (pathApi !== path.win32) return normalized;
-
-  // realpath() canonicalizes 8.3 aliases on Windows. Normalize the remaining
-  // case and namespace differences before using path.relative for containment.
-  const withoutNamespace = normalized.startsWith('\\\\?\\UNC\\')
-    ? `\\\\${normalized.slice('\\\\?\\UNC\\'.length)}`
-    : normalized.startsWith('\\\\?\\')
-      ? normalized.slice('\\\\?\\'.length)
-      : normalized;
-  return withoutNamespace.toLowerCase();
-}
-
 /** Check that a normalized path is within SAFE_ROOT (including its root). */
+function usesWindowsPaths(resolved: string, root: string): boolean {
+  if (process.platform === 'win32') return true;
+  return /^([A-Za-z]:[\\/]|\\\\)/.test(resolved) || /^([A-Za-z]:[\\/]|\\\\)/.test(root);
+}
+
+function stripWindowsNamespace(value: string): string {
+  const uncPrefix = '\\\\?\\UNC\\';
+  const namespacePrefix = '\\\\?\\';
+  if (value.startsWith(uncPrefix)) return '\\\\' + value.slice(uncPrefix.length);
+  if (value.startsWith(namespacePrefix)) return value.slice(namespacePrefix.length);
+  return value;
+}
+
 export function isWithinRoot(resolved: string, root: string): boolean {
-  const pathApi = looksLikeWindowsPath(resolved) || looksLikeWindowsPath(root) ? path.win32 : path;
-  const normalizedResolved = normalizeBoundaryPath(resolved, pathApi);
-  const normalizedRoot = normalizeBoundaryPath(root, pathApi);
-  const relative = pathApi.relative(normalizedRoot, normalizedResolved);
+  // Windows paths are case-insensitive and may differ between long and 8.3
+  // spellings (for example RUNNER~1 versus runneradmin). Compare normalized
+  // absolute paths so a valid workspace child is not rejected by a lexical
+  // spelling difference while preserving the separator boundary check.
+  // path.win32 keeps that comparison stable when the process itself is POSIX.
+  const pathApi = usesWindowsPaths(resolved, root) ? path.win32 : path;
+  const normalize = (value: string): string => {
+    const absolute = pathApi.resolve(pathApi === path.win32 ? stripWindowsNamespace(value) : value);
+    return pathApi === path.win32 ? absolute.toLowerCase() : absolute;
+  };
+  const normalizedResolved = normalize(resolved);
+  const normalizedRoot = normalize(root);
   return (
-    relative === '' ||
-    (!relative.startsWith(`..${pathApi.sep}`) && relative !== '..' && !pathApi.isAbsolute(relative))
+    normalizedResolved === normalizedRoot ||
+    normalizedResolved.startsWith(normalizedRoot + pathApi.sep)
   );
 }
 
@@ -79,11 +101,8 @@ export function isWithinRoot(resolved: string, root: string): boolean {
 async function lstatIfExists(p: string): Promise<import('node:fs').Stats | undefined> {
   try {
     return await fs.promises.lstat(p);
-  } catch (err) {
-    if (err instanceof Error && 'code' in err && (err as { code?: string }).code === 'ENOENT') {
-      return undefined;
-    }
-    throw err;
+  } catch {
+    return undefined;
   }
 }
 

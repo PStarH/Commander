@@ -15,7 +15,7 @@ All domain events carry a canonical envelope and are persisted in the kernel eve
 ### Envelope Fields
 
 - `eventId`: unique identifier
-- `aggregateType`: `run` | `step` | `effect` | `interaction` | `worker`
+- `aggregateType`: `run` | `step` | `effect` | `interaction` | `worker` | `tenant`
 - `aggregateId`: the affected aggregate
 - `sequence`: monotonic sequence within the aggregate
 - `type`: semantic event type (e.g., `run.paused`, `step.succeeded`)

@@ -457,6 +457,45 @@ describe('AgentRuntime - Tool Not Found Handling', () => {
     expect(toolResultMsg).toBeDefined();
     expect(toolResultMsg?.content).toContain('TOOL_NOT_FOUND');
   });
+
+  it('fails when an allowed tool reports a real execution error', async () => {
+    resetModelRouter();
+    resetMessageBus();
+    resetTraceRecorder();
+    resetPatternTracker();
+
+    const router = new ModelRouter();
+    const runtime = new AgentRuntime({ maxRetries: 0, timeoutMs: 5000 }, router);
+    const provider = new ToolCallMockProvider([
+      {
+        toolCalls: [{ id: 'call_broken', name: 'broken_tool', arguments: {} }],
+        finishReason: 'tool_calls',
+      },
+      {
+        response: 'The tool reported an internal error.',
+        finishReason: 'stop',
+      },
+    ]);
+    runtime.registerProvider('openai', provider);
+    runtime.registerTool('broken_tool', {
+      definition: {
+        name: 'broken_tool',
+        description: 'A tool that fails during execution.',
+        inputSchema: { type: 'object', properties: {} },
+      },
+      execute: async () => {
+        throw new Error('database connection refused');
+      },
+      isConcurrencySafe: true,
+      isReadOnly: true,
+    });
+
+    const result = await runtime.execute(makeContext({ availableTools: ['broken_tool'] }));
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('TOOL_EXECUTION_FAILED');
+    expect(result.error).toContain('broken_tool');
+    expect(provider.callCount).toBe(2);
+  });
 });
 
 describe('AgentRuntime - Speculative Cache (PASTE)', () => {

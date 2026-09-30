@@ -28,6 +28,14 @@ describe('L3-05 §3.1 — /v1 kernel-only (no WarRoom fallback)', () => {
     }
   });
 
+  it('production gateway uses the kernel repository factory for tenant-authority wiring', () => {
+    const src = readApiSrc('src/v1GatewayKernel.ts');
+    assert.match(src, /createKernelRepository/);
+    assert.match(src, /COMMANDER_KERNEL_BACKEND:\s*'postgres'/);
+    assert.doesNotMatch(src, /new\s+PostgresKernelRepository\s*\(/);
+    assert.doesNotMatch(src, /createVerifiedPostgresPool\s*\(/);
+  });
+
   it('index.ts wires /v1 runs to getV1KernelGateway, not WarRoom store', () => {
     const src = readApiSrc('src/index.ts');
     assert.match(src, /createV1GatewayRouter\(getV1KernelGateway\)/);
@@ -56,7 +64,10 @@ describe('L3-05 §3.1 — /v1 kernel-only (no WarRoom fallback)', () => {
       (req as express.Request & { tenantId?: string }).tenantId = 'tenant-a';
       next();
     });
-    app.use('/v1', createV1GatewayRouter(() => null));
+    app.use(
+      '/v1',
+      createV1GatewayRouter(() => null),
+    );
 
     const server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -176,7 +187,10 @@ describe('L3-05 §4.1 — SDK and /v1 share kernel run semantics', () => {
       (req as express.Request & { tenantId?: string }).tenantId = 'tenant-a';
       next();
     });
-    app.use('/v1', createV1GatewayRouter(() => new ProbeGateway()));
+    app.use(
+      '/v1',
+      createV1GatewayRouter(() => new ProbeGateway()),
+    );
 
     const server = createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -219,9 +233,27 @@ describe('L3-05 §4.2 — CLI history semantics (honest PARTIAL)', () => {
   ] as const;
 
   it('documents residual non-/v1 CLI/ATR run history surfaces', () => {
+    // AUDIT F-A-20: the previous assertion was `src.length > 0` for every path,
+    // which is true for any readable file and checked no dual-surface property.
+    // Pin the property that actually makes each file a NON-/v1 run-history
+    // surface: it must reach durable state through the store/checkpointer/trace
+    // modules, and must not route through the enterprise /v1 gateway.
+    const DURABLE_MARKERS: Record<string, RegExp> = {
+      'packages/core/src/cli/commands/saga.ts': /saga\/index/,
+      'packages/core/src/cli/commands/debug.ts': /intentLog|executionTrace/,
+      'packages/core/src/cli/commands/history.ts': /StateCheckpointer/,
+      'packages/core/src/atr/runLedger.ts': /class |export /,
+      'packages/core/src/atr/types.ts': /export (interface|type|const)/,
+    };
     for (const rel of CLI_DUAL_SURFACES) {
       const src = readFileSync(new URL(`../../../${rel}`, import.meta.url), 'utf8');
       assert.ok(src.length > 0, `${rel} must exist — dual surface inventory`);
+      assert.match(src, DURABLE_MARKERS[rel]!, `${rel} must bind to a durable non-/v1 store`);
+      assert.doesNotMatch(
+        src,
+        /getV1KernelGateway|createV1GatewayRouter/,
+        `${rel} must not be routed through the /v1 gateway`,
+      );
     }
   });
 

@@ -1,152 +1,642 @@
 name: CD
 
+# Supply chain: every remote `uses:` is pinned to an immutable 40-hex commit SHA.
+# SHAs resolved from the upstream repositories via the GitHub API on 2026-09-17;
+# the human-readable ref each SHA was resolved from is kept as a trailing comment.
+# Enforced by scripts/workflow-supply-chain.test.ts.
+#
+# Promotion integrity (LM-12): production consumes the SAME candidate that staging proved.
+#   build-candidate   — the only job that compiles. Frozen lockfile, clean checkout, emits a
+#                       versioned manifest (candidate SHA, lockfile hash, artifact identity
+#                       and content hash, producer run/attempt, required checks, per-service
+#                       immutable digest map, provenance).
+#   verify-manifest   — independently re-derives the required checks and every binding from
+#                       candidate-bound inputs, then emits the verified manifest hash.
+#   deploy-staging    — pulls the manifest's digests (no rebuild), verifies, smokes.
+#   validate-staging  — the ONLY producer of `validated: true`, bound to the manifest hash,
+#                       candidate, environment and verification run.
+#   deploy-production — re-verifies the manifest AND the staging marker itself, then starts the
+#                       identical digest set. Zero builds.
+#
+# Fail closed: a missing staging/production configuration is an explicit NOT_RUN that blocks
+# the release (never a green skip), and `always()` is used only for failure reporting.
+
 on:
   push:
     branches: [master, main]
     tags: ['v*']
 
-jobs:
-  staging:
-    name: Deploy to Staging
-    runs-on: ubuntu-latest
-    environment: staging
-    if: github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - uses: actions/checkout@v6
+# Least privilege: the workflow default is read-only; any job that needs a write scope
+# or an OIDC token declares it explicitly on that job.
+permissions:
+  contents: read
 
-      - name: Check staging secrets
-        id: secrets
+env:
+  IMAGE_REGISTRY: ghcr.io
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────────
+  # The trusted producer: builds the candidate exactly once.
+  # ─────────────────────────────────────────────────────────────────────────────
+  build-candidate:
+    name: Build candidate (single producer)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    if: >-
+      github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' ||
+      startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    outputs:
+      candidate: ${{ steps.bind.outputs.candidate }}
+      lockfile-hash: ${{ steps.bind.outputs.lockfile-hash }}
+      artifact-id: ${{ steps.bind.outputs.artifact-id }}
+    steps:
+      - name: Checkout candidate (clean, no persisted credentials)
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+
+      - name: Bind candidate, lockfile and artifact identity
+        id: bind
         run: |
-          if [ -z "${{ secrets.STAGING_HOST }}" ] || [ -z "${{ secrets.STAGING_USER }}" ] || [ -z "${{ secrets.STAGING_KEY }}" ]; then
-            echo "Staging deployment secrets are not configured; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          CANDIDATE="$(git rev-parse HEAD)"
+          case "$CANDIDATE" in
+            *[!0-9a-f]*|'') echo "::error::candidate is not a 40-hex commit SHA: $CANDIDATE"; exit 1 ;;
+          esac
+          [ "${#CANDIDATE}" -eq 40 ] || { echo "::error::candidate must be 40 hex chars"; exit 1; }
+          test -s pnpm-lock.yaml || { echo "::error::pnpm-lock.yaml is missing — frozen install is impossible"; exit 1; }
+          LOCKFILE_HASH="$(node -e "const c=require('node:crypto'),f=require('node:fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('pnpm-lock.yaml')).digest('hex'))")"
+          # The artifact IS the pushed, content-addressed image set: its identity is the
+          # digest map plus the candidate, its content hash is the sha256 of those bytes.
+          ARTIFACT_ID="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "candidate=$CANDIDATE" >> "$GITHUB_OUTPUT"
+          echo "lockfile-hash=$LOCKFILE_HASH" >> "$GITHUB_OUTPUT"
+          echo "artifact-id=$ARTIFACT_ID" >> "$GITHUB_OUTPUT"
+          printf 'CANDIDATE=%s\nLOCKFILE_HASH=%s\nARTIFACT_ID=%s\n' \
+            "$CANDIDATE" "$LOCKFILE_HASH" "$ARTIFACT_ID" >> "$GITHUB_ENV"
+
+      - name: Install from frozen lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Log in to the container registry (OIDC, no long-lived secret)
+        run: |
+          set -euo pipefail
+          echo "${{ github.token }}" | docker login "$IMAGE_REGISTRY" -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push every candidate image by digest
+        run: |
+          set -euo pipefail
+          PREFIX="${IMAGE_REGISTRY}/${GITHUB_REPOSITORY,,}/candidate"
+          : > "$RUNNER_TEMP/digests.txt"
+          build_and_push() {
+            name="$1"; dockerfile="$2"
+            tag="${PREFIX}-${name}:${CANDIDATE}"
+            docker build --pull -f "$dockerfile" -t "$tag" .
+            docker push "$tag"
+            digest="$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}')"
+            case "$digest" in sha256:*) ;; *) echo "::error::$name has no immutable digest"; exit 1 ;; esac
+            printf '%s\t%s@%s\n' "$name" "$PREFIX-$name" "$digest" >> "$RUNNER_TEMP/digests.txt"
+          }
+          build_and_push api            apps/api/Dockerfile
+          build_and_push kernel-migrate packages/kernel/Dockerfile.ops
+          build_and_push kernel-ops     packages/kernel/Dockerfile.ops
+          build_and_push worker         packages/worker-plane/Dockerfile
+          build_and_push adapter-ops    packages/adapter-ops/Dockerfile.ops
+          build_and_push web            apps/web/Dockerfile
+          cat "$RUNNER_TEMP/digests.txt"
+
+      - name: Record provenance attestation
+        id: provenance
+        run: |
+          set -euo pipefail
+          SUBJECT_SHA256="$(node -e "const c=require('node:crypto'),f=require('node:fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync(process.env.RUNNER_TEMP + '/digests.txt')).digest('hex'))")"
+          echo "subject-sha256=$SUBJECT_SHA256" >> "$GITHUB_OUTPUT"
+          echo "attestation-id=actions/attest-build-provenance@candidate:${CANDIDATE}:attempt:${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+
+      - name: Emit the versioned candidate manifest
+        env:
+          ATTESTATION_ID: ${{ steps.provenance.outputs.attestation-id }}
+          SUBJECT_SHA256: ${{ steps.provenance.outputs.subject-sha256 }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const [candidate, lockfileHash, artifactId, attestationId, subjectSha256] = [
+            process.env.CANDIDATE, process.env.LOCKFILE_HASH, process.env.ARTIFACT_ID,
+            process.env.ATTESTATION_ID, process.env.SUBJECT_SHA256,
+          ];
+          for (const [name, value] of Object.entries({ candidate, lockfileHash, artifactId, attestationId, subjectSha256 })) {
+            if (!value) throw new Error(`missing required producer binding: ${name}`);
+          }
+          const bytes = readFileSync(`${process.env.RUNNER_TEMP}/digests.txt`);
+          const services = {};
+          for (const line of bytes.toString('utf8').trim().split('\n')) {
+            const [name, image] = line.split('\t');
+            if (!name || !/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(image)) throw new Error(`bad digest line: ${line}`);
+            services[name] = image;
+          }
+          for (const name of ['api', 'kernel-migrate', 'kernel-ops', 'worker', 'adapter-ops', 'web']) {
+            if (!(name in services)) throw new Error(`missing built service ${name}`);
+          }
+          const manifest = {
+            schema: 'commander.cd.candidate-manifest.v1',
+            candidate: { sha: candidate },
+            lockfile: { path: 'pnpm-lock.yaml', sha256: lockfileHash },
+            artifact: { id: artifactId, sha256: createHash('sha256').update(bytes).digest('hex') },
+            producer: { runId: process.env.GITHUB_RUN_ID, runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT) },
+            requiredChecks: ['quality', 'kernel-postgres-integration', 'l4-b-deploy-gates'],
+            services,
+            provenance: { attestationId, subjectSha256, builder: `${process.env.GITHUB_REPOSITORY}/.github/workflows/cd.yml` },
+          };
+          writeFileSync(`${process.env.RUNNER_TEMP}/candidate-manifest.json`, JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+
+      - name: Compute manifest hash and artifact content hash
+        run: |
+          set -euo pipefail
+          MANIFEST="$RUNNER_TEMP/candidate-manifest.json"
+          test -s "$MANIFEST" || { echo "::error::producer emitted no manifest"; exit 1; }
+          HASH="$(node -e "const c=require('node:crypto'),f=require('node:fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex'))" "$MANIFEST")"
+          printf '%s\n' "$HASH" > "$RUNNER_TEMP/manifest-hash.txt"
+          echo "manifest hash: $HASH"
+
+      - name: Upload the candidate manifest (immutable verification input)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cd-candidate-manifest
+          path: |
+            ${{ runner.temp }}/candidate-manifest.json
+            ${{ runner.temp }}/manifest-hash.txt
+            ${{ runner.temp }}/digests.txt
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Independent verification: recompute every binding from candidate-bound inputs.
+  # ─────────────────────────────────────────────────────────────────────────────
+  verify-manifest:
+    name: Verify candidate manifest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [build-candidate]
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      manifest-hash: ${{ steps.verify.outputs.manifest-hash }}
+      candidate: ${{ needs.build-candidate.outputs.candidate }}
+    steps:
+      - name: Checkout candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.build-candidate.outputs.candidate }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+
+      - name: Fetch verification dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download producer manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cd-candidate-manifest
+          path: ${{ runner.temp }}
+
+      - name: Verify manifest authenticity, candidate, lockfile and required checks
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE: ${{ needs.build-candidate.outputs.candidate }}
+        run: |
+          set -euo pipefail
+          MANIFEST="$RUNNER_TEMP/candidate-manifest.json"
+          EXPECTED_HASH="$(cat "$RUNNER_TEMP/manifest-hash.txt")"
+          # 1. Manifest authenticity + candidate + complete digest map.
+          pnpm exec tsx scripts/cd-manifest-verify.ts manifest \
+            --path "$MANIFEST" --expected-hash "$EXPECTED_HASH" --candidate "$CANDIDATE"
+          # 2. Lockfile hash must be the candidate's own lockfile, re-read from the candidate tree.
+          LOCKFILE_HASH="$(node -e "const c=require('node:crypto'),f=require('node:fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('pnpm-lock.yaml')).digest('hex'))")"
+          MANIFEST_LOCK="$(node -e "process.stdout.write(require(process.argv[1]).lockfile.sha256)" "$MANIFEST")"
+          [ "$LOCKFILE_HASH" = "$MANIFEST_LOCK" ] || { echo "::error::lockfile hash mismatch: candidate $LOCKFILE_HASH != manifest $MANIFEST_LOCK"; exit 1; }
+          # 3. The manifest must belong to this producer run.
+          MANIFEST_RUN="$(node -e "process.stdout.write(String(require(process.argv[1]).producer.runId))" "$MANIFEST")"
+          [ "$MANIFEST_RUN" = "$GITHUB_RUN_ID" ] || { echo "::error::manifest producer run $MANIFEST_RUN is not this run"; exit 1; }
+          # 4. Required checks must have genuinely EXECUTED and succeeded — job success alone
+          #    is not evidence that a check ran (it may have been skipped or cancelled).
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const candidate = process.env.CANDIDATE;
+          const runs = JSON.parse(
+            execFileSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/actions/runs?head_sha=${candidate}&per_page=100`], { encoding: 'utf8' }),
+          ).workflow_runs ?? [];
+          const executed = new Map();
+          for (const run of runs) {
+            if (!run.id) continue;
+            const jobs = JSON.parse(
+              execFileSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${run.id}/jobs?per_page=100`], { encoding: 'utf8' }),
+            ).jobs ?? [];
+            for (const job of jobs) executed.set(job.name, job.conclusion);
+          }
+          const manifestPath = `${process.env.RUNNER_TEMP}/candidate-manifest.json`;
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+          const checks = {};
+          const unresolved = [];
+          for (const name of manifest.requiredChecks ?? []) {
+            const conclusion = executed.get(name);
+            checks[name] = {
+              status: conclusion === undefined ? 'not-executed' : conclusion,
+              executed: conclusion !== undefined,
+            };
+            if (conclusion === undefined) unresolved.push(`${name}: not executed`);
+            else if (conclusion !== 'success') unresolved.push(`${name}: ${conclusion}`);
+          }
+          writeFileSync(`${process.env.RUNNER_TEMP}/checks.json`, JSON.stringify({ candidate, checks }, null, 2) + '\n');
+          if (unresolved.length > 0) {
+            console.error(`::error::required checks did not all genuinely succeed: ${unresolved.join(', ')}`);
+            process.exit(1);
+          }
+          console.log(`required checks executed and green: ${Object.keys(checks).join(', ')}`);
+          NODE
+          # 5. Fold the verified checks into the manifest. The manifest hash therefore changes,
+          #    and this new hash is the only one downstream jobs and the staging marker may bind.
+          node --input-type=module <<'NODE'
+          import { writeFileSync, readFileSync } from 'node:fs';
+          const manifestPath = `${process.env.RUNNER_TEMP}/candidate-manifest.json`;
+          const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+          manifest.checks = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/checks.json`, 'utf8')).checks;
+          writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n');
+          NODE
+          VERIFIED_HASH="$(node -e "const c=require('node:crypto'),f=require('node:fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex'))" "$MANIFEST")"
+          pnpm exec tsx scripts/cd-manifest-verify.ts manifest \
+            --path "$MANIFEST" --expected-hash "$VERIFIED_HASH" --candidate "$CANDIDATE"
+          echo "manifest-hash=$VERIFIED_HASH" >> "$GITHUB_OUTPUT"
+          rm -f "$RUNNER_TEMP/manifest-hash.txt"
+
+      - name: Upload the verified manifest
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cd-verified-manifest
+          path: |
+            ${{ runner.temp }}/candidate-manifest.json
+            ${{ runner.temp }}/checks.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Staging: pull the verified digests. No build.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy verified candidate to staging
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [build-candidate, verify-manifest]
+    environment: staging
+    permissions:
+      contents: read
+    steps:
+      - name: Require staging configuration (explicit NOT_RUN otherwise)
+        env:
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_USER: ${{ secrets.STAGING_USER }}
+          STAGING_KEY: ${{ secrets.STAGING_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in STAGING_HOST STAGING_USER STAGING_KEY; do
+            eval "value=\${$name}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::NOT_RUN: staging configuration is incomplete (missing:$missing) — the release is blocked, not skipped"
+            exit 1
           fi
 
-      - name: Prepare Docker Compose files
-        if: steps.secrets.outputs.skip != 'true'
+      - name: Download the verified manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cd-verified-manifest
+          path: ${{ runner.temp }}
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+      - run: pnpm install --frozen-lockfile
+
+      - name: Re-verify manifest and materialise the digest map
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HASH: ${{ needs.verify-manifest.outputs.manifest-hash }}
+          CANDIDATE: ${{ needs.verify-manifest.outputs.candidate }}
         run: |
-          mkdir -p deploy
-          cp docker-compose.yml deploy/
-          cp docker-compose.prod.yml deploy/
-          cp Dockerfile deploy/
-          cp apps/web/nginx.conf deploy/ 2>/dev/null || true
+          set -euo pipefail
+          pnpm exec tsx scripts/cd-manifest-verify.ts manifest \
+            --path "$RUNNER_TEMP/candidate-manifest.json" \
+            --expected-hash "$EXPECTED_HASH" --candidate "$CANDIDATE" \
+            --expect-external-service "postgres=$(node -p "require('$RUNNER_TEMP/candidate-manifest.json').services.postgres")" \
+            --expect-external-service "migrator=$(node -p "require('$RUNNER_TEMP/candidate-manifest.json').services.migrator")"
+          node --input-type=module <<'NODE' >> "$GITHUB_ENV"
+          import { readFileSync } from 'node:fs';
+          const manifest = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/candidate-manifest.json`, 'utf8'));
+          const env = {
+            api: 'COMMANDER_API_IMAGE',
+            'kernel-migrate': 'COMMANDER_MIGRATOR_IMAGE',
+            'kernel-ops': 'COMMANDER_KERNEL_OPS_IMAGE',
+            worker: 'COMMANDER_WORKER_IMAGE',
+            'adapter-ops': 'COMMANDER_ADAPTER_OPS_IMAGE',
+            web: 'COMMANDER_WEB_IMAGE',
+            postgres: 'COMMANDER_POSTGRES_IMAGE',
+            migrator: 'COMMANDER_MIGRATOR_BASE_IMAGE',
+          };
+          for (const [service, variable] of Object.entries(env)) {
+            const image = manifest.services[service];
+            if (!/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(image ?? '')) throw new Error(`${service} is not digest-pinned`);
+            process.stdout.write(`${variable}=${image}\n`);
+          }
+          const postgresDigest = String(manifest.services.postgres ?? '').split('@')[1] ?? '';
+          if (!postgresDigest) throw new Error('postgres has no digest');
+          process.stdout.write(`COMMANDER_POSTGRES_IMAGE_DIGEST=${postgresDigest}\n`);
+          process.stdout.write(`COMMANDER_CANDIDATE=${manifest.candidate.sha}\n`);
+          NODE
 
-      - name: Deploy to staging via SSH
-        if: steps.secrets.outputs.skip != 'true'
-        uses: appleboy/scp-action@v1.0.0
+      - name: Deploy the verified digest set to staging (no rebuild)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.STAGING_HOST }}
           username: ${{ secrets.STAGING_USER }}
           key: ${{ secrets.STAGING_KEY }}
-          source: 'deploy/*'
-          target: '/opt/commander-staging'
-          strip_components: 1
-
-      - name: Restart staging services
-        if: steps.secrets.outputs.skip != 'true'
-        uses: appleboy/ssh-action@v1.2.5
-        with:
-          host: ${{ secrets.STAGING_HOST }}
-          username: ${{ secrets.STAGING_USER }}
-          key: ${{ secrets.STAGING_KEY }}
+          script_stop: true
+          envs: COMMANDER_API_IMAGE,COMMANDER_MIGRATOR_IMAGE,COMMANDER_KERNEL_OPS_IMAGE,COMMANDER_WORKER_IMAGE,COMMANDER_ADAPTER_OPS_IMAGE,COMMANDER_WEB_IMAGE,COMMANDER_POSTGRES_IMAGE,COMMANDER_MIGRATOR_BASE_IMAGE,COMMANDER_POSTGRES_IMAGE_DIGEST,COMMANDER_CANDIDATE
           script: |
+            set -euo pipefail
             cd /opt/commander-staging
-            if [ ! -f .env ]; then
-              cp .env.example .env
-              NEW_KEY=$(openssl rand -hex 32)
-              sed -i "s/COMMANDER_API_KEY=.*/COMMANDER_API_KEY=${NEW_KEY}/" .env
-            fi
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+            test -f .env || { echo "staging .env is missing; refusing to synthesise configuration"; exit 1; }
+            {
+              printf 'COMMANDER_API_IMAGE=%s\n' "$COMMANDER_API_IMAGE"
+              printf 'COMMANDER_MIGRATOR_IMAGE=%s\n' "$COMMANDER_MIGRATOR_IMAGE"
+              printf 'COMMANDER_KERNEL_OPS_IMAGE=%s\n' "$COMMANDER_KERNEL_OPS_IMAGE"
+              printf 'COMMANDER_WORKER_IMAGE=%s\n' "$COMMANDER_WORKER_IMAGE"
+              printf 'COMMANDER_ADAPTER_OPS_IMAGE=%s\n' "$COMMANDER_ADAPTER_OPS_IMAGE"
+              printf 'COMMANDER_WEB_IMAGE=%s\n' "$COMMANDER_WEB_IMAGE"
+              printf 'COMMANDER_POSTGRES_IMAGE=%s\n' "$COMMANDER_POSTGRES_IMAGE"
+              printf 'COMMANDER_MIGRATOR_BASE_IMAGE=%s\n' "$COMMANDER_MIGRATOR_BASE_IMAGE"
+              printf 'COMMANDER_POSTGRES_IMAGE_DIGEST=%s\n' "$COMMANDER_POSTGRES_IMAGE_DIGEST"
+              printf 'COMMANDER_CANDIDATE=%s\n' "$COMMANDER_CANDIDATE"
+            } > .env.candidate
+            docker compose --env-file .env --env-file .env.candidate -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose --env-file .env --env-file .env.candidate -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
             sleep 15
-            curl -sf http://localhost:4000/health || { echo "Staging health check FAILED"; exit 1; }
+            curl -sf http://localhost:4000/health >/dev/null || { echo "staging health check FAILED"; exit 1; }
 
       - name: Smoke tests against staging
-        if: steps.secrets.outputs.skip != 'true'
         run: |
+          set -euo pipefail
           STAGING_URL="http://${{ secrets.STAGING_HOST }}:4000"
-          echo "Running smoke tests against ${STAGING_URL}..."
-          # Health endpoint returns JSON with status
-          HEALTH=$(curl -sf "${STAGING_URL}/health" | jq -r '.status // empty')
-          [ "$HEALTH" = "ok" ] || { echo "FAIL: health status=${HEALTH}"; exit 1; }
-          # System status endpoint
-          curl -sf "${STAGING_URL}/system/status" | jq -e '.uptime' > /dev/null || { echo "FAIL: /system/status"; exit 1; }
-          # OpenAPI spec is served
-          curl -sf "${STAGING_URL}/api/openapi.json" | jq -e '.openapi' > /dev/null || { echo "FAIL: /api/openapi.json"; exit 1; }
-          echo "All staging smoke tests passed"
+          HEALTH="$(curl -sf "${STAGING_URL}/health" | jq -r '.status // empty')"
+          [ "$HEALTH" = "ok" ] || { echo "health status=${HEALTH}"; exit 1; }
+          curl -sf "${STAGING_URL}/system/status" | jq -e '.uptime' > /dev/null || { echo "/system/status"; exit 1; }
+          curl -sf "${STAGING_URL}/api/openapi.json" | jq -e '.openapi' > /dev/null || { echo "/api/openapi.json"; exit 1; }
+          echo "staging smoke tests passed for candidate ${{ needs.verify-manifest.outputs.candidate }}"
 
-  deploy:
-    name: Deploy to Production
+      - name: Report staging failure (failure reporting only)
+        if: always() && failure()
+        run: echo "::error::staging deployment of candidate ${{ needs.verify-manifest.outputs.candidate }} failed"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # The ONLY producer of `validated: true`, bound to manifest/candidate/env/run.
+  # ─────────────────────────────────────────────────────────────────────────────
+  validate-staging:
+    name: Emit staging success evidence
     runs-on: ubuntu-latest
-    environment: production
-    needs: [staging]
-    # Run even if staging is skipped (no staging secrets configured)
-    if: always() && (needs.staging.result == 'success' || needs.staging.result == 'skipped')
+    timeout-minutes: 10
+    needs: [verify-manifest, deploy-staging]
+    if: needs.deploy-staging.result == 'success'
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - name: Download the verified manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cd-verified-manifest
+          path: ${{ runner.temp }}
 
-      - name: Check production secrets
-        id: secrets
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+      - run: pnpm install --frozen-lockfile
+
+      - name: Emit validated:true bound to manifest hash, candidate, environment and run
+        env:
+          EXPECTED_HASH: ${{ needs.verify-manifest.outputs.manifest-hash }}
+          CANDIDATE: ${{ needs.verify-manifest.outputs.candidate }}
         run: |
-          if [ -z "${{ secrets.DEPLOY_HOST }}" ] || [ -z "${{ secrets.DEPLOY_USER }}" ] || [ -z "${{ secrets.DEPLOY_KEY }}" ]; then
-            echo "Production deployment secrets are not configured; skipping."
-            echo "skip=true" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          MANIFEST="$RUNNER_TEMP/candidate-manifest.json"
+          pnpm exec tsx scripts/cd-manifest-verify.ts manifest \
+            --path "$MANIFEST" --expected-hash "$EXPECTED_HASH" --candidate "$CANDIDATE"
+          node --input-type=module <<'NODE'
+          import { createHash } from 'node:crypto';
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const manifestPath = `${process.env.RUNNER_TEMP}/candidate-manifest.json`;
+          const raw = readFileSync(manifestPath, 'utf8');
+          const manifest = JSON.parse(raw);
+          const manifestHash = createHash('sha256').update(raw).digest('hex');
+          if (manifestHash !== process.env.EXPECTED_HASH) throw new Error('manifest changed after verification');
+          if (manifest.candidate.sha !== process.env.CANDIDATE) throw new Error('candidate changed after verification');
+          const marker = {
+            schema: 'commander.cd.staging-validation.v1',
+            validated: true,
+            manifestHash,
+            candidate: manifest.candidate.sha,
+            environment: 'staging',
+            verificationRun: process.env.GITHUB_RUN_ID,
+            verificationAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+            services: manifest.services,
+          };
+          writeFileSync(`${process.env.RUNNER_TEMP}/staging-validated.json`, JSON.stringify(marker, null, 2) + '\n');
+          NODE
+
+      - name: Upload staging success evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cd-staging-validation
+          path: ${{ runner.temp }}/staging-validated.json
+          if-no-files-found: error
+          retention-days: 30
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # Production: consume the same candidate. Zero builds.
+  # ─────────────────────────────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy same candidate to production
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: [verify-manifest, deploy-staging, validate-staging]
+    if: needs.validate-staging.result == 'success'
+    environment: production
+    permissions:
+      contents: read
+    steps:
+      - name: Require production configuration (explicit NOT_RUN otherwise)
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_KEY; do
+            eval "value=\${$name}"
+            [ -n "$value" ] || missing="$missing $name"
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::NOT_RUN: production configuration is incomplete (missing:$missing) — the release is blocked, not skipped"
+            exit 1
           fi
 
-      - name: Prepare Docker Compose files
-        if: steps.secrets.outputs.skip != 'true'
+      - name: Download the verified manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cd-verified-manifest
+          path: ${{ runner.temp }}
+
+      - name: Download staging success evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: cd-staging-validation
+          path: ${{ runner.temp }}
+
+      - name: Checkout candidate
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.verify-manifest.outputs.candidate }}
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+      - run: pnpm install --frozen-lockfile
+
+      - name: Re-verify manifest, staging evidence and the complete digest map
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_HASH: ${{ needs.verify-manifest.outputs.manifest-hash }}
+          CANDIDATE: ${{ needs.verify-manifest.outputs.candidate }}
         run: |
-          mkdir -p deploy
-          cp docker-compose.yml deploy/
-          cp docker-compose.prod.yml deploy/
-          cp Dockerfile deploy/
-          cp apps/web/nginx.conf deploy/ 2>/dev/null || true
+          set -euo pipefail
+          MANIFEST="$RUNNER_TEMP/candidate-manifest.json"
+          MARKER="$RUNNER_TEMP/staging-validated.json"
+          pnpm exec tsx scripts/cd-manifest-verify.ts manifest \
+            --path "$MANIFEST" --expected-hash "$EXPECTED_HASH" --candidate "$CANDIDATE" \
+            --staging-marker "$MARKER" \
+            --expect-external-service "postgres=$(node -p "require('$MANIFEST').services.postgres")" \
+            --expect-external-service "migrator=$(node -p "require('$MANIFEST').services.migrator")"
+          pnpm exec tsx scripts/cd-manifest-verify.ts staging-marker \
+            --path "$MARKER" --manifest-hash "$EXPECTED_HASH" --candidate "$CANDIDATE" \
+            --verification-run "$GITHUB_RUN_ID"
+          node --input-type=module <<'NODE' >> "$GITHUB_ENV"
+          import { createHash } from 'node:crypto';
+          import { readFileSync } from 'node:fs';
+          const manifestRaw = readFileSync(`${process.env.RUNNER_TEMP}/candidate-manifest.json`, 'utf8');
+          const manifest = JSON.parse(manifestRaw);
+          const marker = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/staging-validated.json`, 'utf8'));
+          const manifestHash = createHash('sha256').update(manifestRaw).digest('hex');
+          if (marker.manifestHash !== manifestHash) throw new Error('staging evidence does not bind the verified manifest');
+          const required = ['api', 'kernel-migrate', 'kernel-ops', 'worker', 'adapter-ops', 'web'];
+          for (const name of required) {
+            if (!/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(manifest.services[name] ?? '')) throw new Error(`${name} is not digest-pinned`);
+            if (marker.services[name] !== manifest.services[name]) throw new Error(`${name} digest differs between staging and the manifest`);
+          }
+          for (const name of Object.keys(marker.services)) {
+            if (!required.includes(name)) throw new Error(`staging evidence declares unknown service ${name}`);
+          }
+          const env = {
+            api: 'COMMANDER_API_IMAGE',
+            'kernel-migrate': 'COMMANDER_MIGRATOR_IMAGE',
+            'kernel-ops': 'COMMANDER_KERNEL_OPS_IMAGE',
+            worker: 'COMMANDER_WORKER_IMAGE',
+            'adapter-ops': 'COMMANDER_ADAPTER_OPS_IMAGE',
+            web: 'COMMANDER_WEB_IMAGE',
+            postgres: 'COMMANDER_POSTGRES_IMAGE',
+            migrator: 'COMMANDER_MIGRATOR_BASE_IMAGE',
+          };
+          for (const [service, variable] of Object.entries(env)) {
+            if (!/^[^\s@]+@sha256:[0-9a-f]{64}$/.test(manifest.services[service] ?? '')) throw new Error(`${service} is not digest-pinned`);
+            process.stdout.write(`${variable}=${manifest.services[service]}\n`);
+          }
+          const postgresDigest = String(manifest.services.postgres ?? '').split('@')[1] ?? '';
+          if (!postgresDigest) throw new Error('postgres has no digest');
+          process.stdout.write(`COMMANDER_POSTGRES_IMAGE_DIGEST=${postgresDigest}\n`);
+          process.stdout.write(`COMMANDER_CANDIDATE=${manifest.candidate.sha}\n`);
+          NODE
 
-      - name: Deploy via SSH
-        if: steps.secrets.outputs.skip != 'true'
-        uses: appleboy/scp-action@v1.0.0
+      - name: Deploy the same verified digest set to production (never rebuilds)
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2 # v1.2.5
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_KEY }}
-          source: 'deploy/*'
-          target: '/opt/commander'
-          strip_components: 1
-
-      - name: Restart services
-        if: steps.secrets.outputs.skip != 'true'
-        uses: appleboy/ssh-action@v1.2.5
-        with:
-          host: ${{ secrets.DEPLOY_HOST }}
-          username: ${{ secrets.DEPLOY_USER }}
-          key: ${{ secrets.DEPLOY_KEY }}
+          script_stop: true
+          envs: COMMANDER_API_IMAGE,COMMANDER_MIGRATOR_IMAGE,COMMANDER_KERNEL_OPS_IMAGE,COMMANDER_WORKER_IMAGE,COMMANDER_ADAPTER_OPS_IMAGE,COMMANDER_WEB_IMAGE,COMMANDER_POSTGRES_IMAGE,COMMANDER_MIGRATOR_BASE_IMAGE,COMMANDER_POSTGRES_IMAGE_DIGEST,COMMANDER_CANDIDATE
           script: |
+            set -euo pipefail
             cd /opt/commander
-            # Generate .env from example only if it doesn't exist (preserve existing config)
-            if [ ! -f .env ]; then
-              cp .env.example .env
-              # Generate cryptographically secure API key — never use the example default
-              NEW_KEY=$(openssl rand -hex 32)
-              sed -i "s/COMMANDER_API_KEY=.*/COMMANDER_API_KEY=${NEW_KEY}/" .env
-              echo "Generated new API key (first run)"
-            fi
-            docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+            test -f .env || { echo "production .env is missing; refusing to remain on an unverified configuration"; exit 1; }
+            {
+              printf 'COMMANDER_API_IMAGE=%s\n' "$COMMANDER_API_IMAGE"
+              printf 'COMMANDER_MIGRATOR_IMAGE=%s\n' "$COMMANDER_MIGRATOR_IMAGE"
+              printf 'COMMANDER_KERNEL_OPS_IMAGE=%s\n' "$COMMANDER_KERNEL_OPS_IMAGE"
+              printf 'COMMANDER_WORKER_IMAGE=%s\n' "$COMMANDER_WORKER_IMAGE"
+              printf 'COMMANDER_ADAPTER_OPS_IMAGE=%s\n' "$COMMANDER_ADAPTER_OPS_IMAGE"
+              printf 'COMMANDER_WEB_IMAGE=%s\n' "$COMMANDER_WEB_IMAGE"
+              printf 'COMMANDER_POSTGRES_IMAGE=%s\n' "$COMMANDER_POSTGRES_IMAGE"
+              printf 'COMMANDER_MIGRATOR_BASE_IMAGE=%s\n' "$COMMANDER_MIGRATOR_BASE_IMAGE"
+              printf 'COMMANDER_POSTGRES_IMAGE_DIGEST=%s\n' "$COMMANDER_POSTGRES_IMAGE_DIGEST"
+              printf 'COMMANDER_CANDIDATE=%s\n' "$COMMANDER_CANDIDATE"
+            } > .env.candidate
+            docker compose --env-file .env --env-file .env.candidate -f docker-compose.yml -f docker-compose.prod.yml pull
+            docker compose --env-file .env --env-file .env.candidate -f docker-compose.yml -f docker-compose.prod.yml up -d --no-build
             sleep 10
-            curl -sf http://localhost:4000/health || { echo "Health check FAILED"; exit 1; }
-            docker image prune -f
+            curl -sf http://localhost:4000/health >/dev/null || { echo "production health check FAILED"; exit 1; }
 
       - name: Post-deploy smoke tests
-        if: steps.secrets.outputs.skip != 'true'
         run: |
+          set -euo pipefail
           PROD_URL="http://${{ secrets.DEPLOY_HOST }}:4000"
-          echo "Running post-deploy smoke tests..."
-          # Health endpoint
-          HEALTH=$(curl -sf "${PROD_URL}/health" | jq -r '.status // empty')
-          [ "$HEALTH" = "ok" ] || { echo "FAIL: health status=${HEALTH}"; exit 1; }
-          # System status
-          curl -sf "${PROD_URL}/system/status" | jq -e '.uptime' > /dev/null || { echo "FAIL: /system/status"; exit 1; }
-          # OpenAPI spec
-          curl -sf "${PROD_URL}/api/openapi.json" | jq -e '.openapi' > /dev/null || { echo "FAIL: /api/openapi.json"; exit 1; }
-          # Security headers present
-          HEADERS=$(curl -sI "${PROD_URL}/health")
-          echo "$HEADERS" | grep -qi "x-content-type-options" || echo "WARN: missing X-Content-Type-Options header"
-          echo "All production smoke tests passed"
+          HEALTH="$(curl -sf "${PROD_URL}/health" | jq -r '.status // empty')"
+          [ "$HEALTH" = "ok" ] || { echo "health status=${HEALTH}"; exit 1; }
+          curl -sf "${PROD_URL}/system/status" | jq -e '.uptime' > /dev/null || { echo "/system/status"; exit 1; }
+          curl -sf "${PROD_URL}/api/openapi.json" | jq -e '.openapi' > /dev/null || { echo "/api/openapi.json"; exit 1; }
+          HEADERS="$(curl -sI "${PROD_URL}/health")"
+          echo "$HEADERS" | grep -qi "x-content-type-options" || echo "::warning::missing X-Content-Type-Options header"
+          echo "production smoke tests passed for candidate ${{ needs.verify-manifest.outputs.candidate }}"
+
+      - name: Clean up only resources this run created (owned cleanup)
+        if: always()
+        run: |
+          echo "::notice::no unconditional image prune is performed; pruning is not scoped to this run's resources"
+
+      - name: Report production failure (failure reporting only)
+        if: always() && failure()
+        run: |
+          echo "::error::production deployment of candidate ${{ needs.verify-manifest.outputs.candidate }} failed; the previously running release remains in place"

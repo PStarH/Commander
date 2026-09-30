@@ -126,7 +126,7 @@ export class CheckpointManager {
     let cp = this.checkpoints.find((c) => c.id === id);
     if (!cp && this.store) {
       const snapshot = this.store.getSnapshot(id);
-      if (snapshot) {
+      if (snapshot && this.belongsToRun(snapshot)) {
         cp = this.toCheckpoint(snapshot);
         this.checkpoints.push(cp);
       }
@@ -169,13 +169,12 @@ export class CheckpointManager {
     const checkpoint = this.checkpoints.find((cp) => cp.id === id);
     if (!checkpoint) {
       if (this.store) {
-        const messages = this.store.rewindTo(id);
-        if (messages) {
-          const idx = this.checkpoints.findIndex((cp) => cp.id === id);
-          if (idx >= 0) {
-            this.checkpoints = this.checkpoints.slice(0, idx + 1);
+        const snapshot = this.store.getSnapshot(id);
+        if (snapshot && this.belongsToRun(snapshot)) {
+          const messages = this.store.rewindTo(id);
+          if (messages) {
+            return messages;
           }
-          return messages;
         }
       }
       return null;
@@ -245,6 +244,11 @@ export class CheckpointManager {
   }
 
   // ── Internal ──
+
+  /** When a runId is configured, snapshots from other runs must never be read. */
+  private belongsToRun(snapshot: CheckpointSnapshot): boolean {
+    return this.runId === undefined || snapshot.checkpoint.runId === this.runId;
+  }
 
   private toCheckpoint(snapshot: CheckpointSnapshot): Checkpoint {
     const { checkpoint, messages, filesRead, filesModified } = snapshot;

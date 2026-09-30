@@ -1,4 +1,4 @@
-import { describe, it } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { classifyLLMError, computeBackoff } from '../src/runtime/llmRetry';
 import { CircuitBreaker } from '../src/runtime/circuitBreaker';
@@ -10,6 +10,13 @@ import { TopologyRouter } from '../src/ultimate/topologyRouter';
 import { ContextWindowManager, estimateTotalTokens } from '../src/runtime/contextWindow';
 import { estimateMessageTokens } from '../src/runtime/contextWindow';
 import type { LLMMessage } from '../src/runtime/types';
+// Static imports, not `require(...)`: the global `require` is undefined in this
+// ES module, so the multimodal cases below threw `ReferenceError` instead of
+// exercising the tools.
+import { tmpdir } from 'node:os';
+import { PdfExtractTool } from '../src/tools/multimodal/pdfTool';
+import { VisionAnalyzeTool } from '../src/tools/multimodal/visionTool';
+import { ScreenshotCaptureTool } from '../src/tools/multimodal/screenshotTool';
 
 // ============================================================================
 // 1.1 TOOL CALLING EDGE CASES
@@ -43,9 +50,15 @@ describe('1.1 Tool Calling Edge Cases', () => {
     const err = classifyLLMError(
       new Error('SyntaxError: Unexpected token in JSON at position 1234'),
     );
-    assert.ok(
-      !err.retryable || err.errorClass === 'permanent',
-      'Malformed response should be permanent error',
+    // A malformed provider response is not retryable: `classifyLLMError` reports
+    // `retryable:false` (class `unknown`) because no retry can repair a bad body.
+    // The old `!err.retryable || err.errorClass === 'permanent'` asserted nothing
+    // — it was satisfied by any non-retryable classification.
+    assert.strictEqual(err.retryable, false, 'Malformed response must not be retried');
+    assert.notStrictEqual(
+      err.errorClass,
+      'transient',
+      'Malformed response must not be classified as a retryable transient error',
     );
   });
 
@@ -280,11 +293,10 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-2: PDF tool handles non-PDF input gracefully', async () => {
-    const { PdfExtractTool } = require('../src/tools/multimodal/pdfTool');
     const tool = new PdfExtractTool();
     const fs = await import('fs');
     const path = await import('path');
-    const tmpFile = path.join(require('os').tmpdir(), 'not-a-pdf.txt');
+    const tmpFile = path.join(tmpdir(), 'not-a-pdf.txt');
     fs.writeFileSync(tmpFile, 'This is not a PDF file.', 'utf-8');
     const result = await tool.execute({ path: tmpFile });
     fs.unlinkSync(tmpFile);
@@ -295,7 +307,6 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-3: Vision tool handles non-existent file path', async () => {
-    const { VisionAnalyzeTool } = require('../src/tools/multimodal/visionTool');
     const tool = new VisionAnalyzeTool();
     const result = await tool.execute({ source: '/tmp/nonexistent-image-xyz.png' });
     assert.ok(
@@ -305,7 +316,6 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-4: Screenshot tool validates parameter schema', () => {
-    const { ScreenshotCaptureTool } = require('../src/tools/multimodal/screenshotTool');
     const tool = new ScreenshotCaptureTool();
     const def = tool.definition;
     assert.ok(def.name === 'screenshot_capture', 'Tool name is correct');
@@ -317,7 +327,6 @@ describe('1.3 Multimodal Input Edge Cases', () => {
   });
 
   it('MM-EC-5: Vision tool handles extreme detail levels', () => {
-    const { VisionAnalyzeTool } = require('../src/tools/multimodal/visionTool');
     const tool = new VisionAnalyzeTool();
     const def = tool.definition;
     const detailEnum = def.inputSchema.properties?.detail?.enum;
@@ -470,5 +479,82 @@ describe('1.5 Sandbox Execution Edge Cases', () => {
     for (const d of delays) {
       assert.ok(d <= 11000, `Backoff should be capped: ${d} <= 11000`);
     }
+  });
+});
+
+// ============================================================================
+// Vision tool credential/egress bounds (TR-06)
+// ============================================================================
+describe('Vision tool credential/egress bounds (TR-06)', () => {
+  const ENV_KEYS = ['VISION_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'VISION_BASE_URL'];
+  let saved: Record<string, string | undefined>;
+  let calls: Array<{ url: string; init: RequestInit | undefined }>;
+  let originalFetch: typeof globalThis.fetch;
+
+  beforeEach(() => {
+    saved = {};
+    for (const k of ENV_KEYS) {
+      saved[k] = process.env[k];
+      delete process.env[k];
+    }
+    calls = [];
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response(JSON.stringify({ choices: [{ message: { content: 'described' } }] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }) as typeof globalThis.fetch;
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    for (const k of ENV_KEYS) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it('TR-06a: never sends ANTHROPIC_API_KEY to the OpenAI-compatible endpoint', async () => {
+    process.env.ANTHROPIC_API_KEY = 'anthropic-secret';
+    const tool = new VisionAnalyzeTool();
+    const result = await tool.execute({
+      source: 'data:image/png;base64,aGVsbG8=',
+      prompt: 'describe',
+    });
+    assert.strictEqual(calls.length, 0, 'must fail closed without calling the endpoint');
+    assert.ok(
+      result.includes('No API key configured'),
+      `expected a fail-closed error, got: ${result.slice(0, 120)}`,
+    );
+  });
+
+  it('TR-06b: bounds the outbound fetch with an AbortSignal', async () => {
+    process.env.OPENAI_API_KEY = 'sk-openai';
+    const tool = new VisionAnalyzeTool();
+    const result = await tool.execute({
+      source: 'data:image/png;base64,aGVsbG8=',
+      prompt: 'describe',
+    });
+    assert.strictEqual(result, 'described');
+    assert.strictEqual(calls.length, 1);
+    assert.ok(calls[0].init?.signal, 'fetch must carry an AbortSignal');
+    assert.strictEqual(
+      (calls[0].init?.headers as Record<string, string>).Authorization,
+      'Bearer sk-openai',
+    );
+  });
+
+  it('TR-06c: applies the 20MB cap to base64 data URLs', async () => {
+    process.env.OPENAI_API_KEY = 'sk-openai';
+    const tool = new VisionAnalyzeTool();
+    const oversized = Buffer.alloc(20 * 1024 * 1024 + 1).toString('base64');
+    const result = await tool.execute({ source: `data:image/png;base64,${oversized}` });
+    assert.ok(
+      result.includes('too large'),
+      `expected size rejection, got: ${result.slice(0, 120)}`,
+    );
+    assert.strictEqual(calls.length, 0, 'oversized payload must not reach the network');
   });
 });

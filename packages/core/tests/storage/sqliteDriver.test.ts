@@ -2,12 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
-import {
-  SqliteDriver,
-  probeSqlite,
-  _resetSqliteProbeForTesting,
-  TableSchema,
-} from '../../src/storage';
+import { SqliteDriver, _resetSqliteProbeForTesting, TableSchema } from '../../src/storage';
+import { sqliteDurabilityGate } from './sqliteTestGate';
 
 interface ProbeRow {
   id: string;
@@ -26,7 +22,11 @@ const probeSchema: TableSchema<ProbeRow> = {
   ],
 };
 
-const hasSqlite = probeSqlite().available;
+// Functional probe (open/create/write/read/close), not just a module-load check.
+// Throws when COMMANDER_REQUIRE_SQLITE_TESTS is set and the binding is unusable,
+// so a release-gate run cannot pass by skipping every durability case.
+const sqlite = sqliteDurabilityGate();
+const hasSqlite = sqlite.available;
 
 describe('SqliteDriver — contract', () => {
   let tmpDir: string;

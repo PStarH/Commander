@@ -1,6 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ExecutionContextInjector } from '../../src/runtime/executionContextInjector';
 import type { AgentExecutionContext } from '../../src/runtime/types';
+import { AgentInbox } from '../../src/runtime/agentInbox';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -20,6 +24,7 @@ function makeInbox(
   messages: Array<{ id: string; from: string; subject: string; body: string }> = [],
 ) {
   return {
+    peekInbox: vi.fn(() => messages),
     pollInbox: vi.fn(() => messages),
     acknowledge: vi.fn(),
     dispose: vi.fn(),
@@ -119,9 +124,10 @@ describe('ExecutionContextInjector', () => {
     expect(result.content).toContain('topology');
   });
 
-  it('respects token budget cap — skips inbox content that exceeds cap', async () => {
-    // Create inbox messages whose combined block exceeds the token cap.
-    // body.slice(0, 300) limits each body to 300 chars, so we need many messages.
+  it('injects a fitting subset of an oversized batch and acknowledges only that subset', async () => {
+    // RCH-12: an oversized inbox batch used to be acknowledged in full while the
+    // block was skipped entirely, silently dropping the messages. It must now
+    // inject what fits and leave the remainder pending.
     const messages = Array.from({ length: 30 }, (_, i) => ({
       id: `msg-${i}`,
       from: `sender-${i}`,
@@ -136,12 +142,14 @@ describe('ExecutionContextInjector', () => {
     });
 
     // tokenBudget = 1000 → cap = max(2000, 200) = 2000 tokens
-    // 20 messages × ~350 chars each = ~7000 chars → ~2000 tokens → exceeds cap
     const result = await injector.inject({ ctx: makeCtx(), tokenBudget: 1000 });
-    // The inbox block should be skipped because it exceeds the token cap
-    expect(result.content).not.toContain('Pending Messages');
-    // But acknowledge should still be called for all messages
-    expect(inbox.acknowledge).toHaveBeenCalledTimes(30);
+
+    expect(result.content).toContain('Pending Messages');
+    const acknowledgedIds = inbox.acknowledge.mock.calls.map((call: unknown[]) => call[1]);
+    expect(acknowledgedIds.length).toBeGreaterThan(0);
+    expect(acknowledgedIds.length).toBeLessThan(30);
+    // Acknowledged exactly the injected prefix, in order.
+    expect(acknowledgedIds).toEqual(messages.slice(0, acknowledgedIds.length).map((m) => m.id));
   });
 
   it('handles memory query failure gracefully', async () => {
@@ -239,5 +247,108 @@ describe('ExecutionContextInjector', () => {
     });
 
     expect(memory.query).not.toHaveBeenCalled();
+  });
+});
+
+// ── RCH-12: acknowledge only the messages actually injected ─────────────────
+
+describe('ExecutionContextInjector inbox acknowledgement (RCH-12)', () => {
+  let dir: string;
+  let inbox: AgentInbox;
+  const AGENT = 'agent-rch12';
+
+  function send(index: number, body = 'x'.repeat(300), subject = `subject-${index}`): void {
+    inbox.send({
+      id: `msg-${index}`,
+      from: 'peer',
+      to: AGENT,
+      subject,
+      body,
+      priority: 'normal',
+      tags: [],
+    });
+  }
+
+  function make(inboxInstance: AgentInbox): ExecutionContextInjector {
+    return new ExecutionContextInjector({
+      agentInbox: inboxInstance,
+      getMemory: () => null,
+      securityOrch: makeSecurityOrch(),
+    });
+  }
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'rch12-inbox-'));
+    inbox = new AgentInbox(dir);
+  });
+
+  afterEach(() => {
+    inbox.dispose();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('injects and acknowledges every message when the batch fits the cap', async () => {
+    for (let i = 0; i < 3; i++) send(i);
+
+    const result = await make(inbox).inject({
+      ctx: makeCtx({ agentId: AGENT }),
+      tokenBudget: 200000,
+    });
+
+    expect(result.content).toContain('Pending Messages');
+    expect(inbox.getMessages(AGENT, 'unread')).toHaveLength(0);
+    expect(inbox.getMessages(AGENT, 'acknowledged')).toHaveLength(3);
+  });
+
+  it('leaves the remainder unread when only part of an oversized batch fits', async () => {
+    for (let i = 0; i < 60; i++) send(i);
+
+    const result = await make(inbox).inject({
+      ctx: makeCtx({ agentId: AGENT }),
+      tokenBudget: 12000,
+    });
+
+    const acknowledged = inbox.getMessages(AGENT, 'acknowledged');
+    const unread = inbox.getMessages(AGENT, 'unread');
+    expect(acknowledged.length).toBeGreaterThan(0);
+    expect(acknowledged.length).toBeLessThan(60);
+    expect(acknowledged.length + unread.length).toBe(60);
+    // Everything injected was acknowledged, and nothing else.
+    for (const msg of acknowledged) {
+      expect(result.content).toContain(msg.subject);
+    }
+    const injectedSubjects = acknowledged.map((msg) => msg.subject);
+    for (const subject of ['subject-0', 'subject-59']) {
+      if (!injectedSubjects.includes(subject)) expect(result.content).not.toContain(`${subject}:`);
+    }
+  });
+
+  it('acknowledges nothing when no message fits the cap', async () => {
+    // The block slices bodies to 300 chars, but the subject is not sliced.
+    send(0, 'tiny', 'y'.repeat(12000));
+
+    const result = await make(inbox).inject({
+      ctx: makeCtx({ agentId: AGENT }),
+      tokenBudget: 12000,
+    });
+
+    expect(result.content).not.toContain('Pending Messages');
+    expect(inbox.getMessages(AGENT, 'acknowledged')).toHaveLength(0);
+    expect(inbox.getMessages(AGENT, 'unread')).toHaveLength(1);
+  });
+
+  it('consumes the leftover messages on the next run', async () => {
+    for (let i = 0; i < 60; i++) send(i);
+    const injector = make(inbox);
+    const ctx = makeCtx({ agentId: AGENT });
+
+    await injector.inject({ ctx, tokenBudget: 12000 });
+    const firstUnread = inbox.getMessages(AGENT, 'unread').length;
+    expect(firstUnread).toBeGreaterThan(0);
+
+    const second = await injector.inject({ ctx, tokenBudget: 1200000 });
+    expect(second.content).toContain('Pending Messages');
+    expect(inbox.getMessages(AGENT, 'unread')).toHaveLength(0);
+    expect(inbox.getMessages(AGENT, 'acknowledged')).toHaveLength(60);
   });
 });

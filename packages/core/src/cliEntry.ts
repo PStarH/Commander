@@ -14,6 +14,11 @@
  *   commander --version                 Show version
  *   commander help                      Show this help
  */
+// NOTE: this import MUST stay first. ESM evaluates the static import list in
+// source order, so this side-effect module loads the walk-up `.env` before any
+// command/config module below is evaluated — several of them read `process.env`
+// at module scope. Reordering it silently reintroduces the startup bug.
+import './cli/bootstrapEnv';
 import { reportSilentFailure } from './silentFailureReporter';
 import { $, parseFlags, setTheme } from './cli/util';
 
@@ -42,6 +47,7 @@ import {
   cmdResume,
   cmdCompensation,
   cmdInit,
+  cmdQuickstart,
   cmdIntelligence,
   cmdExperience,
   cmdDebugIntent,
@@ -61,6 +67,10 @@ import {
 } from './cli/commands';
 import { cmdFix } from './cli/commands/convenience';
 import { cmdSandbox } from './cli/commands/sandbox';
+import { getDirname, getRequire } from './esmCompat';
+
+const nodeRequire = getRequire(import.meta.url);
+const __dirname = getDirname(import.meta.url);
 
 // ============================================================================
 // Per-command help text
@@ -94,13 +104,13 @@ function resolveActiveProfile(): CliProfile {
 
 const COMMAND_HELP: Record<string, string> = {
   run: `  ${$.bold}commander run <task> [flags]${$.reset}\n\n  Execute a task with the full multi-agent pipeline.\n\n  ${$.bold}Flags:${$.reset}\n    --dry-run              Show plan without executing\n    --stream               Real-time SSE progress streaming\n    --tui                  Terminal dashboard with live topology view\n    --mode=<mode>          Execution mode: balanced (default), fast, thorough, goal\n    --provider=<name>      Force provider (openai, anthropic, deepseek, etc.)\n    --budget=<tokens>      Token budget (default: 100000)\n    --max-rounds=<n>       Max rounds (goal mode only, default: 10)\n\n  ${$.dim}Examples:${$.reset}\n    commander run "Fix all TypeScript errors in src/"\n    commander run "Analyze auth module" --dry-run\n    commander run "Refactor auth" --stream\n    commander run showcase\n`,
-  review: `  ${$.bold}commander review [flags]${$.reset}\n\n  Review code changes with AI-powered analysis.\n\n  ${$.bold}Flags:${$.reset}\n    --commit [sha]     Review a specific commit (or latest)\n    --branch           Review entire branch vs main\n    --base <ref>       Compare against a specific ref\n    --json             Output as JSON\n    --guidelines <r>   Custom rules (pipe-separated)\n\n  ${$.dim}Example:${$.reset}\n    commander review --commit\n    commander review --branch --json\n`,
+  review: `  ${$.bold}commander review [flags]${$.reset}\n\n  Review code changes with AI-powered analysis.\n\n  ${$.bold}Flags:${$.reset}\n    --commit [sha]     Review a specific commit (or latest)\n    --branch           Review entire branch vs main\n    --base <ref>       Compare against a specific ref\n    --real             Require a real provider; never use heuristic fallback\n    --provider=<name>  Provider to use with --real\n    --json             Output as JSON\n    --guidelines <r>   Custom rules (pipe-separated)\n\n  ${$.dim}Example:${$.reset}\n    commander review --commit HEAD --real --provider=openai\n    commander review --branch --json\n`,
   fix: `  ${$.bold}commander fix [flags]${$.reset}\n\n  Auto-fix lint, formatting, and type errors.\n\n  ${$.bold}Flags:${$.reset}\n    --test              Also run tests after fixing\n\n  ${$.dim}Example:${$.reset}\n    commander fix\n    commander fix --test\n`,
   init: `  ${$.bold}commander init [flags]${$.reset}\n\n  Zero-config environment scan + fallback chain setup.\n  Scans API keys, tests connectivity to all providers, measures latency,\n  and saves the optimal fallback chain to .commander.json.\n\n  ${$.bold}Flags:${$.reset}\n    --skip-tests    Skip connectivity tests (scan keys only)\n    --timeout=<ms>  Per-provider test timeout (default: 5000)\n    --save          Save config only, skip getting-started guide\n\n  ${$.dim}Example:${$.reset}\n    commander init\n    commander init --timeout=3000\n`,
   status: `  ${$.bold}commander status${$.reset}\n\n  Show system status: provider, API keys, runtime, meta-learner stats.\n`,
   config: `  ${$.bold}commander config [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    show              Show current configuration\n    set <key> <val>   Set a config value\n    list-providers    List all available providers\n    list-models       List available models\n    test              Test API connection\n\n  ${$.dim}Example:${$.reset}\n    commander config set model gpt-4o\n    commander config test\n`,
   history: `  ${$.bold}commander history [subcommand]${$.reset}\n\n  ${$.bold}Subcommands:${$.reset}\n    (none)            List all sessions\n    view <runId>      View session details\n    delete <runId>    Delete a session\n    prune <keep>      Keep only the last N sessions\n`,
-  doctor: `  ${$.bold}commander doctor${$.reset}\n\n  Run diagnostics: Node.js, API key, packages, git, workspace, connectivity.\n`,
+  doctor: `  ${$.bold}commander doctor [flags]${$.reset}\n\n  Run diagnostics: Node.js, API key, packages, git, workspace, connectivity.\n\n  ${$.bold}Flags:${$.reset}\n    --offline, --no-network   Skip provider connectivity; API key is optional\n`,
   gui: `  ${$.bold}commander gui${$.reset}\n\n  Start the Agent War Room web dashboard (API + Web UI).\n  One-click: starts API (port 4000) + Web (port 5173) and opens the browser.\n`,
   plugin: `  ${$.bold}commander plugin <subcommand>${$.reset}\n\n  Install, list, and uninstall Commander plugins.\n\n  ${$.bold}Subcommands:${$.reset}\n    install <source>   Install a plugin (npm package / github:user/repo / local path)\n    list (ls)          List installed plugins\n    uninstall <name>   Uninstall a plugin\n    info <name>        Show plugin details\n\n  ${$.dim}Examples:${$.reset}\n    commander plugin install @commander/web-scraper\n    commander plugin install ./my-plugin\n    commander plugin list\n`,
   up: `  ${$.bold}commander up [task] [flags]${$.reset}\n\n  Unified execution + Web TUI. Starts a local server (default port 4000) that\n  serves the web dashboard and optionally runs a task with live metrics.\n\n  ${$.bold}Flags:${$.reset}\n    --port=<n>      Server port (default: 4000)\n    --no-open       Do not auto-open the browser\n    --resume        Resume frozen runs from their checkpoints\n\n  ${$.dim}Examples:${$.reset}\n    commander up\n    commander up "audit this repo"\n    commander up --port=5000\n`,
@@ -166,8 +176,12 @@ async function main() {
 
   if (args[0] === '--version' || args[0] === 'version') {
     try {
-      const pkgPath = require.resolve('../../package.json');
-      console.log(`${require(pkgPath).version} (profile: ${resolveActiveProfile()})`);
+      // `../package.json` is packages/core/package.json from BOTH `src/` (dev,
+      // tsx) and `dist/` (built) — they are sibling directories. The previous
+      // `../../package.json` resolved to packages/package.json, which does not
+      // exist, so `--version` always fell through to "unknown".
+      const pkgPath = nodeRequire.resolve('../package.json');
+      console.log(`${nodeRequire(pkgPath).version} (profile: ${resolveActiveProfile()})`);
     } catch (err) {
       reportSilentFailure(err, 'cli:120');
       console.log(`unknown (profile: ${resolveActiveProfile()})`);
@@ -210,10 +224,14 @@ async function main() {
       await cmdInit(parseFlags(rest).flags);
       break;
     case 'quickstart':
-      console.log(
-        `\n  ${$.yellow}💡 Tip:${$.reset} 'quickstart' has been upgraded to ${$.cyan}commander init${$.reset}\n`,
-      );
-      await cmdInit(parseFlags(rest).flags);
+      if (rest.includes('--check')) {
+        await cmdQuickstart(rest);
+      } else {
+        console.log(
+          `\n  ${$.yellow}💡 Tip:${$.reset} 'quickstart' has been upgraded to ${$.cyan}commander init${$.reset}\n`,
+        );
+        await cmdInit(parseFlags(rest).flags);
+      }
       break;
 
     // ── Management ──
@@ -224,7 +242,7 @@ async function main() {
       await cmdConfig(rest);
       break;
     case 'doctor':
-      await cmdDoctor();
+      await cmdDoctor(rest);
       break;
     case 'gui':
       await cmdGui();
@@ -394,8 +412,8 @@ async function main() {
       // Security: Use spawn with explicit argv array instead of execSync with
       // template literal to prevent command injection via CLI arguments.
       // Per OWASP OS Command Injection Defense Cheat Sheet: avoid shell interpretation.
-      const { spawn } = require('child_process');
-      const vizPath = require('path').join(__dirname, '../../../viz/dist/index.js');
+      const { spawn } = nodeRequire('child_process');
+      const vizPath = nodeRequire('path').join(__dirname, '../../../viz/dist/index.js');
       try {
         spawn('node', [vizPath, ...rest], { stdio: 'inherit', shell: false });
       } catch (err) {

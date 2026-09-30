@@ -21,6 +21,20 @@ import {
   makeContext,
   resetGlobalState,
 } from './e2eTestHelpers';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file drives deploy/rollback tool loops end to end through
+// AgentRuntime.execute() and asserts nothing about SideEffectGate admission, so
+// it opts in explicitly to the always-admit unit fixture. The global default is
+// now the real, fail-closed gate. This is a unit convenience, NOT an admission
+// proof.
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 interface DeployEnv {
   baseDir: string;
@@ -246,9 +260,10 @@ describe('E2E: Deploy & Rollback through AgentRuntime.execute()', () => {
       makeContext({ availableTools: ['deploy', 'health_check'], goal: 'Deploy and check' }),
     );
 
-    // Runtime should complete — the tool failure is returned as an error
-    // message to the LLM, which then decides what to do
-    expect(result.status).toBe('success');
+    // A failed health check is a failed run until a later recovery batch
+    // proves the outcome; a final model explanation is not proof of success.
+    expect(result.status).toBe('failed');
+    expect(result.error).toContain('TOOL_EXECUTION_FAILED');
     // v2 was deployed, health check failed but no rollback was scripted
     expect(env.getVersion()).toBe('v2');
   });

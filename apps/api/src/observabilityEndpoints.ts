@@ -8,15 +8,33 @@
  */
 import { Router, type Request, type Response, type NextFunction } from 'express';
 import type { IncomingMessage } from 'http';
-import * as path from 'path';
 import {
   handleObservabilityRequest,
   type ObservabilityDeps,
   OBSERVABILITY_HTTP_ROUTES,
 } from '@commander/core/observability';
 import { getTraceRecorder, PersistentTraceStore } from '@commander/core/runtime';
+import { resolveConfiguredTraceBase } from '@commander/core/runtime/traceStore';
 
-const tracesDir = path.join(process.cwd(), '.commander_traces');
+/**
+ * Resolve the trace base directory for this process.
+ *
+ * Delegates to the single owner of the trace-directory rule in
+ * `@commander/core/runtime/traceStore` so the observability reader can never
+ * disagree with the trace writer (or with the lineage/hallucination/cost
+ * readers) about where traces live.
+ */
+export function resolveTraceDirectory(
+  env: {
+    COMMANDER_TRACE_DIR?: string | undefined;
+    COMMANDER_TRACES_DIR?: string | undefined;
+  } = process.env,
+  cwd: string = process.cwd(),
+): string {
+  return resolveConfiguredTraceBase(env, cwd);
+}
+
+const tracesDir = resolveTraceDirectory();
 const traceStore = new PersistentTraceStore(tracesDir);
 const tenantTraceStores = new Map<string, PersistentTraceStore>();
 // In-memory recorder is empty in a pure observability process; the handler

@@ -6,7 +6,7 @@ import {
   type JsonWebKeyInput,
   type KeyObject,
 } from 'node:crypto';
-import type { EvidenceSignature, EvidenceSigner } from './signedEvidence.js';
+import type { EvidenceSignature, EvidenceSigner } from './evidenceBundle.js';
 
 export interface EvidenceJwk {
   kty?: string;

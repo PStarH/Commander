@@ -287,8 +287,28 @@ export class PluginPermissionEnforcer {
    */
   private matchPath(filePath: string, pattern: string): boolean {
     // Normalize separators
-    const normalizedPath = filePath.replace(/\\/g, '/');
+    let normalizedPath = filePath.replace(/\\/g, '/');
     const normalizedPattern = pattern.replace(/\\/g, '/');
+
+    // AUDIT-R5F1: canonicalize before any prefix/wildcard match and reject
+    // traversal outright — `/workspace/../../etc/passwd` used to pass a
+    // `/workspace/**` grant because startsWith never resolved the `..`.
+    if (normalizedPath.includes('..')) {
+      const segments: string[] = [];
+      for (const seg of normalizedPath.split('/')) {
+        if (seg === '..') {
+          if (segments.length === 0 || segments[0] === '') {
+            // '..' above an absolute root — escapes the filesystem root.
+            return false;
+          }
+          segments.pop();
+        } else if (seg !== '.') {
+          segments.push(seg);
+        }
+      }
+      normalizedPath = segments.join('/') || '/';
+      if (normalizedPath.includes('..')) return false; // defensive
+    }
 
     // Exact match
     if (normalizedPath === normalizedPattern) return true;
@@ -296,7 +316,10 @@ export class PluginPermissionEnforcer {
     // Prefix match with /**
     if (normalizedPattern.endsWith('/**')) {
       const prefix = normalizedPattern.slice(0, -3);
-      return normalizedPath.startsWith(prefix);
+      // `startsWith` alone treats a sibling directory whose name merely shares a
+      // prefix as inside the grant: `/workspace/data/**` would accept
+      // `/workspace/database/x`. Require the match to end at a path separator.
+      return normalizedPath === prefix || normalizedPath.startsWith(prefix + '/');
     }
 
     // Prefix match with /

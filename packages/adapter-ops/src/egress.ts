@@ -5,11 +5,30 @@
 
 export function parseEgressAllowlist(env: NodeJS.ProcessEnv = process.env): string[] {
   const raw = env.COMMANDER_ADAPTER_EGRESS_ALLOWLIST?.trim() ?? '';
-  if (!raw) return [];
-  return raw
+  const allowlist = raw
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  const kubernetesServer = env.COMMANDER_KUBERNETES_SERVER?.trim();
+  if (kubernetesServer) {
+    let server: URL;
+    try {
+      server = new URL(kubernetesServer);
+    } catch {
+      throw new Error('COMMANDER_KUBERNETES_SERVER_INVALID: expected an HTTPS URL');
+    }
+    if (
+      server.protocol !== 'https:' ||
+      server.username ||
+      server.password ||
+      server.search ||
+      server.hash
+    ) {
+      throw new Error('COMMANDER_KUBERNETES_SERVER_INVALID: expected an HTTPS origin');
+    }
+    allowlist.push(server.hostname);
+  }
+  return [...new Set(allowlist)];
 }
 
 /**
@@ -31,25 +50,67 @@ export function assertEgressAllowlistBeforeDaemonStart(
       'ADAPTER_OPS_EGRESS_ALLOWLIST_REQUIRED: set COMMANDER_ADAPTER_EGRESS_ALLOWLIST before starting outbound daemons on non-demo cells',
     );
   }
+  // AUDIT-F1: CIDR-only allowlists silently disabled the application-layer
+  // hostname gate (assertEgressUrlAllowed cannot adjudicate IPs without DNS
+  // resolution). That made an operator-looking config equivalent to
+  // allow-any-host, leaving NetworkPolicy as the only control. Fail closed:
+  // at least one hostname entry is required; CIDR entries remain additive.
+  const hostEntries = allowlist.filter((e) => !looksLikeCidr(e));
+  if (tier !== 'demo' && allowlist.length > 0 && hostEntries.length === 0) {
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED: COMMANDER_ADAPTER_EGRESS_ALLOWLIST contains only CIDR entries; ' +
+        'the application-layer hostname gate cannot adjudicate them. Add at least one hostname (or *.suffix) entry.',
+    );
+  }
 }
 
 /**
- * 传输层闸门：对实际 HTTP(S) URL 的 hostname 做允许列表匹配。
- * 条目为 hostname（或后缀域）；CIDR 条目无法在无 DNS 解析时匹配，交由 NetworkPolicy。
+ * 传输层闸门：对实际 HTTP(S) URL 的 scheme 与 hostname 做允许列表匹配。
+ *
+ * 契约（fail-closed）：
+ * - 空允许列表 = 拒绝一切出站（“未配置”不等于“放行”）。demo/hollow cell 需要空列表
+ *   放行时必须由调用方显式传 `allowEmptyAllowlist: true`，不允许从 env 猜测。
+ * - scheme：默认只允许 `https:`；`http:` 仅对 loopback 主机（127.0.0.1 / ::1 /
+ *   localhost）放行；其余 scheme 一律拒绝。
+ * - 条目为精确 hostname，或以 `*.` 前缀显式声明的后缀域。裸条目不再隐式匹配子域
+ *   （原 `host.endsWith('.' + entry)` 会让任何子域随父域一起被放行）。
+ * - 纯 CIDR 列表无法在无 DNS 时裁决主机名 → 拒绝（daemon 启动闸门另要求至少一个
+ *   hostname 条目）。
  */
-export function assertEgressUrlAllowed(url: RequestInfo | URL, allowlist: readonly string[]): void {
-  if (allowlist.length === 0) return;
+export interface EgressUrlGateOptions {
+  /**
+   * 显式声明“允许空允许列表”（demo/hollow cell）。除 demo 外任何调用点都不得传 true。
+   */
+  allowEmptyAllowlist?: boolean;
+}
+
+export function assertEgressUrlAllowed(
+  url: RequestInfo | URL,
+  allowlist: readonly string[],
+  options: EgressUrlGateOptions = {},
+): void {
+  if (allowlist.length === 0) {
+    if (options.allowEmptyAllowlist === true) return;
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_DENIED: COMMANDER_ADAPTER_EGRESS_ALLOWLIST is empty; refusing outbound request',
+    );
+  }
   const href = typeof url === 'string' ? url : url instanceof URL ? url.href : String(url);
-  let host: string;
+  let target: URL;
   try {
-    host = new URL(href).hostname.toLowerCase();
+    target = new URL(href);
   } catch {
     throw new Error('ADAPTER_OPS_EGRESS_DENIED: unparseable URL ' + href.slice(0, 120));
   }
+  // `URL.hostname` keeps the brackets of an IPv6 literal; entries are written bare.
+  const host = target.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  assertEgressSchemeAllowed(target);
   const hostEntries = allowlist.filter((entry) => !looksLikeCidr(entry));
   if (hostEntries.length === 0) {
-    // 仅有 CIDR 时应用层无法裁决主机名；daemon 启动闸门已要求非空 allowlist。
-    return;
+    // 仅有 CIDR 时应用层无法裁决主机名 → 拒绝，而不是放行。
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_DENIED: allowlist has no hostname entry to adjudicate host ' + host,
+    );
   }
   const allowed = hostEntries.some((entry) => hostMatches(host, entry.toLowerCase()));
   if (!allowed) {
@@ -59,14 +120,75 @@ export function assertEgressUrlAllowed(url: RequestInfo | URL, allowlist: readon
   }
 }
 
+/** `https:` always; `http:` only for loopback targets; everything else is denied. */
+function assertEgressSchemeAllowed(target: URL): void {
+  const protocol = target.protocol.toLowerCase();
+  if (protocol === 'https:') return;
+  if (protocol === 'http:' && isLoopbackHost(target.hostname)) return;
+  throw new Error(
+    'ADAPTER_OPS_EGRESS_DENIED: scheme ' +
+      protocol +
+      ' is not permitted for host ' +
+      target.hostname.toLowerCase() +
+      ' (https only; http is limited to loopback)',
+  );
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost';
+}
+
+export const ADAPTER_OPS_EGRESS_REDIRECT_DENIED = 'ADAPTER_OPS_EGRESS_REDIRECT_DENIED';
+
+/**
+ * Redirects are never followed through the gate.
+ *
+ * AO-04: the gate used to adjudicate only the first URL and then hand the
+ * request to `fetch`, whose default `redirect: 'follow'` silently re-issued it
+ * against whatever host the allowlisted server named in `Location`. A 302 from
+ * an allowlisted host to an attacker host therefore escaped the allowlist and
+ * the response body (and any credentials the caller attached) went with it.
+ *
+ * The gate now forces `redirect: 'manual'` and rejects any 3xx response, so
+ * every hop stays inside the allowlist. Callers that must follow a redirect
+ * have to adjudicate the target themselves with `assertEgressUrlAllowed` and
+ * re-issue the request — they cannot opt back into blind following.
+ */
 export function createEgressGatedFetch(
   allowlist: readonly string[],
   fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
+  options: EgressUrlGateOptions = {},
 ): typeof fetch {
-  return ((input: RequestInfo | URL, init?: RequestInit) => {
-    assertEgressUrlAllowed(input, allowlist);
-    return fetchImpl(input, init);
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    assertEgressUrlAllowed(input, allowlist, options);
+    const response = await fetchImpl(input, { ...init, redirect: 'manual' });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get('location');
+      let target = location ?? '';
+      if (location) {
+        try {
+          target = new URL(location, requestUrl(input)).href;
+        } catch {
+          target = location;
+        }
+      }
+      throw Object.assign(
+        new Error(
+          `${ADAPTER_OPS_EGRESS_REDIRECT_DENIED}: refusing to follow HTTP ${response.status} redirect to ` +
+            (target || '(missing location)'),
+        ),
+        { code: ADAPTER_OPS_EGRESS_REDIRECT_DENIED },
+      );
+    }
+    return response;
   }) as typeof fetch;
+}
+
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.href;
+  return input.url;
 }
 
 function looksLikeCidr(entry: string): boolean {
@@ -76,8 +198,17 @@ function looksLikeCidr(entry: string): boolean {
 }
 
 function hostMatches(host: string, entry: string): boolean {
-  if (host === entry) return true;
-  if (entry.startsWith('*.') && host.endsWith(entry.slice(1))) return true;
-  if (!entry.includes('*') && host.endsWith('.' + entry)) return true;
-  return false;
+  if (entry.startsWith('*.')) {
+    const suffix = entry.slice(1);
+    return host.length > suffix.length && host.endsWith(suffix);
+  }
+  if (entry.includes('*')) {
+    // A wildcard that is not the documented leading `*.` form would silently never
+    // match; treat the configuration as invalid instead of fail-open.
+    throw new Error(
+      'ADAPTER_OPS_EGRESS_ALLOWLIST_INVALID: wildcard entries must use the leading "*." form: ' +
+        entry,
+    );
+  }
+  return host === entry;
 }

@@ -1,5 +1,4 @@
 import { reportSilentFailure } from '../silentFailureReporter';
-import { createRequire } from 'node:module';
 // IdempotencyStore — P0-1 ATR kernel component.
 // Persistent deduplication for tool side-effect calls. SQLite-backed, per-tenant.
 //
@@ -22,10 +21,13 @@ import { createRequire } from 'node:module';
 
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname } from 'node:path';
 import { getGlobalLogger } from '../logging';
 import type { IdempotencyOptions, IdempotencyRecord, IdempotencyState } from './types';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export interface IdempotencyStoreConfig {
   filePath: string;
@@ -59,7 +61,7 @@ interface BetterSqlite3DB {
 
 let BetterSqlite3: { new (filePath: string): BetterSqlite3DB } | null = null;
 try {
-  BetterSqlite3 = createRequire(import.meta.url)('better-sqlite3');
+  BetterSqlite3 = nodeRequire('better-sqlite3');
 } catch (_silentE_) {
   reportSilentFailure(_silentE_, 'idempotencyStore:62');
 }

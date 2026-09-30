@@ -1,161 +1,241 @@
-import { FIXED_ACTION_ADAPTER_MANIFESTS } from '@commander/contracts';
+import { createHash } from 'node:crypto';
+import {
+  commanderActionMarker,
+  compensationIdempotencyKey,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+} from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import type { EffectRemoteOutcome } from '@commander/effect-broker';
-import { adapterFetch, assertOkResponse, readJsonResponse, type FetchFn } from '../http.js';
+import { adapterFetch, readJsonResponse, type FetchFn } from '../http.js';
 import type {
   ActionAdapter,
   AdapterCompensateInput,
-  AdapterCredentialProvider,
   AdapterExecuteInput,
   AdapterQueryInput,
+  KubernetesCredentialProvider,
 } from '../types.js';
+import { parseKubernetesDeploymentDestination } from '../types.js';
 
-const descriptor = FIXED_ACTION_ADAPTER_MANIFESTS.find(
-  (manifest) => manifest.adapterId === 'kubernetes.deployment.rollback',
-)!;
-const SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+export type KubernetesObservedOutcome = 'APPLIED' | 'NOT_APPLIED' | 'UNKNOWN';
 
-export interface KubernetesCredentials {
-  cluster: string;
-  server: string;
-  token: string;
-  caData?: string;
+export { KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR };
+
+const ACTION_MARKER_ANNOTATION = 'commander.io/action-marker';
+const ACTION_ORIGINAL_REVISION_ANNOTATION = 'commander.io/action-original-revision';
+const ACTION_TARGET_REVISION_ANNOTATION = 'commander.io/action-target-revision';
+const ACTION_TEMPLATE_HASH_ANNOTATION = 'commander.io/action-template-sha256';
+const COMPENSATION_MARKER_ANNOTATION = 'commander.io/compensation-marker';
+const COMPENSATION_TARGET_REVISION_ANNOTATION = 'commander.io/compensation-target-revision';
+const COMPENSATION_TEMPLATE_HASH_ANNOTATION = 'commander.io/compensation-template-sha256';
+const ROLLBACK_REASON_ANNOTATION = 'commander.io/rollback-reason';
+const REVISION_ANNOTATION = 'deployment.kubernetes.io/revision';
+const MAX_REASON_LENGTH = 1_024;
+const MAX_TEMPLATE_BYTES = 256 * 1_024;
+
+interface KubernetesDeploymentSummary {
+  name: string;
+  namespace: string;
+  uid?: string;
+  resourceVersion?: string;
+  revision?: string;
+  annotations: Record<string, string>;
+  selector: Record<string, string>;
+  template?: Record<string, unknown>;
+  templateHash?: string;
+  rolloutComplete: boolean;
+}
+
+interface KubernetesRollbackTarget {
+  template: Record<string, unknown>;
+  templateHash: string;
+}
+
+interface Observation {
+  classification: KubernetesObservedOutcome;
+  deployments: KubernetesDeploymentSummary[];
+  httpStatus?: number;
+  matched?: KubernetesDeploymentSummary;
 }
 
 export interface KubernetesDeploymentRollbackAdapterOptions {
-  credentials: AdapterCredentialProvider;
+  credentials: KubernetesCredentialProvider;
   fetch?: FetchFn;
-  /**
-   * Narrow post-commit hook used by the governed fault-control boundary.
-   * It runs only after this adapter receives a successful Deployment PATCH.
-   */
-  afterPatchResponse?: (input: {
-    tenantId: string;
-    effectId: string;
-    idempotencyKey: string;
-    destination: string;
-  }) => Promise<void>;
 }
 
-interface Destination {
-  cluster: string;
-  namespace: string;
-  name: string;
+function executionError(
+  message: string,
+  code: string,
+  commitState: 'NOT_COMMITTED' | 'UNKNOWN',
+  details?: Record<string, unknown>,
+): AdapterExecutionError {
+  return new AdapterExecutionError(message, {
+    code,
+    commitState,
+    retryMode: commitState === 'UNKNOWN' ? 'QUERY_FIRST' : 'NEVER',
+    details,
+  });
 }
 
-function parseDestination(destination: string): Destination {
-  const match = /^k8s:\/\/([^/]+)\/([^/]+)\/deployments\/([^/]+)$/.exec(destination);
-  if (!match || !match[1] || !match[2] || !match[3]) {
-    throw new AdapterExecutionError('Invalid Kubernetes destination', {
-      code: 'KUBERNETES_DESTINATION_INVALID',
-      commitState: 'NOT_COMMITTED',
-      retryMode: 'NEVER',
-    });
+function requiredRevision(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !/^[1-9][0-9]{0,18}$/.test(value)) {
+    throw executionError(
+      `${label} must be a positive integer string`,
+      'KUBERNETES_REVISION_INVALID',
+      'NOT_COMMITTED',
+    );
   }
-  const [cluster, namespace, name] = [match[1], match[2], match[3]];
-  if (![cluster, namespace, name].every((value) => SEGMENT.test(value))) {
-    throw new AdapterExecutionError('Invalid Kubernetes destination', {
-      code: 'KUBERNETES_DESTINATION_INVALID',
-      commitState: 'NOT_COMMITTED',
-      retryMode: 'NEVER',
-    });
-  }
-  return { cluster, namespace, name };
+  return value;
 }
 
-function apiUrl(creds: KubernetesCredentials, destination: Destination): string {
-  let base: URL;
-  try {
-    base = new URL(creds.server);
-  } catch {
-    throw new AdapterExecutionError('Invalid Kubernetes API server', {
-      code: 'KUBERNETES_SERVER_INVALID',
-      commitState: 'NOT_COMMITTED',
-      retryMode: 'NEVER',
-    });
+function requiredReason(value: unknown): string {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.length > MAX_REASON_LENGTH) {
+    throw executionError(
+      `reason must be between 1 and ${MAX_REASON_LENGTH} characters`,
+      'KUBERNETES_REASON_INVALID',
+      'NOT_COMMITTED',
+    );
   }
-  if (base.protocol !== 'https:') {
-    throw new AdapterExecutionError('Kubernetes API server must use HTTPS', {
-      code: 'KUBERNETES_SERVER_INSECURE',
-      commitState: 'NOT_COMMITTED',
-      retryMode: 'NEVER',
-    });
-  }
-  return `${base.toString().replace(/\/$/, '')}/apis/apps/v1/namespaces/${encodeURIComponent(destination.namespace)}/deployments/${encodeURIComponent(destination.name)}`;
+  return value;
 }
 
-function namespaceApiUrl(
-  creds: KubernetesCredentials,
-  destination: Destination,
-  resource: string,
-): string {
-  return apiUrl(creds, destination).replace(
-    `/deployments/${encodeURIComponent(destination.name)}`,
-    `/${resource}`,
-  );
-}
-
-function credentialsFor(
-  provider: AdapterCredentialProvider,
-  input: { tenantId: string; destination: string },
-  destination: Destination,
-): Promise<KubernetesCredentials> {
-  if (!provider.getKubernetesCredentials) {
-    throw new AdapterExecutionError('Kubernetes credentials are not configured', {
-      code: 'KUBERNETES_CREDENTIALS_MISSING',
-      commitState: 'NOT_COMMITTED',
-      retryMode: 'NEVER',
-    });
+function requiredExecuteArgs(value: unknown): { targetRevision: string; reason: string } {
+  const args = objectRecord(value);
+  if (
+    !args ||
+    Object.keys(args).length !== 2 ||
+    !Object.keys(args).every((key) => key === 'targetRevision' || key === 'reason')
+  ) {
+    throw executionError(
+      'Kubernetes rollback arguments contain an unsupported key',
+      'KUBERNETES_ARGUMENTS_INVALID',
+      'NOT_COMMITTED',
+    );
   }
-  return provider
-    .getKubernetesCredentials(input.tenantId, input.destination)
-    .then((credentials) => {
-      if (
-        !credentials?.cluster ||
-        credentials.cluster !== destination.cluster ||
-        !credentials.server ||
-        !credentials.token
-      ) {
-        throw new AdapterExecutionError('Kubernetes cluster credential mismatch', {
-          code: 'KUBERNETES_CREDENTIALS_MISMATCH',
-          commitState: 'NOT_COMMITTED',
-          retryMode: 'NEVER',
-        });
-      }
-      return credentials;
-    });
-}
-
-function headers(credentials: KubernetesCredentials): HeadersInit {
   return {
-    Authorization: `Bearer ${credentials.token}`,
-    Accept: 'application/json',
-    'Content-Type': 'application/merge-patch+json',
+    targetRevision: requiredRevision(args.targetRevision, 'targetRevision'),
+    reason: requiredReason(args.reason),
   };
 }
 
-function templatePatch(
-  template: Record<string, unknown>,
-  idempotencyKey: string,
-  targetRevision: string,
-  reason: string,
-): Record<string, unknown> {
-  const metadata = (template.metadata ?? {}) as Record<string, unknown>;
-  const annotations = (metadata.annotations ?? {}) as Record<string, unknown>;
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  const record = objectRecord(value);
+  if (record) {
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+      .join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function templateHash(template: Record<string, unknown>): string {
+  return createHash('sha256').update(canonicalJson(template)).digest('hex');
+}
+
+function stringMap(value: unknown): Record<string, string> {
+  const result: Record<string, string> = {};
+  const record = objectRecord(value);
+  if (!record) return result;
+  for (const [key, entry] of Object.entries(record)) {
+    if (typeof entry === 'string') result[key] = entry;
+  }
+  return result;
+}
+
+function deploymentSummary(value: unknown): KubernetesDeploymentSummary | null {
+  const deployment = objectRecord(value);
+  const record = objectRecord(deployment?.metadata);
+  if (!record) return null;
+  if (typeof record.name !== 'string' || typeof record.namespace !== 'string') return null;
+  const annotations = stringMap(record.annotations);
+  const spec = objectRecord(deployment?.spec);
+  const selector = objectRecord(spec?.selector);
+  const template = objectRecord(spec?.template) ?? undefined;
+  const status = objectRecord(deployment?.status);
+  const generation = typeof record.generation === 'number' ? record.generation : undefined;
+  const observedGeneration =
+    typeof status?.observedGeneration === 'number' ? status.observedGeneration : undefined;
+  const replicas = typeof status?.replicas === 'number' ? status.replicas : undefined;
+  const updatedReplicas =
+    typeof status?.updatedReplicas === 'number' ? status.updatedReplicas : undefined;
+  const availableReplicas =
+    typeof status?.availableReplicas === 'number' ? status.availableReplicas : undefined;
+  const unavailableReplicas =
+    typeof status?.unavailableReplicas === 'number' ? status.unavailableReplicas : 0;
   return {
-    spec: {
-      template: {
-        ...template,
-        metadata: {
-          ...metadata,
-          annotations: {
-            ...annotations,
-            'commander.io/idempotency-key': idempotencyKey,
-            'commander.io/target-revision': targetRevision,
-            'commander.io/reason': reason,
-          },
-        },
-      },
+    name: record.name,
+    namespace: record.namespace,
+    uid: typeof record.uid === 'string' ? record.uid : undefined,
+    resourceVersion:
+      typeof record.resourceVersion === 'string' ? record.resourceVersion : undefined,
+    revision: annotations[REVISION_ANNOTATION],
+    annotations,
+    selector: stringMap(selector?.matchLabels),
+    template,
+    templateHash: template ? templateHash(template) : undefined,
+    rolloutComplete:
+      generation !== undefined &&
+      observedGeneration !== undefined &&
+      observedGeneration >= generation &&
+      replicas !== undefined &&
+      updatedReplicas === replicas &&
+      availableReplicas === replicas &&
+      unavailableReplicas === 0,
+  };
+}
+
+function evidence(
+  deployment: string,
+  namespace: string,
+  status: KubernetesObservedOutcome,
+  httpStatus: number,
+  revision?: string,
+): Record<string, unknown> {
+  return {
+    deployment,
+    namespace,
+    ...(revision ? { revision } : {}),
+    status,
+    httpStatus,
+  };
+}
+
+function toRemoteOutcome(
+  observation: Observation,
+  deployment: string,
+  namespace: string,
+  evidenceRevision?: string,
+): EffectRemoteOutcome {
+  if (observation.classification === 'APPLIED') {
+    return {
+      status: 'APPLIED',
+      response: evidence(
+        deployment,
+        namespace,
+        'APPLIED',
+        observation.httpStatus ?? 200,
+        evidenceRevision ?? observation.matched?.revision,
+      ),
+    };
+  }
+  if (observation.classification === 'NOT_APPLIED') {
+    return {
+      status: 'NOT_APPLIED',
+      response: evidence(deployment, namespace, 'NOT_APPLIED', observation.httpStatus ?? 200),
+    };
+  }
+  return {
+    status: 'UNKNOWN',
+    error: {
+      code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+      message: 'Remote outcome is not yet provable',
     },
   };
 }
@@ -167,167 +247,516 @@ export function createKubernetesDeploymentRollbackAdapter(
   const fetchImpl = (url: RequestInfo | URL, init?: RequestInit) =>
     adapterFetch(rawFetch, url, init);
 
-  async function read(
-    input: AdapterQueryInput,
-    destination: Destination,
-    credentials: KubernetesCredentials,
-  ): Promise<Record<string, unknown>> {
-    const response = await fetchImpl(apiUrl(credentials, destination), {
-      headers: headers(credentials),
-      signal: input.signal,
-    });
-    if (response.status === 404) return {};
-    await assertOkResponse(response, 'Kubernetes deployment query');
-    return readJsonResponse<Record<string, unknown>>(response);
+  async function requestContext(tenantId: string, destination: string) {
+    const parsed = parseKubernetesDeploymentDestination(destination);
+    const token = await options.credentials.getToken(tenantId, parsed.cluster, parsed.namespace);
+    const server = options.credentials.getServer(tenantId, parsed.cluster, parsed.namespace);
+    const collectionPath = `/apis/apps/v1/namespaces/${encodeURIComponent(parsed.namespace)}/deployments`;
+    const collectionUrl = new URL(collectionPath, server);
+    return { ...parsed, token, collectionUrl };
   }
 
-  async function outcome(
-    input: AdapterQueryInput,
-    compensation = false,
-  ): Promise<EffectRemoteOutcome> {
-    const destination = parseDestination(input.destination);
-    const credentials = await credentialsFor(options.credentials, input, destination);
-    const deployment = await read(input, destination, credentials);
-    const metadata = (deployment.metadata ?? {}) as Record<string, unknown>;
-    const annotations = (
-      (deployment.spec as Record<string, unknown> | undefined)?.template as
-        Record<string, unknown> | undefined
-    )?.metadata as Record<string, unknown> | undefined;
-    const values = (annotations?.annotations ?? {}) as Record<string, unknown>;
-    const target = String(input.request.targetRevision ?? input.request.expectedState ?? '');
-    const key = String(input.request.idempotencyKey ?? input.idempotencyKey);
-    if (
-      !deployment.metadata ||
-      values['commander.io/idempotency-key'] !== key ||
-      (target && values['commander.io/target-revision'] !== target)
-    )
-      return { status: 'UNKNOWN' };
+  function headers(token: string, contentType?: string): HeadersInit {
     return {
-      status: 'COMPLETED',
-      response: {
-        deployment: destination.name,
-        namespace: destination.namespace,
-        revision: values['commander.io/target-revision'],
-        status: compensation ? 'COMPENSATED' : 'ROLLED_BACK',
-      },
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/json',
+      'Content-Type': contentType ?? 'application/json',
     };
   }
 
-  async function execute(input: AdapterExecuteInput): Promise<Record<string, unknown>> {
-    const destination = parseDestination(input.destination);
-    const targetRevision =
-      typeof input.args.targetRevision === 'string' && input.args.targetRevision.trim()
-        ? input.args.targetRevision
-        : '';
-    const reason =
-      typeof input.args.reason === 'string' && input.args.reason.trim() ? input.args.reason : '';
-    if (
-      !targetRevision ||
-      !reason ||
-      Object.keys(input.args).some((key) => !['targetRevision', 'reason'].includes(key))
-    ) {
-      throw new AdapterExecutionError('Invalid Kubernetes rollback arguments', {
-        code: 'KUBERNETES_ROLLBACK_ARGS_INVALID',
-        commitState: 'NOT_COMMITTED',
-        retryMode: 'NEVER',
-      });
+  function targetAnnotations(markerAnnotation: string): {
+    revision: string;
+    templateHash: string;
+  } {
+    return markerAnnotation === ACTION_MARKER_ANNOTATION
+      ? {
+          revision: ACTION_TARGET_REVISION_ANNOTATION,
+          templateHash: ACTION_TEMPLATE_HASH_ANNOTATION,
+        }
+      : {
+          revision: COMPENSATION_TARGET_REVISION_ANNOTATION,
+          templateHash: COMPENSATION_TEMPLATE_HASH_ANNOTATION,
+        };
+  }
+
+  async function resolveRollbackTarget(
+    input: Pick<AdapterExecuteInput, 'tenantId' | 'destination' | 'signal'>,
+    deployment: KubernetesDeploymentSummary,
+    targetRevision: string,
+  ): Promise<KubernetesRollbackTarget> {
+    if (!deployment.uid || Object.keys(deployment.selector).length === 0) {
+      throw executionError(
+        'Kubernetes deployment lacks a stable owner uid or matchLabels selector',
+        'KUBERNETES_DEPLOYMENT_SELECTOR_INVALID',
+        'NOT_COMMITTED',
+      );
     }
-    const credentials = await credentialsFor(options.credentials, input, destination);
-    const existing = await outcome({
-      ...input,
-      request: { idempotencyKey: input.idempotencyKey, targetRevision },
-    });
-    if (existing.status === 'COMPLETED') return existing.response;
-    const current = await read({ ...input, request: {} }, destination, credentials);
-    const metadata = (current.metadata ?? {}) as Record<string, unknown>;
-    const selector = (
-      (current.spec as Record<string, unknown> | undefined)?.selector as
-        Record<string, unknown> | undefined
-    )?.matchLabels;
-    if (
-      !metadata.uid ||
-      !selector ||
-      typeof selector !== 'object' ||
-      Object.keys(selector as Record<string, unknown>).length === 0
-    ) {
-      throw new AdapterExecutionError('Kubernetes deployment cannot be safely rolled back', {
-        code: 'KUBERNETES_DEPLOYMENT_INVALID',
-        commitState: 'NOT_COMMITTED',
-        retryMode: 'NEVER',
+    const context = await requestContext(input.tenantId, input.destination);
+    const selector = Object.entries(deployment.selector)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => `${key}=${value}`)
+      .join(',');
+    const replicasetsUrl = new URL(
+      `/apis/apps/v1/namespaces/${encodeURIComponent(context.namespace)}/replicasets`,
+      context.collectionUrl,
+    );
+    replicasetsUrl.searchParams.set('labelSelector', selector);
+    let response: Response;
+    try {
+      response = await fetchImpl(replicasetsUrl, {
+        headers: headers(context.token),
+        signal: input.signal,
       });
+    } catch {
+      throw executionError(
+        'Kubernetes ReplicaSet history query failed',
+        'KUBERNETES_REPLICASET_QUERY_FAILED',
+        'NOT_COMMITTED',
+      );
     }
-    const labelSelector = new URLSearchParams({
-      labelSelector: Object.entries(selector as Record<string, string>)
-        .map(([key, value]) => `${key}=${value}`)
-        .join(','),
-    }).toString();
-    const replicasResponse = await fetchImpl(
-      `${namespaceApiUrl(credentials, destination, 'replicasets')}?${labelSelector}`,
-      { headers: headers(credentials), signal: input.signal },
-    );
-    await assertOkResponse(replicasResponse, 'Kubernetes ReplicaSet query');
-    const replicas = await readJsonResponse<{ items?: Array<Record<string, unknown>> }>(
-      replicasResponse,
-    );
-    const replica = (replicas.items ?? []).find((item) => {
-      const replicaMetadata = (item.metadata ?? {}) as Record<string, unknown>;
-      const annotations = (replicaMetadata.annotations ?? {}) as Record<string, unknown>;
-      const owners = Array.isArray(replicaMetadata.ownerReferences)
-        ? replicaMetadata.ownerReferences
-        : [];
+    if (!response.ok) {
+      throw executionError(
+        `Kubernetes ReplicaSet history query failed with HTTP ${response.status}`,
+        'KUBERNETES_REPLICASET_QUERY_FAILED',
+        'NOT_COMMITTED',
+        { httpStatus: response.status },
+      );
+    }
+    let payload: { items?: unknown[] };
+    try {
+      payload = await readJsonResponse<{ items?: unknown[] }>(response);
+    } catch {
+      throw executionError(
+        'Kubernetes ReplicaSet history response was invalid',
+        'KUBERNETES_REPLICASET_RESPONSE_INVALID',
+        'NOT_COMMITTED',
+      );
+    }
+    const matches = (payload.items ?? []).filter((value) => {
+      const replicaSet = objectRecord(value);
+      const metadata = objectRecord(replicaSet?.metadata);
+      const annotations = stringMap(metadata?.annotations);
+      const owners = Array.isArray(metadata?.ownerReferences) ? metadata.ownerReferences : [];
       return (
-        annotations['deployment.kubernetes.io/revision'] === targetRevision &&
-        owners.some((owner) => (owner as Record<string, unknown>).uid === metadata.uid)
+        annotations[REVISION_ANNOTATION] === targetRevision &&
+        owners.some((owner) => {
+          const entry = objectRecord(owner);
+          return entry?.kind === 'Deployment' && entry.uid === deployment.uid;
+        })
       );
     });
-    const template = (replica?.spec as Record<string, unknown> | undefined)?.template;
-    if (!template || typeof template !== 'object') {
-      throw new AdapterExecutionError('Kubernetes deployment revision not found', {
-        code: 'KUBERNETES_ROLLBACK_REVISION_NOT_FOUND',
-        commitState: 'NOT_COMMITTED',
-        retryMode: 'NEVER',
-      });
+    if (matches.length !== 1) {
+      throw executionError(
+        matches.length === 0
+          ? 'Kubernetes target revision was not found'
+          : 'Multiple ReplicaSets matched the target revision',
+        matches.length === 0
+          ? 'KUBERNETES_TARGET_REVISION_NOT_FOUND'
+          : 'KUBERNETES_TARGET_REVISION_AMBIGUOUS',
+        matches.length === 0 ? 'NOT_COMMITTED' : 'UNKNOWN',
+        { matchCount: matches.length, targetRevision },
+      );
     }
-    const response = await fetchImpl(apiUrl(credentials, destination), {
-      method: 'PATCH',
-      headers: headers(credentials),
-      body: JSON.stringify(
-        templatePatch(
-          template as Record<string, unknown>,
-          input.idempotencyKey,
-          targetRevision,
-          reason,
-        ),
-      ),
-      signal: input.signal,
-    });
-    await assertOkResponse(response, 'Kubernetes deployment rollback');
-    await options.afterPatchResponse?.({
-      tenantId: input.tenantId,
-      effectId: input.effectId,
-      idempotencyKey: input.idempotencyKey,
-      destination: input.destination,
-    });
-    const deployment = await readJsonResponse<Record<string, unknown>>(response);
+    const replicaSet = objectRecord(matches[0]);
+    const template = objectRecord(objectRecord(replicaSet?.spec)?.template);
+    if (!template) {
+      throw executionError(
+        'Kubernetes target ReplicaSet lacks a pod template',
+        'KUBERNETES_TARGET_TEMPLATE_INVALID',
+        'NOT_COMMITTED',
+      );
+    }
+    if (Buffer.byteLength(canonicalJson(template), 'utf8') > MAX_TEMPLATE_BYTES) {
+      throw executionError(
+        'Kubernetes target pod template exceeds the adapter request bound',
+        'KUBERNETES_TARGET_TEMPLATE_TOO_LARGE',
+        'NOT_COMMITTED',
+      );
+    }
+    return { template, templateHash: templateHash(template) };
+  }
+
+  async function observe(
+    input: Pick<AdapterQueryInput, 'tenantId' | 'destination' | 'signal'>,
+    markerAnnotation: string,
+    marker: string,
+    expectedRevision: string,
+  ): Promise<Observation> {
+    const context = await requestContext(input.tenantId, input.destination);
+    let response: Response;
+    try {
+      response = await fetchImpl(context.collectionUrl, {
+        headers: headers(context.token),
+        signal: input.signal,
+      });
+    } catch {
+      return { classification: 'UNKNOWN', deployments: [] };
+    }
+    if (response.status === 404) {
+      // A missing collection is an unavailable observation, not proof that a
+      // prior marker was never committed (the namespace/API may have gone away).
+      return { classification: 'UNKNOWN', deployments: [], httpStatus: 404 };
+    }
+    if (response.status === 409 || response.status === 429 || response.status >= 500) {
+      return { classification: 'UNKNOWN', deployments: [], httpStatus: response.status };
+    }
+    if (!response.ok) {
+      throw executionError(
+        `Kubernetes deployment query failed with HTTP ${response.status}`,
+        'KUBERNETES_QUERY_FAILED',
+        'NOT_COMMITTED',
+        { httpStatus: response.status },
+      );
+    }
+    let payload: { items?: unknown[] };
+    try {
+      payload = await readJsonResponse<{ items?: unknown[] }>(response);
+    } catch {
+      return { classification: 'UNKNOWN', deployments: [], httpStatus: response.status };
+    }
+    // AA-05: a 200 response that is not a Kubernetes List (missing/non-array
+    // `items`) says nothing about whether the rollback was applied. Treating it
+    // as an empty list produced NOT_APPLIED, i.e. converted an unmeasured result
+    // into a committed one. Fail closed to UNKNOWN.
+    if (!Array.isArray(payload.items)) {
+      return { classification: 'UNKNOWN', deployments: [], httpStatus: response.status };
+    }
+    const deployments = payload.items
+      .map(deploymentSummary)
+      .filter((entry): entry is KubernetesDeploymentSummary => entry !== null);
+    const matches = deployments.filter(
+      (deployment) => deployment.annotations[markerAnnotation] === marker,
+    );
+    if (matches.length === 0) {
+      return { classification: 'NOT_APPLIED', deployments, httpStatus: response.status };
+    }
+    if (matches.length !== 1) {
+      return { classification: 'UNKNOWN', deployments, httpStatus: response.status };
+    }
+    const matched = matches[0]!;
+    const expected = targetAnnotations(markerAnnotation);
+    if (
+      matched.name !== context.name ||
+      matched.namespace !== context.namespace ||
+      matched.annotations[expected.revision] !== expectedRevision ||
+      !matched.templateHash ||
+      matched.annotations[expected.templateHash] !== matched.templateHash ||
+      !matched.rolloutComplete
+    ) {
+      return { classification: 'UNKNOWN', deployments, httpStatus: response.status, matched };
+    }
     return {
-      deployment: destination.name,
-      namespace: destination.namespace,
-      revision: targetRevision,
-      status: 'ROLLBACK_REQUESTED',
-      resourceVersion: (deployment.metadata as Record<string, unknown> | undefined)
-        ?.resourceVersion,
+      classification: 'APPLIED',
+      deployments,
+      httpStatus: response.status,
+      matched,
     };
+  }
+
+  async function write(
+    input: Pick<AdapterExecuteInput, 'tenantId' | 'destination' | 'signal'>,
+    markerAnnotation: string,
+    marker: string,
+    deployment: KubernetesDeploymentSummary,
+    targetRevision: string,
+    reason: string,
+    target: KubernetesRollbackTarget,
+  ): Promise<number> {
+    const context = await requestContext(input.tenantId, input.destination);
+    const deploymentUrl = new URL(
+      `${context.collectionUrl.pathname}/${encodeURIComponent(context.name)}`,
+      context.collectionUrl,
+    );
+    const expected = targetAnnotations(markerAnnotation);
+    try {
+      const patchResponse = await fetchImpl(deploymentUrl, {
+        method: 'PATCH',
+        headers: headers(context.token, 'application/merge-patch+json'),
+        body: JSON.stringify({
+          metadata: {
+            annotations: {
+              [markerAnnotation]: marker,
+              [expected.revision]: targetRevision,
+              [expected.templateHash]: target.templateHash,
+              ...(markerAnnotation === ACTION_MARKER_ANNOTATION
+                ? { [ACTION_ORIGINAL_REVISION_ANNOTATION]: deployment.revision }
+                : {}),
+            },
+          },
+        }),
+        signal: input.signal,
+      });
+      if (!patchResponse.ok) {
+        throw executionError(
+          `Kubernetes marker patch failed with HTTP ${patchResponse.status}`,
+          'KUBERNETES_MARKER_PATCH_FAILED',
+          patchResponse.status === 401 || patchResponse.status === 403
+            ? 'NOT_COMMITTED'
+            : 'UNKNOWN',
+          { httpStatus: patchResponse.status },
+        );
+      }
+      let markedDeployment: KubernetesDeploymentSummary | null;
+      try {
+        markedDeployment = deploymentSummary(await readJsonResponse<unknown>(patchResponse));
+      } catch {
+        markedDeployment = null;
+      }
+      if (!markedDeployment?.resourceVersion) {
+        throw executionError(
+          'Kubernetes marker patch response lacks resourceVersion',
+          'KUBERNETES_MARKER_RESPONSE_INVALID',
+          'UNKNOWN',
+        );
+      }
+
+      const rollbackResponse = await fetchImpl(deploymentUrl, {
+        method: 'PATCH',
+        headers: headers(context.token, 'application/strategic-merge-patch+json'),
+        body: JSON.stringify({
+          metadata: {
+            resourceVersion: markedDeployment.resourceVersion,
+            annotations: { [ROLLBACK_REASON_ANNOTATION]: reason },
+          },
+          spec: { template: target.template },
+        }),
+        signal: input.signal,
+      });
+      if (!rollbackResponse.ok) {
+        throw executionError(
+          `Kubernetes rollback failed with HTTP ${rollbackResponse.status}`,
+          'KUBERNETES_ROLLBACK_FAILED',
+          'UNKNOWN',
+          { httpStatus: rollbackResponse.status },
+        );
+      }
+      let rolledBack: KubernetesDeploymentSummary | null;
+      try {
+        rolledBack = deploymentSummary(await readJsonResponse<unknown>(rollbackResponse));
+      } catch {
+        rolledBack = null;
+      }
+      if (!rolledBack?.rolloutComplete || rolledBack.templateHash !== target.templateHash) {
+        throw executionError(
+          'Kubernetes rollback was accepted but rollout completion is not yet visible',
+          'KUBERNETES_ROLLOUT_PENDING',
+          'UNKNOWN',
+          { httpStatus: rollbackResponse.status },
+        );
+      }
+      return rollbackResponse.status;
+    } catch (error) {
+      if (error instanceof AdapterExecutionError) throw error;
+      throw executionError(
+        'Kubernetes rollback completion is unknown',
+        'KUBERNETES_ROLLBACK_UNKNOWN',
+        'UNKNOWN',
+      );
+    }
   }
 
   return {
-    descriptor,
-    execute,
-    queryOutcome: (input) => outcome(input),
-    async compensate(input: AdapterCompensateInput): Promise<Record<string, unknown>> {
-      const targetRevision = input.compensationPatch.targetRevision;
-      const reason = input.compensationPatch.reason;
-      return execute({ ...input, args: { targetRevision, reason } });
+    descriptor: KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+
+    async execute(input: AdapterExecuteInput): Promise<Record<string, unknown>> {
+      const { targetRevision, reason } = requiredExecuteArgs(input.args);
+      const context = parseKubernetesDeploymentDestination(input.destination);
+      const marker = commanderActionMarker(input.tenantId, input.idempotencyKey);
+      const observed = await observe(input, ACTION_MARKER_ANNOTATION, marker, targetRevision);
+      if (observed.classification === 'APPLIED') {
+        const originalRevision = observed.matched?.annotations[ACTION_ORIGINAL_REVISION_ANNOTATION];
+        if (!originalRevision) {
+          throw executionError(
+            'Matching action marker lacks original revision evidence',
+            'KUBERNETES_ACTION_EVIDENCE_CONFLICT',
+            'UNKNOWN',
+          );
+        }
+        return evidence(
+          context.name,
+          context.namespace,
+          'APPLIED',
+          observed.httpStatus ?? 200,
+          originalRevision,
+        );
+      }
+      if (observed.classification === 'UNKNOWN') {
+        throw executionError(
+          'Kubernetes rollback observation is ambiguous',
+          'KUBERNETES_ACTION_OBSERVATION_UNKNOWN',
+          'UNKNOWN',
+        );
+      }
+      const deployment = observed.deployments.find(
+        (candidate) => candidate.name === context.name && candidate.namespace === context.namespace,
+      );
+      if (!deployment?.revision) {
+        throw executionError(
+          'Kubernetes deployment or observed revision was not found',
+          'KUBERNETES_DEPLOYMENT_NOT_FOUND',
+          'NOT_COMMITTED',
+          { httpStatus: observed.httpStatus },
+        );
+      }
+      const target = await resolveRollbackTarget(input, deployment, targetRevision);
+      const httpStatus = await write(
+        input,
+        ACTION_MARKER_ANNOTATION,
+        marker,
+        deployment,
+        targetRevision,
+        reason,
+        target,
+      );
+      return evidence(context.name, context.namespace, 'APPLIED', httpStatus, deployment.revision);
     },
-    queryCompensationOutcome: (input) => outcome(input, true),
+
+    async queryOutcome(input: AdapterQueryInput): Promise<EffectRemoteOutcome> {
+      const args =
+        input.request.args && typeof input.request.args === 'object'
+          ? (input.request.args as Record<string, unknown>)
+          : {};
+      const targetRevision = requiredRevision(
+        input.request.targetRevision ?? args.targetRevision,
+        'targetRevision',
+      );
+      const context = parseKubernetesDeploymentDestination(input.destination);
+      const observed = await observe(
+        input,
+        ACTION_MARKER_ANNOTATION,
+        commanderActionMarker(input.tenantId, input.idempotencyKey),
+        targetRevision,
+      );
+      const originalRevision = observed.matched?.annotations[ACTION_ORIGINAL_REVISION_ANNOTATION];
+      if (observed.classification === 'APPLIED' && !originalRevision) {
+        return {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        };
+      }
+      return toRemoteOutcome(observed, context.name, context.namespace, originalRevision);
+    },
+
+    async compensate(input: AdapterCompensateInput): Promise<Record<string, unknown>> {
+      if (!input.originalEffectId) {
+        throw executionError(
+          'Missing original effect id for compensation',
+          'KUBERNETES_COMPENSATE_MISSING_EFFECT',
+          'NOT_COMMITTED',
+        );
+      }
+      const originalRevision = requiredRevision(
+        input.forwardResponse.revision,
+        'Missing original revision; forwardResponse.revision',
+      );
+      const allowed = new Set(KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR.compensationPatchKeys);
+      const keys = Object.keys(input.compensationPatch);
+      if (keys.length !== allowed.size || keys.some((key) => !allowed.has(key))) {
+        throw executionError(
+          'compensationPatch contains denied or missing keys',
+          'KUBERNETES_COMPENSATE_PATCH_DENIED',
+          'NOT_COMMITTED',
+        );
+      }
+      const targetRevision = requiredRevision(
+        input.compensationPatch.targetRevision,
+        'compensationPatch.targetRevision',
+      );
+      if (targetRevision !== originalRevision) {
+        throw executionError(
+          'compensationPatch targetRevision must equal the original revision',
+          'KUBERNETES_COMPENSATE_TARGET_MUTATION',
+          'NOT_COMMITTED',
+        );
+      }
+      const reason = requiredReason(input.compensationPatch.reason);
+      const context = parseKubernetesDeploymentDestination(input.destination);
+      const marker = compensationIdempotencyKey(
+        input.originalEffectId,
+        KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR.adapterVersion,
+      );
+      const observed = await observe(input, COMPENSATION_MARKER_ANNOTATION, marker, targetRevision);
+      if (observed.classification === 'APPLIED') {
+        return evidence(
+          context.name,
+          context.namespace,
+          'APPLIED',
+          observed.httpStatus ?? 200,
+          targetRevision,
+        );
+      }
+      if (observed.classification === 'UNKNOWN') {
+        throw executionError(
+          'Kubernetes compensation observation is ambiguous',
+          'KUBERNETES_COMPENSATE_OBSERVATION_UNKNOWN',
+          'UNKNOWN',
+        );
+      }
+      const deployment = observed.deployments.find(
+        (candidate) => candidate.name === context.name && candidate.namespace === context.namespace,
+      );
+      if (!deployment?.revision) {
+        throw executionError(
+          'Kubernetes deployment was not found for compensation',
+          'KUBERNETES_COMPENSATE_DEPLOYMENT_NOT_FOUND',
+          'NOT_COMMITTED',
+        );
+      }
+      const target = await resolveRollbackTarget(input, deployment, targetRevision);
+      const httpStatus = await write(
+        input,
+        COMPENSATION_MARKER_ANNOTATION,
+        marker,
+        deployment,
+        targetRevision,
+        reason,
+        target,
+      );
+      return evidence(context.name, context.namespace, 'APPLIED', httpStatus, targetRevision);
+    },
+
+    async queryCompensationOutcome(
+      input: AdapterQueryInput & { compensationResponse?: Record<string, unknown> },
+    ): Promise<EffectRemoteOutcome> {
+      const forwardResponse =
+        input.request.forwardResponse && typeof input.request.forwardResponse === 'object'
+          ? (input.request.forwardResponse as Record<string, unknown>)
+          : {};
+      const compensationPatch =
+        input.request.compensationPatch && typeof input.request.compensationPatch === 'object'
+          ? (input.request.compensationPatch as Record<string, unknown>)
+          : {};
+      const targetRevision = requiredRevision(
+        compensationPatch.targetRevision ?? forwardResponse.revision,
+        'compensation targetRevision',
+      );
+      const originalEffectId = String(input.request.originalEffectId ?? '');
+      if (!originalEffectId)
+        return {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        };
+      const context = parseKubernetesDeploymentDestination(input.destination);
+      const marker = compensationIdempotencyKey(
+        originalEffectId,
+        KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR.adapterVersion,
+      );
+      const observed = await observe(input, COMPENSATION_MARKER_ANNOTATION, marker, targetRevision);
+      if (observed.classification !== 'APPLIED')
+        return {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        };
+      return toRemoteOutcome(observed, context.name, context.namespace, targetRevision);
+    },
   };
 }

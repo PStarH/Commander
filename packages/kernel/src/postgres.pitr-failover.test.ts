@@ -248,7 +248,14 @@ function createRunCommand(tenantId: string) {
 
 describe(
   'Postgres PITR and failover drill',
-  { skip: !process.env.COMMANDER_ENABLE_PITR_DRILL },
+  {
+    // F-K2-13: the opt-in is supplied by `pnpm test:pitr-failover`
+    // (COMMANDER_ENABLE_PITR_DRILL=1). The reason is named so a direct run
+    // reports NOT VERIFIED rather than silently vanishing.
+    skip: process.env.COMMANDER_ENABLE_PITR_DRILL
+      ? false
+      : 'NOT VERIFIED: COMMANDER_ENABLE_PITR_DRILL is unset - PITR restore-to-target and streaming-replica failover did not run',
+  },
   () => {
     it('PITR restores kernel data to a target time', async () => {
       const baseDir = await mkdtemp(join(tmpdir(), 'commander-pitr-'));

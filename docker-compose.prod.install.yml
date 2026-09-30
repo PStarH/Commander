@@ -1,0 +1,4 @@
+services:
+  kernel-migrate:
+    environment:
+      COMMANDER_BOOTSTRAP_AUTHORITY_DATABASE_URL: ${COMMANDER_BOOTSTRAP_AUTHORITY_DATABASE_URL:?}

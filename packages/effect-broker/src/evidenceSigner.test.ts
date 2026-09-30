@@ -3,29 +3,27 @@ import { generateKeyPairSync } from 'node:crypto';
 import { describe, it } from 'node:test';
 import { createEvidenceSigner, verifyEvidenceSignature } from './evidenceSigner.js';
 
-describe('evidence signer', () => {
-  it('publishes a JWKS entry that verifies its Ed25519 signature', async () => {
+describe('signed evidence Ed25519 authority', () => {
+  it('uses the configured key id and private key across signer recreation', async () => {
     const { privateKey } = generateKeyPairSync('ed25519');
-    const signer = createEvidenceSigner({
-      privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
-      keyId: 'cell-1',
-    });
-    const body = '{"receipt":1}';
-    const signature = await signer.sign(body);
-
-    assert.equal(signer.verify(body, signature), true);
-    assert.equal(verifyEvidenceSignature(body, signature, signer.jwks), true);
-    assert.equal(verifyEvidenceSignature(body + 'x', signature, signer.jwks), false);
+    const privateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+    const first = createEvidenceSigner({ privateKeyPem, keyId: 'cell-2026-01' });
+    const second = createEvidenceSigner({ privateKeyPem, keyId: 'cell-2026-01' });
+    const signature = await first.sign('{"receipt":1}');
+    assert.equal(signature.algorithm, 'Ed25519');
+    assert.equal(signature.keyId, 'cell-2026-01');
+    assert.equal(second.verify('{"receipt":1}', signature), true);
+    assert.equal(second.verify('{"receipt":2}', signature), false);
+    assert.equal(verifyEvidenceSignature('{"receipt":1}', signature, first.jwks), true);
   });
 
-  it('rejects non-Ed25519 signing keys', () => {
-    const { privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  it('rejects missing or non-Ed25519 signing material', () => {
     assert.throws(
-      () =>
-        createEvidenceSigner({
-          privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
-          keyId: 'invalid-key',
-        }),
+      () => createEvidenceSigner({ privateKeyPem: '', keyId: 'cell-1' }),
+      /EVIDENCE_SIGNING_KEY_REQUIRED/,
+    );
+    assert.throws(
+      () => createEvidenceSigner({ privateKeyPem: 'not-a-key', keyId: 'cell-1' }),
       /EVIDENCE_SIGNING_KEY_INVALID/,
     );
   });

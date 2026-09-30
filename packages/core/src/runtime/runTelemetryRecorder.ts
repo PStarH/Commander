@@ -74,6 +74,8 @@ export interface RecordSuccessParams extends RunTelemetryCommonParams {
 
 export interface RecordFailureParams extends RunTelemetryCommonParams {
   lastError: string | undefined;
+  /** Safe user-facing summary when the terminal error contains sensitive data. */
+  failureSummary?: string;
   lastErrorIsPermanent: boolean;
   /** Mutable execution state — updated with final tokens/steps/error before the terminal checkpoint. */
   state: AgentExecutionState;
@@ -250,6 +252,7 @@ export class RunTelemetryRecorder {
       routing,
       taskType,
       lastError,
+      failureSummary,
       lastErrorIsPermanent,
       totalTokens,
       steps,
@@ -327,7 +330,7 @@ export class RunTelemetryRecorder {
       attempt: maxRetries,
       stepNumber: steps.length,
       lastError,
-      exitSummary: lastError,
+      exitSummary: failureSummary ?? lastError,
     });
 
     if (memory) {
@@ -438,7 +441,7 @@ export class RunTelemetryRecorder {
       agentId: ctx.agentId,
       missionId: ctx.missionId,
       status: 'failed',
-      summary: lastError ?? 'Unknown error',
+      summary: failureSummary ?? lastError ?? 'Unknown error',
       steps,
       totalTokenUsage: totalTokens,
       totalDurationMs: Date.now() - startTime,

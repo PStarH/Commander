@@ -32,6 +32,8 @@ import {
   verifyWithManifest,
   startVerifyTimer,
   FailClosedPersistor,
+  installAuditChainIntegrity,
+  resetAuditChainIntegrity,
   type KeyProvider,
 } from '../../src/security/auditChainIntegrity';
 
@@ -373,5 +375,152 @@ describe('FailClosedPersistor', () => {
     } finally {
       env.cleanup();
     }
+  });
+});
+
+// SF-BOUND-AUDITCHAIN: the production install path (`COMMANDER_AUDIT_MANIFEST_DIR`)
+// used a fresh InMemoryKeyProvider per process, so after every restart each
+// reloaded chain head failed verifyEntry and the 60 s timer raised a permanent
+// false `kms_sig_invalid` alarm.
+describe('SF-BOUND-AUDITCHAIN durable signing identity across restart', () => {
+  let env: { dir: string; cleanup: () => void };
+  const MANIFEST_KEY = 'm'.repeat(64);
+
+  beforeEach(() => {
+    env = makeTmp();
+    delete process.env.COMMANDER_AUDIT_SIGNING_KEY_FILE;
+  });
+  afterEach(() => {
+    resetAuditChainIntegrity();
+    delete process.env.COMMANDER_AUDIT_SIGNING_KEY_FILE;
+    env.cleanup();
+  });
+
+  /** Write two entries through the install path, then tear the process down. */
+  async function seed(manifestDir: string, signerKeyFile: string): Promise<void> {
+    const ledger = freshLedger(env.dir);
+    const stop = installAuditChainIntegrity(ledger, {
+      manifestDir,
+      manifestKey: MANIFEST_KEY,
+      signerKeyFile,
+      intervalMs: 60_000,
+    });
+    ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'a' });
+    ledger.logEvent({ type: 'content_threat', severity: 'high', source: 't', message: 'b' });
+    await drain();
+    stop();
+    resetAuditChainIntegrity();
+  }
+
+  it('persists the signer identity so reloaded chain heads verify after a restart', async () => {
+    const manifestDir = path.join(env.dir, 'manifest');
+    const signerKeyFile = path.join(env.dir, 'keys', 'audit-signing-key.pem');
+    await seed(manifestDir, signerKeyFile);
+
+    // Restart: a new process with no in-memory state re-installs on the same
+    // manifest directory and re-reads the manifest the verify timer checks.
+    const restarted = freshLedger(env.dir);
+    const stop = installAuditChainIntegrity(restarted, {
+      manifestDir,
+      manifestKey: MANIFEST_KEY,
+      signerKeyFile,
+      intervalMs: 60_000,
+    });
+    const reloaded = new ChainManifest({
+      manifestDir,
+      manifestKey: MANIFEST_KEY,
+      signerKeyFile,
+    });
+    const result = verifyWithManifest(restarted, reloaded);
+    stop();
+    resetAuditChainIntegrity();
+
+    assert.deepEqual(
+      result.manifestGaps,
+      [],
+      `expected no manifest gaps after restart, got ${JSON.stringify(result.manifestGaps)}`,
+    );
+    assert.equal(result.ok, true);
+    assert.equal(result.tamperProof, true);
+  });
+
+  it('fails closed with AUDIT_SIGNING_KEY_REQUIRED instead of installing an ephemeral signer', () => {
+    const ledger = freshLedger(env.dir);
+    assert.throws(
+      () =>
+        installAuditChainIntegrity(ledger, {
+          manifestDir: path.join(env.dir, 'manifest'),
+          manifestKey: MANIFEST_KEY,
+        }),
+      /AUDIT_SIGNING_KEY_REQUIRED/,
+    );
+  });
+
+  it('fails closed with AUDIT_SIGNING_IDENTITY_MISMATCH when the persisted signer changed', async () => {
+    const manifestDir = path.join(env.dir, 'manifest');
+    const signerKeyFile = path.join(env.dir, 'keys', 'audit-signing-key.pem');
+    await seed(manifestDir, signerKeyFile);
+
+    const swappedKeyFile = path.join(env.dir, 'keys', 'other-signing-key.pem');
+    assert.throws(
+      () =>
+        new ChainManifest({
+          manifestDir,
+          manifestKey: MANIFEST_KEY,
+          signerKeyFile: swappedKeyFile,
+        }),
+      /AUDIT_SIGNING_IDENTITY_MISMATCH/,
+    );
+  });
+
+  it('still raises kms_sig_invalid for a genuine signature mismatch after restart', async () => {
+    const manifestDir = path.join(env.dir, 'manifest');
+    const signerKeyFile = path.join(env.dir, 'keys', 'audit-signing-key.pem');
+    await seed(manifestDir, signerKeyFile);
+
+    const restarted = freshLedger(env.dir);
+    const reloaded = new ChainManifest({
+      manifestDir,
+      manifestKey: MANIFEST_KEY,
+      signerKeyFile,
+    });
+    // Corrupt the L2 signature while leaving the head HMAC aligned — isolates kms_sig_invalid.
+    (reloaded.getEntries()[0] as { kmsSig: string }).kmsSig = Buffer.alloc(384, 0xab).toString(
+      'base64',
+    );
+
+    const result = verifyWithManifest(restarted, reloaded);
+    assert.equal(result.ok, false);
+    assert.equal(result.tamperProof, false);
+    assert.ok(
+      result.manifestGaps.some((g) => g.reason === 'kms_sig_invalid'),
+      `expected kms_sig_invalid, got ${JSON.stringify(result.manifestGaps)}`,
+    );
+  });
+
+  it('still detects an on-disk content rewrite after restart', async () => {
+    const manifestDir = path.join(env.dir, 'manifest');
+    const signerKeyFile = path.join(env.dir, 'keys', 'audit-signing-key.pem');
+    await seed(manifestDir, signerKeyFile);
+
+    const restarted = freshLedger(env.dir);
+    const reloaded = new ChainManifest({
+      manifestDir,
+      manifestKey: MANIFEST_KEY,
+      signerKeyFile,
+    });
+    const chainFile = path.join(env.dir, 'audit-chain-0.ndjson');
+    const lines = fs.readFileSync(chainFile, 'utf-8').trim().split('\n');
+    const tampered = JSON.parse(lines[0]!);
+    tampered.message = 'FORGED';
+    fs.writeFileSync(
+      chainFile,
+      lines.map((l, i) => (i === 0 ? JSON.stringify(tampered) : l)).join('\n') + '\n',
+    );
+
+    const result = verifyWithManifest(restarted, reloaded);
+    assert.equal(result.ok, false);
+    assert.equal(result.tamperProof, false);
+    assert.equal(result.brokenChain?.reason, 'invalid_hmac');
   });
 });

@@ -55,7 +55,26 @@ function v1AgentCard(): A2AAgentCard {
 type TenantA2ATask = A2ATask & { tenantId?: string };
 
 const tasks = new Map<string, TenantA2ATask>();
+const completionTimers = new Map<string, ReturnType<typeof setTimeout>>();
 let taskIdCounter = 0;
+
+function clearCompletionTimer(taskId: string): void {
+  const timer = completionTimers.get(taskId);
+  if (timer === undefined) return;
+  clearTimeout(timer);
+  completionTimers.delete(taskId);
+}
+
+/**
+ * CAA-05: the scheduled terminal transition must pass the same `canTransition`
+ * authority as every other transition. Without it, a CANCELED task (cancel lands
+ * inside the delay window) is overwritten to COMPLETED by the timer.
+ */
+function completeTask(task: TenantA2ATask): void {
+  clearCompletionTimer(task.id);
+  if (!canTransition(task.status.state, 'COMPLETED')) return;
+  task.status = { state: 'COMPLETED', timestamp: new Date().toISOString() };
+}
 
 export function createA2AV2Router(options?: { authToken?: string | null }): Router {
   const router = express.Router();
@@ -113,7 +132,7 @@ export function createA2AV2Router(options?: { authToken?: string | null }): Rout
     res.write(`data: ${JSON.stringify(ssr('task', task))}\n\n`);
 
     setTimeout(() => {
-      task.status = { state: 'COMPLETED', timestamp: new Date().toISOString() };
+      completeTask(task);
       task.artifacts = [
         { artifactId: 'art-1', parts: [{ type: 'text', text: 'Task completed.' }] },
       ];
@@ -131,9 +150,10 @@ async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse>
     case A2A_METHODS.SEND_MESSAGE: {
       const task = createTask('WORKING');
       tasks.set(task.id, task);
-      setTimeout(() => {
-        task.status = { state: 'COMPLETED', timestamp: new Date().toISOString() };
-      }, 50);
+      completionTimers.set(
+        task.id,
+        setTimeout(() => completeTask(task), 50),
+      );
       return { jsonrpc: '2.0', id: req.id, result: { task } };
     }
 
@@ -166,6 +186,7 @@ async function handleMethod(req: A2AJsonRpcRequest): Promise<A2AJsonRpcResponse>
         return errorResponse(req.id, A2A_ERROR.TASK_NOT_CANCELABLE, 'Task cannot be canceled');
       }
       task.status = { state: 'CANCELED', timestamp: new Date().toISOString() };
+      clearCompletionTimer(task.id);
       return { jsonrpc: '2.0', id: req.id, result: { task } };
     }
 

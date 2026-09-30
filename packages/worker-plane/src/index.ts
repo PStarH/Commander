@@ -1,6 +1,5 @@
 export {
   PostgresWorkerRegistry,
-  InMemoryWorkerRegistry,
   WORKER_PLANE_SCHEMA_SQL,
   WORKER_OPEN_ENDED_TENANTS_FORBIDDEN,
   WORKER_CLAIM_SECRET_REGISTER_FAILED,

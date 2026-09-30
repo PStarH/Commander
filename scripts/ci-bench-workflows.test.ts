@@ -53,10 +53,14 @@ test('baseline PR workflows use explicit write permissions without persisted che
     'chaos-bench.yml',
   ]) {
     const { source, value } = workflow(file);
-    assert.deepEqual(value.permissions, { contents: 'write', 'pull-requests': 'write' }, file);
+    assert.deepEqual(
+      value.permissions,
+      { actions: 'read', contents: 'write', 'pull-requests': 'write' },
+      file,
+    );
     assert.match(
       source,
-      /uses: actions\/checkout@v[46]\n\s+with:\n(?:\s+#[^\n]*\n)*\s+persist-credentials: false/m,
+      /uses: actions\/checkout@(?:v[46]|[0-9a-f]{40} # v[46])\n\s+with:\n(?:\s+#[^\n]*\n)*\s+persist-credentials: false/m,
       file,
     );
   }

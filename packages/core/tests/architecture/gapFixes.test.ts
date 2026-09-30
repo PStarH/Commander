@@ -258,8 +258,20 @@ describe('Distributed EventBus', () => {
       redisUrl: 'redis://nonexistent:6379',
     });
 
-    // Wait a bit for init to fail
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    // The fallback is asynchronous: the constructor kicks off `initRedis()` and
+    // only flips `backend` to 'memory' once the connection attempt rejects.
+    //
+    // This used to be a fixed `setTimeout(100)`, which made the case a race: it
+    // passed when the connect failed quickly and failed under load, where the
+    // 100 ms window elapsed first (observed in a full-suite run; the same file
+    // passes 20/20 in 118 ms in isolation). Waiting on the *condition* instead of
+    // on the clock keeps the assertion meaningful — it still fails if the
+    // fallback never happens — without depending on how fast the network stack
+    // gives up.
+    const deadline = Date.now() + 10_000;
+    while (bus.getBackend() !== 'memory' && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
 
     // Should fall back to memory mode
     expect(bus.getBackend()).toBe('memory');
@@ -269,6 +281,8 @@ describe('Distributed EventBus', () => {
     await bus.publish('topic', 'test');
 
     expect(received.length).toBe(1);
+
+    await bus.shutdown();
   });
 
   it('should shutdown gracefully', async () => {

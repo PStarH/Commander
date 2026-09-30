@@ -11,7 +11,7 @@ describe('EvolutionaryWorkflowEngine', () => {
     it('creates engine with custom config', () => {
       const engine = new EvolutionaryWorkflowEngine({
         populationSize: 20,
-        generations: 10,
+        maxGenerations: 10,
       });
       expect(engine).toBeDefined();
     });
@@ -21,7 +21,7 @@ describe('EvolutionaryWorkflowEngine', () => {
     it('evolves a simple workflow', async () => {
       const engine = new EvolutionaryWorkflowEngine({
         populationSize: 5,
-        generations: 2,
+        maxGenerations: 2,
       });
       const result = await engine.evolve({
         taskType: 'CODING',

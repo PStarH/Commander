@@ -11,6 +11,9 @@ import type { DeliberationPlan, OrchestrationTopology, EffortLevel } from './typ
 import type { LLMProvider, LLMRequest } from '../runtime/types';
 import { classifyEffortLevel } from './effortScaler';
 import { getGlobalLogger } from '../logging';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 /** Escape regex metacharacters to prevent ReDoS / injection from user-supplied keywords. */
 function escapeRegex(str: string): string {
@@ -421,7 +424,7 @@ function estimateDuration(
 function getHistoricalDuration(taskType: string): number {
   try {
     // Dynamic import to avoid circular dependency
-    const { getMetaLearner } = require('../selfEvolution/metaLearner');
+    const { getMetaLearner } = nodeRequire('../selfEvolution/metaLearner');
     const metaLearner = getMetaLearner();
     const scores = metaLearner.getStrategyScores(taskType);
     if (scores.length === 0) return 0;

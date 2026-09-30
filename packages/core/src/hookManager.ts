@@ -43,6 +43,9 @@ import type {
   AfterBackendSelectContext,
 } from './pluginTypes';
 import { adaptBuiltinPluginTool } from './pluginTypes';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
@@ -668,7 +671,7 @@ export class HookManager {
     let ToolRegistry: any = null;
     try {
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const mod = require('./tools/toolRegistry');
+      const mod = nodeRequire('./tools/toolRegistry');
       ToolRegistry = mod.ToolRegistry ?? mod.default?.ToolRegistry ?? null;
     } catch {
       // ToolRegistry not available in this process (e.g., tests). No-op —

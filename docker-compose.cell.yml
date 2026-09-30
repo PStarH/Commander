@@ -1,3 +1,9 @@
+# Kernel-on services construct verified PostgreSQL pools, so they need the
+# pinned-TLS material. Pass it as an explicit third file on the command line
+# (docker compose -f docker-compose.yml -f <this> -f docker-compose.kernel-tls.yml);
+# `include:` is not used because `docker compose up` rejects the resulting
+# service redefinition with "services.<name> conflicts with imported resource".
+
 # =============================================================================
 # Commander — Cell profile override (L4-07)
 # Usage:
@@ -8,6 +14,7 @@
 #   export COMMANDER_CAPABILITY_JWKS_JSON=…   # worker/adapter Ed25519 authority
 #   export COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM=… COMMANDER_EVIDENCE_SIGNING_KEY_ID=…
 #   export COMMANDER_INTEGRITY_KEY=… COMMANDER_WORKER_AUTH_TOKEN=…
+#   export COMMANDER_AUDIT_CHAIN_KEY="$(openssl rand -hex 32)"   # audit-chain HMAC
 #   # Optional: DOCKER_GID — worker entrypoint auto-aligns to docker.sock GID.
 #   # Override only if you need compose group_add without rebuilding the image:
 #   #   export DOCKER_GID=$(docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock)
@@ -17,7 +24,11 @@
 #   kernel-migrate → commander_owner
 #   api            → commander_app
 #   kernel-ops     → commander_scheduler
-#   worker / adapter-ops → commander_worker
+#   worker → commander_worker; adapter-ops → commander_adapter_ops
+
+volumes:
+  adapter-ops-claim-secrets:
+  cell-postgres-tls:
 # Worker tenant default for cell: local (override via COMMANDER_WORKER_TENANTS).
 # =============================================================================
 
@@ -43,6 +54,9 @@ services:
   postgres:
     profiles:
       - cell
+    depends_on:
+      postgres-tls-init:
+        condition: service_completed_successfully
     volumes:
       - cell-postgres-tls:/etc/postgres-tls:ro
     command:
@@ -55,21 +69,29 @@ services:
       - ssl_key_file=/etc/postgres-tls/server.key
       - -c
       - ssl_ca_file=/etc/postgres-tls/ca.crt
-    depends_on:
-      postgres-tls-init:
-        condition: service_completed_successfully
+    environment:
+      # Explicit production + REQUIRED superuser password: the cell path must not
+      # inherit the base file's `${POSTGRES_PASSWORD:-}` interpolation guard.
+      - POSTGRES_USER=${POSTGRES_USER:-commander}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-commander}
 
   kernel-migrate:
     profiles:
       - cell
     environment:
+      # Explicit production: never inherit the base file's local defaults.
+      - NODE_ENV=production
       # Hardcoded role DSNs — block host DATABASE_URL / COMMANDER_KERNEL_DATABASE_URL bleed.
-      - DATABASE_URL=postgres://commander_owner:commander_owner@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_owner:commander_owner@postgres:5432/commander
       # The owner migration is also responsible for seeding the explicit worker
       # tenant allowlist before worker/adapter LOGINs register.
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_ALLOWED_TENANTS=${COMMANDER_WORKER_ALLOWED_TENANTS:-${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}}
+      - COMMANDER_ADAPTER_OPS_PASSWORD=${COMMANDER_ADAPTER_OPS_PASSWORD:-commander_adapter_ops}
+      # Seed the explicit cell API key into PostgreSQL's auth authority during
+      # owner migration; API_KEYS is only a legacy interpolation surface.
+      - COMMANDER_API_KEY=${COMMANDER_API_KEY:-}
+      - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       # Owner-only policy seed for the explicit demo adapter; worker remains read-only.
       - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
 
@@ -79,6 +101,9 @@ services:
     volumes:
       - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     environment:
+      # Explicit production: the base file is development/local-only, so the
+      # cell path must not inherit NODE_ENV=development or its kernel-off switch.
+      - NODE_ENV=production
       # Legacy /api stores are frozen presentation compatibility, not /v1 authority.
       # Keep their runtime DDL away from the least-privilege commander_app role.
       - API_STORE_BACKEND=memory
@@ -90,15 +115,19 @@ services:
       - TENANT_API_KEYS=${TENANT_API_KEYS:-}
       - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       - COMMANDER_DEFAULT_TENANT_ID=${COMMANDER_DEFAULT_TENANT_ID:-${COMMANDER_CELL_TENANT_ID:-local}}
-      - DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full
-      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
-      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
       - COMMANDER_MASTER_KEY=${COMMANDER_MASTER_KEY:?set COMMANDER_MASTER_KEY}
       - JWT_SECRET=${JWT_SECRET:?set JWT_SECRET}
       # API legacy HMAC path (not worker/adapter authority).
       - COMMANDER_CAPABILITY_TOKEN_KEY=${COMMANDER_CAPABILITY_TOKEN_KEY:?set COMMANDER_CAPABILITY_TOKEN_KEY}
       - COMMANDER_INTEGRITY_KEY=${COMMANDER_INTEGRITY_KEY:?set COMMANDER_INTEGRITY_KEY}
+      # Audit-chain HMAC master key. NODE_ENV=production makes the ledger refuse
+      # to start without it, so the cell profile must inject a strong value.
+      - COMMANDER_AUDIT_CHAIN_KEY=${COMMANDER_AUDIT_CHAIN_KEY:?set COMMANDER_AUDIT_CHAIN_KEY}
+      - COMMANDER_EVIDENCE_JWKS_JSON=${COMMANDER_EVIDENCE_JWKS_JSON:-}
+      - DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_API_TLS_DSN:-postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
     depends_on:
       kernel-migrate:
         condition: service_completed_successfully
@@ -115,10 +144,9 @@ services:
       - ${DOCKER_GID:-0}
     user: '0:0'
     environment:
-      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
-      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
-      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
+      # Explicit production + kernel-on: never inherit the base file's local defaults.
+      - NODE_ENV=production
+      - COMMANDER_KERNEL_ENABLED=1
       # Cell / Helm demo tenant scope (explicit; never '*').
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_WORKER_AUTH_TOKEN=${COMMANDER_WORKER_AUTH_TOKEN:?set COMMANDER_WORKER_AUTH_TOKEN}
@@ -126,6 +154,11 @@ services:
       - COMMANDER_KERNEL_BACKEND=postgres
       - COMMANDER_ENABLE_DEMO_TICKET=${COMMANDER_ENABLE_DEMO_TICKET:-}
       - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
+      - COMMANDER_KUBERNETES_CLUSTER=${COMMANDER_KUBERNETES_CLUSTER:-}
+      - COMMANDER_KUBERNETES_SERVER=${COMMANDER_KUBERNETES_SERVER:-}
+      - COMMANDER_KUBERNETES_TOKEN_ENV=${COMMANDER_KUBERNETES_TOKEN_ENV:-}
+      - COMMANDER_KUBERNETES_NAMESPACES=${COMMANDER_KUBERNETES_NAMESPACES:-}
+      - COMMANDER_KUBERNETES_BEARER_TOKEN=${COMMANDER_KUBERNETES_BEARER_TOKEN:-}
       - COMMANDER_SANDBOX_ISOLATION=docker
       - DOCKER_HOST=unix:///var/run/docker.sock
       # Worker authority: Ed25519 PEM + JWKS (fail-closed; no HMAC capability-token-key).
@@ -134,6 +167,10 @@ services:
       - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
       - COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM=${COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:?set COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM}
       - COMMANDER_EVIDENCE_SIGNING_KEY_ID=${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?set COMMANDER_EVIDENCE_SIGNING_KEY_ID}
+      - DATABASE_URL=${COMMANDER_WORKER_TLS_DSN:-postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_KERNEL_DATABASE_URL=${COMMANDER_WORKER_TLS_DSN:-postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
     healthcheck:
       test:
         [
@@ -151,8 +188,8 @@ services:
     profiles:
       - cell
     environment:
-      - DATABASE_URL=postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_scheduler:commander_scheduler@postgres:5432/commander
+      # Explicit production: never inherit the base file's local defaults.
+      - NODE_ENV=production
 
   adapter-ops:
     build:
@@ -161,26 +198,35 @@ services:
     environment:
       - NODE_ENV=production
       - COMMANDER_KERNEL_BACKEND=postgres
-      - DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
-      - COMMANDER_KERNEL_DATABASE_URL=postgres://commander_worker:commander_worker@postgres:5432/commander?sslmode=verify-full
-      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
-      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
+      - COMMANDER_ADAPTER_OPS_INSTANCE_ID=${COMMANDER_ADAPTER_OPS_INSTANCE_ID:-local}
+      - COMMANDER_ADAPTER_OPS_CLAIM_SECRET_DIR=/var/run/commander/adapter-ops
       # Same fail-closed tenant scope as worker (resolveWorkerTenantScope on postgres path).
       - COMMANDER_WORKER_TENANTS=${COMMANDER_WORKER_TENANTS:-${COMMANDER_CELL_TENANT_ID:-local}}
       - COMMANDER_ADAPTER_OPS_HEALTH_PORT=8082
       - COMMANDER_CELL_TIER=demo
       - COMMANDER_CELL_TENANT_ID=${COMMANDER_CELL_TENANT_ID:-local}
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
-      - COMMANDER_ADAPTER_EGRESS_ALLOWLIST=10.0.0.0/8
+      - COMMANDER_ADAPTER_EGRESS_ALLOWLIST=${COMMANDER_ADAPTER_EGRESS_ALLOWLIST:-api.github.com}
+      - COMMANDER_KUBERNETES_CLUSTER=${COMMANDER_KUBERNETES_CLUSTER:-}
+      - COMMANDER_KUBERNETES_SERVER=${COMMANDER_KUBERNETES_SERVER:-}
+      - COMMANDER_KUBERNETES_TOKEN_ENV=${COMMANDER_KUBERNETES_TOKEN_ENV:-}
+      - COMMANDER_KUBERNETES_NAMESPACES=${COMMANDER_KUBERNETES_NAMESPACES:-}
+      - COMMANDER_KUBERNETES_BEARER_TOKEN=${COMMANDER_KUBERNETES_BEARER_TOKEN:-}
       # Adapter authority: same Ed25519 contract as worker (fail-closed).
       - COMMANDER_CAPABILITY_PRIVATE_KEY_PEM=${COMMANDER_CAPABILITY_PRIVATE_KEY_PEM:?set COMMANDER_CAPABILITY_PRIVATE_KEY_PEM}
       - COMMANDER_CAPABILITY_KEY_ID=${COMMANDER_CAPABILITY_KEY_ID:?set COMMANDER_CAPABILITY_KEY_ID}
       - COMMANDER_CAPABILITY_JWKS_JSON=${COMMANDER_CAPABILITY_JWKS_JSON:?set COMMANDER_CAPABILITY_JWKS_JSON}
+      # Evidence signing keys are required on the adapter-ops runtime too; the
+      # base file relaxed them for interpolation safety, so the cell override
+      # must re-impose the guard instead of inheriting an empty value.
       - COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM=${COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM:?set COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM}
       - COMMANDER_EVIDENCE_SIGNING_KEY_ID=${COMMANDER_EVIDENCE_SIGNING_KEY_ID:?set COMMANDER_EVIDENCE_SIGNING_KEY_ID}
+      - COMMANDER_DATABASE_TLS_CA_FILE=/run/commander/postgres-tls/ca.crt
+      - COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=${COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256:?set COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256}
     expose:
       - '8082'
     volumes:
+      - adapter-ops-claim-secrets:/var/run/commander/adapter-ops
       - ${COMMANDER_CELL_POSTGRES_TLS_DIR:?set COMMANDER_CELL_POSTGRES_TLS_DIR}/ca.crt:/run/commander/postgres-tls/ca.crt:ro
     healthcheck:
       test:
@@ -200,6 +246,3 @@ services:
     restart: unless-stopped
     profiles:
       - cell
-
-volumes:
-  cell-postgres-tls:

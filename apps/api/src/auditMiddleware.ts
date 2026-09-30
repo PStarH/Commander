@@ -52,15 +52,15 @@ export function sanitizeBody(body: unknown): unknown {
     return body.slice(0, 200).map(sanitizeBody);
   }
 
-  const out: Record<string, unknown> = {};
+  const entries: Array<[string, unknown]> = [];
   for (const [key, value] of Object.entries(body as Record<string, unknown>)) {
-    if (SENSITIVE_BODY_KEYS.has(key.toLowerCase())) {
-      out[key] = '[REDACTED]';
-    } else {
-      out[key] = sanitizeBody(value);
-    }
+    if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+    entries.push([
+      key,
+      SENSITIVE_BODY_KEYS.has(key.toLowerCase()) ? '[REDACTED]' : sanitizeBody(value),
+    ]);
   }
-  return out;
+  return Object.fromEntries(entries);
 }
 
 /** Derive a unified severity from the final HTTP status code. */
