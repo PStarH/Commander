@@ -49,8 +49,15 @@ jobs:
           --health-timeout 5s
           --health-retries 20
     env:
-      DATABASE_URL: postgres://commander:commander@localhost:5432/commander
-      COMMANDER_KERNEL_DATABASE_URL: postgres://commander:commander@localhost:5432/commander
+      DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_KERNEL_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      COMMANDER_OWNER_DATABASE_URL: postgres://commander_owner:commander_owner@localhost:5432/commander
+      OWNER_DSN: postgres://commander_owner:commander_owner@localhost:5432/commander
+      # Same provisioned-instance admission as ci.yml kernel-postgres-integration:
+      # the service container is discarded with the runner and the target is localhost.
+      COMMANDER_CI_INSTANCE_MUTATION: 'yes'
+      COMMANDER_CI_INSTANCE_ID: ci-${{ github.run_id }}-${{ github.run_attempt }}
+      COMMANDER_CI_PROVISION_TOKEN: ci-${{ github.run_id }}-${{ github.run_attempt }}-provision
       P0_TIMEOUT_MS: '120000'
       GIT_TERMINAL_PROMPT: '0'
       # AgentRuntime side-effects must not require a durable path in CI workers
@@ -90,10 +97,49 @@ jobs:
           echo "COMMANDER_DATABASE_TLS_EXPECTED_SERVER_SPKI_SHA256=$SPKI_SHA256" >> "$GITHUB_ENV"
       - name: Rebuild better-sqlite3 (ignore-scripts=true)
         run: pnpm rebuild better-sqlite3
+      - name: Bootstrap kernel integration roles
+        env:
+          PGPASSWORD: commander
+        run: |
+          psql --set ON_ERROR_STOP=1 --host localhost --port 5432 --username commander --dbname commander <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_owner') THEN
+              CREATE ROLE commander_owner LOGIN PASSWORD 'commander_owner' NOSUPERUSER NOCREATEDB CREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_app') THEN
+              CREATE ROLE commander_app LOGIN PASSWORD 'commander_app' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_tenant_authority') THEN
+              CREATE ROLE commander_tenant_authority LOGIN PASSWORD 'commander_tenant_authority' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler') THEN
+              CREATE ROLE commander_scheduler LOGIN PASSWORD 'commander_scheduler' NOSUPERUSER NOCREATEDB NOCREATEROLE INHERIT NOREPLICATION BYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_worker') THEN
+              CREATE ROLE commander_worker LOGIN PASSWORD 'commander_worker' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_adapter_ops') THEN
+              CREATE ROLE commander_adapter_ops LOGIN PASSWORD 'commander_adapter_ops' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS;
+            END IF;
+          END $$;
+          ALTER DATABASE commander OWNER TO commander_owner;
+          ALTER SCHEMA public OWNER TO commander_owner;
+          GRANT commander_app TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_tenant_authority TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_scheduler TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_worker TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          GRANT commander_adapter_ops TO commander_owner WITH ADMIN OPTION, INHERIT FALSE, SET TRUE;
+          SQL
+      - name: Apply kernel closure migrations
+        run: |
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts closure
+          pnpm exec tsx scripts/ci-bootstrap-deploy-gates.ts full
       - name: Build packages
         run: |
           pnpm --filter @commander/contracts build
           pnpm --filter @commander/plugin-sdk build
+          pnpm --filter @commander/postgres-runtime build
           pnpm --filter @commander/effect-broker build
           pnpm --filter @commander/kernel build
           pnpm --filter @commander/core build
