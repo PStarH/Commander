@@ -2085,7 +2085,10 @@ export async function discoverOIDCAuthorizationEndpoint(issuer: string): Promise
     if (response.ok) {
       const doc = (await response.json()) as OIDCDiscoveryDocument;
       if (doc.authorization_endpoint) {
-        const endpoint = requireOidcHttps(doc.authorization_endpoint, 'OIDC authorization endpoint');
+        const endpoint = requireOidcHttps(
+          doc.authorization_endpoint,
+          'OIDC authorization endpoint',
+        );
         if (endpoint.origin !== issuerUrl.origin) {
           throw new Error('OIDC authorization endpoint origin does not match the issuer');
         }
