@@ -15,15 +15,10 @@ import type {
   WorkerDefinition,
   WorkerIdentity,
 } from './types.js';
-import { getCapabilityTokenIssuer } from '@commander/core';
+import { issueLocalToolCapabilityToken } from './stepWorkloadIdentity.js';
 
 function localCapabilityToken(toolName: string, aud = 'tenant-a'): string {
-  return getCapabilityTokenIssuer().issue({
-    sub: 'worker-1',
-    aud,
-    tools: [toolName],
-    ttlSeconds: 300,
-  });
+  return issueLocalToolCapabilityToken({ toolName, aud });
 }
 
 // ── Helpers ──

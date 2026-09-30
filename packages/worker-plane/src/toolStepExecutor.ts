@@ -28,9 +28,9 @@ import {
   getStepWorkloadBinding,
   mintStepCapabilityToken,
   requireStepWorkloadBinding,
+  verifyLocalToolCapabilityToken,
 } from './stepWorkloadIdentity.js';
 import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
-import { getCapabilityTokenVerifier } from '@commander/core/security';
 
 export interface ToolStepInput {
   /** Tool name (e.g., "http.get", "git.push"). */
@@ -215,10 +215,10 @@ export class ToolStepExecutor implements StepExecutor {
       });
     }
     const expectedAud = step.tenantId && step.tenantId.length > 0 ? step.tenantId : '*';
-    const verdict = getCapabilityTokenVerifier().verify(capabilityToken, {
-      tool: input.toolName,
+    const verdict = verifyLocalToolCapabilityToken({
+      token: capabilityToken,
+      toolName: input.toolName,
       args: input.args ?? {},
-      consumeReplay: false,
       aud: expectedAud,
     });
     if (!verdict.ok) {

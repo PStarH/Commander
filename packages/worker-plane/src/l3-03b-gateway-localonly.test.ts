@@ -5,7 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CapabilityTokenIssuer } from '@commander/effect-broker';
-import { getCapabilityTokenIssuer } from '@commander/core';
+import { issueLocalToolCapabilityToken } from './stepWorkloadIdentity.js';
 import { ConnectorStepExecutor } from './connectorStepExecutor.js';
 import {
   isCatalogAuthorizedLocalOnly,
@@ -255,12 +255,7 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
           toolName: 'echo',
           args: { message: 'ok' },
           localOnly: true,
-          capabilityToken: getCapabilityTokenIssuer().issue({
-            sub: 'worker-1',
-            aud: 'tenant-a',
-            tools: ['echo'],
-            ttlSeconds: 300,
-          }),
+          capabilityToken: issueLocalToolCapabilityToken({ toolName: 'echo', aud: 'tenant-a' }),
         },
       });
       const result = await executor.execute(step, {
@@ -406,12 +401,7 @@ describe('L3-03b dev compatibility', () => {
             toolName: 'echo',
             args: { message: 'dev' },
             localOnly: true,
-            capabilityToken: getCapabilityTokenIssuer().issue({
-              sub: 'worker-1',
-              aud: 'tenant-a',
-              tools: ['echo'],
-              ttlSeconds: 300,
-            }),
+            capabilityToken: issueLocalToolCapabilityToken({ toolName: 'echo', aud: 'tenant-a' }),
           },
         });
         const result = await executor.execute(step, {
