@@ -15,7 +15,7 @@ import {
   canonicalRequestHash,
   type EffectKernelPort,
 } from '@commander/effect-broker';
-import { getCapabilityTokenIssuer } from '@commander/core';
+import { issueLocalToolCapabilityToken } from './stepWorkloadIdentity.js';
 import { createWorkerPolicyEvaluator } from './bootstrap.js';
 import { ConnectorStepExecutor } from './connectorStepExecutor.js';
 import {
@@ -288,12 +288,7 @@ describe('L3-03a ToolStepExecutor production monopoly', () => {
           toolName: 'echo',
           args: { message: 'hi' },
           localOnly: true,
-          capabilityToken: getCapabilityTokenIssuer().issue({
-            sub: 'worker-1',
-            aud: 'tenant-a',
-            tools: ['echo'],
-            ttlSeconds: 300,
-          }),
+          capabilityToken: issueLocalToolCapabilityToken({ toolName: 'echo', aud: 'tenant-a' }),
         },
       });
       const result = await executor.execute(step, {
