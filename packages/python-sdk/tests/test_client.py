@@ -9,8 +9,7 @@ import pytest
 import respx
 
 from commander import CommanderClient
-from commander._gateway_client import CommanderGatewayClient
-from commander._types import ActionApprovalInput, ProposeActionInput
+from commander import __all__ as commander_exports
 from commander._exceptions import (
     AuthenticationError,
     ConnectionError,
@@ -18,9 +17,26 @@ from commander._exceptions import (
     RateLimitError,
     ServerError,
 )
+from commander._gateway_client import CommanderGatewayClient
+from commander._types import (
+    ActionApprovalInput,
+    ActionCompensationApprovalInput,
+    ActionCompensationInput,
+    ProposeActionInput,
+)
 
 
 class TestClientLifecycle:
+    def test_compensation_types_are_public_exports(self) -> None:
+        expected = {
+            "ActionCompensationApprovalInput",
+            "ActionCompensationApprovalResult",
+            "ActionCompensationAuthorization",
+            "ActionCompensationInput",
+            "ActionCompensationResult",
+        }
+        assert expected.issubset(commander_exports)
+
     async def test_enter_exit(self) -> None:
         async with CommanderClient(api_key="test") as client:
             assert client is not None
@@ -60,31 +76,27 @@ class TestClientRequests:
         self, mock_api: respx.MockRouter
     ) -> None:
         mock_api.get("/health").respond(401, text="Unauthorized")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(AuthenticationError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(AuthenticationError):
+                await client._request("GET", "/health")
 
     async def test_404_maps_to_not_found(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/nowhere").respond(404, text="Not found")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(NotFoundError):
-                    await client._request("GET", "/nowhere")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(NotFoundError):
+                await client._request("GET", "/nowhere")
 
     async def test_429_maps_to_rate_limit(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/health").respond(429, text="Too fast")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(RateLimitError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(RateLimitError):
+                await client._request("GET", "/health")
 
     async def test_500_maps_to_server_error(self, mock_api: respx.MockRouter) -> None:
         mock_api.get("/health").respond(500, text="Internal error")
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                with pytest.raises(ServerError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test") as client, mock_api:
+            with pytest.raises(ServerError):
+                await client._request("GET", "/health")
 
     async def test_retry_on_connection_error(self, mock_api: respx.MockRouter) -> None:
         # Simulate 2 failures then success
@@ -104,10 +116,44 @@ class TestClientRequests:
         mock_api.get("/health").mock(
             side_effect=httpx.ConnectError("connection refused")
         )
-        async with CommanderClient(api_key="test", max_retries=2) as client:
-            async with mock_api:
-                with pytest.raises(ConnectionError):
-                    await client._request("GET", "/health")
+        async with CommanderClient(api_key="test", max_retries=2) as client, mock_api:
+            with pytest.raises(ConnectionError):
+                await client._request("GET", "/health")
+
+    async def test_read_timeout_does_not_retry_a_non_idempotent_post(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        # A ReadTimeout means the server may already have applied the request.
+        # Retrying a POST can duplicate the side effect, so it must be attempted
+        # exactly once.
+        attempts: list[str] = []
+
+        def _timeout(request: httpx.Request) -> httpx.Response:
+            attempts.append(str(request.url))
+            raise httpx.ReadTimeout("read timed out")
+
+        mock_api.post("/workflows").mock(side_effect=_timeout)
+        async with CommanderClient(api_key="test", max_retries=3) as client, mock_api:
+            with pytest.raises(ConnectionError):
+                await client._request("POST", "/workflows", json={"name": "wf"})
+        assert len(attempts) == 1
+
+    async def test_read_timeout_still_retries_an_idempotent_get(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        attempts: list[str] = []
+
+        def _flaky(request: httpx.Request) -> httpx.Response:
+            attempts.append(str(request.url))
+            if len(attempts) == 1:
+                raise httpx.ReadTimeout("read timed out")
+            return httpx.Response(200, json={"status": "ok"})
+
+        mock_api.get("/health").mock(side_effect=_flaky)
+        async with CommanderClient(api_key="test", max_retries=3) as client, mock_api:
+            data = await client._request("GET", "/health")
+        assert data["status"] == "ok"
+        assert len(attempts) == 2
 
 
 ACTION_FIXTURES = {
@@ -133,7 +179,7 @@ ACTION_FIXTURES = {
         "runId": "run-action-1",
         "stepId": "step-1",
         "effectId": "effect-1",
-        "state": "PENDING",
+        "state": "PROPOSED",
         "decision": {
             "effect": "allow",
             "decisionId": "action-gateway-allow",
@@ -157,17 +203,51 @@ ACTION_FIXTURES = {
 
 
 class TestGatewayClient:
+    async def test_static_api_key_travels_as_x_api_key_not_bearer(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        """AUDIT-D1①: a static key must not ride the JWT Bearer channel.
+
+        Enterprise /v1 JWT middleware rejects any non-JWT Bearer with 401
+        INVALID_TOKEN before API-key authentication can inspect it, so a valid
+        static key sent as Bearer cannot authenticate at all.
+        """
+        route = mock_api.get("/v1/actions/kill-switches").respond(
+            200, json={"killSwitches": []}
+        )
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="cmd-static-key"
+        ) as client, mock_api:
+            result = await client.list_kill_switches()
+            headers = route.calls.last.request.headers
+            assert headers["X-API-Key"] == "cmd-static-key"
+            assert "Authorization" not in headers
+        assert result == []
+
+    async def test_static_api_key_header_matches_reference_sdk(self) -> None:
+        """Static credential pairing stays identical to packages/sdk + stdioServer."""
+        client = CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="cmd-static-key"
+        )
+        try:
+            assert client._build_headers() == {
+                "Accept": "application/json",
+                "Content-Type": "application/json",
+                "X-API-Key": "cmd-static-key",
+            }
+        finally:
+            await client.close()
+
     async def test_simulate_action_posts_envelope(self, mock_api: respx.MockRouter) -> None:
         route = mock_api.post("/v1/actions/simulate").respond(
             200, json={"simulation": ACTION_FIXTURES["simulation"]}
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                result = await client.simulate_action(ProposeActionInput(**ACTION_FIXTURES["input"]))
-                assert route.called
-                assert route.calls.last.request.url.path == "/v1/actions/simulate"
+        ) as client, mock_api:
+            result = await client.simulate_action(ProposeActionInput(**ACTION_FIXTURES["input"]))
+            assert route.called
+            assert route.calls.last.request.url.path == "/v1/actions/simulate"
         assert result.simulation_id == "sim-1"
 
     async def test_propose_action_sends_idempotency_key(self, mock_api: respx.MockRouter) -> None:
@@ -176,12 +256,11 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action, replay, accepted = await client.propose_action(
-                    ProposeActionInput(**ACTION_FIXTURES["input"])
-                )
-                assert route.calls.last.request.headers["Idempotency-Key"] == "action-key-0001"
+        ) as client, mock_api:
+            action, replay, accepted = await client.propose_action(
+                ProposeActionInput(**ACTION_FIXTURES["input"])
+            )
+            assert route.calls.last.request.headers["Idempotency-Key"] == "action-key-0001"
         assert action.run_id == "run-action-1"
         assert replay is False
         assert accepted is True
@@ -192,10 +271,9 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action = await client.get_action("run-action-1")
-                assert route.called
+        ) as client, mock_api:
+            action = await client.get_action("run-action-1")
+            assert route.called
         assert action.run_id == "run-action-1"
 
     async def test_approve_action_posts_bindings(self, mock_api: respx.MockRouter) -> None:
@@ -209,38 +287,121 @@ class TestGatewayClient:
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action = await client.approve_action("run-action-1", approval)
-                assert route.called
+        ) as client, mock_api:
+            action = await client.approve_action(
+                "run-action-1", approval, idempotency_key="approve-action-0001"
+            )
+            assert route.called
+            assert (
+                route.calls.last.request.headers["Idempotency-Key"]
+                == "approve-action-0001"
+            )
         assert action.run_id == "run-action-1"
 
     async def test_reject_action_posts_reason(self, mock_api: respx.MockRouter) -> None:
         route = mock_api.post("/v1/actions/run-action-1/reject").respond(
             200,
-            json={"action": {**ACTION_FIXTURES["action"], "state": "REJECTED"}},
+            json={"action": {**ACTION_FIXTURES["action"], "state": "FAILED"}},
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                action = await client.reject_action("run-action-1", reason="too risky")
-                assert route.called
-        assert action.state == "REJECTED"
+        ) as client, mock_api:
+            action = await client.reject_action(
+                "run-action-1",
+                reason="too risky",
+                idempotency_key="reject-action-0001",
+            )
+            assert route.called
+            assert (
+                route.calls.last.request.headers["Idempotency-Key"]
+                == "reject-action-0001"
+            )
+        assert action.state == "FAILED"
 
     async def test_get_action_evidence(self, mock_api: respx.MockRouter) -> None:
         route = mock_api.get("/v1/actions/run-action-1/evidence").respond(
             200,
             json={
-                "bundle": {"bundleId": "bundle-1", "runId": "run-action-1"},
-                "verification": {"valid": True},
+                "receipt": {
+                    "bundleId": "bundle-1",
+                    "scope": {"runId": "run-action-1"},
+                },
+                "verification": {"ok": True},
             },
         )
         async with CommanderGatewayClient(
             base_url="http://localhost:3001", api_key="test"
-        ) as client:
-            async with mock_api:
-                evidence = await client.get_action_evidence("run-action-1")
-                assert route.called
-        assert evidence.bundle["bundleId"] == "bundle-1"
-        assert evidence.verification["valid"] is True
+        ) as client, mock_api:
+            evidence = await client.get_action_evidence("run-action-1")
+            assert route.called
+        assert evidence.receipt["bundleId"] == "bundle-1"
+        assert evidence.verification.ok is True
+
+    async def test_request_and_approve_compensation(
+        self, mock_api: respx.MockRouter
+    ) -> None:
+        request_route = mock_api.post(
+            "/v1/actions/run-action-1/compensations"
+        ).respond(
+            202,
+            json={
+                "authorization": {
+                    "id": "authorization-1",
+                    "tenantId": "tenant-1",
+                    "originalRunId": "run-action-1",
+                    "originalEffectId": "effect-1",
+                    "compensationEffectType": "compensate.demo.ticket.create",
+                    "adapterVersion": "demo.adapter.v1",
+                    "compensationPatch": {"ticketId": "ticket-1"},
+                    "forwardReceiptHash": "a" * 64,
+                    "policyDecisionId": "decision-1",
+                    "policySnapshotId": "policy-1",
+                    "decision": "require_approval",
+                    "actionDigest": "b" * 64,
+                    "expiresAt": "2026-08-02T00:00:00.000Z",
+                },
+                "replayed": False,
+                "state": "AWAITING_APPROVAL",
+            },
+        )
+        approve_route = mock_api.post(
+            "/v1/actions/run-action-1/compensations/authorization-1/approve"
+        ).respond(
+            202,
+            json={
+                "interaction": {"id": "interaction-1", "status": "answered"},
+                "accepted": True,
+                "request": {"id": "request-1", "state": "AUTHORIZED"},
+                "replayed": False,
+            },
+        )
+        compensation = ActionCompensationInput(
+            originalEffectId="effect-1",
+            adapterVersion="demo.adapter.v1",
+            compensationEffectType="compensate.demo.ticket.create",
+            compensationPatch={"ticketId": "ticket-1"},
+            forwardReceiptHash="a" * 64,
+        )
+        approval = ActionCompensationApprovalInput(
+            actionDigest="b" * 64,
+            policySnapshotId="policy-1",
+        )
+
+        async with CommanderGatewayClient(
+            base_url="http://localhost:3001", api_key="test"
+        ) as client, mock_api:
+            requested = await client.request_action_compensation(
+                "run-action-1", compensation, idempotency_key="compensation-request-1"
+            )
+            approved = await client.approve_action_compensation(
+                "run-action-1",
+                "authorization-1",
+                approval,
+                idempotency_key="compensation-approve-1",
+            )
+            assert request_route.called
+            assert approve_route.called
+            assert request_route.calls.last.request.headers["Idempotency-Key"] == "compensation-request-1"
+            assert approve_route.calls.last.request.headers["Idempotency-Key"] == "compensation-approve-1"
+        assert requested.state == "AWAITING_APPROVAL"
+        assert approved.accepted is True

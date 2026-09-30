@@ -1,19 +1,59 @@
 import { createHash } from 'node:crypto';
 import {
-  KERNEL_CLAIM_SQL,
   KERNEL_CLAIM_RECONCILE_SQL,
   KERNEL_CLAIM_SECRET_SQL,
-  KERNEL_RLS_SQL,
-  KERNEL_ROLES_SQL,
-  KERNEL_SCHEMA_SQL,
-  KERNEL_SCHEMA_VERSION,
+  KERNEL_ADAPTER_OPS_SQL,
+  KERNEL_ADMIT_CLASS_A_SQL,
+  KERNEL_TASK1_COMPLETED_REPLAY_GATE_SQL,
+  KERNEL_TASK1_RUNTIME_AUTHORITY_CLOSURE_SQL,
+  KERNEL_TASK1_FINAL_REVIEW_SQL,
+  KERNEL_TASK1_ROLE_CLOSURE_SQL,
+  KERNEL_CLAIM_SQL,
 } from './schema.js';
-import type { SqlPool } from './postgres.js';
+import * as kernel2026072116 from './schema20260721_16.js';
+import { KERNEL_TASK1_HELM_LIFECYCLE_GATE_SQL } from './task1LifecycleLedger.js';
 import {
-  KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
+  KERNEL_TASK1_API_OPERATIONS_READINESS_SQL,
+  KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL,
+  KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_EXPAND_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL,
+  KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL,
+} from './task1TenantContext.js';
+import {
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL,
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL,
+  KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_SQL,
+  KERNEL_TASK2_RECONCILIATION_RPCS_SQL_HISTORICAL,
+  KERNEL_TASK2_ROLE_CLOSURE_SQL,
+} from './task2Reconciliation.js';
+import type { SqlClient, SqlPool } from './postgres.js';
+import {
+  KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_SQL,
+  KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_REPAIR_SQL,
+  KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+  KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
+  KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
   KERNEL_SIGNED_EVIDENCE_SQL,
+  KERNEL_SIGNED_EVIDENCE_TENANT_CONTEXT_SQL,
 } from './evidenceSchema.js';
-import { KILL_SWITCH_MIGRATION_ID, KILL_SWITCH_SQL } from './killSwitchSchema.js';
+import {
+  KERNEL_COMPENSATION_APPROVAL_BINDING_SQL,
+  KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
+  KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+  KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_SQL,
+  KERNEL_COMPENSATION_METADATA_BINDING_SQL,
+  KERNEL_COMPENSATION_PERSISTENCE_SQL,
+  KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_REPAIR_SQL,
+} from './compensationSchema.js';
+import { KERNEL_CAPABILITY_DURABLE_ACCESS_SQL } from './capabilityPersistence.js';
+import { KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL } from './campaign2CriticalHardening.js';
+import {
+  KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+  KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL,
+  KERNEL_AUTH_PERSISTENCE_SQL,
+} from './authPersistenceSchema.js';
+import { KERNEL_MEMORY_SCHEMA_SQL } from './memorySchema.js';
+import { assertSafeSqlIdentifier } from './sqlSafety.js';
 
 export interface KernelMigration {
   id: string;
@@ -23,48 +63,683 @@ export interface KernelMigration {
 
 const checksum = (sql: string): string => createHash('sha256').update(sql).digest('hex');
 
-export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
+export const KERNEL_MEMORY_SCHEMA_MIGRATIONS: readonly KernelMigration[] = [
   {
-    id: `${KERNEL_SCHEMA_VERSION}.schema`,
-    sql: KERNEL_SCHEMA_SQL,
-    checksum: checksum(KERNEL_SCHEMA_SQL),
+    id: '2026-09-01.1.memory_schema',
+    sql: KERNEL_MEMORY_SCHEMA_SQL,
+    checksum: checksum(KERNEL_MEMORY_SCHEMA_SQL),
   },
-  { id: `${KERNEL_SCHEMA_VERSION}.rls`, sql: KERNEL_RLS_SQL, checksum: checksum(KERNEL_RLS_SQL) },
+];
+
+const KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM =
+  'd76d0dc499b7c2b69abe779252792cf3fd7dd1921e09cd9b8d77e42035f7149d';
+const KERNEL_SIGNED_EVIDENCE_CHECKSUM =
+  '03e254172217224c72be0557b8f0e88bb9021427b580ed46e191bfaf50c03e9a';
+const KERNEL_SIGNED_EVIDENCE_TENANT_CONTEXT_CHECKSUM =
+  '951694343abd0f8523e617815fc9d9a6c78aef72c3d6bf46c346a91b2fffd57e';
+const KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_REPAIR_CHECKSUM =
+  'bc6d7966a9f6ca3cba07308eca89e039452a088b02bb0a8c52ba6d46f785f1e5';
+if (
+  checksum(KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL) !==
+  KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM
+) {
+  throw new Error(
+    'Signed evidence authority closure source changed without a new migration descriptor',
+  );
+}
+
+const KERNEL_TASK2_RECONCILIATION_SCHEMA_HISTORICAL_CHECKSUM =
+  '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703';
+const KERNEL_TASK2_RECONCILIATION_SCHEMA_CANONICAL_CHECKSUM =
+  '46a7513bc4f2402ec1819c1f286c58586417daea9eead4070b278962c73d21c1';
+const KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_CHECKSUM =
+  '5da52ef2d903c20bd81138331e0669e3745375f73161b5945a264e3ceaf27f65';
+const KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_CHECKSUM =
+  'e26ae10783bdd959815887140cbc94ba641443898fde1c10ff61c670e97640f2';
+const KERNEL_SIGNED_EVIDENCE_ORDERING_CHECKSUM =
+  'b5e5fe007767c4649e8c82bc43b6ffcac38fbb947b143866a031648b34298bcb';
+const KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_CHECKSUM =
+  'dbba0b33f23a8b666a08df735b2887ed8ac0784960975ae5cddae28579dd2298';
+
+const pinnedSource = (name: string, sql: string, expected: string): string => {
+  if (checksum(sql) !== expected) {
+    throw new Error(`${name} source changed without a new migration descriptor`);
+  }
+  return expected;
+};
+
+pinnedSource(
+  'Task 2 historical reconciliation schema',
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL,
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_HISTORICAL_CHECKSUM,
+);
+pinnedSource(
+  'Task 2 canonical reconciliation schema',
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL,
+  KERNEL_TASK2_RECONCILIATION_SCHEMA_CANONICAL_CHECKSUM,
+);
+pinnedSource(
+  'Adapter-ops evidence context',
+  KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+  KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_CHECKSUM,
+);
+pinnedSource(
+  'Adapter-ops compensation terminal evidence',
+  KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_SQL,
+  KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_CHECKSUM,
+);
+pinnedSource(
+  'Signed evidence ordering',
+  KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+  KERNEL_SIGNED_EVIDENCE_ORDERING_CHECKSUM,
+);
+pinnedSource(
+  'Signed evidence receipts',
+  KERNEL_SIGNED_EVIDENCE_SQL,
+  KERNEL_SIGNED_EVIDENCE_CHECKSUM,
+);
+pinnedSource(
+  'Signed evidence tenant context',
+  KERNEL_SIGNED_EVIDENCE_TENANT_CONTEXT_SQL,
+  KERNEL_SIGNED_EVIDENCE_TENANT_CONTEXT_CHECKSUM,
+);
+pinnedSource(
+  'Task 2 compensation query repair',
+  KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_SQL,
+  KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_CHECKSUM,
+);
+pinnedSource(
+  'Compensation terminal event sequence repair',
+  KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_REPAIR_SQL,
+  KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_REPAIR_CHECKSUM,
+);
+
+const KERNEL_2026072116_SCHEMA_VERSION = kernel2026072116.KERNEL_SCHEMA_VERSION;
+
+/** Immutable descriptors published by the merged 2026-07-21.16 baseline. */
+export const KERNEL_2026072116_MIGRATIONS: readonly KernelMigration[] = [
   {
-    id: `${KERNEL_SCHEMA_VERSION}.roles`,
-    sql: KERNEL_ROLES_SQL,
-    checksum: checksum(KERNEL_ROLES_SQL),
+    id: `${KERNEL_2026072116_SCHEMA_VERSION}.schema`,
+    sql: kernel2026072116.KERNEL_SCHEMA_SQL,
+    checksum: checksum(kernel2026072116.KERNEL_SCHEMA_SQL),
   },
   {
-    id: `${KERNEL_SCHEMA_VERSION}.claim_secret`,
-    sql: KERNEL_CLAIM_SECRET_SQL,
-    checksum: checksum(KERNEL_CLAIM_SECRET_SQL),
+    id: `${KERNEL_2026072116_SCHEMA_VERSION}.rls`,
+    sql: kernel2026072116.KERNEL_RLS_SQL,
+    checksum: checksum(kernel2026072116.KERNEL_RLS_SQL),
   },
   {
-    id: `${KERNEL_SCHEMA_VERSION}.claim`,
+    id: `${KERNEL_2026072116_SCHEMA_VERSION}.roles`,
+    sql: kernel2026072116.KERNEL_ROLES_SQL,
+    checksum: checksum(kernel2026072116.KERNEL_ROLES_SQL),
+  },
+  {
+    id: `${KERNEL_2026072116_SCHEMA_VERSION}.claim_secret`,
+    sql: kernel2026072116.KERNEL_CLAIM_SECRET_SQL,
+    checksum: checksum(kernel2026072116.KERNEL_CLAIM_SECRET_SQL),
+  },
+  {
+    id: `${KERNEL_2026072116_SCHEMA_VERSION}.claim`,
+    sql: kernel2026072116.KERNEL_CLAIM_SQL,
+    checksum: checksum(kernel2026072116.KERNEL_CLAIM_SQL),
+  },
+  {
+    id: `${KERNEL_2026072116_SCHEMA_VERSION}.claim_reconcile`,
+    sql: kernel2026072116.KERNEL_CLAIM_RECONCILE_SQL,
+    checksum: checksum(kernel2026072116.KERNEL_CLAIM_RECONCILE_SQL),
+  },
+];
+
+export const KERNEL_HISTORICAL_MIGRATION_CHECKSUMS: Readonly<Record<string, string>> =
+  Object.freeze(
+    Object.fromEntries(
+      KERNEL_2026072116_MIGRATIONS.map((migration) => [migration.id, migration.checksum]),
+    ),
+  );
+
+/** Task 1 forward descriptors are pinned independently of mutable schema exports. */
+export const KERNEL_TASK1_FORWARD_MIGRATION_CHECKSUMS = Object.freeze({
+  '2026-07-23.17.task1_role_closure':
+    '4530eb230afb208500eec8639711fb669057b0185cb021093bc06e711fdc6070',
+  '2026-07-23.17.task1_worker_registration_guard':
+    '47dc6b111b972285a03be3c8c47814ef43c772a9b290da7e54ab47b0b381da8e',
+  '2026-07-23.17.task1_adapter_ops_rpcs':
+    '45fcc1e8c3f45228c30cc931ab3cddae7dd64c7888e81407ec8feb3e557f4e37',
+  '2026-07-23.17.task1_admission_foundation':
+    '7d7e029ad011daebd45f9f44773055d1142d667c034e489846116583e0587a8d',
+  '2026-07-23.17.task1_adapter_ops_claims':
+    '4661787e70ecce5005456e8757959f02573234d5cb5e25be9bb47c1737c33e71',
+  '2026-07-25.1.task1_final_review':
+    'cd38a10af9a988fcb06f57a00e5266e03baa5c03a022afd650a3dc69150a8100',
+  '2026-07-26.1.task1_completed_replay_gate':
+    'a946e4a209282b9a287bd0e6f82d3253d0ce91e69a382fd3d7f8cb2a93fe569c',
+  '2026-07-26.1.task1_runtime_authority_closure':
+    'e6dc7640498b11819d67670d765109b91c9327e841dcff2536b7cce7629077ba',
+  '2026-08-01.1.task1_api_operations_readiness':
+    '6b206a58b9dbb97e0b8310d5bc7a8fee4aa5d893eeb6d7b92a5b08509e6c2c53',
+});
+
+/** Phase-aware closure descriptors. The lifecycle owner runner, never runtime startup, applies them. */
+export const KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS = Object.freeze({
+  '2026-07-27.1.task1_helm_lifecycle_gate':
+    '6b7e2bc0acd4ee28ad02f9c70924709bb6f9e00205247d87e752e2df5ff930f3',
+  '2026-07-27.2.task1_authenticated_tenant_authority_expand':
+    'd9a70e13065a7eeb82fae265080530481bd644c0798e32bd88b67722cbdf6eb5',
+  '2026-07-27.3.task1_authenticated_tenant_authority_enforce':
+    '9994edfd6cd1cb7f68b538b4b0f04d1f73435a003b6dba958da7ccdcffc42fc5',
+});
+
+export const KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS = Object.freeze({
+  '2026-07-26.2.task2_reconciliation_schema':
+    '281a703a1cc0a6f98e53d30e78ce9cdf632f31685794bdd3d95c122e431c7703',
+  '2026-08-02.3.task2_reconciliation_schema_canonical_baseline':
+    '46a7513bc4f2402ec1819c1f286c58586417daea9eead4070b278962c73d21c1',
+  '2026-07-26.2.task2_reconciliation_rpcs':
+    '79007556a06e8188c4d85c23ec71d0ee114eafdff337747c5aa5ee76c8bb2b62',
+  '2026-07-26.2.task2_role_closure':
+    '5e56de3dfa9a4d884822c077ca28e6bdc7d482a1cfcc3a3b9a7d5a567e6e0289',
+});
+
+type Task1ForwardMigrationId = keyof typeof KERNEL_TASK1_FORWARD_MIGRATION_CHECKSUMS;
+type Task1ClosureMigrationId = keyof typeof KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS;
+type Task2ForwardMigrationId = keyof typeof KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS;
+
+function task1ForwardMigration(id: Task1ForwardMigrationId, sql: string): KernelMigration {
+  const expectedChecksum = KERNEL_TASK1_FORWARD_MIGRATION_CHECKSUMS[id];
+  const actualChecksum = checksum(sql);
+  if (actualChecksum !== expectedChecksum) {
+    throw new Error(`Task 1 migration source changed without a new descriptor: ${id}`);
+  }
+  return { id, sql, checksum: expectedChecksum };
+}
+
+function task1ClosureMigration(id: Task1ClosureMigrationId, sql: string): KernelMigration {
+  const expectedChecksum = KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS[id];
+  const actualChecksum = checksum(sql);
+  if (actualChecksum !== expectedChecksum) {
+    throw new Error(`Task 1 closure migration source changed without a new descriptor: ${id}`);
+  }
+  return { id, sql, checksum: expectedChecksum };
+}
+
+function task2ForwardMigration(id: Task2ForwardMigrationId, sql: string): KernelMigration {
+  const expectedChecksum = KERNEL_TASK2_FORWARD_MIGRATION_CHECKSUMS[id];
+  const actualChecksum = checksum(sql);
+  if (actualChecksum !== expectedChecksum) {
+    throw new Error(`Task 2 migration source changed without a new descriptor: ${id}`);
+  }
+  return { id, sql, checksum: expectedChecksum };
+}
+
+/** Forward descriptors added after the immutable 2026-07-21.16 baseline. */
+export const KERNEL_TASK1_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
+  task1ForwardMigration('2026-07-23.17.task1_role_closure', KERNEL_TASK1_ROLE_CLOSURE_SQL),
+  task1ForwardMigration('2026-07-23.17.task1_worker_registration_guard', KERNEL_CLAIM_SECRET_SQL),
+  task1ForwardMigration('2026-07-23.17.task1_adapter_ops_rpcs', KERNEL_ADAPTER_OPS_SQL),
+  task1ForwardMigration('2026-07-23.17.task1_admission_foundation', KERNEL_ADMIT_CLASS_A_SQL),
+  task1ForwardMigration('2026-07-23.17.task1_adapter_ops_claims', KERNEL_CLAIM_RECONCILE_SQL),
+  task1ForwardMigration('2026-07-25.1.task1_final_review', KERNEL_TASK1_FINAL_REVIEW_SQL),
+  task1ForwardMigration(
+    '2026-07-26.1.task1_completed_replay_gate',
+    KERNEL_TASK1_COMPLETED_REPLAY_GATE_SQL,
+  ),
+  task1ForwardMigration(
+    '2026-07-26.1.task1_runtime_authority_closure',
+    KERNEL_TASK1_RUNTIME_AUTHORITY_CLOSURE_SQL,
+  ),
+  task1ForwardMigration(
+    '2026-08-01.1.task1_api_operations_readiness',
+    KERNEL_TASK1_API_OPERATIONS_READINESS_SQL,
+  ),
+];
+
+export const KERNEL_TASK2_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
+  task2ForwardMigration(
+    '2026-07-26.2.task2_reconciliation_schema',
+    KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL_HISTORICAL,
+  ),
+  task2ForwardMigration(
+    '2026-08-02.3.task2_reconciliation_schema_canonical_baseline',
+    KERNEL_TASK2_RECONCILIATION_SCHEMA_SQL,
+  ),
+  task2ForwardMigration(
+    '2026-07-26.2.task2_reconciliation_rpcs',
+    KERNEL_TASK2_RECONCILIATION_RPCS_SQL_HISTORICAL,
+  ),
+  task2ForwardMigration('2026-07-26.2.task2_role_closure', KERNEL_TASK2_ROLE_CLOSURE_SQL),
+];
+
+export const KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_MIGRATIONS: readonly KernelMigration[] =
+  [
+    {
+      id: '2026-08-09.2.task2_compensation_query_unsupported',
+      sql: KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_SQL,
+      checksum: KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_CHECKSUM,
+    },
+  ];
+
+export const KERNEL_SIGNED_EVIDENCE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-07-29.1.signed_evidence_receipts',
+    sql: KERNEL_SIGNED_EVIDENCE_SQL,
+    checksum: KERNEL_SIGNED_EVIDENCE_CHECKSUM,
+  },
+  {
+    id: '2026-07-29.2.signed_evidence_authority_closure',
+    sql: KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_SQL,
+    checksum: KERNEL_SIGNED_EVIDENCE_AUTHORITY_CLOSURE_CHECKSUM,
+  },
+  {
+    id: '2026-08-02.1.adapter_ops_evidence_context',
+    sql: KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_SQL,
+    checksum: KERNEL_ADAPTER_OPS_EVIDENCE_CONTEXT_CHECKSUM,
+  },
+  {
+    id: '2026-08-02.2.adapter_ops_compensation_terminal_evidence',
+    sql: KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_SQL,
+    checksum: KERNEL_ADAPTER_OPS_COMPENSATION_TERMINAL_EVIDENCE_CHECKSUM,
+  },
+  {
+    id: '2026-08-02.4.signed_evidence_ordering_repair',
+    sql: KERNEL_SIGNED_EVIDENCE_ORDERING_SQL,
+    checksum: KERNEL_SIGNED_EVIDENCE_ORDERING_CHECKSUM,
+  },
+  {
+    id: '2026-08-08.1.signed_evidence_tenant_context',
+    sql: KERNEL_SIGNED_EVIDENCE_TENANT_CONTEXT_SQL,
+    checksum: KERNEL_SIGNED_EVIDENCE_TENANT_CONTEXT_CHECKSUM,
+  },
+];
+
+export const KERNEL_COMPENSATION_PERSISTENCE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-07-29.1.governed_compensation_persistence',
+    sql: KERNEL_COMPENSATION_PERSISTENCE_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_PERSISTENCE_SQL),
+  },
+  {
+    id: '2026-08-08.2.compensation_authorization_read_rpc',
+    sql: KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_AUTHORIZATION_READ_SQL),
+  },
+];
+
+export const KERNEL_CAPABILITY_DURABLE_ACCESS_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-08.3.capability_durable_access',
+    sql: KERNEL_CAPABILITY_DURABLE_ACCESS_SQL,
+    checksum: checksum(KERNEL_CAPABILITY_DURABLE_ACCESS_SQL),
+  },
+];
+
+export const KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-07-29.2.campaign2_critical_authority_hardening',
+    sql: KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL,
+    checksum: checksum(KERNEL_CAMPAIGN2_CRITICAL_HARDENING_SQL),
+  },
+];
+
+/**
+ * PostgreSQL-authoritative auth persistence (users, API keys, refresh tokens,
+ * auth failures, rate limits). The checksum is computed at load so the
+ * descriptor always matches the shipped SQL; `authPersistenceSchema.test.ts`
+ * pins it so any source change without a new descriptor fails loudly.
+ */
+export const KERNEL_AUTH_PERSISTENCE_CHECKSUM = checksum(KERNEL_AUTH_PERSISTENCE_SQL);
+
+export const KERNEL_AUTH_PERSISTENCE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-25.1.auth_persistence_schema',
+    sql: KERNEL_AUTH_PERSISTENCE_SQL,
+    checksum: KERNEL_AUTH_PERSISTENCE_CHECKSUM,
+  },
+];
+
+export const KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-06.1.auth_persistence_legacy_preflight',
+    sql: KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL,
+    checksum: checksum(KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_SQL),
+  },
+];
+
+export const KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-06.2.auth_access_token_authority',
+    sql: KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL,
+    checksum: checksum(KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_SQL),
+  },
+];
+
+/** Must follow campaign2's public five-argument claim wrapper creation. */
+export const KERNEL_COMPENSATION_APPROVAL_BINDING_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-08.4.compensation_approval_binding_claim_rpc',
+    sql: KERNEL_COMPENSATION_APPROVAL_BINDING_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_APPROVAL_BINDING_SQL),
+  },
+];
+
+/** Install terminal run/effect closure after the public claim RPC exists. */
+export const KERNEL_COMPENSATION_TERMINAL_CLOSURE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-08.5.compensation_terminal_closure',
+    sql: KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_TERMINAL_CLOSURE_SQL),
+  },
+];
+
+/** Reinstall the canonical claim RPC after the immutable baseline so governed compensation runs are never generic work. */
+export const KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-08.6.compensation_claim_guard',
     sql: KERNEL_CLAIM_SQL,
     checksum: checksum(KERNEL_CLAIM_SQL),
   },
+];
+
+/** Repair context close ordering after the pinned Task 1 closure without changing its checksum. */
+export const KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS: readonly KernelMigration[] = [
   {
-    id: `${KERNEL_SCHEMA_VERSION}.claim_reconcile`,
-    sql: KERNEL_CLAIM_RECONCILE_SQL,
-    checksum: checksum(KERNEL_CLAIM_RECONCILE_SQL),
-  },
-  {
-    id: KERNEL_SIGNED_EVIDENCE_MIGRATION_ID,
-    sql: KERNEL_SIGNED_EVIDENCE_SQL,
-    checksum: checksum(KERNEL_SIGNED_EVIDENCE_SQL),
-  },
-  {
-    id: KILL_SWITCH_MIGRATION_ID,
-    sql: KILL_SWITCH_SQL,
-    checksum: checksum(KILL_SWITCH_SQL),
+    id: '2026-08-08.7.task1_tenant_context_clock_safety',
+    sql: KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL,
+    checksum: checksum(KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_SQL),
   },
 ];
+
+/** Repair tenant-context bind timestamps after a backwards wall-clock step. */
+export const KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS: readonly KernelMigration[] =
+  [
+    {
+      id: '2026-08-09.1.task1_tenant_context_bind_monotonicity',
+      sql: KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL,
+      checksum: checksum(KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_SQL),
+    },
+  ];
+
+/** Allocate compensation effect event sequences from durable aggregate history. */
+export const KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-08.8.compensation_terminal_event_sequence',
+    sql: KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_REPAIR_SQL,
+    checksum: KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_REPAIR_CHECKSUM,
+  },
+];
+
+/** Close compensation authority when the generic reconciler resolves a timed-out compensation effect. */
+export const KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-09.1.compensation_reconciliation_closure',
+    sql: KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_SQL),
+  },
+];
+
+/**
+ * KC-05: keep terminal compensation requests from retaining a claim deadline so
+ * the automatic claim selection cannot pick an oldest terminal row forever.
+ */
+export const KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-17.1.compensation_terminal_claim_deadline',
+    sql: KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_REPAIR_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_REPAIR_SQL),
+  },
+];
+
+/** Bind legacy durable compensation runs to strict evidence targets. */
+export const KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-08-09.3.compensation_metadata_binding',
+    sql: KERNEL_COMPENSATION_METADATA_BINDING_SQL,
+    checksum: checksum(KERNEL_COMPENSATION_METADATA_BINDING_SQL),
+  },
+];
+
+/**
+ * Read-only descriptor state for the runtime migration gate.
+ *
+ * The sealed runtime roles hold no privilege on `commander_kernel_migrations`
+ * (the catalog hardening revokes it), so the gate cannot read the ledger
+ * directly. This owner-owned SECURITY DEFINER reader exposes exactly the applied
+ * `(id, checksum)` pairs the runtime gate needs to compare against the release's
+ * published descriptor set, without granting the runtime roles table access.
+ */
+export const KERNEL_APPLIED_MIGRATION_DESCRIPTORS_SQL = `
+CREATE OR REPLACE FUNCTION public.commander_applied_migration_descriptors()
+RETURNS TABLE (id text, checksum text)
+LANGUAGE sql
+STABLE
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $function$
+  SELECT ledger.id::text, ledger.checksum::text
+    FROM public.commander_kernel_migrations AS ledger
+$function$;
+
+REVOKE ALL ON FUNCTION public.commander_applied_migration_descriptors()
+  FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.commander_applied_migration_descriptors()
+  TO commander_app, commander_worker, commander_scheduler, commander_adapter_ops;
+`;
+
+/**
+ * Post-closure descriptor that publishes the runtime migration-gate reader. It is
+ * applied after the Task 1 baseline/closure ledger assertions, which pin that
+ * ledger to exactly the published baseline and lifecycle descriptors.
+ */
+export const KERNEL_APPLIED_MIGRATION_DESCRIPTOR_MIGRATIONS: readonly KernelMigration[] = [
+  {
+    id: '2026-09-18.1.applied_migration_descriptors_readiness',
+    sql: KERNEL_APPLIED_MIGRATION_DESCRIPTORS_SQL,
+    checksum: checksum(KERNEL_APPLIED_MIGRATION_DESCRIPTORS_SQL),
+  },
+];
+
+export const KERNEL_FORWARD_MIGRATIONS: readonly KernelMigration[] = [
+  ...KERNEL_TASK1_FORWARD_MIGRATIONS,
+  ...KERNEL_TASK2_FORWARD_MIGRATIONS,
+  ...KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_MIGRATIONS,
+  ...KERNEL_COMPENSATION_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_CAPABILITY_DURABLE_ACCESS_MIGRATIONS,
+  ...KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_APPROVAL_BINDING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_CLOSURE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
+  ...KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
+  ...KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
+  ...KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS,
+  ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
+];
+
+export const KERNEL_TASK1_BASELINE_MIGRATIONS: readonly KernelMigration[] = [
+  ...KERNEL_2026072116_MIGRATIONS,
+  ...KERNEL_TASK1_FORWARD_MIGRATIONS,
+];
+
+export const KERNEL_TASK1_CLOSURE_MIGRATIONS: readonly KernelMigration[] = [
+  task1ClosureMigration(
+    '2026-07-27.1.task1_helm_lifecycle_gate',
+    KERNEL_TASK1_HELM_LIFECYCLE_GATE_SQL,
+  ),
+  task1ClosureMigration(
+    '2026-07-27.2.task1_authenticated_tenant_authority_expand',
+    KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_EXPAND_SQL,
+  ),
+  task1ClosureMigration(
+    '2026-07-27.3.task1_authenticated_tenant_authority_enforce',
+    KERNEL_TASK1_AUTHENTICATED_TENANT_AUTHORITY_ENFORCE_SQL,
+  ),
+];
+
+export const KERNEL_MIGRATIONS: readonly KernelMigration[] = [
+  ...KERNEL_TASK1_BASELINE_MIGRATIONS,
+  ...KERNEL_TASK2_FORWARD_MIGRATIONS,
+  ...KERNEL_TASK2_RECONCILIATION_COMPENSATION_QUERY_REPAIR_MIGRATIONS,
+  ...KERNEL_COMPENSATION_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_CAPABILITY_DURABLE_ACCESS_MIGRATIONS,
+  ...KERNEL_CAMPAIGN2_CRITICAL_HARDENING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_APPROVAL_BINDING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_CLOSURE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_CLAIM_GUARD_MIGRATIONS,
+  ...KERNEL_TASK1_TENANT_CONTEXT_CLOCK_SAFETY_MIGRATIONS,
+  ...KERNEL_TASK1_TENANT_CONTEXT_BIND_MONOTONICITY_MIGRATIONS,
+  ...KERNEL_SIGNED_EVIDENCE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_EVENT_SEQUENCE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_RECONCILIATION_CLOSURE_MIGRATIONS,
+  ...KERNEL_COMPENSATION_METADATA_BINDING_MIGRATIONS,
+  ...KERNEL_COMPENSATION_TERMINAL_CLAIM_DEADLINE_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_LEGACY_PREFLIGHT_MIGRATIONS,
+  ...KERNEL_AUTH_PERSISTENCE_MIGRATIONS,
+  ...KERNEL_AUTH_ACCESS_TOKEN_AUTHORITY_MIGRATIONS,
+  ...KERNEL_MEMORY_SCHEMA_MIGRATIONS,
+  ...KERNEL_APPLIED_MIGRATION_DESCRIPTOR_MIGRATIONS,
+];
+
+const TASK2_HISTORICAL_SCHEMA_ID = '2026-07-26.2.task2_reconciliation_schema';
 
 export interface MigrationRunOptions {
   /** Expected role category for the connection. */
   requiredRole?: 'owner' | 'scheduler' | 'app';
+}
+
+export type Task1ClosurePhase = 'expand' | 'enforce';
+export type MigrationExecutionPhase = 'baseline' | 'lifecycle' | Task1ClosurePhase;
+
+function migrationExecutionFailure(
+  error: unknown,
+  migration: KernelMigration,
+  phase: MigrationExecutionPhase,
+): Error {
+  const sqlstate =
+    error &&
+    typeof error === 'object' &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    /^[0-9A-Z]{5}$/.test(error.code)
+      ? error.code
+      : undefined;
+  if (!sqlstate) return error instanceof Error ? error : new Error('COMMANDER_MIGRATION_FAILED');
+
+  return Object.assign(new Error('COMMANDER_MIGRATION_FAILED'), {
+    migrationId: migration.id,
+    phase,
+    sqlstate,
+  });
+}
+
+async function applyMigration(
+  client: SqlClient,
+  migration: KernelMigration,
+  phase: MigrationExecutionPhase,
+): Promise<void> {
+  try {
+    await client.query(migration.sql);
+    await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
+      migration.id,
+      migration.checksum,
+    ]);
+  } catch (error) {
+    throw migrationExecutionFailure(error, migration, phase);
+  }
+}
+
+const TASK1_DESCRIPTOR_NAMES = ['lifecycle', 'expand', 'enforce'] as const;
+type Task1DescriptorName = (typeof TASK1_DESCRIPTOR_NAMES)[number];
+
+function selectedTask1ClosureMigrations(
+  descriptorSet: readonly string[],
+): readonly KernelMigration[] {
+  if (
+    descriptorSet.length < 1 ||
+    descriptorSet.length > TASK1_DESCRIPTOR_NAMES.length ||
+    descriptorSet.some((value, index) => value !== TASK1_DESCRIPTOR_NAMES[index])
+  ) {
+    throw new Error('TASK1_CLOSURE_DESCRIPTOR_SET_INVALID');
+  }
+  return KERNEL_TASK1_CLOSURE_MIGRATIONS.slice(0, descriptorSet.length);
+}
+
+/** Apply an exact closure prefix on the already-locked owner transaction client. */
+export async function applyTask1ClosureDescriptorSet(
+  client: SqlClient,
+  descriptorSet: readonly Task1DescriptorName[] | readonly string[],
+): Promise<void> {
+  for (const migration of [...KERNEL_2026072116_MIGRATIONS, ...KERNEL_TASK1_FORWARD_MIGRATIONS]) {
+    const existing = await client.query<{ checksum: string }>(
+      'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
+      [migration.id],
+    );
+    if (existing.rowCount !== 1 || existing.rows[0]?.checksum !== migration.checksum) {
+      throw new Error('TASK1_CLOSURE_BASELINE_REQUIRED');
+    }
+  }
+
+  const migrations = selectedTask1ClosureMigrations(descriptorSet);
+  const phase: MigrationExecutionPhase =
+    migrations.length === 1 ? 'lifecycle' : migrations.length === 2 ? 'expand' : 'enforce';
+  for (const migration of migrations) {
+    const existing = await client.query<{ checksum: string }>(
+      'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
+      [migration.id],
+    );
+    if (existing.rows[0]) {
+      if (existing.rows[0].checksum !== migration.checksum) {
+        throw new Error('TASK1_CLOSURE_CHECKSUM_MISMATCH');
+      }
+      continue;
+    }
+    await applyMigration(client, migration, phase);
+  }
+}
+
+/**
+ * Apply the Task 1 closure descriptors under an exact owner session. Runtime startup deliberately
+ * calls runKernelMigrations instead, whose descriptor set excludes these phase-gated migrations.
+ */
+export async function runTask1ClosureMigrations(
+  pool: SqlPool,
+  phase: Task1ClosurePhase,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('commander.kernel.migrations'))");
+    const authority = await client.query<{ current_user: string; session_user: string }>(
+      'SELECT current_user, session_user',
+    );
+    const identity = authority.rows[0];
+    if (
+      authority.rowCount !== 1 ||
+      identity?.current_user !== 'commander_owner' ||
+      identity.session_user !== 'commander_owner'
+    ) {
+      throw new Error('TASK1_CLOSURE_OWNER_AUTHORITY_REQUIRED');
+    }
+
+    await applyTask1ClosureDescriptorSet(
+      client,
+      phase === 'expand' ? ['lifecycle', 'expand'] : ['lifecycle', 'expand', 'enforce'],
+    );
+    await client.query('COMMIT');
+  } catch (error) {
+    try {
+      await client.query('ROLLBACK');
+    } catch {
+      // Preserve the authority or descriptor failure.
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 /** Apply kernel migrations exactly once, with checksum and advisory-lock checks. */
@@ -118,7 +793,36 @@ export async function runKernelMigrations(
         applied_at TIMESTAMPTZ NOT NULL DEFAULT now()
       )
     `);
-    for (const migration of KERNEL_MIGRATIONS) {
+    const closure = await client.query<{ checksum: string }>(
+      'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
+      ['2026-07-27.3.task1_authenticated_tenant_authority_enforce'],
+    );
+    const canonicalClosureApplied =
+      closure.rows[0]?.checksum ===
+      KERNEL_TASK1_CLOSURE_MIGRATION_CHECKSUMS[
+        '2026-07-27.3.task1_authenticated_tenant_authority_enforce'
+      ];
+    if (closure.rows[0] && !canonicalClosureApplied) {
+      throw new Error(
+        'Kernel migrations rejected: Task 1 enforce closure checksum is not the canonical published descriptor',
+      );
+    }
+    if (canonicalClosureApplied) {
+      const historicalTask2 = await client.query<{ checksum: string }>(
+        'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
+        [TASK2_HISTORICAL_SCHEMA_ID],
+      );
+      if (
+        historicalTask2.rows[0] &&
+        historicalTask2.rows[0].checksum !== KERNEL_TASK2_RECONCILIATION_SCHEMA_HISTORICAL_CHECKSUM
+      ) {
+        throw new Error(`Kernel migration checksum mismatch for ${TASK2_HISTORICAL_SCHEMA_ID}`);
+      }
+    }
+    const migrations = canonicalClosureApplied
+      ? KERNEL_MIGRATIONS.filter((migration) => migration.id !== TASK2_HISTORICAL_SCHEMA_ID)
+      : KERNEL_TASK1_BASELINE_MIGRATIONS;
+    for (const migration of migrations) {
       const existing = await client.query<{ checksum: string }>(
         'SELECT checksum FROM commander_kernel_migrations WHERE id=$1',
         [migration.id],
@@ -128,11 +832,7 @@ export async function runKernelMigrations(
           throw new Error(`Kernel migration checksum mismatch for ${migration.id}`);
         continue;
       }
-      await client.query(migration.sql);
-      await client.query('INSERT INTO commander_kernel_migrations (id, checksum) VALUES ($1,$2)', [
-        migration.id,
-        migration.checksum,
-      ]);
+      await applyMigration(client, migration, 'baseline');
     }
 
     // Ensure the migration owner can bypass RLS for operational queries and the
@@ -142,8 +842,30 @@ export async function runKernelMigrations(
       'SELECT rolbypassrls, rolname FROM pg_roles WHERE rolname = current_user',
     );
     if (!ownerInfo.rows[0]?.rolbypassrls) {
+      // AUDIT-K5 (F-K2-6): `rolname` comes from pg_roles and cannot be
+      // parameterised inside ALTER ROLE, so it must pass the identifier guard
+      // before interpolation — otherwise a hostile owner role name can close
+      // the identifier and inject DDL through the simple-query protocol.
+      assertSafeSqlIdentifier(ownerInfo.rows[0].rolname, 'migration owner rolname');
       await client.query(`ALTER ROLE "${ownerInfo.rows[0].rolname}" BYPASSRLS`);
     }
+
+    // Scheduler cross-tenant recovery is BYPASSRLS. The published role SQL only
+    // sets that bit when the migrator is a superuser, so a non-superuser owner
+    // that already has BYPASSRLS must grant it too. commander_owner can.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'commander_scheduler')
+           AND EXISTS (
+             SELECT 1 FROM pg_roles
+              WHERE rolname = current_user
+                AND (rolsuper OR rolbypassrls)
+           ) THEN
+          ALTER ROLE commander_scheduler BYPASSRLS;
+        END IF;
+      END $$;
+    `);
 
     // The least-privilege application role must never bypass RLS. The roles
     // migration creates it without BYPASSRLS; this defensive block ensures the
@@ -156,6 +878,7 @@ export async function runKernelMigrations(
         END IF;
       END $$;
     `);
+    await client.query('GRANT SELECT ON commander_kernel_migrations TO commander_app');
 
     await client.query('COMMIT');
   } catch (error) {

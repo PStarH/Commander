@@ -1,16 +1,72 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { Pool } from 'pg';
-import { PostgresKernelRepository } from './postgres.js';
+import { PostgresKernelRepository, PostgresTenantContextAuthority } from './postgres.js';
 import type { SqlClient, SqlPool } from './postgres.js';
 import { runKernelMigrations } from './migrations.js';
+import type {
+  ClaimedReconcileEffect,
+  ClaimReconcileEffectsInput,
+  ClaimStepRequest,
+  CompleteStepRequest,
+  FailEffectRequest,
+  KernelEffect,
+  KernelLease,
+  KernelOutboxMessage,
+  KernelStep,
+  KernelTimer,
+  OperationsReadiness,
+} from './types.js';
 import { KernelInvariantError } from './types.js';
-import { runKernelRepositoryContractTests } from './testing/repositoryContract.js';
 import { TENANT_TABLES } from './schema.js';
 import { seedWorkerAllowedTenants, seedWorkerClaimSecret } from './seedWorkerClaimSecret.js';
+import { runKernelRepositoryContractTests } from './testing/repositoryContract.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+
+// F-K1-9 / F-K1-10: every proof in this file needs a live PostgreSQL 16 fixture.
+// `pnpm test:integration` invokes it with no env guard, so a silent skip would
+// report PASS for unrun RLS / role-authority / fencing proofs. Absent fixture is
+// NOT VERIFIED and must fail the run, not vanish from it.
+const LIVE_PG_SKIP_REASON =
+  'NOT VERIFIED: COMMANDER_KERNEL_DATABASE_URL/DATABASE_URL (and the derived worker DSN) are ' +
+  'unset - live PostgreSQL RLS, role-authority and generation-fencing proofs did not run';
+const POSTGRES_CONTRACT_SKIP_REASON =
+  'NOT VERIFIED: COMMANDER_KERNEL_POSTGRES_CONTRACT_TEST !== 1 - the shared Postgres repository ' +
+  'contract suite did not run';
+const livePostgresAvailable = Boolean(databaseUrl);
+
+// Narrowed views for the live-gated bodies below; the gate above has already
+// failed the run when this is empty.
+const liveDatabaseUrl = databaseUrl as string;
+if (!livePostgresAvailable) {
+  process.stderr.write(`[kernel:integration] ${LIVE_PG_SKIP_REASON}\n`);
+  test('live PostgreSQL fixture is configured (REQUIRED)', () => {
+    assert.fail(LIVE_PG_SKIP_REASON);
+  });
+}
 const workerPassword = process.env.COMMANDER_WORKER_PASSWORD ?? 'commander_worker';
+const appPassword = process.env.COMMANDER_APP_PASSWORD ?? 'commander_app';
+const adapterOpsPassword = process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops';
+const tenantAuthorityPassword =
+  process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority';
+const contractDatabaseEnabled = process.env.COMMANDER_KERNEL_POSTGRES_CONTRACT_TEST === '1';
+const contractDatabaseUrl = process.env.COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_URL;
+const contractDatabaseMarker = 'commander_kernel_contract_v1';
+
+function resolveContractDatabaseUrl(): string | undefined {
+  if (!contractDatabaseEnabled) return undefined;
+  if (!contractDatabaseUrl) {
+    throw new Error('COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_URL_REQUIRED');
+  }
+  const databaseName = new URL(contractDatabaseUrl).pathname.slice(1);
+  if (databaseName !== 'commander_kernel_contract') {
+    throw new Error('COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_MUST_BE_ISOLATED');
+  }
+  return contractDatabaseUrl;
+}
+
+const isolatedContractDatabaseUrl = resolveContractDatabaseUrl();
 
 function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string): string {
   const url = new URL(baseUrl);
@@ -22,23 +78,104 @@ function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string):
 const workerDatabaseUrl =
   process.env.COMMANDER_WORKER_DATABASE_URL ??
   (databaseUrl
-    ? deriveRoleDatabaseUrl(databaseUrl, 'commander_worker', workerPassword)
+    ? deriveRoleDatabaseUrl(liveDatabaseUrl, 'commander_worker', workerPassword)
+    : undefined);
+const liveWorkerDatabaseUrl = workerDatabaseUrl as string;
+const schedulerDatabaseUrl =
+  process.env.COMMANDER_SCHEDULER_DATABASE_URL ??
+  (databaseUrl
+    ? deriveRoleDatabaseUrl(
+        databaseUrl,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      )
+    : undefined);
+// Same convention as `liveWorkerDatabaseUrl`: the fixture gate above already
+// fails the run when this is empty, so the alias narrows the type for callers.
+const liveSchedulerDatabaseUrl = schedulerDatabaseUrl as string;
+const adapterOpsDatabaseUrl =
+  process.env.COMMANDER_ADAPTER_OPS_DATABASE_URL ??
+  (databaseUrl
+    ? deriveRoleDatabaseUrl(liveDatabaseUrl, 'commander_adapter_ops', adapterOpsPassword)
     : undefined);
 
-/** Pool wrapper that SET SESSION ROLEs on every acquired connection. */
-function createRolePool(
+const contractWorkerDatabaseUrl = isolatedContractDatabaseUrl
+  ? deriveRoleDatabaseUrl(isolatedContractDatabaseUrl, 'commander_worker', workerPassword)
+  : undefined;
+const contractSchedulerDatabaseUrl = isolatedContractDatabaseUrl
+  ? deriveRoleDatabaseUrl(
+      isolatedContractDatabaseUrl,
+      'commander_scheduler',
+      process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+    )
+  : undefined;
+const contractAdapterOpsDatabaseUrl = isolatedContractDatabaseUrl
+  ? deriveRoleDatabaseUrl(isolatedContractDatabaseUrl, 'commander_adapter_ops', adapterOpsPassword)
+  : undefined;
+
+function createEnforcedAppContext(
   ownerDatabaseUrl: string,
-  role: string,
-): SqlPool & { end: () => Promise<void> } {
-  const pool = new Pool({ connectionString: ownerDatabaseUrl, max: 2 });
+  options: { forceDerivedRoleUrls?: boolean } = {},
+): {
+  appPool: SqlPool & { end: () => Promise<void> };
+  tenantAuthorityPool: SqlPool & { end: () => Promise<void> };
+  createRepository: () => PostgresKernelRepository;
+} {
+  const forceDerivedRoleUrls = options.forceDerivedRoleUrls === true;
+  const appPool = createLoginPool(
+    (forceDerivedRoleUrls ? undefined : process.env.COMMANDER_APP_DATABASE_URL) ??
+      deriveRoleDatabaseUrl(ownerDatabaseUrl, 'commander_app', appPassword),
+  );
+  const tenantAuthorityPool = createLoginPool(
+    (forceDerivedRoleUrls ? undefined : process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL) ??
+      deriveRoleDatabaseUrl(
+        ownerDatabaseUrl,
+        'commander_tenant_authority',
+        tenantAuthorityPassword,
+      ),
+  );
+  const authority = new PostgresTenantContextAuthority(tenantAuthorityPool);
   return {
-    connect: async () => {
-      const client = await pool.connect();
-      await client.query(`SET SESSION ROLE ${role}`);
-      return client as SqlClient;
-    },
-    end: () => pool.end(),
+    appPool,
+    tenantAuthorityPool,
+    createRepository: () =>
+      new PostgresKernelRepository(appPool, {
+        tenantContextAuthority: authority,
+        tenantContextPhase: 'enforce',
+      }),
   };
+}
+
+async function seedTenantAuthorityAllowedTenants(
+  ownerPool: Pool,
+  tenantIds: readonly string[],
+): Promise<void> {
+  for (const tenantId of tenantIds) {
+    await ownerPool.query(
+      `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
+       VALUES ($1)
+       ON CONFLICT (tenant_id) DO NOTHING`,
+      [tenantId],
+    );
+  }
+}
+
+async function cleanupTenantTestState(
+  ownerPool: Pool,
+  tenantIds: readonly string[],
+): Promise<void> {
+  await ownerPool.query(
+    'DELETE FROM commander_app_tenant_contexts WHERE tenant_id = ANY($1::text[])',
+    [tenantIds],
+  );
+  await ownerPool.query(
+    'DELETE FROM commander_tenant_authority_allowed_tenants WHERE tenant_id = ANY($1::text[])',
+    [tenantIds],
+  );
+  await ownerPool.query(
+    'DELETE FROM commander_worker_allowed_tenants WHERE tenant_id = ANY($1::text[])',
+    [tenantIds],
+  );
 }
 
 /** True LOGIN pool — session_user is the role (unlike SET SESSION ROLE from owner). */
@@ -56,8 +193,8 @@ async function ensureRoleLogin(ownerPool: Pool, role: string, password: string):
 }
 
 async function resetPostgresContractTables(pool: Pool): Promise<void> {
-  // Contract suite reuses fixed ids (run-1 / tenant-a); wipe between cases.
-  // Keep migration ledger so runKernelMigrations stays idempotent.
+  // The contract reuses stable fixture IDs; its disposable integration database
+  // is reset between cases while preserving the migration checksum ledger.
   await pool.query(`
     DO $reset$
     DECLARE r RECORD;
@@ -76,115 +213,421 @@ async function resetPostgresContractTables(pool: Pool): Promise<void> {
   `);
 }
 
-if (databaseUrl) {
-  runKernelRepositoryContractTests({
-    name: 'Postgres',
-    create: async () => {
-      const pool = new Pool({ connectionString: databaseUrl, max: 4 });
-      await runKernelMigrations(pool);
-      await resetPostgresContractTables(pool);
-      const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
-      (repo as PostgresKernelRepository & { _contractPool?: Pool })._contractPool = pool;
-      return repo;
-    },
-    destroy: async (repo) => {
-      const pg = repo as PostgresKernelRepository & { _contractPool?: Pool };
-      if (pg._contractPool) await pg._contractPool.end();
-    },
-    seedWorker: async (repo) => {
-      const pg = repo as PostgresKernelRepository & { _contractPool?: Pool };
-      const workerId = `contract-worker-${Date.now()}`;
-      await pg._contractPool!.query(
-        `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
-         VALUES ($1,'agent','contract','["agent","tool"]',4,'ACTIVE',1,$1,$2::jsonb)`,
-        [workerId, JSON.stringify(['tenant-a'])],
+async function assertDisposableContractDatabase(pool: Pool): Promise<void> {
+  const result = await pool.query<{ marker: string }>(
+    `SELECT marker
+       FROM public.kernel_contract_disposable_marker
+      WHERE marker = $1`,
+    [contractDatabaseMarker],
+  );
+  if (result.rowCount !== 1) {
+    throw new Error('COMMANDER_KERNEL_POSTGRES_CONTRACT_DATABASE_MARKER_REQUIRED');
+  }
+}
+
+async function readPostgresClock(pool: SqlPool): Promise<Date> {
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ now: Date | string }>('SELECT clock_timestamp() AS now');
+    const value = result.rows[0]?.now;
+    if (!value) throw new Error('POSTGRES_CLOCK_UNAVAILABLE');
+    return new Date(value);
+  } finally {
+    client.release();
+  }
+}
+
+interface ContractWorkerCredential {
+  id: string;
+  generation: number;
+  claimSecret: string;
+}
+
+interface PostgresContractResources {
+  ownerPool: Pool;
+  workerPool: Pool;
+  adapterPool: Pool;
+  schedulerPool: SqlPool & { end: () => Promise<void> };
+  appPool: SqlPool & { end: () => Promise<void> };
+  tenantAuthorityPool: SqlPool & { end: () => Promise<void> };
+  workerRepository: PostgresKernelRepository;
+  adapterRepository: PostgresKernelRepository;
+  schedulerRepository: PostgresKernelRepository;
+  workerCredential?: ContractWorkerCredential;
+  reconcileCredential?: ContractWorkerCredential;
+}
+
+/**
+ * The shared contract assumes a single repository, whereas production splits
+ * app, worker, adapter-ops, and scheduler authority. This test-only facade
+ * preserves that contract while each privileged operation uses its real LOGIN.
+ */
+class PostgresContractRepository extends PostgresKernelRepository {
+  constructor(
+    appPool: SqlPool,
+    tenantContextAuthority: PostgresTenantContextAuthority,
+    readonly resources: PostgresContractResources,
+  ) {
+    super(appPool, { tenantContextAuthority, tenantContextPhase: 'enforce' });
+  }
+
+  override async claimNextStep(request: ClaimStepRequest): Promise<KernelStep | null> {
+    const credential = this.resources.workerCredential;
+    if (!credential || request.workerId !== credential.id) return null;
+    return this.resources.workerRepository.claimNextStep({
+      ...request,
+      workerGeneration: credential.generation,
+      claimSecret: credential.claimSecret,
+    });
+  }
+
+  override async getOperationsReadiness(tenantId: string, at?: Date): Promise<OperationsReadiness> {
+    const readiness = await super.getOperationsReadiness(tenantId, at);
+    return at ? { ...readiness, checkedAt: at.toISOString() } : readiness;
+  }
+
+  override async completeStep(request: CompleteStepRequest): Promise<KernelStep | null> {
+    return this.resources.workerRepository.completeStep(request);
+  }
+
+  override async completeEffect(
+    effectId: string,
+    tenantId: string,
+    lease: Pick<KernelLease, 'workerId' | 'workerGeneration' | 'token' | 'fencingEpoch'>,
+    response: Record<string, unknown>,
+    actor: string,
+  ): Promise<KernelEffect | null> {
+    return this.resources.workerRepository.completeEffect(
+      effectId,
+      tenantId,
+      lease,
+      response,
+      actor,
+    );
+  }
+
+  override async failEffect(request: FailEffectRequest): Promise<KernelEffect | null> {
+    return this.resources.workerRepository.failEffect(request);
+  }
+
+  override async claimOutbox(limit: number, now?: Date): Promise<KernelOutboxMessage[]> {
+    // Scheduler claim eligibility is evaluated by PostgreSQL. Reading the same
+    // server clock avoids relying on skewed process clocks across real LOGINS.
+    return this.resources.schedulerRepository.claimOutbox(
+      limit,
+      now ?? (await readPostgresClock(this.resources.schedulerPool)),
+    );
+  }
+
+  override async markOutboxPublished(
+    messageId: string,
+    claimToken: string,
+    tenantId?: string,
+  ): Promise<boolean> {
+    return this.resources.schedulerRepository.markOutboxPublished(messageId, claimToken, tenantId);
+  }
+
+  override async claimExpiredTimers(now?: Date, limit?: number): Promise<KernelTimer[]> {
+    return this.resources.schedulerRepository.claimExpiredTimers(now, limit);
+  }
+
+  override async claimReconcileEffects(
+    input: ClaimReconcileEffectsInput,
+  ): Promise<ClaimedReconcileEffect[]> {
+    const credential = this.resources.reconcileCredential;
+    // F-K1-26: returning [] here made "no effects claimed" indistinguishable
+    // from "the reconcile credential was never seeded" — a fail-closed contract
+    // expectation could pass for the wrong reason. Fail loudly instead.
+    if (!credential) {
+      throw new Error(
+        'CONTRACT_RECONCILE_CREDENTIAL_NOT_SEEDED: the contract fixture must seed an ' +
+          'effect.reconcile adapter-ops worker before claiming reconcile work',
       );
-      return { workerId, generation: 1 };
+    }
+    return this.resources.adapterRepository.claimReconcileEffects({
+      ...input,
+      workerId: credential.id,
+      workerGeneration: credential.generation,
+      claimSecret: credential.claimSecret,
+    });
+  }
+}
+
+async function seedContractWorker(repository: PostgresContractRepository): Promise<{
+  workerId: string;
+  generation: number;
+}> {
+  const { resources } = repository;
+  if (resources.workerCredential) {
+    return {
+      workerId: resources.workerCredential.id,
+      generation: resources.workerCredential.generation,
+    };
+  }
+  const registration = await resources.workerPool.query<{
+    registration: { id: string; generation: number; claim_secret: string };
+  }>(
+    `SELECT register_worker(
+       'worker-1','agent','contract','["agent","tool"]'::jsonb,'{}'::jsonb,4,
+       'db:commander_worker','["tenant-a"]'::jsonb,NULL
+     ) AS registration`,
+  );
+  const credential = registration.rows[0]?.registration;
+  assert.ok(credential, 'worker registration must return a credential');
+  resources.workerCredential = {
+    id: credential.id,
+    generation: Number(credential.generation),
+    claimSecret: credential.claim_secret,
+  };
+  return { workerId: credential.id, generation: Number(credential.generation) };
+}
+
+async function seedContractOperationsWorker(
+  repository: PostgresContractRepository,
+  input: {
+    id: string;
+    tenantIds: string[];
+    capabilities: string[];
+    status?: 'ACTIVE' | 'DRAINING' | 'OFFLINE';
+    registeredAt: Date;
+    lastHeartbeatAt: Date;
+    identitySubject?: string;
+  },
+): Promise<void> {
+  const { ownerPool, adapterPool } = repository.resources;
+  const capability = input.capabilities[0];
+  const role = capability === 'effect.reconcile' ? 'reconcile' : 'compensation';
+  const instanceId = input.id.slice(input.id.indexOf(':') + 1).replaceAll('_', '-');
+  const registeredWorkerId = `${role}:${instanceId}`;
+  const canRegister =
+    input.capabilities.length === 1 &&
+    (capability === 'effect.reconcile' || capability === 'effect.compensate') &&
+    input.status !== 'DRAINING' &&
+    input.status !== 'OFFLINE' &&
+    input.identitySubject === 'db:commander_adapter_ops' &&
+    input.lastHeartbeatAt > input.registeredAt;
+
+  for (const tenantId of input.tenantIds) {
+    await ownerPool.query(
+      `INSERT INTO commander_worker_allowed_tenants (tenant_id)
+       VALUES ($1)
+       ON CONFLICT (tenant_id) DO NOTHING`,
+      [tenantId],
+    );
+  }
+
+  await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+    input.id,
+  ]);
+  await ownerPool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+    registeredWorkerId,
+  ]);
+  await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [input.id]);
+  await ownerPool.query('DELETE FROM commander_workers WHERE id=$1', [registeredWorkerId]);
+
+  if (canRegister) {
+    const registration = await adapterPool.query<{
+      registration: { id: string; generation: number; claim_secret: string };
+    }>(`SELECT register_adapter_ops_worker($1,$2,$3::jsonb,NULL) AS registration`, [
+      role,
+      instanceId,
+      JSON.stringify(input.tenantIds),
+    ]);
+    const credential = registration.rows[0]?.registration;
+    assert.ok(credential, 'adapter-ops registration must return a credential');
+    await adapterPool.query('SELECT heartbeat_adapter_ops_worker($1,$2,$3)', [
+      credential.id,
+      credential.generation,
+      credential.claim_secret,
+    ]);
+    if (capability === 'effect.reconcile') {
+      repository.resources.reconcileCredential = {
+        id: credential.id,
+        generation: Number(credential.generation),
+        claimSecret: credential.claim_secret,
+      };
+    }
+    return;
+  }
+
+  // Negative contract fixtures intentionally model rows a runtime RPC cannot create.
+  await ownerPool.query(
+    `INSERT INTO commander_workers (
+       id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,
+       tenant_ids,registered_at,last_heartbeat_at
+     ) VALUES ($1,'agent','contract',$2::jsonb,1,$3,1,$4,$5::jsonb,$6,$7)`,
+    [
+      input.id,
+      JSON.stringify(input.capabilities),
+      input.status ?? 'ACTIVE',
+      input.identitySubject ?? 'db:commander_adapter_ops',
+      JSON.stringify(input.tenantIds),
+      input.registeredAt.toISOString(),
+      input.lastHeartbeatAt.toISOString(),
+    ],
+  );
+}
+
+if (
+  contractDatabaseEnabled &&
+  isolatedContractDatabaseUrl &&
+  contractWorkerDatabaseUrl &&
+  contractSchedulerDatabaseUrl &&
+  contractAdapterOpsDatabaseUrl
+) {
+  runKernelRepositoryContractTests({
+    name: 'Postgres enforced authorities',
+    reconcileClaimUsesDatabaseClock: true,
+    create: async () => {
+      const ownerPool = new Pool({ connectionString: isolatedContractDatabaseUrl, max: 4 });
+      await assertDisposableContractDatabase(ownerPool);
+      await runKernelMigrations(ownerPool);
+      await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+      await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
+      await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
+      await ensureRoleLogin(
+        ownerPool,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      );
+      await ensureRoleLogin(ownerPool, 'commander_adapter_ops', adapterOpsPassword);
+      await resetPostgresContractTables(ownerPool);
+      await seedWorkerAllowedTenants(ownerPool, ['tenant-a']);
+      await seedTenantAuthorityAllowedTenants(ownerPool, ['tenant-a', 'tenant-b']);
+
+      const { appPool, tenantAuthorityPool } = createEnforcedAppContext(
+        isolatedContractDatabaseUrl,
+        { forceDerivedRoleUrls: true },
+      );
+      const workerPool = new Pool({ connectionString: contractWorkerDatabaseUrl, max: 2 });
+      const adapterPool = new Pool({ connectionString: contractAdapterOpsDatabaseUrl, max: 2 });
+      const schedulerPool = createLoginPool(contractSchedulerDatabaseUrl);
+      const workerRepository = new PostgresKernelRepository(workerPool, { schedulerMode: false });
+      const adapterRepository = new PostgresKernelRepository(adapterPool, {
+        schedulerMode: false,
+        adapterOpsMode: true,
+      });
+      const schedulerRepository = new PostgresKernelRepository(schedulerPool, {
+        schedulerMode: true,
+      });
+      const authority = new PostgresTenantContextAuthority(tenantAuthorityPool);
+      const resources: PostgresContractResources = {
+        ownerPool,
+        workerPool,
+        adapterPool,
+        schedulerPool,
+        appPool,
+        tenantAuthorityPool,
+        workerRepository,
+        adapterRepository,
+        schedulerRepository,
+      };
+      return new PostgresContractRepository(appPool, authority, resources);
     },
+    destroy: async (repository) => {
+      const contract = repository as PostgresContractRepository;
+      const { resources } = contract;
+      await resources.workerPool.end();
+      await resources.adapterPool.end();
+      await resources.schedulerPool.end();
+      await resources.tenantAuthorityPool.end();
+      await resources.appPool.end();
+      await resetPostgresContractTables(resources.ownerPool);
+      await resources.ownerPool.end();
+    },
+    seedWorker: async (repository) => seedContractWorker(repository as PostgresContractRepository),
+    seedOperationsWorker: async (repository, input) =>
+      seedContractOperationsWorker(repository as PostgresContractRepository, input),
   });
+} else {
+  // F-K1-10: make the silently-absent contract suite visible in the run output
+  // instead of dropping it without a trace.
+  process.stderr.write(`[kernel:integration] ${POSTGRES_CONTRACT_SKIP_REASON}\n`);
+  describe('Postgres enforced authorities', { skip: POSTGRES_CONTRACT_SKIP_REASON }, () => {});
 }
 
 describe('PostgresKernelRepository integration', () => {
-  it('limits commander_worker DML to the execution data path', { skip: !databaseUrl }, async () => {
-    if (!databaseUrl) return;
-    const ownerPool = new Pool({ connectionString: databaseUrl, max: 2 });
-    await runKernelMigrations(ownerPool);
-    try {
-      const forbidden = [
-        'commander_runs',
-        'commander_steps',
-        'commander_workers',
-        'commander_effect_allowlist',
-        'commander_action_kill_switches',
-        'commander_tenant_execution_limits',
-        'commander_tenant_execution_control',
-        'commander_outbox_dlq',
-      ];
-      for (const table of forbidden) {
-        const privileges = await ownerPool.query<{ can_insert: boolean; can_delete: boolean }>(
-          `SELECT
+  it(
+    'limits commander_worker DML to the execution data path',
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
+    async () => {
+      const ownerPool = new Pool({ connectionString: liveDatabaseUrl, max: 2 });
+      await runKernelMigrations(ownerPool);
+      try {
+        const forbidden = [
+          'commander_runs',
+          'commander_steps',
+          'commander_workers',
+          'commander_effect_allowlist',
+          'commander_action_kill_switches',
+          'commander_tenant_execution_limits',
+          'commander_tenant_execution_control',
+          'commander_outbox_dlq',
+        ];
+        for (const table of forbidden) {
+          const privileges = await ownerPool.query<{ can_insert: boolean; can_delete: boolean }>(
+            `SELECT
              has_table_privilege('commander_worker', $1, 'INSERT') AS can_insert,
              has_table_privilege('commander_worker', $1, 'DELETE') AS can_delete`,
-          [table],
-        );
-        assert.equal(
-          privileges.rows[0]?.can_insert,
-          false,
-          `commander_worker must not INSERT ${table}`,
-        );
-        assert.equal(
-          privileges.rows[0]?.can_delete,
-          false,
-          `commander_worker must not DELETE ${table}`,
-        );
-      }
+            [table],
+          );
+          assert.equal(
+            privileges.rows[0]?.can_insert,
+            false,
+            `commander_worker must not INSERT ${table}`,
+          );
+          assert.equal(
+            privileges.rows[0]?.can_delete,
+            false,
+            `commander_worker must not DELETE ${table}`,
+          );
+        }
 
-      const required = [
-        ['commander_events', 'INSERT'],
-        ['commander_effects', 'INSERT'],
-        ['commander_effects', 'UPDATE'],
-        ['commander_steps', 'UPDATE'],
-        ['commander_runs', 'UPDATE'],
-        ['commander_interactions', 'INSERT'],
-        ['commander_interactions', 'UPDATE'],
-        ['commander_capability_replays', 'INSERT'],
-      ] as const;
-      for (const [table, privilege] of required) {
-        const result = await ownerPool.query<{ allowed: boolean }>(
-          `SELECT has_table_privilege('commander_worker', $1, $2) AS allowed`,
-          [table, privilege],
-        );
-        assert.equal(
-          result.rows[0]?.allowed,
-          true,
-          `commander_worker requires ${privilege} on ${table}`,
-        );
+        const required = [
+          ['commander_events', 'INSERT'],
+          ['commander_effects', 'UPDATE'],
+          ['commander_steps', 'UPDATE'],
+          ['commander_runs', 'UPDATE'],
+          ['commander_interactions', 'INSERT'],
+          ['commander_interactions', 'UPDATE'],
+          ['commander_effect_quota', 'INSERT'],
+          ['commander_capability_revocations', 'INSERT'],
+          ['commander_capability_replays', 'INSERT'],
+        ] as const;
+        for (const [table, privilege] of required) {
+          const result = await ownerPool.query<{ allowed: boolean }>(
+            `SELECT has_table_privilege('commander_worker', $1, $2) AS allowed`,
+            [table, privilege],
+          );
+          assert.equal(
+            result.rows[0]?.allowed,
+            true,
+            `commander_worker requires ${privilege} on ${table}`,
+          );
+        }
+      } finally {
+        await ownerPool.end();
       }
-    } finally {
-      await ownerPool.end();
-    }
-  });
+    },
+  );
 
   it(
     'runs checksummed migrations, enforces worker generation fencing, and preserves tenant isolation',
-    { skip: !databaseUrl || !workerDatabaseUrl },
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl || !workerDatabaseUrl) return;
-      const pool = new Pool({ connectionString: databaseUrl, max: 8 });
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 8 });
       await runKernelMigrations(pool);
-      await ensureRoleLogin(
-        pool,
-        'commander_app',
-        process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
-      );
+      await ensureRoleLogin(pool, 'commander_app', appPassword);
+      await ensureRoleLogin(pool, 'commander_tenant_authority', tenantAuthorityPassword);
       await ensureRoleLogin(
         pool,
         'commander_scheduler',
         process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
       );
       await ensureRoleLogin(pool, 'commander_worker', workerPassword);
-      const appPool = createRolePool(databaseUrl, 'commander_app');
-      const workerPool = createLoginPool(workerDatabaseUrl);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
       const tenantA = `integration-a-${Date.now()}`;
       const tenantB = `integration-b-${Date.now()}`;
       const workerA = `integration-worker-a-${Date.now()}`;
@@ -192,8 +635,8 @@ describe('PostgresKernelRepository integration', () => {
       // App role for RLS-scoped reads/writes; worker LOGIN for claim RPC (EXECUTE only).
       // Do not use owner+SET ROLE worker: enforceAppRole KEEP_IDENTITY keys off session_user
       // and would downgrade back to commander_app.
-      const repoA = new PostgresKernelRepository(appPool);
-      const repoB = new PostgresKernelRepository(appPool);
+      const repoA = createRepository();
+      const repoB = createRepository();
       const workerRepoA = new PostgresKernelRepository(workerPool, { schedulerMode: false });
       const workerRepoB = new PostgresKernelRepository(workerPool, { schedulerMode: false });
       try {
@@ -214,10 +657,17 @@ describe('PostgresKernelRepository integration', () => {
           ),
         );
 
-        const policyRows = await pool.query(
-          `SELECT tablename FROM pg_policies WHERE policyname='commander_tenant_isolation'`,
+        const policyRows = await pool.query<{ tablename: string }>(
+          `SELECT DISTINCT tablename
+             FROM pg_policies
+            WHERE schemaname='public' AND tablename = ANY($1::text[])`,
+          [TENANT_TABLES as unknown as string[]],
         );
-        assert.ok(policyRows.rows.length >= 8, 'tenant RLS policies must be installed');
+        assert.equal(
+          policyRows.rows.length,
+          TENANT_TABLES.length,
+          'tenant RLS policies must be installed for every tenant table',
+        );
 
         // Every tenant table must have RLS both ENABLED and FORCED.
         const rlsRows = await pool.query<{
@@ -254,10 +704,17 @@ describe('PostgresKernelRepository integration', () => {
           false,
           'commander_worker must NOT bypass RLS',
         );
+        assert.equal(
+          byName.get('commander_scheduler')?.rolbypassrls,
+          true,
+          'commander_scheduler must bypass RLS',
+        );
         for (const name of ['commander_app', 'commander_worker', 'commander_scheduler']) {
           assert.equal(byName.get(name)?.rolsuper, false, `${name} must not be a superuser`);
         }
 
+        await seedWorkerAllowedTenants(pool, [tenantA, tenantB]);
+        await seedTenantAuthorityAllowedTenants(pool, [tenantA, tenantB]);
         await pool.query(
           `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
          VALUES ($1,'agent','integration','["agent"]',2,'ACTIVE',1,$2,$3::jsonb),
@@ -329,7 +786,7 @@ describe('PostgresKernelRepository integration', () => {
 
         const staleLease = { ...claimed!.lease!, workerGeneration: 0 };
         assert.equal(
-          await repoA.completeStep({
+          await workerRepoA.completeStep({
             stepId: claimed!.id,
             tenantId: claimed!.tenantId,
             lease: staleLease,
@@ -339,7 +796,7 @@ describe('PostgresKernelRepository integration', () => {
           null,
         );
         assert.ok(
-          await repoA.completeStep({
+          await workerRepoA.completeStep({
             stepId: claimed!.id,
             tenantId: claimed!.tenantId,
             lease: claimed!.lease!,
@@ -381,7 +838,7 @@ describe('PostgresKernelRepository integration', () => {
         });
         assert.equal(currentGenerationClaim?.lease?.workerGeneration, 2);
         assert.ok(
-          await repoA.completeStep({
+          await workerRepoA.completeStep({
             stepId: currentGenerationClaim!.id,
             tenantId: currentGenerationClaim!.tenantId,
             lease: currentGenerationClaim!.lease!,
@@ -400,8 +857,247 @@ describe('PostgresKernelRepository integration', () => {
         await pool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
           [workerA, workerB],
         ]);
+        await cleanupTenantTestState(pool, [tenantA, tenantB]);
         await workerPool.end();
+        await tenantAuthorityPool.end();
         await appPool.end();
+        await pool.end();
+      }
+    },
+  );
+
+  // KC-01: cancelling a step that was not occupying a tenant slot must not
+  // decrement the shared tenant running_steps counter, otherwise a tenant with
+  // limit=1 can cancel a PENDING run to free a slot it never used while a
+  // genuinely RUNNING step keeps the tenant over its limit.
+  it(
+    'cancelRun releases a tenant slot only for steps that were actually RUNNING',
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
+    async () => {
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 8 });
+      await runKernelMigrations(pool);
+      await ensureRoleLogin(pool, 'commander_app', appPassword);
+      await ensureRoleLogin(pool, 'commander_tenant_authority', tenantAuthorityPassword);
+      await ensureRoleLogin(
+        pool,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      );
+      await ensureRoleLogin(pool, 'commander_worker', workerPassword);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
+      const schedulerPool = createLoginPool(liveSchedulerDatabaseUrl);
+      const schedulerRepo = new PostgresKernelRepository(schedulerPool, { schedulerMode: true });
+      const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
+      const suffix = `${Date.now()}-${process.pid}`;
+      const tenantId = `kc01-${suffix}`;
+      const workerId = `kc01-worker-${suffix}`;
+      const repo = createRepository();
+      try {
+        await seedWorkerAllowedTenants(pool, [tenantId]);
+        await seedTenantAuthorityAllowedTenants(pool, [tenantId]);
+        await pool.query(
+          `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
+           VALUES ($1,'agent','integration','["agent"]',4,'ACTIVE',1,$2,$3::jsonb)`,
+          [workerId, workerId, JSON.stringify([tenantId])],
+        );
+        const secret = await seedWorkerClaimSecret(pool, workerId, 1);
+        await schedulerRepo.setTenantConcurrencyLimit(tenantId, 1);
+        for (const [runId, stepId] of [
+          [`${tenantId}-run-a`, `${tenantId}-step-a`],
+          [`${tenantId}-run-b`, `${tenantId}-step-b`],
+          [`${tenantId}-run-c`, `${tenantId}-step-c`],
+        ]) {
+          await repo.createRun(
+            {
+              id: runId,
+              tenantId,
+              intentHash: `intent-${runId}`,
+              workGraphHash: `graph-${runId}`,
+              workGraphVersion: 'v1',
+              policySnapshotId: `policy-${runId}`,
+              steps: [{ id: stepId, kind: 'agent', maxAttempts: 2 }],
+            },
+            'integration',
+          );
+        }
+
+        const claimA = await workerRepo.claimNextStep({
+          workerId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: secret,
+        });
+        assert.equal(claimA?.id, `${tenantId}-step-a`, 'step-a must hold the only tenant slot');
+
+        const usage = async () =>
+          Number(
+            (
+              await pool.query<{ running_steps: string }>(
+                'SELECT running_steps FROM commander_tenant_execution_usage WHERE tenant_id=$1',
+                [tenantId],
+              )
+            ).rows[0]?.running_steps ?? -1,
+          );
+        assert.equal(await usage(), 1, 'claiming must consume the tenant slot');
+
+        // Cancel the PENDING run B. Before the fix this decremented running_steps to 0.
+        assert.equal(
+          (await repo.cancelRun(`${tenantId}-run-b`, tenantId, 'integration'))?.state,
+          'CANCELLED',
+        );
+        assert.equal(await usage(), 1, 'cancelling a PENDING step must not release a tenant slot');
+
+        assert.equal(
+          await workerRepo.claimNextStep({
+            workerId,
+            workerGeneration: 1,
+            capabilities: ['agent'],
+            leaseTtlMs: 30_000,
+            claimSecret: secret,
+          }),
+          null,
+          'the tenant limit must still be enforced while step-a is RUNNING',
+        );
+
+        assert.equal(
+          (await repo.cancelRun(`${tenantId}-run-a`, tenantId, 'integration'))?.state,
+          'CANCELLED',
+        );
+        assert.equal(await usage(), 0, 'cancelling the RUNNING step must release its slot');
+        const claimC = await workerRepo.claimNextStep({
+          workerId,
+          workerGeneration: 1,
+          capabilities: ['agent'],
+          leaseTtlMs: 30_000,
+          claimSecret: secret,
+        });
+        assert.equal(claimC?.id, `${tenantId}-step-c`, 'the freed slot must admit the next step');
+      } finally {
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_worker_claim_secrets WHERE worker_id=$1', [
+          workerId,
+        ]);
+        await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
+        await cleanupTenantTestState(pool, [tenantId]);
+        await schedulerPool.end();
+        await workerPool.end();
+        await tenantAuthorityPool.end();
+        await appPool.end();
+        await pool.end();
+      }
+    },
+  );
+
+  // KC-05: a terminal compensation request must not keep a claim deadline, or the
+  // automatic claim selection (`ORDER BY created_at LIMIT 1` over rows where
+  // `state='AUTHORIZED' OR claim_expires_at<=now()`) always picks the oldest
+  // terminal row, rejects it on state, and starves newer AUTHORIZED requests.
+  it(
+    'terminal compensation requests never retain a claim deadline (queue starvation guard)',
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
+    async () => {
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 4 });
+      await runKernelMigrations(pool);
+      const suffix = `${Date.now()}-${process.pid}`;
+      const tenantId = `kc05-${suffix}`;
+      const runId = `kc05-run-${suffix}`;
+      const stepId = `kc05-step-${suffix}`;
+      const effectId = `kc05-effect-${suffix}`;
+      const authId = `kc05-auth-${suffix}`;
+      const authId2 = `kc05-auth2-${suffix}`;
+      const terminalRequestId = `kc05-terminal-${suffix}`;
+      const authorizedRequestId = `kc05-authorized-${suffix}`;
+      const holder = new PostgresKernelRepository(pool, { schedulerMode: true });
+      try {
+        await holder.createRun(
+          {
+            id: runId,
+            tenantId,
+            intentHash: `intent-${suffix}`,
+            workGraphHash: `graph-${suffix}`,
+            workGraphVersion: 'v1',
+            policySnapshotId: `policy-${suffix}`,
+            steps: [{ id: stepId, kind: 'agent', maxAttempts: 1 }],
+          },
+          'integration',
+        );
+        await pool.query(
+          `INSERT INTO commander_effects
+             (id,run_id,step_id,tenant_id,type,idempotency_key,request_hash,policy_decision_id,state,request,
+              reconcile_attempts,policy_snapshot_id,lease_worker_id,lease_fencing_epoch,action_digest,
+              lease_worker_generation,reconcile_max_attempts,reconcile_initial_delay_ms,reconcile_max_delay_ms,
+              reconcile_deadline_at)
+           VALUES ($1,$2,$3,$4,'compensate.test',$5,repeat('a',64),'pd',$6,'{}'::jsonb,0,'policy-0','w',0,repeat('b',64),0,8,30000,900000,now()+interval '1 day')`,
+          [effectId, runId, stepId, tenantId, `idem-${suffix}`, 'COMPLETED'],
+        );
+        await pool.query(
+          `INSERT INTO commander_compensation_authorizations
+             (id,tenant_id,original_run_id,original_effect_id,compensation_effect_type,adapter_version,
+              compensation_patch,forward_receipt_hash,policy_decision_id,policy_snapshot_id,decision,action_digest,expires_at)
+           VALUES ($1,$2,$3,$4,'compensate.test','v1','{}'::jsonb,repeat('c',64),'pd','ps','allow',repeat('d',64),now()+interval '1 day')`,
+          [authId, tenantId, runId, effectId],
+        );
+        await pool.query(
+          `INSERT INTO commander_compensation_authorizations
+             (id,tenant_id,original_run_id,original_effect_id,compensation_effect_type,adapter_version,
+              compensation_patch,forward_receipt_hash,policy_decision_id,policy_snapshot_id,decision,action_digest,expires_at)
+           VALUES ($1,$2,$3,$4,'compensate.test','v1','{}'::jsonb,repeat('c',64),'pd','ps','allow',repeat('e',64),now()+interval '1 day')`,
+          [authId2, tenantId, runId, effectId],
+        );
+        // Terminal row is older and carries a stale deadline; the fix must null it.
+        await pool.query(
+          `INSERT INTO commander_compensation_requests
+             (id,tenant_id,original_run_id,original_effect_id,compensation_run_id,compensation_step_id,
+              adapter_version,compensation_effect_type,compensation_patch,forward_receipt_hash,authorization_id,
+              reconcile_policy,state,created_at,claim_expires_at)
+           VALUES ($1,$2,$4,$5,$4,$6,'v1','compensate.test','{}'::jsonb,repeat('c',64),$3,'{}'::jsonb,'COMPLETED',now()-interval '2 hours',now()-interval '1 hour')`,
+          [terminalRequestId, tenantId, authId, runId, effectId, stepId],
+        );
+        await pool.query(
+          `INSERT INTO commander_compensation_requests
+             (id,tenant_id,original_run_id,original_effect_id,compensation_run_id,compensation_step_id,
+              adapter_version,compensation_effect_type,compensation_patch,forward_receipt_hash,authorization_id,
+              reconcile_policy,state,created_at)
+           VALUES ($1,$2,$4,$5,$4,$6,'v1','compensate.test','{}'::jsonb,repeat('c',64),$3,'{}'::jsonb,'AUTHORIZED',now()-interval '1 minute')`,
+          [authorizedRequestId, tenantId, authId2, runId, effectId, stepId],
+        );
+
+        const stored = await pool.query<{ claim_expires_at: Date | null }>(
+          'SELECT claim_expires_at FROM commander_compensation_requests WHERE id=$1',
+          [terminalRequestId],
+        );
+        assert.equal(
+          stored.rows[0]?.claim_expires_at,
+          null,
+          'a terminal compensation request must not retain claim_expires_at',
+        );
+
+        // Exact automatic-selection predicate from claim_compensation_request.
+        const selected = await pool.query<{ id: string }>(
+          `SELECT r.id FROM public.commander_compensation_requests r
+            WHERE r.tenant_id=$1
+              AND (NULLIF($2,'') IS NOT NULL OR r.state='AUTHORIZED' OR r.claim_expires_at<=$3::timestamptz)
+              AND (NULLIF($2,'') IS NULL OR r.id=$2)
+            ORDER BY r.created_at FOR UPDATE OF r SKIP LOCKED LIMIT 1`,
+          [tenantId, '', new Date()],
+        );
+        assert.equal(
+          selected.rows[0]?.id,
+          authorizedRequestId,
+          'automatic selection must skip the older terminal request instead of starving the queue',
+        );
+      } finally {
+        await pool.query('DELETE FROM commander_compensation_requests WHERE tenant_id=$1', [
+          tenantId,
+        ]);
+        await pool.query('DELETE FROM commander_compensation_authorizations WHERE tenant_id=$1', [
+          tenantId,
+        ]);
+        await pool.query('DELETE FROM commander_effects WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
         await pool.end();
       }
     },
@@ -409,24 +1105,21 @@ describe('PostgresKernelRepository integration', () => {
 
   it(
     'atomically releases kernel-native approvals with fencing and tenant isolation',
-    { skip: !databaseUrl || !workerDatabaseUrl },
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl || !workerDatabaseUrl) return;
-      const pool = new Pool({ connectionString: databaseUrl, max: 8 });
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 8 });
       await runKernelMigrations(pool);
-      await ensureRoleLogin(
-        pool,
-        'commander_app',
-        process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
-      );
+      await ensureRoleLogin(pool, 'commander_app', appPassword);
+      await ensureRoleLogin(pool, 'commander_tenant_authority', tenantAuthorityPassword);
       await ensureRoleLogin(
         pool,
         'commander_scheduler',
         process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
       );
       await ensureRoleLogin(pool, 'commander_worker', workerPassword);
-      const appPool = createRolePool(databaseUrl, 'commander_app');
-      const workerPool = createLoginPool(workerDatabaseUrl);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
       const suffix = `${Date.now()}-${process.pid}`;
       const tenantA = `approval-a-${suffix}`;
       const tenantB = `approval-b-${suffix}`;
@@ -436,10 +1129,12 @@ describe('PostgresKernelRepository integration', () => {
       const rolledBackRunId = `run-approval-rollback-${suffix}`;
       const rolledBackStepId = `step-approval-rollback-${suffix}`;
       const workerId = `worker-approval-${suffix}`;
-      const repoA = new PostgresKernelRepository(appPool);
-      const repoB = new PostgresKernelRepository(appPool);
+      const repoA = createRepository();
+      const repoB = createRepository();
       const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
       try {
+        await seedWorkerAllowedTenants(pool, [tenantA, tenantB]);
+        await seedTenantAuthorityAllowedTenants(pool, [tenantA, tenantB]);
         await pool.query(
           `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
          VALUES ($1,'agent','integration','["tool"]',1,'ACTIVE',1,$2,$3::jsonb)`,
@@ -547,7 +1242,7 @@ describe('PostgresKernelRepository integration', () => {
         assert.equal(claimed?.lease?.fencingEpoch, 1);
         assert.ok(claimed?.lease?.token);
         assert.equal(
-          await repoA.completeStep({
+          await workerRepo.completeStep({
             stepId,
             tenantId: tenantA,
             lease: { ...claimed!.lease!, token: 'stale-token' },
@@ -557,7 +1252,7 @@ describe('PostgresKernelRepository integration', () => {
           null,
         );
         assert.ok(
-          await repoA.completeStep({
+          await workerRepo.completeStep({
             stepId,
             tenantId: tenantA,
             lease: claimed!.lease!,
@@ -573,7 +1268,78 @@ describe('PostgresKernelRepository integration', () => {
           workerId,
         ]);
         await pool.query('DELETE FROM commander_workers WHERE id=$1', [workerId]);
+        await cleanupTenantTestState(pool, [tenantA, tenantB]);
         await workerPool.end();
+        await tenantAuthorityPool.end();
+        await appPool.end();
+        await pool.end();
+      }
+    },
+  );
+
+  it(
+    'refuses to answer an expired interaction and leaves the waiting step untouched',
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
+    async () => {
+      const pool = new Pool({ connectionString: liveDatabaseUrl, max: 8 });
+      await runKernelMigrations(pool);
+      await ensureRoleLogin(pool, 'commander_app', appPassword);
+      await ensureRoleLogin(pool, 'commander_tenant_authority', tenantAuthorityPassword);
+      await ensureRoleLogin(
+        pool,
+        'commander_scheduler',
+        process.env.COMMANDER_SCHEDULER_PASSWORD ?? 'commander_scheduler',
+      );
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
+      const suffix = `${Date.now()}-${process.pid}`;
+      const tenantId = `expiry-${suffix}`;
+      const runId = `run-expiry-${suffix}`;
+      const stepId = `step-expiry-${suffix}`;
+      const interactionId = `interaction-expiry-${suffix}`;
+      const repo = createRepository();
+      try {
+        await seedTenantAuthorityAllowedTenants(pool, [tenantId]);
+        await repo.createRun(
+          {
+            id: runId,
+            tenantId,
+            intentHash: 'expiry-intent',
+            workGraphHash: 'expiry-graph',
+            workGraphVersion: 'v1',
+            policySnapshotId: 'expiry-policy',
+            steps: [
+              {
+                id: stepId,
+                kind: 'tool',
+                initialState: 'WAITING_FOR_HUMAN',
+                interaction: {
+                  id: interactionId,
+                  prompt: 'Expired approval',
+                  expiresAt: new Date(Date.now() - 60_000).toISOString(),
+                },
+              },
+            ],
+          },
+          'integration',
+        );
+        await assert.rejects(
+          () =>
+            repo.answerInteraction({
+              interactionId,
+              runId,
+              tenantId,
+              response: { approved: true },
+              actor: 'late-reviewer',
+            }),
+          (error) => error instanceof KernelInvariantError && error.code === 'INTERACTION_EXPIRED',
+        );
+        assert.equal((await repo.getInteraction(interactionId, tenantId))?.status, 'pending');
+        assert.equal((await repo.getStep(stepId, tenantId))?.state, 'WAITING_FOR_HUMAN');
+      } finally {
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+        await cleanupTenantTestState(pool, [tenantId]);
+        await tenantAuthorityPool.end();
         await appPool.end();
         await pool.end();
       }
@@ -582,16 +1348,12 @@ describe('PostgresKernelRepository integration', () => {
 
   it(
     'worker LOGIN DSN (schedulerMode false) claims via durable authz and cannot widen with tenantIds',
-    { skip: !databaseUrl || !workerDatabaseUrl },
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl || !workerDatabaseUrl) return;
-      const ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
+      const ownerPool = new Pool({ connectionString: liveDatabaseUrl, max: 4 });
       await runKernelMigrations(ownerPool);
-      await ensureRoleLogin(
-        ownerPool,
-        'commander_app',
-        process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
-      );
+      await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+      await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
       await ensureRoleLogin(
         ownerPool,
         'commander_scheduler',
@@ -599,10 +1361,11 @@ describe('PostgresKernelRepository integration', () => {
       );
       await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
 
-      const workerPool = createLoginPool(workerDatabaseUrl);
-      const appPool = createRolePool(databaseUrl, 'commander_app');
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
       const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
-      const appRepo = new PostgresKernelRepository(appPool);
+      const appRepo = createRepository();
       const suffix = `${Date.now()}-${process.pid}`;
       const tenantAllowed = `worker-allowed-${suffix}`;
       const tenantOutside = `worker-outside-${suffix}`;
@@ -631,6 +1394,7 @@ describe('PostgresKernelRepository integration', () => {
           [workerId, JSON.stringify([tenantAllowed])],
         );
         await seedWorkerAllowedTenants(ownerPool, [tenantAllowed]);
+        await seedTenantAuthorityAllowedTenants(ownerPool, [tenantAllowed, tenantOutside]);
         const claimSecret = await seedWorkerClaimSecret(ownerPool, workerId, 1);
 
         await appRepo.createRun(
@@ -786,7 +1550,9 @@ describe('PostgresKernelRepository integration', () => {
         await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
           tenantAllowed,
         ]);
+        await cleanupTenantTestState(ownerPool, [tenantAllowed, tenantOutside]);
         await workerPool.end();
+        await tenantAuthorityPool.end();
         await appPool.end();
         await ownerPool.end();
       }
@@ -795,22 +1561,20 @@ describe('PostgresKernelRepository integration', () => {
 
   it(
     'app revoke + worker LOGIN observe isCapabilityRevoked under RLS (schedulerMode false)',
-    { skip: !databaseUrl || !workerDatabaseUrl },
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl || !workerDatabaseUrl) return;
-      const ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
+      const ownerPool = new Pool({ connectionString: liveDatabaseUrl, max: 4 });
       await runKernelMigrations(ownerPool);
-      await ensureRoleLogin(
-        ownerPool,
-        'commander_app',
-        process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
-      );
+      await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+      await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
       await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
+      await ensureRoleLogin(ownerPool, 'commander_adapter_ops', adapterOpsPassword);
 
-      const workerPool = createLoginPool(workerDatabaseUrl);
-      const appPool = createRolePool(databaseUrl, 'commander_app');
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
       const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
-      const appRepo = new PostgresKernelRepository(appPool);
+      const appRepo = createRepository();
       const suffix = `${Date.now()}-${process.pid}`;
       const tenantId = `cap-rev-${suffix}`;
       const jti = `jti-${suffix}`;
@@ -818,6 +1582,7 @@ describe('PostgresKernelRepository integration', () => {
 
       try {
         await seedWorkerAllowedTenants(ownerPool, [tenantId]);
+        await seedTenantAuthorityAllowedTenants(ownerPool, [tenantId]);
         assert.equal(
           await workerRepo.isCapabilityRevoked(jti, tenantId),
           false,
@@ -848,7 +1613,9 @@ describe('PostgresKernelRepository integration', () => {
         await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
           tenantId,
         ]);
+        await cleanupTenantTestState(ownerPool, [tenantId]);
         await workerPool.end();
+        await tenantAuthorityPool.end();
         await appPool.end();
         await ownerPool.end();
       }
@@ -857,27 +1624,25 @@ describe('PostgresKernelRepository integration', () => {
 
   it(
     'worker LOGIN reads allowlist and updates quota without policy mutation authority',
-    { skip: !databaseUrl || !workerDatabaseUrl },
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl || !workerDatabaseUrl) return;
-      const ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
+      const ownerPool = new Pool({ connectionString: liveDatabaseUrl, max: 4 });
       await runKernelMigrations(ownerPool);
-      await ensureRoleLogin(
-        ownerPool,
-        'commander_app',
-        process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
-      );
+      await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+      await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
       await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
 
-      const workerPool = createLoginPool(workerDatabaseUrl);
-      const appPool = createRolePool(databaseUrl, 'commander_app');
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
       const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
-      const appRepo = new PostgresKernelRepository(appPool);
+      const appRepo = createRepository();
       const suffix = `${Date.now()}-${process.pid}`;
       const tenantId = `allow-quota-${suffix}`;
 
       try {
         await seedWorkerAllowedTenants(ownerPool, [tenantId]);
+        await seedTenantAuthorityAllowedTenants(ownerPool, [tenantId]);
         assert.equal(await workerRepo.isActionAllowed(tenantId, 'http.post'), false);
         await appRepo.setAllowlistEntry(tenantId, 'http.post', true);
         assert.equal(await workerRepo.isActionAllowed(tenantId, 'http.post'), true);
@@ -916,7 +1681,9 @@ describe('PostgresKernelRepository integration', () => {
         await ownerPool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
           tenantId,
         ]);
+        await cleanupTenantTestState(ownerPool, [tenantId]);
         await workerPool.end();
+        await tenantAuthorityPool.end();
         await appPool.end();
         await ownerPool.end();
       }
@@ -925,22 +1692,32 @@ describe('PostgresKernelRepository integration', () => {
 
   it(
     'worker LOGIN claimReconcileEffects via claim_reconcile_effects; app cannot EXECUTE',
-    { skip: !databaseUrl || !workerDatabaseUrl },
+    { skip: livePostgresAvailable ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl || !workerDatabaseUrl) return;
-      const ownerPool = new Pool({ connectionString: databaseUrl, max: 4 });
+      const ownerPool = new Pool({ connectionString: liveDatabaseUrl, max: 4 });
       await runKernelMigrations(ownerPool);
-      await ensureRoleLogin(
-        ownerPool,
-        'commander_app',
-        process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
-      );
+      await ensureRoleLogin(ownerPool, 'commander_app', appPassword);
+      await ensureRoleLogin(ownerPool, 'commander_tenant_authority', tenantAuthorityPassword);
       await ensureRoleLogin(ownerPool, 'commander_worker', workerPassword);
+      await ensureRoleLogin(ownerPool, 'commander_adapter_ops', adapterOpsPassword);
 
-      const workerPool = createLoginPool(workerDatabaseUrl);
-      const appPool = createRolePool(databaseUrl, 'commander_app');
+      const workerPool = createLoginPool(liveWorkerDatabaseUrl);
+      const adapterPool = new Pool({
+        connectionString: deriveRoleDatabaseUrl(
+          liveDatabaseUrl,
+          'commander_adapter_ops',
+          adapterOpsPassword,
+        ),
+        max: 2,
+      });
+      const { appPool, tenantAuthorityPool, createRepository } =
+        createEnforcedAppContext(liveDatabaseUrl);
       const workerRepo = new PostgresKernelRepository(workerPool, { schedulerMode: false });
-      const appRepo = new PostgresKernelRepository(appPool);
+      const adapterRepo = new PostgresKernelRepository(adapterPool, {
+        schedulerMode: false,
+        adapterOpsMode: true,
+      });
+      const appRepo = createRepository();
       const suffix = `${Date.now()}-${process.pid}`;
       const tenantAllowed = `recon-ok-${suffix}`;
       const tenantOutside = `recon-out-${suffix}`;
@@ -948,14 +1725,49 @@ describe('PostgresKernelRepository integration', () => {
       const runId = `run-recon-${suffix}`;
       const stepId = `step-recon-${suffix}`;
       const effectId = `effect-recon-${suffix}`;
+      const adapterWorkerIds = [`reconcile:recon-${suffix}`, `compensation:comp-${suffix}`];
+      let reconcileCredential: { id: string; generation: number; claim_secret: string } | undefined;
 
       try {
-        await ownerPool.query(
-          `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
-         VALUES ($1,'agent','integration','["agent"]',2,'ACTIVE',1,$1,$2::jsonb)`,
-          [workerId, JSON.stringify([tenantAllowed])],
-        );
-        const claimSecret = await seedWorkerClaimSecret(ownerPool, workerId, 1);
+        await seedWorkerAllowedTenants(ownerPool, [tenantAllowed, tenantOutside]);
+        await seedTenantAuthorityAllowedTenants(ownerPool, [tenantAllowed, tenantOutside]);
+        for (const [role, id] of [
+          ['reconcile', adapterWorkerIds[0]],
+          ['compensation', adapterWorkerIds[1]],
+        ] as const) {
+          const registration = await adapterPool.query<{
+            registration: { id: string; generation: number; claim_secret: string };
+          }>(`SELECT register_adapter_ops_worker($1,$2,$3::jsonb,NULL) AS registration`, [
+            role,
+            id.slice(id.indexOf(':') + 1),
+            JSON.stringify([tenantAllowed]),
+          ]);
+          const credential = registration.rows[0]!.registration;
+          if (role === 'reconcile') reconcileCredential = credential;
+          await adapterPool.query(`SELECT heartbeat_adapter_ops_worker($1,$2,$3)`, [
+            credential.id,
+            credential.generation,
+            credential.claim_secret,
+          ]);
+        }
+        assert.ok(reconcileCredential);
+        const workerRegistrationClient = await workerPool.connect();
+        let workerRegistration: {
+          rows: Array<{ registration: { generation: number; claim_secret: string } }>;
+        };
+        try {
+          workerRegistration = await workerRegistrationClient.query(
+            `SELECT register_worker(
+               $1,'agent','integration','["agent"]'::jsonb,'{}'::jsonb,2,
+               'db:commander_worker',$2::jsonb,NULL
+             ) AS registration`,
+            [workerId, JSON.stringify([tenantAllowed])],
+          );
+        } finally {
+          workerRegistrationClient.release();
+        }
+        const workerGeneration = Number(workerRegistration.rows[0]!.registration.generation);
+        const claimSecret = workerRegistration.rows[0]!.registration.claim_secret;
 
         await appRepo.createRun(
           {
@@ -972,7 +1784,7 @@ describe('PostgresKernelRepository integration', () => {
 
         const claimed = await workerRepo.claimNextStep({
           workerId,
-          workerGeneration: 1,
+          workerGeneration,
           capabilities: ['agent'],
           leaseTtlMs: 30_000,
           claimSecret,
@@ -984,7 +1796,7 @@ describe('PostgresKernelRepository integration', () => {
           runId,
           stepId,
           tenantId: tenantAllowed,
-          type: 'http.post',
+          type: 'read.ticket',
           idempotencyKey: `recon-key-${suffix}`,
           policyDecisionId: 'decision-1',
           policySnapshotId: 'policy-recon',
@@ -993,19 +1805,17 @@ describe('PostgresKernelRepository integration', () => {
           lease: claimed!.lease!,
           actor: workerId,
         });
-        assert.ok(admitted.admitted);
+        assert.ok(admitted.admitted, JSON.stringify(admitted));
         await appRepo.markEffectCompletionUnknown({
           effectId,
           tenantId: tenantAllowed,
           reason: 'timeout',
           actor: workerId,
         });
-        const past = new Date(Date.now() - 1_000).toISOString();
         await appRepo.requestReconcile({
           effectId,
           tenantId: tenantAllowed,
           actor: 'integration',
-          reconcileAfter: past,
         });
 
         await assert.rejects(
@@ -1014,7 +1824,7 @@ describe('PostgresKernelRepository integration', () => {
               limit: 5,
               now: new Date(),
               workerId,
-              workerGeneration: 1,
+              workerGeneration,
               claimSecret,
             }),
           /permission denied/i,
@@ -1022,23 +1832,23 @@ describe('PostgresKernelRepository integration', () => {
         );
 
         assert.deepEqual(
-          await workerRepo.claimReconcileEffects({
+          await adapterRepo.claimReconcileEffects({
             limit: 5,
             now: new Date(),
-            workerId,
-            workerGeneration: 1,
+            workerId: reconcileCredential.id,
+            workerGeneration: reconcileCredential.generation,
             claimSecret: 'wrong-secret',
           }),
           [],
           'wrong claimSecret must claim no reconcile effects',
         );
 
-        const claimedEffects = await workerRepo.claimReconcileEffects({
+        const claimedEffects = await adapterRepo.claimReconcileEffects({
           limit: 5,
           now: new Date(),
-          workerId,
-          workerGeneration: 1,
-          claimSecret,
+          workerId: reconcileCredential.id,
+          workerGeneration: reconcileCredential.generation,
+          claimSecret: reconcileCredential.claim_secret,
         });
         assert.equal(claimedEffects.length, 1, 'worker LOGIN must claim reconcile via RPC');
         assert.equal(claimedEffects[0]!.effect.tenantId, tenantAllowed);
@@ -1060,15 +1870,27 @@ describe('PostgresKernelRepository integration', () => {
           },
           'integration',
         );
-        await ownerPool.query(
-          `INSERT INTO commander_workers (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
-         VALUES ($1,'agent','integration','["agent"]',2,'ACTIVE',1,$1,$2::jsonb)`,
-          [`${workerId}-out`, JSON.stringify([tenantOutside])],
-        );
-        const outsideSecret = await seedWorkerClaimSecret(ownerPool, `${workerId}-out`, 1);
+        const outsideWorkerId = `${workerId}-out`;
+        const outsideRegistrationClient = await workerPool.connect();
+        let outsideRegistration: {
+          rows: Array<{ registration: { generation: number; claim_secret: string } }>;
+        };
+        try {
+          outsideRegistration = await outsideRegistrationClient.query(
+            `SELECT register_worker(
+               $1,'agent','integration','["agent"]'::jsonb,'{}'::jsonb,2,
+               'db:commander_worker',$2::jsonb,NULL
+             ) AS registration`,
+            [outsideWorkerId, JSON.stringify([tenantOutside])],
+          );
+        } finally {
+          outsideRegistrationClient.release();
+        }
+        const outsideGeneration = Number(outsideRegistration.rows[0]!.registration.generation);
+        const outsideSecret = outsideRegistration.rows[0]!.registration.claim_secret;
         const outsideClaim = await workerRepo.claimNextStep({
-          workerId: `${workerId}-out`,
-          workerGeneration: 1,
+          workerId: outsideWorkerId,
+          workerGeneration: outsideGeneration,
           capabilities: ['agent'],
           leaseTtlMs: 30_000,
           claimSecret: outsideSecret,
@@ -1086,27 +1908,26 @@ describe('PostgresKernelRepository integration', () => {
           actionDigest: 'b'.repeat(64),
           request: {},
           lease: outsideClaim!.lease!,
-          actor: `${workerId}-out`,
+          actor: outsideWorkerId,
         });
         await appRepo.markEffectCompletionUnknown({
           effectId: outsideEffect,
           tenantId: tenantOutside,
           reason: 'timeout',
-          actor: `${workerId}-out`,
+          actor: outsideWorkerId,
         });
         await appRepo.requestReconcile({
           effectId: outsideEffect,
           tenantId: tenantOutside,
           actor: 'integration',
-          reconcileAfter: past,
         });
 
-        const noWiden = await workerRepo.claimReconcileEffects({
+        const noWiden = await adapterRepo.claimReconcileEffects({
           limit: 5,
           now: new Date(),
-          workerId,
-          workerGeneration: 1,
-          claimSecret,
+          workerId: reconcileCredential.id,
+          workerGeneration: reconcileCredential.generation,
+          claimSecret: reconcileCredential.claim_secret,
         });
         assert.equal(
           noWiden.filter((e) => e.effect.tenantId === tenantOutside).length,
@@ -1121,8 +1942,18 @@ describe('PostgresKernelRepository integration', () => {
           'DELETE FROM commander_worker_claim_secrets WHERE worker_id LIKE $1',
           [`${workerId}%`],
         );
+        await ownerPool.query(
+          'DELETE FROM commander_worker_claim_secrets WHERE worker_id = ANY($1::text[])',
+          [adapterWorkerIds],
+        );
         await ownerPool.query('DELETE FROM commander_workers WHERE id LIKE $1', [`${workerId}%`]);
+        await ownerPool.query('DELETE FROM commander_workers WHERE id = ANY($1::text[])', [
+          adapterWorkerIds,
+        ]);
+        await cleanupTenantTestState(ownerPool, [tenantAllowed, tenantOutside]);
         await workerPool.end();
+        await adapterPool.end();
+        await tenantAuthorityPool.end();
         await appPool.end();
         await ownerPool.end();
       }

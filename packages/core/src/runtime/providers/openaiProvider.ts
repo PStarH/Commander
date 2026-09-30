@@ -2,12 +2,26 @@ import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types'
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
 import { executeViaBatchAPI, supportsNativeBatchAPI, type BatchAPIConfig } from '../batchApiClient';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
+import { MAX_LLM_RESPONSE_BYTES } from '../runtimeConstants';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
   prompt_tokens_details?: { cached_tokens?: number };
+}
+
+interface OpenAICompletionResponse {
+  choices?: Array<{
+    message?: {
+      content?: string;
+      tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+      reasoning_content?: string;
+    };
+    finish_reason?: string;
+  }>;
+  usage?: Partial<OpenAICompletionUsage>;
 }
 
 interface OpenAIStreamChunk {
@@ -37,6 +51,7 @@ export class OpenAIProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.openai.com/v1';
     this.defaultModel = config.defaultModel ?? 'gpt-4o';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {
@@ -77,19 +92,53 @@ export class OpenAIProvider implements LLMProvider {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({ ...body, stream: useStreaming }),
+      signal: request.signal,
     });
 
     if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenAI API error ${response.status}: ${err}`);
+      throw new Error(`OpenAI API error ${response.status}`);
     }
 
     if (useStreaming) {
       return this.handleStreamingResponse(response, model, request.responseFormat);
     }
 
-    const data = await response.json();
+    const data = await this.readResponse(response);
     return this.parseResponse(data, model, request.responseFormat);
+  }
+
+  private async readResponse(response: Response): Promise<OpenAICompletionResponse> {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error(`OpenAI API returned invalid JSON (${response.status})`);
+
+    const chunks: Uint8Array[] = [];
+    let bytesRead = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (!value) continue;
+        bytesRead += value.byteLength;
+        if (bytesRead > MAX_LLM_RESPONSE_BYTES) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error(
+            `PAYLOAD_TOO_LARGE: response ${bytesRead} > ${MAX_LLM_RESPONSE_BYTES} bytes`,
+          );
+        }
+        chunks.push(value);
+      }
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('PAYLOAD_TOO_LARGE:')) throw error;
+      throw new Error(`OpenAI API returned invalid JSON (${response.status})`);
+    }
+
+    try {
+      return JSON.parse(
+        new TextDecoder().decode(Buffer.concat(chunks)),
+      ) as OpenAICompletionResponse;
+    } catch {
+      throw new Error(`OpenAI API returned invalid JSON (${response.status})`);
+    }
   }
 
   private buildBody(request: LLMRequest, model: string): Record<string, unknown> {
@@ -160,12 +209,20 @@ export class OpenAIProvider implements LLMProvider {
     let usage: OpenAICompletionUsage | null = null;
     let finishReason: string | null = null;
     let buffer = '';
+    let bytesRead = 0;
 
     const decoder = new TextDecoder();
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
+      bytesRead += value.byteLength;
+      if (bytesRead > MAX_LLM_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new Error(
+          `PAYLOAD_TOO_LARGE: response ${bytesRead} > ${MAX_LLM_RESPONSE_BYTES} bytes`,
+        );
+      }
 
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split('\n');
@@ -228,7 +285,7 @@ export class OpenAIProvider implements LLMProvider {
             ? 'tool_calls'
             : finishReason === 'length'
               ? 'length'
-              : 'stop',
+              : 'error',
       toolCalls:
         toolCalls.length > 0
           ? toolCalls.map((tc) => ({
@@ -243,22 +300,7 @@ export class OpenAIProvider implements LLMProvider {
   }
 
   private parseResponse(
-    data: {
-      choices?: Array<{
-        message?: {
-          content?: string;
-          tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
-          reasoning_content?: string;
-        };
-        finish_reason?: string;
-      }>;
-      usage?: {
-        prompt_tokens?: number;
-        completion_tokens?: number;
-        total_tokens?: number;
-        prompt_tokens_details?: { cached_tokens?: number };
-      };
-    },
+    data: OpenAICompletionResponse,
     model: string,
     responseFormat?: LLMRequest['responseFormat'],
   ): LLMResponse {
@@ -293,7 +335,7 @@ export class OpenAIProvider implements LLMProvider {
             ? 'tool_calls'
             : choice?.finish_reason === 'length'
               ? 'length'
-              : 'stop',
+              : 'error',
       toolCalls,
       parsed,
       // Capture reasoning_content for MiMo reasoning models

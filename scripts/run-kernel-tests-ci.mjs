@@ -5,13 +5,14 @@ import { spawnSync } from 'node:child_process';
 const { scripts } = JSON.parse(
   readFileSync(new URL('../packages/kernel/package.json', import.meta.url), 'utf8'),
 );
-const [runner, flag, ...files] = scripts.test.split(' ');
-if (
-  runner !== 'tsx' ||
-  flag !== '--test' ||
-  files.length === 0 ||
-  files.some((file) => !/^src\/[\w./-]+\.ts$/.test(file))
-) {
+const parts = scripts.test.split(' ');
+const files =
+  parts[0] === 'node' && parts[1] === '--import' && parts[2] === 'tsx' && parts[3] === '--test'
+    ? parts.slice(4)
+    : parts[0] === 'tsx' && parts[1] === '--test'
+      ? parts.slice(2)
+      : [];
+if (files.length === 0 || files.some((file) => !/^src\/[\w./-]+\.ts$/.test(file))) {
   throw new Error('Kernel test command changed; update the CI reporter invocation');
 }
 const result = spawnSync(

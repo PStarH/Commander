@@ -4,12 +4,13 @@
  * This test proves the shared execution kernel scales horizontally:
  *   - 10+ concurrent workers claim and execute steps from a shared queue
  *   - Throughput scales linearly with worker count (within ~30% efficiency)
- *   - No steps are lost, duplicated, or executed out of dependency order
+ *   - No in-memory step claims are lost or duplicated, and dependency order is preserved
  *   - Tenant fairness is maintained under load
  *   - Worker failure during high load is recovered without data loss
  *
- * CI-blocking: proves the kernel can handle production-grade concurrency.
- * Uses InMemoryKernelRepository to avoid Postgres dependency.
+ * CI-blocking: protects the in-memory claim/lease protocol under concurrency.
+ * Uses InMemoryKernelRepository; it is not a production throughput or external
+ * side-effect proof.
  */
 
 import { describe, it, beforeEach } from 'node:test';
@@ -207,7 +208,7 @@ function createBatchRun(tenantId: string, stepCount: number, kindPrefix = 'task'
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-describe('V2 Multi-Worker Load — Distributed Scalability Proof', () => {
+describe('V2 Multi-Worker Load — In-Memory Scalability Simulation', () => {
   let kernel: InMemoryKernelRepository;
 
   beforeEach(() => {
@@ -255,12 +256,12 @@ describe('V2 Multi-Worker Load — Distributed Scalability Proof', () => {
       `Scaling too slow: solo=${soloTime}ms, parallel=${maxDuration}ms (expected ≤${expectedMaxParallelTime}ms for ≥40% efficiency)`,
     );
 
-    // No step should be executed twice
+    // No in-memory step claim should be recorded twice
     const executedStepIds = executor10.executions.map((s) => s.id);
     assert.equal(
       new Set(executedStepIds).size,
       executedStepIds.length,
-      'No step should be executed twice',
+      'No duplicate in-memory step claims',
     );
   });
 
@@ -285,7 +286,11 @@ describe('V2 Multi-Worker Load — Distributed Scalability Proof', () => {
 
     // Verify no duplication
     const executedIds = executor.executions.map((s) => s.id);
-    assert.equal(new Set(executedIds).size, executedIds.length, 'No duplicate executions');
+    assert.equal(
+      new Set(executedIds).size,
+      executedIds.length,
+      'No duplicate in-memory step claims',
+    );
 
     // At least 2 workers should have been active
     const activeWorkers = results.filter((r) => r.completed > 0).length;
@@ -367,7 +372,7 @@ describe('V2 Multi-Worker Load — Distributed Scalability Proof', () => {
     assert.equal(
       new Set(executor.executions.map((s) => s.id)).size,
       executor.executions.length,
-      'No duplicate executions despite crash recovery',
+      'No duplicate in-memory step claims despite crash recovery',
     );
   });
 
@@ -403,7 +408,7 @@ describe('V2 Multi-Worker Load — Distributed Scalability Proof', () => {
     assert.equal(
       new Set(executor.executions.map((s) => s.id)).size,
       executor.executions.length,
-      'No duplicate executions in sustained load',
+      'No duplicate in-memory step claims in sustained load',
     );
   });
 });

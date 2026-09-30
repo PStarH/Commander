@@ -190,6 +190,24 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
   });
 
   /**
+   * GET /checkpoints/stats
+   * Get checkpoint statistics
+   *
+   * LM-24 / api-management#L22: this static route must be registered BEFORE the
+   * dynamic `GET /checkpoints/:id`. When it sat after, `GET /checkpoints/stats`
+   * matched `:id` with `id === 'stats'`, `checkpointManager.get('stats')`
+   * returned nothing, and the statistics endpoint answered 404
+   * "Checkpoint not found" — the route was unreachable.
+   */
+  router.get('/checkpoints/stats', (req: Request, res: Response) => {
+    const principal = resolvePrincipalForInbox(req, res);
+    if (!principal) return;
+    const { missionId } = req.query;
+    const stats = checkpointManager.getStats(missionId as string, requestTenant(req));
+    res.json(stats);
+  });
+
+  /**
    * GET /checkpoints/:id
    * Get checkpoint details
    */
@@ -373,18 +391,6 @@ export function createGovernanceRouter(checkpointManager: CheckpointManager): Ro
       message: `Processed ${expired.length} expired checkpoints`,
       expired,
     });
-  });
-
-  /**
-   * GET /checkpoints/stats
-   * Get checkpoint statistics
-   */
-  router.get('/checkpoints/stats', (req: Request, res: Response) => {
-    const principal = resolvePrincipalForInbox(req, res);
-    if (!principal) return;
-    const { missionId } = req.query;
-    const stats = checkpointManager.getStats(missionId as string, requestTenant(req));
-    res.json(stats);
   });
 
   /**

@@ -323,7 +323,12 @@ const DETECTION_RULES: RedactionRule[] = [
   },
   {
     category: 'pii',
-    pattern: /\b(?:\d[ -]*?){13,16}\b/g,
+    // The `(?=[2-6])` guard is an ISO/IEC 7812 major-industry-identifier check:
+    // without it this pattern masked any 13-16 digit run, so a Unix-millisecond
+    // timestamp (13 digits, leading 1) was rewritten to `****-****-****-7457`
+    // and legitimate data was corrupted. Real card numbers never begin with
+    // 0/1/7/8/9. Paired with the DLP detector's Luhn check for the same class.
+    pattern: /\b(?=[2-6])(?:\d[ -]*?){13,16}\b/g,
     strategy: 'mask',
     label: 'Credit card number',
   },

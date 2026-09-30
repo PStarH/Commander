@@ -1,15 +1,11 @@
 import { createHash } from 'node:crypto';
-import { getRequire } from './esmCompat';
-const require = getRequire(import.meta.url);
 
 import {
-  KernelInvariantError,
-  PostgresKernelRepository,
-  createVerifiedPostgresPool,
+  createKernelRepository,
   type KernelRepository,
+  type KernelRepositoryHandle,
   type AnswerInteractionRequest,
   type KernelEffect,
-  type EvidenceLookup,
   type KernelEvent,
   type KernelInteraction,
   type KernelRun,
@@ -19,7 +15,14 @@ import {
   type NewKernelStep,
   type PutKillSwitchInput,
   type RemoveKillSwitchInput,
+  type OperationsReadiness,
+  type RequestReconcileResult,
+  type CompensationAuthorizationRecord,
+  type CreateInteractionRequest,
+  type RequestCompensationInput,
+  type RequestCompensationResult,
 } from '@commander/kernel';
+import type { EvidenceBundle, EvidenceSignature } from '@commander/effect-broker';
 
 export type {
   KillSwitch,
@@ -29,7 +32,46 @@ export type {
   RemoveKillSwitchInput,
 } from '@commander/kernel';
 
+export type ActionReconcileRequestResult = RequestReconcileResult;
+
+export interface GatewayEvidenceRecord {
+  tenantId: string;
+  runId: string;
+  bundleId: string;
+  actionDigest: string;
+  body: EvidenceBundle;
+  contentHash: string;
+  signature: EvidenceSignature | null;
+  createdAt: string;
+  anchoredAt: string | null;
+  retentionUntil: string;
+}
+
+function isEvidenceBundle(value: unknown): value is EvidenceBundle {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
+  const bundle = value as Record<string, unknown>;
+  const scope = bundle.scope;
+  return (
+    typeof bundle.schemaVersion === 'string' &&
+    typeof bundle.bodyVersion === 'string' &&
+    typeof bundle.bundleId === 'string' &&
+    typeof bundle.exportedAt === 'string' &&
+    typeof bundle.actionDigest === 'string' &&
+    typeof bundle.terminalDisposition === 'string' &&
+    typeof bundle.contentHash === 'string' &&
+    Array.isArray(bundle.effects) &&
+    Array.isArray(bundle.auditEvents) &&
+    typeof scope === 'object' &&
+    scope !== null &&
+    typeof (scope as Record<string, unknown>).tenantId === 'string' &&
+    typeof (scope as Record<string, unknown>).runId === 'string'
+  );
+}
+
 export interface V1KernelGateway {
+  getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness>;
+  /** Optional read-only evidence repository availability probe; absent is not ready. */
+  getEvidenceRepositoryAvailability?(): Promise<{ ready: boolean }>;
   submit(input: {
     tenantId: string;
     idempotencyKey: string;
@@ -44,15 +86,24 @@ export interface V1KernelGateway {
   getStep(stepId: string, tenantId: string): Promise<KernelStep | null>;
   listEvents(runId: string, tenantId: string): Promise<KernelEvent[]>;
   listInteractions(runId: string, tenantId: string): Promise<KernelInteraction[]>;
+  createInteraction(input: CreateInteractionRequest, actor: string): Promise<KernelInteraction>;
   answerInteraction(input: AnswerInteractionRequest): Promise<KernelInteraction>;
   listEffects(runId: string, tenantId: string): Promise<KernelEffect[]>;
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null>;
-  requestReconcile(input: {
-    effectId: string;
-    tenantId: string;
-    actor: string;
-  }): Promise<KernelEffect | null>;
-  getEvidence(binding: EvidenceLookup): ReturnType<KernelRepository['getEvidence']>;
+  getEvidence(runId: string, tenantId: string): Promise<GatewayEvidenceRecord | null>;
+  requestReconcile(
+    effectId: string,
+    tenantId: string,
+    actor: string,
+  ): Promise<ActionReconcileRequestResult>;
+  createCompensationAuthorization(
+    authorization: CompensationAuthorizationRecord,
+  ): Promise<{ authorization: CompensationAuthorizationRecord; replayed: boolean }>;
+  getCompensationAuthorization(
+    authorizationId: string,
+    tenantId: string,
+  ): Promise<CompensationAuthorizationRecord | null>;
+  requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult>;
   /**
    * Pause a run, releasing any active worker leases but keeping scheduled work.
    * Returns null when the run was not found or is not in a pausable state.
@@ -173,6 +224,14 @@ export function canonicalWorkGraphHash(steps: NewKernelStep[]): string {
 class RepositoryV1KernelGateway implements V1KernelGateway {
   constructor(private readonly repository: KernelRepository) {}
 
+  getOperationsReadiness(tenantId: string, now?: Date): Promise<OperationsReadiness> {
+    return this.repository.getOperationsReadiness(tenantId, now);
+  }
+
+  async getEvidenceRepositoryAvailability(): Promise<{ ready: boolean }> {
+    return (await this.repository.checkEvidenceRepositoryAvailability?.()) ?? { ready: false };
+  }
+
   async submit(
     input: Parameters<V1KernelGateway['submit']>[0],
   ): Promise<{ run: KernelRun; created: boolean }> {
@@ -230,6 +289,9 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   listInteractions(runId: string, tenantId: string): Promise<KernelInteraction[]> {
     return this.repository.listInteractions(runId, tenantId);
   }
+  createInteraction(input: CreateInteractionRequest, actor: string): Promise<KernelInteraction> {
+    return this.repository.createInteraction(input, actor);
+  }
   answerInteraction(input: AnswerInteractionRequest): Promise<KernelInteraction> {
     return this.repository.answerInteraction(input);
   }
@@ -239,15 +301,39 @@ class RepositoryV1KernelGateway implements V1KernelGateway {
   getEffect(effectId: string, tenantId: string): Promise<KernelEffect | null> {
     return this.repository.getEffect(effectId, tenantId);
   }
-  requestReconcile(input: {
-    effectId: string;
-    tenantId: string;
-    actor: string;
-  }): Promise<KernelEffect | null> {
-    return this.repository.requestReconcile(input);
+  async getEvidence(runId: string, tenantId: string): Promise<GatewayEvidenceRecord | null> {
+    const record = await this.repository.getEvidence(runId, tenantId);
+    if (!record) return null;
+    if (!isEvidenceBundle(record.body)) throw new Error('EVIDENCE_INVALID');
+    return { ...record, body: record.body };
   }
-  getEvidence(binding: EvidenceLookup): ReturnType<KernelRepository['getEvidence']> {
-    return this.repository.getEvidence(binding);
+  requestReconcile(
+    effectId: string,
+    tenantId: string,
+    actor: string,
+  ): Promise<ActionReconcileRequestResult> {
+    return this.requestReconcileFromRepository(effectId, tenantId, actor);
+  }
+  createCompensationAuthorization(
+    authorization: CompensationAuthorizationRecord,
+  ): Promise<{ authorization: CompensationAuthorizationRecord; replayed: boolean }> {
+    return this.repository.createCompensationAuthorization(authorization);
+  }
+  getCompensationAuthorization(
+    authorizationId: string,
+    tenantId: string,
+  ): Promise<CompensationAuthorizationRecord | null> {
+    return this.repository.getCompensationAuthorization(authorizationId, tenantId);
+  }
+  requestCompensation(input: RequestCompensationInput): Promise<RequestCompensationResult> {
+    return this.repository.requestCompensation(input);
+  }
+  private async requestReconcileFromRepository(
+    effectId: string,
+    tenantId: string,
+    actor: string,
+  ): Promise<ActionReconcileRequestResult> {
+    return this.repository.requestReconcile({ effectId, tenantId, actor });
   }
   pauseRun(runId: string, tenantId: string, actor: string): Promise<KernelRun | null> {
     return this.repository.pauseRun(runId, tenantId, actor);
@@ -288,6 +374,7 @@ export class GatewayStepIdConflictError extends Error {
 
 let gateway: V1KernelGateway | null = null;
 let initializePromise: Promise<void> | null = null;
+let repositoryHandle: KernelRepositoryHandle | null = null;
 
 /**
  * Kernel Postgres DSN: COMMANDER_KERNEL_DATABASE_URL, else DATABASE_URL.
@@ -333,18 +420,29 @@ export function isCommanderKernelExplicitlyDisabled(env: NodeJS.ProcessEnv = pro
 export async function initializeV1KernelGateway(): Promise<void> {
   if (!isCommanderKernelEnabled()) return;
   if (initializePromise) return initializePromise;
-  const connectionString = getKernelDatabaseUrl();
-  if (!connectionString)
+  if (!getKernelDatabaseUrl())
     throw new Error(
       'Kernel enabled (COMMANDER_KERNEL_ENABLED default-on or =1) requires COMMANDER_KERNEL_DATABASE_URL or DATABASE_URL',
     );
   initializePromise = (async () => {
-    const pool = createVerifiedPostgresPool({ connectionString });
-    const repository = new PostgresKernelRepository(pool as never);
-    await repository.initialize();
-    gateway = new RepositoryV1KernelGateway(repository);
+    const handle = await createKernelRepository({
+      env: {
+        ...process.env,
+        COMMANDER_KERNEL_BACKEND: 'postgres',
+      },
+    });
+    repositoryHandle = handle;
+    gateway = new RepositoryV1KernelGateway(handle.repository);
   })();
   return initializePromise;
+}
+
+export async function closeV1KernelGateway(): Promise<void> {
+  const handle = repositoryHandle;
+  repositoryHandle = null;
+  gateway = null;
+  initializePromise = null;
+  await handle?.close();
 }
 
 export function getV1KernelGateway(): V1KernelGateway | null {

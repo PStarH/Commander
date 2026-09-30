@@ -1,0 +1,7 @@
+{
+  "scheduled": true,
+  "effectId": "effect_action_01",
+  "state": "COMPLETION_UNKNOWN",
+  "reconcileAfter": "2026-07-21T00:05:00.000Z",
+  "alreadyScheduled": false
+}

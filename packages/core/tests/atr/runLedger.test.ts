@@ -2,12 +2,12 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert';
-import { RunLedger } from '../../src/atr/runLedger';
+import { RunLedger, RunIntentMismatchError } from '../../src/atr/runLedger';
 import { LeaseManager } from '../../src/atr/leaseManager';
 import { IdempotencyStore } from '../../src/atr/idempotencyStore';
 import type { CompensationHandler } from '../../src/atr/runLedger';
 
-function newLedger(): RunLedger {
+function newLedgerBundle(): { ledger: RunLedger; lease: LeaseManager } {
   const lease = new LeaseManager({
     filePath: ':memory:',
     defaultTtlSeconds: 60,
@@ -19,12 +19,30 @@ function newLedger(): RunLedger {
     evictEveryOps: 100_000,
     maxRecords: 1000,
   });
-  return new RunLedger(lease, idempotency, {
+  const ledger = new RunLedger(lease, idempotency, {
     filePath: ':memory:',
     defaultTtlSeconds: 60,
     defaultHolder: 'test',
     defaultIdempotencyTtlSeconds: 60,
   });
+  return { ledger, lease };
+}
+
+function newLedger(): RunLedger {
+  return newLedgerBundle().ledger;
+}
+
+/** Move a live lease (and the run row mirror) into the past. */
+function expireLease(ledger: RunLedger, lease: LeaseManager, runId: string, token: string): void {
+  assert.strictEqual(lease.heartbeat(runId, token, { ttlSeconds: -1 }), true);
+  const live = lease.get(runId);
+  assert.ok(live);
+  assert.strictEqual(
+    ledger.syncLeaseCredentials(runId, live!.token, live!.fencingEpoch, {
+      expiresAt: live!.expiresAt,
+    }),
+    true,
+  );
 }
 
 describe('RunLedger', () => {
@@ -202,6 +220,114 @@ describe('RunLedger', () => {
       assert.ok(result.outcome.failed > 0);
       assert.ok(result.outcome.errors.length > 0);
       assert.strictEqual(result.outcome.errors[0].error, 'external system down');
+    });
+  });
+
+  // ── AS-04: ownership + lease validity + legal source state, atomically ────
+  describe('AS-04 terminal / lease / source-state guards', () => {
+    it('a terminal run is read-only: begin/verify/commit all fail', () => {
+      const ledger = newLedger();
+      const { tx } = ledger.start({ runId: 'run-t', intentHash: 'h' });
+      assert.strictEqual(ledger.beginExecuting('run-t', tx.leaseToken, tx.fencingEpoch), true);
+      assert.strictEqual(ledger.beginVerifying('run-t', tx.leaseToken, tx.fencingEpoch), true);
+      assert.strictEqual(ledger.commit('run-t', tx.leaseToken, tx.fencingEpoch), true);
+
+      assert.strictEqual(ledger.beginExecuting('run-t', tx.leaseToken, tx.fencingEpoch), false);
+      assert.strictEqual(ledger.beginVerifying('run-t', tx.leaseToken, tx.fencingEpoch), false);
+      assert.strictEqual(ledger.commit('run-t', tx.leaseToken, tx.fencingEpoch), false);
+      assert.strictEqual(ledger.getTransaction('run-t')!.state, 'COMMITTED');
+    });
+
+    it('refuses to re-bind an existing run id to a different intent', () => {
+      const ledger = newLedger();
+      ledger.start({ runId: 'run-intent', intentHash: 'hash-A' });
+      assert.throws(
+        () => ledger.start({ runId: 'run-intent', intentHash: 'hash-B' }),
+        (err: unknown) => err instanceof RunIntentMismatchError,
+      );
+      // Same intent is still idempotent.
+      const again = ledger.start({ runId: 'run-intent', intentHash: 'hash-A' });
+      assert.strictEqual(again.lease.acquired, false);
+      assert.strictEqual(again.tx.intentHash, 'hash-A');
+    });
+
+    it('an exclusive claim (from PENDING) can only succeed once', () => {
+      const ledger = newLedger();
+      const { tx } = ledger.start({ runId: 'run-claim', intentHash: 'h' });
+      assert.strictEqual(
+        ledger.beginExecuting('run-claim', tx.leaseToken, tx.fencingEpoch, { from: ['PENDING'] }),
+        true,
+      );
+      // A second claimer with the SAME credentials cannot win the source-state CAS.
+      assert.strictEqual(
+        ledger.beginExecuting('run-claim', tx.leaseToken, tx.fencingEpoch, { from: ['PENDING'] }),
+        false,
+      );
+    });
+
+    it('refuses a source state that is not in the legal set', () => {
+      const ledger = newLedger();
+      const { tx } = ledger.start({ runId: 'run-src', intentHash: 'h' });
+      ledger.beginExecuting('run-src', tx.leaseToken, tx.fencingEpoch);
+      ledger.pause('run-src', tx.leaseToken, tx.fencingEpoch, { reason: 'test' });
+      // Default begin source states are PENDING/EXECUTING: PAUSED is not one.
+      assert.strictEqual(ledger.beginExecuting('run-src', tx.leaseToken, tx.fencingEpoch), false);
+      assert.strictEqual(ledger.getTransaction('run-src')!.state, 'PAUSED');
+    });
+
+    it('refuses writes after the lease expires', () => {
+      const { ledger, lease } = newLedgerBundle();
+      const { tx } = ledger.start({ runId: 'run-expiry', intentHash: 'h' });
+      assert.strictEqual(ledger.beginExecuting('run-expiry', tx.leaseToken, tx.fencingEpoch), true);
+      expireLease(ledger, lease, 'run-expiry', tx.leaseToken);
+
+      assert.strictEqual(
+        ledger.recordAction({
+          runId: 'run-expiry',
+          leaseToken: tx.leaseToken,
+          fencingEpoch: tx.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k',
+          compensable: true,
+        }),
+        null,
+      );
+      assert.strictEqual(
+        ledger.beginVerifying('run-expiry', tx.leaseToken, tx.fencingEpoch),
+        false,
+      );
+      assert.strictEqual(ledger.commit('run-expiry', tx.leaseToken, tx.fencingEpoch), false);
+    });
+
+    it('refuses writes after the lease is revoked (kill)', () => {
+      const ledger = newLedger();
+      const { tx } = ledger.start({ runId: 'run-kill', intentHash: 'h' });
+      ledger.beginExecuting('run-kill', tx.leaseToken, tx.fencingEpoch);
+      assert.strictEqual(ledger.revokeLease('run-kill', tx.leaseToken, tx.fencingEpoch), true);
+      assert.strictEqual(
+        ledger.recordAction({
+          runId: 'run-kill',
+          leaseToken: tx.leaseToken,
+          fencingEpoch: tx.fencingEpoch,
+          toolName: 't',
+          externalSystem: 's',
+          args: {},
+          idempotencyKey: 'k',
+          compensable: true,
+        }),
+        null,
+      );
+    });
+
+    it('syncLeaseCredentials refuses credentials that are not the live lease', () => {
+      const ledger = newLedger();
+      const { tx } = ledger.start({ runId: 'run-sync', intentHash: 'h' });
+      assert.strictEqual(
+        ledger.syncLeaseCredentials('run-sync', 'not-the-token', tx.fencingEpoch + 5),
+        false,
+      );
     });
   });
 });

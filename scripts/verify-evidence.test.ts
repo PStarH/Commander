@@ -6,17 +6,17 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { describe, it } from 'node:test';
 import {
-  buildSignedEvidenceBundle,
+  buildRunEvidenceBundle,
   canonicalEvidenceBody,
   canonicalEvidenceJson,
-  type SignedEvidenceBundle,
-} from '../packages/effect-broker/src/signedEvidence.js';
-import { createEvidenceSigner } from '../packages/effect-broker/src/evidenceSigner.js';
+  createEvidenceSigner,
+  type EvidenceBundle,
+} from '../packages/effect-broker/src/index.js';
 
 async function resign(
-  receipt: SignedEvidenceBundle,
+  receipt: EvidenceBundle,
   signer: ReturnType<typeof createEvidenceSigner>,
-): Promise<SignedEvidenceBundle> {
+): Promise<EvidenceBundle> {
   const { contentHash: _contentHash, signature: _signature, ...body } = receipt;
   const contentHash = createHash('sha256').update(canonicalEvidenceJson(body)).digest('hex');
   const resigned = { ...receipt, contentHash };
@@ -31,7 +31,7 @@ describe('verify-evidence CLI', () => {
       privateKeyPem: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
       keyId: 'cell-cli-1',
     });
-    const receipt = buildSignedEvidenceBundle({
+    const receipt = buildRunEvidenceBundle({
       tenantId: 'tenant-a',
       runId: 'run-1',
       actionDigest: 'a'.repeat(64),
@@ -80,19 +80,15 @@ describe('verify-evidence CLI', () => {
         await resign(
           {
             ...receipt,
-            bodyVersion:
-              'commander.evidence-body/v2' as unknown as SignedEvidenceBundle['bodyVersion'],
+            bodyVersion: 'commander.evidence-body/v2' as EvidenceBundle['bodyVersion'],
           },
           signer,
         ),
         await resign(
-          {
-            ...receipt,
-            effects: [effectWithoutRequestHash] as SignedEvidenceBundle['effects'],
-          },
+          { ...receipt, effects: [effectWithoutRequestHash] as EvidenceBundle['effects'] },
           signer,
         ),
-        await resign({ ...receipt, unexpected: true } as SignedEvidenceBundle, signer),
+        await resign({ ...receipt, unexpected: true } as EvidenceBundle, signer),
       ];
       for (const malformedReceipt of malformedReceipts) {
         writeFileSync(receiptPath, JSON.stringify(malformedReceipt));

@@ -22,6 +22,7 @@ import { getGlobalLogger } from '../logging';
 import { getAuditChainLedger } from '../security/auditChainLedger';
 import {
   getAdaptiveHitl,
+  STRATEGY_SEVERITY,
   type HITLStrategy,
   type HITLSignalBundle,
   type HITLDecision,
@@ -136,6 +137,7 @@ export class SecurityOrchestrator {
 
     let hitlDecided: HITLStrategy = 'auto';
     let hitlDecision: HITLDecision | undefined;
+    let adaptiveBlockReason: string | undefined;
 
     // AdaptiveHITL: dynamic risk scoring from runtime signals
     if (this.config.enableAdaptiveHITL) {
@@ -198,9 +200,16 @@ export class SecurityOrchestrator {
         hitlDecided = decision.strategy;
         sources.push('AdaptiveHITL');
 
-        // Deny = block execution
-        if (decision.strategy === 'deny') {
+        // Enforce the documented contract — this facade takes the *max*
+        // restriction of ToolApproval and AdaptiveHITL. Previously only 'deny'
+        // flipped `allowed`, so a 'confirm' / 'pause_and_review' / 'escalate'
+        // verdict (i.e. "a human must approve this before it runs") was treated
+        // as an allow and the tool executed without any confirmation. No
+        // confirmation round-trip is wired into this path, so any strategy at or
+        // above 'confirm' must fail closed rather than silently proceed.
+        if (STRATEGY_SEVERITY[decision.strategy] >= STRATEGY_SEVERITY.confirm) {
           allowed = false;
+          adaptiveBlockReason = `AdaptiveHITL requires '${decision.strategy}' before this tool call may execute`;
         }
 
         // Audit confirm+ decisions (both allowed and denied) so the tamper-evident
@@ -222,6 +231,7 @@ export class SecurityOrchestrator {
         // Fail closed: if dynamic risk evaluation cannot run, block the tool call.
         allowed = false;
         hitlDecided = 'deny';
+        adaptiveBlockReason = 'AdaptiveHITL evaluation failed; failing closed';
         sources.push('AdaptiveHITL(failed)');
       }
     }
@@ -230,6 +240,7 @@ export class SecurityOrchestrator {
       allowed,
       hitlStrategy: hitlDecided,
       hitlDecision,
+      blockReason: adaptiveBlockReason,
       sources,
     };
   }
@@ -275,15 +286,19 @@ export class SecurityOrchestrator {
         reportSilentFailure(err, 'securityOrchestrator:259');
         /* best-effort */
       }
-      // Fail-open: return unsanitized entries on DP failure
+      // Fail closed. Returning `entries` here would hand the *unsanitized*
+      // memory straight to a different agent — the exact cross-agent leak DP
+      // exists to prevent — while labelling the query `answerable: true`, so
+      // no caller could tell that sanitization never ran. A DP layer that
+      // cannot answer must say so.
       return {
-        result: entries,
+        result: undefined,
         epsilonUsed: 0,
         deltaUsed: 0,
         remainingBudget: 0,
-        answerable: true,
-        mechanism: 'laplace',
-        sensitivity: 0,
+        answerable: false,
+        reason: 'sanitizer_unavailable',
+        detail: `Differential privacy layer failed: ${(e as Error)?.message ?? String(e)}`,
       };
     }
   }

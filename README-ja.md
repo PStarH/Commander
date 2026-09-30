@@ -1,50 +1,48 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/GAIA-TBD-lightgrey?style=flat-square" />
-  <img src="https://img.shields.io/badge/PinchBench-97.7%25-green?style=flat-square" />
-  <img src="https://img.shields.io/badge/HumanEval+-91.5%25-orange?style=flat-square" />
-  <img src="https://img.shields.io/badge/providers-25-purple?style=flat-square" />
-  <img src="https://img.shields.io/badge/topologies-5-red?style=flat-square" />
   <img src="https://img.shields.io/badge/license-MIT-yellow?style=flat-square" />
 </p>
 
 <h1 align="center">Commander</h1>
-<p align="center"><strong>AI が何をしているか見えるように。結果を信頼して。コストを削減。</strong></p>
+<p align="center"><strong>ローカルエージェントランタイムとアクション管理ゲートウェイ · Alpha</strong></p>
+
+> **Alpha 注意:** Commander は現在 alpha で、プロダクション対応ではありません。出力、ベンチマーク、POC
+> シナリオ、ダッシュボード値は開発またはデモ用の信号です。独自の確認なしに、無人の本番ワークロードや機密データに使用しないでください。
 
 <p align="center">
   <code>pnpm exec tsx packages/core/src/cliEntry.ts watch "investigate this bug"</code><br>
-  <sub>インストール不要。ワンコマンド。マルチエージェントの推論ストリームをリアルタイムでターミナルに表示。</sub>
+  <sub>ソースのインストールと設定後、実行イベントとツール呼び出しをターミナルで確認できます。</sub>
 </p>
 
 <p align="center">
-  <img src="docs/assets/commander-watch-demo.gif" alt="Commander watch demo — リアルタイムエージェントストリーミング" width="90%">
+  <img src="docs/assets/commander-watch-demo.svg" alt="Commander watch demo — リアルタイムエージェントストリーミング" width="90%">
 </p>
 
 ---
 
-> **2 つの実行形態：** Commander は 2 つの SKU で提供されます —— **Local CLI**（ローカルツール、デフォルト）と **Enterprise Gateway**（`/v1` + 任意 Postgres、**alpha**。live-fire 証明済みの完全マルチテナント SaaS ではありません）。詳細は英語の [README.md](README.md) SKU 表と [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) を参照。
+> **2 つの実行形態：** Commander は **Local CLI**（ローカル開発ツール）と **Enterprise Gateway**（`/v1`、PostgreSQL 必須、**alpha**）を提供します。共有マルチテナント SaaS の受入完了を意味しません。企業評価は [Shadow Phase A](docs/pilot/shadow/README.md) から開始し、履歴サンプルのみを評価します。外部 rollback の実行・承認は行わず、ライブ rollback は引き続き凍結中です。詳細は英語の [README.md](README.md) と [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md) を参照。
 
 ## Commander の独自性
 
-**透明性——すべてが見える。** 各エージェントの思考、ツール呼び出し、決定が SSE を介してリアルタイムでストリーミングされます。ブラックボックスなし。エージェントの作業をステップバイステップで確認できます。
+**透明性——実行イベントを確認。** 各エージェントのイベント、ツール呼び出し、利用可能なゲート決定が SSE を介してリアルタイムでストリーミングされます。出力された作業トレースを段階的に確認できます。
 
-**信頼性——検証済みの出力。** 品質ゲートが結果を返す前にすべてチェックします。ハルシネーション検出、整合性、完全性、正確性、安全性の検証。信頼できる結果が得られます。
+**信頼性——設定可能な出力チェック。** 検証パイプラインを有効にした経路では、品質ゲートが結果を返す前に設定済みのチェックを実行します。ハルシネーション検出、整合性、完全性、正確性、安全性を含み、失敗時は再試行または失敗を報告します。
 
-**コスト効率——スマートな支出。** 推論エンジンがトークンを消費する前にタスクを分析します。適切なトポロジを自動選択——単純なタスクには 1 エージェント、複雑なタスクには並列エージェント。実際のコスト：タスクあたり約 $0.10（品質検証込み）。
+**コスト効率——スマートな支出。** 推論エンジンがトークンを消費する前にタスクを分析します。適切なトポロジを自動選択——単純なタスクには 1 エージェント、複雑なタスクには並列エージェント。実際のコストはプロバイダー、モデル、タスク、設定した検証によって異なります。
 
 **25 の LLM プロバイダー。** OpenAI、Anthropic、Google、Azure、DeepSeek、GLM、MiMo、Xiaomi、Groq、Together、Perplexity、Fireworks、Replicate、Mistral、Cohere、OpenRouter、xAI、Anyscale、DeepInfra、Agnes、Ollama、vLLM、AWS Bedrock、StepFun、MiniMax——環境変数を 1 つ設定するだけで、Commander が残りを処理します。フォールバックチェーン付き。
 
-**自己改善。** Meta-learner は Thompson Sampling + Reflexion を使用して、実行間でエージェント設定を調整します。使用するほど向上します。
+**自己改善。** Meta-learner は Thompson Sampling + Reflexion を使用して、記録された実行に基づきエージェント設定を調整します。効果はタスク、モデル、データに依存します。
 
 ---
 
 ## 30 秒デモ
 
 ```bash
-# tsx があればインストール不要（または pnpm/npx を使用）
+# インストールと設定を済ませたソースディレクトリで実行
 pnpm exec tsx packages/core/src/cliEntry.ts watch "find the bug in src/server.ts and fix it"
 ```
 
-これはモックアップではありません——実際のエージェント実行からのライブ SSE ストリームの実録画です。すべてのツール呼び出し、すべての決定、すべての検証がリアルタイムでターミナルにストリーミングされます。エージェントの思考を**観察**できます。
+これは UI を示す録画デモで、CLI の SSE ストリーミング操作を紹介します。プロダクション実行や顧客環境の証拠を示すものではありません。
 
 ---
 
@@ -60,7 +58,7 @@ export OPENAI_API_KEY=sk-...
 # 3. 何でも実行
 pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 pnpm exec tsx packages/core/src/cliEntry.ts plan "implement authentication"    # 実行前に計画を確認
-pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # エージェントの推論をリアルタイム表示
+pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     # エージェントのイベントをリアルタイム表示
 ```
 
 ---
@@ -84,7 +82,7 @@ pnpm exec tsx packages/core/src/cliEntry.ts watch "debug the failing test"     #
 
 ## トポロジ
 
-Commander は 5 つの標準トポロジから最適なものを自動選択します：
+Commander は 5 つの標準トポロジから適切な構成を自動選択します：
 
 - **SINGLE** — 単一エージェント、単純なクエリ、迅速な回答
 - **CHAIN** — 順次パイプライン、段階的な精緻化
@@ -116,10 +114,10 @@ packages/core/src/
 
 ## 品質ゲート
 
-すべての結果は返却前に検証されます：
+検証パイプラインを有効にした経路では、結果は返却前に設定済みのチェックを通ります：
 
 ```
-タスク入力 → エージェント実行 → [品質ゲート] → 検証済み出力
+タスク入力 → エージェント実行 → [品質ゲート] → 設定済みチェック後の出力
                             │
                             ├─ ハルシネーション検出（hallucination）
                             ├─ 整合性（consistency）
@@ -134,7 +132,7 @@ packages/core/src/
 
 ### 前提条件
 
-- Node.js ≥ 18
+- Node.js 22.x（≥ 22.9.0、< 23）
 - pnpm（推奨）または npm
 - 任意の LLM プロバイダーの API キー
 
@@ -164,16 +162,18 @@ export ANTHROPIC_API_KEY=sk-ant-...
 # CLI を使用
 pnpm exec tsx packages/core/src/cliEntry.ts run "your task here"
 
-# API を使用
-pnpm exec tsx examples/api-usage.ts
+# 基本例を実行
+pnpm exec tsx examples/basic.ts
 
-# Docker を使用
-docker compose up -d
+# Docker を使用（api は認証用 PostgreSQL DSN を必要とするため v2 profile を使用）
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
 ```
 
 ---
 
 ## ベンチマーク
+
+> 以下のベンチマークはシミュレーション/スクリプト化 harness または CI ベースラインで実行されます。プロダクション SLA や SOC 証拠を測るものではありません。
 
 ```bash
 pnpm benchmark:gaia        # GAIA ベンチマークを実行（詳細なスクリプトは package.json の scripts を参照）
@@ -181,19 +181,17 @@ pnpm benchmark:gaia        # GAIA ベンチマークを実行（詳細なスク�
 
 ---
 
-| ベンチマーク                                           |   Commander   | ベア LLM (MiMo) | OpenClaw |      Δ      |
-| ------------------------------------------------------ | :-----------: | :-------------: | :------: | :---------: |
-| **GAIA**（165 の多段階推論タスク）                     | ⏳ 再実行待ち |      21.2%      |    —     |      —      |
-| **BFCL** ツール選択（35 シナリオ非公式サブセット）     |   **77.1%**   |        —        |    —     |      —      |
-| **BFCL** パラメータ予測（35 シナリオ非公式サブセット） |   **77.1%**   |        —        |    —     |      —      |
-| **PinchBench**（43 のエージェントタスク）              |  **100.0%**   |        —        |  89.5%   | **+10.5pp** |
-| **HumanEval+**（164 の Python 問題）                   |   **96.3%**   |        —        |    —     |      —      |
-
-BFCL は本リポジトリで複数の非公式サブセットを使用しています：35 シナリオ汎用サブセット（`benchmarks/bfcl/results_full.json`、77.1% ツール / 77.1% パラメータ）、30 タスク Commander 再実行（`docs/benchmark-results/bfcl/results.json`、80.0% / 80.0%）、および 12 コアサブセット（`benchmarks/bfcl/results.json`、91.7% / 91.7%）。これらはいずれも公式 BFCL リーダーボードの実行結果ではありません。
+| スイート | カバレッジ | 結果 |
+| -------- | ---------- | ---- |
+| Chaos Engineering | 合成 200 ケース + mutation 55 ケース（計 255） | harness の入口；結果は基準マトリクスを参照 |
+| Red Team | 47 シナリオ、8 攻撃カテゴリ | 掲載ケースはすべて blocked（シミュレーション harness） |
+| AgentDojo | 12 セキュリティテストケース | 掲載ケースはすべて blocked（シミュレーション harness） |
+| GAIA Spine | コア機能ベンチマーク | quick/offline 回帰をスケジュール；完全な fixture は保留 |
+| SLO | API 可用性 99.95%、P95 スケジュール <5s | CI ベースライン、プロダクション SLA ではない |
 
 ```bash
 # 任意のベンチマークを再現
-pnpm --filter @commander/core benchmark:verify  # 提出済み BFCL スコア主張を再計算
+pnpm test:core                   # コアスイートとローカルベースラインを検証
 pnpm test:core                   # 完全なコアスイート：node:test + vitest
 pnpm benchmark:chaos:full        # カオスエンジニアリングベンチマーク（255 シナリオ）
 ```
@@ -207,7 +205,7 @@ pnpm benchmark:chaos:full        # カオスエンジニアリングベンチマ
 | `commander run <task>`             | 完全なマルチエージェント実行（`--dry-run` で計画表示、`--stream` でリアルタイム SSE、`--tui` で端末ダッシュボード） |
 | `commander fix`                    | lint・フォーマット・型エラーを自動修正                      |
 | `commander init`                   | ゼロ設定環境スキャン + プロバイダー接続テスト               |
-| `commander company <task>`         | マルチエージェント企業モード：計画 → 構築 → レビュー → 改善 |
+| `commander company <task>`         | ローカル company モード：計画 → 構築 → レビュー → 改善 |
 | `commander swarm <task>`           | 再帰的分解 + 並列実行                                       |
 | `commander drive <task>`           | 自律的な段階的実行                                          |
 | `commander goal <task>`            | 多輪収束ループ                                              |
@@ -251,13 +249,25 @@ pnpm exec tsx packages/core/src/cliEntry.ts run "analyze this repository"
 ## デプロイ
 
 ```bash
-# ローカル（Docker Compose）
+# ローカル（Docker Compose）— API のみ、SQLite、kernel は明示的に無効
+# 注意: api の 5 つの認証オーソリティは PostgreSQL 専用でローカル代替がなく、
+# この profile は DATABASE_URL を注入しないため、コンテナは起動時に
+# AUTH_DATABASE_URL_REQUIRED で終了します。起動可能な経路は下の v2 profile。
+cp .env.example .env   # 必須シークレットをすべて入力（雛形のままでは起動しません）
 docker compose up -d
-# → API: localhost:4000  |  Web GUI: localhost:3000
+# → api コンテナは起動直後に終了（AUTH_DATABASE_URL_REQUIRED）
 
-# 本番環境（VM / VPS）
+# ローカル + Web コンソール（同じく認証 DSN が無く api は終了）
+docker compose --profile web up -d
+
+# 起動可能なローカル／本番形態（Postgres + kernel + worker plane、commander_app DSN 付き）
+docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d --build
+
+# 本番環境（VM / VPS、ビルド済みイメージ）
 ./scripts/deploy-vm.sh your-vm-ip --env-file .env.production
 ```
+
+既定の `docker compose up` は `api` のみを起動します（ローカル SQLite）が、そのコンテナには `DATABASE_URL` が無いため起動時に `AUTH_DATABASE_URL_REQUIRED` で終了します。api の 5 つの認証オーソリティ（ユーザー、API キー、refresh token、認証失敗、レート制限）は PostgreSQL 専用で `commander_app` ロールを要求し、ローカル／SQLite／インメモリのフォールバックは存在しません。実際に起動するスタックには `v2` または `cell` profile を使用してください。Web コンソール、Postgres、worker plane は対応する profile を明示的に有効化してください。詳細は `docs/deploy.md` を参照。
 
 本番 Compose オーバーレイで追加できるもの：CPU/メモリ制限、JSON ファイルログ、自動再起動、ヘルスチェック、レート制限。マルチテナンシーは **Enterprise Gateway（alpha）** —— リクエスト文脈の隔離はあり、ストレージ隔離は opt-in。`ENTERPRISE_READINESS.md` を参照し、完成形 SaaS 隔離とみなさないでください。
 
@@ -272,7 +282,7 @@ docker compose up -d
 
 ## ドキュメント
 
-- [ARCHITECTURE.md](ARCHITECTURE.md) — システム設計・モジュール図・データフロー
+- [docs/architecture/](docs/architecture/000-index.md) — アーキテクチャ決定記録（V2 リソースモデル・状態機械・永続化・アイデンティティ・effect broker・worker プロトコル・イベントセマンティクス）
 - [docs/getting-started.md](docs/getting-started.md) — クイックスタート
 - [docs/deploy.md](docs/deploy.md) — デプロイ
 - [docs/v2-migration-guide.md](docs/v2-migration-guide.md) — Architecture V2 移行
@@ -283,6 +293,13 @@ docker compose up -d
 - [docs/README.md](docs/README.md) — 公開ドキュメント索引
 
 内部監査・AI 作業計画・デューデリジェンスメモは**本リポジトリに含まれません**。開発者ローカルの `.internal/`（gitignore）のみです。
+
+## プライバシー、フィードバック、セキュリティ
+
+- [PRIVACY.md](PRIVACY.md): provider への送信、trace/memory/audit の保存、保持と削除の境界。
+- 通常のバグは [GitHub Issues](https://github.com/PStarH/Commander/issues) に、prompt・ログ・設定・PII・秘密情報を必ずマスキングして報告してください。
+- 質問や提案は [GitHub Discussions](https://github.com/PStarH/Commander/discussions) を使用してください。
+- セキュリティ脆弱性は [SECURITY.md](SECURITY.md) に従って非公開で報告し、公開 issue は作成しないでください。
 
 ## ライセンス
 

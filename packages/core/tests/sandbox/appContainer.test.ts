@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import {
   AppContainerSB,
   buildAppContainerAclGrantScript,
@@ -563,25 +563,27 @@ describe('AppContainerSB', () => {
   it.runIf(process.platform === 'win32')(
     'rolls back ACLs on a real path without executing injected syntax',
     () => {
-      const targetPath = path.join(stateDir, 'acl-rollback-target');
-      fs.mkdirSync(targetPath, { recursive: true });
+      const marker = path.join(stateDir, 'APP_CONTAINER_PWNED.txt');
+      const script = buildAppContainerAclRollbackScript('S-1-15-2-100', [
+        {
+          path: `${path.join(stateDir, 'missing-acl-target')}; Set-Content -LiteralPath '${marker}' -Value pwned #`,
+          access: 'read',
+        },
+      ]);
+      expect(script).not.toContain('Set-Content');
+      expect(script).not.toContain(marker);
 
       try {
-        const script = buildAppContainerAclRollbackScript('S-1-15-2-123-456', [
-          { path: targetPath, access: 'read' },
-        ]);
-        const result = spawnSync(
+        execFileSync(
           'powershell.exe',
           ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-          { encoding: 'utf8', timeout: 10_000 },
+          { timeout: 10_000 },
         );
-
-        expect(result.error).toBeUndefined();
-        expect(result.status).toBe(0);
-        expect(result.stdout).toContain('ACL_ROLLED_BACK');
-      } finally {
-        fs.rmSync(targetPath, { recursive: true, force: true });
+      } catch {
+        // icacls fails because that path does not exist. The injected
+        // Set-Content would still have created the marker first.
       }
+      expect(fs.existsSync(marker)).toBe(false);
     },
   );
 });

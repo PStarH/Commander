@@ -1,0 +1,57 @@
+# Demo cell profile with bundled ephemeral Postgres.
+# Used by the Kind lifecycle harness for the fresh bundled scenario.
+tier: demo
+web: { enabled: false }
+worker:
+  enabled: true
+  tenants: local
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+kernelOps:
+  enabled: true
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+adapterOps:
+  enabled: true
+  replicas: 1
+  secrets: { create: true }
+  image:
+    repository: commander-lifecycle-noop
+    tag: latest
+    pullPolicy: IfNotPresent
+capability: { create: true }
+api:
+  secrets: { create: true }
+  replicas: 2
+persistence: { enabled: false }
+
+# Override every workload image to the no-op fixture image built by the harness.
+image:
+  repository: commander-lifecycle-noop
+  tag: latest
+  pullPolicy: IfNotPresent
+
+# Tenant authority proof configuration. The harness creates the referenced
+# Secrets before installing the chart.
+tenantAuthority:
+  configurationSha256: '0000000000000000000000000000000000000000000000000000000000000000'
+  apiProof:
+    publicSecret: commander-lifecycle-api-proof-public
+    caKey: ca.crt
+    certKey: tls.crt
+  cutoverPhase: enforce
+
+database:
+  enabled: true
+  backend: postgres
+  postgres:
+    bundled: true
+    persistence: { enabled: false }
+
+databaseTls:
+  existingSecret: commander-lifecycle-database-tls
+  expectedServerSpkiSha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc

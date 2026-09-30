@@ -20,6 +20,9 @@ import type { IEventBus } from '../contracts/pillarII';
 import { getMessageBus } from './messageBus';
 import type { MessageBus } from './messageBus';
 import { getGlobalEventSourcingEngine } from './eventSourcingEngine';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -383,7 +386,7 @@ let globalEventBus: ContractEventBus | null = null;
  */
 export function getGlobalContractEventBus(): ContractEventBus {
   if (!globalEventBus) {
-    const { createDistributedEventBus } = require('./distributedEventBus') as {
+    const { createDistributedEventBus } = nodeRequire('./distributedEventBus') as {
       createDistributedEventBus: (config?: {
         backend?: 'memory' | 'redis' | 'nats';
         redisUrl?: string;

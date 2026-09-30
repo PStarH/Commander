@@ -71,8 +71,11 @@ interface JwkOkp {
 }
 
 function isProductionOrEnterprise(env: CapabilityAuthorityEnv): boolean {
+  // AUDIT-K1: COMMANDER_ENV joins the signal set — production detection must
+  // not hinge on NODE_ENV surviving the deployment env plumbing.
   return (
     env.NODE_ENV === 'production' ||
+    env.COMMANDER_ENV === 'production' ||
     env.COMMANDER_PROFILE === 'enterprise' ||
     env.COMMANDER_CELL_TIER === 'enterprise' ||
     env.COMMANDER_REQUIRE_CAPABILITY_AUTHORITY === '1'
@@ -203,6 +206,12 @@ function createDurableTokenPort(input: {
   return {
     async verify(token: string, now?: Date): Promise<CapabilityGrant> {
       const grant = await base.verify(token, now);
+      // AUDIT-F2: fail closed — a signed grant without a nonce would bypass
+      // durable replay accounting entirely (nothing to consume). Reject in
+      // production/enterprise profiles; the bundled issuer always sets one.
+      if (!grant.nonce && isProductionOrEnterprise(process.env)) {
+        throw new Error('Capability grant rejected: replay nonce required in production profile');
+      }
       if (grant.nonce) {
         const replayed = await input.repository.consumeCapabilityReplay({
           tenantId: grant.tenantId,

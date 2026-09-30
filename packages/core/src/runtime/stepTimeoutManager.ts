@@ -30,8 +30,28 @@ export interface StepTimeoutOptions {
   onTimeout?: (signal: AbortSignal) => void;
 }
 
+/**
+ * One in-flight wrapped step. The manager owns the deadline timer (instead of
+ * the promise executor) so cancellation can release it immediately rather than
+ * leaving it alive until the wrapped promise eventually settles.
+ */
+interface ActiveStep {
+  controller: AbortController;
+  timer: ReturnType<typeof setTimeout>;
+  timeoutError: StepTimeoutError;
+  onTimeout?: (signal: AbortSignal) => void;
+  settled: boolean;
+  cleanupInvoked: boolean;
+  cancel: (err: Error) => void;
+}
+
 export class StepTimeoutManager {
-  private active = new Map<string, { controller: AbortController; reject: (err: Error) => void }>();
+  /**
+   * stepId → every in-flight wrap for that id. Duplicate step IDs are tracked
+   * as a set so a finished duplicate cannot evict a still-running sibling and
+   * leave it uncancellable.
+   */
+  private active = new Map<string, Set<ActiveStep>>();
 
   async wrap<T>(promise: Promise<T>, options: StepTimeoutOptions): Promise<T> {
     const controller = new AbortController();
@@ -39,60 +59,94 @@ export class StepTimeoutManager {
 
     const timeoutPromise = new Promise<never>((_, reject) => {
       rejectFn = reject;
-      const timer = setTimeout(() => {
-        controller.abort(new StepTimeoutError(options.stepId, options.timeoutMs));
-        if (options.onTimeout) {
-          try {
-            options.onTimeout(controller.signal);
-          } catch (err) {
-            reportSilentFailure(err, 'stepTimeoutManager:47');
-            /* best-effort */
-          }
-        }
-        reject(new StepTimeoutError(options.stepId, options.timeoutMs));
-      }, options.timeoutMs);
-      // Use .then() with both handlers instead of .finally() to avoid creating
-      // a floating rejected promise that Node.js reports as unhandled.
-      // .finally() propagates the rejection, but nothing chains on the result.
-      // .then(onFulfilled, onRejected) swallows the error if neither handler throws.
-      promise.then(
-        () => clearTimeout(timer),
-        () => clearTimeout(timer),
-      );
     });
 
-    this.active.set(options.stepId, {
+    const entry: ActiveStep = {
       controller,
-      reject: (err) => {
+      timer: undefined as unknown as ReturnType<typeof setTimeout>,
+      timeoutError: new StepTimeoutError(options.stepId, options.timeoutMs),
+      onTimeout: options.onTimeout,
+      settled: false,
+      cleanupInvoked: false,
+      cancel: (err) => {
+        if (entry.settled) return;
+        entry.settled = true;
+        // Cancellation is a terminal path: release the deadline timer here and
+        // fire the caller's cleanup contract, exactly as a timeout would.
+        clearTimeout(entry.timer);
         controller.abort(err);
+        runCleanup(entry);
         if (rejectFn) rejectFn(err);
       },
-    });
+    };
+
+    entry.timer = setTimeout(() => {
+      if (entry.settled) return;
+      entry.settled = true;
+      controller.abort(entry.timeoutError);
+      runCleanup(entry);
+      if (rejectFn) rejectFn(entry.timeoutError);
+    }, options.timeoutMs);
+
+    const stepId = options.stepId;
+    let peers = this.active.get(stepId);
+    if (!peers) {
+      peers = new Set();
+      this.active.set(stepId, peers);
+    }
+    peers.add(entry);
 
     try {
       return await Promise.race([promise, timeoutPromise]);
     } finally {
-      this.active.delete(options.stepId);
+      // Every terminal path — timeout, success, original rejection or cancel —
+      // releases both the timer and this wrap's registry slot.
+      entry.settled = true;
+      clearTimeout(entry.timer);
+      peers.delete(entry);
+      if (peers.size === 0 && this.active.get(stepId) === peers) this.active.delete(stepId);
     }
   }
 
   cancel(stepId: string): boolean {
-    const entry = this.active.get(stepId);
-    if (!entry) return false;
-    entry.reject(new StepTimeoutError(stepId, 0));
+    const peers = this.active.get(stepId);
+    if (!peers || peers.size === 0) return false;
+    for (const entry of Array.from(peers)) {
+      entry.cancel(new StepTimeoutError(stepId, 0));
+    }
+    this.active.delete(stepId);
     return true;
   }
 
   cancelAll(): number {
-    const count = this.active.size;
-    for (const [stepId, entry] of this.active.entries()) {
-      entry.reject(new StepTimeoutError(stepId, 0));
+    let count = 0;
+    const entries: ActiveStep[] = [];
+    for (const peers of this.active.values()) {
+      for (const entry of peers) entries.push(entry);
+    }
+    for (const entry of entries) {
+      entry.cancel(new StepTimeoutError(entry.timeoutError.stepId, 0));
+      count++;
     }
     this.active.clear();
     return count;
   }
 
   activeCount(): number {
-    return this.active.size;
+    let count = 0;
+    for (const peers of this.active.values()) count += peers.size;
+    return count;
+  }
+}
+
+function runCleanup(entry: ActiveStep): void {
+  if (entry.cleanupInvoked) return;
+  entry.cleanupInvoked = true;
+  if (!entry.onTimeout) return;
+  try {
+    entry.onTimeout(entry.controller.signal);
+  } catch (err) {
+    reportSilentFailure(err, 'stepTimeoutManager:47');
+    /* best-effort */
   }
 }

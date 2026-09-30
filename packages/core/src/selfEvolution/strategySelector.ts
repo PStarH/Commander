@@ -142,6 +142,29 @@ export class StrategySelector {
     }
   }
 
+  /**
+   * Fold a shadow-mode observation into the Thompson priors at half weight.
+   *
+   * A shadow run is a genuine execution, but it is advisory — it never gates a
+   * response and it consumed a copy of the incumbent's inputs. Crediting it at
+   * full weight would let the shadow track steer selection as strongly as the
+   * strategy that actually served the request, so it contributes half.
+   *
+   * `BetaDistribution.update()` derives its weight from task difficulty as
+   * `0.5 + (1 - difficulty) * 0.5`, which bottoms out at exactly 0.5; passing
+   * `difficulty = 1.0` therefore expresses "half weight" without adding a
+   * separate weight parameter to the distribution.
+   */
+  recordShadowComparison(params: {
+    taskType: string;
+    shadowStrategy: string;
+    shadowSuccess: boolean;
+  }): void {
+    const idx = STRATEGY_NAMES.indexOf(params.shadowStrategy as StrategyName);
+    if (idx < 0) return;
+    this.getOrCreatePriors(params.taskType)[idx].update(params.shadowSuccess, 1.0);
+  }
+
   getThompsonPriors(): Map<string, BetaDistribution[]> {
     return this.thompsonPriors;
   }

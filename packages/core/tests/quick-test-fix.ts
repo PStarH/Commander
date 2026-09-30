@@ -1,5 +1,6 @@
 #!/usr/bin/env npx tsx
 import * as fs from 'fs';
+import { requireMimoApiKey, mimoBaseUrl } from './helpers/liveProviderCredentials';
 
 async function main() {
   const { AgentRuntime } = await import('../src/runtime/agentRuntime');
@@ -11,8 +12,8 @@ async function main() {
     await import('../src/tools/fileSystemTool');
 
   const provider = new MiMoProvider({
-    apiKey: 'tp-sgmq4chswvythfusfq43fbjnn9adnhzqzzf7v99b3a9kp9pz',
-    baseUrl: 'https://token-plan-sgp.xiaomimimo.com/v1',
+    apiKey: requireMimoApiKey(),
+    baseUrl: mimoBaseUrl('https://token-plan-sgp.xiaomimimo.com/v1'),
     defaultModel: 'mimo-v2.5-pro',
   });
 

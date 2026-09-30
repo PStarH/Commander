@@ -44,6 +44,8 @@ export interface LLMRequest {
   messages: LLMMessage[];
   temperature?: number;
   maxTokens?: number;
+  /** Cancels provider transport work when the enclosing operation is aborted. */
+  signal?: AbortSignal;
   stop?: string[];
   tools?: ToolDefinition[];
   cacheConfig?: CacheConfig;
@@ -57,6 +59,13 @@ export interface LLMRequest {
     /** Name for the structured output schema (OpenAI json_schema). */
     name?: string;
   };
+  /**
+   * Whether the provider may emit multiple tool calls in one assistant turn.
+   * Defaults to false because duplicate mutation calls must not be inferred
+   * from provider-side parallel planning; the runtime can still schedule
+   * independent calls explicitly after validating them.
+   */
+  parallelToolCalls?: boolean;
   /** Mistral safe_prompt: enables additional safety moderation */
   safePrompt?: boolean;
 }

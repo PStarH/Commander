@@ -1,8 +1,9 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert';
 import * as http from 'node:http';
-import * as crypto from 'node:crypto';
+import * as net from 'node:net';
 import { CommanderHttpServer } from '../src/runtime/httpServer';
+import { hashSecret } from '../src/runtime/httpTenantGate';
 
 const PORT = 0; // dynamic port
 let server: CommanderHttpServer | null = null;
@@ -50,6 +51,20 @@ async function requestJson(
   });
 }
 
+/** Probe whether a TCP connection to `port` on 127.0.0.1 succeeds. */
+function canConnect(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = net.connect({ port, host: '127.0.0.1' });
+    const done = (result: boolean) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.once('connect', () => done(true));
+    socket.once('error', () => done(false));
+    socket.setTimeout(2000, () => done(false));
+  });
+}
+
 async function fetchJson(
   path: string,
   options?: { accept?: string; origin?: string; requestId?: string },
@@ -83,38 +98,53 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
   });
 
   describe('/health', () => {
-    it('returns 200 with uptime and session info', async () => {
+    // A bare CommanderHttpServer has no runtime registered, so every probe that
+    // needs one (circuit breaker, provider, DLQ, checkpoints, compensation)
+    // reports "not wired" and the report comes back `degraded`. The endpoint
+    // deliberately maps that to 503 and names the components — it replaced an
+    // unconditional `status: 'ok'`, which the audit called security theater
+    // because a load balancer would otherwise route traffic to a process whose
+    // dependencies were unreachable. See src/runtime/httpHealthRoutes.ts.
+    it('reports degraded (503) and names the unwired components', async () => {
       const { status, body } = await fetchJson('/health');
-      assert.strictEqual(status, 200);
-      assert.strictEqual(body.status, 'ok');
+      assert.strictEqual(status, 503);
+      assert.strictEqual(body.status, 'degraded');
+      assert.ok(
+        Array.isArray(body.degradedComponents) && body.degradedComponents.length > 0,
+        'an unwired server must name the components it could not verify',
+      );
       assert.ok(typeof body.uptime === 'number');
       assert.ok(typeof body.timestamp === 'string');
     });
 
     it('bypasses authentication', async () => {
       const { status } = await fetchJson('/health');
-      assert.strictEqual(status, 200);
+      // Health is public: the response must be served, not a 401/403.
+      assert.notStrictEqual(status, 401);
+      assert.notStrictEqual(status, 403);
+      assert.strictEqual(status, 503);
     });
 
     it('returns a request id header and preserves incoming request id', async () => {
-      const { status, headers } = await fetchJson('/health', { requestId: 'req-test-123' });
-      assert.strictEqual(status, 200);
+      const { headers } = await fetchJson('/health', { requestId: 'req-test-123' });
       assert.strictEqual(headers['x-request-id'], 'req-test-123');
     });
   });
 
   describe('/ready', () => {
-    it('returns 200 with ready status', async () => {
+    it('reports not_ready (503) when dependencies are unwired', async () => {
       const { status, body } = await fetchJson('/ready');
-      assert.strictEqual(status, 200);
-      assert.strictEqual(body.status, 'ready');
+      assert.strictEqual(status, 503);
+      assert.strictEqual(body.status, 'not_ready');
       assert.ok(typeof body.uptime === 'number');
       assert.ok(typeof body.memory?.rss === 'number');
     });
 
     it('is unauthenticated', async () => {
       const { status } = await fetchJson('/ready');
-      assert.strictEqual(status, 200);
+      assert.notStrictEqual(status, 401);
+      assert.notStrictEqual(status, 403);
+      assert.strictEqual(status, 503);
     });
   });
 
@@ -192,7 +222,7 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
     it('accepts hashed API key config without retaining the raw key', async () => {
       const rawKey = 'hashed-test-key-123';
-      const keyHash = crypto.createHash('sha256').update(rawKey).digest('hex');
+      const keyHash = hashSecret(rawKey);
       const authServer = new CommanderHttpServer({
         port: 0,
         host: '127.0.0.1',
@@ -204,11 +234,29 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       const authBaseUrl = `http://127.0.0.1:${authServer.getPort()}`;
 
       try {
-        const { status, body } = await requestJson('GET', `${authBaseUrl}/api/v1/status`, {
+        // The hashed key authenticates. Probe a *non-tenant-scoped* route: once
+        // `tenantApiKeys` is configured, every tenant-scoped route requires a
+        // *mapped* key (`requireTenant` in httpTenantGate.ts) and a global key
+        // is deliberately not a tenant identity. `/openapi.json` is the
+        // unauthenticated 200 endpoint that proves authentication succeeded.
+        const { status } = await requestJson('GET', `${authBaseUrl}/openapi.json`, {
           headers: { Authorization: `Bearer ${rawKey}` },
         });
         assert.strictEqual(status, 200);
-        assert.strictEqual(typeof body.activeSessions, 'number');
+
+        // Pin the tenant-gate policy from both sides, so it cannot silently
+        // drift into either "global key reaches tenant routes" or "nothing does".
+        const globalOnTenantRoute = await requestJson('GET', `${authBaseUrl}/api/v1/status`, {
+          headers: { Authorization: `Bearer ${rawKey}` },
+        });
+        assert.strictEqual(globalOnTenantRoute.status, 401);
+        assert.match(globalOnTenantRoute.body.error, /Tenant required/);
+
+        const mappedOnTenantRoute = await requestJson('GET', `${authBaseUrl}/api/v1/status`, {
+          headers: { Authorization: 'Bearer tenant-raw-key' },
+        });
+        assert.strictEqual(mappedOnTenantRoute.status, 200);
+        assert.strictEqual(typeof mappedOnTenantRoute.body.activeSessions, 'number');
 
         const retainedConfig = (
           authServer as unknown as {
@@ -235,7 +283,12 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
 
   describe('HTTP hardening', () => {
     it('does not emit wildcard CORS by default', async () => {
-      const { status, headers } = await fetchJson('/health', { origin: 'https://evil.example' });
+      // `/openapi.json` is unauthenticated and returns 200. `/health` is not a
+      // usable probe here: it fails closed with 503 while the runtime
+      // dependencies are unwired (see the `/health` suite above).
+      const { status, headers } = await fetchJson('/openapi.json', {
+        origin: 'https://evil.example',
+      });
       assert.strictEqual(status, 200);
       assert.notStrictEqual(headers['access-control-allow-origin'], '*');
       assert.strictEqual(headers['access-control-allow-origin'], undefined);
@@ -253,12 +306,18 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       await corsServer.start();
       const corsBaseUrl = `http://127.0.0.1:${corsServer.getPort()}`;
 
-      const { status, headers } = await requestJson('GET', `${corsBaseUrl}/health`, {
-        origin: 'http://localhost:3000',
-      });
-      assert.strictEqual(status, 200);
-      assert.strictEqual(headers['access-control-allow-origin'], 'http://localhost:3000');
-      await corsServer.stop();
+      // try/finally is load-bearing: without it a failing assertion skips
+      // `stop()` and leaks a listening socket, which hangs the whole file
+      // (and, under `node --test`, aborts every later test in it).
+      try {
+        const { status, headers } = await requestJson('GET', `${corsBaseUrl}/openapi.json`, {
+          origin: 'http://localhost:3000',
+        });
+        assert.strictEqual(status, 200);
+        assert.strictEqual(headers['access-control-allow-origin'], 'http://localhost:3000');
+      } finally {
+        await corsServer.stop();
+      }
     });
 
     it('rejects oversized JSON request bodies', async () => {
@@ -277,7 +336,11 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
           body: { sessionId: 'x'.repeat(128) },
         });
         assert.strictEqual(status, 413);
-        assert.ok(body.error.includes('Request body too large'));
+        // Errors are emitted as RFC 7807 Problem Details (`sendProblem` in
+        // apiErrors.ts), so the machine-readable field is `code` and the
+        // human-readable one is `detail` — not `error`.
+        assert.strictEqual(body.code, 'PAYLOAD_TOO_LARGE');
+        assert.match(body.detail, /Request body too large/);
       } finally {
         await smallServer.stop();
       }
@@ -301,10 +364,17 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         const { status: readyStatus } = await requestJson('GET', `${protectedBaseUrl}/ready`);
         assert.strictEqual(readyStatus, 401);
 
+        // With the key supplied the request must no longer be *rejected by auth*.
+        // It is not necessarily 200: `/health` fails closed with 503 while the
+        // runtime dependencies are unwired, and that is the correct report here.
         const { status: okStatus } = await requestJson('GET', `${protectedBaseUrl}/health`, {
           headers: { Authorization: 'Bearer health-test-key' },
         });
-        assert.strictEqual(okStatus, 200);
+        assert.ok(
+          okStatus !== 401 && okStatus !== 403,
+          `an authenticated request must not be rejected by auth, got ${okStatus}`,
+        );
+        assert.strictEqual(okStatus, 503);
       } finally {
         await protectedServer.stop();
       }
@@ -356,6 +426,113 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
       );
       // Should NOT use setInterval polling anymore
       assert.ok(!text?.includes('setInterval(refresh,'), 'HTML should not use setInterval polling');
+    });
+  });
+
+  // EH-04: the compensation dashboard rendered before authentication and the
+  // auxiliary SSE streams had no auth at all; on a multi-tenant server they
+  // also exposed the process-global bus to every tenant.
+  describe('/dashboard/compensation access control', () => {
+    it('requires authentication and refuses multi-tenant servers', async () => {
+      const secured = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'secured-key',
+        rateLimitPerMinute: 0,
+      });
+      await secured.start();
+      const securedUrl = `http://127.0.0.1:${secured.getPort()}`;
+      const multi = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'owner-key',
+        tenantApiKeys: { 'tenant-a-key': 'tenant-a', 'tenant-b-key': 'tenant-b' },
+        rateLimitPerMinute: 0,
+      });
+      await multi.start();
+      const multiUrl = `http://127.0.0.1:${multi.getPort()}`;
+
+      try {
+        const anonymous = await requestJson('GET', `${securedUrl}/dashboard/compensation`, {
+          accept: 'text/html',
+        });
+        assert.strictEqual(anonymous.status, 401);
+
+        const anonymousStream = await requestJson('GET', `${securedUrl}/stream/compensation`);
+        assert.strictEqual(anonymousStream.status, 401);
+
+        const authenticated = await requestJson('GET', `${securedUrl}/dashboard/compensation`, {
+          accept: 'text/html',
+          headers: { authorization: 'Bearer secured-key' },
+        });
+        assert.strictEqual(authenticated.status, 200);
+        assert.ok(authenticated.text?.includes('Compensation Dashboard'));
+
+        const crossTenant = await requestJson('GET', `${multiUrl}/dashboard/compensation`, {
+          accept: 'text/html',
+          headers: { authorization: 'Bearer tenant-a-key' },
+        });
+        assert.strictEqual(crossTenant.status, 403);
+        assert.match(crossTenant.text ?? '', /multi-tenant/);
+
+        const crossTenantStream = await requestJson('GET', `${multiUrl}/stream/cost`, {
+          headers: { authorization: 'Bearer tenant-a-key' },
+        });
+        assert.strictEqual(crossTenantStream.status, 403);
+      } finally {
+        await secured.stop();
+        await multi.stop();
+      }
+    });
+  });
+
+  // EH-06: `readRequestBody` was unbounded and its only public caller (the SAML
+  // ACS) sits outside the dispatcher's main try/catch; and `start()` never
+  // rejected when the bind failed.
+  describe('embedded server input and startup bounds', () => {
+    it('answers 413 (not 500) for an over-limit body on a body route outside the dispatcher try', async () => {
+      const bounded = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'bounded-key',
+        maxBodyBytes: 32,
+        rateLimitPerMinute: 0,
+      });
+      await bounded.start();
+      const boundedUrl = `http://127.0.0.1:${bounded.getPort()}`;
+
+      try {
+        const { status, body } = await requestJson('POST', `${boundedUrl}/slo`, {
+          headers: { authorization: 'Bearer bounded-key' },
+          body: { padding: 'x'.repeat(256) },
+        });
+        assert.strictEqual(status, 413);
+        assert.strictEqual(body.code, 'PAYLOAD_TOO_LARGE');
+      } finally {
+        await bounded.stop();
+      }
+    });
+
+    it('rejects start() when the port is already bound instead of hanging', async () => {
+      const first = new CommanderHttpServer({
+        port: 0,
+        host: '127.0.0.1',
+        apiKey: 'first-key',
+        rateLimitPerMinute: 0,
+      });
+      await first.start();
+      const second = new CommanderHttpServer({
+        port: first.getPort(),
+        host: '127.0.0.1',
+        apiKey: 'second-key',
+        rateLimitPerMinute: 0,
+      });
+
+      try {
+        await assert.rejects(() => second.start(), /EADDRINUSE/);
+      } finally {
+        await first.stop();
+      }
     });
   });
 
@@ -528,7 +705,7 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
   });
 
   describe('Graceful shutdown', () => {
-    it('stop() resolves without error', async () => {
+    it('stop() closes the listening socket', async () => {
       const srv = new CommanderHttpServer({
         port: 0,
         host: '127.0.0.1',
@@ -536,8 +713,16 @@ describe('CommanderHttpServer — Monitoring Endpoints', () => {
         rateLimitPerMinute: 0,
       });
       await srv.start();
+      const port = srv.getPort();
+      assert.ok(port > 0, 'a started server must report its bound port');
+      // A raw TCP probe keeps this assertion independent of the HTTP client's
+      // connection pool: a refused connection after stop() is evidence that the
+      // listening socket was released rather than the call being a no-op.
+      assert.strictEqual(await canConnect(port), true, 'the server must listen while running');
+
       await srv.stop();
-      assert.ok(true, 'stop() resolved successfully');
+      assert.strictEqual(await canConnect(port), false, 'a stopped server must refuse connections');
+      assert.strictEqual(srv.getPort(), 0);
     });
   });
 });

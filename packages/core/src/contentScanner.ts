@@ -115,6 +115,41 @@ export interface ContentScanner {
 }
 
 /**
+ * Compile a caller/plugin-supplied rule pattern into a scan-safe RegExp.
+ *
+ * `scanHarmfulContent` walks a rule with `exec` until it returns null. That
+ * contract only terminates for patterns that (a) are global and (b) never
+ * produce a zero-width match at an unchanged `lastIndex`. Registration is the
+ * public boundary, so enforce both here instead of trusting every caller:
+ *
+ * - a non-global pattern would otherwise return the same match forever, and
+ * - a pattern that matches the empty string (`^`, `a*`, `\b`, …) never advances
+ *   `lastIndex`, so the scan loop spins and grows `threats` until OOM.
+ *
+ * A rejected pack must fail loudly: silently dropping the rule would make the
+ * scanner report "no harmful content" for content the operator asked it to
+ * check.
+ */
+function compileScanSafePattern(pattern: RegExp, context: string): RegExp {
+  // Sticky (`y`) matching is position-anchored and would stop a forward scan
+  // after the first non-match; drop it in favour of a global scan.
+  const flags = (pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`).replace(
+    /y/g,
+    '',
+  );
+  const compiled = new RegExp(pattern.source, flags);
+  compiled.lastIndex = 0;
+  const probe = compiled.exec('');
+  if (probe !== null && probe[0].length === 0) {
+    throw new Error(
+      `${context}: pattern /${pattern.source}/${pattern.flags} can match the empty string, ` +
+        'which makes the harmful-content scan loop non-terminating; the rule pack was rejected',
+    );
+  }
+  return compiled;
+}
+
+/**
  * ContentScanner 实现类
  */
 export class DefaultContentScanner implements ContentScanner {
@@ -127,8 +162,8 @@ export class DefaultContentScanner implements ContentScanner {
     /<[^>]+style\s*=\s*["'][^"']*opacity\s*:\s*0[^"']*["'][^>]*>/gi,
     /<[^>]+hidden[^>]*>/gi,
     /<input[^>]+type\s*=\s*["']hidden["'][^>]*>/gi,
-    /<script[^>]*>[\s\S]*?<\/script>/gi,
-    /<iframe[^>]*>[\s\S]*?<\/iframe>/gi,
+    /<script[^>]*>[\s\S]*?<\/script[^>]*>/gi,
+    /<iframe[^>]*>[\s\S]*?<\/iframe[^>]*>/gi,
     /<!--[\s\S]*?-->/g, // HTML 注释可能隐藏指令
   ];
 
@@ -253,7 +288,10 @@ export class DefaultContentScanner implements ContentScanner {
 
   // 隐藏 Unicode 字符
   private invisibleUnicodeRanges = [
-    '\u0000-\u001F', // 控制字符
+    // Keep ordinary text formatting (tab, LF, CR) out of the threat set. The
+    // scanner runs on every tool result, so treating line breaks as hidden
+    // content would block every multi-line file or JSON response.
+    '\u0000-\u0008\u000B\u000C\u000E-\u001F', // non-formatting control characters
     '\u007F-\u009F', // 控制字符
     '\u200B-\u200F', // 零宽字符 (ZWSP, ZWNJ, ZWJ, LRM, RLM)
     '\u202A-\u202E', // 方向格式化字符 (LTR, RTL 等)
@@ -455,13 +493,13 @@ export class DefaultContentScanner implements ContentScanner {
 
     for (const pattern of this.hiddenHtmlPatterns) {
       pattern.lastIndex = 0;
-      let match;
-      while ((match = pattern.exec(content)) !== null) {
+      for (const match of content.matchAll(pattern)) {
+        const start = match.index ?? 0;
         threats.push({
           type: 'hidden_html',
           severity: 'HIGH',
           description: `Hidden HTML element detected: ${match[0].substring(0, 50)}...`,
-          location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+          location: { start, end: start + match[0].length, snippet: match[0] },
           remediation: this.getRemediation({ type: 'hidden_html' } as ContentThreat),
         });
       }
@@ -620,11 +658,13 @@ export class DefaultContentScanner implements ContentScanner {
 
   // ── Harmful content detection: populated by registered rule packs ──
   static registerRulePack(name: string, rules: HarmfulContentRule[]): void {
-    // Clone RegExp instances so the pack cannot mutate scanner state from outside.
-    DefaultContentScanner.rulePacks.set(
-      name,
-      rules.map((r) => ({ ...r, pattern: new RegExp(r.pattern.source, r.pattern.flags) })),
-    );
+    // Compile/validate every pattern BEFORE mutating the registry so a rejected
+    // pack cannot leave a half-registered pack behind.
+    const compiled = rules.map((r) => ({
+      ...r,
+      pattern: compileScanSafePattern(r.pattern, `registerRulePack("${name}")`),
+    }));
+    DefaultContentScanner.rulePacks.set(name, compiled);
   }
 
   static unregisterRulePack(name: string): boolean {
@@ -641,13 +681,13 @@ export class DefaultContentScanner implements ContentScanner {
     for (const rules of DefaultContentScanner.rulePacks.values()) {
       for (const { category, severity, pattern } of rules) {
         pattern.lastIndex = 0;
-        let match;
-        while ((match = pattern.exec(content)) !== null) {
+        for (const match of content.matchAll(pattern)) {
+          const start = match.index ?? 0;
           threats.push({
             type: 'harmful_content',
             severity,
             description: `Harmful content detected (${category}): "${match[0].slice(0, 80)}"`,
-            location: { start: match.index, end: match.index + match[0].length, snippet: match[0] },
+            location: { start, end: start + match[0].length, snippet: match[0] },
             remediation: this.getRemediation({ type: 'harmful_content' } as ContentThreat),
           });
         }

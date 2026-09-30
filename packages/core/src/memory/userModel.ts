@@ -23,7 +23,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import { getGlobalLogger } from '../logging';
 import { mkdir, readFile, writeFile, access, unlink } from 'fs/promises';
 import { join, dirname } from 'node:path';
-import { getCurrentTenantId } from '../runtime/tenantContext';
+import { tenantBucketOrThrow } from '../runtime/tenantContext';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 
 // ============================================================================
@@ -549,7 +549,7 @@ export class UserModelManager {
       [/\b(test|jest|vitest|pytest|cargo test)\b/i, 'testing'],
       [/\b(auth|oauth|jwt|session|cookie)\b/i, 'authentication'],
       [/\b(api|rest|graphql|grpc|websocket)\b/i, 'api'],
-      [/\b(type|interface|generic|enum)\b/i, 'typescript'],
+      [/\b(typescript|type|interface|generic|enum)\b/i, 'typescript'],
       [/\b(git|branch|merge|rebase|commit)\b/i, 'git'],
       [/\b(performance|optimize|cache|lazy|bundle)\b/i, 'performance'],
       [/\b(security|vulnerability|xss|csrf|injection)\b/i, 'security'],
@@ -617,7 +617,7 @@ export class UserModelManager {
   }
 
   private getTenantId(): string {
-    return getCurrentTenantId() ?? '__default__';
+    return tenantBucketOrThrow();
   }
 
   private getModelPath(userId: string): string {

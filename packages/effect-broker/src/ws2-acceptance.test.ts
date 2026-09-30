@@ -262,7 +262,10 @@ describe('WS2 §6 capability token lifecycle', () => {
       issuer: 'commander-issuer',
       audience: 'commander.effect-broker',
       publicKeys: { k1: iss.publicKey },
-      revocations: { isRevoked: async (jti: string, _tenantId: string) => revokedJtis.has(jti) },
+      revocations: {
+        revoke: async () => {},
+        isRevoked: async (jti: string, _tenantId: string) => revokedJtis.has(jti),
+      },
     });
     const token = iss.issue({
       ...baseGrant,
@@ -414,7 +417,7 @@ describe('WS2 §5 three-layer policy engine called by admit()', () => {
         isActionAllowed: async () => true,
         getQuota: async () => ({ countUsed: 1, tokensUsed: 0 }),
         incrementQuota: async () => ({ countUsed: 3, tokensUsed: 0 }),
-        markEffectCompletionUnknown: async (input) => {
+        markEffectCompletionUnknown: async (input: { effectId: string }) => {
           parked = input.effectId;
           return { id: input.effectId, state: 'COMPLETION_UNKNOWN' };
         },

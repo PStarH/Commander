@@ -77,6 +77,9 @@ import { handleHealthRoutes } from './httpHealthRoutes';
 import { handleExecuteRoute } from './httpExecuteRoute';
 import { handleSecurityRoutes } from './httpSecurityRoutes';
 import { HttpRequestError, parseBody, sendJson } from './httpUtils';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 export interface HttpServerConfig {
   port: number;
@@ -231,8 +234,10 @@ export class CommanderHttpServer {
   private config: HttpServerConfig;
   private server:
     ReturnType<typeof createNodeHttpServer> | ReturnType<typeof createHttpsServer> | null = null;
-  private runtimes: Map<string, { runtime: AgentRuntimeInterface; lastAccessedAt: number }> =
-    new Map();
+  private runtimes: Map<
+    string,
+    { runtime: AgentRuntimeInterface; lastAccessedAt: number; tenantId?: string }
+  > = new Map();
   private bus = getMessageBus();
   private mcpServer: MCPServer | null = null;
   // Rate limiting: IP → { count, resetAt }
@@ -321,7 +326,7 @@ export class CommanderHttpServer {
     // Initialize OIDC auth plugin from env if enabled
     if (this.config.oidcEnabled !== false) {
       try {
-        const { createOIDCPluginFromEnv } = require('./oidcAuthPlugin');
+        const { createOIDCPluginFromEnv } = nodeRequire('./oidcAuthPlugin');
         const plugin = createOIDCPluginFromEnv();
         if (plugin) {
           this.registerAuthPlugin(plugin);
@@ -338,7 +343,7 @@ export class CommanderHttpServer {
 
     // Initialize SAML auth plugin from env if configured
     try {
-      const { createSAMLPluginFromEnv } = require('./samlAuthPlugin');
+      const { createSAMLPluginFromEnv } = nodeRequire('./samlAuthPlugin');
       const plugin = createSAMLPluginFromEnv();
       if (plugin) {
         this.registerAuthPlugin(plugin);
@@ -357,7 +362,7 @@ export class CommanderHttpServer {
       this.registerSIEMForwarder(this.config.siemForwarder);
     } else {
       try {
-        const { createSIEMForwarderFromEnv } = require('./siemForwarder');
+        const { createSIEMForwarderFromEnv } = nodeRequire('./siemForwarder');
         const forwarder = createSIEMForwarderFromEnv();
         if (forwarder) {
           this.registerSIEMForwarder(forwarder);
@@ -511,7 +516,58 @@ export class CommanderHttpServer {
   }
 
   async start(): Promise<void> {
-    return new Promise((resolve) => {
+    // Tier 1.1: Install process crash handlers before serving traffic so a
+    // crash during boot is still captured.
+    try {
+      const dlq = getDeadLetterQueue();
+      const leaseManager = new LeaseManager();
+      installProcessCrashHandlers({
+        dlq,
+        leaseManager,
+        activeRunIds: () => {
+          const ids: string[] = [];
+          for (const [,] of this.runtimes) {
+            // Each runtime tracks its own activeRuns — aggregate them
+          }
+          return ids;
+        },
+        leaseTokenFor: () => undefined,
+        fencingEpochFor: () => undefined,
+        tenantIdFor: () => undefined,
+      });
+    } catch (e) {
+      getGlobalLogger().warn('HttpServer', 'Failed to install crash handlers', {
+        error: (e as Error)?.message,
+      });
+    }
+
+    // P0: Zombie run recovery on server startup. Scans the RunLedger for runs
+    // left in EXECUTING/VERIFYING/PAUSED by a crashed process, fences them, and
+    // aborts+compensates or reclaims for resume. Awaited *before* the port is
+    // bound and immediately after the crash handlers exist: recovery only
+    // settles once compensation has settled, so serving requests before that
+    // point would race the scan. A failed scan aborts startup instead of
+    // serving with an unknown run state (fail closed).
+    try {
+      const result = await RecoveryBootstrapper.bootstrap();
+      if (result.scanned > 0) {
+        getGlobalLogger().info('HttpServer', 'Recovery bootstrap scan completed', {
+          scanned: result.scanned,
+          recovered: result.recovered,
+          aborted: result.aborted,
+          skipped: result.skipped,
+        });
+      }
+    } catch (e) {
+      getGlobalLogger().error(
+        'HttpServer',
+        'Recovery bootstrap scan failed; refusing to start',
+        e instanceof Error ? e : new Error(String(e)),
+      );
+      throw e;
+    }
+
+    return new Promise((resolve, reject) => {
       const handler = (req: IncomingMessage, res: ServerResponse) => {
         // Track connection for graceful shutdown
         const socket = req.socket;
@@ -547,6 +603,18 @@ export class CommanderHttpServer {
       this.server = this.config.https
         ? createHttpsServer(this.config.https, handler)
         : createNodeHttpServer(handler);
+      // EH-06: a failed bind (EADDRINUSE, EACCES, EADDRNOTAVAIL) emitted an
+      // `error` event with no listener, so `start()` never settled and the
+      // caller hung (or the process crashed on the unhandled event). Reject the
+      // start promise and release the cleanup timer / server handle.
+      this.server.once('error', (err: Error) => {
+        if (this.sessionCleanupTimer) {
+          clearInterval(this.sessionCleanupTimer);
+          this.sessionCleanupTimer = null;
+        }
+        this.server = null;
+        reject(err);
+      });
       this.server.listen(this.config.port, this.config.host, () => {
         getGlobalLogger().info('HttpServer', 'Listening', {
           protocol: this.config.https ? 'https' : 'http',
@@ -554,49 +622,6 @@ export class CommanderHttpServer {
           port: this.config.port,
           authEnabled: !this.authDisabled,
         });
-
-        // Tier 1.1: Install process crash handlers for the HTTP server
-        try {
-          const dlq = getDeadLetterQueue();
-          const leaseManager = new LeaseManager();
-          installProcessCrashHandlers({
-            dlq,
-            leaseManager,
-            activeRunIds: () => {
-              const ids: string[] = [];
-              for (const [,] of this.runtimes) {
-                // Each runtime tracks its own activeRuns — aggregate them
-              }
-              return ids;
-            },
-            leaseTokenFor: () => undefined,
-            fencingEpochFor: () => undefined,
-            tenantIdFor: () => undefined,
-          });
-        } catch (e) {
-          getGlobalLogger().warn('HttpServer', 'Failed to install crash handlers', {
-            error: (e as Error)?.message,
-          });
-        }
-
-        // P0: Zombie run recovery on server startup. Scans the RunLedger
-        // for runs left in EXECUTING/VERIFYING/PAUSED by a crashed process,
-        // fences them, and aborts+compensates or reclaims for resume.
-        try {
-          const result = RecoveryBootstrapper.bootstrap();
-          if (result.scanned > 0) {
-            getGlobalLogger().info('HttpServer', 'Recovery bootstrap scan completed', {
-              scanned: result.scanned,
-              recovered: result.recovered,
-              aborted: result.aborted,
-              skipped: result.skipped,
-            });
-          }
-        } catch (e) {
-          getGlobalLogger().warn('HttpServer', 'Recovery bootstrap scan failed', {
-            error: (e as Error)?.message,
-          });
-        }
 
         // SOC 2 C1.2 / GDPR Art 17 disposal — schedule the retention
         // janitor at boot. Hourly cadence matches the typical mtime
@@ -679,17 +704,21 @@ export class CommanderHttpServer {
       }
       this.isShuttingDown = true;
 
-      // Cancel all in-flight tool executions across all active runtimes
-      for (const [, entry] of this.runtimes) {
+      // Cancel all in-flight tool executions across all active runtimes, then
+      // dispose them: EH-06 found that `stop()` cancelled steps but left every
+      // session runtime (timers, listeners, leases) alive after shutdown.
+      for (const [sessionId, entry] of this.runtimes) {
         try {
           const cancelled = entry.runtime.cancelAllSteps();
           if (cancelled > 0) {
             getGlobalLogger().info('HttpServer', 'Cancelled in-flight steps', { cancelled });
           }
+          entry.runtime.dispose();
         } catch (err) {
           reportSilentFailure(err, 'httpServer:514');
           /* best-effort */
         }
+        this.runtimes.delete(sessionId);
       }
 
       const remaining = this.connections.size;
@@ -717,6 +746,44 @@ export class CommanderHttpServer {
     });
   }
 
+  private admitCaller(req: IncomingMessage, res: ServerResponse): Promise<boolean> {
+    return this.authenticateRequest(req, res);
+  }
+
+  private samlBrowserRedirect(plugin: SAMLAuthPlugin, relayState: string | undefined): string {
+    return plugin.createLoginRedirectUrl(relayState);
+  }
+
+  private async acceptBearerPlugin(
+    bearerToken: string,
+    requiredRole: AuthRole | undefined,
+    res: ServerResponse,
+  ): Promise<boolean> {
+    for (const plugin of this.authPlugins) {
+      try {
+        const result = await plugin.authenticate(bearerToken);
+        if (result) {
+          if (requiredRole && ROLE_HIERARCHY[result.role] < ROLE_HIERARCHY[requiredRole]) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Insufficient privileges.' }));
+            return false;
+          }
+          return true;
+        }
+      } catch (err) {
+        reportSilentFailure(err, 'httpServer:558');
+        continue;
+      }
+    }
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        error: 'Unauthorized. Provide Authorization: Bearer <api-key> or valid OIDC token.',
+      }),
+    );
+    return false;
+  }
+
   /** Full auth gate (API key + OIDC). Returns true if allowed; sends an error otherwise. */
   private async authenticateRequest(
     req: IncomingMessage,
@@ -728,33 +795,19 @@ export class CommanderHttpServer {
     // Explicit auth-disabled mode remains the local-development escape hatch.
     if (authResult.success) return true;
 
+    // A mapped tenant key is also a valid outer authentication credential.
+    // `requireTenant` still resolves the tenant and enforces the tenant gate in
+    // multi-tenant mode; this check only prevents the request from being
+    // rejected before it reaches that route-level authorization.
+    if (resolveTenantFromAuthGate(req, this.tenantApiKeyHashes)) {
+      return true;
+    }
+
     // If auth plugins are registered, try async OIDC authentication
     if (this.authPlugins.length > 0) {
       const bearerToken = extractAuthKey(req);
       if (bearerToken) {
-        for (const plugin of this.authPlugins) {
-          try {
-            const result = await plugin.authenticate(bearerToken);
-            if (result) {
-              if (requiredRole && ROLE_HIERARCHY[result.role] < ROLE_HIERARCHY[requiredRole]) {
-                res.writeHead(403, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Insufficient privileges.' }));
-                return false;
-              }
-              return true;
-            }
-          } catch (err) {
-            reportSilentFailure(err, 'httpServer:558');
-            continue;
-          }
-        }
-        res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(
-          JSON.stringify({
-            error: 'Unauthorized. Provide Authorization: Bearer <api-key> or valid OIDC token.',
-          }),
-        );
-        return false;
+        return this.acceptBearerPlugin(bearerToken, requiredRole, res);
       }
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(
@@ -774,14 +827,68 @@ export class CommanderHttpServer {
     return false;
   }
 
-  /** Read the full request body as a string (for POST/PUT requests). */
+  /**
+   * Read the full request body as a string (for POST/PUT requests).
+   *
+   * EH-06: this reader was unbounded and is reached by the public SAML ACS
+   * before the rate limiter, so it is now capped at the same `maxBodyBytes`
+   * every other body route uses. The connection is destroyed on overflow so a
+   * caller cannot keep streaming into a rejected request.
+   */
   private async readRequestBody(req: IncomingMessage): Promise<string> {
+    const limit = this.config.maxBodyBytes;
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
-      req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
-      req.on('error', reject);
+      let size = 0;
+      let settled = false;
+      req.on('data', (chunk: Buffer) => {
+        if (settled) return;
+        size += chunk.length;
+        if (size > limit) {
+          // Stop buffering and answer 413. The stream is left flowing rather
+          // than destroyed: destroying the socket races the response write, so
+          // the caller would see ECONNRESET instead of the reason. Memory stays
+          // bounded because the early return above discards the remaining
+          // chunks without accumulating them.
+          settled = true;
+          chunks.length = 0;
+          reject(new HttpRequestError(413, `Request body too large. Limit is ${limit} bytes.`));
+          return;
+        }
+        chunks.push(chunk);
+      });
+      req.on('end', () => {
+        if (settled) return;
+        settled = true;
+        resolve(Buffer.concat(chunks).toString('utf-8'));
+      });
+      req.on('error', (err) => {
+        if (settled) return;
+        settled = true;
+        reject(err);
+      });
     });
+  }
+
+  /**
+   * EH-06: bounded body read with an RFC 7807 answer. The SLO and SAML body
+   * routes sit outside the dispatcher's main try/catch, so an over-limit body
+   * would otherwise surface as a generic 500 instead of `PAYLOAD_TOO_LARGE`.
+   * Returns null after the response has been written.
+   */
+  private async readBoundedBody(req: IncomingMessage, res: ServerResponse): Promise<string | null> {
+    try {
+      return await this.readRequestBody(req);
+    } catch (err) {
+      if (err instanceof HttpRequestError) {
+        sendProblem(res, 'PAYLOAD_TOO_LARGE', err.message, {
+          instance: req.url ?? '',
+          requestId: this.getRequestId(req),
+        });
+        return null;
+      }
+      throw err;
+    }
   }
 
   private async handleRequest(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -827,7 +934,9 @@ export class CommanderHttpServer {
       if (!(await this.authenticateRequest(req, res, requiredRole))) return;
       let reqBody: string | undefined;
       if (req.method === 'POST' || req.method === 'PUT') {
-        reqBody = await this.readRequestBody(req);
+        const boundedBody = await this.readBoundedBody(req, res);
+        if (boundedBody === null) return;
+        reqBody = boundedBody;
       }
       const result = handleSLOOperationsRequest(req.method ?? 'GET', segments, reqBody);
       if (result) {
@@ -848,7 +957,9 @@ export class CommanderHttpServer {
       if (!(await this.authenticateRequest(req, res, requiredRole))) return;
       let reqBody: string | undefined;
       if (req.method === 'POST' || req.method === 'PUT') {
-        reqBody = await this.readRequestBody(req);
+        const boundedBody = await this.readBoundedBody(req, res);
+        if (boundedBody === null) return;
+        reqBody = boundedBody;
       }
       const result = handleSLOOperationsRequest(req.method ?? 'GET', segments, reqBody);
       if (result) {
@@ -866,12 +977,19 @@ export class CommanderHttpServer {
       return;
     }
 
-    // Compensation dashboard (HTML page — bypasses auth for local dev, but not rate limiting)
+    // Compensation dashboard (HTML page).
+    //
+    // EH-04: this used to render before authentication and before the tenant
+    // gate, exposing recent compensation error summaries to anonymous callers.
+    // It now takes the same outer authentication as the SOP dashboard beside it,
+    // and is refused on a multi-tenant server (see permitUnscopedDiagnostics).
     if (
       segments[0] === 'dashboard' &&
       segments[1] === 'compensation' &&
       (req.method ?? 'GET') === 'GET'
     ) {
+      if (!(await this.admitCaller(req, res))) return;
+      if (!this.permitUnscopedDiagnostics(res)) return;
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(renderDashboardHtml(this.bus));
       return;
@@ -885,7 +1003,7 @@ export class CommanderHttpServer {
     // version did readdirSync + readFileSync + statSync per SOP file,
     // which lagged the event loop for the entire render.
     if (segments[0] === 'dashboard' && segments[1] === 'sop' && (req.method ?? 'GET') === 'GET') {
-      if (!(await this.authenticateRequest(req, res))) return;
+      if (!(await this.admitCaller(req, res))) return;
       try {
         const html = await renderSOPDashboardHtmlAsync();
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -902,13 +1020,26 @@ export class CommanderHttpServer {
     }
 
     // SAML SSO endpoints must be public (the user has no session yet).
+    //
+    // EH-06: this is the one unauthenticated body-accepting endpoint on the
+    // server, so it is rate limited here — the limiter below deliberately runs
+    // after `authenticateRequest` for every other route, and moving it earlier
+    // would let an unauthenticated flood drain a shared NAT's bucket.
     if (
       segments[0] === 'api' &&
       segments[1] === 'v1' &&
       segments[2] === 'auth' &&
       segments[3] === 'saml'
     ) {
-      await this.handleSamlAuthRequest(req, res, segments, queryStr);
+      if (
+        this.config.rateLimitPerMinute > 0 &&
+        !this.checkRateLimit(req.socket.remoteAddress ?? 'unknown')
+      ) {
+        res.writeHead(429, { 'Content-Type': 'application/json', 'Retry-After': '60' });
+        res.end(JSON.stringify({ error: 'Rate limit exceeded. Try again later.' }));
+        return;
+      }
+      await this.completeSamlHttp(req, res, segments, queryStr);
       return;
     }
 
@@ -960,6 +1091,17 @@ export class CommanderHttpServer {
         await this.handleApiRequest(req, res, segments.slice(1), queryStr);
       } else if (segments[0] === 'stream') {
         const streamSegments = segments.slice(1);
+        // EH-04: the auxiliary streams read the process-global bus, so they
+        // need the same authentication as every other route, plus the
+        // multi-tenant refusal their data shape forces.
+        if (
+          streamSegments[0] === 'cost' ||
+          streamSegments[0] === 'compensation' ||
+          streamSegments[0] === 'sop'
+        ) {
+          if (!(await this.admitCaller(req, res))) return;
+          if (!this.permitUnscopedDiagnostics(res)) return;
+        }
         if (streamSegments[0] === 'cost') {
           await this.handleCostStreamRequest(req, res);
         } else if (streamSegments[0] === 'compensation') {
@@ -1071,7 +1213,7 @@ export class CommanderHttpServer {
    * Handle public SAML 2.0 SSO endpoints (/api/v1/auth/saml/login and /acs).
    * Called before API key authentication so unauthenticated users can log in.
    */
-  private async handleSamlAuthRequest(
+  private async completeSamlHttp(
     req: IncomingMessage,
     res: ServerResponse,
     segments: string[],
@@ -1090,14 +1232,15 @@ export class CommanderHttpServer {
       const relayState = queryStr
         ? (new URLSearchParams(queryStr).get('relayState') ?? undefined)
         : undefined;
-      const redirectUrl = samlPlugin.createLoginRedirectUrl(relayState);
+      const redirectUrl = this.samlBrowserRedirect(samlPlugin, relayState);
       res.writeHead(302, { Location: redirectUrl });
       res.end();
       return;
     }
 
     if (action === 'acs' && method === 'POST') {
-      const rawBody = await this.readRequestBody(req);
+      const rawBody = await this.readBoundedBody(req, res);
+      if (rawBody === null) return;
       const body = new URLSearchParams(rawBody);
       const samlResponse = body.get('SAMLResponse');
       const relayState = body.get('RelayState') ?? undefined;
@@ -1143,9 +1286,11 @@ export class CommanderHttpServer {
       }
 
       const [, resource] = segments;
-      const id = segments[3];
+      const id = segments[2];
       if (resource === 'runtime') {
         if (method === 'POST') {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
           const rawBody = await parseBody(req, this.config.maxBodyBytes);
           const body = validateOrThrow<{
             sessionId?: string;
@@ -1155,18 +1300,37 @@ export class CommanderHttpServer {
             systemPrompt?: string;
             maxTokens?: number;
           }>(rawBody, Schemas.createRuntime);
-          const sessionId = body.sessionId ?? `session_${Date.now()}`;
+          const sessionId = body.sessionId ?? `session_${crypto.randomUUID()}`;
+          // EH-01: creation used to overwrite an existing entry after resolving
+          // the *caller's* tenant, so tenant B could replace tenant A's session
+          // by guessing its id (and deny its owner). Refuse duplicates
+          // unconditionally — answering differently for the owner would leak
+          // ownership — and apply the same capacity contract as execution.
+          if (this.runtimes.has(sessionId)) {
+            sendJson(res, 409, { error: 'Session ID already exists' });
+            return;
+          }
+          if (this.runtimes.size >= CommanderHttpServer.MAX_SESSIONS) this.evictStaleSessions();
+          if (this.runtimes.size >= CommanderHttpServer.MAX_SESSIONS) {
+            sendJson(res, 429, {
+              error: 'Maximum sessions reached. Please reuse an existing session.',
+            });
+            return;
+          }
           const runtime = this.createRuntime(body.provider ?? 'openai');
-          this.runtimes.set(sessionId, { runtime, lastAccessedAt: Date.now() });
+          this.runtimes.set(sessionId, { runtime, lastAccessedAt: Date.now(), tenantId });
           sendJson(res, 201, { sessionId, status: 'created' });
           return;
         }
         if (id) {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
           const entry = this.runtimes.get(id);
           if (!entry) {
             sendJson(res, 404, { error: 'Session not found' });
             return;
           }
+          if (!this.assertTenantAccess(res, tenantId, entry.tenantId, req.url ?? '')) return;
           entry.lastAccessedAt = Date.now();
           if (method === 'GET') {
             sendJson(res, 200, {
@@ -1177,7 +1341,15 @@ export class CommanderHttpServer {
             return;
           }
           if (method === 'DELETE') {
+            // EH-06: the map entry was dropped without disposing the runtime, so
+            // a deleted session's timers/listeners/leases outlived its session.
             this.runtimes.delete(id);
+            try {
+              entry.runtime.cancelAllSteps();
+              entry.runtime.dispose();
+            } catch (err) {
+              reportSilentFailure(err, 'httpServer:deleteRuntimeSession');
+            }
             sendJson(res, 200, { status: 'deleted' });
             return;
           }
@@ -1428,23 +1600,36 @@ export class CommanderHttpServer {
       }
       if (resource === 'bus') {
         if (method === 'GET') {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
           const topic = queryStr
             ? (new URLSearchParams(queryStr).get('topic') ?? undefined)
             : undefined;
-          sendJson(res, 200, {
-            topics: this.bus.getActiveTopics(),
-            history: this.bus
-              .getHistory(topic as MessageBusTopic | undefined, 50)
-              .map((m) => ({ topic: m.topic, source: m.source, timestamp: m.timestamp })),
+          await runWithTenant(tenantId, async () => {
+            const bus = getMessageBus();
+            sendJson(res, 200, {
+              topics: bus.getActiveTopics(),
+              history: bus
+                .getHistory(topic as MessageBusTopic | undefined, 50)
+                .map((m) => ({ topic: m.topic, source: m.source, timestamp: m.timestamp })),
+            });
           });
           return;
         }
       }
       if (resource === 'status') {
-        sendJson(res, 200, {
-          activeSessions: this.runtimes.size,
-          busTopics: this.bus.getActiveTopics(),
-          subscriberCounts: this.bus.getAllSubscriberCounts(),
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        await runWithTenant(tenantId, async () => {
+          const bus = getMessageBus();
+          const activeSessions = tenantId
+            ? [...this.runtimes.values()].filter((entry) => entry.tenantId === tenantId).length
+            : this.runtimes.size;
+          sendJson(res, 200, {
+            activeSessions,
+            busTopics: bus.getActiveTopics(),
+            subscriberCounts: bus.getAllSubscriberCounts(),
+          });
         });
         return;
       }
@@ -1461,7 +1646,11 @@ export class CommanderHttpServer {
       }
       if (resource === 'compensation' && method === 'GET') {
         // GET /api/v1/compensation — JSON compensation metrics snapshot
-        sendJson(res, 200, getCompensationData(this.bus));
+        const tenantId = this.requireTenant(req, res);
+        if (res.writableEnded) return;
+        await runWithTenant(tenantId, async () => {
+          sendJson(res, 200, getCompensationData(getMessageBus()));
+        });
         return;
       }
       if (resource === 'sops') {
@@ -1474,37 +1663,41 @@ export class CommanderHttpServer {
         // the /.commander/sops disk-scan no longer blocks the event loop
         // for the duration of a multi-agent directory listing.
         if (method === 'GET') {
-          // Skip 'v1' and 'sops' (2 elements) to get agentId, runId, format
-          const [, , agentId, runId, format] = segments;
-          if (!agentId) {
-            const data = await getSOPDashboardDataAsync();
-            sendJson(res, 200, data);
-            return;
-          }
-          if (!runId) {
-            // List SOPs for a specific agent
-            const allSops = await listSOPsAsync();
-            const filtered = allSops.filter((s) => s.agentId === agentId);
-            sendJson(res, 200, { agentId, sops: filtered, total: filtered.length });
-            return;
-          }
-          if (format === 'markdown') {
-            const md = await getSOPMarkdownAsync(agentId, runId);
-            if (!md) {
+          const tenantId = this.requireTenant(req, res);
+          if (res.writableEnded) return;
+          await runWithTenant(tenantId, async () => {
+            // Skip 'v1' and 'sops' (2 elements) to get agentId, runId, format
+            const [, , agentId, runId, format] = segments;
+            if (!agentId) {
+              const data = await getSOPDashboardDataAsync();
+              sendJson(res, 200, data);
+              return;
+            }
+            if (!runId) {
+              // List SOPs for a specific agent
+              const allSops = await listSOPsAsync();
+              const filtered = allSops.filter((s) => s.agentId === agentId);
+              sendJson(res, 200, { agentId, sops: filtered, total: filtered.length });
+              return;
+            }
+            if (format === 'markdown') {
+              const md = await getSOPMarkdownAsync(agentId, runId);
+              if (!md) {
+                sendJson(res, 404, { error: 'SOP not found' });
+                return;
+              }
+              res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
+              res.end(md);
+              return;
+            }
+            // Default: return structured JSON
+            const sop = await getSOPAsync(agentId, runId);
+            if (!sop) {
               sendJson(res, 404, { error: 'SOP not found' });
               return;
             }
-            res.writeHead(200, { 'Content-Type': 'text/markdown; charset=utf-8' });
-            res.end(md);
-            return;
-          }
-          // Default: return structured JSON
-          const sop = await getSOPAsync(agentId, runId);
-          if (!sop) {
-            sendJson(res, 404, { error: 'SOP not found' });
-            return;
-          }
-          sendJson(res, 200, sop);
+            sendJson(res, 200, sop);
+          });
           return;
         }
       }
@@ -1551,16 +1744,19 @@ export class CommanderHttpServer {
     res: ServerResponse,
     segments: string[],
   ): Promise<void> {
-    const [, resource, id] = segments;
+    const [resource, id] = segments;
     if (resource !== 'runtime' || !id) {
       sendJson(res, 404, { error: 'Not found' });
       return;
     }
+    const tenantId = this.requireTenant(req, res);
+    if (res.writableEnded) return;
     const entry = this.runtimes.get(id);
     if (!entry) {
       sendJson(res, 404, { error: 'Session not found' });
       return;
     }
+    if (!this.assertTenantAccess(res, tenantId, entry.tenantId, req.url ?? '')) return;
 
     // SSE per-IP connection limit
     const ip = req.socket.remoteAddress ?? 'unknown';
@@ -1575,34 +1771,37 @@ export class CommanderHttpServer {
     }
     ipConns.add(res);
 
-    entry.lastAccessedAt = Date.now();
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      Connection: 'keep-alive',
-    });
-    const stream = new SSEStream();
-    stream.pipe(res);
-    stream.emitStatus('session.started', id);
-    const unsubStart = this.bus.subscribe('agent.started', () => {
-      stream.emitStatus('agent.started');
-    });
-    const unsubComplete = this.bus.subscribe('agent.completed', () => {
-      stream.emitStatus('agent.completed');
-    });
-    const unsubError = this.bus.subscribe('agent.failed', () => {
-      stream.emitStatus('agent.error');
-    });
-    req.on('close', () => {
-      unsubStart();
-      unsubComplete();
-      unsubError();
-      stream.close();
-      const conns = this.sseConnections.get(ip);
-      if (conns) {
-        conns.delete(res);
-        if (conns.size === 0) this.sseConnections.delete(ip);
-      }
+    await runWithTenant(tenantId, async () => {
+      entry.lastAccessedAt = Date.now();
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        Connection: 'keep-alive',
+      });
+      const bus = getMessageBus();
+      const stream = new SSEStream();
+      stream.pipe(res);
+      stream.emitStatus('session.started', id);
+      const unsubStart = bus.subscribe('agent.started', () => {
+        stream.emitStatus('agent.started');
+      });
+      const unsubComplete = bus.subscribe('agent.completed', () => {
+        stream.emitStatus('agent.completed');
+      });
+      const unsubError = bus.subscribe('agent.failed', () => {
+        stream.emitStatus('agent.error');
+      });
+      req.on('close', () => {
+        unsubStart();
+        unsubComplete();
+        unsubError();
+        stream.close();
+        const conns = this.sseConnections.get(ip);
+        if (conns) {
+          conns.delete(res);
+          if (conns.size === 0) this.sseConnections.delete(ip);
+        }
+      });
     });
   }
 
@@ -1801,9 +2000,11 @@ export class CommanderHttpServer {
       sendJson(res, 503, { error: 'MCP Server not initialized. Call registerMCPServer first.' });
       return;
     }
+    const tenantId = this.requireTenant(req, res);
+    if (res.writableEnded) return;
     try {
       const body = (await parseBody(req, this.config.maxBodyBytes)) as JSONRPCRequest;
-      const response = await this.mcpServer.handleRequest(body);
+      const response = await runWithTenant(tenantId, () => this.mcpServer!.handleRequest(body));
       sendJson(res, 200, response);
     } catch (err) {
       if (err instanceof HttpRequestError && err.statusCode === 413) {
@@ -1882,6 +2083,24 @@ export class CommanderHttpServer {
       url,
       this.tenantApiKeyHashes,
     );
+  }
+
+  /**
+   * EH-04: the compensation/SOP/cost diagnostics surfaces (HTML dashboards and
+   * their auxiliary SSE streams) render the `MessageBus` singleton and the
+   * process-wide `MetricsCollector` counters. Neither carries a tenant, so the
+   * data cannot be scoped to the caller. On a server configured for more than
+   * one tenant these surfaces are refused outright — a fail-closed answer —
+   * rather than leaking every tenant's events to any authenticated caller.
+   */
+  private permitUnscopedDiagnostics(res: ServerResponse): boolean {
+    const tenants = new Set(this.tenantApiKeyHashes.values());
+    if (tenants.size <= 1) return true;
+    sendJson(res, 403, {
+      error:
+        'This diagnostics surface reads process-global events and is unavailable on a multi-tenant server. Use the tenant-scoped /api/v1/* endpoints instead.',
+    });
+    return false;
   }
 
   private checkRateLimit(ip: string): boolean {

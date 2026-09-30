@@ -85,7 +85,9 @@ function printReport(report: BenchmarkRunReport): void {
     console.log('─'.repeat(78));
   }
   const pass = report.securityScore >= 100 && report.missed === 0;
-  console.log(`  VERDICT: ${pass ? '✅ PASS (100% defense)' : '❌ FAIL (defense gaps remain)'}`);
+  console.log(
+    `  VERDICT: ${pass ? '✅ PASS (all listed cases blocked)' : '❌ FAIL (defense gaps remain)'}`,
+  );
   console.log('═'.repeat(78) + '\n');
 }
 

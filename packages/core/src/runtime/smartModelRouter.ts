@@ -29,6 +29,7 @@ export type ModelCapability =
   | 'high_quality'
   | 'function_calling'
   | 'json_mode'
+  | 'structured_output'
   | 'streaming'
   | 'translation'
   | 'summarization'
@@ -87,9 +88,10 @@ function toModelConfig(user: UserModelConfig): ModelConfig {
     costPer1MOutput: user.costPer1MOutput,
     capabilities: user.capabilities,
     contextWindow: user.contextWindow,
+    maxOutputTokens: user.maxOutputTokens,
     priority: 0,
     supportsJSONMode: user.capabilities.includes('json_mode'),
-    supportsStructuredOutput: user.capabilities.includes('json_mode'),
+    supportsStructuredOutput: user.capabilities.includes('structured_output'),
   };
 }
 
@@ -101,6 +103,7 @@ function toUserModelConfig(model: ModelConfig): UserModelConfig {
     costPer1MInput: model.costPer1MInput,
     costPer1MOutput: model.costPer1MOutput,
     contextWindow: model.contextWindow,
+    maxOutputTokens: model.maxOutputTokens,
     tier: model.tier,
   };
 }
@@ -282,6 +285,7 @@ export class SmartModelRouter {
     const estimatedOutputTokens = Math.min(
       ctx.tokenBudget,
       model.contextWindow - estimatedInputTokens,
+      model.maxOutputTokens ?? Number.POSITIVE_INFINITY,
     );
     const estimatedCost =
       (estimatedInputTokens / 1_000_000) * model.costPer1MInput +
@@ -457,15 +461,23 @@ export class SmartModelRouter {
         displayName: 'MiMo V2.5 Pro',
       },
       {
-        id: 'agnes-2.0-flash',
+        id: 'agnes-2.5-flash',
         provider: 'agnes',
         tier: 'eco',
-        capabilities: ['code', 'reasoning', 'analysis', 'fast', 'low_cost', 'streaming'],
+        capabilities: [
+          'code',
+          'reasoning',
+          'analysis',
+          'fast',
+          'low_cost',
+          'streaming',
+          'function_calling',
+        ],
         costPer1MInput: 0,
         costPer1MOutput: 0,
-        contextWindow: 128000,
+        contextWindow: 524_288,
         maxOutputTokens: 65536,
-        displayName: 'Agnes 2.0 Flash',
+        displayName: 'Agnes 2.5 Flash',
       },
     ];
   }

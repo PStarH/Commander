@@ -58,13 +58,14 @@
       "fieldConfig": { "defaults": { "unit": "ms", "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "yellow", "value": 3000 }, { "color": "red", "value": 5000 }] } } }
     },
     {
-      "title": "Active Workers & Steps",
+      "title": "Running Steps & Queue Age",
+      "description": "Note: there is no `commander_workers_active` metric — worker liveness lives in the kernel commander_workers table and is not exported to Prometheus. This panel uses emitted metrics only.",
       "type": "stat",
       "datasource": "Prometheus",
       "gridPos": { "h": 4, "w": 6, "x": 0, "y": 12 },
       "targets": [
-        { "expr": "commander_workers_active", "legendFormat": "Active Workers", "refId": "A" },
-        { "expr": "count(commander_steps{state=\"RUNNING\"})", "legendFormat": "Running Steps", "refId": "B" }
+        { "expr": "histogram_quantile(0.95, sum(rate(commander_step_queue_age_ms_bucket[5m])) by (le))", "legendFormat": "P95 queue age (ms)", "refId": "A" },
+        { "expr": "sum(rate(commander_step_latency_ms_count[5m]))", "legendFormat": "Step throughput", "refId": "B" }
       ]
     },
     {

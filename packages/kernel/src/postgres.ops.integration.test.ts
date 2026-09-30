@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { Pool } from 'pg';
 import {
   consumeCompensationBatch,
@@ -13,12 +13,24 @@ import { PostgresKernelRepository } from './postgres.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
 
+// F-K1-8: both tests need a live PostgreSQL 16 fixture and `pnpm test:integration`
+// has no env guard, so a silent skip would report PASS for an unrun durability
+// proof. Absent fixture is NOT VERIFIED and must fail the run.
+const LIVE_PG_SKIP_REASON =
+  'NOT VERIFIED: COMMANDER_KERNEL_DATABASE_URL/DATABASE_URL is unset - the live PostgreSQL ' +
+  'tenant-pause / reclaim / WS2 delivery durability proof did not run';
+if (!databaseUrl) {
+  process.stderr.write(`[kernel:integration] ${LIVE_PG_SKIP_REASON}\n`);
+  test('live PostgreSQL fixture is configured (REQUIRED)', () => {
+    assert.fail(LIVE_PG_SKIP_REASON);
+  });
+}
+
 describe('PostgreSQL kernel ops durability', () => {
   it(
     'persists tenant pause, reclaim compensation via consumer, and WS2 delivery',
-    { skip: !databaseUrl },
+    { skip: databaseUrl ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl) return;
       const pool = new Pool({ connectionString: databaseUrl, max: 8 });
       const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const tenantA = `ops-a-${suffix}`;
@@ -29,9 +41,6 @@ describe('PostgreSQL kernel ops durability', () => {
       const delivery = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
       try {
         await runKernelMigrations(pool);
-        await pool.query(`DELETE FROM commander_outbox WHERE topic = ANY($1::text[])`, [
-          [KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC],
-        ]);
         await pool.query(
           `INSERT INTO commander_workers
            (id,kind,version,capabilities,max_concurrency,status,generation,identity_subject,tenant_ids)
@@ -95,7 +104,7 @@ describe('PostgreSQL kernel ops durability', () => {
           runId: stepC.runId,
           stepId: stepC.id,
           tenantId: tenantC,
-          type: 'tool',
+          type: 'read.cache',
           idempotencyKey: `effect-key-${suffix}`,
           request: { tool: 'write' },
           policyDecisionId: 'decision',
@@ -119,7 +128,9 @@ describe('PostgreSQL kernel ops durability', () => {
          WHERE id=$1`,
           [stepC.id],
         );
-        await repo.reclaimExpiredLeases(new Date(), 10);
+        // The database clock is authoritative for `lease_expires_at`; leave a
+        // margin so host/container clock skew cannot make this test flaky.
+        await repo.reclaimExpiredLeases(new Date(Date.now() + 60_000), 10);
         assert.equal((await repo.getRun(stepC.runId, tenantC))?.state, 'COMPENSATING');
 
         await new KernelOutboxPublisher(repo, delivery).publish(100);
@@ -141,17 +152,13 @@ describe('PostgreSQL kernel ops durability', () => {
         const pendingCount = Number(pendingComp.rows[0]?.count ?? 0);
         assert.equal(pendingCount, 1);
 
-        await pool.query(
-          `DELETE FROM commander_outbox
-         WHERE topic = ANY($1::text[]) AND tenant_id <> $2`,
-          [[KERNEL_COMPENSATION_TOPIC, LEGACY_COMPENSATION_TOPIC], tenantC],
-        );
-
+        let brokerAdmissions = 0;
         let compensated = 0;
         const consumeResult = await consumeCompensationBatch(
           repo,
           {
             admit: async (input) => {
+              brokerAdmissions += 1;
               const cmpAdmit = await repo.admitEffect({
                 id: input.effectId,
                 runId: stepC.runId,
@@ -174,8 +181,8 @@ describe('PostgreSQL kernel ops durability', () => {
               return {
                 admitted: cmpAdmit.admitted,
                 effectId: input.effectId,
-                replayed: !!cmpAdmit.replayed,
-                reason: cmpAdmit.reason,
+                replayed: 'replayed' in cmpAdmit ? cmpAdmit.replayed : false,
+                reason: 'reason' in cmpAdmit ? cmpAdmit.reason : undefined,
               };
             },
             executeAdmitted: async (input) => {
@@ -192,12 +199,36 @@ describe('PostgreSQL kernel ops durability', () => {
             },
           },
           async () => 'cmp-token',
-          { workerId: 'cmp-worker', topic: KERNEL_COMPENSATION_TOPIC, limit: 10 },
+          {
+            workerId: 'cmp-worker',
+            workerGeneration: 1,
+            claimSecret: 'cmp-secret',
+            registry: { resolve: () => null },
+            topic: KERNEL_COMPENSATION_TOPIC,
+            limit: 10,
+          },
         );
-        assert.equal(consumeResult.consumed, 1);
-        assert.equal(consumeResult.succeeded, 1);
-        assert.equal(compensated, 1);
-        assert.equal((await repo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 10)).length, 0);
+        assert.equal(consumeResult.consumed, 0);
+        assert.equal(consumeResult.succeeded, 0);
+        assert.equal(consumeResult.escalated, 0);
+        assert.equal(
+          brokerAdmissions,
+          0,
+          'untrusted recovery work must fail before broker admission',
+        );
+        assert.equal(compensated, 0, 'untrusted recovery work must not invoke the adapter');
+        const retriableComp = await pool.query<{
+          published_at: Date | null;
+          moved_to_dlq_at: Date | null;
+          last_error: { code?: string } | null;
+        }>(
+          `SELECT published_at, moved_to_dlq_at, last_error FROM commander_outbox
+         WHERE tenant_id=$1 AND topic=$2`,
+          [tenantC, KERNEL_COMPENSATION_TOPIC],
+        );
+        assert.equal(retriableComp.rows[0]?.published_at, null);
+        assert.equal(retriableComp.rows[0]?.moved_to_dlq_at, null);
+        assert.equal(retriableComp.rows[0]?.last_error, null);
 
         const durableEventId = `restart-event-${suffix}`;
         await delivery.publish({
@@ -210,12 +241,12 @@ describe('PostgreSQL kernel ops durability', () => {
           payload: { runId: stepC.runId },
         });
         const firstClaim = (
-          await delivery.claim('ws2-before-restart', 10_000, new Date(Date.now() + 1_000))
+          await delivery.claim('ws2-before-restart', 10_000, new Date(Date.now() + 60_000))
         ).find((message) => message.eventId === durableEventId);
         assert.ok(firstClaim);
         const restartedAdapter = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
         const redelivered = (
-          await restartedAdapter.claim('ws2-after-restart', 10_000, new Date(Date.now() + 61_000))
+          await restartedAdapter.claim('ws2-after-restart', 10_000, new Date(Date.now() + 121_000))
         ).find((message) => message.eventId === durableEventId);
         assert.ok(redelivered);
         assert.notEqual(redelivered.claimToken, firstClaim.claimToken);
@@ -243,10 +274,9 @@ describe('PostgreSQL kernel ops durability', () => {
   it(
     'locks COMPLETED|ADMITTED effects before compensation snapshot so sibling completeEffect cannot orphan',
     {
-      skip: !databaseUrl,
+      skip: databaseUrl ? false : LIVE_PG_SKIP_REASON,
     },
     async () => {
-      if (!databaseUrl) return;
       // 并发回归：failStep→COMPENSATING 与 sibling completeEffect 竞态时，
       // 凡最终 COMPLETED 的 effect 必须落在 compensation.requested.effectIds 内。
       const pool = new Pool({ connectionString: databaseUrl, max: 12 });
@@ -322,7 +352,7 @@ describe('PostgreSQL kernel ops durability', () => {
                 runId,
                 stepId: stepA,
                 tenantId,
-                type: 'tool',
+                type: 'read.cache',
                 idempotencyKey: `a-${suffix}`,
                 request: { tool: 'write-a' },
                 policyDecisionId: 'decision-a',
@@ -351,7 +381,7 @@ describe('PostgreSQL kernel ops durability', () => {
                 runId,
                 stepId: stepB,
                 tenantId,
-                type: 'tool',
+                type: 'read.cache',
                 idempotencyKey: `b-${suffix}`,
                 request: { tool: 'write-b' },
                 policyDecisionId: 'decision-b',

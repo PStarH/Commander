@@ -139,8 +139,10 @@ export class ScreenshotCaptureTool implements Tool {
       const launchArgs = process.env.COMMANDER_CHROMIUM_NO_SANDBOX === '1' ? ['--no-sandbox'] : [];
       const browser = await chromium.launch({ headless: true, args: launchArgs });
       const page = await browser.newPage({ viewport: { width: opts.width, height: opts.height } });
-      // Route every browser request through the pinned outbound policy. This
-      // rechecks redirects and subresources immediately before connection.
+      // Route every browser request through the outbound policy. This enforces
+      // the domain allowlist (or a registered tenant-bound authorization) plus
+      // the SSRF/private-address check, and rechecks redirects and subresources
+      // immediately before connection.
       await page.route('**/*', async (route) => {
         const requestUrl = route.request().url();
         if (!requestUrl.startsWith('http://') && !requestUrl.startsWith('https://')) {

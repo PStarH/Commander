@@ -149,13 +149,16 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
   // 完成并回调
   const handleFinish = useCallback(async () => {
     try {
-      await completeOnboarding(['welcome', 'provider', 'first-task', 'complete']);
+      const steps = ['welcome', 'provider'];
+      if (onboardingStatus?.hasRunTask) steps.push('first-task');
+      steps.push('complete');
+      await completeOnboarding(steps);
     } catch {
       // 即使标记失败也允许进入控制台
     } finally {
       onComplete?.();
     }
-  }, [onComplete]);
+  }, [onComplete, onboardingStatus?.hasRunTask]);
 
   return (
     <div className="page" style={{ maxWidth: '760px', margin: '0 auto' }}>
@@ -180,6 +183,12 @@ export function OnboardingWizard({ onComplete, onSkip }: OnboardingWizardProps) 
             跳过引导
           </button>
         </div>
+      </div>
+
+      <div className="banner" role="note" style={{ marginBottom: '14px' }}>
+        <AlertTriangle size={14} /> Commander is alpha and not production-ready. This guide may show
+        configure provider credentials in the deployment environment or secret manager before
+        testing.
       </div>
 
       {/* 步骤进度条 */}
@@ -376,7 +385,7 @@ function WelcomeStep() {
         <div>
           <h2 style={{ fontSize: '1.2rem' }}>欢迎使用 Commander</h2>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-            生产级多 Agent 编排框架 — 从 POC 到生产的可靠路径
+            Alpha 多 Agent 编排预览 — 用于本地评估与开发
           </p>
         </div>
       </div>
@@ -389,8 +398,8 @@ function WelcomeStep() {
           marginBottom: '18px',
         }}
       >
-        调研显示 93% 的企业 Agent 项目卡在 POC→生产阶段，上手体验是关键。本向导将带你完成 LLM
-        provider 连接、首个任务运行，并熟悉核心能力。
+        本向导将带你完成 LLM provider 连接、首个任务运行，并熟悉核心能力。Commander 当前为
+        alpha，尚未达到生产就绪标准。
       </p>
 
       <div style={{ display: 'grid', gap: '10px' }}>
@@ -445,7 +454,6 @@ function ProviderStep({
   const detectedProvider = status?.provider as OnboardingProvider | undefined;
   const [provider, setProvider] = useState<OnboardingProvider>(detectedProvider ?? 'openai');
   const [model, setModel] = useState<string>(status?.model ?? 'gpt-4o');
-  const [apiKey, setApiKey] = useState<string>('');
   const [testing, setTesting] = useState(false);
   const [testResult, setTestResult] = useState<OnboardingProviderTestResult | null>(null);
   const [saving, setSaving] = useState(false);
@@ -462,7 +470,7 @@ function ProviderStep({
 
   // 当 status 到达后，回填检测到的值
   useEffect(() => {
-    if (detectedProvider && !apiKey) {
+    if (detectedProvider) {
       setProvider(detectedProvider);
     }
     if (status?.model && !model) {
@@ -476,14 +484,14 @@ function ProviderStep({
     setError(null);
     setTestResult(null);
     try {
-      const result = await testProvider(provider, model, apiKey || undefined);
+      const result = await testProvider(provider, model);
       setTestResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : '测试失败');
     } finally {
       setTesting(false);
     }
-  }, [provider, model, apiKey]);
+  }, [provider, model]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -493,16 +501,15 @@ function ProviderStep({
       await saveOnboardingConfig({
         provider,
         model,
-        apiKey: apiKey || undefined,
       });
-      setSavedMsg('配置已保存到 .commander.json');
+      setSavedMsg('Provider 和模型偏好已保存。密钥仍由环境或密钥管理器提供。');
       await onSaved();
     } catch (err) {
       setError(err instanceof Error ? err.message : '保存失败');
     } finally {
       setSaving(false);
     }
-  }, [provider, model, apiKey, onSaved]);
+  }, [provider, model, onSaved]);
 
   const opt = PROVIDER_OPTIONS.find((o) => o.id === provider);
 
@@ -510,8 +517,8 @@ function ProviderStep({
     <div>
       <h2 style={{ fontSize: '1.1rem', marginBottom: '6px' }}>配置 LLM Provider</h2>
       <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: '16px' }}>
-        选择一个 provider 并测试连通性。API Key 仅保存到本地 <code>.commander.json</code>
-        ，不会写入环境变量。
+        选择一个 provider 并测试连通性。请在部署环境或密钥管理器中配置 API Key；向导不会接收、
+        传输或保存密钥。
       </p>
 
       {/* 检测到的状态 */}
@@ -562,18 +569,6 @@ function ProviderStep({
           value={model}
           onChange={(e) => setModel(e.target.value)}
           placeholder={opt?.defaultModel}
-          style={{ width: '100%' }}
-        />
-      </Field>
-
-      <Field label="API Key">
-        <input
-          className="inp"
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={provider === 'ollama' ? '本地 provider 无需 API Key' : 'sk-...'}
-          autoComplete="off"
           style={{ width: '100%' }}
         />
       </Field>
@@ -686,7 +681,6 @@ function FirstTaskStep({
   const [task, setTask] = useState<string>(FALLBACK_TASKS[0].prompt);
   const [running, setRunning] = useState(false);
   const [result, setResult] = useState<string | null>(null);
-  const [resultSuccess, setResultSuccess] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // 加载示例任务
@@ -712,11 +706,13 @@ function FirstTaskStep({
     setRunning(true);
     setError(null);
     setResult(null);
-    setResultSuccess(null);
     try {
       const res = await runFirstTask(task.trim());
+      if (!res.success) {
+        setError(res.error ?? '运行失败');
+        return;
+      }
       setResult(res.result ?? '');
-      setResultSuccess(res.success);
       await onRan();
     } catch (err) {
       setError(err instanceof Error ? err.message : '运行失败');
@@ -729,7 +725,7 @@ function FirstTaskStep({
     <div>
       <h2 style={{ fontSize: '1.1rem', marginBottom: '6px' }}>运行首个任务</h2>
       <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)', marginBottom: '14px' }}>
-        选择一个示例任务或输入自定义任务，验证 provider 配置可用。 Commander 会将任务路由到 LLM
+        选择一个示例任务或输入自定义任务，验证 provider 配置可用。Commander 会将任务路由到 LLM
         并返回结果。
       </p>
 
@@ -744,8 +740,8 @@ function FirstTaskStep({
           }}
         >
           <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <AlertTriangle size={14} /> 未检测到
-            provider，将返回示例结果。请先在「Provider」步骤配置。
+            <AlertTriangle size={14} /> 未检测到 provider。请先在部署环境或密钥管理器中配置密钥，
+            再运行任务。
           </span>
         </div>
       )}
@@ -816,10 +812,8 @@ function FirstTaskStep({
             marginBottom: '14px',
             padding: '12px 14px',
             borderRadius: 'var(--radius-md)',
-            border: `1px solid ${
-              resultSuccess ? 'var(--accent-green-border)' : 'var(--accent-amber-border)'
-            }`,
-            background: resultSuccess ? 'var(--accent-green-bg)' : 'var(--accent-amber-bg)',
+            border: '1px solid var(--accent-green-border)',
+            background: 'var(--accent-green-bg)',
           }}
         >
           <div
@@ -830,11 +824,10 @@ function FirstTaskStep({
               fontSize: '0.78rem',
               fontWeight: 600,
               marginBottom: '8px',
-              color: resultSuccess ? 'var(--accent-green)' : 'var(--accent-amber)',
+              color: 'var(--accent-green)',
             }}
           >
-            {resultSuccess ? <CheckCircle size={14} /> : <AlertTriangle size={14} />}
-            {resultSuccess ? '执行成功' : '已返回示例结果'}
+            <CheckCircle size={14} /> Provider 执行成功
           </div>
           <pre
             style={{
@@ -878,7 +871,7 @@ function CompleteStep() {
     {
       icon: <MessageSquare size={16} />,
       title: '对话',
-      desc: '与 Agent 流式对话，实时查看思考与工具调用。',
+      desc: '与 Agent 流式对话，实时查看运行事件与工具调用。',
       to: '/chat',
     },
     {
@@ -928,7 +921,7 @@ function CompleteStep() {
         <div>
           <h2 style={{ fontSize: '1.2rem' }}>配置完成</h2>
           <p style={{ fontSize: '0.82rem', color: 'var(--text-tertiary)' }}>
-            你已具备运行生产级多 Agent 任务的基础配置
+            你已完成 alpha 评估环境的基础配置
           </p>
         </div>
       </div>

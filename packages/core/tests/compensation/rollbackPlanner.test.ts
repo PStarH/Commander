@@ -15,7 +15,6 @@ import {
   generateRollbackPlan,
   executeRollbackPlan,
   registerCompensationMetadata,
-  registerResourceKeys,
   type PlanInput,
   type PlannedToolCall,
 } from '../../src/compensation/rollbackPlanner';
@@ -327,19 +326,15 @@ describe('RollbackPlanner', () => {
       const completed: string[] = [];
       await executeRollbackPlan(plan, {
         handlers: { file_write: async () => ({ success: true }) },
-        onStepStart: (step) => started.push(step.stepId),
-        onStepComplete: (step) => completed.push(step.stepId),
+        onStepStart: (step) => {
+          started.push(step.stepId);
+        },
+        onStepComplete: (step) => {
+          completed.push(step.stepId);
+        },
       });
       assert.strictEqual(started.length, 1);
       assert.strictEqual(completed.length, 1);
-    });
-  });
-
-  describe('registerResourceKeys', () => {
-    it('allows registering custom resource key fields', () => {
-      registerResourceKeys('custom_prefix', ['id', 'version']);
-      // The registration is global; just verify it doesn't throw
-      assert.ok(true);
     });
   });
 });

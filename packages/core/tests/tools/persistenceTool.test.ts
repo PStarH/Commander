@@ -40,6 +40,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import * as fsp from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { randomUUID } from 'node:crypto';
+
+// Keep this module-isolation contract test away from the shared repository
+// memory directory used by other Vitest workers. Windows Node 20 can retain a
+// handle briefly during parallel cleanup, turning a shared recursive rm into a
+// 60-second hook timeout. The production path remains unchanged by default.
+const ISOLATED_MEMORY_DIR = path.join(os.tmpdir(), `commander-memory-${randomUUID()}`);
+process.env.COMMANDER_MEMORY_DIR = ISOLATED_MEMORY_DIR;
 
 const realRefs = vi.hoisted(() => ({
   mkdir: null as typeof fsp.mkdir | null,
@@ -54,12 +62,13 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   };
 });
 
+const EXPECTED_MEMORY_DIR = ISOLATED_MEMORY_DIR;
 const ORIGINAL_CWD = process.cwd();
 let testRoot = '';
 let restoreCwd: (() => void) | undefined;
 
 function expectedMemoryDir(): string {
-  return path.join(process.cwd(), '.commander_memory');
+  return path.resolve(ISOLATED_MEMORY_DIR);
 }
 
 /** Windows CI can hit ENOTEMPTY/EBUSY/EPERM while AV or node still holds files. */
@@ -82,7 +91,7 @@ async function rmMemoryDirRetry(): Promise<void> {
   // Best-effort on Windows — do not fail the suite on leftover locked files.
   if (process.platform === 'win32') {
     try {
-      await fsp.rm(expectedMemoryDir(), {
+      await fsp.rm(EXPECTED_MEMORY_DIR, {
         recursive: true,
         force: true,
         maxRetries: 5,

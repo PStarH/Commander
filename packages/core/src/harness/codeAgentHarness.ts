@@ -9,7 +9,7 @@
  *
  * This harness is selected for power/standard-tier code models by the built-in
  * selection rules in HarnessRegistry. It demonstrates the full capability of
- * the pluggable harness system while being 100% compatible with Commander's
+ * the pluggable harness system while preserving compatibility with Commander's
  * plugin hooks, tenant isolation, and metrics infrastructure.
  */
 import type {
@@ -29,8 +29,9 @@ import type {
   TokenUsage,
 } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
-import { generateId, now } from '../runtime/runtimeHelpers';
+import { now } from '../runtime/runtimeHelpers';
 import { BaseHarness } from './baseHarness';
+import { extractDecisionObject } from './decisionJson';
 
 // ============================================================================
 // Capabilities
@@ -193,6 +194,10 @@ export class CodeAgentHarness extends BaseHarness {
       let lastError: string | undefined;
       let finalContent = '';
       let taskComplete = false;
+      // Set when the content scan rejects a final answer. Kept separate from
+      // taskComplete so the post-loop synthesis path cannot turn a rejected
+      // answer into a 'success' result.
+      let contentRejected = false;
 
       // ── Detect: start vs continue ──
       // If messages contain assistant responses with tool_calls, we're continuing.
@@ -326,12 +331,18 @@ export class CodeAgentHarness extends BaseHarness {
           if (!response.toolCalls || response.toolCalls.length === 0) {
             finalContent = response.content || '';
             if (finalContent && finalContent.length > 50) {
-              // Content safety scan
+              // Content safety scan. A long response is NOT exempt: the previous
+              // `|| finalContent.length > 200` let any long answer bypass the
+              // check, and unsafe content must never be a successful final answer.
               const scanResult = await services.scanContent(finalContent);
-              if (scanResult.isSafe || finalContent.length > 200) {
-                taskComplete = true;
+              if (!scanResult.isSafe) {
+                lastError = 'Final content failed the content safety scan';
+                finalContent = '';
+                contentRejected = true;
                 break;
               }
+              taskComplete = true;
+              break;
             }
             // Short/no content — might need to nudge
             if (toolLoopCount === 0) {
@@ -558,7 +569,7 @@ export class CodeAgentHarness extends BaseHarness {
       const finalResult = this.buildResultInternal(
         runId,
         goal,
-        finalContent ? 'success' : 'failed',
+        contentRejected ? 'failed' : finalContent ? 'success' : 'failed',
         finalContent || (lastError ?? 'All attempts exhausted'),
         steps,
         totalTokenUsage,
@@ -693,8 +704,8 @@ Respond with a JSON object:
       const guardianProvider = services.getProvider(this.guardianConfig.provider);
       if (!guardianProvider) {
         return {
-          approved: true,
-          reason: `Guardian provider "${this.guardianConfig.provider}" not available — auto-approved`,
+          approved: false,
+          reason: `Guardian provider "${this.guardianConfig.provider}" not available — denied (fail-closed)`,
         };
       }
 
@@ -705,25 +716,29 @@ Respond with a JSON object:
       });
 
       if (!guardianResponse?.content) {
-        return { approved: true, reason: 'Guardian returned empty response — auto-approved' };
-      }
-
-      const jsonMatch = guardianResponse.content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]) as GuardianDecision;
         return {
-          approved: parsed.approved !== false,
-          reason: parsed.reason || 'Guardian review complete',
-          suggestion: parsed.suggestion,
+          approved: false,
+          reason: 'Guardian returned empty response — denied (fail-closed)',
         };
       }
 
-      return { approved: true, reason: 'Could not parse Guardian response — auto-approved' };
+      const parsed = extractDecisionObject(guardianResponse.content, 'approved');
+      if (!parsed) {
+        return {
+          approved: false,
+          reason: 'Could not parse Guardian response — denied (fail-closed)',
+        };
+      }
+      return {
+        approved: parsed.approved === true,
+        reason: typeof parsed.reason === 'string' ? parsed.reason : 'Guardian review complete',
+        suggestion: typeof parsed.suggestion === 'string' ? parsed.suggestion : undefined,
+      };
     } catch (err) {
-      getGlobalLogger().warn('CodeAgentHarness', 'Guardian check failed, auto-approving', {
+      getGlobalLogger().warn('CodeAgentHarness', 'Guardian check failed, denying', {
         error: (err as Error)?.message,
       });
-      return { approved: true, reason: 'Guardian check failed — auto-approved (fail-open)' };
+      return { approved: false, reason: 'Guardian check failed — denied (fail-closed)' };
     }
   }
 

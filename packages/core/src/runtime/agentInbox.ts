@@ -95,6 +95,18 @@ export class AgentInbox {
     return msgs.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
   }
 
+  /**
+   * List unread messages without claiming them.
+   *
+   * RCH-12: the context injector must decide how many messages actually fit the
+   * prompt budget before it can acknowledge them; `pollInbox` flips every unread
+   * message to `read`, so a caller that could not inject them all would strand
+   * the remainder (only `unread` messages are ever polled again).
+   */
+  peekInbox(agentId: string): InboxMessage[] {
+    return this.getOrCreateInbox(agentId).filter((msg) => msg.status === 'unread');
+  }
+
   /** Get unread messages for an agent */
   pollInbox(agentId: string): InboxMessage[] {
     const inbox = this.getOrCreateInbox(agentId);

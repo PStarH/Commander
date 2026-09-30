@@ -1,6 +1,53 @@
 # =============================================================================
 # Commander — Network Policy (Enterprise tier)
 # =============================================================================
+{{- define "commander.databaseEndpointEgress" -}}
+{{- $root := .root -}}
+{{- $roles := .roles -}}
+{{- range $endpoint := $root.Values.networkPolicy.databaseEndpoints -}}
+{{- $selected := false -}}
+{{- range $role := $roles -}}
+{{- if has $role $endpoint.roles -}}{{- $selected = true -}}{{- end -}}
+{{- end -}}
+{{- if $selected }}
+- to:
+  {{- if $endpoint.cidr }}
+    - ipBlock:
+        cidr: {{ $endpoint.cidr.cidr | quote }}
+  ports:
+    - protocol: TCP
+      port: {{ $endpoint.cidr.port }}
+  {{- else }}
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ $endpoint.service.namespace | quote }}
+      podSelector:
+        matchLabels:
+          {{- toYaml $endpoint.service.podSelector | nindent 10 }}
+  ports:
+    - protocol: TCP
+      port: {{ $endpoint.service.targetPort }}
+  {{- end }}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "commander.clusterDnsEgress" -}}
+- to:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: {{ .Values.networkPolicy.clusterDns.namespace | quote }}
+      podSelector:
+        matchLabels:
+          {{- toYaml .Values.networkPolicy.clusterDns.podSelector | nindent 10 }}
+  ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+{{- end -}}
+
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 {{- if .Values.redis.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -56,13 +103,42 @@ spec:
       ports:
         - protocol: TCP
           port: {{ .Values.api.port }}
+
     {{- else }}
+    # Fail closed: with neither a web workload nor an ingress-controller
+    # namespace configured, admit only pods in this release's own namespace.
+    # An empty namespace selector would admit every pod in the cluster.
     - from:
-        - namespaceSelector: {}
+        - podSelector: {}
       ports:
         - protocol: TCP
           port: {{ .Values.api.port }}
     {{- end }}
+
+---
+# Dedicated tenant-authority proof ingress. It intentionally never permits the
+# normal API HTTP port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "commander.fullname" . }}-api-proof-ingress
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "commander.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: api
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "commander.proofReaderLabels" . | nindent 14 }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.tenantAuthority.apiProof.port }}
 
 {{- if .Values.networkPolicy.enabled }}
 ---
@@ -123,24 +199,10 @@ spec:
     - Egress
   egress:
     # DNS
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # PostgreSQL (bundled)
-    {{- if include "commander.bundledPostgres" . }}
-    - to:
-        - podSelector:
-            matchLabels:
-              {{- include "commander.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: postgres
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
+    {{- include "commander.clusterDnsEgress" . | nindent 4 }}
+    # PostgreSQL app and tenant-authority roles.
+    {{- include "commander.databaseEndpointEgress" (dict "root" . "roles" (list "app" "tenant-authority")) | nindent 4 }}
+    # Exact external PostgreSQL Service CIDRs required by the API migration gate.
     {{- range .Values.networkPolicy.egress.databaseCidrs }}
     - to:
         - ipBlock:
@@ -162,6 +224,67 @@ spec:
     {{- end }}
 
 ---
+# The proof Job has no Service and no ingress. It may resolve cluster DNS,
+# reach sealed database endpoints, and call only the dedicated proof listener.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "commander.fullname" . }}-tenant-cutover-prove
+  labels:
+    {{- include "commander.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "commander.proofReaderLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Read-only Kubernetes topology API used by the projected proof-reader identity.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              component: kube-apiserver
+      ports:
+        - protocol: TCP
+          port: 6443
+    {{- range .Values.networkPolicy.egress.kubernetesApiCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: 443
+        - protocol: TCP
+          port: 6443
+    {{- end }}
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "commander.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: api
+      ports:
+        - protocol: TCP
+          port: {{ .Values.tenantAuthority.apiProof.port }}
+    {{- include "commander.databaseEndpointEgress" (dict "root" . "roles" (list "owner")) | nindent 4 }}
+
+---
 # Allow worker egress to PostgreSQL
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -178,32 +301,8 @@ spec:
     - Egress
   egress:
     # DNS
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    # PostgreSQL (bundled)
-    {{- if include "commander.bundledPostgres" . }}
-    - to:
-        - podSelector:
-            matchLabels:
-              {{- include "commander.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: postgres
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
-    {{- range .Values.networkPolicy.egress.databaseCidrs }}
-    - to:
-        - ipBlock:
-            cidr: {{ . | quote }}
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
+    {{- include "commander.clusterDnsEgress" . | nindent 4 }}
+    {{- include "commander.databaseEndpointEgress" (dict "root" . "roles" (list "worker")) | nindent 4 }}
     {{- range .Values.networkPolicy.egress.adapterCidrs }}
     - to:
         - ipBlock:
@@ -212,7 +311,14 @@ spec:
         - protocol: TCP
           port: 443
     {{- end }}
-
+    {{- range .Values.networkPolicy.egress.kubernetesApiCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.adapterOps.kubernetes.apiPort }}
+    {{- end }}
 ---
 # Allow kernel-ops egress to PostgreSQL + DNS
 apiVersion: networking.k8s.io/v1
@@ -229,31 +335,8 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    {{- if include "commander.bundledPostgres" . }}
-    - to:
-        - podSelector:
-            matchLabels:
-              {{- include "commander.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: postgres
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
-    {{- range .Values.networkPolicy.egress.databaseCidrs }}
-    - to:
-        - ipBlock:
-            cidr: {{ . | quote }}
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
+    {{- include "commander.clusterDnsEgress" . | nindent 4 }}
+    {{- include "commander.databaseEndpointEgress" (dict "root" . "roles" (list "scheduler")) | nindent 4 }}
 
 ---
 # Allow adapter-ops egress to PostgreSQL, DNS, and adapter CIDR allowlist
@@ -271,31 +354,8 @@ spec:
   policyTypes:
     - Egress
   egress:
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    {{- if include "commander.bundledPostgres" . }}
-    - to:
-        - podSelector:
-            matchLabels:
-              {{- include "commander.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: postgres
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
-    {{- range .Values.networkPolicy.egress.databaseCidrs }}
-    - to:
-        - ipBlock:
-            cidr: {{ . | quote }}
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
+    {{- include "commander.clusterDnsEgress" . | nindent 4 }}
+    {{- include "commander.databaseEndpointEgress" (dict "root" . "roles" (list "adapter-ops")) | nindent 4 }}
     {{- range .Values.networkPolicy.egress.adapterCidrs }}
     - to:
         - ipBlock:
@@ -303,6 +363,14 @@ spec:
       ports:
         - protocol: TCP
           port: 443
+    {{- end }}
+    {{- range .Values.networkPolicy.egress.kubernetesApiCidrs }}
+    - to:
+        - ipBlock:
+            cidr: {{ . | quote }}
+      ports:
+        - protocol: TCP
+          port: {{ $.Values.adapterOps.kubernetes.apiPort }}
     {{- end }}
 
 ---
@@ -342,7 +410,11 @@ spec:
         - podSelector:
             matchLabels:
               {{- include "commander.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: migration
+              commander.io/migration-client-v2: "true"
+              commander.io/migration-release: {{ .Release.Name | quote }}
+        - podSelector:
+            matchLabels:
+              {{- include "commander.proofReaderLabels" . | nindent 14 }}
       ports:
         - protocol: TCP
           port: {{ $.Values.database.postgres.port }}
@@ -360,33 +432,12 @@ spec:
   podSelector:
     matchLabels:
       {{- include "commander.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: migration
+      commander.io/migration-client-v2: "true"
+      commander.io/migration-release: {{ .Release.Name | quote }}
   policyTypes:
     - Egress
   egress:
-    - to:
-        - namespaceSelector: {}
-      ports:
-        - protocol: UDP
-          port: 53
-        - protocol: TCP
-          port: 53
-    {{- if include "commander.bundledPostgres" . }}
-    - to:
-        - podSelector:
-            matchLabels:
-              {{- include "commander.selectorLabels" . | nindent 14 }}
-              app.kubernetes.io/component: postgres
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
-    {{- range .Values.networkPolicy.egress.databaseCidrs }}
-    - to:
-        - ipBlock:
-            cidr: {{ . | quote }}
-      ports:
-        - protocol: TCP
-          port: {{ $.Values.database.postgres.port }}
-    {{- end }}
+    {{- include "commander.clusterDnsEgress" . | nindent 4 }}
+    {{- include "commander.databaseEndpointEgress" (dict "root" . "roles" (list "owner" "app" "tenant-authority" "scheduler" "worker" "adapter-ops")) | nindent 4 }}
+{{- end }}
 {{- end }}

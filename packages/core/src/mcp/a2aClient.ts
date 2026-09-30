@@ -28,30 +28,30 @@ import {
   A2A_INTERRUPTED_STATES,
 } from './a2aCompliance';
 import { getGlobalLogger } from '../logging';
-import { getOutboundNetworkPolicy } from '../security/outboundNetworkPolicy';
+import {
+  getOutboundNetworkPolicy,
+  isNonGlobalDestination,
+} from '../security/outboundNetworkPolicy';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
 // Per OWASP SSRF Prevention Cheat Sheet: validate scheme, reject private IPs.
-const PRIVATE_IP_PATTERNS = [
-  /^127\./,
-  /^10\./,
-  /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
-  /^192\.168\./,
-  /^169\.254\./,
-  /^0\./,
-  /^::1$/,
-  /^fc00:/,
-  /^fe80:/,
-];
-
+//
+// Address classification is delegated to the outbound policy's canonical
+// helper rather than kept as a local regex list. The previous local list had
+// drifted: it omitted `localhost` / `*.localhost`, IPv4-mapped IPv6
+// (`::ffff:127.0.0.1`), the `[::1]` bracketed form and most non-global IPv6
+// ranges, so `new A2AClient('http://localhost:8080', token)` constructed
+// successfully. The transport-time SSRF check still caught it, but the
+// constructor guard is documented to reject private/internal hosts and must
+// not depend on a later layer to hold.
 function isSafeA2AUrl(urlStr: string): boolean {
   try {
     const parsed = new URL(urlStr);
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
-    for (const pattern of PRIVATE_IP_PATTERNS) {
-      if (pattern.test(parsed.hostname)) return false;
-    }
-    return true;
+    return !isNonGlobalDestination(parsed.hostname);
   } catch {
     return false;
   }
@@ -100,7 +100,7 @@ export class A2AClient {
     // Security: Configure mTLS if certificates are provided.
     if (mTLSConfig) {
       try {
-        const https = require('node:https');
+        const https = nodeRequire('node:https');
         this.mtlsAgent = new https.Agent({
           cert: mTLSConfig.cert,
           key: mTLSConfig.key,
@@ -266,6 +266,9 @@ export class A2AClient {
       if (this.mtlsAgent) {
         (fetchOptions as Record<string, unknown>).agent = this.mtlsAgent;
       }
+      // Authorization-aware egress: the remote agent URL must be allowlisted (or
+      // hold a registered tenant-bound authorization) and pass the
+      // SSRF/private-address check. Redirects are refused outright below.
       const response = await getOutboundNetworkPolicy().ssrfCheckedFetch(url, fetchOptions);
       if (response.status >= 300 && response.status < 400) {
         await response.body?.cancel().catch(() => {});

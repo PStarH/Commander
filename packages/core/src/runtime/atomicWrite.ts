@@ -6,8 +6,13 @@
  * parse — crash-looping boot paths or silently losing all state. These helpers
  * make writes atomic and make reads corruption-tolerant.
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+
+function exclusiveTempPath(dir: string, base: string): string {
+  return path.join(dir, `.${base}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+}
 
 /**
  * Atomically write a file: write to a temp file in the same directory, fsync the
@@ -18,8 +23,8 @@ import * as path from 'node:path';
 export function atomicWriteFileSync(filePath: string, data: string | Buffer): void {
   const dir = path.dirname(filePath);
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}`);
-  const fd = fs.openSync(tmp, 'w');
+  const tmp = exclusiveTempPath(dir, path.basename(filePath));
+  const fd = fs.openSync(tmp, 'wx');
   try {
     fs.writeFileSync(fd, data);
     fs.fsyncSync(fd);
@@ -49,14 +54,8 @@ export function atomicWriteFileSync(filePath: string, data: string | Buffer): vo
 export async function atomicWriteFile(filePath: string, data: string | Buffer): Promise<void> {
   const dir = path.dirname(filePath);
   await fs.promises.mkdir(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}`);
-  const fh = await fs.promises.open(tmp, 'w');
-  try {
-    await fh.writeFile(data);
-    await fh.sync();
-  } finally {
-    await fh.close();
-  }
+  const tmp = exclusiveTempPath(dir, path.basename(filePath));
+  await fs.promises.writeFile(tmp, data, { flag: 'wx', mode: 0o600, flush: true });
   await fs.promises.rename(tmp, filePath);
   try {
     const dh = await fs.promises.open(dir, 'r');

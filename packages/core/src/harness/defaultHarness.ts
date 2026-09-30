@@ -6,7 +6,7 @@
  * when no specialized harness matches the execution context.
  *
  * Capabilities: minimal (no sub-agents, no Guardian, no hashline edits)
- * but 100% backward compatible with existing Commander behavior.
+ * and is intended to preserve compatibility with existing Commander behavior.
  */
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {
@@ -292,7 +292,10 @@ export class DefaultHarness extends BaseHarness {
         const safeContent = response?.content || '';
         if (safeContent.length > 0) {
           const contentScan = await services.scanContent(safeContent);
-          if (contentScan.isSafe || safeContent.length > 100) {
+          // Fail closed: a long response is NOT exempt from the content scan.
+          // The previous `|| safeContent.length > 100` let any long answer
+          // bypass the safety check and be reported as success.
+          if (contentScan.isSafe) {
             const result = this.buildResultInternal(
               runId,
               goal,

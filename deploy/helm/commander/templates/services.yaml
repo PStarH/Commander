@@ -2,6 +2,9 @@
 # Commander — Services
 # =============================================================================
 
+{{- include "commander.requireWebDisabled" . }}
+
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -21,25 +24,23 @@ spec:
     app.kubernetes.io/component: api
 
 ---
-{{- if .Values.web.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "commander.fullname" . }}-web
+  name: {{ include "commander.fullname" . }}-api-proof
   labels:
     {{- include "commander.labels" . | nindent 4 }}
-    app.kubernetes.io/component: web
+    app.kubernetes.io/component: api
 spec:
   type: ClusterIP
   ports:
-    - port: {{ .Values.web.port }}
-      targetPort: http
+    - name: tenant-proof
+      port: {{ .Values.tenantAuthority.apiProof.port }}
+      targetPort: {{ .Values.tenantAuthority.apiProof.port }}
       protocol: TCP
-      name: http
   selector:
     {{- include "commander.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: web
-{{- end }}
+    app.kubernetes.io/component: api
 
 ---
 {{- if .Values.redis.enabled }}
@@ -61,6 +62,7 @@ spec:
     {{- include "commander.selectorLabels" . | nindent 4 }}
     app.kubernetes.io/component: redis
 {{- end }}
+{{- end }}
 
 ---
 {{- if and .Values.database.enabled (eq .Values.database.backend "postgres") (not .Values.database.connectionString) }}
@@ -75,7 +77,7 @@ spec:
   type: ClusterIP
   ports:
     - port: {{ .Values.database.postgres.port }}
-      targetPort: postgres
+      targetPort: {{ .Values.database.postgres.port }}
       protocol: TCP
       name: postgres
   selector:

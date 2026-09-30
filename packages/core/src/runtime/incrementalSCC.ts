@@ -153,7 +153,13 @@ export class IncrementalSCCDetector {
     const toComp = this.nodeToComponent.get(edge.to)!;
 
     if (fromComp === toComp) {
-      // Already in the same SCC — adding this edge doesn't change anything
+      // Already in the same SCC. The edge adds no new reachability, but it is
+      // still a cycle (a self-loop is the degenerate case), so a rejecting
+      // config must not write it into the graph.
+      if (this.config.rejectCyclicEdges) {
+        const existing = this.components.get(fromComp)?.nodes ?? [edge.from];
+        return this.mergeAndAlert(Array.from(new Set([edge.from, ...existing])), edge, false);
+      }
       this.edges.get(edge.from)!.add(edge.to);
       this.reverseEdges.get(edge.to)!.add(edge.from);
       this.edgeMetadata.set(edgeKey, edge);
@@ -164,17 +170,11 @@ export class IncrementalSCCDetector {
     const canReach = this.canReach(edge.to, edge.from);
 
     if (canReach.reachable) {
-      // Cycle detected! Merge all nodes on the path into a single SCC
+      // Cycle detected. When the config rejects cyclic edges, build the alert as
+      // a DRY RUN so the rejected edge and component merges are never applied —
+      // agentHandoff relies on "addEdge returned an alert ⇒ the edge is absent".
       const cycleNodes = this.findCycleNodes(edge.from, edge.to, canReach.path);
-      const alert = this.mergeAndAlert(cycleNodes, edge);
-
-      if (this.config.rejectCyclicEdges) {
-        // Don't add the edge — reject it
-        return alert;
-      }
-
-      // Edge was already added inside mergeAndAlert() — no need to re-add
-      return alert;
+      return this.mergeAndAlert(cycleNodes, edge, !this.config.rejectCyclicEdges);
     }
 
     // No cycle — safe to add the edge
@@ -351,7 +351,11 @@ export class IncrementalSCCDetector {
   /**
    * Merge nodes into a single SCC and emit a deadlock alert.
    */
-  private mergeAndAlert(cycleNodes: string[], triggerEdge: SCCEdge): DeadlockAlert {
+  private mergeAndAlert(
+    cycleNodes: string[],
+    triggerEdge: SCCEdge,
+    commit: boolean = true,
+  ): DeadlockAlert {
     // Find all existing components that contain cycle nodes
     const affectedCompIds = new Set<string>();
     for (const nodeId of cycleNodes) {
@@ -359,14 +363,16 @@ export class IncrementalSCCDetector {
       if (compId) affectedCompIds.add(compId);
     }
 
-    // Merge all affected components into one
+    // Merge all affected components into one. When `commit` is false this is a
+    // dry run: a rejected cyclic edge must leave the graph byte-for-byte
+    // unchanged, so no component, mapping, edge or counter is mutated.
     const newCompId = `scc_${this.componentCounter++}`;
     const allNodes: string[] = [];
     for (const compId of affectedCompIds) {
       const comp = this.components.get(compId);
       if (comp) {
         allNodes.push(...comp.nodes);
-        this.components.delete(compId);
+        if (commit) this.components.delete(compId);
       }
     }
     // Add any cycle nodes not yet in a component
@@ -375,8 +381,10 @@ export class IncrementalSCCDetector {
     }
 
     // Update node → component mapping
-    for (const nodeId of allNodes) {
-      this.nodeToComponent.set(nodeId, newCompId);
+    if (commit) {
+      for (const nodeId of allNodes) {
+        this.nodeToComponent.set(nodeId, newCompId);
+      }
     }
 
     // Collect all edges within the new component
@@ -395,9 +403,11 @@ export class IncrementalSCCDetector {
     componentEdges.push(triggerEdge);
 
     // Add the trigger edge to the graph
-    this.edges.get(triggerEdge.from)!.add(triggerEdge.to);
-    this.reverseEdges.get(triggerEdge.to)!.add(triggerEdge.from);
-    this.edgeMetadata.set(`${triggerEdge.from}→${triggerEdge.to}`, triggerEdge);
+    if (commit) {
+      this.edges.get(triggerEdge.from)!.add(triggerEdge.to);
+      this.reverseEdges.get(triggerEdge.to)!.add(triggerEdge.from);
+      this.edgeMetadata.set(`${triggerEdge.from}→${triggerEdge.to}`, triggerEdge);
+    }
 
     const component: SCCComponent = {
       id: newCompId,
@@ -406,7 +416,9 @@ export class IncrementalSCCDetector {
       topologicalOrder: allNodes, // In a cycle, topological order is undefined — just list nodes
     };
 
-    this.components.set(newCompId, component);
+    if (commit) {
+      this.components.set(newCompId, component);
+    }
 
     // Build alert
     const involvedAgents = allNodes.filter((id) => {

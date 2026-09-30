@@ -3,15 +3,20 @@ import { describe, it } from 'node:test';
 import {
   CapabilityTokenIssuer,
   CapabilityTokenVerifier,
+  AdapterExecutionError,
   EffectBroker,
   EffectBrokerError,
   DURABLE_CAPABILITY_STORES_REQUIRED,
   InMemoryCapabilityReplayStore,
   InMemoryCapabilityRevocationStore,
   assertEffectBrokerDurableStores,
+  buildTerminalEvidenceRecordFromKernel,
   canonicalRequestHash,
   isClassAEffectType,
+  type EffectKernelPort,
   type CapabilityGrant,
+  type CapabilityRevocationStore,
+  type EvidenceRecord,
 } from './index.js';
 
 const grant: CapabilityGrant = {
@@ -55,7 +60,1063 @@ function makeTokens() {
   };
 }
 
+describe('EB04 terminal evidence retains the admitted action digest', () => {
+  for (const scenario of [
+    { name: 'completes non-Class-A without a grant digest', type: 'llm.chat' },
+    { name: 'records non-Class-A failure without a grant digest', type: 'llm.chat', fails: true },
+    {
+      name: 'retains the digest when the request changes after admit',
+      type: 'local.hash',
+      mutateRequest: true,
+    },
+    {
+      name: 'parks a tampered non-Class-A ledger digest',
+      type: 'llm.chat',
+      ledgerDigest: 'b'.repeat(64),
+    },
+    { name: 'parks a missing ledger digest', type: 'llm.chat', ledgerDigest: undefined },
+    { name: 'parks an empty ledger digest', type: 'llm.chat', ledgerDigest: '' },
+    {
+      name: 'preserves an explicit Class A grant digest',
+      type: 'crm.write',
+      grantDigest: 'a'.repeat(64),
+    },
+    {
+      name: 'parks a tampered Class A ledger digest',
+      type: 'crm.write',
+      grantDigest: 'a'.repeat(64),
+      ledgerDigest: 'b'.repeat(64),
+    },
+  ]) {
+    it(scenario.name, async () => {
+      const tokens = makeTokens();
+      const request = { value: 1 };
+      const requestHash = canonicalRequestHash(request);
+      const expectedDigest = scenario.grantDigest ?? requestHash;
+      const signedGrant: CapabilityGrant = {
+        ...grant,
+        effectTypes: [scenario.type],
+        requestHash,
+      };
+      if (scenario.grantDigest) signedGrant.actionDigest = scenario.grantDigest;
+      else delete signedGrant.actionDigest;
+      const token = tokens.issue(signedGrant);
+      assert.equal((await tokens.verify(token)).actionDigest, scenario.grantDigest);
+      assert.equal(isClassAEffectType(scenario.type), scenario.type === 'crm.write');
+      const effectId = 'effect-eb04';
+      const lease = { workerId: 'w', workerGeneration: 1, token: 'lease', fencingEpoch: 1 };
+      let ledger: Awaited<ReturnType<NonNullable<EffectKernelPort['listEffectsForRun']>>>[number];
+      const records: EvidenceRecord[] = [];
+      const parks: Parameters<NonNullable<EffectKernelPort['markEffectCompletionUnknown']>>[0][] =
+        [];
+      let executions = 0;
+      const broker = new EffectBroker(
+        tokens,
+        {
+          evaluate: async () => ({
+            effect: 'allow',
+            decisionId: 'd1',
+            reason: 'ok',
+            policySnapshotId: 'p1',
+          }),
+        },
+        {
+          admitEffect: async (input) => {
+            assert.equal(input.actionDigest, expectedDigest);
+            ledger = {
+              id: input.id,
+              runId: input.runId,
+              stepId: input.stepId,
+              tenantId: input.tenantId,
+              type: input.type,
+              state: 'ADMITTED',
+              policyDecisionId: input.policyDecisionId,
+              policySnapshotId: input.policySnapshotId,
+              actionDigest: input.actionDigest,
+              requestHash,
+              createdAt: '2026-07-29T00:00:00.000Z',
+            };
+            return { admitted: true, effect: { id: input.id, state: 'ADMITTED' } };
+          },
+          completeEffect: async () => assert.fail('must not bypass atomic evidence completion'),
+          completeEffectWithEvidence: async (
+            id,
+            tenantId,
+            completedLease,
+            _response,
+            _actor,
+            record,
+          ) => {
+            assert.equal(id, effectId);
+            assert.equal(tenantId, grant.tenantId);
+            assert.deepEqual(completedLease, lease);
+            records.push(record);
+            return { id, state: 'COMPLETED' };
+          },
+          failEffectWithEvidence: async (input) => {
+            records.push(input.evidence);
+            return { id: input.effectId, state: 'FAILED' };
+          },
+          getTerminalEvidenceContext: async (id, runId, tenantId, claimToken) => {
+            assert.deepEqual(
+              [id, runId, tenantId, claimToken],
+              [effectId, grant.runId, grant.tenantId, lease.token],
+            );
+            return { effect: { ...ledger }, events: [] };
+          },
+          markEffectCompletionUnknown: async (input) => {
+            parks.push(input);
+            ledger.state = 'COMPLETION_UNKNOWN';
+            return { id: input.effectId, state: ledger.state };
+          },
+        },
+        {
+          execute: async () => {
+            executions += 1;
+            if (scenario.fails) {
+              throw new AdapterExecutionError('rejected before commit', {
+                code: 'REMOTE_REJECTED',
+                commitState: 'NOT_COMMITTED',
+                retryMode: 'NEVER',
+              });
+            }
+            return { status: 'ok' };
+          },
+        },
+        { append: async () => {} },
+        {
+          requireEvidencePersistence: true,
+          evidenceSigner: {
+            sign: async () => ({
+              algorithm: 'Ed25519',
+              keyId: 'eb04-test',
+              signedAt: new Date().toISOString(),
+              value: 'test-signature',
+            }),
+            verify: () => true,
+          },
+        },
+      );
+      const admitted = await broker.admit({
+        effectId,
+        token,
+        type: scenario.type,
+        request,
+        idempotencyKey: 'eb04',
+        lease,
+        actor: 'w',
+      });
+      assert.equal(admitted.admitted, true);
+      if (scenario.mutateRequest) request.value = 2;
+      const invalidLedger = Object.hasOwn(scenario, 'ledgerDigest');
+      if (invalidLedger) ledger!.actionDigest = scenario.ledgerDigest;
+      if (invalidLedger || scenario.fails) {
+        await assert.rejects(
+          broker.executeAdmitted({ effectId }),
+          (error: unknown) =>
+            error instanceof EffectBrokerError &&
+            error.code === (invalidLedger ? 'EVIDENCE_PERSIST_FAILED' : 'EFFECT_FAILED'),
+        );
+      } else {
+        const result = await broker.executeAdmitted({ effectId });
+        assert.deepEqual(result, { effectId, replayed: false, response: { status: 'ok' } });
+      }
+      assert.equal(executions, 1);
+      if (invalidLedger) {
+        assert.equal(records.length, 0);
+        assert.deepEqual(parks, [
+          {
+            effectId,
+            tenantId: grant.tenantId,
+            reason: 'EVIDENCE_PERSIST_FAILED',
+            actor: 'w',
+            lease,
+          },
+        ]);
+        assert.equal(ledger!.state, 'COMPLETION_UNKNOWN');
+      } else {
+        assert.equal(parks.length, 0);
+        assert.equal(records.length, 1);
+        assert.equal(records[0].actionDigest, expectedDigest);
+        assert.equal(records[0].body.actionDigest, expectedDigest);
+        assert.equal(records[0].body.effects[0].state, scenario.fails ? 'FAILED' : 'COMPLETED');
+      }
+      await assert.rejects(broker.executeAdmitted({ effectId }), /ADMISSION_NOT_FOUND/);
+    });
+  }
+});
+
+describe('EB05 request binding uses every production profile signal', () => {
+  const profiles = [
+    ['NODE_ENV', 'production'],
+    ['COMMANDER_ENV', 'production'],
+    ['COMMANDER_PROFILE', 'enterprise'],
+    ['COMMANDER_CELL_TIER', 'enterprise'],
+    ['COMMANDER_REQUIRE_WORKLOAD_BINDING', '1'],
+  ] as const;
+  for (const [key, value] of profiles) {
+    it(`rejects requireRequestBinding=false for ${key}=${value}`, () => {
+      const previous = profiles.map(([name]) => [name, process.env[name]] as const);
+      try {
+        for (const [name] of profiles) delete process.env[name];
+        process.env[key] = value;
+        const construct = (requireRequestBinding?: boolean) =>
+          new EffectBroker(
+            makeTokens(),
+            {
+              evaluate: async () => ({
+                effect: 'allow',
+                decisionId: 'd1',
+                reason: 'ok',
+                policySnapshotId: 'p1',
+              }),
+            },
+            { admitEffect: async () => ({ admitted: false }), completeEffect: async () => null },
+            { execute: async () => ({}) },
+            { append: async () => {} },
+            {
+              requireRequestBinding,
+              localWorkerId: 'w',
+              replay: { consume: () => false },
+              revocations: { revoke: () => undefined, isRevoked: () => false },
+            },
+          );
+        assert.doesNotThrow(() => construct());
+        assert.doesNotThrow(() => construct(true));
+        assert.throws(
+          () => construct(false),
+          (error: unknown) =>
+            error instanceof EffectBrokerError && error.code === 'REQUEST_BINDING_DISABLED_IN_PROD',
+        );
+        delete process.env[key];
+        assert.doesNotThrow(() => construct(false));
+      } finally {
+        for (const [name, original] of previous) {
+          if (original === undefined) delete process.env[name];
+          else process.env[name] = original;
+        }
+      }
+    });
+  }
+});
+
 describe('EffectBroker', () => {
+  it('builds terminal evidence from one effect-scoped kernel context', async () => {
+    let contextReads = 0;
+    const record = await buildTerminalEvidenceRecordFromKernel({
+      kernel: {
+        getTerminalEvidenceContext: async (effectId, runId, tenantId, claimToken) => {
+          contextReads += 1;
+          assert.deepEqual(
+            { effectId, runId, tenantId, claimToken },
+            {
+              effectId: 'effect-context',
+              runId: 'run-context',
+              tenantId: 'tenant',
+              claimToken: 'claim-context',
+            },
+          );
+          return {
+            effect: {
+              id: 'effect-context',
+              runId: 'run-context',
+              stepId: 'step-context',
+              tenantId: 'tenant',
+              type: 'crm.write',
+              state: 'COMPLETION_UNKNOWN',
+              policyDecisionId: 'decision-context',
+              policySnapshotId: 'policy-context',
+              actionDigest: 'e'.repeat(64),
+              requestHash: 'request-context',
+              createdAt: '2026-07-29T00:00:00.000Z',
+            },
+            events: [
+              {
+                type: 'effect.completion_unknown',
+                tenantId: 'tenant',
+                runId: 'run-context',
+                stepId: 'step-context',
+                aggregateId: 'effect-context',
+                occurredAt: '2026-07-29T00:00:01.000Z',
+                payload: { reason: 'REMOTE_TIMEOUT' },
+              },
+            ],
+          };
+        },
+      },
+      signer: {
+        sign: async () => ({
+          algorithm: 'Ed25519',
+          keyId: 'cell-1',
+          signedAt: '2026-07-29T00:00:02.000Z',
+          value: 'signature',
+        }),
+        verify: () => true,
+      },
+      tenantId: 'tenant',
+      runId: 'run-context',
+      effectId: 'effect-context',
+      projectedState: 'COMPLETED',
+      response: { remoteId: 'remote-context' },
+      terminalEvent: {
+        type: 'effect.reconciled_completed',
+        severity: 'low',
+        details: { disposition: 'COMPLETED' },
+      },
+      recordedAt: '2026-07-29T00:00:03.000Z',
+      retentionUntil: '2027-07-29T00:00:03.000Z',
+      claimToken: 'claim-context',
+    });
+
+    assert.equal(contextReads, 1);
+    assert.equal(record.bundleId, 'evidence_effect-context');
+    assert.deepEqual(
+      record.body.auditEvents.map((event) => event.type),
+      ['effect.completion_unknown', 'effect.reconciled_completed'],
+    );
+  });
+
+  it('does not fall back to broad lifecycle reads when the context authority denies', async () => {
+    let broadReads = 0;
+    await assert.rejects(
+      buildTerminalEvidenceRecordFromKernel({
+        kernel: {
+          getTerminalEvidenceContext: async () => {
+            throw new Error('ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED');
+          },
+          listEffectsForRun: async () => {
+            broadReads += 1;
+            return [];
+          },
+          listEvents: async () => {
+            broadReads += 1;
+            return [];
+          },
+        },
+        signer: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: '2026-07-29T00:00:02.000Z',
+            value: 'signature',
+          }),
+          verify: () => true,
+        },
+        tenantId: 'tenant',
+        runId: 'run-context',
+        effectId: 'effect-context',
+        projectedState: 'COMPLETED',
+        response: {},
+        terminalEvent: { type: 'effect.completed', severity: 'low', details: {} },
+        recordedAt: '2026-07-29T00:00:03.000Z',
+        retentionUntil: '2027-07-29T00:00:03.000Z',
+        claimToken: 'wrong-claim',
+      }),
+      /ADAPTER_OPS_EVIDENCE_CONTEXT_DENIED/,
+    );
+    assert.equal(broadReads, 0);
+  });
+
+  it('projects a reconciliation receipt from kernel lifecycle truth', async () => {
+    const record = await buildTerminalEvidenceRecordFromKernel({
+      kernel: {
+        listEffectsForRun: async () => [
+          {
+            id: 'effect-reconciled',
+            runId: 'run-reconciled',
+            stepId: 'step-reconciled',
+            tenantId: 'tenant',
+            type: 'crm.write',
+            state: 'COMPLETION_UNKNOWN',
+            policyDecisionId: 'decision-reconciled',
+            policySnapshotId: 'policy-reconciled',
+            actionDigest: 'c'.repeat(64),
+            requestHash: 'request-reconciled',
+            createdAt: '2026-07-29T00:00:00.000Z',
+          },
+          {
+            id: 'effect-unrelated',
+            runId: 'run-reconciled',
+            stepId: 'step-unrelated',
+            tenantId: 'tenant',
+            type: 'crm.write',
+            state: 'ADMITTED',
+            policyDecisionId: 'decision-unrelated',
+            policySnapshotId: 'policy-reconciled',
+            actionDigest: 'd'.repeat(64),
+            requestHash: 'request-unrelated',
+            createdAt: '2026-07-29T00:00:00.500Z',
+          },
+        ],
+        listEvents: async () => [
+          {
+            type: 'effect.completion_unknown',
+            tenantId: 'tenant',
+            runId: 'run-reconciled',
+            stepId: 'step-reconciled',
+            aggregateId: 'effect-reconciled',
+            occurredAt: '2026-07-29T00:00:01.000Z',
+            payload: { reason: 'REMOTE_TIMEOUT' },
+          },
+          {
+            type: 'effect.admitted',
+            tenantId: 'tenant',
+            runId: 'run-reconciled',
+            stepId: 'step-unrelated',
+            aggregateId: 'effect-unrelated',
+            occurredAt: '2026-07-29T00:00:00.500Z',
+            payload: {},
+          },
+        ],
+      },
+      signer: {
+        sign: async () => ({
+          algorithm: 'Ed25519',
+          keyId: 'cell-1',
+          signedAt: '2026-07-29T00:00:02.000Z',
+          value: 'signature',
+        }),
+        verify: () => true,
+      },
+      tenantId: 'tenant',
+      runId: 'run-reconciled',
+      effectId: 'effect-reconciled',
+      projectedState: 'CONFIRMED_NOT_APPLIED',
+      response: { status: 'not_applied' },
+      terminalEvent: {
+        type: 'effect.confirmed_not_applied',
+        severity: 'high',
+        details: { disposition: 'CONFIRMED_NOT_APPLIED' },
+      },
+      recordedAt: '2026-07-29T00:00:02.000Z',
+      retentionUntil: '2027-07-29T00:00:02.000Z',
+    });
+
+    assert.equal(record.actionDigest, 'c'.repeat(64));
+    assert.equal(record.body.terminalDisposition, 'FAILED');
+    assert.equal(record.body.effects[0]?.state, 'CONFIRMED_NOT_APPLIED');
+    assert.deepEqual(
+      record.body.effects.map((effect) => effect.effectId),
+      ['effect-reconciled'],
+    );
+    assert.deepEqual(
+      record.body.auditEvents.map((event) => event.type),
+      ['effect.completion_unknown', 'effect.confirmed_not_applied'],
+    );
+  });
+
+  it('commits signed evidence and effect completion through one kernel authority call', async () => {
+    const tokens = makeTokens();
+    let normalCompletionCalled = false;
+    let atomicRecord: EvidenceRecord | undefined;
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'effect-atomic-evidence', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => {
+          normalCompletionCalled = true;
+          return {};
+        },
+        completeEffectWithEvidence: async (
+          _effectId,
+          _tenantId,
+          _lease,
+          _response,
+          _actor,
+          record,
+        ) => {
+          atomicRecord = record;
+          return {};
+        },
+        // EB-10: evidence-authoritative brokers must be able to park.
+        markEffectCompletionUnknown: async () => ({}),
+        listEffectsForRun: async () => [
+          {
+            id: 'effect-before',
+            runId: 'run',
+            stepId: 'step-before',
+            tenantId: 'tenant',
+            type: 'crm.write',
+            state: 'COMPLETED',
+            policyDecisionId: 'd-before',
+            requestHash: 'request-before',
+            response: { status: 'ok' },
+            createdAt: '2026-07-29T00:00:00.000Z',
+            completedAt: '2026-07-29T00:00:01.000Z',
+          },
+          {
+            id: 'effect-atomic-evidence',
+            runId: 'run',
+            stepId: 'step',
+            tenantId: 'tenant',
+            type: 'crm.write',
+            state: 'ADMITTED',
+            policyDecisionId: 'd1',
+            actionDigest: grant.actionDigest,
+            requestHash: canonicalRequestHash({}),
+            createdAt: '2026-07-29T00:00:02.000Z',
+          },
+        ],
+        listEvents: async () => [
+          {
+            type: 'effect.admitted',
+            tenantId: 'tenant',
+            runId: 'run',
+            stepId: 'step',
+            aggregateId: 'effect-atomic-evidence',
+            occurredAt: '2026-07-29T00:00:02.000Z',
+            payload: { policyDecisionId: 'd1' },
+          },
+        ],
+      },
+      { execute: async () => ({ status: 'ok' }) },
+      { append: async () => {} },
+      {
+        evidenceSigner: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: new Date().toISOString(),
+            value: 'sig',
+          }),
+          verify: () => true,
+        },
+        requireEvidencePersistence: true,
+      },
+    );
+
+    await broker.execute({
+      effectId: 'effect-atomic-evidence',
+      token: tokens.issue(grant),
+      type: 'crm.write',
+      request: {},
+      idempotencyKey: 'atomic-evidence-idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+      actor: 'w',
+    });
+
+    assert.equal(normalCompletionCalled, false);
+    assert.equal(atomicRecord?.bundleId, 'evidence_effect-atomic-evidence');
+    assert.equal(atomicRecord?.anchoredAt !== null, true);
+    assert.deepEqual(
+      atomicRecord?.body.effects.map((effect) => effect.effectId),
+      ['effect-atomic-evidence'],
+    );
+    assert.equal(atomicRecord?.body.effects[0]?.createdAt, '2026-07-29T00:00:02.000Z');
+    assert.equal(atomicRecord?.body.auditEvents[0]?.type, 'effect.admitted');
+  });
+
+  it('commits NOT_COMMITTED failures with a FAILED signed receipt', async () => {
+    const tokens = makeTokens();
+    let failedEvidence: EvidenceRecord | undefined;
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'effect-failed-evidence', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => ({}),
+        completeEffectWithEvidence: async () => ({}),
+        failEffect: async () => ({}),
+        failEffectWithEvidence: async (input) => {
+          failedEvidence = input.evidence;
+          return {};
+        },
+        // EB-10: evidence-authoritative brokers must be able to park.
+        markEffectCompletionUnknown: async () => ({}),
+        listEffectsForRun: async () => [
+          {
+            id: 'effect-failed-evidence',
+            runId: 'run',
+            stepId: 'step',
+            tenantId: 'tenant',
+            type: 'crm.write',
+            state: 'ADMITTED',
+            policyDecisionId: 'd1',
+            actionDigest: grant.actionDigest,
+            requestHash: canonicalRequestHash({}),
+            createdAt: '2026-07-29T00:00:00.000Z',
+          },
+        ],
+        listEvents: async () => [],
+      },
+      {
+        execute: async () => {
+          throw new AdapterExecutionError('remote rejected before commit', {
+            code: 'REMOTE_REJECTED',
+            commitState: 'NOT_COMMITTED',
+            retryMode: 'NEVER',
+          });
+        },
+      },
+      { append: async () => {} },
+      {
+        evidenceSigner: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: '2026-07-29T00:00:01.000Z',
+            value: 'sig',
+          }),
+          verify: () => true,
+        },
+        requireEvidencePersistence: true,
+      },
+    );
+
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect-failed-evidence',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'failed-evidence-idem',
+        lease: { workerId: 'w', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) => error instanceof EffectBrokerError && error.code === 'EFFECT_FAILED',
+    );
+    assert.equal(failedEvidence?.body.terminalDisposition, 'FAILED');
+    assert.equal(failedEvidence?.body.effects[0]?.state, 'FAILED');
+  });
+
+  it('uses the claim-bound compensation terminal authority without generic write fallback', async () => {
+    const tokens = makeTokens();
+    const request = { target: 'ticket://INC-1' };
+    const compensationGrant: CapabilityGrant = {
+      ...grant,
+      effectTypes: ['compensate.crm.write'],
+      requestHash: canonicalRequestHash(request),
+      actionDigest: 'c'.repeat(64),
+      policyDecisionId: 'd1',
+      authorizationId: 'authorization-1',
+      requestId: 'request-1',
+      adapterVersion: '1.0.0',
+      decisionEffect: 'allow',
+      approvalBinding: null,
+    };
+    let genericWrites = 0;
+    let terminalInput: Record<string, unknown> | undefined;
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        compensationTerminalEvidenceRequired: true,
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'effect-compensation-terminal', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => {
+          genericWrites += 1;
+          return {};
+        },
+        markEffectCompletionUnknown: async () => ({}),
+        completeCompensationEffectWithEvidence: async (input) => {
+          terminalInput = input;
+          return {};
+        },
+        failCompensationEffectWithEvidence: async () => ({}),
+        getTerminalEvidenceContext: async () => ({
+          effect: {
+            id: 'effect-compensation-terminal',
+            runId: 'run',
+            stepId: 'step',
+            tenantId: 'tenant',
+            type: 'compensate.crm.write',
+            state: 'ADMITTED',
+            policyDecisionId: 'd1',
+            policySnapshotId: 'p1',
+            actionDigest: 'c'.repeat(64),
+            requestHash: canonicalRequestHash(request),
+            createdAt: '2026-08-02T00:00:00.000Z',
+          },
+          events: [],
+        }),
+      },
+      { execute: async () => ({ compensated: true }) },
+      { append: async () => {} },
+      {
+        evidenceSigner: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: '2026-08-02T00:00:01.000Z',
+            value: 'sig',
+          }),
+          verify: () => true,
+        },
+        requireEvidencePersistence: true,
+      },
+    );
+    const claim = {
+      requestId: 'request-1',
+      requestClaimToken: 'claim-1',
+      outboxMessageId: 'outbox-1',
+      outboxClaimToken: 'claim-1',
+    };
+    const admitted = await broker.admit({
+      effectId: 'effect-compensation-terminal',
+      token: tokens.issue(compensationGrant),
+      type: 'compensate.crm.write',
+      request,
+      idempotencyKey: 'compensation-terminal',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'claim-1', fencingEpoch: 7 },
+      actor: 'w',
+      compensationClaim: claim,
+    });
+    assert.equal(admitted.admitted, true);
+    await broker.executeAdmitted({ effectId: 'effect-compensation-terminal' });
+
+    assert.equal(genericWrites, 0);
+    assert.deepEqual(terminalInput?.claim, claim);
+    assert.equal(terminalInput?.effectId, 'effect-compensation-terminal');
+    assert.equal(
+      (terminalInput?.evidence as EvidenceRecord | undefined)?.bundleId,
+      'evidence_effect-compensation-terminal',
+    );
+  });
+
+  it('parks without kernel completion when mandatory evidence persistence fails', async () => {
+    const tokens = makeTokens();
+    let completed = false;
+    let parkedReason = '';
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'effect-evidence', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => {
+          completed = true;
+          return {};
+        },
+        completeEffectWithEvidence: async () => {
+          throw new Error('storage unavailable');
+        },
+        markEffectCompletionUnknown: async (input) => {
+          parkedReason = input.reason;
+          return {};
+        },
+      },
+      { execute: async () => ({ status: 'ok' }) },
+      { append: async () => {} },
+      {
+        evidenceSigner: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: new Date().toISOString(),
+            value: 'sig',
+          }),
+          verify: () => true,
+        },
+        requireEvidencePersistence: true,
+      },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect-evidence',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'evidence-idem',
+        lease: { workerId: 'w', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) =>
+        error instanceof EffectBrokerError && error.code === 'EVIDENCE_PERSIST_FAILED',
+    );
+    assert.equal(completed, false);
+    assert.equal(parkedReason, 'EVIDENCE_PERSIST_FAILED');
+  });
+
+  it('rejects an oversized signed receipt before the atomic kernel write', async () => {
+    const tokens = makeTokens();
+    let atomicCompletionCalled = false;
+    let parkedReason = '';
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        admitEffect: async () => ({
+          admitted: true,
+          effect: { id: 'effect-oversized-evidence', state: 'ADMITTED' },
+        }),
+        completeEffect: async () => ({}),
+        completeEffectWithEvidence: async () => {
+          atomicCompletionCalled = true;
+          return {};
+        },
+        markEffectCompletionUnknown: async (input) => {
+          parkedReason = input.reason;
+          return {};
+        },
+      },
+      { execute: async () => ({ status: 'x'.repeat(300_000) }) },
+      { append: async () => {} },
+      {
+        evidenceSigner: {
+          sign: async () => ({
+            algorithm: 'Ed25519',
+            keyId: 'cell-1',
+            signedAt: new Date().toISOString(),
+            value: 'sig',
+          }),
+          verify: () => true,
+        },
+        requireEvidencePersistence: true,
+      },
+    );
+
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect-oversized-evidence',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'oversized-evidence-idem',
+        lease: { workerId: 'w', workerGeneration: 1, token: 'lease', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) =>
+        error instanceof EffectBrokerError && error.code === 'EVIDENCE_PERSIST_FAILED',
+    );
+    assert.equal(atomicCompletionCalled, false);
+    assert.equal(parkedReason, 'EVIDENCE_PERSIST_FAILED');
+  });
+  it('requires a kernel readiness checker when the production gate is enabled', () => {
+    const tokens = makeTokens();
+    assert.throws(
+      () =>
+        new EffectBroker(
+          tokens,
+          {
+            evaluate: async () => ({
+              effect: 'allow',
+              decisionId: 'd1',
+              reason: 'ok',
+              policySnapshotId: 'p1',
+            }),
+          },
+          {
+            admitEffect: async () => ({
+              admitted: true,
+              effect: { id: 'effect', state: 'ADMITTED' },
+            }),
+            completeEffect: async () => ({}),
+          },
+          { execute: async () => ({}) },
+          { append: async () => {} },
+          { requireOperationsReadiness: true },
+        ),
+      (error: unknown) =>
+        error instanceof EffectBrokerError && error.code === 'OPERATIONS_READINESS_CHECK_REQUIRED',
+    );
+  });
+
+  it('blocks forward Class A before kernel admission and adapter execution when drains are unavailable', async () => {
+    const tokens = makeTokens();
+    let admitted = false;
+    let invoked = false;
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        getOperationsReadiness: async () => ({
+          ready: false,
+          reason: 'COMPENSATION_DRAIN_UNAVAILABLE',
+          reconciliationWorkers: 1,
+          compensationWorkers: 0,
+          checkedAt: new Date().toISOString(),
+        }),
+        admitEffect: async () => {
+          admitted = true;
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      {
+        execute: async () => {
+          invoked = true;
+          return {};
+        },
+      },
+      { append: async () => {} },
+      { requireOperationsReadiness: true },
+    );
+    await assert.rejects(
+      broker.execute({
+        effectId: 'effect',
+        token: tokens.issue(grant),
+        type: 'crm.write',
+        request: {},
+        idempotencyKey: 'idem',
+        lease: { workerId: 'w', workerGeneration: 1, token: 'l', fencingEpoch: 1 },
+        actor: 'w',
+      }),
+      (error: unknown) =>
+        error instanceof EffectBrokerError && error.code === 'OPERATIONS_NOT_READY',
+    );
+    assert.equal(admitted, false);
+    assert.equal(invoked, false);
+  });
+
+  it('rejects compensation without a complete kernel-issued admission binding', async () => {
+    const tokens = makeTokens();
+    let kernelCalls = 0;
+    const request = { authorizationId: 'auth-1', requestId: '', claimToken: 'claim-1' };
+    const compensationGrant = {
+      ...grant,
+      effectTypes: ['compensate.crm.write'],
+      requestHash: canonicalRequestHash(request),
+      actionDigest: 'c'.repeat(64),
+    };
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        admitEffect: async () => {
+          kernelCalls += 1;
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({}) },
+      { append: async () => {} },
+    );
+    const result = await broker.admit({
+      effectId: 'effect',
+      token: tokens.issue(compensationGrant),
+      type: 'compensate.crm.write',
+      request,
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'claim-1', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(result.admitted, false);
+    assert.equal(result.reason, 'COMPENSATION_BINDING_REQUIRED');
+    assert.equal(kernelCalls, 0);
+  });
+
+  it('delegates a complete governed compensation binding to kernel admission', async () => {
+    const tokens = makeTokens();
+    const request = { authorizationId: 'auth-1', requestId: 'request-1', claimToken: 'claim-1' };
+    let readinessCalls = 0;
+    let kernelCalls = 0;
+    const compensationGrant = {
+      ...grant,
+      effectTypes: ['compensate.crm.write'],
+      requestHash: canonicalRequestHash(request),
+      actionDigest: 'c'.repeat(64),
+      policyDecisionId: 'd1',
+      authorizationId: 'auth-1',
+      requestId: 'request-1',
+      adapterVersion: '1.0.0',
+      decisionEffect: 'allow' as const,
+      approvalBinding: null,
+    };
+    const broker = new EffectBroker(
+      tokens,
+      {
+        evaluate: async () => ({
+          effect: 'allow',
+          decisionId: 'd1',
+          reason: 'ok',
+          policySnapshotId: 'p1',
+        }),
+      },
+      {
+        getOperationsReadiness: async () => {
+          readinessCalls += 1;
+          return {
+            ready: false,
+            reason: 'COMPENSATION_DRAIN_UNAVAILABLE',
+            reconciliationWorkers: 1,
+            compensationWorkers: 0,
+            checkedAt: new Date().toISOString(),
+          };
+        },
+        admitEffect: async (input) => {
+          void input;
+          kernelCalls += 1;
+          return { admitted: true, effect: { id: 'effect', state: 'ADMITTED' } };
+        },
+        completeEffect: async () => ({}),
+      },
+      { execute: async () => ({}) },
+      { append: async () => {} },
+      { requireOperationsReadiness: true },
+    );
+    const result = await broker.admit({
+      effectId: 'effect',
+      token: tokens.issue(compensationGrant),
+      type: 'compensate.crm.write',
+      request,
+      idempotencyKey: 'idem',
+      lease: { workerId: 'w', workerGeneration: 1, token: 'claim-1', fencingEpoch: 1 },
+      actor: 'w',
+    });
+    assert.equal(result.admitted, true);
+    assert.equal(kernelCalls, 1);
+    assert.equal(readinessCalls, 0);
+  });
   it('supports separate Ed25519 issuer and verifier keys', async () => {
     const issuer = CapabilityTokenIssuer.generate({
       issuer: 'commander-issuer',
@@ -626,6 +1687,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
             effect: { id: 'effect', state: 'ADMITTED' },
           }),
           completeEffect: async () => ({}),
+          markEffectCompletionUnknown: async () => ({}),
         },
         { execute: executor },
         { append: async () => {} },
@@ -662,6 +1724,7 @@ describe('executeAdmitted worker affinity (C-α)', () => {
       fencingEpoch: 1,
       leaseToken: 'l',
       effectId: 'eff-aff-ok',
+      idempotencyKey: 'idem',
     });
   });
 
@@ -1389,7 +2452,7 @@ describe('P1: durable stores must reject InMemory classes (presence != durabilit
       () =>
         assertEffectBrokerDurableStores({
           replay: { consume: () => false },
-          revocations: {} as unknown as { isRevoked: () => boolean },
+          revocations: {} as unknown as CapabilityRevocationStore,
         }),
       (err: unknown) =>
         err instanceof EffectBrokerError && err.code === DURABLE_CAPABILITY_STORES_REQUIRED,

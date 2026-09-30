@@ -52,6 +52,7 @@ import { PdfExtractTool } from './multimodal/pdfTool';
 import { ScreenshotCaptureTool } from './multimodal/screenshotTool';
 import { createRequestHumanInputTool } from './requestHumanInputTool';
 import { createRequestToolTool } from './requestToolTool';
+import { InterruptError } from '../runtime/interruptError';
 
 // ============================================================================
 // Helper utilities
@@ -116,6 +117,10 @@ async function executeResourceAction(
   try {
     return await def.handler(args, ctx);
   } catch (err) {
+    // InterruptError / HumanInteractionRequired are control-flow signals that
+    // pause the run — converting them into a result string makes the runtime
+    // continue as if the tool had succeeded.
+    if (err instanceof InterruptError) throw err;
     return `Error executing ${action}: ${String(err)}`;
   }
 }

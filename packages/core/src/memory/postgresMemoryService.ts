@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   ForgetMemoryInput,
@@ -41,6 +42,8 @@ interface PostgresPool {
 export interface PostgresMemoryServiceOptions {
   connectionString?: string;
   pool?: PostgresPool;
+  /** Whether this instance owns schema setup. Runtime roles should defer to migrations. */
+  manageSchema?: boolean;
   retention?: MemoryRetentionPolicy;
   embeddingDimension?: number;
   now?: () => Date;
@@ -95,6 +98,7 @@ export class PostgresMemoryService
 {
   private readonly pool: PostgresPool;
   private readonly ownsPool: boolean;
+  private readonly manageSchema: boolean;
   private readonly retention: MemoryRetentionPolicy;
   private readonly embeddingDimension?: number;
   private readonly now: () => Date;
@@ -105,6 +109,7 @@ export class PostgresMemoryService
 
   constructor(options: PostgresMemoryServiceOptions) {
     this.retention = options.retention ?? {};
+    this.manageSchema = options.manageSchema ?? true;
     this.embeddingDimension = options.embeddingDimension;
     this.now = options.now ?? (() => new Date());
     if (options.pool) {
@@ -115,8 +120,7 @@ export class PostgresMemoryService
     if (!options.connectionString) {
       throw new Error('PostgresMemoryService requires connectionString or pool');
     }
-    const Pool = require('pg').Pool as new (options: { connectionString: string }) => PostgresPool;
-    this.pool = new Pool({ connectionString: options.connectionString });
+    this.pool = createVerifiedPostgresPool({ connectionString: options.connectionString });
     this.ownsPool = true;
   }
 
@@ -369,6 +373,7 @@ export class PostgresMemoryService
   }
 
   private async bootstrap(): Promise<void> {
+    if (!this.manageSchema) return;
     for (const statement of memorySchemaStatements()) await this.pool.query(statement);
     if (this.embeddingDimension === undefined) return;
     try {

@@ -139,10 +139,27 @@ describe('ToolApproval', () => {
   // ── Unknown tools ──────────────────────────────────────────────────────────
 
   describe('unknown tools', () => {
-    it('auto-approves tools with no matching policy', async () => {
+    it('denies tools with no matching policy when no approval callback is configured', async () => {
+      // SECURITY (SBX-10): an unmatched tool must fail closed. The built-in
+      // default callback only approves policy-driven auto/semi_auto tools, so
+      // an unknown tool (escalated to `manual`) is denied rather than allowed.
+      const noCallback = new ToolApproval();
+      const result = await noCallback.requestApproval('custom_unknown_tool', { data: 'test' });
+      assert.strictEqual(result.approved, false);
+      assert.match(result.reason ?? '', /deny/i);
+    });
+
+    it('escalates tools with no matching policy to manual review', async () => {
+      // The operator callback — not a default-allow — decides the outcome.
+      approval = createApproval(false);
       const result = await approval.requestApproval('custom_unknown_tool', { data: 'test' });
-      assert.strictEqual(result.approved, true);
-      assert.ok(result.reason.includes('No policy'));
+
+      assert.ok(lastRequest, 'the approval callback must be consulted');
+      const req = lastRequest as { policy: ApprovalPolicy; reason?: string };
+      assert.strictEqual(req.policy.level, 'manual', 'unmatched tools must never be auto-approved');
+      assert.strictEqual(req.policy.riskLevel, 'high');
+      assert.match(req.reason ?? '', /No matching approval policy/);
+      assert.strictEqual(result.approved, false);
     });
   });
 
@@ -242,11 +259,15 @@ describe('ToolApproval', () => {
     });
 
     it('can remove policies', async () => {
+      approval = createApproval(false);
       approval.removePolicy('web_search');
-      // After removal, web_search has no policy → auto-approved (no policy found)
+      // After removal web_search has no policy → escalated to manual review,
+      // never silently auto-approved.
       const result = await approval.requestApproval('web_search', { query: 'test' });
-      assert.strictEqual(result.approved, true);
-      assert.ok(result.reason.includes('No policy'));
+      assert.ok(lastRequest, 'the approval callback must be consulted');
+      const req = lastRequest as { policy: ApprovalPolicy };
+      assert.strictEqual(req.policy.level, 'manual');
+      assert.strictEqual(result.approved, false);
     });
   });
 

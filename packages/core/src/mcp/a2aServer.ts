@@ -45,6 +45,7 @@ import {
   A2A_TERMINAL_STATES,
 } from './a2aCompliance';
 import { getGlobalLogger } from '../logging';
+import { assessGovernanceRiskLevel } from '../ultimate/riskAssessor';
 import { createContentScanner } from '../contentScanner';
 import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
 
@@ -409,7 +410,15 @@ export class A2AServer {
               a2aContextId: contextId,
               acceptedOutputModes: configuration?.acceptedOutputModes,
             },
-            governanceProfile: { riskLevel: 'LOW' },
+            // ET-02: the A2A entry used to declare the lowest risk for every
+            // remote task, so no approval or escalation gate keyed on HIGH/CRITICAL
+            // could ever fire on this path.
+            governanceProfile: {
+              riskLevel: assessGovernanceRiskLevel(
+                userMessage || '(empty message)',
+                A2A_ALLOWED_TOOLS,
+              ),
+            },
           },
         });
 

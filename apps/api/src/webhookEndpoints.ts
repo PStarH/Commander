@@ -5,8 +5,8 @@
  * communication. This router lets an Agent be embedded directly into those IM
  * workflows: users @mention the bot in a group chat, the IM platform forwards
  * the message to Commander via a webhook URL, Commander dispatches it to the
- * target Agent via the shared AgentRuntime, and the Agent's reply is returned
- * in the platform-specific response format.
+ * target Agent through Commander. Synchronous execution has been removed from
+ * the API process; callers must migrate to the canonical action/run surface.
  *
  * Endpoints:
  *   POST /api/webhook/dingtalk/:id?  — DingTalk robot callback
@@ -23,9 +23,7 @@ import { reportSilentFailure } from '@commander/core';
 import { Router, text, type NextFunction, type Request, type Response } from 'express';
 import { z } from 'zod';
 import * as crypto from 'crypto';
-import * as fs from 'fs';
 import * as path from 'path';
-import { getSharedRuntime } from './sharedRuntime';
 import { toErrorMessage } from './routeHelpers';
 import { validateBody } from './validationMiddleware';
 import {
@@ -36,6 +34,20 @@ import {
 } from './webhookCrypto';
 import { atomicWriteFileSync, readJsonFileSafe } from './atomicWrite';
 import { hasRole } from './userStore';
+
+function dingTalkSignatureMatches(timestamp: string, sign: string, secret: string): boolean {
+  return verifyDingTalkSignature(timestamp, sign, secret);
+}
+
+function weComSignatureMatches(
+  token: string,
+  timestamp: string,
+  nonce: string,
+  encrypt: string,
+  signature: string,
+): boolean {
+  return verifyWeComSignature(token, timestamp, nonce, encrypt, signature);
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -155,29 +167,14 @@ function extractXmlField(xml: string, tag: string): string | null {
   return plain ? (plain[1] ?? null) : null;
 }
 
-// ── Agent execution helper ────────────────────────────────────────────────
-
-type WebhookRuntimeProvider = () => Pick<ReturnType<typeof getSharedRuntime>, 'execute'>;
-
-async function executeAgentMessage(
-  agentId: string,
-  message: string,
-  getRuntime: WebhookRuntimeProvider = getSharedRuntime,
-): Promise<string> {
-  const runtime = getRuntime();
-  const result = await runtime.execute({
-    agentId,
-    projectId: 'project-war-room',
-    goal: message,
-    contextData: {},
-    availableTools: [],
-    tokenBudget: 50000,
-    maxSteps: 20,
+function sendExecutionGone(res: Response): void {
+  res.status(410).json({
+    error: {
+      code: 'LEGACY_EXECUTION_DISABLED',
+      message: 'Synchronous webhook execution has been removed.',
+      replacement: 'POST /v1/actions',
+    },
   });
-
-  return (
-    result.summary || (result.status === 'success' ? 'Task completed.' : `Task ${result.status}.`)
-  );
 }
 
 // ── Validation schemas ────────────────────────────────────────────────────
@@ -204,7 +201,7 @@ const createWebhookSchema = z
 
 // ── Router ────────────────────────────────────────────────────────────────
 
-export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getSharedRuntime): Router {
+export function createWebhookRouter(): Router {
   const router = Router();
 
   // ── POST /api/webhook/dingtalk/:id? — DingTalk robot callback ─────────
@@ -229,7 +226,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
       // Signature verification is mandatory when a config exists.
       const timestamp = req.query.timestamp as string | undefined;
       const sign = req.query.sign as string | undefined;
-      if (!timestamp || !sign || !verifyDingTalkSignature(timestamp, sign, config.secret)) {
+      if (!timestamp || !sign || !dingTalkSignatureMatches(timestamp, sign, config.secret)) {
         res.status(401).json({ error: 'Invalid signature' });
         return;
       }
@@ -254,9 +251,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
         return;
       }
 
-      const reply = await executeAgentMessage(config.agentId, messageText);
-
-      res.json({ msgtype: 'text', text: { content: reply } });
+      sendExecutionGone(res);
     } catch (error) {
       res.status(500).json({ error: toErrorMessage(error) });
     }
@@ -326,11 +321,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
           return;
         }
 
-        const reply = await executeAgentMessage(config.agentId, messageText);
-
-        // Feishu expects a 200 with code 0 for acknowledgment.
-        // The reply is posted back via the Feishu API (if configured).
-        res.json({ code: 0, msg: 'success', reply });
+        sendExecutionGone(res);
       } else {
         // Unknown event — acknowledge
         res.json({ code: 0, msg: 'success' });
@@ -390,7 +381,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
           return;
         }
         const signPayload = encrypt ?? echostr;
-        if (!verifyWeComSignature(config.secret, timestamp, nonce, signPayload, msgSignature)) {
+        if (!weComSignatureMatches(config.secret, timestamp, nonce, signPayload, msgSignature)) {
           res.status(401).json({ error: 'Invalid msg_signature' });
           return;
         }
@@ -416,7 +407,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
         res.status(401).json({ error: 'Missing signature parameters' });
         return;
       }
-      if (!verifyWeComSignature(config.secret, timestamp, nonce, encrypt, msgSignature)) {
+      if (!weComSignatureMatches(config.secret, timestamp, nonce, encrypt, msgSignature)) {
         res.status(401).json({ error: 'Invalid msg_signature' });
         return;
       }
@@ -437,13 +428,7 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
         // Strip @bot mention
         const messageText = content.replace(/^\s*@\S+\s*/, '').trim();
         if (messageText) {
-          const reply = await executeAgentMessage(config.agentId, messageText, getRuntime);
-
-          // Return plain XML response (unencrypted for simplicity)
-          res.type('application/xml');
-          res.send(
-            `<xml><MsgType><![CDATA[text]]></MsgType><Content><![CDATA[${reply}]]></Content></xml>`,
-          );
+          sendExecutionGone(res);
           return;
         }
       }
@@ -463,9 +448,9 @@ export function createWebhookRouter(getRuntime: WebhookRuntimeProvider = getShar
   router.get('/api/webhook/wecom/:id', wecomHandler);
 
   // ── GET /api/webhook/config — list IM webhooks ────────────────────────
-  router.get('/api/webhook/config', (_req: Request, res: Response) => {
+  router.get('/api/webhook/config', (req: Request, res: Response) => {
     try {
-      const tenantId = requestTenant(_req);
+      const tenantId = requestTenant(req);
       const configs = readIMWebhooks().filter((config) => config.tenantId === tenantId);
       res.json({ webhooks: configs.map(publicWebhookConfig), total: configs.length });
     } catch (error) {

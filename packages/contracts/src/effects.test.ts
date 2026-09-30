@@ -77,8 +77,10 @@ describe('WS2 §2 EffectEnvelope contract', () => {
       idempotency_key: 'idem-abc',
       status: 'admitted',
     };
-    assert.equal(isValidEffectEnvelopeIdentity({ ...base, action: 'unknown.action' }), true);
-    assert.equal(isValidEffectEnvelopeIdentity({ ...base, idempotency_key: '' }), true);
+    const unknownAction: EffectEnvelope = { ...base, action: 'unknown.action' };
+    assert.equal(isValidEffectEnvelopeIdentity(unknownAction), true);
+    const blankIdempotencyKey: EffectEnvelope = { ...base, idempotency_key: '' };
+    assert.equal(isValidEffectEnvelopeIdentity(blankIdempotencyKey), true);
   });
 
   it('EFFECT_ID_PATTERN accepts safe identifier characters', () => {

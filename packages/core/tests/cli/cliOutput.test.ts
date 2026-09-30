@@ -4,9 +4,28 @@
  * These tests capture console output from formatting functions and compare
  * against stored snapshots, catching accidental UI regressions.
  */
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import { $, section, kv, bullet, onboardingMessage } from '../../src/cli/util';
+
+// `$` (and the helpers that embed it) is computed once at module load from
+// `NO_COLOR` / `TERM=dumb`. In a NO_COLOR or dumb-terminal shell the palette is
+// empty, so the ANSI assertions below failed for an environment reason rather
+// than a UI regression — a suite that only passed on the author's terminal.
+// Neutralise those variables, then import the module so the palette is built
+// with colour enabled. The names stay module-scoped, so every case is unchanged.
+type CliUtil = typeof import('../../src/cli/util');
+let $: CliUtil['$'];
+let section: CliUtil['section'];
+let kv: CliUtil['kv'];
+let bullet: CliUtil['bullet'];
+let onboardingMessage: CliUtil['onboardingMessage'];
+
+before(async () => {
+  delete process.env.NO_COLOR;
+  if (!process.env.TERM || process.env.TERM === 'dumb') process.env.TERM = 'xterm-256color';
+  const util: CliUtil = await import('../../src/cli/util');
+  ({ $, section, kv, bullet, onboardingMessage } = util);
+});
 
 // Capture console.log output
 let output: string[];

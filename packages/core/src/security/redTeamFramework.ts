@@ -1185,18 +1185,23 @@ export function generateSecurityReport(report: RedTeamRunReport): string {
   lines.push('');
 
   // ── Summary breakdown ───────────────────────────────────────────
+  // `totalTests` is 0 whenever a filter matches no scenario (`--category=<typo>`),
+  // which made every share below `0/0 -> NaN` and printed "NaN%" four times.
+  const share = (n: number): string =>
+    report.totalTests > 0 ? ((n / report.totalTests) * 100).toFixed(1) : '0.0';
+
   lines.push('  ── Results Breakdown ──');
   lines.push(
-    `  🛡️  Blocked:    ${report.summary.blocked.toString().padStart(3)}  (${((report.summary.blocked / report.totalTests) * 100).toFixed(1)}%)`,
+    `  🛡️  Blocked:    ${report.summary.blocked.toString().padStart(3)}  (${share(report.summary.blocked)}%)`,
   );
   lines.push(
-    `  ⚠️  Detected:   ${report.summary.detected.toString().padStart(3)}  (${((report.summary.detected / report.totalTests) * 100).toFixed(1)}%)`,
+    `  ⚠️  Detected:   ${report.summary.detected.toString().padStart(3)}  (${share(report.summary.detected)}%)`,
   );
   lines.push(
-    `  🔴 Missed:      ${report.summary.missed.toString().padStart(3)}  (${((report.summary.missed / report.totalTests) * 100).toFixed(1)}%)`,
+    `  🔴 Missed:      ${report.summary.missed.toString().padStart(3)}  (${share(report.summary.missed)}%)`,
   );
   lines.push(
-    `  ⚡ Errors:      ${report.summary.error.toString().padStart(3)}  (${((report.summary.error / report.totalTests) * 100).toFixed(1)}%)`,
+    `  ⚡ Errors:      ${report.summary.error.toString().padStart(3)}  (${share(report.summary.error)}%)`,
   );
   lines.push('');
 
@@ -1224,6 +1229,23 @@ export function generateSecurityReport(report: RedTeamRunReport): string {
     lines.push('  ── 🚨 CRITICAL FINDINGS ──');
     for (const finding of report.criticalFindings) {
       lines.push(`  ❌ ${finding}`);
+    }
+    lines.push('');
+  } else if (report.totalTests === 0 || report.summary.error > 0) {
+    // "No critical findings" is not the same as "no critical attack got
+    // through". `runAll()` only ever pushes `missed`+critical into
+    // criticalFindings, so an `error` outcome is invisible here, and a
+    // zero-scenario run has nothing to report on at all. Falling through to the
+    // optimistic branch below would assert a safety property that was never
+    // measured. See redTeamGate.ts for the matching gate contract.
+    lines.push('  ⚠️ No critical findings recorded — this run is NOT evidence of safety:');
+    if (report.totalTests === 0) {
+      lines.push('     - no scenarios were evaluated');
+    }
+    if (report.summary.error > 0) {
+      lines.push(
+        `     - ${report.summary.error} scenario(s) could not be evaluated because the defense threw`,
+      );
     }
     lines.push('');
   } else {
@@ -1255,29 +1277,57 @@ export function generateSecurityReport(report: RedTeamRunReport): string {
   lines.push('');
 
   // ── Recommendations ─────────────────────────────────────────────
+  // Each condition is evaluated independently and the optimistic closing line
+  // only prints when nothing at all was observed — otherwise a run that missed a
+  // medium-severity attack, or whose defenses threw, would still be summarised
+  // as "All attacks were blocked".
   lines.push('  ── Recommendations ──');
-  if (report.summary.missed === 0) {
+  let advisories = 0;
+
+  if (report.totalTests === 0) {
+    lines.push('  ⚠️ No attacks were run. Re-run without a filter, or check the --category value.');
+    advisories += 1;
+  }
+
+  if (report.summary.error > 0) {
+    lines.push(
+      `  ⚠️ ${report.summary.error} attack(s) could not be evaluated because a defense layer threw.`,
+    );
+    lines.push('     An unevaluated defense is not a passing defense — fix the layer and re-run.');
+    advisories += 1;
+  }
+
+  const missedCritical = report.results.filter(
+    (r) => r.result === 'missed' && r.scenario.severity === 'critical',
+  );
+  if (missedCritical.length > 0) {
+    lines.push(
+      `  🔴 ${missedCritical.length} critical-severity attacks were missed. URGENT action required.`,
+    );
+    for (const mc of missedCritical) {
+      lines.push(`     - ${mc.scenario.id}: ${mc.scenario.name}`);
+    }
+    advisories += 1;
+  }
+
+  const missedHigh = report.results.filter(
+    (r) => r.result === 'missed' && r.scenario.severity === 'high',
+  );
+  if (missedHigh.length > 0) {
+    lines.push(
+      `  ⚠️ ${missedHigh.length} high-severity attacks were missed. Review defense layers.`,
+    );
+    advisories += 1;
+  }
+
+  const missedOther = report.summary.missed - missedCritical.length - missedHigh.length;
+  if (missedOther > 0) {
+    lines.push(`  ⚠️ ${missedOther} lower-severity attack(s) were missed. Review defense layers.`);
+    advisories += 1;
+  }
+
+  if (advisories === 0) {
     lines.push('  ✅ All attacks were blocked. Continue monitoring for new attack vectors.');
-  } else {
-    const missedCritical = report.results.filter(
-      (r) => r.result === 'missed' && r.scenario.severity === 'critical',
-    );
-    if (missedCritical.length > 0) {
-      lines.push(
-        `  🔴 ${missedCritical.length} critical-severity attacks were missed. URGENT action required.`,
-      );
-      for (const mc of missedCritical) {
-        lines.push(`     - ${mc.scenario.id}: ${mc.scenario.name}`);
-      }
-    }
-    const missedHigh = report.results.filter(
-      (r) => r.result === 'missed' && r.scenario.severity === 'high',
-    );
-    if (missedHigh.length > 0) {
-      lines.push(
-        `  ⚠️ ${missedHigh.length} high-severity attacks were missed. Review defense layers.`,
-      );
-    }
   }
   lines.push('');
   lines.push(`  ${bar}`);
@@ -1288,6 +1338,22 @@ export function generateSecurityReport(report: RedTeamRunReport): string {
 
 /**
  * Generate a JSON security report suitable for CI/CD pipelines.
+ *
+ * Consumer contract — `.github/workflows/red-team.yml` reads this payload and
+ * depends on three things that are easy to miss from here:
+ *
+ *   1. `totalTests` must be present. The workflow prints it in the step summary
+ *      and, more importantly, feeds it into the baseline HMAC payload; the
+ *      verifier in `redTeamBaseline.ts` (`computeSignature`) signs
+ *      `report.totalTests`, and `JSON.stringify` drops `undefined`, so a missing
+ *      field silently produced a signature that could never verify.
+ *   2. Each result must expose a nested `scenario`. The workflow's comparator
+ *      and its inline signer both read `r.scenario.id` / `r.scenario.name` /
+ *      `r.scenario.cvssScore`, and `computeSignature` signs `r.scenario.id`.
+ *      The flat `id`/`name`/`cvssScore` keys are kept alongside it because other
+ *      callers already consume them; `scenario` is additive.
+ *   3. `error` counts must be visible, both in `summary` and per category. An
+ *      outcome the report cannot express is an outcome the gate cannot enforce.
  */
 export function generateSecurityReportJson(report: RedTeamRunReport): string {
   return JSON.stringify(
@@ -1307,6 +1373,7 @@ export function generateSecurityReportJson(report: RedTeamRunReport): string {
                 : report.securityScore >= 60
                   ? 'D'
                   : 'F',
+      totalTests: report.totalTests,
       summary: report.summary,
       criticalFindings: report.criticalFindings,
       categoryBreakdown: ALL_CATEGORIES.map((cat) => {
@@ -1317,6 +1384,7 @@ export function generateSecurityReportJson(report: RedTeamRunReport): string {
           blocked: catResults.filter((r) => r.result === 'blocked').length,
           detected: catResults.filter((r) => r.result === 'detected').length,
           missed: catResults.filter((r) => r.result === 'missed').length,
+          error: catResults.filter((r) => r.result === 'error').length,
         };
       }),
       results: report.results.map((r) => ({
@@ -1328,6 +1396,15 @@ export function generateSecurityReportJson(report: RedTeamRunReport): string {
         result: r.result,
         triggeredDefense: r.triggeredDefense,
         durationMs: r.durationMs,
+        // Nested form required by the workflow comparator and the baseline
+        // signature payload (see contract note above).
+        scenario: {
+          id: r.scenario.id,
+          name: r.scenario.name,
+          category: r.scenario.category,
+          severity: r.scenario.severity,
+          cvssScore: r.scenario.cvssScore,
+        },
       })),
     },
     null,

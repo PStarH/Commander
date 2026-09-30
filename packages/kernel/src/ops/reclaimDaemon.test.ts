@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { InMemoryKernelRepository } from '../testing/inMemoryRepository.js';
+import {
+  InMemoryKernelRepository,
+  seedFreshOperationsDrains,
+} from '../testing/inMemoryRepository.js';
 import { KERNEL_COMPENSATION_TOPIC } from './compensationConsumer.js';
 import { ReclaimDaemon } from './reclaimDaemon.js';
 
@@ -143,8 +146,9 @@ describe('reclaim daemon', () => {
     await Promise.all([first, second]);
   });
 
-  it('durably requests compensation after terminal reclaim of a completed effect', async () => {
+  it('records missing compensation authority after terminal reclaim of a completed effect', async () => {
     const repository = new InMemoryKernelRepository();
+    seedFreshOperationsDrains(repository, 'tenant-a');
     const base = new Date();
     await repository.createRun(
       {
@@ -199,27 +203,23 @@ describe('reclaim daemon', () => {
 
     await new ReclaimDaemon(repository).tick(new Date(base.getTime() + 2_000));
 
-    assert.equal((await repository.getRun('run-a', 'tenant-a'))?.state, 'COMPENSATING');
+    assert.equal((await repository.getRun('run-a', 'tenant-a'))?.state, 'RUNNING');
     const messages = await repository.claimOutboxByTopic(
       KERNEL_COMPENSATION_TOPIC,
       100,
       new Date(base.getTime() + 3_000),
     );
-    const compensation = messages.filter(
-      (message) => message.topic === 'commander.kernel.compensation.requested',
-    );
-    assert.equal(compensation.length, 1);
-    assert.equal(compensation[0]?.payload.effectIds instanceof Array, true);
-    assert.equal(compensation[0]?.key, 'tenant-a/run-a/1');
+    assert.equal(messages.length, 0);
     const events = await repository.listEvents('run-a', 'tenant-a');
     assert.equal(
-      events.some((event) => event.type === 'run.compensating'),
+      events.some((event) => event.type === 'compensation.authorization_required'),
       true,
     );
   });
 
   it('marks an admitted effect completion unknown when its lease expires', async () => {
     const repository = new InMemoryKernelRepository();
+    seedFreshOperationsDrains(repository, 'tenant-a');
     const base = new Date();
     await repository.createRun(
       {

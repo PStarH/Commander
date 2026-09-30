@@ -15,6 +15,9 @@ import {
   getCurrentTenantId,
   validateTenantId,
 } from '../../../runtime/tenantContext';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Types
@@ -349,7 +352,7 @@ export class DatasetVersionManager {
         versionCases: Object.fromEntries(this.versionCases),
         datasetTenants: Object.fromEntries(this.datasetTenants),
       };
-      const fs = require('node:fs');
+      const fs = nodeRequire('node:fs');
       const tmp = this.dbPath + '.tmp';
       fs.writeFileSync(tmp, JSON.stringify(data), { encoding: 'utf8', mode: 0o600 });
       fs.renameSync(tmp, this.dbPath);
@@ -362,7 +365,7 @@ export class DatasetVersionManager {
     if (!this.dbPath || !existsSync(this.dbPath)) return;
 
     try {
-      const fs = require('node:fs');
+      const fs = nodeRequire('node:fs');
       const raw = fs.readFileSync(this.dbPath, 'utf8');
       const data = JSON.parse(raw);
 

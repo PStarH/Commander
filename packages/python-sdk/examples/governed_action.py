@@ -42,6 +42,7 @@ async def main() -> None:
                     simulation_id=simulation.simulation_id,
                     policy_snapshot_id=simulation.policy_snapshot_id,
                 ),
+                idempotency_key=f"{action_input.idempotency_key}:approve",
             )
             print("approve", approved.state)
 

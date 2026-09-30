@@ -3,6 +3,7 @@ import {
   ActionAdapterRegistry,
   EnvAdapterCredentialProvider,
   type AdapterCredentialProvider,
+  type KubernetesCredentialProvider,
 } from '@commander/action-adapters';
 
 export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistry): EffectExecutor {
@@ -13,7 +14,13 @@ export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistr
         throw new Error(`UNREGISTERED_EFFECT_TYPE: ${input.type}`);
       }
       const ctx = input.executionContext;
-      if (!ctx?.tenantId || !ctx.effectId || typeof input.request.idempotencyKey !== 'string') {
+      const idempotencyKey =
+        typeof ctx?.idempotencyKey === 'string' && ctx.idempotencyKey.trim().length > 0
+          ? ctx.idempotencyKey
+          : typeof input.request.idempotencyKey === 'string'
+            ? input.request.idempotencyKey
+            : undefined;
+      if (!ctx?.tenantId || !ctx.effectId || !idempotencyKey) {
         throw new Error('EFFECT_AUTHORIZATION_REQUIRED');
       }
       const destination = String(input.request.destination ?? '');
@@ -24,7 +31,7 @@ export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistr
           originalEffectId: String(
             (input.request as Record<string, unknown>).originalEffectId ?? '',
           ),
-          idempotencyKey: input.request.idempotencyKey,
+          idempotencyKey,
           destination,
           forwardResponse:
             ((input.request as Record<string, unknown>).forwardResponse as Record<
@@ -42,7 +49,7 @@ export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistr
       return adapter.execute({
         tenantId: ctx.tenantId,
         effectId: ctx.effectId,
-        idempotencyKey: input.request.idempotencyKey,
+        idempotencyKey,
         destination,
         args: (input.request.args as Record<string, unknown>) ?? {},
         signal: input.signal,
@@ -52,16 +59,34 @@ export function createActionAdapterEffectExecutor(registry: ActionAdapterRegistr
 }
 
 export function createProductionAdapterRegistry(
-  credentials?: AdapterCredentialProvider,
+  credentials?: AdapterCredentialProvider & KubernetesCredentialProvider,
+  env: NodeJS.ProcessEnv = process.env,
 ): ActionAdapterRegistry {
-  const cellTenantId = process.env.COMMANDER_CELL_TENANT_ID;
+  const cellTenantId = env.COMMANDER_CELL_TENANT_ID;
   if (!cellTenantId) {
     return ActionAdapterRegistry.empty();
+  }
+  const cluster = env.COMMANDER_KUBERNETES_CLUSTER;
+  const server = env.COMMANDER_KUBERNETES_SERVER;
+  const tokenEnv = env.COMMANDER_KUBERNETES_TOKEN_ENV;
+  const namespaces = env.COMMANDER_KUBERNETES_NAMESPACES;
+  if (
+    (cluster || server || tokenEnv || namespaces) &&
+    !(cluster && server && tokenEnv && namespaces)
+  ) {
+    throw new Error(
+      'COMMANDER_KUBERNETES_CLUSTER, COMMANDER_KUBERNETES_SERVER, COMMANDER_KUBERNETES_TOKEN_ENV, and COMMANDER_KUBERNETES_NAMESPACES must be configured together',
+    );
   }
   const provider =
     credentials ??
     new EnvAdapterCredentialProvider({
       cellTenantId,
+      environment: env,
+      kubernetesClusters:
+        cluster && server && tokenEnv && namespaces
+          ? { [cluster]: { server, tokenEnv, namespaces: namespaces.split(',') } }
+          : undefined,
     });
   return ActionAdapterRegistry.production(provider);
 }

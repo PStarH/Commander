@@ -1,4 +1,5 @@
 import { reportSilentFailure } from '../lib/silentFailure';
+import { openAuthenticatedEventStream } from '../lib/authenticatedEventStream';
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   WarRoomSnapshot,
@@ -10,15 +11,11 @@ import {
   fetchWarRoomSnapshot,
   fetchMemoryItems,
   fetchMemoryOverview,
-  createMission,
-  updateMissionStatus,
-  approveMission,
-  createLog,
-  ApprovalRequiredError,
   API_BASE,
   PROJECT_ID,
   getAuthToken,
 } from '../api';
+import { WAR_ROOM_REFRESH_TOPICS, createRefreshBatcher } from '../realtime';
 
 export function useWarRoom() {
   const [snapshot, setSnapshot] = useState<WarRoomSnapshot | null>(null);
@@ -70,28 +67,31 @@ export function useWarRoom() {
   useEffect(() => {
     loadAll();
 
-    let eventSource: EventSource | null = null;
+    const refresh = createRefreshBatcher(() => {
+      void loadAllRef.current?.();
+    });
+
+    let eventStream: ReturnType<typeof openAuthenticatedEventStream> | null = null;
     try {
-      const params = new URLSearchParams();
-      const token = getAuthToken();
-      if (token) {
-        // Cookie preferred when API is same-site; query kept as cross-origin fallback
-        // (server strips access_token from req.url before logging).
-        document.cookie = `commander_access_token=${encodeURIComponent(token)}; path=/; SameSite=Lax`;
-        params.set('access_token', token);
-      }
-      const qs = params.toString();
-      eventSource = new EventSource(
-        `${API_BASE}/projects/${PROJECT_ID}/events${qs ? `?${qs}` : ''}`,
-        { withCredentials: true },
+      eventStream = openAuthenticatedEventStream(
+        `${API_BASE}/projects/${PROJECT_ID}/events`,
+        getAuthToken(),
+        {
+          onOpen: () => setConnectionStatus('connected'),
+          onEvent: (eventName) => {
+            if ((WAR_ROOM_REFRESH_TOPICS as readonly string[]).includes(eventName)) {
+              refresh.schedule();
+            }
+          },
+          onError: (err) => {
+            reportSilentFailure(err, 'useWarRoom:82');
+            setConnectionStatus('disconnected');
+          },
+        },
       );
-      eventSource.onopen = () => setConnectionStatus('connected');
-      eventSource.addEventListener('snapshot', () => {
-        loadAllRef.current?.();
-      });
-      eventSource.onerror = () => {
-        setConnectionStatus('disconnected');
-      };
+      // The helper reports failures through onError; avoid an unhandled promise
+      // while still allowing callers/tests to await `.ready` directly.
+      void eventStream.ready.catch(() => undefined);
     } catch (err) {
       reportSilentFailure(err, 'useWarRoom:82');
       setConnectionStatus('disconnected');
@@ -101,53 +101,10 @@ export function useWarRoom() {
 
     return () => {
       window.clearInterval(timer);
-      eventSource?.close();
+      refresh.cancel();
+      eventStream?.close();
     };
   }, [loadAll]);
-
-  const handleCreateMission = async (payload: Parameters<typeof createMission>[0]) => {
-    try {
-      setError(null);
-      await createMission(payload);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleUpdateMissionStatus = async (missionId: string, status: string) => {
-    try {
-      setError(null);
-      await updateMissionStatus(missionId, status);
-      await loadAll();
-    } catch (err) {
-      if (err instanceof ApprovalRequiredError) {
-        setError(err.message);
-        return;
-      }
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleApproveMission = async (missionId: string) => {
-    try {
-      setError(null);
-      await approveMission(missionId);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
-
-  const handleCreateLog = async (missionId: string, payload: Parameters<typeof createLog>[1]) => {
-    try {
-      setError(null);
-      await createLog(missionId, payload);
-      await loadAll();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
-    }
-  };
 
   const handleSearchMemory = async (filters?: {
     query?: string;
@@ -174,10 +131,6 @@ export function useWarRoom() {
     connectionStatus,
     dismissError,
     reload: loadAll,
-    createMission: handleCreateMission,
-    updateMissionStatus: handleUpdateMissionStatus,
-    approveMission: handleApproveMission,
-    createLog: handleCreateLog,
     searchMemory: handleSearchMemory,
   };
 }

@@ -66,6 +66,8 @@ export interface ToolExecutionRuntime {
   cacheManager: CacheManager;
   dlq: DeadLetterQueue;
   getRunHandle(): RunHandle | null;
+  /** Authoritative pause state checked immediately before an external effect. */
+  isRunPaused?: (runId: string) => boolean;
   config: AgentRuntimeConfig;
   reflexionGenerator: ReflexionGenerator;
   stepTimeout: StepTimeoutManager;
@@ -191,7 +193,8 @@ export class ToolExecutionService {
         };
       }
 
-      const effect = classifyToolEffect(toolCall.name, toolCall.arguments);
+      const tool = this.runtime.tools.get(toolCall.name);
+      const effect = classifyToolEffect(toolCall.name, toolCall.arguments, tool);
       const compensationToolName = effect.compensationToolName ?? effect.semanticToolName;
       const reversibility = effect.isReadOnly
         ? 'reversible'
@@ -208,12 +211,26 @@ export class ToolExecutionService {
       }
 
       // ── Layer 2 ReversibilityGate: block irreversible actions without approval ──
+      // Pass the explicit classification through to the gate. The gate keeps
+      // external read tools (web_fetch/browser_*) irreversible while allowing
+      // custom enterprise read adapters whose names are unknown to it.
       if (this.runtime.reversibilityGate) {
-        const gateDecision = await this.runtime.reversibilityGate.evaluate(
-          effect.semanticToolName,
-          toolCall.arguments as Record<string, unknown>,
-          { runId, agentId },
-        );
+        // Only the registry's explicit read-only classification can downgrade
+        // an unknown enterprise adapter. Risk/destructive hints alone are not
+        // authoritative and can conflict with the adapter's real behavior.
+        const hasExplicitReadOnlyMetadata = tool?.isReadOnly === true;
+        const gateDecision = hasExplicitReadOnlyMetadata
+          ? await this.runtime.reversibilityGate.evaluate(
+              effect.semanticToolName,
+              toolCall.arguments as Record<string, unknown>,
+              { runId, agentId },
+              { isReadOnly: true },
+            )
+          : await this.runtime.reversibilityGate.evaluate(
+              effect.semanticToolName,
+              toolCall.arguments as Record<string, unknown>,
+              { runId, agentId },
+            );
         if (!gateDecision.allowed) {
           const errorMsg = `REVERSIBILITY_GATE_BLOCKED: ${gateDecision.reason}`;
           bus.publish('tool.blocked', agentId, {
@@ -249,7 +266,6 @@ export class ToolExecutionService {
         return resolveBlock;
       }
 
-      const tool = this.runtime.tools.get(toolCall.name);
       const toolFound = !!tool;
 
       // ── Hook: afterToolResolve ──
@@ -400,6 +416,18 @@ export class ToolExecutionService {
       // Architecture V2: SideEffectGate — mandatory policy PDP + ATR scheduleAction.
       // WS2 §9: compat bypass removed; the gate is fail-closed everywhere.
       let schedulerActionId: string | null = null;
+      const operatorPauseResult = (): ToolResult => ({
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: 'OPERATOR_PAUSE: tool execution skipped after the run was paused',
+        error: 'OPERATOR_PAUSE: tool execution skipped after the run was paused',
+        durationMs: Date.now() - startTime,
+      });
+
+      // Do not create an ATR action for a call that was paused while earlier
+      // asynchronous gates were running.
+      if (this.runtime.isRunPaused?.(runId)) return operatorPauseResult();
+
       const runHandle = this.runtime.getRunHandle();
       try {
         const admission = await getSideEffectGate().admit({
@@ -461,7 +489,12 @@ export class ToolExecutionService {
       } catch (e) {
         if (e instanceof SideEffectGateError) {
           const durationMs = Date.now() - startTime;
-          const errorMsg = `SIDE_EFFECT_GATE: ${e.code}: ${e.message}`;
+          // Layer-accurate marker: a policy denial must not be relabelled
+          // GUARDIAN_BLOCKED, which would erase the layer that denied the call.
+          const errorMsg =
+            e.code === 'POLICY_DENIED'
+              ? `POLICY_DENIED: ${e.message}`
+              : `SIDE_EFFECT_GATE: ${e.code}: ${e.message}`;
           bus.publish('tool.blocked', agentId, {
             runId,
             toolName: toolCall.name,
@@ -625,6 +658,11 @@ export class ToolExecutionService {
               : guardianResult.kind === 'guardian_error'
                 ? `GUARDIAN_ERROR: ${guardianResult.reason}`
                 : `SECURITY_GATEWAY_BLOCKED: ${guardianResult.reason}`;
+          if (guardianResult.kind === 'guardian_blocked') {
+            // Buyer-visible interception signal (asserted by demo-qa golden path).
+            // eslint-disable-next-line no-console
+            console.log(`[🔥 拦截成功] ${toolCall.name}: ${guardianResult.reason ?? 'policy'}`);
+          }
           const durationMs = Date.now() - startTime;
           bus.publish('tool.blocked', agentId, {
             runId,
@@ -716,6 +754,32 @@ export class ToolExecutionService {
       const executionArgs = workloadContext
         ? { ...sanitizedArgs, ...toRuntimeWorkloadMetadata(workloadContext) }
         : sanitizedArgs;
+
+      // SideEffectGate records the action before the adapter call. If an
+      // operator pause arrives during the remaining asynchronous security
+      // gates, close that reservation and never invoke the external tool.
+      if (this.runtime.isRunPaused?.(runId)) {
+        const rh = this.runtime.getRunHandle();
+        if (schedulerActionId && rh) {
+          try {
+            getExecutionScheduler().recordError({
+              runId,
+              leaseToken: rh.leaseToken,
+              fencingEpoch: rh.fencingEpoch,
+              actionId: schedulerActionId,
+              error: 'OPERATOR_PAUSE: tool execution skipped after the run was paused',
+              tenantId,
+            });
+          } catch (err) {
+            getGlobalLogger().debug('ToolExecutionService', 'Failed to close paused action', {
+              runId,
+              actionId: schedulerActionId,
+              error: (err as Error).message,
+            });
+          }
+        }
+        return operatorPauseResult();
+      }
 
       const boundaryResult = await boundary.execute<string>(
         toolCall.name,
@@ -933,7 +997,14 @@ export class ToolExecutionService {
       // Token-aware truncation: keep head (first ~60%) + tail (last ~40%) for maximum informational value.
       // The head preserves context/setup; the tail preserves results/errors.
       const maxSize = tool.maxOutputSize ?? this.runtime.config.observationMaskWindow * 1000;
-      if (typeof output === 'string' && output.length > maxSize && maxSize > 0) {
+      const truncated = typeof output === 'string' && output.length > maxSize && maxSize > 0;
+      if (truncated) {
+        getMetricsCollector().incrementCounter(
+          'tool_truncations_total',
+          'Tool outputs truncated by the result budget',
+          1,
+          [{ name: 'tool', value: toolCall.name }],
+        );
         // Security: Use SHA-256 instead of MD5 for cryptographic safety.
         const hash = crypto.createHash('sha256').update(output).digest('hex').slice(0, 8);
         const resultDir = path.join(process.cwd(), '.commander_results');
@@ -1067,6 +1138,12 @@ export class ToolExecutionService {
           const tool = this.runtime.tools.get(pred.name);
           if (!tool) return;
 
+          // The name whitelist is only a coarse filter. A plugin can replace a
+          // built-in name, so speculative execution must also require the
+          // tool's explicit read-only declaration before bypassing the normal
+          // execution pipeline.
+          if (tool.isReadOnly !== true) return;
+
           // Align with formal execute path: capability is mandatory for
           // speculative cache writes. Without a token, skip entirely so a later
           // formal call cannot hit an unauthorized cache entry.
@@ -1099,12 +1176,20 @@ export class ToolExecutionService {
             return;
           }
 
+          const hasExplicitReadOnlyMetadata = tool.isReadOnly === true;
           if (this.runtime.reversibilityGate) {
-            const gateDecision = await this.runtime.reversibilityGate.evaluate(
-              pred.name,
-              sanitizedArgs as Record<string, unknown>,
-              { runId: `spec_${Date.now()}`, agentId: 'speculative' },
-            );
+            const gateDecision = hasExplicitReadOnlyMetadata
+              ? await this.runtime.reversibilityGate.evaluate(
+                  pred.name,
+                  sanitizedArgs as Record<string, unknown>,
+                  { runId: `spec_${Date.now()}`, agentId: 'speculative' },
+                  { isReadOnly: true },
+                )
+              : await this.runtime.reversibilityGate.evaluate(
+                  pred.name,
+                  sanitizedArgs as Record<string, unknown>,
+                  { runId: `spec_${Date.now()}`, agentId: 'speculative' },
+                );
             if (!gateDecision.allowed) return;
           }
 

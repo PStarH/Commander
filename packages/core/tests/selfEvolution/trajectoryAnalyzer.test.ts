@@ -19,10 +19,15 @@ function makeExp(overrides: Partial<ExecutionExperience> = {}): ExecutionExperie
   } as ExecutionExperience;
 }
 
-function mockProvider(response: LLMResponse): LLMProvider {
+function mockProvider(response: Pick<LLMResponse, 'content'>): LLMProvider {
   return {
     name: 'mock',
-    call: vi.fn().mockResolvedValue(response),
+    call: vi.fn().mockResolvedValue({
+      model: 'mock-model',
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      finishReason: 'stop',
+      ...response,
+    }),
   };
 }
 

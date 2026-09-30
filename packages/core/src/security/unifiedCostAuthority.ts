@@ -244,7 +244,20 @@ class BudgetEnforcer {
 
   /** 更新配置（运行时可被 AnomalyObserver 调整）。 */
   updateConfig(patch: Partial<BudgetCap>): void {
-    this.config = { ...this.config, ...patch };
+    // A cap that is NaN / undefined / negative makes every `>` and `>=` cap
+    // comparison evaluate false, which silently disables that limit rather than
+    // enforcing it. Reject the invalid patch and keep the previous caps.
+    const next: BudgetCap = { ...this.config };
+    for (const [key, value] of Object.entries(patch) as [keyof BudgetCap, unknown][]) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+        throw new Error(
+          `UnifiedCostAuthority.updateConfig: invalid cap '${key}' ${String(value)} ` +
+            '(must be a finite, non-negative number)',
+        );
+      }
+      next[key] = value;
+    }
+    this.config = next;
   }
 
   /** AnomalyObserver 反馈动态阈值调整（per-tenant）。 */
@@ -611,7 +624,26 @@ export class UnifiedCostAuthority {
     if (ctx.tool) {
       const result = this.predictor.predictToolCost(ctx.tool.name, ctx.tool.costTier);
       estimatedCostUsd = result.costUsd;
-    } else if (ctx.model && ctx.estimatedTokens) {
+    } else if (ctx.model !== undefined) {
+      if (typeof ctx.model !== 'string' || ctx.model.trim().length === 0) {
+        throw new Error('UnifiedCostAuthority.preCall: model must be a non-empty string');
+      }
+      // A model call without a token estimate is unmeasured. Treating it as a
+      // $0 call lets an otherwise capped tenant spend without reservation, so
+      // missing, zero, NaN, infinite, and negative estimates all fail closed.
+      // A real model call cannot consume zero tokens, so `0` is an estimation
+      // failure, not a measured free call.
+      if (ctx.estimatedTokens === undefined) {
+        throw new Error(
+          'UnifiedCostAuthority.preCall: estimatedTokens is required for model calls',
+        );
+      }
+      if (!Number.isFinite(ctx.estimatedTokens) || ctx.estimatedTokens <= 0) {
+        throw new Error(
+          `UnifiedCostAuthority.preCall: invalid estimatedTokens ${String(ctx.estimatedTokens)} ` +
+            '(must be a finite, positive number)',
+        );
+      }
       estimatedCostUsd = this.predictor.predictLLMCost(
         ctx.model,
         ctx.estimatedTokens,
@@ -640,6 +672,17 @@ export class UnifiedCostAuthority {
     ctx: UCACallContext,
     actual: { costUsd: number; promptTokens?: number; completionTokens?: number },
   ): UCAPostCallResult {
+    // A non-finite or negative reported cost corrupts every counter it touches:
+    // a negative value silently *credits* the run/tenant/global budget, and NaN
+    // poisons all later `>=` cap comparisons so the MELT can never fire. Treat an
+    // invalid measurement as a hard error instead of recording it — an unmeasured
+    // or nonsensical cost must not become a silent budget credit.
+    if (!Number.isFinite(actual.costUsd) || actual.costUsd < 0) {
+      throw new Error(
+        `UnifiedCostAuthority.postCall: invalid costUsd ${String(actual.costUsd)} ` +
+          '(must be a finite, non-negative number)',
+      );
+    }
     const meltResult = this.enforcer.postRecord(ctx, actual);
     const snapshot = this.enforcer.getSnapshot(ctx.runId, ctx.tenantId);
 

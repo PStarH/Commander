@@ -290,6 +290,20 @@ export class MCPServer {
    * This is the main entry point for both HTTP and stdio transports.
    */
   async handleRequest(request: JSONRPCRequest): Promise<JSONRPCResponse> {
+    // A malformed message (JSON `null`, a bare array, a primitive) must be
+    // rejected before dispatch: destructuring it throws, and the catch below
+    // then throws again re-reading `request.id`, which turns a bad client
+    // message into an unhandled rejection.
+    if (typeof request !== 'object' || request === null || Array.isArray(request)) {
+      return {
+        jsonrpc: '2.0',
+        id: null,
+        error: {
+          code: MCP_ERROR_CODES.INVALID_REQUEST,
+          message: 'Invalid JSON-RPC request: expected an object',
+        },
+      };
+    }
     try {
       return await this.dispatch(request);
     } catch (err) {
@@ -601,6 +615,7 @@ export class MCPServer {
             if (toolRequiresActionGateway(tool)) {
               if (!actionGatewayExecutor) {
                 return {
+                  isError: true,
                   content: [
                     {
                       type: 'text' as const,
@@ -638,6 +653,7 @@ export class MCPServer {
           } catch (err) {
             if (err instanceof ActionGatewayPolicyError) {
               return {
+                isError: true,
                 content: [
                   {
                     type: 'text' as const,
@@ -647,6 +663,7 @@ export class MCPServer {
               };
             }
             return {
+              isError: true,
               content: [
                 {
                   type: 'text' as const,

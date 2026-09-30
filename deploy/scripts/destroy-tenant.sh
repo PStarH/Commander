@@ -75,6 +75,15 @@ if ! [[ $TENANT_ID =~ $TENANT_ID_RE ]]; then
   exit 1
 fi
 
+# `.` and `..` satisfy TENANT_ID_RE but are path segments, not tenant ids. The
+# id is interpolated into DATA_DIR and then handed to `rm -rf`, and the
+# tenants.json / API-key removal below runs before that. Reject the id up front
+# instead of relying on `rm`'s own refusal of a trailing dot segment.
+if [[ "$TENANT_ID" == "." || "$TENANT_ID" == ".." ]]; then
+  echo "Error: invalid tenant id '$TENANT_ID' (path segment, not a tenant)" >&2
+  exit 1
+fi
+
 # -----------------------------------------------------------------------------
 
 # Locate tenant and determine its deployment model
@@ -156,7 +165,7 @@ PY
 # Delete data directories for silo / bridge tenants
 # -----------------------------------------------------------------------------
 if [[ -n "$DATA_DIR" && -e "$DATA_DIR" ]]; then
-  rm -rf "$DATA_DIR"
+  rm -rf -- "$DATA_DIR"
   echo "Deleted $DATA_DIR"
 fi
 

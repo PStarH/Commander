@@ -1,6 +1,7 @@
 import type { LLMProvider, LLMRequest, LLMResponse, TokenUsage } from '../types';
 import { FormatBridge } from '../formatBridge';
 import { getGlobalLogger } from '../../logging';
+import { assertSafeProviderBaseUrl } from './providerUrlPolicy';
 
 interface OpenAICompletionUsage {
   prompt_tokens: number;
@@ -45,6 +46,7 @@ export class GLMProvider implements LLMProvider {
     this.apiKey = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://open.bigmodel.cn/api/paas/v4';
     this.defaultModel = config.defaultModel ?? 'glm-4.7';
+    assertSafeProviderBaseUrl(this.baseUrl, { providerName: this.name });
   }
 
   async call(request: LLMRequest): Promise<LLMResponse> {

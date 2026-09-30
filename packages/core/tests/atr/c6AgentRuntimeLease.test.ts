@@ -142,7 +142,11 @@ describe('C6 — agentRuntime ↔ LeaseManager wiring', () => {
     assert.strictEqual(next.acquired, true);
     assert.ok(!next.reclaimed, 'released lease is not reclaimed; fresh slot created');
     assert.notStrictEqual(next.lease.token, lease.token);
-    assert.strictEqual(next.lease.fencingEpoch, 1, 'fresh lease starts at epoch 1');
+    assert.strictEqual(
+      next.lease.fencingEpoch,
+      lease.fencingEpoch + 1,
+      'fencing epoch is monotonic per run: a released slot must never reuse its epoch',
+    );
   });
 
   it('idempotency key and lease token are independent identifiers', () => {

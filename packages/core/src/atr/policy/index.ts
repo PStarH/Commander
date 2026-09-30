@@ -22,13 +22,11 @@ export type {
   PolicyEngineOptions,
   PolicyEngineStats,
   ConflictReport,
-  CacheEntry,
   BudgetSnapshot,
   CompensableActionSummary,
 } from './types';
 
 export { PolicyEngine, hashPolicyInput, canonicalJson } from './engine';
-export { DecisionCache } from './cache';
 export { defaultBuiltins } from './builtins';
 export { evaluateExpr } from './evaluator';
 export { parsePolicyPack, tokenize } from './loader';

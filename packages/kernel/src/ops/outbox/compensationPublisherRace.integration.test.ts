@@ -18,6 +18,12 @@ describe('compensationPublisherRace', () => {
     const repository = new InMemoryKernelRepository();
     const delivery = new InMemoryOutboxDeliveryPort();
     const publisher = new KernelOutboxPublisher(repository, delivery);
+    const workerId = 'race-consumer';
+    const workerGeneration = 1;
+    const claimSecret = repository.seedTestWorker(workerId, ['tenant-race'], workerGeneration, {
+      capabilities: ['effect.compensate'],
+      identitySubject: 'db:commander_adapter_ops',
+    });
 
     await repository.createRun(
       {
@@ -74,27 +80,57 @@ describe('compensationPublisherRace', () => {
     }
 
     const deliveredCompensationTopics: string[] = [];
+    let brokerAdmissions = 0;
+    let brokerExecutions = 0;
+    let publishedTotal = 0;
     for (let round = 0; round < 100; round++) {
       const [pub] = await Promise.all([
         publisher.publish(5),
         consumeCompensationBatch(
           repository,
           {
-            admit: async () => ({ admitted: true, effectId: `eff-${round}`, replayed: false }),
-            executeAdmitted: async () => ({
-              effectId: `eff-${round}`,
-              replayed: false,
-              response: { ok: true },
-            }),
+            admit: async () => {
+              brokerAdmissions += 1;
+              return { admitted: true, effectId: `eff-${round}`, replayed: false };
+            },
+            executeAdmitted: async () => {
+              brokerExecutions += 1;
+              return { effectId: `eff-${round}`, replayed: false, response: { ok: true } };
+            },
           },
           async () => 'race-token',
-          { workerId: 'race-consumer', limit: 5, topic: KERNEL_COMPENSATION_TOPIC },
+          {
+            workerId,
+            workerGeneration,
+            claimSecret,
+            limit: 5,
+            topic: KERNEL_COMPENSATION_TOPIC,
+            registry: { resolve: () => null },
+          },
         ),
       ]);
-      assert.ok(pub.published + pub.duplicates + pub.retried + pub.failed >= 0);
+      // F-K1-5: the previous assertion was `published + duplicates + retried +
+      // failed >= 0`, true for any non-negative counters. Pin the real invariants.
+      assert.equal(pub.duplicates, 0, `round ${round}: no duplicate publications expected`);
+      assert.equal(pub.retried, 0, `round ${round}: no retries expected`);
+      assert.equal(pub.failed, 0, `round ${round}: no failed publications expected`);
+      assert.ok(pub.published <= 5, `round ${round}: publish limit must be respected`);
+      publishedTotal += pub.published;
     }
 
     const claimed = await delivery.claim('ws2', 500);
+    assert.equal(
+      claimed.length,
+      publishedTotal,
+      'every counted publication must correspond to a durably delivered message',
+    );
+    assert.ok(publishedTotal >= 20, 'all 20 generic noise rows must be published');
+    // Claim past the 60s claim lease: an un-acked (merely claimed) row would re-appear.
+    assert.deepEqual(
+      await repository.claimOutbox(500, new Date(Date.now() + 61_000)),
+      [],
+      'the generic publisher must publish AND ack every non-compensation outbox row',
+    );
     for (const msg of claimed) {
       if (msg.topic === KERNEL_COMPENSATION_TOPIC || msg.topic === LEGACY_COMPENSATION_TOPIC) {
         deliveredCompensationTopics.push(msg.topic);
@@ -105,14 +141,36 @@ describe('compensationPublisherRace', () => {
       [],
       'kernel-ops publisher must not deliver compensation topics under interleaved load',
     );
+    assert.equal(brokerAdmissions, 0, 'pre-Task-3 payloads must fail before broker admission');
+    assert.equal(
+      brokerExecutions,
+      0,
+      'publisher race must not masquerade as compensation execution',
+    );
 
     // Legacy is never claimed by KERNEL topic consumer; publisher denylist keeps it out of WS2.
     const remainingLegacy = await repository.claimOutboxByTopic(LEGACY_COMPENSATION_TOPIC, 100);
     assert.equal(remainingLegacy.length, legacySeeded);
     assert.equal(
-      (await repository.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100)).length,
+      (
+        await repository.claimOutboxByTopic(
+          KERNEL_COMPENSATION_TOPIC,
+          100,
+          new Date('9999-12-31T23:59:59.999Z'),
+        )
+      ).length,
       0,
-      'all kernel compensation rows should be consumed or claimed-through by consumer',
+      'authorization-missing rows are acknowledged without entering generic delivery',
+    );
+    const authorizationRequiredEvents = (
+      await repository.listEvents('run-race', 'tenant-race')
+    ).filter((event) => event.type === 'compensation.authorization_required');
+    assert.equal(authorizationRequiredEvents.length, 40);
+    assert.equal(
+      authorizationRequiredEvents.every(
+        (event) => event.payload.reason === 'COMPENSATION_AUTHORIZATION_REQUIRED',
+      ),
+      true,
     );
   });
 });

@@ -11,8 +11,13 @@
  * copies avoid a cross-package build-order dependency. Dedupe when a shared
  * `@commander/*` fs utility exists.
  */
+import * as crypto from 'node:crypto';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+
+function exclusiveTempPath(dir: string, base: string): string {
+  return path.join(dir, `.${base}.${crypto.randomBytes(8).toString('hex')}.tmp`);
+}
 
 /**
  * Atomically write a file: write to a temp file in the same directory, fsync the
@@ -20,18 +25,25 @@ import * as path from 'node:path';
  * rename), then fsync the directory so the rename itself survives power loss.
  * A crash can never observe a half-written or truncated target.
  */
-export function atomicWriteFileSync(filePath: string, data: string | Buffer): void {
-  const dir = path.dirname(filePath);
+export function atomicWriteFileSync(filePath: string, data: string | Buffer, mode?: number): void {
+  const resolved = path.resolve(filePath);
+  const dir = path.dirname(resolved);
+  const base = path.basename(resolved);
+  const prefix = dir.endsWith(path.sep) ? dir : dir + path.sep;
+  const target = path.resolve(dir, base);
+  const tmp = path.resolve(exclusiveTempPath(dir, base));
+  if (!target.startsWith(prefix) || !tmp.startsWith(prefix)) {
+    throw new Error('ATOMIC_WRITE_PATH_ESCAPE');
+  }
   fs.mkdirSync(dir, { recursive: true });
-  const tmp = path.join(dir, `.${path.basename(filePath)}.tmp-${process.pid}-${Date.now()}`);
-  const fd = fs.openSync(tmp, 'w');
+  const fd = fs.openSync(tmp, 'wx', mode);
   try {
     fs.writeFileSync(fd, data);
     fs.fsyncSync(fd);
   } finally {
     fs.closeSync(fd);
   }
-  fs.renameSync(tmp, filePath);
+  fs.renameSync(tmp, target);
   try {
     const dfd = fs.openSync(dir, 'r');
     try {

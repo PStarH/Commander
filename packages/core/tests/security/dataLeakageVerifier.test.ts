@@ -115,11 +115,20 @@ describe('DataLeakageVerifier', () => {
   it('covers all configured vectors', async () => {
     verifier.registerTarget(makeIsolatedTarget());
     const report = await verifier.verify();
+    const configured = verifier['config'].vectors;
+    const tenants = verifier['config'].tenants.length;
     const observedVectors = new Set(report.leaks.map((l) => l.vector));
-    const defendedVectors = new Set(verifier['config'].vectors);
-    // Either defended or leaked, every vector should appear
-    for (const vector of verifier['config'].vectors) {
-      expect(observedVectors.has(vector) || defendedVectors.has(vector)).toBe(true);
+    // Every reported leak must be one of the configured vectors …
+    for (const vector of observedVectors) {
+      expect(configured).toContain(vector);
     }
+    // … every case must produce exactly one outcome (leak / defended / error) …
+    expect(report.defended + report.leaks.length + report.errors).toBe(report.totalCases);
+    // … and every configured vector must be exercised for every ordered tenant
+    // pair (owner ≠ attacker). totalCases scales with `vectors.length`, so a
+    // verify() that silently dropped a vector would shrink the case count.
+    // The old assertion OR'd against a set built from `configured` itself, so it
+    // was true regardless of what verify() actually did.
+    expect(report.totalCases).toBe(configured.length * tenants * (tenants - 1));
   });
 });

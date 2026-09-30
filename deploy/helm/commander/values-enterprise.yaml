@@ -1,6 +1,18 @@
 # Enterprise cell profile — external Postgres + existingSecrets only.
 tier: enterprise
 
+image:
+  digest: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+
+tenantAuthority:
+  configurationSha256: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+  proofOwnerSecret: cell-enterprise-proof-owner-r1
+  releaseProjectionConfigMap: cell-enterprise-release-projection-r1
+  bootstrapAuthoritySecret: cell-enterprise-bootstrap-authority-r1
+  apiProof:
+    publicSecret: commander-api-proof-public
+    privateSecret: commander-api-proof-private
+
 # Explicit cell tenant for COMMANDER_CELL_TENANT_ID (must match an entry in worker.tenants).
 cell:
   tenantId: tenant-a
@@ -20,22 +32,31 @@ kernelOps:
 
 adapterOps:
   enabled: true
-  # Single replica until daemon ids are POD_NAME-suffixed (multi-replica stomps claims).
-  replicas: 1
+  reconcileIntervalMs: 10000
+  compensationIntervalMs: 10000
+  # Pod metadata.name is the durable adapter-ops instance identity.
+  replicas: 2
+  pdb:
+    enabled: true
+    minAvailable: 1
   secrets:
     existingSecret: cmdr-adapters
+  egress:
+    allowlist:
+      - api.github.com
 
 # Operator-supplied Ed25519 PEM + JWKS (existingSecret refs only; never chart-generated).
 capability:
   existingSecret: cmdr-capability
   create: false
 
-# Operator-managed evidence-signing private key and key id.
 evidenceSigning:
   existingSecret: cmdr-evidence-signing
+  create: false
 
 evidenceVerification:
   existingSecret: cmdr-evidence-jwks
+  jwksJsonKey: jwks-json
 
 database:
   enabled: true
@@ -44,8 +65,19 @@ database:
     bundled: false
     existingSecret: cmdr-db
 
+databaseTls:
+  caSecret: commander-database-public-ca
+  expectedServerSpkiSha256: cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+
 networkPolicy:
   enabled: true
+  # Replace this documentation address with the literal /32 or /128 reached by
+  # all six TLS DSNs, or use one or more exact Kubernetes Service tuples.
+  databaseEndpoints:
+    - roles: [owner, app, tenant-authority, scheduler, worker, adapter-ops]
+      cidr:
+        cidr: 10.0.0.0/32
+        port: 5432
   egress:
     adapterCidrs: []
     databaseCidrs:

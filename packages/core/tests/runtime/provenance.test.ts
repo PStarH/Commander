@@ -1,6 +1,13 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 import { captureProvenance, createRunProvenance } from '../../src/runtime/provenance';
+import { getDirname } from '../../src/esmCompat';
+
+const __dirname = getDirname(import.meta.url);
+const repoRoot = path.resolve(__dirname, '..', '..', '..', '..');
 
 describe('Provenance tracking', () => {
   // -----------------------------------------------------------------------
@@ -63,15 +70,51 @@ describe('Provenance tracking', () => {
     assert.equal((prov as any).tags, undefined);
   });
 
-  it('in this repo git.dirty should be true (working tree has changes)', () => {
+  /**
+   * Read the checked-out branch straight from `.git/HEAD`. This is a plain file
+   * read, so it is independent of the `execFileSync('git', …)` path that
+   * `captureProvenance` uses — comparing against it is a real check rather than
+   * a restatement of the implementation. Returns undefined for a detached HEAD.
+   */
+  function branchFromGitHead(): string | undefined {
+    try {
+      const head = fs.readFileSync(path.join(repoRoot, '.git', 'HEAD'), 'utf8').trim();
+      return /^ref:\s+refs\/heads\/(.+)$/.exec(head)?.[1];
+    } catch {
+      return undefined;
+    }
+  }
+
+  it('git.branch reports the branch git actually has checked out', () => {
+    const expected = branchFromGitHead();
     const prov = captureProvenance();
-    // The test suite runs in a repo with uncommitted changes (per git status)
-    assert.equal(prov.git.dirty, true);
+    if (expected === undefined) {
+      // Detached HEAD, or `.git` is a file (linked worktree / submodule): there
+      // is no branch name to compare against, so only require a populated field.
+      assert.equal(typeof prov.git.branch, 'string');
+      assert.ok(prov.git.branch.length > 0, 'branch should not be empty');
+      return;
+    }
+    // Must be the real branch — not the 'unknown' fallback, and not stale. This
+    // assertion used to hardcode 'master', so it could not pass on any other
+    // branch (the repo currently checks out `codex/first-customer-trial-20260908`).
+    assert.equal(prov.git.branch, expected);
+    assert.notEqual(prov.git.branch, 'unknown', 'the git fallback must not be used inside a repo');
   });
 
-  it('in this repo git.branch should be "master" (current branch)', () => {
+  it('git.dirty agrees with whether the working tree has uncommitted changes', () => {
     const prov = captureProvenance();
-    assert.equal(prov.git.branch, 'master');
+    // Derive the expectation instead of pinning it: a hardcoded `true` passes
+    // only while this working tree happens to be dirty, and fails on every clean
+    // checkout (e.g. CI after a fresh clone) — which is not a defect in
+    // `captureProvenance`. This mirrors the implementation's own mechanism, so
+    // it guards propagation of the value rather than the git invocation.
+    const porcelain = execFileSync('git', ['status', '--porcelain'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    assert.equal(prov.git.dirty, porcelain.trim().length > 0);
   });
 
   // -----------------------------------------------------------------------

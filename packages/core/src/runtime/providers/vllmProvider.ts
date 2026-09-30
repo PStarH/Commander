@@ -24,7 +24,9 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
 
   constructor(config: { apiKey?: string; baseUrl?: string; defaultModel?: string }) {
     super({
-      apiKey: config.apiKey ?? '',
+      // A caller-supplied credential must win; VLLM_API_KEY is only the
+      // fallback for an authenticated endpoint when the caller supplies none.
+      apiKey: config.apiKey || process.env.VLLM_API_KEY || '',
       baseUrl: config.baseUrl,
       defaultModel: config.defaultModel,
     });
@@ -41,7 +43,6 @@ export class VLLMProvider extends BaseOpenAICompatibleProvider {
   protected getExtraConfig(): Partial<OpenAICompatibleConfig> {
     return {
       isLocal: true,
-      apiKey: process.env.VLLM_API_KEY || '',
     };
   }
 

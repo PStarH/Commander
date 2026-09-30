@@ -6,6 +6,11 @@
 
 Python SDK for [Commander](https://github.com/PStarH/Commander) - multi-agent orchestration via HTTP.
 
+> **Alpha / non-production-ready:** the SDK and Enterprise Gateway are alpha. Provider calls,
+> prompts, responses, traces, and memory may be persisted or sent to the configured provider.
+> Review the repository [privacy boundary](../../PRIVACY.md), redact public reports, and do not
+> use unattended production workloads without your own validation.
+
 ```bash
 pip install commander-ai
 ```
@@ -165,7 +170,7 @@ asyncio.run(main())
 
 | Method                                       | Description                            |
 | -------------------------------------------- | -------------------------------------- |
-| `client.get_security_posture()`              | Latest compliance report               |
+| `client.get_security_posture()`              | Latest self-assessed posture report    |
 | `client.get_security_posture_history(...)`   | Snapshot history                       |
 | `client.get_security_posture_snapshot(id)`   | Specific snapshot                      |
 
@@ -252,10 +257,18 @@ Not for Jupyter/notebooks — use `CommanderClient` with `asyncio` there.
 
 ## Configuration
 
-| Env var             | Default                 | Description               |
-| ------------------- | ----------------------- | ------------------------- |
-| `COMMANDER_API_KEY` | —                       | API key for Bearer auth   |
-| —                   | `http://localhost:3001` | Commander server base URL |
+| Env var             | Used by                       | Default                 | Description                        |
+| ------------------- | ----------------------------- | ----------------------- | ---------------------------------- |
+| `COMMANDER_API_KEY` | both clients                  | —                       | API key sent as `Bearer` auth      |
+| `COMMANDER_API_URL` | `CommanderGatewayClient` only | `http://127.0.0.1:4000` | Commander server base URL          |
+| —                   | `CommanderClient` (legacy)    | `http://localhost:3001` | Legacy default; see the warning below |
+
+> **Warning — legacy default port.** `CommanderClient` and
+> `CommanderClientSync` do **not** read `COMMANDER_API_URL`; they default to port
+> `3001`, which is **not** a Commander API port (it belongs to Grafana in the
+> observability profile). Always pass an explicit `base_url` when using the
+> legacy client, or use `CommanderGatewayClient`, which is the current server
+> path and defaults to port `4000`.
 
 ## Architecture
 

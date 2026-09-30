@@ -60,16 +60,19 @@ describe('G5 GHCR image publisher', () => {
 
     const steps = publish.steps ?? [];
     assert.equal(
-      steps.find((step) => step.uses === 'actions/checkout@v6')?.with?.ref,
+      steps.find((step) => step.uses?.startsWith('actions/checkout@'))?.with?.ref,
       '${{ needs.validate.outputs.commit_sha }}',
     );
     assert.equal(
-      steps.find((step) => step.uses === 'docker/login-action@v3')?.with?.registry,
+      steps.find((step) => step.uses?.startsWith('docker/login-action@'))?.with?.registry,
       'ghcr.io',
     );
 
     const gateway = steps.find((step) => step.name === 'Build and push Gateway image');
-    assert.equal(gateway?.uses, 'docker/build-push-action@v6');
+    assert.equal(
+      gateway?.uses,
+      'docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8',
+    );
     assert.equal(gateway?.with?.file, 'apps/api/Dockerfile');
     assert.equal(gateway?.with?.context, '.');
     assert.equal(gateway?.with?.push, true);
@@ -77,7 +80,7 @@ describe('G5 GHCR image publisher', () => {
     assert.equal(gateway?.with?.provenance, 'mode=max');
 
     const worker = steps.find((step) => step.name === 'Build and push Worker image');
-    assert.equal(worker?.uses, 'docker/build-push-action@v6');
+    assert.equal(worker?.uses, 'docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8');
     assert.equal(worker?.with?.file, 'packages/worker-plane/Dockerfile');
     assert.equal(worker?.with?.context, '.');
     assert.equal(worker?.with?.push, true);
@@ -85,7 +88,10 @@ describe('G5 GHCR image publisher', () => {
     assert.equal(worker?.with?.provenance, 'mode=max');
 
     const artifact = steps.find((step) => step.name === 'Upload image provenance');
-    assert.equal(artifact?.uses, 'actions/upload-artifact@v4');
+    assert.equal(
+      artifact?.uses,
+      'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
+    );
     assert.equal(artifact?.with?.name, 'g5-image-provenance');
     assert.equal(artifact?.with?.path, 'g5-image-provenance.json');
 

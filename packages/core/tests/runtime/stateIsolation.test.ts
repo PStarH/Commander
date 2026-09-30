@@ -12,7 +12,7 @@
  * via ScriptedLLMProvider, but CircuitBreaker, DLQ, CostGuard, and
  * ToolOrchestrator are all real.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 
 // These E2E tests mutate shared singleton state (circuit breakers, DLQ,
 // budgets). Force sequential execution within the file to prevent cross-test
@@ -28,6 +28,21 @@ import {
   makeContext,
   resetGlobalState,
 } from './e2eTestHelpers';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file drives tool loops end to end through AgentRuntime.execute()
+// and asserts nothing about SideEffectGate admission, so it opts in explicitly
+// to the always-admit unit fixture. The global default is now the real,
+// fail-closed gate. This is a unit convenience, NOT an admission proof.
+// (`resetGlobalState()` does not touch the gate singleton, so the file-level
+// install survives the describe-level hook below.)
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
   beforeEach(() => {
@@ -60,7 +75,8 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
     ]);
     runtime.registerProvider('mock', provider1);
     const result1 = await runtime.execute(makeContext({ availableTools: ['flaky-tool'] }));
-    expect(result1.status).toBe('success');
+    expect(result1.status).toBe('failed');
+    expect(result1.error).toContain('TOOL_EXECUTION_FAILED');
 
     // Run 2: same tool should be available (not blocked by stale breaker)
     const provider2 = new ScriptedLLMProvider([
@@ -117,7 +133,8 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
     ]);
     runtime.registerProvider('mock', provider1);
     const result1 = await runtime.execute(makeContext({ availableTools: ['bad-tool'] }));
-    expect(result1.status).toBe('success');
+    expect(result1.status).toBe('failed');
+    expect(result1.error).toContain('TOOL_EXECUTION_FAILED');
     runtime.flushDeadLetterQueue();
 
     // Run 2: different tool, should succeed without DLQ interference
@@ -155,8 +172,10 @@ describe('E2E: State isolation between AgentRuntime.execute() calls', () => {
       const result = await runtime.execute(
         makeContext({ availableTools: [toolName], goal: `Run ${i}` }),
       );
-      // All runs should complete (failures are handled gracefully)
-      expect(result.status).toBe('success');
+      // Successful effects succeed; failed effects remain failed instead of
+      // being hidden by the model's final response.
+      expect(result.status).toBe(useOk ? 'success' : 'failed');
+      if (!useOk) expect(result.error).toContain('TOOL_EXECUTION_FAILED');
     }
   });
 

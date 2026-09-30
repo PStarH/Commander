@@ -11,6 +11,10 @@ import * as path from 'path';
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
+interface TokenUsage {
+  totalTokens: number;
+}
+
 interface ReplayRunSummary {
   runId: string;
   agentId: string;
@@ -40,6 +44,30 @@ interface TraceEvent {
   parentSpanId?: string;
 }
 
+interface TokenUsage {
+  totalTokens: number;
+}
+
+interface CheckpointFile {
+  agentId?: string;
+  missionId?: string;
+  context?: { goal?: string };
+  phase: string;
+  timestamp: string;
+  totalDurationMs?: number;
+  stepNumber?: number;
+  [key: string]: unknown;
+}
+
+interface RunManifest {
+  agentId?: string;
+  missionId?: string;
+  goal?: string;
+  model?: string;
+  timestamp?: string;
+  [key: string]: unknown;
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 interface ReplayDir {
@@ -49,7 +77,7 @@ interface ReplayDir {
 }
 
 interface LocatedCheckpoint {
-  checkpoint: any;
+  checkpoint: CheckpointFile;
   dirs: ReplayDir;
 }
 
@@ -98,19 +126,31 @@ function requireTenantResponse(req: Request, res: { status: (code: number) => an
 }
 
 async function readJsonFile<T>(filePath: string): Promise<T | null> {
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(process.cwd()) + path.sep)) return null;
   try {
-    await fsp.access(filePath);
-    return JSON.parse(await fsp.readFile(filePath, 'utf-8')) as T;
+    await fsp.access(resolved);
+    return JSON.parse(await fsp.readFile(resolved, 'utf-8')) as T;
   } catch (err) {
-    reportSilentFailure(err, 'replayEndpoints:53');
+    reportSilentFailure(err, 'replayEndpoints:readJsonFile');
     return null;
   }
 }
 
+async function readCheckpointFile(filePath: string): Promise<CheckpointFile | null> {
+  return readJsonFile<CheckpointFile>(filePath);
+}
+
+async function readManifestFile(filePath: string): Promise<RunManifest | null> {
+  return readJsonFile<RunManifest>(filePath);
+}
+
 async function readNdjsonFile(filePath: string): Promise<TraceEvent[]> {
+  const resolved = path.resolve(filePath);
+  if (!resolved.startsWith(path.resolve(process.cwd()) + path.sep)) return [];
   try {
-    await fsp.access(filePath);
-    const raw = (await fsp.readFile(filePath, 'utf-8')).trim();
+    await fsp.access(resolved);
+    const raw = (await fsp.readFile(resolved, 'utf-8')).trim();
     if (!raw) return [];
     const events: TraceEvent[] = [];
     for (const line of raw.split('\n')) {
@@ -134,7 +174,7 @@ async function locateCheckpoint(req: Request, runId: string): Promise<LocatedChe
       path.join(dirs.stateDir, 'completed', `${runId}.json`),
       path.join(dirs.stateDir, `${runId}.checkpoint`),
     ]) {
-      const checkpoint = await readJsonFile<any>(filePath);
+      const checkpoint = await readCheckpointFile(filePath);
       if (checkpoint) {
         return { checkpoint, dirs };
       }
@@ -179,16 +219,16 @@ export function createReplayRouter(): Router {
         for (const file of files) {
           const runId = file.replace(/\.json$/, '');
           if (runs.some((run) => run.runId === runId)) continue;
-          const checkpoint = await readJsonFile<any>(path.join(completedDir, file));
+          const checkpoint = await readCheckpointFile(path.join(completedDir, file));
           if (!checkpoint) continue;
 
           const [events, manifest] = await Promise.all([
             readNdjsonFile(path.join(dirs.tracesDir, `${runId}.ndjson`)),
-            readJsonFile<any>(path.join(dirs.samplesDir, 'runs', `${runId}.json`)),
+            readManifestFile(path.join(dirs.samplesDir, 'runs', `${runId}.json`)),
           ]);
 
           const totalTokens = events.reduce((sum, event) => {
-            const usage = event.data?.tokenUsage as any;
+            const usage = event.data?.tokenUsage as TokenUsage | undefined;
             return sum + (usage?.totalTokens ?? 0);
           }, 0);
 
@@ -230,7 +270,7 @@ export function createReplayRouter(): Router {
           if (runs.some((run) => run.runId === runId)) continue;
 
           const [checkpoint, events] = await Promise.all([
-            readJsonFile<any>(path.join(dirs.stateDir, file)),
+            readCheckpointFile(path.join(dirs.stateDir, file)),
             readNdjsonFile(path.join(dirs.tracesDir, `${runId}.ndjson`)),
           ]);
           if (!checkpoint) continue;
@@ -277,12 +317,12 @@ export function createReplayRouter(): Router {
     }
 
     const [manifest, events] = await Promise.all([
-      readJsonFile<any>(path.join(located!.dirs.samplesDir, 'runs', `${runId}.json`)),
+      readManifestFile(path.join(located!.dirs.samplesDir, 'runs', `${runId}.json`)),
       readNdjsonFile(path.join(located!.dirs.tracesDir, `${runId}.ndjson`)),
     ]);
 
     const totalTokens = events.reduce((sum, e) => {
-      const usage = e.data?.tokenUsage as any;
+      const usage = e.data?.tokenUsage as TokenUsage | undefined;
       return sum + (usage?.totalTokens ?? 0);
     }, 0);
 

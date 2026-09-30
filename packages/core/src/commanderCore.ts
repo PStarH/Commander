@@ -31,8 +31,8 @@ import type { ProbeResult } from './commander/probe';
 import type { CommanderOptions, DeploymentTier, ResolvedConfig } from './commander/tier';
 import type { WiredRuntime } from './commander/factory';
 import type { AgentRuntimeInterface, AgentExecutionResult } from './runtime';
-import { AgentRuntime, getMessageBus } from './runtime';
 import { getGlobalLogger } from './logging';
+import { assessGovernanceRiskLevel } from './ultimate/riskAssessor';
 
 // Re-export types for consumers
 export type { ProbeResult } from './commander/probe';
@@ -191,7 +191,10 @@ export class Commander {
       agentId,
       goal: task,
       contextData: {
-        governanceProfile: { riskLevel: 'LOW' },
+        // Risk is measured from the goal, never asserted. This used to be a
+        // hardcoded `'LOW'`, which made telosOrchestrator compute
+        // `requiresApproval: false` for every goal — see assessGovernanceRiskLevel.
+        governanceProfile: { riskLevel: assessGovernanceRiskLevel(task, availableTools ?? []) },
       },
       availableTools: availableTools ?? [],
       maxSteps: this.config.runtime.maxStepsPerRun ?? 20,

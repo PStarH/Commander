@@ -22,9 +22,23 @@ import { describe, it, expect } from 'vitest';
 import { ExecutionTraceRecorder } from '../../../src/runtime/executionTrace';
 import { SamplingPolicy } from '../../../src/plugins/builtin/observability/samplingPolicy';
 import { classifyLLMError } from '../../../src/runtime/llmRetry';
-import { OtelSpanExporter } from '../../../src/plugins/builtin/observability/otelExporter';
+import { OtelSpanExporter } from '../../../src/observability/otelExporter';
 import { eventToOtelAttrs } from '../../../src/observability/otelSemConv';
 import type { TraceEvent, ExecutionTrace } from '../../../src/runtime/types';
+
+/**
+ * Classification metadata that `recordEvent` carries on error events and that
+ * `samplingPolicy` / `eventToOtelAttrs` read back via their own structural
+ * casts. The shared `TraceEvent['data']` type does not declare these fields.
+ */
+type ErrorClassificationData = TraceEvent['data'] & {
+  errorClass?: string;
+  attempts?: number;
+  statusCode?: number;
+};
+function errorData(event: TraceEvent): ErrorClassificationData {
+  return event.data as ErrorClassificationData;
+}
 
 describe('Retry sampling rule on real production traces', () => {
   it('fires on a transient LLM 503 recorded via the real recorder path', () => {
@@ -45,26 +59,27 @@ describe('Retry sampling rule on real production traces', () => {
 
     // 3. Record the error via recordEvent, passing classification
     //    metadata so the sampling policy can use it.
+    const data: ErrorClassificationData = {
+      error: ce.message,
+      errorClass: ce.errorClass,
+      retryable: ce.retryable,
+      retrying: true, // we retried at least once
+      attempts: 2,
+      statusCode: ce.statusCode,
+    };
     const recorded = recorder.recordEvent(runId, {
       type: 'error',
       durationMs: 100,
-      data: {
-        error: ce.message,
-        errorClass: ce.errorClass,
-        retryable: ce.retryable,
-        retrying: true, // we retried at least once
-        attempts: 2,
-        statusCode: ce.statusCode,
-      },
+      data,
     });
 
     // 4. The recorded event should carry the classification on `data`.
     expect(recorded.type).toBe('error');
-    expect(recorded.data.errorClass).toBe('transient');
+    expect(errorData(recorded).errorClass).toBe('transient');
     expect(recorded.data.retryable).toBe(true);
     expect(recorded.data.retrying).toBe(true);
-    expect(recorded.data.attempts).toBe(2);
-    expect(recorded.data.statusCode).toBe(503);
+    expect(errorData(recorded).attempts).toBe(2);
+    expect(errorData(recorded).statusCode).toBe(503);
 
     // 5. The sampling policy's retry rule must fire on this real trace.
     const trace = recorder.getTrace(runId) as ExecutionTrace;
@@ -89,18 +104,19 @@ describe('Retry sampling rule on real production traces', () => {
     expect(ce.errorClass).toBe('transient');
     expect(ce.retryable).toBe(true);
 
+    const data: ErrorClassificationData = {
+      error: ce.message,
+      errorClass: ce.errorClass,
+      retryable: ce.retryable,
+      retrying: true,
+      attempts: 3,
+    };
     const recorded = recorder.recordEvent(runId, {
       type: 'error',
       durationMs: 50,
-      data: {
-        error: ce.message,
-        errorClass: ce.errorClass,
-        retryable: ce.retryable,
-        retrying: true,
-        attempts: 3,
-      },
+      data,
     });
-    expect(recorded.data.errorClass).toBe('transient');
+    expect(errorData(recorded).errorClass).toBe('transient');
 
     const trace = recorder.getTrace(runId) as ExecutionTrace;
     const decision = new SamplingPolicy({ baseRate: 0, keepIfRetriesAtLeast: 1 }).decide(
@@ -123,17 +139,18 @@ describe('Retry sampling rule on real production traces', () => {
     expect(ce.errorClass).toBe('permanent');
     expect(ce.retryable).toBe(false);
 
+    const data: ErrorClassificationData = {
+      error: ce.message,
+      errorClass: ce.errorClass,
+      retryable: ce.retryable,
+      retrying: false, // permanent errors don't retry
+      attempts: 1,
+      statusCode: ce.statusCode,
+    };
     recorder.recordEvent(runId, {
       type: 'error',
       durationMs: 20,
-      data: {
-        error: ce.message,
-        errorClass: ce.errorClass,
-        retryable: ce.retryable,
-        retrying: false, // permanent errors don't retry
-        attempts: 1,
-        statusCode: ce.statusCode,
-      },
+      data,
     });
 
     const trace = recorder.getTrace(runId) as ExecutionTrace;
@@ -154,18 +171,19 @@ describe('Retry sampling rule on real production traces', () => {
     const runId = 'run-default-retryable';
     recorder.startRun(runId, 'agent-d');
 
+    const data: ErrorClassificationData = {
+      error: 'transient: rate limit',
+      errorClass: 'transient',
+      // retryable omitted on purpose
+      retrying: true,
+      attempts: 2,
+    };
     const recorded = recorder.recordEvent(runId, {
       type: 'error',
       durationMs: 30,
-      data: {
-        error: 'transient: rate limit',
-        errorClass: 'transient',
-        // retryable omitted on purpose
-        retrying: true,
-        attempts: 2,
-      },
+      data,
     });
-    expect(recorded.data.errorClass).toBe('transient');
+    expect(errorData(recorded).errorClass).toBe('transient');
     // retryable is omitted on purpose — should be undefined since recordEvent doesn't default it
     expect(recorded.data.retryable).toBeUndefined();
   });
@@ -196,17 +214,18 @@ describe('Retry sampling rule on real production traces', () => {
       const runId = 'run-redact-survives';
       recorder.startRun(runId, 'agent-e');
 
+      const data: ErrorClassificationData = {
+        error: 'transient: 429',
+        errorClass: 'transient',
+        retryable: true,
+        retrying: true,
+        attempts: 2,
+        statusCode: 429,
+      };
       recorder.recordEvent(runId, {
         type: 'error',
         durationMs: 10,
-        data: {
-          error: 'transient: 429',
-          errorClass: 'transient',
-          retryable: true,
-          retrying: true,
-          attempts: 2,
-          statusCode: 429,
-        },
+        data,
       });
 
       // baseRate=1 sampling so the trace is guaranteed to be exported
@@ -256,17 +275,18 @@ describe('Retry sampling rule on real production traces', () => {
     const runId = 'run-helper-level';
     recorder.startRun(runId, 'agent-f');
 
+    const data: ErrorClassificationData = {
+      error: 'transient: 429',
+      errorClass: 'transient',
+      retryable: true,
+      retrying: true,
+      attempts: 2,
+      statusCode: 429,
+    };
     const recorded = recorder.recordEvent(runId, {
       type: 'error',
       durationMs: 10,
-      data: {
-        error: 'transient: 429',
-        errorClass: 'transient',
-        retryable: true,
-        retrying: true,
-        attempts: 2,
-        statusCode: 429,
-      },
+      data,
     });
     const attrs = eventToOtelAttrs(recorded, { agentName: 'agent-f' });
     expect(attrs['error.class']).toBe('transient');

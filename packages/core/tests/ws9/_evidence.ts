@@ -6,11 +6,21 @@
  *   - `describeIf` — conditional `describe` that uses `describe.skip` when the
  *     probe is unavailable. Skipped tests emit NO evidence (spec §9.2 honesty).
  *   - `writeEvidence` / `writePass` / `writeBreach` / `writeFail` — structured
- *     JSON artifact writers to `docs/baselines/ws9/<caseId>.json`.
+ *     JSON artifact writers into *this run's own output root*, plus the binding
+ *     metadata (runId, candidate gitSha, start/end, environment fingerprint and
+ *     hash-bound child artifacts) consumed by `scripts/ws9-livefire.ts`.
+ *   - `toChildArtifact` — record a produced child artifact, run-root relative.
  *   - `TENANT_A` / `TENANT_B` — the two real tenant identifiers (spec §3.1).
  *
+ * Binding contract (LM-16 / audit WS9-02): case artifacts live under a
+ * per-execution owned directory (`WS9_OUTPUT_ROOT`, set by the orchestrator to
+ * an empty run directory), never in a shared `docs/baselines/ws9` top level.
+ * Writers fail closed when no run root is configured so evidence can never be
+ * emitted unbound.
+ *
  * Evidence artifact format (spec §9):
- *   { testCaseId, verdict, evidenceLevel, breach, details, gitSha, ranAt, artifacts }
+ *   { testCaseId, runId, verdict, evidenceLevel, breach, details, gitSha,
+ *     startedAt, endedAt, environment, artifacts[] }
  *
  * Honesty rules (spec §9.2):
  *   - Skipped tests MUST NOT write evidence (no artifact = "missing" in summary).
@@ -20,8 +30,19 @@
 
 import { describe, it as vitestIt } from 'vitest';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import * as path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import {
+  RUN_ROOT_ENV,
+  beginRun,
+  describeChildArtifact,
+  markRunFailed,
+  writeCaseArtifact,
+  type ChildArtifact,
+  type EvidenceLevel,
+  type Verdict,
+} from '../../../scripts/ws9-livefire';
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
@@ -29,34 +50,65 @@ export const TENANT_A = 'tenant-a';
 export const TENANT_B = 'tenant-b';
 
 /**
- * Baseline directory for WS9 evidence artifacts.
- * Derived from this file's location: packages/core/tests/ws9/ → repo root.
+ * Evidence root for the current execution.
+ *
+ * The orchestrator (`scripts/ws9-livefire.ts`) owns the directory and passes it
+ * via `WS9_OUTPUT_ROOT`.
  */
-export const WS9_BASELINE_DIR = path.resolve(
-  __dirname,
-  '..',
-  '..',
-  '..',
-  '..',
-  'docs',
-  'baselines',
-  'ws9',
-);
+export function requireRunRoot(): string {
+  const root = process.env[RUN_ROOT_ENV];
+  if (!root || !root.trim()) {
+    throw new Error(
+      `${RUN_ROOT_ENV} is not set — run WS9 through scripts/ws9-livefire.ts so evidence is bound to this run`,
+    );
+  }
+  if (!path.isAbsolute(root)) {
+    throw new Error(`${RUN_ROOT_ENV} must be an absolute path, got "${root}"`);
+  }
+  return root;
+}
+
+/**
+ * A bare runner (e.g. `pnpm --filter @commander/core test`) must not write into
+ * the shared published `docs/baselines/ws9` tree, but it also must not crash on
+ * import. Such an execution gets its own private, owned run directory, left
+ * unsealed (`status='running'`): the evidence it produces can never be consumed
+ * by `verifyRun`, so it cannot fill a WS9 slot.
+ */
+function resolveRunRootForThisExecution(): string {
+  const configured = process.env[RUN_ROOT_ENV];
+  if (configured && configured.trim()) return requireRunRoot();
+  const fallback = fs.mkdtempSync(path.join(os.tmpdir(), 'ws9-unorchestrated-'));
+  process.env[RUN_ROOT_ENV] = fallback;
+  beginRun(fallback);
+  console.warn(
+    `[ws9] ${RUN_ROOT_ENV} is not set; this unorchestrated run writes evidence to ${fallback} and can never fill a WS9 slot.`,
+  );
+  return fallback;
+}
+
+/**
+ * WS9 evidence directory for this execution. Tests that shell out to auxiliary
+ * producers use this instead of a shared `docs/baselines/ws9` path.
+ */
+export const WS9_BASELINE_DIR = resolveRunRootForThisExecution();
 
 // ─── Types ──────────────────────────────────────────────────────────────
 
-export type Verdict = 'PASS' | 'FAIL' | 'SKIPPED' | 'BREACH';
-export type EvidenceLevel = 'live' | 'ci-worm-sim' | 'simulated';
+export type { Verdict, EvidenceLevel, ChildArtifact };
 
 export interface EvidenceArtifact {
   testCaseId: string;
+  runId: string;
   verdict: Verdict;
   evidenceLevel: EvidenceLevel;
   breach: boolean;
   details: string;
   gitSha: string;
-  ranAt: string;
-  artifacts: string[];
+  startedAt: string;
+  endedAt: string;
+  environment: string;
+  artifacts: ChildArtifact[];
 }
 
 export interface ProbeResult {
@@ -154,39 +206,62 @@ export function describeIf(probe: ProbeResult | boolean): typeof describe {
 
 // ─── Evidence writers ───────────────────────────────────────────────────
 
-function gitSha(): string {
-  try {
-    const res = spawnSync('git', ['rev-parse', 'HEAD'], {
-      encoding: 'utf-8',
-      stdio: ['pipe', 'pipe', 'ignore'],
-      timeout: 3_000,
-    });
-    return (res.stdout ?? '').trim() || 'unknown';
-  } catch {
-    return 'unknown';
-  }
+/**
+ * Hash-bind a child artifact produced by a case (bench output, scan dump, …).
+ *
+ * The stored path is relative to this run's output root whenever the artifact
+ * lives inside it; anything outside the root is recorded as an absolute
+ * `external` reference so the consumer can still re-verify its hash without
+ * ever resolving it relative to the run.
+ */
+export function toChildArtifact(artifactPath: string | ChildArtifact): ChildArtifact {
+  if (typeof artifactPath !== 'string') return artifactPath;
+  return describeChildArtifact(artifactPath, requireRunRoot());
 }
 
-function ensureBaselineDir(): void {
-  if (!fs.existsSync(WS9_BASELINE_DIR)) {
-    fs.mkdirSync(WS9_BASELINE_DIR, { recursive: true });
-  }
+function normalizeChildren(artifacts: Array<string | ChildArtifact>): ChildArtifact[] {
+  return artifacts.map((a) => toChildArtifact(a));
 }
 
 /**
- * Write a structured evidence JSON artifact to `docs/baselines/ws9/<caseId>.json`.
+ * Write a structured evidence JSON artifact into this run's output root.
  * Returns the artifact file path (for inclusion in test output).
+ *
+ * Fail-closed: if the run root is missing or the write fails, the run manifest
+ * is marked `failed` (so an interrupted run can never be consumed as a
+ * previous summary) and the error propagates to fail the test.
  */
-export function writeEvidence(artifact: Omit<EvidenceArtifact, 'gitSha' | 'ranAt'>): string {
-  ensureBaselineDir();
-  const full: EvidenceArtifact = {
-    ...artifact,
-    gitSha: gitSha(),
-    ranAt: new Date().toISOString(),
-  };
-  const filePath = path.join(WS9_BASELINE_DIR, `${artifact.testCaseId}.json`);
-  fs.writeFileSync(filePath, JSON.stringify(full, null, 2), { mode: 0o644 });
-  return filePath;
+export function writeEvidence(
+  artifact: Omit<EvidenceArtifact, 'gitSha' | 'startedAt' | 'endedAt' | 'environment' | 'runId'> & {
+    startedAt?: string;
+    endedAt?: string;
+  },
+): string {
+  const runRoot = requireRunRoot();
+  const children = normalizeChildren(artifact.artifacts ?? []);
+  try {
+    const full = writeCaseArtifact(runRoot, {
+      testCaseId: artifact.testCaseId,
+      verdict: artifact.verdict,
+      evidenceLevel: artifact.evidenceLevel,
+      breach: artifact.breach,
+      details: artifact.details,
+      artifacts: children,
+      startedAt: artifact.startedAt,
+      endedAt: artifact.endedAt,
+    });
+    return path.join(runRoot, `${full.testCaseId}.json`);
+  } catch (err) {
+    try {
+      markRunFailed(
+        runRoot,
+        `evidence write failed for ${artifact.testCaseId}: ${(err as Error).message}`,
+      );
+    } catch {
+      // The incomplete marker remains; the run stays unconsumable either way.
+    }
+    throw err;
+  }
 }
 
 /**
@@ -197,8 +272,9 @@ export function writeEvidence(artifact: Omit<EvidenceArtifact, 'gitSha' | 'ranAt
 export function writePass(
   testCaseId: string,
   details: string,
-  artifacts: string[] = [],
+  artifacts: Array<string | ChildArtifact> = [],
   evidenceLevel: EvidenceLevel = 'simulated',
+  timing?: { startedAt?: string; endedAt?: string },
 ): string {
   const filePath = writeEvidence({
     testCaseId,
@@ -206,9 +282,10 @@ export function writePass(
     evidenceLevel,
     breach: false,
     details,
-    artifacts,
+    artifacts: normalizeChildren(artifacts),
+    startedAt: timing?.startedAt,
+    endedAt: timing?.endedAt,
   });
-  artifacts.push(filePath);
   return filePath;
 }
 
@@ -219,7 +296,7 @@ export function writePass(
 export function writeBreach(
   testCaseId: string,
   details: string,
-  artifacts: string[] = [],
+  artifacts: Array<string | ChildArtifact> = [],
   evidenceLevel: EvidenceLevel = 'simulated',
 ): string {
   const filePath = writeEvidence({
@@ -228,9 +305,8 @@ export function writeBreach(
     evidenceLevel,
     breach: true,
     details,
-    artifacts,
+    artifacts: normalizeChildren(artifacts),
   });
-  artifacts.push(filePath);
   return filePath;
 }
 
@@ -241,7 +317,7 @@ export function writeBreach(
 export function writeFail(
   testCaseId: string,
   details: string,
-  artifacts: string[] = [],
+  artifacts: Array<string | ChildArtifact> = [],
   evidenceLevel: EvidenceLevel = 'simulated',
 ): string {
   const filePath = writeEvidence({
@@ -250,8 +326,7 @@ export function writeFail(
     evidenceLevel,
     breach: false,
     details,
-    artifacts,
+    artifacts: normalizeChildren(artifacts),
   });
-  artifacts.push(filePath);
   return filePath;
 }

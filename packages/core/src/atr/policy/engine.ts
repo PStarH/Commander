@@ -1,4 +1,3 @@
-import { reportSilentFailure } from '../../silentFailureReporter';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   type PolicyDecision,
@@ -9,18 +8,19 @@ import {
   type PolicyEngineOptions,
   type PolicyEngineStats,
   type PolicyDenyClass,
-  type LiteralValue,
   type BudgetSnapshot,
 } from './types';
 import { defaultBuiltins } from './builtins';
-import { evaluateExpr } from './evaluator';
+import { createEvaluationState, evaluateExpr } from './evaluator';
 import { detectCycles } from './conflictAnalyzer';
 
 const DEFAULT_MAX_DEPTH = 32;
+const DEFAULT_MAX_NODES = 10_000;
 const DEFAULT_TIMEOUT_MS = 50;
 
 export class PolicyEngine {
   private readonly maxDepth: number;
+  private readonly maxNodes: number;
   private readonly timeoutMs: number;
   private readonly statsImpl: PolicyEngineStats = {
     evaluations: 0,
@@ -46,6 +46,7 @@ export class PolicyEngine {
     private readonly opts: PolicyEngineOptions = {},
   ) {
     this.maxDepth = opts.maxEvaluationDepth ?? DEFAULT_MAX_DEPTH;
+    this.maxNodes = opts.maxEvaluationNodes ?? DEFAULT_MAX_NODES;
     this.timeoutMs = opts.evaluationTimeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.packAst = pack;
     const cycleResult = detectCycles(pack);
@@ -79,6 +80,9 @@ export class PolicyEngine {
 
   evaluate(input: PolicyInput): PolicyDecision {
     const start = process.hrtime.bigint();
+    // Wall-clock budget for the whole decision. A non-positive timeout disables
+    // the deadline; the node/depth budget still bounds the work.
+    const deadlineAt = this.timeoutMs > 0 ? Date.now() + this.timeoutMs : Number.POSITIVE_INFINITY;
     const decisionId = `pd_${Date.now().toString(36)}_${randomBytes(3).toString('hex')}`;
     const budget: BudgetSnapshot = {
       tokensUsed: input.metrics.tokensUsedThisRun,
@@ -97,7 +101,7 @@ export class PolicyEngine {
         return this.failClosed(input, decisionId, budget, 'stale_lease', start, false);
       }
 
-      const result = this.evaluateRules(input);
+      const result = this.evaluateRules(input, deadlineAt);
 
       const afterBudget = this.applyBudgetGate(result, input);
       const riskScore = this.computeRiskScore(input, afterBudget.effect);
@@ -123,19 +127,23 @@ export class PolicyEngine {
       this.recordStats(decision);
       return decision;
     } catch (err) {
-      this.statsImpl.errors++;
+      // A rule that cannot be evaluated must not silently disappear. The whole
+      // decision fails closed with an explicit "unavailable" reason.
       return this.failClosed(
         input,
         decisionId,
         budget,
-        `engine_error: ${(err as Error).message ?? 'unknown'}`,
+        `policy_evaluation_unavailable: ${err instanceof Error ? err.message : String(err)}`,
         start,
         false,
       );
     }
   }
 
-  private evaluateRules(input: PolicyInput): {
+  private evaluateRules(
+    input: PolicyInput,
+    deadlineAt: number,
+  ): {
     effect: PolicyEffect;
     reason: string;
     denyClass?: PolicyDenyClass;
@@ -160,7 +168,7 @@ export class PolicyEngine {
     for (const rule of sortedRules) {
       if (this.cycles.has(rule.name)) continue;
 
-      const ruleResult = this.evaluateRule(rule, input);
+      const ruleResult = this.evaluateRule(rule, input, deadlineAt);
       if (!ruleResult.fired) continue;
 
       decisionPath.push(rule.name);
@@ -243,15 +251,20 @@ export class PolicyEngine {
   private evaluateRule(
     rule: PolicyRuleAst,
     input: PolicyInput,
-  ): { fired: boolean; value?: LiteralValue } {
-    const builtins = defaultBuiltins;
-    try {
-      const value = evaluateExpr(rule.body, input, builtins, this.maxDepth);
-      return { fired: Boolean(value) };
-    } catch (err) {
-      reportSilentFailure(err, 'engine:256');
-      return { fired: false };
+    deadlineAt: number,
+  ): { fired: boolean } {
+    // No try/catch: an evaluation failure must propagate to `evaluate`, which
+    // converts it into an explicit fail-closed deny. Swallowing it here is what
+    // let a broken deny rule disappear into the default allow.
+    const state = createEvaluationState(this.maxNodes, deadlineAt);
+    const value = evaluateExpr(rule.body, input, defaultBuiltins, this.maxDepth, state);
+    if (!Boolean(value)) return { fired: false };
+    if (rule.condition) {
+      // `if { ... }` is a guard: body AND condition must both hold.
+      const condition = evaluateExpr(rule.condition, input, defaultBuiltins, this.maxDepth, state);
+      if (!Boolean(condition)) return { fired: false };
     }
+    return { fired: true };
   }
 
   private applyBudgetGate(

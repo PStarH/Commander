@@ -75,6 +75,7 @@ import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { reportSilentFailure } from '../silentFailureReporter';
 import { getSecurityAuditLogger } from './securityAuditLogger';
 import { getMLInjectionDetector } from './mlInjectionDetector';
+import { stripHtmlComments } from '../runtime/observationPurifier';
 
 // ============================================================================
 // 类型定义
@@ -788,9 +789,19 @@ function stripHiddenUnicode(text: string): string {
  * @param text - 原始文本
  * @returns 清理后的文本
  */
+function stripBlockComments(value: string): string {
+  let text = value;
+  for (;;) {
+    const start = text.indexOf('/*');
+    if (start < 0) return text;
+    const end = text.indexOf('*/', start + 2);
+    if (end < 0) return text.slice(0, start);
+    text = text.slice(0, start) + text.slice(end + 2);
+  }
+}
+
 function stripHtmlAndComments(text: string): string {
-  let result = text.replace(/<!--[\s\S]*?-->/g, '');
-  result = result.replace(/\/\*[\s\S]*?\*\//g, '');
+  let result = stripBlockComments(stripHtmlComments(text));
   result = result.replace(
     /style\s*=\s*"[^"]*(?:display\s*:\s*none|visibility\s*:\s*hidden|font-size\s*:\s*0|opacity\s*:\s*0)[^"]*"/gi,
     '',

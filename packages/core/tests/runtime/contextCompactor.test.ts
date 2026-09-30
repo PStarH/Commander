@@ -14,6 +14,7 @@ import {
   resetTokenGovernor,
 } from '../../src/runtime/tokenGovernor';
 import type { LLMMessage, LLMProvider, LLMResponse } from '../../src/runtime/types';
+import type { CPUWorkerPool } from '../../src/runtime/cpuWorkerPool';
 
 function msgs(...contents: string[]): LLMMessage[] {
   return contents.map((c, i) => ({
@@ -45,10 +46,15 @@ function assistantWithToolCalls(
   };
 }
 
-function mockProvider(response: LLMResponse): LLMProvider {
+function mockProvider(content: string): LLMProvider {
   return {
     name: 'mock',
-    call: vi.fn().mockResolvedValue(response),
+    call: vi.fn().mockResolvedValue({
+      content,
+      model: 'mock-model',
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      finishReason: 'stop',
+    } satisfies LLMResponse),
   };
 }
 
@@ -136,7 +142,7 @@ describe('ContextCompactor (upgraded)', () => {
   describe('scoreMessageImportance', () => {
     it('scores user instructions highly', () => {
       const msg: LLMMessage = { role: 'user', content: 'Please implement a sorting algorithm' };
-      const score = scoreMessageImportance(msg, 0, [], {
+      const score = scoreMessageImportance(msg, 0, 1, {
         errorBonus: 0.4,
         decisionBonus: 0.3,
         userInstructionBonus: 0.3,
@@ -148,7 +154,7 @@ describe('ContextCompactor (upgraded)', () => {
 
     it('scores error messages highly', () => {
       const msg: LLMMessage = { role: 'tool', content: 'ERROR: file not found' };
-      const score = scoreMessageImportance(msg, 0, [], {
+      const score = scoreMessageImportance(msg, 0, 1, {
         errorBonus: 0.4,
         decisionBonus: 0.3,
         userInstructionBonus: 0.3,
@@ -163,7 +169,7 @@ describe('ContextCompactor (upgraded)', () => {
         role: 'assistant',
         content: 'I will use merge sort. The answer is 42.',
       };
-      const score = scoreMessageImportance(msg, 0, [], {
+      const score = scoreMessageImportance(msg, 0, 1, {
         errorBonus: 0.4,
         decisionBonus: 0.3,
         userInstructionBonus: 0.3,
@@ -178,7 +184,7 @@ describe('ContextCompactor (upgraded)', () => {
         role: 'assistant',
         content: '__COMPACTED__summary of earlier work',
       };
-      const score = scoreMessageImportance(msg, 0, [], {
+      const score = scoreMessageImportance(msg, 0, 1, {
         errorBonus: 0.4,
         decisionBonus: 0.3,
         userInstructionBonus: 0.3,
@@ -197,8 +203,8 @@ describe('ContextCompactor (upgraded)', () => {
         compactedPenalty: -0.2,
       };
       const msg: LLMMessage = { role: 'user', content: 'hello' };
-      const recent = scoreMessageImportance(msg, 10, [], config);
-      const old = scoreMessageImportance(msg, 0, [], config);
+      const recent = scoreMessageImportance(msg, 10, 11, config);
+      const old = scoreMessageImportance(msg, 0, 11, config);
       expect(recent).toBeGreaterThan(old);
     });
   });
@@ -975,7 +981,7 @@ describe('ContextCompactor (upgraded)', () => {
     });
 
     it('uses LLM summarization in layer3 async', async () => {
-      const provider = mockProvider({ content: 'LLM summary of earlier conversation.' });
+      const provider = mockProvider('LLM summary of earlier conversation.');
       const compactor = new ContextCompactor({
         maxContextTokens: 6000,
         layer1Trigger: 0.99,

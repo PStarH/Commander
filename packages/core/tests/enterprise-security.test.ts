@@ -1,7 +1,7 @@
 /**
  * Enterprise Security Enhancement Test Suite
  *
- * Tests for the new enterprise-grade security modules:
+ * Tests for the security modules used in enterprise deployment profiles:
  * - ZeroTrustValidator: HMAC 签名验证 + 防重放
  * - BillExplosionGuard: 账单爆炸防护
  * - DataLossPrevention: 数据泄露防护
@@ -12,6 +12,8 @@
 import { describe, it, beforeEach, afterEach } from 'vitest';
 import assert from 'node:assert';
 import * as crypto from 'node:crypto';
+import * as fs from 'node:fs';
+import * as path from 'node:path';
 
 import { ZeroTrustValidator } from '../src/security/zeroTrustValidator';
 import { BillExplosionGuard } from '../src/security/billExplosionGuard';
@@ -353,6 +355,8 @@ describe('BillExplosionGuard', () => {
 // ============================================================================
 describe('DataLossPrevention', () => {
   let dlp: DataLossPrevention;
+  const anthropicKeyFixture = ['sk-ant-api03', '1234567890abcdef'].join('-');
+  const awsAccessKeyFixture = ['AKIAIOSFODNN7', 'EXAMPLE'].join('');
 
   beforeEach(() => {
     // Construct with all DLP types enabled so the test suite is independent
@@ -379,7 +383,7 @@ describe('DataLossPrevention', () => {
   });
 
   it('should detect API keys in content', () => {
-    const content = 'The API key is sk-ant-api03-1234567890abcdef';
+    const content = `The API key is ${anthropicKeyFixture}`;
     const result = dlp.scan(content, 'api_response');
 
     assert.strictEqual(result.isClean, false);
@@ -387,8 +391,41 @@ describe('DataLossPrevention', () => {
     assert.strictEqual(result.riskLevel, 'critical');
   });
 
+  it('does not mask a millisecond timestamp as a credit card', () => {
+    // `1758000000002` is a 13-digit Unix-millisecond timestamp that happens to
+    // pass the Luhn check, which is true of roughly one arbitrary 13-digit run
+    // in ten. Luhn alone therefore masked legitimate timestamps: an API response
+    // field carrying epoch milliseconds came back as `****-****-****-0002`, and
+    // whether it happened depended on the timestamp's value. Card numbers never
+    // begin with 1, and Visa is the only 13-digit brand.
+    const result = dlp.scan('{"selfAssessmentTimestamp":1758000000002}', 'api_response');
+    assert.strictEqual(result.isClean, true, 'a timestamp must not be classified as PII');
+    assert.deepStrictEqual(
+      result.matches.filter((match) => match.type === 'credit_card'),
+      [],
+    );
+  });
+
+  it('still detects real card numbers of every common brand', () => {
+    const cases: Array<[string, string]> = [
+      ['Visa 16', '4111111111111111'],
+      ['Visa 13', '4222222222222'],
+      ['Mastercard', '5555555555554444'],
+      ['Amex', '378282246310005'],
+      ['Discover', '6011111111111117'],
+      ['Diners', '30569309025904'],
+    ];
+    for (const [brand, card] of cases) {
+      const result = dlp.scan(`card ${card}`, 'api_response');
+      assert.ok(
+        result.matches.some((match) => match.type === 'credit_card'),
+        `${brand} (${card}) must still be detected`,
+      );
+    }
+  });
+
   it('should detect AWS access keys', () => {
-    const content = 'AWS_KEY=AKIAIOSFODNN7EXAMPLE';
+    const content = `AWS_KEY=${awsAccessKeyFixture}`;
     const result = dlp.scan(content, 'log_output');
 
     assert.strictEqual(result.isClean, false);
@@ -439,11 +476,11 @@ describe('DataLossPrevention', () => {
   });
 
   it('should sanitize content with REDACT strategy', () => {
-    const content = 'API key: sk-ant-api03-1234567890abcdef';
+    const content = `API key: ${anthropicKeyFixture}`;
     const sanitized = dlp.sanitize(content, 'REDACT', 'api_response');
 
     assert.ok(sanitized.includes('[REDACTED]'));
-    assert.ok(!sanitized.includes('sk-ant-api03-1234567890abcdef'));
+    assert.ok(!sanitized.includes(anthropicKeyFixture));
   });
 
   it('should sanitize content with MASK strategy', () => {
@@ -614,7 +651,7 @@ describe('EnterpriseSecurityGateway', () => {
       model: 'gpt-4o',
       inputTokens: 100,
       outputTokens: 50,
-      output: 'The API key is sk-ant-api03-1234567890abcdef',
+      output: `The API key is ${['sk-ant-api03', '1234567890abcdef'].join('-')}`,
     });
 
     // Should be blocked because DLP detects critical sensitive data
@@ -698,11 +735,9 @@ describe('EnterpriseSecurityGateway', () => {
 // Auth Middleware 时序安全测试
 // ============================================================================
 describe('Auth Middleware timing safety', () => {
-  it('should use SHA-256 hashing for API keys (not plaintext storage)', () => {
-    // This test verifies that the auth middleware code uses crypto.timingSafeEqual
-    // and SHA-256 hashing, which we can check by importing the module
-    const fs = require('node:fs');
-    const path = require('node:path');
+  it('should hash API keys before lookup (not plaintext storage)', () => {
+    // API keys are hashed before the PostgreSQL-authoritative lookup. The raw
+    // credential is never stored or compared against an in-process key map.
     const authPath = path.resolve(
       process.cwd(),
       process.cwd().endsWith(`${path.sep}packages${path.sep}core`)
@@ -711,16 +746,14 @@ describe('Auth Middleware timing safety', () => {
     );
     const authCode = fs.readFileSync(authPath, 'utf8');
 
-    // Verify timing-safe comparison is used
-    assert.ok(authCode.includes('timingSafeEqual'), 'Should use timingSafeEqual');
-    // Verify SHA-256 hashing is used
-    assert.ok(authCode.includes('createHash') || authCode.includes('sha256'), 'Should use SHA-256');
+    assert.ok(authCode.includes('getApiKeyStore().findByHash(hashSecret(token))'));
+    assert.ok(authCode.includes('hashSecret'), 'Should hash API keys before lookup');
     // Verify auth failure lockout is implemented
     assert.ok(
       authCode.includes('lockedOut') || authCode.includes('LOCKOUT'),
       'Should have lockout',
     );
     // Verify plaintext keys are not stored
-    assert.ok(!authCode.includes('apiKeys.set(parts[0]'), 'Should not store raw keys in Map');
+    assert.ok(!authCode.includes('apiKeys.set('), 'Should not store raw keys in Map');
   });
 });

@@ -21,6 +21,7 @@
 **/.next
 **/.cache
 **/.turbo
+**/*.tsbuildinfo
 
 # Test / coverage
 **/*.test.ts
@@ -37,6 +38,9 @@
 **/.venv
 
 # AI / tool artifacts
+**/.internal
+**/.worktrees
+**/.superpowers
 **/.claude
 **/.codex
 **/.omo

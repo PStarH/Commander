@@ -1,5 +1,5 @@
 /**
- * V2 Compensation Rollback Live-Fire Integration Tests
+ * V2 Compensation Rollback In-Memory Integration Tests
  *
  * These tests verify the compensation/rollback mechanism works end-to-end:
  *   1. Execute steps that produce compensable side effects
@@ -9,8 +9,8 @@
  *   5. Verify compensation queue durability
  *   6. Verify reversibility classification
  *
- * This proves the "Layer 3 — Recovery" defense: the system can undo
- * completed side effects when a downstream failure occurs.
+ * This exercises the "Layer 3 — Recovery" protocol with local simulated
+ * effects; external adapter rollback requires adapter-specific evidence.
  */
 
 import { describe, it, beforeEach } from 'node:test';
@@ -42,7 +42,7 @@ function createRunCommand(
   };
 }
 
-describe('V2 Compensation Rollback — Live-Fire Integration', () => {
+describe('V2 Compensation Rollback — In-Memory Integration', () => {
   let kernel: InMemoryKernelRepository;
   let registry: CompensationRegistry;
 

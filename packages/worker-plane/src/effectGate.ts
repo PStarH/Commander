@@ -7,11 +7,22 @@ import { WorkerExecutionError } from './types.js';
 import type { ToolEffectCatalog } from './toolEffectCatalog.js';
 import { DENY_ALL_TOOL_EFFECT_CATALOG } from './toolEffectCatalog.js';
 
-export function isProductionEffectGate(): boolean {
+/**
+ * Single production-profile predicate for the worker plane.
+ *
+ * Every profile that means "this is a real deployment" must be listed here, so the
+ * agent, tool, connector, LLM and sandbox-readiness gates cannot drift apart. The
+ * tool/connector executors previously re-derived this list locally and each copy
+ * omitted a different flag; `COMMANDER_REQUIRE_WORKLOAD_BINDING` in particular was
+ * lost when the copies were replaced, which re-opened the caller-supplied-token
+ * fallback for deployments running only that flag.
+ */
+export function isProductionEffectGate(env: NodeJS.ProcessEnv = process.env): boolean {
   return (
-    process.env.NODE_ENV === 'production' ||
-    process.env.COMMANDER_PROFILE === 'enterprise' ||
-    process.env.COMMANDER_REQUIRE_EFFECT_BROKER === '1'
+    env.NODE_ENV === 'production' ||
+    env.COMMANDER_PROFILE === 'enterprise' ||
+    env.COMMANDER_REQUIRE_EFFECT_BROKER === '1' ||
+    env.COMMANDER_REQUIRE_WORKLOAD_BINDING === '1'
   );
 }
 

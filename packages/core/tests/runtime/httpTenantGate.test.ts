@@ -34,6 +34,12 @@ function mockRes(): ServerResponse & { status: number; body: string; writableEnd
 }
 
 describe('httpTenantGate', () => {
+  it('hashes API credentials with the shared scrypt parameters', () => {
+    expect(hashSecret('test-bootstrap-secret')).toBe(
+      'f49ed27369d4e336be5339ffc80049ede6082faf1e5612c932a929ddb0c9d18d',
+    );
+  });
+
   const tenantMap = new Map<string, string>([[hashSecret('tenant-a-key'), 'tenant-a']]);
 
   it('resolveTenantFromAuth maps hashed bearer key to tenant', () => {

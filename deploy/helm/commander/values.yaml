@@ -13,6 +13,9 @@ cell:
 image:
   repository: commander
   tag: latest
+  # Task 1 lifecycle operations require a digest-pinned image. Development-only
+  # profiles may still use tag rendering outside the tenant-authority path.
+  digest: ''
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -32,6 +35,8 @@ api:
     livenessPath: /health
     readinessPath: /ready
     metricsPath: /metrics
+    startupFailureThreshold: 30
+    startupPeriodSeconds: 2
     initialDelaySeconds: 10
     periodSeconds: 15
   autoscaling:
@@ -51,9 +56,18 @@ api:
     apiKeySecret: ''
     capabilityTokenKeySecret: ''
     integrityKeySecret: ''
+    adminPasswordSecret: ''
+    # Audit-chain HMAC master key. Required outside the demo tier: the API
+    # refuses to start in production without it (and rejects the public dev key).
+    # COMMANDER_MANIFEST_KEY is only needed when COMMANDER_AUDIT_MANIFEST_DIR
+    # enables the manifest chain; inject it separately in that case.
+    auditChainKeySecret: ''
 
+# No web image or Deployment ships with this chart. Enabling this would render a
+# Service with no backing pods, so the chart rejects web.enabled=true (see
+# commander.requireWebDisabled). Enable only after a supported workload exists.
 web:
-  enabled: true
+  enabled: false
   replicas: 1
   port: 80
   resources:
@@ -132,10 +146,15 @@ kernelOps:
     COMMANDER_OUTBOX_MAX_ATTEMPTS: '10'
 
 adapterOps:
+  claimSecretDir: /var/run/commander/adapter-ops
+  reconcileIntervalMs: 10000
+  compensationIntervalMs: 10000
   enabled: false
-  # Single replica: fixed daemon worker ids (reconciliation-daemon / compensation-daemon)
-  # stomping under multi-replica. Multi-replica needs POD_NAME-suffixed ids (follow-up).
+  # Each Pod derives unique reconcile/compensation identities from metadata.name.
   replicas: 1
+  pdb:
+    enabled: false
+    minAvailable: 1
   terminationGracePeriodSeconds: 60
   image:
     repository: ''
@@ -143,7 +162,9 @@ adapterOps:
     pullPolicy: ''
   health:
     port: 8082
-    livenessPath: /health
+    # Liveness is process-only (/livez). /health and /ready stay dependency/loop
+    # gates so a stopped loop degrades traffic without a restart storm.
+    livenessPath: /livez
     readinessPath: /ready
     livenessInitialDelaySeconds: 10
     livenessPeriodSeconds: 15
@@ -159,8 +180,20 @@ adapterOps:
   secrets:
     existingSecret: ''
     create: false
+  kubernetes:
+    cluster: ''
+    namespaces: []
+    server: ''
+    tokenEnv: COMMANDER_KUBERNETES_BEARER_TOKEN
+    tokenSecretKey: kubernetes-bearer-token
+    apiPort: 443
   egress:
-    allowlist: []
+    # Non-demo cells must name at least one hostname here: adapter-ops rejects a
+    # CIDR-only COMMANDER_ADAPTER_EGRESS_ALLOWLIST (ADAPTER_OPS_EGRESS_ALLOWLIST_HOST_REQUIRED)
+    # because its application-layer gate cannot adjudicate IP literals. Pair this
+    # with networkPolicy.egress.adapterCidrs, which stays the NetworkPolicy layer.
+    allowlist:
+      - api.github.com
 
 # Worker/adapter EffectBroker authority (Ed25519 PEM + JWKS). Never HMAC.
 # Deployments mount via secretKeyRef only — never inline PEM/JWKS in env values.
@@ -172,12 +205,18 @@ capability:
   keyIdKey: key-id
   jwksJsonKey: jwks-json
 
-# Producer evidence-signing authority. The chart never creates this Secret.
+# Detached evidence signatures use a dedicated Ed25519 authority. Only worker
+# and adapter-ops receive the private key; API and migration workloads do not.
 evidenceSigning:
   existingSecret: ''
+  # Demo only: chart may create a fixed development keypair.
+  create: false
   privateKeyPemKey: private-key-pem
   keyIdKey: key-id
+  jwksJsonKey: jwks-json
 
+# Public evidence JWKS for the API. The private signing key stays on worker
+# and adapter-ops. Enterprise must name an existing Secret; demo may omit it.
 evidenceVerification:
   existingSecret: ''
   jwksJsonKey: jwks-json
@@ -187,6 +226,9 @@ sandboxd:
 
 migration:
   terminationGracePeriodSeconds: 30
+  activeDeadlineSeconds: 600
+  ttlSecondsAfterFinished: 300
+  databaseWaitTimeoutSeconds: 300
   resources:
     requests:
       cpu: 100m
@@ -229,18 +271,20 @@ database:
       repository: postgres
       tag: '16-alpine'
     port: 5432
-    user: commander
+    user: postgres
     # Schema requires empty inline password — supply via existingSecret.
     password: ''
     database: commander
     existingSecret: ''
     # Legacy single-key name (unused by role-separated workloads).
     existingSecretKey: url
-    # Four distinct DSN secret keys (enterprise existingSecret must include all).
+    # Six distinct DSN secret keys (enterprise existingSecret must include all).
     ownerSecretKey: owner-url
     appSecretKey: app-url
+    tenantAuthoritySecretKey: tenant-authority-url
     schedulerSecretKey: scheduler-url
     workerSecretKey: worker-url
+    adapterOpsSecretKey: adapter-ops-url
     resources:
       requests:
         cpu: 100m
@@ -253,6 +297,17 @@ database:
       size: 10Gi
       storageClass: ''
   connectionString: ''
+
+# PostgreSQL transport identity is separate from database credentials. Bundled
+# PostgreSQL uses existingSecret (CA, certificate, and key); external databases
+# use caSecret and keep their private key outside Commander.
+databaseTls:
+  existingSecret: ''
+  caSecret: ''
+  caKey: ca.crt
+  certKey: tls.crt
+  keyKey: tls.key
+  expectedServerSpkiSha256: ''
 
 persistence:
   enabled: true
@@ -301,9 +356,43 @@ serviceAccount:
 networkPolicy:
   enabled: false
   ingressControllerNamespace: ''
+  clusterDns:
+    namespace: kube-system
+    podSelector:
+      k8s-app: kube-dns
+  # Every entry is either an exact Service tuple or one literal /32 or /128.
+  # Across the list, all six lifecycle database roles must be covered.
+  databaseEndpoints: []
   egress:
     adapterCidrs: []
+    kubernetesApiCidrs: []
     databaseCidrs: []
+  migrationOperator:
+    subject: ''
+
+# Render input supplied by the owner lifecycle orchestrator. Owner-observed
+# database peer data is deliberately not a chart value.
+tenantAuthority:
+  # Controller-only first revision for fresh bundled PostgreSQL. Never set manually.
+  transportBootstrap: false
+  cutoverPhase: enforce
+  configurationSha256: ''
+  chartContentSha256: ''
+  # Ephemeral owner-only Secret created and deleted by helm:tenant-cutover.
+  proofOwnerSecret: ''
+  # Ephemeral immutable ConfigMap created and deleted by helm:tenant-cutover.
+  releaseProjectionConfigMap: ''
+  # Fresh external installs only; bundled installs derive this URL in migration memory.
+  bootstrapAuthoritySecret: ''
+  allowedTenants: []
+  expectedMigrationDescriptors: '{}'
+  apiProof:
+    publicSecret: ''
+    privateSecret: ''
+    caKey: ca.crt
+    certKey: tls.crt
+    keyKey: tls.key
+    port: 9443
 
 podSecurityContext:
   runAsNonRoot: true

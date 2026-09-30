@@ -34,9 +34,8 @@ class TestCost:
                 ],
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                summary = await client.cost_summary()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            summary = await client.cost_summary()
         assert summary.total_calls == 10
         assert summary.total_cost_usd == 0.75
         assert summary.by_model[0].model == "gpt-4"
@@ -62,9 +61,8 @@ class TestCost:
                 "total": 1,
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                result = await client.cost_records(run_id="run_1", limit=10)
+        async with CommanderClient(api_key="test") as client, mock_api:
+            result = await client.cost_records(run_id="run_1", limit=10)
         assert result.total == 1
         assert result.records[0].run_id == "run_1"
 
@@ -79,8 +77,7 @@ class TestCost:
                 "alerts": [],
             },
         )
-        async with CommanderClient(api_key="test") as client:
-            async with mock_api:
-                budget = await client.cost_budget()
+        async with CommanderClient(api_key="test") as client, mock_api:
+            budget = await client.cost_budget()
         assert budget.monthly_used == 5.0
         assert budget.usage_percent == 5

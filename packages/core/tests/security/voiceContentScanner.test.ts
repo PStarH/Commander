@@ -182,6 +182,15 @@ describe('VoiceContentScanner', () => {
       const result = scanner.scan(wav);
       expect(result.audioHash).toBeTruthy();
     });
+
+    it('fails closed on oversized audio instead of reporting it safe unscanned', () => {
+      const strictScanner = new VoiceContentScanner({ maxFileSize: 1024 });
+      const result = strictScanner.scan(makeWav(Buffer.alloc(4096)));
+      expect(result.isSafe).toBe(false);
+      const oversize = result.threats.filter((t) => t.type === 'oversize_unscanned');
+      expect(oversize).toHaveLength(1);
+      expect(oversize[0].severity).toBe('HIGH');
+    });
   });
 
   describe('reset', () => {

@@ -152,8 +152,11 @@ non-product memory classes remain in tree but off allowlist. Remaining specialty
     `getGlobalEventSourcingEngine()` defaults to `.commander_state/event-sourcing.wal`
     (or `COMMANDER_EVENT_SOURCING_WAL`). Header + `isDurable()` clarify optional WAL
     (fixed 2026-07-15).
-  - `apps/api` `EpisodicMemoryStore` is JSON + in-memory `Map`s (`episodicMemoryStore.ts` —
-    header corrected 2026-07-15; still not SQLite/atomic). Parallel to core `memory/episodicStore.ts`.
+  - ~~`apps/api` `EpisodicMemoryStore` is JSON + in-memory `Map`s (`episodicMemoryStore.ts` —
+    header corrected 2026-07-15; still not SQLite/atomic). Parallel to core `memory/episodicStore.ts`.~~
+    **RESOLVED 2026-07-15 (Phase B):** the zombie store was deleted
+    (`refactor(api): Phase B delete zombie EpisodicMemoryStore`); core
+    `memory/episodicStore.ts` is the single canonical implementation.
   - `apps/api` `StateMachine` checkpoints use plain non-atomic `fs.writeFileSync`
     (`stateMachine.ts:169,198`).
 - (2) **HOLDS for `/v1` durable path (as of 2026-07-15):** kernel defaults ON in production,
@@ -243,8 +246,9 @@ rules. The contracts leaf, V2 package graph, and new package-role ban are ENFORC
   the full gates `pnpm arch:guard`, `pnpm arch:gate`, and `pnpm test:arch` pass. The contracts
   snapshot baseline was regenerated and `pnpm contract:check` reports no breaking changes.
 
-- **2026-07-15 (plan: EpisodicMemoryStore routing)** — Direction Audit + strangler plan at
-  `docs/direction-audits/2026-07-15-episodic-memory-routing.md`. Finding: apps/api
+- **2026-07-15 (plan: EpisodicMemoryStore routing)** — Direction Audit + strangler plan
+  (internal working material, since moved out of the public tree to
+  `.internal/docs/direction-audits/2026-07-15-episodic-memory-routing.md`). Finding: apps/api
   `EpisodicMemoryStore` is health/shutdown-only (no feature routes); core ACT-R store remains
   canonical. Phase A health decouple → Phase B delete (+ rewrite store-path-overrides tests).
   Phase C Gateway ACT-R routes deferred.

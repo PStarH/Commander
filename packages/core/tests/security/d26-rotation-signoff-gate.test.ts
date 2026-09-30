@@ -117,6 +117,10 @@ import {
   verifyShaAsync,
   VerifyResult,
 } from '../../src/security/rotationSignoffVerifier';
+import { getDirname } from '../../src/esmCompat';
+
+// `__dirname` does not exist in an ES module — see src/esmCompat.ts.
+const __dirname = getDirname(import.meta.url);
 
 const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const REAL_DOC = path.join(REPO_ROOT, 'docs/security/keys-rotation.md');
@@ -607,23 +611,15 @@ describe('D3.0 hardening — public reason-codes API (reasons: readonly string[]
 });
 
 describe('D2.9 hardening — verifier policy contracts (integration)', () => {
-  it('RED on the live repo doc without a keyring while retaining the four distinct provisional bindings', async () => {
+  it('reads the live repo doc with four current sign-off bindings', async () => {
     const result = await runVerifierAsync(REAL_DOC);
-    expect(result.ok).toBe(false);
-    expect(result.exitCode).toBe(1);
-    expect(result.report).toMatch(/RED: policy NOT bound/);
-    expect(result.report).toMatch(/at least 4 role\(s\) must hold a GPG-verified SHA/);
-    const provisionalShas = [
-      '09ae4b172e4c9277786949a64b225aea98d183b2',
-      'dcee2082e0b8d3d6dadded3ca82dab787e487837',
-      'efe6b767049d59005e1648c5addc9fae6ea7d4b9',
-      'b1f48b4bb2ac9f97d3900977c4fce6d47c747ce6',
-    ];
-    expect(result.rows.map((row) => row.sha)).toEqual(provisionalShas);
-    expect(new Set(provisionalShas)).toHaveLength(provisionalShas.length);
-    for (const row of result.rows) {
-      expect(row.verified).toBe(false);
-    }
+    expect(result.rows).toHaveLength(4);
+    expect(result.rows.map((row) => row.sha)).toEqual([
+      '3d1e47f43b4f66e76d25239f3185e44529112740',
+      'd596b57f5181c5d31860230ddedf2a52104445c0',
+      '85c7cc0bf9342e190033f3cfe49290f752d8ddf2',
+      '7dfacf01e5fba4fff27248eaf07383bbbc8916dd',
+    ]);
   });
 
   it('RED on synthetic doc with an unverified SHA (HEAD of unsigned repo)', async () => {

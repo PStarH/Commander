@@ -15,13 +15,13 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SequentialPipelineExecutor, type AgentExecutor } from '../../src/ultimate/executor';
 import {
-  SequentialPipelineExecutor,
-  type AgentExecutor,
+  SequentialPipelineBuilder,
   type SequentialContext,
+  type SequentialPipeline,
   type TokenUsage,
-} from '../../src/ultimate/executor';
-import { SequentialPipelineBuilder, type SequentialPipeline } from '../../src/ultimate/sequential';
+} from '../../src/ultimate/sequential';
 import { CircuitBreakerRegistry } from '../../src/runtime/circuitBreakerRegistry';
 import * as auditChainLedgerModule from '../../src/security/auditChainLedger';
 

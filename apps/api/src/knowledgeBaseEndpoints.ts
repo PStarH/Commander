@@ -27,6 +27,7 @@ import { toErrorMessage } from './routeHelpers';
 import { validateBody, validateQuery } from './validationMiddleware';
 import {
   getKnowledgeStore,
+  isKnowledgeStoreError,
   normalizeContentType,
   SUPPORTED_CONTENT_TYPES,
   type KnowledgeDocument,
@@ -125,9 +126,35 @@ function requestKnowledgeStore(req: Request): KnowledgeStore {
   return getKnowledgeStore(requestTenantId(req));
 }
 
-/** Preserve JWT behavior while enforcing explicit write authority for API-key mutations. */
+/**
+ * LM-22: map store failures onto non-2xx responses with a stable, redacted code.
+ *
+ * A read/parse failure must never be answered with an empty success payload, and
+ * the raw filesystem error (which contains absolute paths) must not be echoed.
+ */
+function sendKnowledgeError(res: Response, error: unknown): void {
+  if (isKnowledgeStoreError(error)) {
+    if (error.code === 'KNOWLEDGE_INGEST_FAILED') {
+      res.status(422).json({ error: 'KNOWLEDGE_INGEST_FAILED' });
+      return;
+    }
+    res.status(503).json({ error: 'KNOWLEDGE_STORE_UNAVAILABLE' });
+    return;
+  }
+  res.status(500).json({ error: toErrorMessage(error) });
+}
+
+/**
+ * AUDIT-API4: JWT writers need a role floor — previously ANY JWT role
+ * (including viewer) could upload and delete tenant knowledge documents.
+ * developer+ may write; admins and above always pass.
+ */
 function requireKnowledgeWriter(req: Request, res: Response, next: NextFunction): void {
   if (req.user) {
+    if (!hasRole(req.user.role, 'developer')) {
+      res.status(403).json({ error: 'Knowledge-base write authority is required' });
+      return;
+    }
     next();
     return;
   }
@@ -206,10 +233,9 @@ export function createKnowledgeBaseRouter(): Router {
           content,
           tags,
         });
-        const statusCode = doc.status === 'failed' ? 422 : 201;
-        res.status(statusCode).json({ document: doc });
+        res.status(201).json({ document: doc });
       } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+        sendKnowledgeError(res, error);
       }
     },
   );
@@ -228,7 +254,7 @@ export function createKnowledgeBaseRouter(): Router {
         });
         res.json(result);
       } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+        sendKnowledgeError(res, error);
       }
     },
   );
@@ -248,7 +274,7 @@ export function createKnowledgeBaseRouter(): Router {
       }
       res.json({ document: doc });
     } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
+      sendKnowledgeError(res, error);
     }
   });
 
@@ -270,7 +296,7 @@ export function createKnowledgeBaseRouter(): Router {
         }
         res.json({ status: 'deleted', id });
       } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+        sendKnowledgeError(res, error);
       }
     },
   );
@@ -293,7 +319,7 @@ export function createKnowledgeBaseRouter(): Router {
         });
         res.json({ query, results, count: results.length });
       } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+        sendKnowledgeError(res, error);
       }
     },
   );
@@ -316,7 +342,7 @@ export function createKnowledgeBaseRouter(): Router {
         });
         res.json(rag);
       } catch (error) {
-        res.status(500).json({ error: toErrorMessage(error) });
+        sendKnowledgeError(res, error);
       }
     },
   );
@@ -327,7 +353,7 @@ export function createKnowledgeBaseRouter(): Router {
       const stats: KnowledgeStats = await requestKnowledgeStore(req).stats();
       res.json(stats);
     } catch (error) {
-      res.status(500).json({ error: toErrorMessage(error) });
+      sendKnowledgeError(res, error);
     }
   });
 

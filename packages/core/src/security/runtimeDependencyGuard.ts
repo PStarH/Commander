@@ -489,6 +489,16 @@ const KNOWN_DOH_ENDPOINTS: ReadonlySet<string> = new Set([
   'doh.crypto.sx',
 ]);
 
+const postInstallShellNames = ['sh', 'bash', 'zsh'].join('|');
+const postInstallPipeToShell = new RegExp(
+  'curl[\\s\\S]*?\\|\\s*(?:' +
+    postInstallShellNames +
+    ')|wget[\\s\\S]*?\\|\\s*(?:' +
+    postInstallShellNames +
+    ')',
+  'i',
+);
+
 /**
  * Post-install 脚本可疑行为正则模式表。
  * 每条规则包含匹配正则、行为标签与严重程度。
@@ -527,11 +537,15 @@ const SUSPICIOUS_SCRIPT_PATTERNS: ReadonlyArray<{
   { pattern: /\bnpm\s+(publish|install|run\s+script)/i, label: 'npm_mutation', severity: 'medium' },
   { pattern: /\bnc\b\s+-|ncat|netcat/i, label: 'reverse_shell', severity: 'critical' },
   {
-    pattern: /curl[\s\S]*?\|\s*(sh|bash|zsh)|wget[\s\S]*?\|\s*(sh|bash|zsh)/i,
+    pattern: postInstallPipeToShell,
     label: 'pipe_to_shell',
     severity: 'critical',
   },
-  { pattern: /registry\.(npmjs|yarnpkg)\.org/i, label: 'registry_access', severity: 'low' },
+  {
+    pattern: /(?:^|[^A-Za-z0-9.-])registry\.(?:npmjs|yarnpkg)\.org(?![A-Za-z0-9.-])/i,
+    label: 'registry_access',
+    severity: 'low',
+  },
   {
     pattern: /\b(token|secret|password|apikey|api_key)\b/i,
     label: 'credential_keyword',
@@ -1016,14 +1030,28 @@ export class RuntimeDependencyGuard {
       }
     }
 
-    this.stats.packagesTracked = this.integrityRecords.size;
+    // `tracked` counts package *directories* that were hashed, but
+    // `integrityRecords` is keyed by `name@version` (:1008), so two directories
+    // resolving to the same identity collapse onto a single record. The number
+    // of packages the guard can actually verify against is therefore the record
+    // count, not the directory count — and that is what `stats.packagesTracked`
+    // has always stored (:1019). Returning `tracked` instead made the method's
+    // return value disagree with its own stats: measured on this repo, 489
+    // directories but 486 distinct identities. Both numbers are now reported,
+    // each under a name that says what it counts.
+    const packagesTracked = this.integrityRecords.size;
+    this.stats.packagesTracked = packagesTracked;
     this.stats.lastInitializedAt = nowIso();
-    this.log('info', '依赖完整性基线已建立', { packagesTracked: tracked });
+    this.log('info', '依赖完整性基线已建立', {
+      packagesTracked,
+      packageDirsHashed: tracked,
+    });
     this.audit('security_scan', 'low', '依赖完整性基线建立', {
-      packagesTracked: tracked,
+      packagesTracked,
+      packageDirsHashed: tracked,
       nodeModulesRoot,
     });
-    return tracked;
+    return packagesTracked;
   }
 
   /**
@@ -1381,7 +1409,7 @@ export class RuntimeDependencyGuard {
     let maxSeverity: SecuritySeverity = 'low';
 
     for (const rule of SUSPICIOUS_SCRIPT_PATTERNS) {
-      const match = rule.pattern.exec(scriptContent);
+      const match = RegExp.prototype.exec.call(rule.pattern, scriptContent);
       if (match) {
         findings.push({
           label: rule.label,

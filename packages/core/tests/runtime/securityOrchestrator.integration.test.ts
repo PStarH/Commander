@@ -32,6 +32,19 @@ import {
 } from '../../src/security/differentialPrivacyLayer';
 import type { AgentExecutionContext, Tool } from '../../src/runtime/types';
 import type { LLMRequest, LLMResponse } from '../../src/runtime/types';
+import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+
+// LM-03: this file exercises SecurityOrchestrator wiring through AgentRuntime
+// tool loops. It asserts nothing about SideEffectGate admission, so it opts in
+// explicitly to the always-admit unit fixture. The global default is now the
+// real, fail-closed gate. This is a unit convenience, NOT an admission proof.
+let restoreSideEffectGate: () => void;
+beforeEach(() => {
+  restoreSideEffectGate = installAlwaysAdmitGate();
+});
+afterEach(() => {
+  restoreSideEffectGate();
+});
 
 // ============================================================================
 // Helpers

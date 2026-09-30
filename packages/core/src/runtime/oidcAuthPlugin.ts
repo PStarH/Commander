@@ -139,16 +139,30 @@ export class OIDCAuthPlugin implements AuthPlugin {
       return null; // Malformed JWT
     }
 
-    // Validate required claims
+    // Validate required claims. NumericDate claims must be actual finite
+    // numbers: a string such as "9999999999" must not silently satisfy an
+    // arithmetic comparison, so a type is not a validation.
+    const isNumericDate = (value: unknown): value is number =>
+      typeof value === 'number' && Number.isFinite(value);
+
     const iss = payload.iss as string | undefined;
     const aud = payload.aud as string | string[] | undefined;
-    const exp = payload.exp as number | undefined;
-    const iat = payload.iat as number | undefined;
+    const exp = payload.exp;
+    const iat = payload.iat;
+    const nbf = payload.nbf;
     const sub = payload.sub as string | undefined;
 
-    if (!iss || !aud || !exp || !sub) {
+    if (!iss || !aud || !isNumericDate(exp) || !sub) {
       audit.logAuthFailure('OIDCAuthPlugin', 'JWT missing required claims (iss, aud, exp, sub)', {
         missingClaims: ['iss', 'aud', 'exp', 'sub'].filter((c) => !payload[c]),
+      });
+      return null;
+    }
+
+    if ((iat !== undefined && !isNumericDate(iat)) || (nbf !== undefined && !isNumericDate(nbf))) {
+      audit.logAuthFailure('OIDCAuthPlugin', 'JWT NumericDate claim is not a finite number', {
+        iatType: typeof iat,
+        nbfType: typeof nbf,
       });
       return null;
     }
@@ -179,9 +193,16 @@ export class OIDCAuthPlugin implements AuthPlugin {
       return null;
     }
 
-    // Validate not-before with clock skew
-    if (iat && iat - (this.config.clockSkewSeconds ?? 60) > now) {
-      audit.logAuthFailure('OIDCAuthPlugin', 'JWT used before iat', { iat, now });
+    // Validate not-before (RFC 7519 §4.1.5) with clock skew. `iat` is a
+    // distinct claim and must not be used as a substitute for `nbf`.
+    if (nbf !== undefined && nbf - (this.config.clockSkewSeconds ?? 60) > now) {
+      audit.logAuthFailure('OIDCAuthPlugin', 'JWT used before nbf', { nbf, now });
+      return null;
+    }
+
+    // Reject a token that claims to have been issued in the future.
+    if (iat !== undefined && iat - (this.config.clockSkewSeconds ?? 60) > now) {
+      audit.logAuthFailure('OIDCAuthPlugin', 'JWT issued in the future', { iat, now });
       return null;
     }
 
@@ -406,6 +427,38 @@ export class OIDCAuthPlugin implements AuthPlugin {
     const cryptoAlg = this.jwtAlgToCrypto(alg);
     if (!cryptoAlg) {
       throw new Error(`Unsupported algorithm: ${alg}`);
+    }
+
+    // Bind the declared algorithm to the actual key type/curve, so an RSA key
+    // cannot satisfy an ES* header (or a P-256 key an ES384/ES512 header).
+    const keyType = keyObject.asymmetricKeyType;
+    if (alg.startsWith('ES')) {
+      if (keyType !== 'ec') {
+        return false;
+      }
+      const expectedCurves: Record<string, string> = {
+        ES256: 'prime256v1',
+        ES384: 'secp384r1',
+        ES512: 'secp521r1',
+      };
+      const namedCurve = (keyObject.asymmetricKeyDetails as { namedCurve?: string } | undefined)
+        ?.namedCurve;
+      const expectedCurve = expectedCurves[alg];
+      if (expectedCurve && namedCurve && namedCurve !== expectedCurve) {
+        return false;
+      }
+      // JWS ECDSA signatures are fixed-length R||S (RFC 7518 §3.4), while
+      // Node's default is DER — without this every valid ES* token fails.
+      return crypto.verify(
+        cryptoAlg,
+        Buffer.from(data, 'utf-8'),
+        { key: keyObject, dsaEncoding: 'ieee-p1363' },
+        signature,
+      );
+    }
+
+    if (alg.startsWith('RS') && keyType !== 'rsa' && keyType !== 'rsa-pss') {
+      return false;
     }
 
     return crypto.verify(cryptoAlg, Buffer.from(data, 'utf-8'), keyObject, signature);

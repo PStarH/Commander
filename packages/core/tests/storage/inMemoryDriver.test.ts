@@ -168,4 +168,38 @@ describe('InMemoryDriver — contract', () => {
     expect(() => driver.getTable('probe', mismatched)).toThrow(/schema mismatch/);
     driver.close();
   });
+  it('returns a copy from insert so the stored row cannot be mutated through it', () => {
+    const driver = new InMemoryDriver();
+    const t = driver.getTable<ProbeRow>('probe', probeSchema);
+    const returned = t.insert({ id: 'alias', tag: 'a', num: 1, flag: true });
+    returned.num = 99;
+    returned.tag = 'mutated';
+    expect(t.get('alias')?.num).toBe(1);
+    expect(t.get('alias')?.tag).toBe('a');
+    driver.close();
+  });
+
+  it('rolls back tables first opened inside a rejected transaction', async () => {
+    const driver = new InMemoryDriver();
+    const outer = driver.getTable<ProbeRow>('probe', probeSchema);
+    outer.insert({ id: 'kept', tag: 'pre', num: 0, flag: true });
+
+    let innerHandle: ReturnType<typeof driver.getTable<ProbeRow>> | undefined;
+    await expect(
+      driver.transaction(() => {
+        innerHandle = driver.getTable<ProbeRow>('late', probeSchema);
+        innerHandle.insert({ id: 'leaked', tag: 'x', num: 1, flag: true });
+        throw new Error('boom');
+      }),
+    ).rejects.toThrow('boom');
+
+    // The handle obtained inside the rejected transaction must not observe the row...
+    expect(innerHandle?.get('leaked')).toBeNull();
+    // ...and a fresh lookup must not either.
+    const reopened = driver.getTable<ProbeRow>('late', probeSchema);
+    expect(reopened.get('leaked')).toBeNull();
+    expect(reopened.count()).toBe(0);
+    expect(outer.get('kept')?.tag).toBe('pre');
+    driver.close();
+  });
 });

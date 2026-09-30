@@ -95,7 +95,9 @@ services:
       - ws9-livefire-net
 
   # ---------------------------------------------------------------------------
-  # Commander API — built from repo Dockerfile (api target).
+  # Commander API — built from apps/api/Dockerfile (production target).
+  # The repo-root Dockerfile is gitignored and absent from a fresh clone, so it
+  # must never be used as a build source here.
   # NODE_ENV=production + COMMANDER_V2_MODE=1 disable legacy /api/* execution
   # (apps/api/src/legacyExecutionGuard.ts), leaving /v1, /health, /metrics as
   # the only reachable surface (enforced/verified by ws9-env-check).
@@ -103,8 +105,8 @@ services:
   commander-api:
     build:
       context: ../..
-      dockerfile: Dockerfile
-      target: api
+      dockerfile: apps/api/Dockerfile
+      target: production
     image: ${COMMANDER_API_IMAGE:-commander-api:ws9-livefire}
     container_name: ws9-commander-api
     environment:
@@ -147,6 +149,11 @@ services:
       # (spec §3.1: HMAC key and log storage physically separated).
       COMMANDER_AUDIT_PERSIST_DIR: /var/lib/commander/audit
       COMMANDER_AUDIT_MANIFEST_DIR: /var/lib/commander/manifest
+      # Durable L2 signing identity. Without it the audit-chain install refuses
+      # to start (AUDIT_SIGNING_KEY_REQUIRED): an ephemeral in-memory signer
+      # makes every restarted chain head fail verification and raises a false
+      # kms_sig_invalid tamper alarm.
+      COMMANDER_AUDIT_SIGNING_KEY_FILE: /var/lib/commander/manifest/chain-signing-key.pem
       COMMANDER_AUDIT_CHAIN_KEY: ws9-livefire-audit-chain-key-32chars!!
       COMMANDER_MANIFEST_KEY: ws9-livefire-manifest-key-do-not-reuse
     ports:

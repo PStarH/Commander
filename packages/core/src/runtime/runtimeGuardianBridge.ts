@@ -11,8 +11,14 @@
  * Usage:
  *   1. At startup (serviceInitializer): initializeRuntimeGuardian(providerFactory, config)
  *   2. Before tool execution (toolExecutionService): await reviewToolCall(toolCall, goal)
- *   3. If no provider is available, the bridge falls back to rule-based
- *      checks (complementing GuardianAgent's existing checks)
+ *   3. Review is FAIL-CLOSED. When the guardian is ENABLED but no explicit
+ *      provider decision can be obtained — missing provider, timeout, empty
+ *      response, unparseable response, or any thrown error — the decision is
+ *      `approved: false` with a "review unavailable" reason. Only an explicit,
+ *      well-formed `APPROVED: true` from the provider approves a tool call.
+ *   4. When `runtimeGuardian.enabled === false` the bridge is a documented
+ *      pass-through: it approves without review (GuardianAgent's rule-based
+ *      checks still run upstream). This is the only non-provider approval path.
  */
 
 import type { ToolCall } from './types';
@@ -39,6 +45,10 @@ export const DEFAULT_RUNTIME_GUARDIAN_CONFIG: RuntimeGuardianConfig = {
 export interface RuntimeGuardianDecision {
   approved: boolean;
   reason: string;
+  /**
+   * True only when the provider returned an explicit, well-formed decision
+   * that was actually used. Unavailable reviews are never `reviewed: true`.
+   */
   reviewed: boolean;
 }
 
@@ -95,52 +105,25 @@ export function isRuntimeGuardianAvailable(): boolean {
 }
 
 /**
- * Reset the runtime guardian state — clears cache, provider factory, and config.
+ * Reset the runtime guardian state — clears the provider factory and config.
  * Used for test isolation.
  */
 export function resetRuntimeGuardian(): void {
   providerFactory = null;
   config = { ...DEFAULT_RUNTIME_GUARDIAN_CONFIG };
-  reviewCache.clear();
 }
 
-// --- LLM review result cache ---
-// Cache recent decisions by (toolName, argsHash) to avoid redundant LLM calls.
-// Entries expire after 5 minutes or when the cache reaches 200 entries.
-interface CacheEntry {
-  decision: RuntimeGuardianDecision;
-  expiresAt: number;
-}
-const reviewCache = new Map<string, CacheEntry>();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-const CACHE_MAX_SIZE = 200;
-
-function getCacheKey(toolCall: ToolCall): string {
-  const argsStr = JSON.stringify(toolCall.arguments);
-  let hash = 0;
-  for (let i = 0; i < argsStr.length; i++) {
-    hash = ((hash << 5) - hash + argsStr.charCodeAt(i)) | 0;
-  }
-  return `${toolCall.name}:${hash}`;
-}
-
-function getCachedDecision(key: string): RuntimeGuardianDecision | null {
-  const entry = reviewCache.get(key);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    reviewCache.delete(key);
-    return null;
-  }
-  return entry.decision;
-}
-
-function setCachedDecision(key: string, decision: RuntimeGuardianDecision): void {
-  if (reviewCache.size >= CACHE_MAX_SIZE) {
-    // Evict oldest entries (first inserted)
-    const firstKey = reviewCache.keys().next().value;
-    if (firstKey) reviewCache.delete(firstKey);
-  }
-  reviewCache.set(key, { decision, expiresAt: Date.now() + CACHE_TTL_MS });
+/**
+ * Fail-closed outcome for an ENABLED review that could not produce an explicit
+ * provider decision. The reason prefix distinguishes an unavailable review from
+ * a policy denial, whose reason is the provider's own REASON text.
+ */
+function unavailable(detail: string): RuntimeGuardianDecision {
+  return {
+    approved: false,
+    reason: `Runtime guardian review unavailable: ${detail}`,
+    reviewed: false,
+  };
 }
 
 /**
@@ -150,16 +133,27 @@ function setCachedDecision(key: string, decision: RuntimeGuardianDecision): void
  * understanding — e.g., "is `shell_execute({ command: 'curl ... | bash' })`
  * dangerous even though it doesn't match any regex pattern?"
  *
- * Falls open (approves) on errors to avoid blocking runs.
- * Results are cached for 5 minutes to reduce LLM cost and latency.
+ * Fail-closed: for an ENABLED review, anything other than an explicit,
+ * well-formed approval from the provider denies the tool call. A denial whose
+ * reason starts with "Runtime guardian review unavailable" means the review
+ * could not be performed (missing provider, timeout, empty/unparseable
+ * response, thrown error); any other denial reason is the provider's policy
+ * decision. No decision is cached: the bridge is a module singleton shared by
+ * every runtime in the process, so a (tool, args) key cannot identify the
+ * runtime, tenant, goal, provider or policy that produced a decision.
  */
 export async function reviewToolCall(
   toolCall: ToolCall,
-  goal: string,
+  goal?: string,
 ): Promise<RuntimeGuardianDecision> {
-  // If not enabled or no provider, skip (GuardianAgent rules still apply)
-  if (!config.enabled || !providerFactory) {
-    return { approved: true, reason: 'Runtime guardian not available', reviewed: false };
+  // Explicitly disabled by the operator: documented pass-through. GuardianAgent
+  // rules and the caller's other gates still run; this path is unchanged.
+  if (!config.enabled) {
+    return {
+      approved: true,
+      reason: 'Runtime guardian disabled — review skipped',
+      reviewed: false,
+    };
   }
 
   // Fast-path: safe tools don't need LLM review
@@ -167,20 +161,14 @@ export async function reviewToolCall(
     return { approved: true, reason: 'Safe tool — auto-approved', reviewed: false };
   }
 
-  // Check cache before making an LLM call
-  const cacheKey = getCacheKey(toolCall);
-  const cached = getCachedDecision(cacheKey);
-  if (cached) {
-    return { ...cached, reason: `${cached.reason} (cached)` };
+  // Enabled review with no provider wired up is UNAVAILABLE, never an approval.
+  if (!providerFactory) {
+    return unavailable('no provider factory initialized');
   }
 
   const provider = providerFactory(config.providerName);
   if (!provider) {
-    return {
-      approved: true,
-      reason: `Provider "${config.providerName}" not available — auto-approved`,
-      reviewed: false,
-    };
+    return unavailable(`provider "${config.providerName}" not available`);
   }
 
   const prompt = buildReviewPrompt(toolCall, goal);
@@ -188,8 +176,11 @@ export async function reviewToolCall(
   try {
     // Race the LLM call against a timeout. Use a timer that we clearTimeout
     // to avoid leaking timers when the LLM responds before the timeout.
+    // The provider contract exposes no abort/cancellation channel, so the
+    // timeout only unblocks this await; the finally below still clears the
+    // timer so nothing leaks.
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeoutPromise = new Promise<{ content?: string }>((_, reject) => {
+    const timeoutPromise = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new Error('Runtime guardian timeout')), config.timeoutMs);
       if (typeof timer.unref === 'function') timer.unref();
     });
@@ -204,46 +195,33 @@ export async function reviewToolCall(
         timeoutPromise,
       ]);
 
-      if (!response?.content) {
-        const decision: RuntimeGuardianDecision = {
-          approved: true,
-          reason: 'Guardian returned empty — auto-approved',
-          reviewed: true,
-        };
-        setCachedDecision(cacheKey, decision);
-        return decision;
+      const parsed = parseDecision(response?.content);
+      if (parsed.kind === 'unavailable') {
+        return unavailable(parsed.detail);
       }
-
-      const parsed = parseDecision(response.content);
-      const decision: RuntimeGuardianDecision = {
-        approved: parsed.approved,
-        reason: parsed.reason,
-        reviewed: true,
-      };
-      setCachedDecision(cacheKey, decision);
-      return decision;
+      return { approved: parsed.approved, reason: parsed.reason, reviewed: true };
     } finally {
       // Always clear the timeout timer to prevent leaks
       if (timer) clearTimeout(timer);
     }
   } catch (err) {
-    // Fail-open on errors — GuardianAgent rules still provide baseline protection
+    // Fail closed: an enabled review that never produced a decision is
+    // unavailable, not an approval.
     reportSilentFailure(err, 'runtimeGuardian:review');
-    return {
-      approved: true,
-      reason: 'Guardian review failed — auto-approved (fail-open)',
-      reviewed: false,
-    };
+    return unavailable(err instanceof Error ? err.message : String(err));
   }
 }
 
-function buildReviewPrompt(toolCall: ToolCall, goal: string): string {
+function buildReviewPrompt(toolCall: ToolCall, goal?: string): string {
   const argsStr = JSON.stringify(toolCall.arguments, null, 2).slice(0, 2000);
+  // Render the goal only when the caller actually has one. A genuinely absent
+  // goal is omitted rather than fabricated into the prompt.
+  const goalSection =
+    typeof goal === 'string' && goal.trim() !== '' ? `Task goal: "${goal.slice(0, 500)}"\n\n` : '';
+
   return `You are a safety Guardian reviewing a tool call for an AI agent.
 
-Task goal: "${goal.slice(0, 500)}"
-
-Tool call:
+${goalSection}Tool call:
   name: ${toolCall.name}
   arguments: ${argsStr}
 
@@ -259,12 +237,31 @@ REASON: <one sentence explanation>
 SUGGESTION: <optional safer alternative>`;
 }
 
-function parseDecision(content: string): { approved: boolean; reason: string } {
-  const approvedMatch = content.match(/APPROVED:\s*(true|false)/i);
-  const reasonMatch = content.match(/REASON:\s*(.+)/i);
+type ParsedDecision =
+  { kind: 'decision'; approved: boolean; reason: string } | { kind: 'unavailable'; detail: string };
 
+/**
+ * Parse an explicit provider decision. Every response that does not carry a
+ * well-formed `APPROVED: true|false` token is UNAVAILABLE — never an implicit
+ * approval.
+ */
+function parseDecision(content: string | undefined): ParsedDecision {
+  if (!content || content.trim() === '') {
+    return { kind: 'unavailable', detail: 'provider returned an empty response' };
+  }
+
+  const approvedMatch = content.match(/APPROVED:\s*(true|false)/i);
+  if (!approvedMatch) {
+    return {
+      kind: 'unavailable',
+      detail: 'provider response contained no well-formed "APPROVED: true|false" decision',
+    };
+  }
+
+  const reasonMatch = content.match(/REASON:\s*(.+)/i);
   return {
-    approved: approvedMatch ? approvedMatch[1].toLowerCase() === 'true' : true,
+    kind: 'decision',
+    approved: approvedMatch[1].toLowerCase() === 'true',
     reason: reasonMatch ? reasonMatch[1].trim() : 'Guardian review complete',
   };
 }

@@ -24,7 +24,7 @@ import { isEnterpriseProfile } from '../src/profileSignal.js';
 import { isLegacyExecutionAllowed } from '../src/legacyExecutionGuard.js';
 import { authMiddleware } from '../src/authMiddleware.js';
 import { tenantContextMiddleware } from '../src/tenantContextMiddleware.js';
-import { signAccessToken } from '../src/jwtMiddleware.js';
+import { createJwtMiddleware, signAccessToken } from '../src/jwtMiddleware.js';
 
 function request(base: string, path: string, init: RequestInit = {}) {
   return fetch(`${base}${path}`, { ...init, redirect: 'manual' });
@@ -59,8 +59,7 @@ function mountApiOpenApiAlias(app: express.Express): void {
       res.status(410).json({
         error: {
           code: 'GONE',
-          message:
-            'This route is frozen in the enterprise profile. Use GET /v1/openapi.json.',
+          message: 'This route is frozen in the enterprise profile. Use GET /v1/openapi.json.',
         },
       });
       return;
@@ -87,49 +86,66 @@ function mountApiRunsGone(app: express.Express): void {
   });
 }
 
+/** F-A-16: save/restore COMMANDER_PROFILE in finally (the sibling tests already do this). */
+async function withProfile<T>(profile: string, body: () => Promise<T>): Promise<T> {
+  const previous = process.env.COMMANDER_PROFILE;
+  process.env.COMMANDER_PROFILE = profile;
+  try {
+    return await body();
+  } finally {
+    if (previous === undefined) delete process.env.COMMANDER_PROFILE;
+    else process.env.COMMANDER_PROFILE = previous;
+  }
+}
+
 describe('L3-06 residual gateway enforcement', () => {
   describe('/api/openapi.json pre-freeze mount hole', () => {
     it('returns 410 + x-legacy in enterprise profile', async () => {
-      process.env.COMMANDER_PROFILE = 'enterprise';
-      await withApp(
-        (app) => {
-          mountApiOpenApiAlias(app);
-          app.use(enterpriseRouteFreeze());
-        },
-        async (base) => {
-          const res = await request(base, '/api/openapi.json');
-          assert.equal(res.status, 410);
-          assert.equal(res.headers.get('x-legacy'), 'true');
-          assert.equal(res.headers.get('deprecation'), 'true');
-          const body = (await res.json()) as { error: { code: string } };
-          assert.equal(body.error.code, 'GONE');
-        },
-      );
-      delete process.env.COMMANDER_PROFILE;
+      await withProfile('enterprise', async () => {
+        await withApp(
+          (app) => {
+            mountApiOpenApiAlias(app);
+            app.use(enterpriseRouteFreeze());
+          },
+          async (base) => {
+            const res = await request(base, '/api/openapi.json');
+            assert.equal(res.status, 410);
+            assert.equal(res.headers.get('x-legacy'), 'true');
+            assert.equal(res.headers.get('deprecation'), 'true');
+            const body = (await res.json()) as { error: { code: string } };
+            assert.equal(body.error.code, 'GONE');
+          },
+        );
+      });
     });
 
     it('serves spec with x-legacy in standard profile', async () => {
-      process.env.COMMANDER_PROFILE = 'standard';
-      await withApp(
-        (app) => {
-          mountApiOpenApiAlias(app);
-          app.use(enterpriseRouteFreeze());
-        },
-        async (base) => {
-          const res = await request(base, '/api/openapi.json');
-          assert.equal(res.status, 200);
-          assert.equal(res.headers.get('x-legacy'), 'true');
-          assert.equal(res.headers.get('deprecation'), 'true');
-          const body = (await res.json()) as { openapi: string };
-          assert.equal(body.openapi, '3.1.0');
-        },
-      );
-      delete process.env.COMMANDER_PROFILE;
+      await withProfile('standard', async () => {
+        await withApp(
+          (app) => {
+            mountApiOpenApiAlias(app);
+            app.use(enterpriseRouteFreeze());
+          },
+          async (base) => {
+            const res = await request(base, '/api/openapi.json');
+            assert.equal(res.status, 200);
+            assert.equal(res.headers.get('x-legacy'), 'true');
+            assert.equal(res.headers.get('deprecation'), 'true');
+            const body = (await res.json()) as { openapi: string };
+            assert.equal(body.openapi, '3.1.0');
+          },
+        );
+      });
     });
   });
 
   describe('/api/runs pre-freeze Gone middleware', () => {
-    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_V2_MODE', 'COMMANDER_LEGACY_EXECUTION'] as const;
+    const envKeys = [
+      'COMMANDER_PROFILE',
+      'NODE_ENV',
+      'COMMANDER_V2_MODE',
+      'COMMANDER_LEGACY_EXECUTION',
+    ] as const;
     const snap: Record<string, string | undefined> = {};
 
     function saveEnv(): void {
@@ -171,7 +187,12 @@ describe('L3-06 residual gateway enforcement', () => {
   });
 
   describe('legacy execution routers under enterprise + COMMANDER_LEGACY_EXECUTION=1', () => {
-    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_V2_MODE', 'COMMANDER_LEGACY_EXECUTION'] as const;
+    const envKeys = [
+      'COMMANDER_PROFILE',
+      'NODE_ENV',
+      'COMMANDER_V2_MODE',
+      'COMMANDER_LEGACY_EXECUTION',
+    ] as const;
     const snap: Record<string, string | undefined> = {};
 
     function saveEnv(): void {
@@ -241,7 +262,7 @@ describe('L3-06 residual gateway enforcement', () => {
   });
 
   describe('JWT tenant binding / ambient X-Tenant-ID (AUTH-2)', () => {
-    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_ENV'] as const;
+    const envKeys = ['COMMANDER_PROFILE', 'NODE_ENV', 'COMMANDER_ENV', 'JWT_SECRET'] as const;
     const snap: Record<string, string | undefined> = {};
 
     function saveEnv(): void {
@@ -259,6 +280,7 @@ describe('L3-06 residual gateway enforcement', () => {
       saveEnv();
       process.env.COMMANDER_PROFILE = 'enterprise';
       process.env.NODE_ENV = 'development';
+      process.env.JWT_SECRET = 'l3-residual-test-jwt-secret-at-least-32-characters';
       delete process.env.COMMANDER_ENV;
       try {
         await withApp(
@@ -286,15 +308,30 @@ describe('L3-06 residual gateway enforcement', () => {
       saveEnv();
       process.env.COMMANDER_PROFILE = 'enterprise';
       process.env.NODE_ENV = 'development';
+      process.env.JWT_SECRET = 'l3-residual-test-jwt-secret-at-least-32-characters';
       delete process.env.COMMANDER_ENV;
       try {
-        const { jwtMiddleware } = await import('../src/jwtMiddleware.js');
         const token = signAccessToken({
           id: 'u1',
           username: 'alice',
           role: 'admin',
+          authVersion: 1,
           tenantId: 'tenant-jwt',
         });
+        const jwtMiddleware = createJwtMiddleware(async (id) =>
+          id === 'u1'
+            ? {
+                id,
+                username: 'alice',
+                email: 'alice@example.test',
+                passwordHash: 'unused',
+                role: 'admin',
+                authVersion: 1,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                lastLoginAt: null,
+              }
+            : undefined,
+        );
         await withApp(
           (app) => {
             app.use(jwtMiddleware);
@@ -332,15 +369,30 @@ describe('L3-06 residual gateway enforcement', () => {
       saveEnv();
       process.env.COMMANDER_PROFILE = 'enterprise';
       process.env.NODE_ENV = 'development';
+      process.env.JWT_SECRET = 'l3-residual-test-jwt-secret-at-least-32-characters';
       delete process.env.COMMANDER_ENV;
       try {
-        const { jwtMiddleware } = await import('../src/jwtMiddleware.js');
         const token = signAccessToken({
           id: 'u1',
           username: 'alice',
           role: 'admin',
+          authVersion: 1,
           tenantId: 'tenant-jwt',
         });
+        const jwtMiddleware = createJwtMiddleware(async (id) =>
+          id === 'u1'
+            ? {
+                id,
+                username: 'alice',
+                email: 'alice@example.test',
+                passwordHash: 'unused',
+                role: 'admin',
+                authVersion: 1,
+                createdAt: '2026-01-01T00:00:00.000Z',
+                lastLoginAt: null,
+              }
+            : undefined,
+        );
         await withApp(
           (app) => {
             app.use(jwtMiddleware);

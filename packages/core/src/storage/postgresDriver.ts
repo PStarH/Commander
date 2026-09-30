@@ -13,6 +13,7 @@
  */
 
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { createVerifiedPostgresPool } from '@commander/postgres-runtime';
 import { reportSilentFailure } from '../silentFailureReporter';
 import type {
   DriverDescription,
@@ -24,6 +25,9 @@ import type {
   ColumnSpec,
 } from './types';
 import { coerceColumn, isCompatibleWithSpec, cloneRow, matchesFilter } from './utils';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 interface PgQueryResult<T = Record<string, unknown>> {
   rows: T[];
@@ -50,6 +54,20 @@ interface PostgresTableState<T extends { id: string }> {
 
 function qid(name: string): string {
   return `"${name.replace(/"/g, '""')}"`;
+}
+
+/**
+ * Map a driver column type to its PostgreSQL SQL type.
+ *
+ * Numbers use DOUBLE PRECISION, not REAL: PostgreSQL REAL is single precision,
+ * so a JavaScript number such as 16777217 or an epoch-millisecond timestamp
+ * silently rounded on write — breaking equality/CAS predicates even though the
+ * insert validator accepted the original finite number.
+ */
+export function sqlTypeForColumn(type: import('./types').ColumnType): string {
+  if (type === 'string') return 'TEXT';
+  if (type === 'number') return 'DOUBLE PRECISION';
+  return 'BOOLEAN';
 }
 
 function normalizeRow(
@@ -342,7 +360,7 @@ export interface PostgresAvailability {
 
 export function probePostgres(): PostgresAvailability {
   try {
-    const pg = require('pg');
+    const pg = nodeRequire('pg');
     if (typeof pg.Pool !== 'function') {
       return { available: false, reason: 'pg module did not export a Pool constructor' };
     }
@@ -374,9 +392,7 @@ export class PostgresDriver implements PersistentDriver {
     }
     this.connectionString = config.path;
     this.namespace = config.namespace;
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const Pool = require('pg').Pool as new (opts: { connectionString: string }) => PgPool;
-    this.pool = new Pool({ connectionString: this.connectionString });
+    this.pool = createVerifiedPostgresPool({ connectionString: this.connectionString });
   }
 
   getTable<T extends { id: string }>(name: string, schema: TableSchema<T>): PersistentTable<T> {
@@ -465,7 +481,7 @@ export class PostgresDriver implements PersistentDriver {
   ): Promise<void> {
     const cols = schema.columns
       .map((c) => {
-        const sqlType = c.type === 'string' ? 'TEXT' : c.type === 'number' ? 'REAL' : 'BOOLEAN';
+        const sqlType = sqlTypeForColumn(c.type);
         const pk = c.name === 'id' ? ' PRIMARY KEY' : '';
         return `${qid(c.name)} ${sqlType}${pk}`;
       })

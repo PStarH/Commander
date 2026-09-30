@@ -1,7 +1,9 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander — Worker Deployment
 # =============================================================================
 {{- if .Values.worker.enabled }}
+{{- include "commander.requireWorkerAuthRef" . }}
 {{- include "commander.requireEnterpriseSecrets" . }}
 apiVersion: apps/v1
 kind: Deployment
@@ -29,6 +31,10 @@ spec:
       automountServiceAccountToken: false
       terminationGracePeriodSeconds: {{ .Values.worker.terminationGracePeriodSeconds }}
       securityContext: {{ toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- if include "commander.postgresBackend" . }}
+      initContainers:
+        {{- include "commander.runtimeMigrationGate" (dict "root" . "key" (include "commander.databaseWorkerSecretKey" .)) | nindent 8 }}
+      {{- end }}
       containers:
         - name: worker
           image: "{{ .Values.worker.image.repository | default .Values.image.repository }}:{{ .Values.worker.image.tag | default .Values.image.tag }}"
@@ -44,6 +50,11 @@ spec:
               value: "1"
             - name: COMMANDER_WORKER_HEALTH_PORT
               value: {{ .Values.worker.health.port | quote }}
+            # F-P1-18: the kubelet httpGet liveness/readiness probes below target the
+            # pod IP, while the worker health listener defaults to loopback. Bind the
+            # pod interface here so every probe is not refused (worker crash loop).
+            - name: COMMANDER_WORKER_HEALTH_HOST
+              value: "0.0.0.0"
             {{- if include "commander.postgresBackend" . }}
             - name: DATABASE_URL
               valueFrom:
@@ -57,6 +68,7 @@ spec:
                   key: {{ include "commander.databaseWorkerSecretKey" . | quote }}
             - name: COMMANDER_KERNEL_BACKEND
               value: postgres
+            {{- include "commander.databaseTlsEnv" . | nindent 12 }}
             {{- end }}
             - name: COMMANDER_WORKER_BOOTSTRAP
               value: {{ .Values.worker.bootstrap | quote }}
@@ -77,6 +89,21 @@ spec:
               value: {{ .Values.worker.tenants | quote }}
             - name: COMMANDER_CELL_TENANT_ID
               value: {{ include "commander.cellTenantId" . | quote }}
+            {{- if .Values.adapterOps.kubernetes.cluster }}
+            - name: COMMANDER_KUBERNETES_CLUSTER
+              value: {{ .Values.adapterOps.kubernetes.cluster | quote }}
+            - name: COMMANDER_KUBERNETES_SERVER
+              value: {{ .Values.adapterOps.kubernetes.server | quote }}
+            - name: COMMANDER_KUBERNETES_NAMESPACES
+              value: {{ join "," .Values.adapterOps.kubernetes.namespaces | quote }}
+            - name: COMMANDER_KUBERNETES_TOKEN_ENV
+              value: {{ .Values.adapterOps.kubernetes.tokenEnv | quote }}
+            - name: {{ .Values.adapterOps.kubernetes.tokenEnv }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adapterOps.secrets.existingSecret | quote }}
+                  key: {{ .Values.adapterOps.kubernetes.tokenSecretKey | quote }}
+            {{- end }}
             - name: COMMANDER_WORKER_POLL_MS
               value: {{ .Values.worker.pollMs | quote }}
             - name: COMMANDER_WORKER_LEASE_TTL_MS
@@ -103,9 +130,15 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            {{- if include "commander.postgresBackend" . }}
+            {{- include "commander.databaseTlsVolumeMount" . | nindent 12 }}
+            {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
+        {{- if include "commander.postgresBackend" . }}
+        {{- include "commander.databaseTlsVolume" . | nindent 8 }}
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector: {{ toYaml . | nindent 8 }}
       {{- end }}
@@ -115,4 +148,5 @@ spec:
       {{- with .Values.tolerations }}
       tolerations: {{ toYaml . | nindent 8 }}
       {{- end }}
+{{- end }}
 {{- end }}

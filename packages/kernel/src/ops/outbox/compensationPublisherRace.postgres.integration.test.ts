@@ -4,10 +4,12 @@
  */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { describe, it } from 'node:test';
+import { describe, it, test } from 'node:test';
 import { Pool } from 'pg';
 import { runKernelMigrations } from '../../migrations.js';
-import { PostgresKernelRepository } from '../../postgres.js';
+import { PostgresKernelRepository, PostgresTenantContextAuthority } from '../../postgres.js';
+import { seedWorkerAllowedTenants } from '../../seedWorkerClaimSecret.js';
+import { canonicalCompensationHash } from '../compensationAuthority.js';
 import {
   consumeCompensationBatch,
   KERNEL_COMPENSATION_TOPIC,
@@ -17,6 +19,29 @@ import { KernelOutboxPublisher } from './kernelOutboxPublisher.js';
 import { PostgresOutboxDeliveryPort } from './postgresOutboxDeliveryPort.js';
 
 const databaseUrl = process.env.COMMANDER_KERNEL_DATABASE_URL ?? process.env.DATABASE_URL;
+
+// F-K1-7: the live-PG race proof needs a PostgreSQL 16 fixture and
+// `pnpm test:integration` has no env guard, so a silent skip would report PASS
+// for an unrun race proof. Absent fixture is NOT VERIFIED and must fail the run.
+const LIVE_PG_SKIP_REASON =
+  'NOT VERIFIED: COMMANDER_KERNEL_DATABASE_URL/DATABASE_URL is unset - the live PostgreSQL ' +
+  'publisher/consumer interleaved-race proof did not run';
+if (!databaseUrl) {
+  process.stderr.write(`[kernel:integration] ${LIVE_PG_SKIP_REASON}\n`);
+  test('live PostgreSQL fixture is configured (REQUIRED)', () => {
+    assert.fail(LIVE_PG_SKIP_REASON);
+  });
+}
+
+// Narrowed view for the live-gated body below.
+const liveDatabaseUrl = databaseUrl as string;
+
+function deriveRoleDatabaseUrl(baseUrl: string, role: string, password: string): string {
+  const url = new URL(baseUrl);
+  url.username = role;
+  url.password = password;
+  return url.toString();
+}
 
 async function seedOutboxRow(
   pool: Pool,
@@ -55,38 +80,153 @@ async function seedOutboxRow(
 describe('compensationPublisherRace (postgres)', () => {
   it(
     'publisher never steals compensation topics across 100 interleaved rounds',
-    { skip: !databaseUrl },
+    { skip: databaseUrl ? false : LIVE_PG_SKIP_REASON },
     async () => {
-      if (!databaseUrl) return;
       const pool = new Pool({ connectionString: databaseUrl, max: 8 });
       const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
       const tenantId = `race-pg-${suffix}`;
       const repo = new PostgresKernelRepository(pool, { schedulerMode: true });
+      const appPool = new Pool({
+        connectionString:
+          process.env.COMMANDER_APP_DATABASE_URL ??
+          deriveRoleDatabaseUrl(
+            liveDatabaseUrl,
+            'commander_app',
+            process.env.COMMANDER_APP_PASSWORD ?? 'commander_app',
+          ),
+        max: 2,
+      });
+      const tenantAuthorityPool = new Pool({
+        connectionString:
+          process.env.COMMANDER_TENANT_AUTHORITY_DATABASE_URL ??
+          deriveRoleDatabaseUrl(
+            liveDatabaseUrl,
+            'commander_tenant_authority',
+            process.env.COMMANDER_TENANT_AUTHORITY_PASSWORD ?? 'commander_tenant_authority',
+          ),
+        max: 2,
+      });
+      const adapterPool = new Pool({
+        connectionString:
+          process.env.COMMANDER_ADAPTER_OPS_DATABASE_URL ??
+          deriveRoleDatabaseUrl(
+            liveDatabaseUrl,
+            'commander_adapter_ops',
+            process.env.COMMANDER_ADAPTER_OPS_PASSWORD ?? 'commander_adapter_ops',
+          ),
+        max: 2,
+      });
+      const appRepository = new PostgresKernelRepository(appPool, {
+        tenantContextAuthority: new PostgresTenantContextAuthority(tenantAuthorityPool),
+        tenantContextPhase: 'enforce',
+      });
+      const adapterRepository = new PostgresKernelRepository(adapterPool, { adapterOpsMode: true });
       const delivery = new PostgresOutboxDeliveryPort(pool, { baseBackoffMs: 1 });
       const publisher = new KernelOutboxPublisher(repo, delivery);
+      const adapterInstance = `race-${suffix}`;
+      const adapterId = `compensation:${adapterInstance}`;
 
       let legacySeeded = 0;
       try {
         await runKernelMigrations(pool);
-        for (let i = 0; i < 40; i++) {
-          await seedOutboxRow(pool, {
+        await seedWorkerAllowedTenants(pool, [tenantId]);
+        await pool.query(
+          `INSERT INTO commander_tenant_authority_allowed_tenants (tenant_id)
+         VALUES ($1)
+         ON CONFLICT (tenant_id) DO UPDATE SET enabled=true`,
+          [tenantId],
+        );
+        const registration = await adapterPool.query<{
+          registration: { generation: number; claim_secret: string };
+        }>(`SELECT register_adapter_ops_worker('compensation',$1,$2::jsonb,NULL) AS registration`, [
+          adapterInstance,
+          JSON.stringify([tenantId]),
+        ]);
+        const adapterGeneration = Number(registration.rows[0]?.registration.generation);
+        const adapterSecret = registration.rows[0]?.registration.claim_secret;
+        assert.ok(Number.isSafeInteger(adapterGeneration) && adapterGeneration > 0);
+        assert.ok(adapterSecret);
+
+        const runId = `run-race-${suffix}`;
+        const effects = Array.from({ length: 40 }, (_, index) => ({
+          id: `effect-race-${suffix}-${index}`,
+          stepId: `step-race-${suffix}-${index}`,
+          response: { prNumber: index },
+        }));
+        await repo.createRun(
+          {
+            id: runId,
             tenantId,
-            topic: KERNEL_COMPENSATION_TOPIC,
-            key: `${tenantId}/run-race/cmp-${i}`,
-            payload: {
-              type: 'kernel.compensation.requested',
+            intentHash: `intent-${suffix}`,
+            workGraphHash: `graph-${suffix}`,
+            workGraphVersion: 'v1',
+            policySnapshotId: 'policy-race-v1',
+            steps: effects.map((effect) => ({ id: effect.stepId, kind: 'agent' })),
+          },
+          'integration',
+        );
+        await pool.query(
+          `UPDATE commander_steps
+         SET state='SUCCEEDED', output='{}'::jsonb
+         WHERE run_id=$1 AND tenant_id=$2`,
+          [runId, tenantId],
+        );
+        for (const effect of effects) {
+          await pool.query(
+            `INSERT INTO commander_effects
+             (id,run_id,step_id,tenant_id,type,idempotency_key,request_hash,policy_decision_id,
+              policy_snapshot_id,lease_worker_id,lease_worker_generation,lease_fencing_epoch,
+              action_digest,state,request,response,completed_at)
+           VALUES ($1,$2,$3,$4,'read.github.pull-request',$5,'seed','policy-forward',
+                   'policy-race-v1','seed-worker',1,0,$6,'COMPLETED',jsonb_build_object('destination','github://octo/repo/pulls'),$7::jsonb,now())`,
+            [
+              effect.id,
+              runId,
+              effect.stepId,
               tenantId,
-              runId: 'run-race',
-              stepId: 'step-race',
-              compensationAction: 'compensate.github.pull-request.create',
-              compensationPayload: {
-                originalEffectId: `effect-${i}`,
-                forwardResponse: { prNumber: i },
-                destination: 'github://octo/repo/pulls',
-              },
-              idempotencyKey: `cmp:effect-${i}:1.0.0`,
-            },
+              `forward-${effect.id}`,
+              'a'.repeat(64),
+              JSON.stringify(effect.response),
+            ],
+          );
+        }
+        await pool.query(
+          `UPDATE commander_runs SET state='SUCCEEDED', terminal_at=now() WHERE id=$1 AND tenant_id=$2`,
+          [runId, tenantId],
+        );
+        for (let i = 0; i < 40; i++) {
+          const effect = effects[i]!;
+          const compensationPatch = { action: 'close', reason: 'race-test' };
+          const adapterVersion = 'github-race/v1';
+          const authorizationId = `authorization-race-${suffix}-${i}`;
+          await appRepository.createCompensationAuthorization({
+            id: authorizationId,
+            tenantId,
+            originalRunId: runId,
+            originalEffectId: effect.id,
+            compensationEffectType: 'compensate.github.pull-request.create',
+            adapterVersion,
+            compensationPatch,
+            forwardReceiptHash: canonicalCompensationHash(effect.response),
+            policyDecisionId: 'policy-compensation',
+            policySnapshotId: 'policy-race-v1',
+            decision: 'allow',
+            actionDigest: canonicalCompensationHash({
+              type: 'compensate.github.pull-request.create',
+              originalEffectId: effect.id,
+              adapterVersion,
+              destination: 'github://octo/repo/pulls',
+              forwardResponse: effect.response,
+              compensationPatch,
+            }),
+            expiresAt: new Date(Date.now() + 300_000).toISOString(),
           });
+          const requested = await appRepository.requestCompensation({
+            tenantId,
+            authorizationId,
+            actor: 'integration',
+          });
+          assert.equal(requested.accepted, true);
           if (i % 3 === 0) {
             await seedOutboxRow(pool, {
               tenantId,
@@ -107,24 +247,46 @@ describe('compensationPublisherRace (postgres)', () => {
         }
 
         const deliveredCompensationTopics: string[] = [];
+        let brokerAdmissions = 0;
+        let brokerExecutions = 0;
+        let consumerConsumed = 0;
+        let consumerEscalated = 0;
+        let publishedTotal = 0;
         for (let round = 0; round < 100; round++) {
-          const [pub] = await Promise.all([
+          const [pub, consumed] = await Promise.all([
             publisher.publish(5),
             consumeCompensationBatch(
-              repo,
+              adapterRepository,
               {
-                admit: async () => ({ admitted: true, effectId: `eff-${round}`, replayed: false }),
-                executeAdmitted: async () => ({
-                  effectId: `eff-${round}`,
-                  replayed: false,
-                  response: { ok: true },
-                }),
+                admit: async () => {
+                  brokerAdmissions += 1;
+                  return { admitted: true, effectId: `eff-${round}`, replayed: false };
+                },
+                executeAdmitted: async () => {
+                  brokerExecutions += 1;
+                  return { effectId: `eff-${round}`, replayed: false, response: { ok: true } };
+                },
               },
               async () => 'race-token',
-              { workerId: 'race-consumer', limit: 5, topic: KERNEL_COMPENSATION_TOPIC },
+              {
+                workerId: adapterId,
+                workerGeneration: adapterGeneration,
+                claimSecret: adapterSecret,
+                registry: { resolve: () => null },
+                limit: 5,
+                topic: KERNEL_COMPENSATION_TOPIC,
+              },
             ),
           ]);
-          assert.ok(pub.published + pub.duplicates + pub.retried + pub.failed >= 0);
+          consumerConsumed += consumed.consumed;
+          consumerEscalated += consumed.escalated;
+          // F-K1-6: the previous assertion was `published + duplicates + retried +
+          // failed >= 0`, true for any non-negative counters.
+          assert.equal(pub.duplicates, 0, `round ${round}: no duplicate publications expected`);
+          assert.equal(pub.retried, 0, `round ${round}: no retries expected`);
+          assert.equal(pub.failed, 0, `round ${round}: no failed publications expected`);
+          assert.ok(pub.published <= 5, `round ${round}: publish limit must be respected`);
+          publishedTotal += pub.published;
         }
 
         const claimed = await delivery.claim('ws2-race', 500);
@@ -138,19 +300,90 @@ describe('compensationPublisherRace (postgres)', () => {
           [],
           'kernel-ops publisher must not deliver compensation topics under interleaved load',
         );
-
-        const remainingLegacy = await repo.claimOutboxByTopic(LEGACY_COMPENSATION_TOPIC, 100);
-        assert.equal(remainingLegacy.length, legacySeeded);
+        assert.equal(brokerAdmissions, 0, 'pre-Task-3 payloads must fail before broker admission');
         assert.equal(
-          (await repo.claimOutboxByTopic(KERNEL_COMPENSATION_TOPIC, 100)).length,
+          brokerExecutions,
           0,
-          'all kernel compensation rows should be consumed or claimed-through by consumer',
+          'publisher race must not masquerade as compensation execution',
+        );
+        assert.equal(
+          consumerConsumed,
+          40,
+          'adapter-ops consumer must claim every governed request',
+        );
+        assert.equal(consumerEscalated, 40, 'unregistered adapters must be escalated fail-closed');
+
+        const outstanding = await pool.query<{
+          legacy: string;
+          governed: string;
+          generic: string;
+        }>(
+          `SELECT
+             count(*) FILTER (WHERE topic=$2 AND published_at IS NULL)::text AS legacy,
+             count(*) FILTER (WHERE topic=$3 AND published_at IS NULL)::text AS governed,
+             count(*) FILTER (WHERE topic NOT IN ($2,$3))::text AS generic
+           FROM commander_outbox
+           WHERE tenant_id=$1`,
+          [tenantId, LEGACY_COMPENSATION_TOPIC, KERNEL_COMPENSATION_TOPIC],
+        );
+        // `KernelOutboxPublisher.publish` claims through
+        // `repository.claimOutbox(limit, now)`, which is NOT tenant-scoped: it
+        // drains every tenant's due rows. So `publishedTotal` counts all tenants'
+        // publications and can never equal this tenant's row count — comparing
+        // them only held on a database where this tenant was the sole producer.
+        // Assert the tenant-scoped invariants instead: this tenant's generic rows
+        // are what the publisher published (proving it worked the right
+        // population), while both compensation topics stay untouched below.
+        const genericPublished = await pool.query<{ count: string }>(
+          `SELECT count(*)::text AS count
+             FROM commander_outbox
+            WHERE tenant_id=$1 AND topic NOT IN ($2,$3) AND published_at IS NOT NULL`,
+          [tenantId, LEGACY_COMPENSATION_TOPIC, KERNEL_COMPENSATION_TOPIC],
+        );
+        assert.ok(
+          Number(genericPublished.rows[0]?.count ?? 0) > 0,
+          "the generic publisher must publish this tenant's non-compensation outbox rows",
+        );
+        assert.ok(publishedTotal >= Number(genericPublished.rows[0]?.count ?? 0));
+        assert.equal(Number(outstanding.rows[0]?.legacy ?? 0), legacySeeded);
+        assert.equal(
+          Number(outstanding.rows[0]?.governed ?? 0),
+          0,
+          'all governed compensation rows should be finalized by the adapter-ops consumer',
         );
       } finally {
         await pool.query('DELETE FROM commander_outbox_deliveries WHERE tenant_id=$1', [tenantId]);
+        await pool.query(
+          `DELETE FROM commander_compensation_finalization_receipts
+         WHERE request_id IN (SELECT id FROM commander_compensation_requests WHERE tenant_id=$1)`,
+          [tenantId],
+        );
         await pool.query('DELETE FROM commander_outbox WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_compensation_requests WHERE tenant_id=$1', [
+          tenantId,
+        ]);
+        await pool.query('DELETE FROM commander_compensation_authorizations WHERE tenant_id=$1', [
+          tenantId,
+        ]);
         await pool.query('DELETE FROM commander_events WHERE tenant_id=$1', [tenantId]);
-        await pool.end();
+        await pool.query('DELETE FROM commander_runs WHERE tenant_id=$1', [tenantId]);
+        await pool.query('DELETE FROM commander_workers WHERE id=$1', [adapterId]);
+        await pool.query('DELETE FROM commander_app_tenant_contexts WHERE tenant_id=$1', [
+          tenantId,
+        ]);
+        await pool.query(
+          'DELETE FROM commander_tenant_authority_allowed_tenants WHERE tenant_id=$1',
+          [tenantId],
+        );
+        await pool.query('DELETE FROM commander_worker_allowed_tenants WHERE tenant_id=$1', [
+          tenantId,
+        ]);
+        await Promise.all([
+          adapterPool.end(),
+          tenantAuthorityPool.end(),
+          appPool.end(),
+          pool.end(),
+        ]);
       }
     },
   );

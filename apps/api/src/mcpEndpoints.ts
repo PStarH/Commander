@@ -1,6 +1,7 @@
 import express, { Router } from 'express';
 import type { Request, Response, NextFunction } from 'express';
-import { MCPServer, getModelRouter, MCPClient, createMCPClient } from '@commander/core';
+import { hashSecret } from '@commander/core/runtime';
+import { MCPServer, getModelRouter, createMCPClient, reportSilentFailure } from '@commander/core';
 import type {
   MCPTool,
   MCPToolResult,
@@ -11,6 +12,8 @@ import type {
 import { URL } from 'node:url';
 import * as path from 'node:path';
 import { hasRole, type UserRole } from './userStore';
+import { getApiKeyStore } from './apiKeyStore';
+import { getCurrentTenantId } from '@commander/core/runtime/tenantContext';
 
 // ── Security: SSRF prevention ────────────────────────────────────────────────
 // Block requests to private/internal IP ranges and cloud metadata endpoints.
@@ -166,18 +169,160 @@ function requireMcpAdmin(req: Request, res: Response, next: NextFunction): void 
   res.status(401).json({ error: 'Authentication required' });
 }
 
-export function createMCPRouter(): Router {
+export interface McpActionGatewayRequest {
+  method: 'GET' | 'POST';
+  path: string;
+  body?: Record<string, unknown>;
+  headers?: Record<string, string>;
+}
+
+export interface McpActionGatewayExecutor {
+  request(input: McpActionGatewayRequest): Promise<unknown>;
+}
+
+export interface McpRouterOptions {
+  actionGatewayExecutor?: McpActionGatewayExecutor;
+  actionGatewayUrl?: string;
+  actionGatewayApiKey?: string;
+  localRuntime?: boolean;
+  /**
+   * AUDIT-D1②: resolves the tenant bound to the configured Action Gateway
+   * service credential (the principal the forwarded request authenticates as).
+   * Defaults to the PostgreSQL API-key store; tests inject an in-memory
+   * resolver so the confused-deputy boundary is provable without a database.
+   */
+  resolveServiceCredentialTenant?: (apiKey: string) => Promise<string | null>;
+}
+
+/** Environment variable holding the Action Gateway service credential. */
+const MCP_SERVICE_CREDENTIAL_ENV = 'COMMANDER_API_KEY';
+
+function defaultResolveServiceCredentialTenant(apiKey: string): Promise<string | null> {
+  return getApiKeyStore()
+    .findByHash(hashSecret(apiKey))
+    .then((record) => record?.tenantId ?? null)
+    .catch((err: unknown) => {
+      reportSilentFailure(err, 'mcpEndpoints:resolveServiceCredentialTenant');
+      // Fail closed: an unresolvable service tenant cannot be proven to match
+      // the caller, so the mismatch check below rejects the dispatch.
+      return null;
+    });
+}
+
+/**
+ * AUDIT-C1: MCP tools/call executes with the configured service credential
+ * against the Action Gateway — the caller's own authority must gate which
+ * gateway tools are reachable, otherwise a low-privilege principal obtains the
+ * service credential's powers through MCP (confused deputy). Mirrors the
+ * role/scope model of actionGatewayEndpoints.
+ */
+const MCP_ACTION_TOOL_AUTHORITY: Record<string, { minRole: UserRole; scopes: string[] }> = {
+  commander_action_propose: {
+    minRole: 'developer',
+    scopes: ['actions:propose', 'write', 'admin', '*'],
+  },
+  commander_action_approve: { minRole: 'admin', scopes: ['actions:approve', 'admin', '*'] },
+  commander_action_compensation_request: {
+    minRole: 'developer',
+    scopes: ['actions:compensation', 'write', 'admin', '*'],
+  },
+  commander_action_compensation_approve: {
+    minRole: 'admin',
+    scopes: ['actions:approve', 'admin', '*'],
+  },
+  commander_action_reconcile: { minRole: 'admin', scopes: ['actions:reconcile', 'admin', '*'] },
+};
+
+function toolNameFromJsonRpc(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const rpc = body as { method?: unknown; params?: { name?: unknown } };
+  if (rpc.method !== 'tools/call') return undefined;
+  const name = rpc.params?.name;
+  return typeof name === 'string' ? name : undefined;
+}
+
+function callerMayInvokeActionTool(req: Request, tool: string): boolean {
+  const authority = MCP_ACTION_TOOL_AUTHORITY[tool];
+  if (!authority) return true; // read-only gateway tools stay for any principal
+  if (req.user) return hasRole(req.user.role, authority.minRole);
+  const scopes = req.apiScopes ?? [];
+  return scopes.some((sc) => authority.scopes.includes(sc));
+}
+
+/**
+ * AUDIT-D1②: the HTTP MCP executor authenticates to the Action Gateway with a
+ * static service credential. A caller from tenant A invoking a gateway tool
+ * while the service credential belongs to tenant B would otherwise read or
+ * mutate B's actions under B's identity (confused deputy). The caller's
+ * authenticated tenant must therefore equal the service credential's tenant
+ * before any gateway dispatch. Returns `undefined` when the check passes,
+ * otherwise the caller-facing reason. A caller with no authenticated tenant has
+ * no tenant identity to widen, so it proceeds on the service credential
+ * (single-tenant / local deployments); an unresolvable service tenant fails
+ * closed against a tenant-bound caller.
+ */
+function callerTenantViolation(
+  req: Request,
+  serviceCredentialTenant: string | null,
+): string | undefined {
+  const callerTenant = req.tenantId ?? getCurrentTenantId() ?? null;
+  if (!callerTenant) return undefined;
+  if (serviceCredentialTenant !== callerTenant) {
+    return 'Caller tenant does not match the Action Gateway service credential tenant';
+  }
+  return undefined;
+}
+
+export function createMCPRouter(options: McpRouterOptions = {}): Router {
   const router = express.Router();
   // Security: express.json() with limit is applied globally in index.ts.
 
   const server = new MCPServer('telos-mcp', '1.0.0');
+  const localRuntime = isLocalRuntimeEnabled(options.localRuntime);
+  if (localRuntime) {
+    registerCoreTools(server);
+  } else {
+    registerActionGatewayTools(server, resolveActionGatewayExecutor(options));
+  }
 
-  // Register TELOS runtime tools as MCP tools
-  // These are the tools that agents can call through MCP
-  registerCoreTools(server);
+  const serviceCredential =
+    options.actionGatewayApiKey?.trim() || process.env[MCP_SERVICE_CREDENTIAL_ENV]?.trim();
+  const resolveServiceCredentialTenant =
+    options.resolveServiceCredentialTenant ?? defaultResolveServiceCredentialTenant;
 
   // POST /mcp — JSON-RPC 2.0 endpoint for all MCP methods
   router.post('/', async (req, res) => {
+    // AUDIT-C1: authorize gateway tool invocation with the CALLER's
+    // authority before dispatch — the executor signs with the service key.
+    const tool = toolNameFromJsonRpc(req.body);
+    if (tool && !callerMayInvokeActionTool(req, tool)) {
+      res.status(403).json({
+        jsonrpc: '2.0',
+        id: (req.body as { id?: unknown })?.id ?? null,
+        error: { code: -32603, message: `Insufficient authority for MCP tool: ${tool}` },
+      });
+      return;
+    }
+    // AUDIT-D1②: reject a caller whose tenant differs from the tenant bound to
+    // the service credential BEFORE the gateway dispatch (confused deputy).
+    if (tool && !localRuntime && serviceCredential) {
+      let serviceTenant: string | null = null;
+      try {
+        serviceTenant = await resolveServiceCredentialTenant(serviceCredential);
+      } catch (err: unknown) {
+        reportSilentFailure(err, 'mcpEndpoints:callerTenantViolation');
+        serviceTenant = null; // fail closed below
+      }
+      const violation = callerTenantViolation(req, serviceTenant);
+      if (violation) {
+        res.status(403).json({
+          jsonrpc: '2.0',
+          id: (req.body as { id?: unknown })?.id ?? null,
+          error: { code: -32603, message: violation },
+        });
+        return;
+      }
+    }
     const response = await server.handleRequest(req.body);
     res.json(response);
   });
@@ -188,6 +333,7 @@ export function createMCPRouter(): Router {
       name: 'telos-mcp',
       version: '1.0.0',
       capabilities: server.getCapabilities(),
+      enterpriseWrites: !localRuntime,
     });
   });
 
@@ -197,6 +343,8 @@ export function createMCPRouter(): Router {
     res.json({
       status: status.initialized ? 'initialized' : 'ready',
       ...status,
+      tools: server.listTools(),
+      enterpriseWrites: !localRuntime,
       timestamp: new Date().toISOString(),
     });
   });
@@ -292,6 +440,293 @@ export function createMCPRouter(): Router {
   });
 
   return router;
+}
+
+function registerActionGatewayTools(
+  server: MCPServer,
+  executor: McpActionGatewayExecutor | undefined,
+): void {
+  const actionEnvelopeSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      source: { type: 'string' },
+      package: { type: 'string' },
+      model: { type: 'string' },
+      tool: { type: 'string' },
+      destination: { type: 'string' },
+      effectType: { type: 'string' },
+      args: { type: 'object' },
+      idempotencyKey: { type: 'string' },
+    },
+    required: [
+      'source',
+      'package',
+      'model',
+      'tool',
+      'destination',
+      'effectType',
+      'args',
+      'idempotencyKey',
+    ],
+  };
+  const runIdSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: { runId: { type: 'string' } },
+    required: ['runId'],
+  };
+  const idempotentRunIdSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+    },
+    required: ['runId', 'idempotencyKey'],
+  };
+  const compensationRequestSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      originalEffectId: { type: 'string' },
+      adapterVersion: { type: 'string' },
+      compensationEffectType: { type: 'string' },
+      compensationPatch: { type: 'object' },
+      forwardReceiptHash: { type: 'string' },
+    },
+    required: [
+      'runId',
+      'idempotencyKey',
+      'originalEffectId',
+      'adapterVersion',
+      'compensationEffectType',
+      'compensationPatch',
+      'forwardReceiptHash',
+    ],
+  };
+  const compensationApprovalSchema: MCPTool['inputSchema'] = {
+    type: 'object',
+    properties: {
+      runId: { type: 'string' },
+      authorizationId: { type: 'string' },
+      idempotencyKey: { type: 'string' },
+      actionDigest: { type: 'string' },
+      policySnapshotId: { type: 'string' },
+    },
+    required: ['runId', 'authorizationId', 'idempotencyKey', 'actionDigest', 'policySnapshotId'],
+  };
+
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_simulate',
+    'Simulate a governed action through the Commander Action Gateway.',
+    actionEnvelopeSchema,
+    (args) => actionRequest('POST', '/v1/actions/simulate', args),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_propose',
+    'Propose a governed action through the Commander Action Gateway.',
+    actionEnvelopeSchema,
+    (args) => actionRequest('POST', '/v1/actions', args),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_get',
+    'Get a governed action from the Commander Action Gateway.',
+    runIdSchema,
+    (args) => ({ method: 'GET', path: actionPath(args.runId) }),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_approve',
+    'Approve an action using its exact simulation binding.',
+    {
+      type: 'object',
+      properties: {
+        runId: { type: 'string' },
+        idempotencyKey: { type: 'string' },
+        actionDigest: { type: 'string' },
+        simulationId: { type: 'string' },
+        policySnapshotId: { type: 'string' },
+      },
+      required: ['runId', 'idempotencyKey', 'actionDigest', 'simulationId', 'policySnapshotId'],
+    },
+    (args) => {
+      const { runId, idempotencyKey, actionDigest, simulationId, policySnapshotId } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/approve`,
+        body: { actionDigest, simulationId, policySnapshotId },
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_request',
+    'Request governed compensation for a completed forward effect.',
+    compensationRequestSchema,
+    (args) => {
+      const { runId, idempotencyKey, ...body } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations`,
+        body,
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_compensation_approve',
+    'Approve a bound compensation authorization.',
+    compensationApprovalSchema,
+    (args) => {
+      const { runId, authorizationId, idempotencyKey, actionDigest, policySnapshotId } = args;
+      return {
+        method: 'POST',
+        path: `${actionPath(runId)}/compensations/${encodeURIComponent(requiredString(authorizationId, 'authorizationId'))}/approve`,
+        body: { actionDigest, policySnapshotId },
+        headers: idempotencyHeaders(idempotencyKey),
+      };
+    },
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_reconcile',
+    'Request reconciliation for a completion-unknown action.',
+    idempotentRunIdSchema,
+    (args) => ({
+      method: 'POST',
+      path: `${actionPath(args.runId)}/reconcile`,
+      headers: idempotencyHeaders(args.idempotencyKey),
+    }),
+  );
+  registerGatewayTool(
+    server,
+    executor,
+    'commander_action_evidence',
+    'Get the evidence bundle for a governed action.',
+    runIdSchema,
+    (args) => ({ method: 'GET', path: `${actionPath(args.runId)}/evidence` }),
+  );
+}
+
+function registerGatewayTool(
+  server: MCPServer,
+  executor: McpActionGatewayExecutor | undefined,
+  name: string,
+  description: string,
+  inputSchema: MCPTool['inputSchema'],
+  buildRequest: (args: Record<string, unknown>) => McpActionGatewayRequest,
+): void {
+  server.registerTool({ name, description, inputSchema }, async (args) => {
+    if (!executor) {
+      throw new Error(
+        'ACTION_GATEWAY_REQUIRED: configure COMMANDER_ACTION_GATEWAY_URL for enterprise MCP actions.',
+      );
+    }
+    const result = await executor.request(buildRequest(args));
+    return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+  });
+}
+
+function actionRequest(
+  method: 'POST',
+  path: string,
+  body: Record<string, unknown>,
+): McpActionGatewayRequest {
+  return { method, path, body, headers: idempotencyHeaders(body.idempotencyKey) };
+}
+
+function idempotencyHeaders(value: unknown): Record<string, string> {
+  return { 'Idempotency-Key': requiredString(value, 'idempotencyKey') };
+}
+
+function actionPath(runId: unknown): string {
+  return `/v1/actions/${encodeURIComponent(requiredString(runId, 'runId'))}`;
+}
+
+function requiredString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new Error(`${name} must be a non-empty string`);
+  }
+  return value;
+}
+
+function isEnterpriseOrProductionMcpMode(env: NodeJS.ProcessEnv = process.env): boolean {
+  const profile = env.COMMANDER_PROFILE?.trim().toLowerCase();
+  if (profile === 'enterprise') return true;
+  const commanderEnv = env.COMMANDER_ENV?.trim().toLowerCase();
+  if (commanderEnv === 'production' || commanderEnv === 'prod') return true;
+  return env.NODE_ENV === 'production';
+}
+
+function isLocalRuntimeEnabled(
+  configured?: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (isEnterpriseOrProductionMcpMode(env)) return false;
+  return configured ?? env.COMMANDER_MCP_LOCAL_RUNTIME?.trim() === '1';
+}
+
+function resolveActionGatewayExecutor(
+  options: McpRouterOptions,
+): McpActionGatewayExecutor | undefined {
+  if (options.actionGatewayExecutor) return options.actionGatewayExecutor;
+  const baseUrl =
+    options.actionGatewayUrl?.trim() || process.env.COMMANDER_ACTION_GATEWAY_URL?.trim();
+  if (!baseUrl) return undefined;
+  return createFetchActionGatewayExecutor({
+    baseUrl,
+    apiKey: options.actionGatewayApiKey ?? process.env.COMMANDER_API_KEY,
+  });
+}
+
+export function createFetchActionGatewayExecutor(options: {
+  baseUrl: string;
+  apiKey?: string;
+  fetch?: typeof globalThis.fetch;
+}): McpActionGatewayExecutor {
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  if (!fetchImpl) throw new Error('A fetch implementation is required for the Action Gateway');
+  const baseUrl = options.baseUrl.replace(/\/$/, '');
+  return {
+    async request(input) {
+      const headers = new Headers(input.headers);
+      headers.set('accept', 'application/json');
+      if (input.body) headers.set('content-type', 'application/json');
+      // AUDIT-D1①: a static Commander API key must be sent as X-API-Key.
+      // Authorization: Bearer is reserved for JWT access tokens and is rejected
+      // by enterprise /v1 JWT middleware before API-key auth can inspect it.
+      if (options.apiKey) headers.set('x-api-key', options.apiKey);
+      // AUDIT-D1②: attribute the caller's authenticated tenant on the forwarded
+      // request. The gateway's tenant guard only ever lets this header *match*
+      // the authenticated service principal, so a caller from tenant A hitting a
+      // tenant-B service credential is rejected downstream — the header can
+      // never be trusted as identity on its own.
+      const callerTenant = getCurrentTenantId();
+      if (callerTenant) headers.set('x-tenant-id', callerTenant);
+      const response = await fetchImpl(`${baseUrl}${input.path}`, {
+        method: input.method,
+        headers,
+        ...(input.body ? { body: JSON.stringify(input.body) } : {}),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        throw new Error(`Action Gateway request failed (${response.status}): ${text}`);
+      }
+      if (!text) return {};
+      return JSON.parse(text) as unknown;
+    },
+  };
 }
 
 function registerCoreTools(server: MCPServer): void {

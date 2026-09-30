@@ -184,7 +184,7 @@ function isBalanced(s: string): boolean {
 // .catch(...) invocations — those are not empty catches and would only be
 // mutated by mistake.
 
-const RE_CATCH = /([ \t]*)}(?:\s|\n)+catch\s*(?:\(\s*([A-Za-z_$][\w$]*)\s*\))?\s*\{([\s\S]*?)\}/g;
+const RE_CATCH = /([ \t]*)}\s+catch\s*(?:\(\s*([A-Za-z_$][\w$]*)\s*\))?\s*\{([\s\S]*?)\}/g;
 
 function rewriteCatches(content: string, baseName: string): { content: string; edits: number } {
   let edits = 0;
@@ -259,8 +259,9 @@ function ensureImport(
   if (!content.includes(symbol)) return { content, added: false };
 
   // Check if already imported from a path matching this exact source.
+  const safeSymbol = symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const importBlockRe = new RegExp(
-    `import\\s*\\{[^}]*\\b${symbol}\\b[^}]*\\}\\s*from\\s*['"][^'"]*['"]\\s*;?`,
+    `import\\s*\\{[^}]*\\b${safeSymbol}\\b[^}]*\\}\\s*from\\s*['"][^'"]*['"]\\s*;?`,
     'g',
   );
   // If we see an aliased import (`as X`), it'd be referenced as X in the
@@ -269,7 +270,7 @@ function ensureImport(
   // alongside an aliased import, that's a serious inconsistency; we
   // refuse the rewrite for safety. Detect by scanning for an `as` clause
   // targeting this symbol anywhere.
-  if (new RegExp(`\\b${symbol}\\s+as\\b`).test(content)) {
+  if (new RegExp(`\\b${safeSymbol}\\s+as\\b`).test(content)) {
     return { content, added: false };
   }
   while (importBlockRe.exec(content) !== null) {
@@ -278,8 +279,9 @@ function ensureImport(
   }
 
   // Try to extend an existing `import { already } from './x'` block.
+  const safeSource = sourceRel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const re_named = new RegExp(
-    `^(import\\s*\\{)([^}]*)(\\}\\s*from\\s*['"]${sourceRel.replace(/\./g, '\\.')}['"]\\s*;?)$`,
+    `^(import\\s*\\{)([^}]*)(\\}\\s*from\\s*['"]${safeSource}['"]\\s*;?)$`,
     'm',
   );
   const m = re_named.exec(content);

@@ -5,8 +5,8 @@
  * Verifies infrastructure prerequisites before any live-fire test runs.
  * If ANY required (FAIL-severity) check fails, exit non-zero: the live-fire
  * suite must not run and no evidence is produced. Advisory (WARN-severity)
- * checks do not block the verdict but report gaps (e.g. missing runsc,
- * unreachable /v1 gateway) that certain test classes need.
+ * checks do not block the verdict but report gaps (e.g. missing runsc) that
+ * certain test classes need.
  *
  * Per spec `spec/ws9-tenant-livefire-compliance.md` §3.2:
  *   - Postgres role is not owner/superuser and cannot create roles/DBs.
@@ -15,8 +15,9 @@
  *   - No forbidden *_API_KEY / *_SECRET / *_TOKEN in process.env (allowlist
  *     at config/keypath-allowlist.json).
  *   - runsc binary present (WARN if missing).
- *   - /v1 gateway reachable; legacy /api/* returns 410/404 (WARN if API
- *     unreachable; FAIL if reachable but legacy route serves).
+ *   - /v1 gateway reachable; legacy /api/* returns 410/404. An unconfigured or
+ *     unreachable gateway is a FAIL: "not evaluated" is never a pass, because
+ *     DATA tests can silently run without the gateway invariant holding.
  *
  * Exit codes:
  *   0  all required checks pass (WARNs are OK)
@@ -470,14 +471,22 @@ function checkForbiddenEnvVars(): CheckResult {
   const allowed = new Set(allowlist.allowed);
   const forbidden = allowlist.forbiddenPatterns ?? [];
 
-  const pattern = /(_API_KEY|_SECRET|_TOKEN)$/;
+  // Candidate selection must cover the declared forbidden list itself. Entries
+  // such as STRIPE_SECRET_KEY / AWS_SECRET_ACCESS_KEY (…_KEY) and
+  // AWS_ACCESS_KEY_ID (…_ID) do not end in the legacy suffix, so a
+  // suffix-only filter made three declared-forbidden names unreachable dead
+  // config: the check reported PASS for exactly the variables it exists to
+  // reject.
+  const suffixPattern = /(_API_KEY|_SECRET|_TOKEN)$/;
+  const isExplicitlyForbidden = (key: string) =>
+    forbidden.some((entry) => entry.length > 0 && key.includes(entry));
   const violations: string[] = [];
   const present: string[] = [];
 
   for (const key of Object.keys(process.env)) {
-    if (!pattern.test(key)) continue;
+    const explicitlyForbidden = isExplicitlyForbidden(key);
+    if (!suffixPattern.test(key) && !explicitlyForbidden) continue;
     present.push(key);
-    const explicitlyForbidden = forbidden.some((f) => key === f || key.includes(f));
     if (explicitlyForbidden || !allowed.has(key)) {
       violations.push(key);
     }
@@ -495,7 +504,7 @@ function checkForbiddenEnvVars(): CheckResult {
     check: NAME,
     passed: true,
     severity: 'FAIL',
-    detail: `No forbidden *_API_KEY/*_SECRET/*_TOKEN env vars. Allowed keys present: ${present.length === 0 ? 'none' : present.join(', ')}.`,
+    detail: `No forbidden *_API_KEY/*_SECRET/*_TOKEN env vars and no allowlist forbiddenPatterns entry present. Allowed keys present: ${present.length === 0 ? 'none' : present.join(', ')}.`,
   };
 }
 
@@ -544,12 +553,16 @@ async function checkV1Gateway(): Promise<CheckResult> {
   const NAME = 'v1-gateway-only';
   const base = gatewayBaseUrl();
   if (!base) {
+    // Fail closed: with no host/port the check never runs, so reporting
+    // `passed: true` would claim an invariant that was never observed. The
+    // live-fire DATA case genuinely needs the API, so this is not advisory.
     return {
       check: NAME,
-      passed: true,
-      severity: 'WARN',
+      passed: false,
+      severity: 'FAIL',
       detail:
-        'COMMANDER_API_HOST/PORT not set; /v1 gateway checks skipped. Live-fire DATA tests need the API reachable.',
+        'COMMANDER_API_HOST/PORT not set; the /v1 gateway invariant (/v1 reachable, legacy /api/* closed) was not evaluated. ' +
+        'Live-fire DATA tests require the API reachable (spec §3.2), so an unconfigured gateway is a failure, not a pass.',
     };
   }
 

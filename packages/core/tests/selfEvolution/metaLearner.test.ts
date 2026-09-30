@@ -169,15 +169,18 @@ describe('MetaLearner', () => {
       ml.recordExperience(
         makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: 'SEQUENTIAL' }),
       );
-      const sourceStrategy = ml.selectStrategy('code', 'gpt-4');
-      const targetStrategy = sourceStrategy === 'PARALLEL' ? 'SEQUENTIAL' : 'PARALLEL';
-      ml.createPrediction('edit-1', 'switch strategy', targetStrategy, sourceStrategy, 'gpt-4', [
-        'code',
-      ]);
+      const chosen = ml.selectStrategy('code', 'gpt-4');
+      const target = chosen === 'SEQUENTIAL' ? 'PARALLEL' : 'SEQUENTIAL';
+      ml.createPrediction('edit-1', 'switch strategy', target, chosen, 'gpt-4', ['code']);
       expect(ml.getPredictions().length).toBe(1);
 
       ml.recordExperience(
-        makeExperience({ modelUsed: 'gpt-4', taskType: 'code', strategyUsed: targetStrategy }),
+        makeExperience({
+          modelUsed: 'gpt-4',
+          taskType: 'code',
+          strategyUsed: target,
+          success: true,
+        }),
       );
       expect(ml.getVerdicts().length).toBe(1);
     });

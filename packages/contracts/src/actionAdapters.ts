@@ -19,14 +19,14 @@ export interface ActionAdapterDescriptorV1 {
 export const GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR: ActionAdapterDescriptorV1 = {
   schema: 'commander.action-adapter/v1',
   adapterId: 'github.pull-request.create',
-  adapterVersion: '1.0.0',
+  adapterVersion: '1.1.0',
   effectType: 'connector.github.pull-request.create',
   toolName: 'github.pull-request.create',
   compensationEffectType: 'compensate.github.pull-request.create',
   destinationPattern: 'github://{owner}/{repo}/pulls',
   defaultGatewayEffect: 'require_approval',
   reversible: true,
-  evidenceResponseSummaryKeys: ['prNumber', 'url', 'state', 'httpStatus', 'errorCode'],
+  evidenceResponseSummaryKeys: ['prNumber', 'url', 'state', 'headSha', 'httpStatus', 'errorCode'],
 };
 
 export const SERVICENOW_INCIDENT_CREATE_DESCRIPTOR: ActionAdapterDescriptorV1 = {
@@ -47,7 +47,7 @@ export const KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR: ActionAdapterDescriptorV
   schema: 'commander.action-adapter/v1',
   adapterId: 'kubernetes.deployment.rollback',
   adapterVersion: '1.0.0',
-  effectType: 'mutate.kubernetes.deployment.rollback',
+  effectType: 'connector.kubernetes.deployment.rollback',
   toolName: 'kubernetes.deployment.rollback',
   compensationEffectType: 'compensate.kubernetes.deployment.rollback',
   destinationPattern: 'k8s://{cluster}/{namespace}/deployments/{name}',
@@ -70,15 +70,28 @@ export const FIXED_ACTION_ADAPTER_MANIFESTS: readonly ActionAdapterDescriptorV1[
   KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
 ];
 
+export const ACTION_ADAPTER_DESTINATION_MATCHING = Object.freeze({
+  algorithm: 'exact-segments-v1',
+  separator: '/',
+  placeholderStart: '{',
+  placeholderEnd: '}',
+  placeholderPattern: '^[A-Za-z0-9][A-Za-z0-9._-]*$',
+  literalComparison: 'case-sensitive-exact',
+  decoding: 'none',
+} as const);
+
+const placeholderPattern = new RegExp(ACTION_ADAPTER_DESTINATION_MATCHING.placeholderPattern);
+
 function destinationMatchesPattern(pattern: string, destination: string): boolean {
-  const patternParts = pattern.split('/');
-  const destinationParts = destination.split('/');
+  const matching = ACTION_ADAPTER_DESTINATION_MATCHING;
+  const patternParts = pattern.split(matching.separator);
+  const destinationParts = destination.split(matching.separator);
   if (patternParts.length !== destinationParts.length) return false;
   for (let i = 0; i < patternParts.length; i += 1) {
     const p = patternParts[i]!;
     const d = destinationParts[i]!;
-    if (p.startsWith('{') && p.endsWith('}')) {
-      if (!d || d.includes('/') || d.includes(':') || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(d)) {
+    if (p.startsWith(matching.placeholderStart) && p.endsWith(matching.placeholderEnd)) {
+      if (!placeholderPattern.test(d)) {
         return false;
       }
       continue;
@@ -94,7 +107,12 @@ export function findAdapterManifest(input: {
   destination: string;
 }): ActionAdapterDescriptorV1 | null {
   for (const manifest of FIXED_ACTION_ADAPTER_MANIFESTS) {
-    if (manifest.effectType !== input.effectType) continue;
+    if (
+      manifest.effectType !== input.effectType &&
+      manifest.compensationEffectType !== input.effectType
+    ) {
+      continue;
+    }
     if (manifest.toolName !== input.toolName) continue;
     if (!destinationMatchesPattern(manifest.destinationPattern, input.destination)) continue;
     return manifest;

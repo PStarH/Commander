@@ -2,6 +2,11 @@
 
 Publishable MCP (Model Context Protocol) server for Commander. Exposes Commander tools over line-delimited stdin/stdout JSON-RPC so any MCP client (Claude Desktop, Cursor, etc.) can call them.
 
+> **Alpha / non-production-ready:** the default tools call a configured
+> Commander Action Gateway and can initiate governed state changes. Review
+> [PRIVACY.md](../../PRIVACY.md), use a scoped API key, and keep the local
+> development surface disabled outside an isolated evaluation.
+
 ## Installation
 
 ```bash
@@ -17,30 +22,42 @@ npm install @commander/mcp-server
 The package installs a `commander-mcp-server` binary:
 
 ```bash
+COMMANDER_ACTION_GATEWAY_URL=https://commander.example \
+COMMANDER_API_KEY=... \
 commander-mcp-server
 ```
 
 Options:
 
-| Flag                      | Description                                             |
-| ------------------------- | ------------------------------------------------------- |
-| `--name <name>`           | Server name advertised during MCP initialization        |
-| `--version <version>`     | Server version advertised during MCP initialization     |
-| `--model-router-only`     | Only register the lightweight model-router tools        |
-| `--allow-dangerous-tools` | Expose dangerous built-in tools such as `shell_execute` |
-| `--help`                  | Show help                                               |
+| Flag                      | Description                                            |
+| ------------------------- | ------------------------------------------------------ |
+| `--name <name>`           | Server name advertised during MCP initialization       |
+| `--version <version>`     | Server version advertised during MCP initialization    |
+| `--model-router-only`     | In local-runtime mode, expose only model-router tools  |
+| `--allow-dangerous-tools` | In local-runtime mode, expose reviewed dangerous tools |
+| `--help`                  | Show help                                              |
 
 ### Programmatic
 
 ```typescript
-import { createStdioMcpServer, startStdioServer } from '@commander/mcp-server';
+import { createStdioMcpServer } from '@commander/mcp-server';
 
 const { server, status } = createStdioMcpServer();
 console.log(`Exposing ${status.tools.length} tools`);
-
-// Or start reading from process.stdin automatically:
-const { stop } = startStdioServer({ modelRouterOnly: false });
 ```
+
+To start reading from `process.stdin` automatically, use the shipped binary — that
+is what an MCP client should launch:
+
+```bash
+commander-mcp-server
+```
+
+The exported package surface is `createStdioMcpServer`,
+`createFetchMcpActionGatewayExecutor`, `isLocalRuntimeEnabled`, and `run`
+(the CLI entry point). `startStdioServer` lives in the internal
+`stdioServer` module and is **not** re-exported from the package root, so do not
+import it from `@commander/mcp-server`.
 
 ### Wiring into an MCP client config
 
@@ -49,7 +66,11 @@ const { stop } = startStdioServer({ modelRouterOnly: false });
   "mcpServers": {
     "commander": {
       "command": "commander-mcp-server",
-      "args": []
+      "args": [],
+      "env": {
+        "COMMANDER_ACTION_GATEWAY_URL": "https://commander.example",
+        "COMMANDER_API_KEY": "replace-with-a-scoped-key"
+      }
     }
   }
 }
@@ -57,12 +78,27 @@ const { stop } = startStdioServer({ modelRouterOnly: false });
 
 ## Tools
 
-By default the server registers:
+By default the server registers eight Action Gateway tools:
 
-- `execute_agent` — run a goal against the Commander runtime
-- `list_models` — list models and tiers from the model router
-- `route_task` — preview which tier a task would be routed to
-- All built-in Commander tools returned by `createAllTools()`, with dangerous tools filtered out unless `--allow-dangerous-tools` is passed
+- `commander_action_simulate`
+- `commander_action_propose`
+- `commander_action_get`
+- `commander_action_approve`
+- `commander_action_compensation_request`
+- `commander_action_compensation_approve`
+- `commander_action_reconcile`
+- `commander_action_evidence`
+
+Set `COMMANDER_ACTION_GATEWAY_URL` to make these tools callable. Without it,
+calls fail closed with `ACTION_GATEWAY_REQUIRED`; no local or in-memory write
+fallback is used.
+
+For local development only, `COMMANDER_MCP_LOCAL_RUNTIME=1` exposes
+`execute_agent`, `list_models`, `route_task`, and the built-in Commander tools.
+That `execute_agent` surface currently returns a simulated result and does not
+call an LLM provider. `--model-router-only` narrows this development surface to
+the three model-router tools. `--allow-dangerous-tools` additionally requires a
+configured Action Gateway.
 
 ## HTTP API (when used inside `@commander/api`)
 

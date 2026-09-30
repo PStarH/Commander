@@ -1,5 +1,6 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import * as nodePath from 'node:path';
+import { randomUUID } from 'node:crypto';
 import type {
   EvolutionPrediction,
   ExecutionExperience,
@@ -66,6 +67,22 @@ export class MetaLearner {
     // Start async load; persistChain gates subsequent writes to ensure
     // no persist fires before load completes (prevents state overwrite).
     this.persistChain = this.load();
+  }
+
+  /**
+   * Resolves once hydration and every write scheduled so far have settled.
+   *
+   * The constructor starts an asynchronous load and `recordExperience` defers
+   * its disk write onto the same chain, so a caller that reads state — or
+   * checks that the state file exists — immediately after construction or
+   * recording is racing the I/O. Await this instead of reaching into the
+   * private `persistChain`.
+   *
+   * This is a point-in-time barrier: a write scheduled *after* the returned
+   * promise settles is not covered by it.
+   */
+  ready(): Promise<void> {
+    return this.persistChain;
   }
 
   // ========================================================================
@@ -164,6 +181,69 @@ export class MetaLearner {
     }
 
     return chosen;
+  }
+
+  /**
+   * Select the runner-up (second-best) strategy for shadow-mode comparison.
+   *
+   * Deliberately shares the ranking that `calculateAdjustedScores()` exposes, so
+   * the shadow candidate is always the strategy that lost to the incumbent by
+   * the narrowest margin — the only comparison that carries information.
+   *
+   * Returns `null` unless at least two strategies have actually been observed:
+   * with zero or one sampled strategy there is no runner-up, and shadowing the
+   * incumbent with itself would prove nothing. `trials` is the Thompson prior's
+   * `totalTrials`, which is 0 for a strategy that has never been tried.
+   */
+  selectShadowStrategy(taskType: string): string | null {
+    const scores = this.calculateAdjustedScores(taskType);
+    if (scores.length < 2) return null;
+    if (scores[1].trials === 0) return null;
+    return scores[1].name;
+  }
+
+  /**
+   * Record a shadow-mode comparison and fold it into the priors at half weight.
+   *
+   * The shadow run is a real execution, but it is advisory: it never gates a
+   * response and it ran on a copy of the incumbent's inputs. Crediting it at
+   * full weight would let the shadow track steer selection as strongly as the
+   * strategy that actually served the request, so `StrategySelector` applies
+   * the minimum update weight (0.5) for it.
+   */
+  recordShadowComparison(params: {
+    runId: string;
+    taskType: string;
+    mainStrategy: string;
+    shadowStrategy: string;
+    mainSuccess: boolean;
+    shadowSuccess: boolean;
+    mainDurationMs: number;
+    shadowDurationMs: number;
+    mainTokenCost?: number;
+    shadowTokenCost?: number;
+  }): void {
+    this.shadowComparisons.push({
+      id: randomUUID(),
+      runId: params.runId,
+      timestamp: new Date().toISOString(),
+      taskType: params.taskType,
+      mainStrategy: params.mainStrategy,
+      shadowStrategy: params.shadowStrategy,
+      mainSuccess: params.mainSuccess,
+      shadowSuccess: params.shadowSuccess,
+      mainDurationMs: params.mainDurationMs,
+      shadowDurationMs: params.shadowDurationMs,
+      mainTokenCost: params.mainTokenCost ?? 0,
+      shadowTokenCost: params.shadowTokenCost ?? 0,
+    });
+    if (this.shadowComparisons.length > 200) this.shadowComparisons.shift();
+
+    this.selector.recordShadowComparison({
+      taskType: params.taskType,
+      shadowStrategy: params.shadowStrategy,
+      shadowSuccess: params.shadowSuccess,
+    });
   }
 
   // ========================================================================

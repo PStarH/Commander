@@ -1,3 +1,4 @@
+{{- if not .Values.tenantAuthority.transportBootstrap }}
 # =============================================================================
 # Commander Redis — StatefulSet (Enterprise tier)
 # =============================================================================
@@ -42,10 +43,8 @@ spec:
             initialDelaySeconds: 15
             periodSeconds: 20
           readinessProbe:
-            exec:
-              command:
-                - redis-cli
-                - ping
+            tcpSocket:
+              port: redis
             initialDelaySeconds: 5
             periodSeconds: 10
           {{- if .Values.redis.persistence.enabled }}
@@ -66,4 +65,5 @@ spec:
         storageClassName: {{ .Values.redis.persistence.storageClass }}
         {{- end }}
   {{- end }}
+{{- end }}
 {{- end }}

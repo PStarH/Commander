@@ -6,7 +6,11 @@
 # hook only ever does argv-agnostic delegation + env setup.
 #
 # Install:   bash scripts/install-hooks.sh
-# Uninstall: rm .git/hooks/pre-commit
+# Uninstall: bash scripts/install-hooks.sh --uninstall
+#
+# Local hooks are a convenience gate, not a security boundary — a local user can
+# skip or delete them. The hard guarantee is server-side branch protection with
+# required status checks.
 
 set -euo pipefail
 

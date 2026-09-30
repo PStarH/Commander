@@ -1,9 +1,29 @@
 import { execFileSync } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
 import type { Tool, ToolDefinition } from '../runtime/types';
 import { getSafeRoot, isWithinRoot } from './fileSystemTool';
 
 const EXCLUDE_DIRS = ['node_modules', '.git', 'dist', 'build', 'coverage', '.cache', 'target'];
+
+/**
+ * Resolve `target` to its real (symlink-free) path. When the target does not
+ * exist, resolve the nearest existing ancestor and re-attach the non-existent
+ * remainder — the same strategy `safePath()` uses.
+ */
+async function realPathOrAncestor(target: string): Promise<string> {
+  let ancestor = target;
+  for (;;) {
+    try {
+      const real = await fs.promises.realpath(ancestor);
+      return ancestor === target ? real : path.join(real, path.relative(ancestor, target));
+    } catch {
+      const parent = path.dirname(ancestor);
+      if (parent === ancestor) return target; // reached the filesystem root
+      ancestor = parent;
+    }
+  }
+}
 
 const DEFINITION: ToolDefinition = {
   name: 'code_search',
@@ -83,6 +103,21 @@ export class CodeSearchTool implements Tool {
 
       const maxHead = maxResults * (contextLines * 2 + 2);
 
+      // SECURITY: a purely lexical containment check is not enough. A symlink
+      // that lives inside the workspace but points outside it resolves
+      // lexically to a path under the root, and grep follows a symlink named on
+      // the command line — so the boundary has to be verified against the REAL
+      // path before grep runs. (safePath() does the same for the file tools.)
+      const realRoot = await realPathOrAncestor(cwd);
+
+      // The search root itself must be a real directory inside the workspace: a
+      // `tests`/`docs`/`config` symlink pointing outside would otherwise be
+      // followed by grep.
+      const realSearchDir = await realPathOrAncestor(searchDir);
+      if (!isWithinRoot(realSearchDir, realRoot)) {
+        return `Error: Access denied: search domain "${searchDomain}" is outside workspace`;
+      }
+
       // SECURITY FIX: use execFileSync with argv array instead of execSync with shell string
       // This prevents command injection via pattern/filePattern containing shell metacharacters
       const args: string[] = [
@@ -99,19 +134,27 @@ export class CodeSearchTool implements Tool {
         // filePattern is user-supplied. Absolute paths (and path escapes) must
         // stay inside the workspace — otherwise `grep -E pattern /etc/passwd`
         // reads host files even when cwd is the sandbox root.
-        const resolvedTarget = path.isAbsolute(filePattern)
+        const lexicalTarget = path.isAbsolute(filePattern)
           ? path.resolve(filePattern)
           : path.resolve(searchDir, filePattern);
-        if (!isWithinRoot(resolvedTarget, path.resolve(getSafeRoot()))) {
+        if (!isWithinRoot(lexicalTarget, path.resolve(getSafeRoot()))) {
           return `Error: Access denied: filePattern "${filePattern}" is outside workspace`;
         }
-        // Prefer relative path under searchDir so grep never sees an absolute
-        // path that could be reinterpreted outside the sandbox.
-        const relativeTarget = path.relative(searchDir, resolvedTarget) || '.';
+        // Keep the search-domain scoping the tool always had.
+        const relativeTarget = path.relative(searchDir, lexicalTarget) || '.';
         if (relativeTarget.startsWith('..') || path.isAbsolute(relativeTarget)) {
           return `Error: Access denied: filePattern "${filePattern}" is outside workspace`;
         }
-        args.push('-E', grepPattern, relativeTarget);
+        // Resolve symlinks and re-check: a symlink inside the workspace must not
+        // be able to redirect grep past the boundary.
+        const realTarget = await realPathOrAncestor(lexicalTarget);
+        if (!isWithinRoot(realTarget, realRoot)) {
+          return `Error: Access denied: filePattern "${filePattern}" is outside workspace`;
+        }
+        // Hand grep the canonical absolute path: it is already verified to be
+        // inside the workspace, and an absolute path can never be mistaken for
+        // a grep option.
+        args.push('-E', grepPattern, realTarget);
       } else {
         args.push(
           '--include=*.ts',
@@ -121,14 +164,14 @@ export class CodeSearchTool implements Tool {
           '--include=*.go',
           '-E',
           grepPattern,
-          searchDir,
+          realSearchDir,
         );
       }
 
       let stdout: string;
       try {
         stdout = execFileSync('grep', args, {
-          cwd: searchDir,
+          cwd: realSearchDir,
           timeout: 30000,
           maxBuffer: 10 * 1024 * 1024,
           encoding: 'utf-8',

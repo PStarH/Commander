@@ -3,6 +3,8 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
 import { CompensationRegistry } from '../../src/runtime/compensationRegistry';
+import { CompensationQueue } from '../../src/atr/compensationQueue';
+import { runWithTenant } from '../../src/runtime/tenantContext';
 
 describe('CompensationRegistry', () => {
   it('registers and retrieves pending actions', () => {
@@ -184,6 +186,100 @@ describe('CompensationRegistry', () => {
     expect(result.succeeded).toBe(2);
     expect(result.failed).toBe(1);
     expect(result.errors.length).toBe(1);
+  });
+});
+
+describe('CompensationRegistry — durable queue drain (AR-03)', () => {
+  let qDir: string;
+  let queue: CompensationQueue;
+
+  beforeEach(() => {
+    qDir = fs.mkdtempSync(path.join(os.tmpdir(), 'atr-comp-queue-'));
+    queue = new CompensationQueue({ filePath: path.join(qDir, 'queue.db') });
+  });
+
+  afterEach(() => {
+    queue.close();
+    fs.rmSync(qDir, { recursive: true, force: true });
+  });
+
+  it('processQueue completes a claimed item instead of refusing the write', async () => {
+    const registry = new CompensationRegistry();
+    registry.setCompensationQueue(queue);
+    let handled = 0;
+    registry.register('durable_tool', async () => {
+      handled++;
+      return { success: true };
+    });
+
+    await runWithTenant('tenant-a', () => {
+      queue.enqueue({
+        id: 'q-1',
+        runId: 'run-1',
+        toolName: 'durable_tool',
+        args: { path: '/tmp/x' },
+        compensationHandlerKey: 'durable_tool',
+      });
+    });
+
+    await runWithTenant('tenant-a', () => registry.processQueue());
+
+    expect(handled).toBe(1);
+    // The item must leave the queue: markCompleted with the claim issued by
+    // claimNext() succeeded (a legacy no-claim write is refused, which would
+    // leave the row in_progress forever).
+    await runWithTenant('tenant-a', () => {
+      expect(queue.countByStatus().in_progress).toBe(0);
+      expect(queue.countByStatus().pending).toBe(0);
+    });
+  });
+
+  it('processQueue escalates an item whose handler is missing', async () => {
+    const registry = new CompensationRegistry();
+    registry.setCompensationQueue(queue);
+
+    await runWithTenant('tenant-a', () => {
+      queue.enqueue({
+        id: 'q-2',
+        runId: 'run-2',
+        toolName: 'no_handler_tool',
+        args: {},
+        compensationHandlerKey: 'no_handler_tool',
+      });
+    });
+
+    await runWithTenant('tenant-a', () => registry.processQueue());
+
+    await runWithTenant('tenant-a', () => {
+      expect(queue.countByStatus().escalated).toBe(1);
+      expect(queue.countByStatus().in_progress).toBe(0);
+    });
+  });
+
+  it('processQueue keeps a failed compensation retryable with the claim bound', async () => {
+    const registry = new CompensationRegistry();
+    registry.setCompensationQueue(queue);
+    registry.register('flaky_tool', async () => ({ success: false, error: 'upstream down' }));
+
+    await runWithTenant('tenant-a', () => {
+      queue.enqueue({
+        id: 'q-3',
+        runId: 'run-3',
+        toolName: 'flaky_tool',
+        args: {},
+        compensationHandlerKey: 'flaky_tool',
+        maxAttempts: 5,
+      });
+    });
+
+    await runWithTenant('tenant-a', () => registry.processQueue());
+
+    await runWithTenant('tenant-a', () => {
+      const item = queue.get('q-3');
+      expect(item?.attemptCount).toBe(1);
+      expect(item?.status).toBe('pending');
+      expect(queue.countByStatus().in_progress).toBe(0);
+    });
   });
 });
 

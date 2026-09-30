@@ -74,6 +74,7 @@ import * as crypto from 'node:crypto';
 import { SecurityEvent } from './securityAuditLogger';
 import { getAuditChainLedger } from './auditChainLedger';
 import { getMetricsCollector } from '../runtime/metricsCollector';
+import { isProductionCryptoEnv } from './productionEnv.js';
 
 // ============================================================================
 // Constants
@@ -302,7 +303,7 @@ function toolMatches(pattern: string, tool: string): boolean {
 export function resolveMasterKey(env: NodeJS.ProcessEnv = process.env): Buffer {
   const v = env[CAPABILITY_TOKEN_KEY_ENV];
   if (v && v.length >= 32) return Buffer.from(v, 'utf-8');
-  if (env.NODE_ENV === 'production') {
+  if (isProductionCryptoEnv(env)) {
     throw new Error(
       `[capabilityToken] ${CAPABILITY_TOKEN_KEY_ENV} must be set (>= 32 chars) in production. ` +
         'Refusing to issue capability tokens with a default key.',

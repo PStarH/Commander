@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { describe, it } from 'node:test';
+import { ActionAdapterRegistry, type ActionAdapter } from '@commander/action-adapters';
+import {
+  GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR,
+  SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
+  evaluateActionGatewayPolicy,
+  KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR,
+} from '@commander/contracts';
 import { InMemoryKernelRepository } from '@commander/kernel/testing/inMemoryRepository';
 import { createWorkerPolicyEvaluator, evaluateActionGatewayMvpV1 } from './bootstrap.js';
 
@@ -17,7 +24,19 @@ const canonical = (value: unknown): string => {
 const digest = (value: Record<string, unknown>): string =>
   createHash('sha256').update(canonical(value)).digest('hex');
 
-const envelope = {
+type ActionEnvelopeFixture = {
+  tenantId: string;
+  source: string;
+  package: string;
+  model: string;
+  tool: string;
+  destination: string;
+  effectType: string;
+  args: Record<string, string>;
+  idempotencyKey: string;
+};
+
+const envelope: ActionEnvelopeFixture = {
   tenantId: 'tenant-a',
   source: 'test-agent',
   package: 'test-package',
@@ -28,6 +47,28 @@ const envelope = {
   args: { title: 'Reset a demo password' },
   idempotencyKey: 'action-key-0001',
 };
+
+function adapter(descriptor: ActionAdapter['descriptor']): ActionAdapter {
+  return {
+    descriptor,
+    async execute() {
+      return {};
+    },
+    async queryOutcome() {
+      return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+    },
+    async compensate() {
+      return {};
+    },
+    async queryCompensationOutcome() {
+      return { status: 'UNKNOWN', error: { code: 'NOT_QUERIED', message: 'not queried' } };
+    },
+  };
+}
+
+const kubernetesRegistry = new ActionAdapterRegistry([
+  adapter(KUBERNETES_DEPLOYMENT_ROLLBACK_DESCRIPTOR),
+]);
 
 async function createActionRun(
   repository: InMemoryKernelRepository,
@@ -46,9 +87,11 @@ async function createActionRun(
     simulationDecisionId?: string;
     effectType?: string;
     tool?: string;
+    envelope?: ActionEnvelopeFixture;
   } = {},
 ) {
-  const tenantId = options.tenantId ?? envelope.tenantId;
+  const baseEnvelope = options.envelope ?? envelope;
+  const tenantId = options.tenantId ?? baseEnvelope.tenantId;
   const runId = options.runId ?? 'run-action';
   const stepId = `${runId}-step`;
   const effectId = `${runId}-effect`;
@@ -56,16 +99,18 @@ async function createActionRun(
   const effect = options.effect ?? 'allow';
   const destination =
     options.destination ??
-    (effect === 'require_approval'
-      ? 'demo://tickets/approval'
-      : effect === 'deny'
-        ? 'demo://tickets/denied'
-        : envelope.destination);
+    (options.envelope
+      ? baseEnvelope.destination
+      : effect === 'require_approval'
+        ? 'demo://tickets/approval'
+        : effect === 'deny'
+          ? 'demo://tickets/denied'
+          : baseEnvelope.destination);
   const actionEnvelope = {
-    ...envelope,
+    ...baseEnvelope,
     tenantId,
-    effectType: options.effectType ?? envelope.effectType,
-    tool: options.tool ?? envelope.tool,
+    effectType: options.effectType ?? baseEnvelope.effectType,
+    tool: options.tool ?? baseEnvelope.tool,
     destination,
   };
   const actionDigest = options.actionDigest ?? digest(actionEnvelope);
@@ -140,49 +185,229 @@ async function createActionRun(
 
 function evaluate(
   repository: InMemoryKernelRepository,
-  input: { tenantId: string; runId: string; stepId: string; request?: Record<string, unknown> },
+  input: {
+    tenantId: string;
+    runId: string;
+    stepId: string;
+    request?: Record<string, unknown>;
+    registry?: ActionAdapterRegistry;
+  },
 ) {
-  return createWorkerPolicyEvaluator(repository).evaluate({
+  const request = input.request ?? envelope;
+  return createWorkerPolicyEvaluator(repository, input.registry).evaluate({
     tenantId: input.tenantId,
     runId: input.runId,
     stepId: input.stepId,
-    type: (input.request?.effectType as string) ?? 'demo.ticket.create',
-    request: input.request ?? envelope,
+    type: String(request.effectType ?? envelope.effectType),
+    request,
     token: {} as never,
   });
 }
 
 describe('L4-01 Action Gateway worker policy', () => {
-  it('requires approval for a registered Kubernetes rollback destination', () => {
-    const decision = evaluateActionGatewayMvpV1({
+  it('allows a registered Kubernetes manifest action only after exact bound approval', async () => {
+    const kubernetesEnvelope = {
       ...envelope,
       tool: 'kubernetes.deployment.rollback',
       destination: 'k8s://kind/commander/deployments/api',
-      effectType: 'mutate.kubernetes.deployment.rollback',
+      effectType: 'connector.kubernetes.deployment.rollback',
+      args: { targetRevision: '41', reason: 'campaign-4 test' },
+    };
+    const repository = new InMemoryKernelRepository();
+    const action = await createActionRun(repository, {
+      runId: 'run-kubernetes-approval',
+      effect: 'require_approval',
+      decisionId: 'action-gateway-manifest-require_approval',
+      envelope: kubernetesEnvelope,
     });
-    assert.equal(decision.effect, 'require_approval');
-    assert.equal(decision.decisionId, 'action-gateway-require_approval');
-  });
 
-  it('denies malformed Kubernetes rollback envelopes', () => {
-    const cases = [
-      { effectType: 'connector.kubernetes.deployment.rollback' },
-      { destination: 'k8s://kind/other%2Ftenant/deployments/api' },
-      { destination: 'k8s://kind/commander/services/api' },
-      { destination: 'k8s://kind/commander/deployments/api/extra' },
-    ] as const;
-    for (const invalid of cases) {
-      const decision = evaluateActionGatewayMvpV1({
-        ...envelope,
-        tool: 'kubernetes.deployment.rollback',
-        destination: 'k8s://kind/commander/deployments/api',
-        effectType: 'mutate.kubernetes.deployment.rollback',
-        ...invalid,
+    assert.equal(
+      (
+        await evaluate(repository, {
+          tenantId: 'tenant-a',
+          runId: action.runId,
+          stepId: action.stepId,
+          request: action.actionEnvelope,
+          registry: kubernetesRegistry,
+        })
+      ).effect,
+      'deny',
+    );
+
+    await repository.answerInteraction({
+      interactionId: action.interactionId,
+      runId: action.runId,
+      tenantId: 'tenant-a',
+      response: {
+        approved: true,
+        actionDigest: action.actionDigest,
+        simulationId: action.simulationId,
+        policySnapshotId: action.policySnapshotId,
+        reviewer: 'reviewer-a',
+        runId: action.runId,
+        tenantId: 'tenant-a',
+      },
+      actor: 'reviewer-a',
+    });
+    const approved = await evaluate(repository, {
+      tenantId: 'tenant-a',
+      runId: action.runId,
+      stepId: action.stepId,
+      request: action.actionEnvelope,
+      registry: kubernetesRegistry,
+    });
+    assert.equal(approved.effect, 'allow');
+    assert.equal(approved.decisionId, 'action-gateway-allow-after-approval');
+
+    const crossDestination = await evaluate(repository, {
+      tenantId: 'tenant-a',
+      runId: action.runId,
+      stepId: action.stepId,
+      request: {
+        ...action.actionEnvelope,
+        destination: 'k8s://kind/commander/deployments/other',
+      },
+      registry: kubernetesRegistry,
+    });
+    assert.equal(crossDestination.effect, 'deny');
+    assert.equal(crossDestination.reason, 'ACTION_DIGEST_MISMATCH');
+
+    for (const [runId, override] of [
+      ['run-kubernetes-malformed', { destination: 'k8s://kind/other%2Ftenant/deployments/api' }],
+      ['run-kubernetes-wrong-tool', { tool: 'kubernetes.deployment.scale' }],
+    ] as const) {
+      const rejected = await createActionRun(repository, {
+        runId,
+        effect: 'require_approval',
+        decisionId: 'action-gateway-manifest-require_approval',
+        envelope: { ...kubernetesEnvelope, ...override },
       });
-      assert.equal(decision.effect, 'deny');
-      assert.equal(decision.decisionId, 'action-gateway-deny');
+      const decision = await evaluate(repository, {
+        tenantId: 'tenant-a',
+        runId: rejected.runId,
+        stepId: rejected.stepId,
+        request: rejected.actionEnvelope,
+        registry: kubernetesRegistry,
+      });
+      assert.equal(decision.effect, 'deny', runId);
+      assert.equal(decision.reason, 'ACTION_GATEWAY_DECISION_REVALIDATION_FAILED', runId);
     }
   });
+
+  it('revalidates a registered Kubernetes compensation as approval-required', () => {
+    const policyInput = {
+      ...envelope,
+      tool: 'kubernetes.deployment.rollback',
+      destination: 'k8s://kind/commander/deployments/api',
+      effectType: 'compensate.kubernetes.deployment.rollback',
+      args: { targetRevision: '2', reason: 'compensation proof' },
+    };
+    const decision = evaluateActionGatewayMvpV1(policyInput, kubernetesRegistry);
+    assert.deepEqual(decision, {
+      effect: 'require_approval',
+      decisionId: 'action-gateway-manifest-require_approval',
+      reason: "Registered adapter policy requires 'require_approval' for this exact action.",
+      policySnapshotId: 'action-gateway-mvp-v1',
+    });
+  });
+
+  it('preserves registry-aware production admission and Kubernetes destination validation', () => {
+    const kubernetes = {
+      ...envelope,
+      effectType: 'connector.kubernetes.deployment.rollback',
+      tool: 'kubernetes.deployment.rollback',
+      destination: 'k8s://cluster-1/namespace-1/deployments/api',
+    };
+    assert.equal(evaluateActionGatewayMvpV1(kubernetes).effect, 'deny');
+    assert.equal(
+      evaluateActionGatewayMvpV1(kubernetes, kubernetesRegistry).effect,
+      'require_approval',
+    );
+    assert.equal(
+      evaluateActionGatewayMvpV1(
+        { ...kubernetes, destination: 'k8s://Cluster_1/namespace-1/deployments/api' },
+        kubernetesRegistry,
+      ).effect,
+      'deny',
+    );
+
+    assert.equal(evaluateActionGatewayMvpV1(envelope).effect, 'allow');
+    assert.equal(
+      evaluateActionGatewayMvpV1({ ...envelope, destination: undefined }).reason,
+      "Destination 'undefined' is not registered by the Action Gateway.",
+    );
+  });
+
+  for (const [descriptor, destination] of [
+    [GITHUB_PULL_REQUEST_CREATE_DESCRIPTOR, 'github://commander/repository/pulls'],
+    [SERVICENOW_INCIDENT_CREATE_DESCRIPTOR, 'servicenow://instance/incident'],
+  ] as const) {
+    it(`requires durable bound approval before executing ${descriptor.effectType}`, async () => {
+      const registry = new ActionAdapterRegistry([adapter(descriptor)]);
+      const repository = new InMemoryKernelRepository();
+      const action = await createActionRun(repository, {
+        effect: 'require_approval',
+        decisionId: 'action-gateway-manifest-require_approval',
+        envelope: {
+          ...envelope,
+          effectType: descriptor.effectType,
+          tool: descriptor.toolName,
+          destination,
+        },
+      });
+      const input = {
+        tenantId: 'tenant-a',
+        runId: action.runId,
+        stepId: action.stepId,
+        request: action.actionEnvelope,
+        registry,
+      };
+      assert.equal((await evaluate(repository, input)).effect, 'deny');
+      await repository.answerInteraction({
+        interactionId: action.interactionId,
+        runId: action.runId,
+        tenantId: 'tenant-a',
+        response: {
+          approved: true,
+          actionDigest: action.actionDigest,
+          simulationId: action.simulationId,
+          policySnapshotId: action.policySnapshotId,
+          reviewer: 'reviewer-a',
+          runId: action.runId,
+          tenantId: 'tenant-a',
+        },
+        actor: 'reviewer-a',
+      });
+      assert.equal((await evaluate(repository, input)).effect, 'allow');
+      assert.equal(
+        (
+          await evaluate(repository, {
+            ...input,
+            request: { ...action.actionEnvelope, args: { title: 'tampered' } },
+          })
+        ).effect,
+        'deny',
+      );
+    });
+    for (const effectType of [descriptor.effectType, descriptor.compensationEffectType]) {
+      it(`revalidates registered ${effectType} against the shared gateway policy`, () => {
+        const registry = new ActionAdapterRegistry([adapter(descriptor)]);
+        const input = { ...envelope, effectType, tool: descriptor.toolName, destination };
+        const { reasonCode: _reasonCode, ...expected } = evaluateActionGatewayPolicy(input);
+        assert.equal(expected.effect, 'require_approval');
+        assert.deepEqual(evaluateActionGatewayMvpV1(input, registry), expected);
+        assert.equal(evaluateActionGatewayMvpV1(input).effect, 'deny');
+        for (const invalid of [
+          { ...input, tool: 'unregistered.tool' },
+          { ...input, destination: `${destination}/unregistered` },
+          { ...input, destination: 'https://unregistered.invalid' },
+          { ...input, effectType: 'connector.unregistered.create' },
+        ]) {
+          assert.equal(evaluateActionGatewayMvpV1(invalid, registry).effect, 'deny');
+        }
+      });
+    }
+  }
 
   it('allows only a trusted persisted Action Gateway envelope', async () => {
     const repository = new InMemoryKernelRepository();
@@ -438,20 +663,20 @@ describe('L4-01 Action Gateway worker policy', () => {
         runId: `run-approval-binding-${name}`,
         effect: 'require_approval',
       });
+      const approvalResponse = {
+        approved: true,
+        actionDigest: action.actionDigest,
+        simulationId: action.simulationId,
+        policySnapshotId: action.policySnapshotId,
+        reviewer: 'reviewer-a',
+        runId: action.runId,
+        tenantId: 'tenant-a',
+      };
       await repository.answerInteraction({
         interactionId: action.interactionId,
         runId: action.runId,
         tenantId: 'tenant-a',
-        response: {
-          approved: true,
-          actionDigest: action.actionDigest,
-          simulationId: action.simulationId,
-          policySnapshotId: action.policySnapshotId,
-          reviewer: 'reviewer-a',
-          runId: action.runId,
-          tenantId: 'tenant-a',
-          ...override,
-        },
+        response: { ...approvalResponse, ...override },
         actor: 'reviewer-a',
       });
       const decision = await evaluate(repository, {

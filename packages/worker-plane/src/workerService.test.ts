@@ -4,7 +4,13 @@ import { getGlobalLogger, getGlobalMetrics, resetControlPlane } from '@commander
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
-import type { ClaimedStep, KernelWorkerPort, WorkerLease } from './types.js';
+import type {
+  ClaimedStep,
+  KernelWorkerPort,
+  StepExecutor,
+  WorkerIdentity,
+  WorkerLease,
+} from './types.js';
 import { getStepWorkloadBinding } from './stepWorkloadIdentity.js';
 import { ToolStepExecutor } from './toolStepExecutor.js';
 
@@ -27,6 +33,7 @@ class FakeKernel implements KernelWorkerPort {
   lastFailureCode: string | undefined;
   lastFailureRetryable: boolean | undefined;
   lastFailureRetryAt: Date | undefined;
+  failureCount = 0;
   heartbeatCount = 0;
   claimDelayMs = 0;
   lastHeartbeatActiveSteps: number | undefined;
@@ -139,6 +146,7 @@ class FakeKernel implements KernelWorkerPort {
     retryAt?: Date;
     refundAttempt?: boolean;
   }): Promise<unknown | null> {
+    this.failureCount++;
     const step = this.steps.find((candidate) => candidate.id === request.stepId);
     if (
       !step ||
@@ -169,6 +177,62 @@ class FakeKernel implements KernelWorkerPort {
 }
 
 describe('worker plane', () => {
+  for (const [label, expiresAt] of [
+    ['malformed', 'not-a-date'],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['missing', undefined],
+    ['null', null],
+    ['out-of-range', '+999999-01-01T00:00:00.000Z'],
+    ['expired', '2029-12-31T23:59:59.999Z'],
+    ['at current time', '2030-01-01T00:00:00.000Z'],
+  ] as const) {
+    it(`WP01 rejects ${label} expiry before authentication or registration`, async (t) => {
+      t.mock.method(Date, 'now', () => Date.parse('2030-01-01T00:00:00.000Z'));
+      const registry = new InMemoryWorkerRegistry();
+      const initialize = t.mock.method(registry, 'initialize');
+      const register = t.mock.method(registry, 'register');
+      const authenticate = t.mock.fn(auth.authenticate);
+      const onRegistered = t.mock.fn();
+      const service = new WorkerService(
+        definition,
+        { ...identity, expiresAt } as WorkerIdentity,
+        { authenticate },
+        registry,
+        new FakeKernel(),
+        { execute: async () => ({}) },
+        { onRegistered },
+      );
+      t.after(() => service.stop());
+
+      await assert.rejects(service.start(), /Worker identity is expired/);
+      assert.equal(authenticate.mock.callCount(), 0);
+      assert.equal(initialize.mock.callCount(), 0);
+      assert.equal(register.mock.callCount(), 0);
+      assert.equal(onRegistered.mock.callCount(), 0);
+      assert.equal(await registry.get(definition.id), null);
+      assert.equal(service.record, null);
+      assert.equal(await service.pollOnce(), false);
+    });
+  }
+
+  it('WP01 registers an identity expiring one millisecond in the future', async (t) => {
+    t.mock.method(Date, 'now', () => Date.parse('2030-01-01T00:00:00.000Z'));
+    const registry = new InMemoryWorkerRegistry();
+    const register = t.mock.method(registry, 'register');
+    const service = new WorkerService(
+      definition,
+      { ...identity, expiresAt: '2030-01-01T00:00:00.001Z' },
+      auth,
+      registry,
+      new FakeKernel(),
+      { execute: async () => ({}) },
+    );
+    t.after(() => service.stop());
+    assert.equal((await service.start()).id, definition.id);
+    assert.equal(register.mock.callCount(), 1);
+  });
+
   it('wraps each claimed step with step-scoped workload identity ALS', async () => {
     const kernel = new FakeKernel();
     kernel.addRun('run-wrapped', 'tenant-a', [{ id: 'wrapped-step', kind: 'agent' }]);
@@ -203,11 +267,12 @@ describe('worker plane', () => {
     await service.stop();
   });
 
-  it('authenticates, registers, claims only authorized work, and completes through the kernel', async () => {
+  it('authenticates, registers, claims only capability-authorized work, and completes through the kernel', async (t) => {
     const kernel = new FakeKernel();
     kernel.addRun('run-a', 'tenant-a', [{ id: 'agent-step', kind: 'agent' }]);
     kernel.addRun('run-b', 'tenant-b', [{ id: 'tool-step', kind: 'tool' }]);
     const registry = new InMemoryWorkerRegistry();
+    const register = t.mock.method(registry, 'register');
     const service = new WorkerService(
       definition,
       identity,
@@ -218,8 +283,21 @@ describe('worker plane', () => {
       { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
     );
     await service.start();
+    // Tenant scoping is DB-owned: the worker registers its authenticated tenant
+    // ceiling and the claim RPC authorizes against `commander_workers`, so the
+    // poll must NOT forward caller-supplied tenantIds (they could only widen it).
+    assert.deepEqual(
+      register.mock.calls[0]?.arguments[2],
+      ['tenant-a'],
+      'the authenticated tenant ceiling must be registered',
+    );
     assert.equal(await service.pollOnce(), true);
     assert.equal(kernel.lastClaimGeneration, 1);
+    assert.equal(
+      kernel.lastClaimTenantIds,
+      undefined,
+      'claim tenant scope is DB-owned, never caller-supplied',
+    );
     await service.waitForIdle();
     assert.equal(kernel.getRun('run-a')?.state, 'SUCCEEDED');
     assert.equal(kernel.getRun('run-b')?.state, 'PENDING');
@@ -298,6 +376,39 @@ describe('worker plane', () => {
     assert.equal(kernel.getStep('agent-step')?.state, 'RETRY_WAIT');
     await service.stop();
   });
+
+  for (const code of [
+    'COMPLETION_UNKNOWN',
+    'COMPLETION_UNCONFIRMED',
+    'EVIDENCE_PERSIST_FAILED',
+  ] as const) {
+    it(`does not fail a step after EffectBroker transfers ownership with ${code}`, async () => {
+      const kernel = new FakeKernel();
+      kernel.addRun(`run-${code}`, 'tenant-a', [{ id: `step-${code}`, kind: 'agent' }]);
+      const service = new WorkerService(
+        definition,
+        identity,
+        auth,
+        new InMemoryWorkerRegistry(),
+        kernel,
+        {
+          execute: async () => {
+            throw new WorkerExecutionError('effect ownership transferred to reconciliation', {
+              code,
+              retryable: true,
+            });
+          },
+        },
+        { leaseTtlMs: 1_000, workerHeartbeatMs: 1_000 },
+      );
+
+      await service.start();
+      assert.equal(await service.pollOnce(), true);
+      await service.waitForIdle();
+      assert.equal(kernel.failureCount, 0);
+      await service.stop();
+    });
+  }
 
   it('refuses to initialize the registry when sandbox readiness fails', async () => {
     const kernel = new FakeKernel();
@@ -504,9 +615,9 @@ describe('worker plane', () => {
     kernel.addRun('run-hb', 'tenant-a', [{ id: 'hb-step', kind: 'agent' }]);
     const registry = new InMemoryWorkerRegistry();
     const originalHeartbeat = registry.heartbeat.bind(registry);
-    registry.heartbeat = async (workerId, generation, activeSteps) => {
+    registry.heartbeat = async (workerId, generation, activeSteps, claimSecret) => {
       kernel.lastHeartbeatActiveSteps = activeSteps;
-      return originalHeartbeat(workerId, generation, activeSteps);
+      return originalHeartbeat(workerId, generation, activeSteps, claimSecret);
     };
     const service = new WorkerService(
       definition,
@@ -800,5 +911,229 @@ describe('worker plane', () => {
       !before || after.timestamp >= before.timestamp,
       'metric point must be recorded for swallowed claim error',
     );
+  });
+});
+
+/**
+ * WP-04 shutdown bounding, WP-05 claim-loop liveness, WP-10 post-claim kernel
+ * observability, and WP-11 owned-resource release.
+ */
+describe('worker plane recovery and observability', () => {
+  /** Resolves when `signal` aborts (a cooperative handler). */
+  function abortable(signal: AbortSignal): Promise<void> {
+    return new Promise((resolve) => {
+      if (signal.aborted) {
+        resolve();
+        return;
+      }
+      signal.addEventListener('abort', () => resolve(), { once: true });
+    });
+  }
+
+  /** Captures WP-10 lease-path failure logs and their metric labels. */
+  function leasePathFailures(): {
+    entries: Array<{ message: string; failurePath?: unknown }>;
+    off: () => void;
+  } {
+    const entries: Array<{ message: string; failurePath?: unknown }> = [];
+    const onLog = (entry: {
+      component: string;
+      message: string;
+      context?: Record<string, unknown>;
+    }) => {
+      if (entry.component === 'WorkerService' && entry.message.includes('lease path')) {
+        entries.push({ message: entry.message, failurePath: entry.context?.failurePath });
+      }
+    };
+    getGlobalLogger().onLog(onLog);
+    return { entries, off: () => getGlobalLogger().offLog(onLog) };
+  }
+
+  it('bounds the stop() drain when a step handler ignores its abort signal (WP-04)', async () => {
+    const kernel = new FakeKernel();
+    kernel.addRun('run-drain', 'tenant-a', [{ id: 'drain-step', kind: 'agent' }]);
+    let release!: () => void;
+    const stuck = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      {
+        execute: async () => {
+          // Ignores context.signal entirely: shutdown must not wait for it.
+          await stuck;
+          return {};
+        },
+      },
+      { leaseTtlMs: 1_000, workerHeartbeatMs: 60_000, drainTimeoutMs: 150 },
+    );
+    await service.start();
+    assert.equal(await service.pollOnce(), true);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    try {
+      const outcome = await Promise.race([
+        service.stop().then(() => 'drained' as const),
+        new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 2_000)),
+      ]);
+      assert.equal(outcome, 'drained', 'stop() must not wait for a non-cooperative handler');
+    } finally {
+      // Let the abandoned step finish so its lease-heartbeat interval is cleared.
+      release();
+      await service.waitForIdle();
+    }
+  });
+
+  it('clears readiness when the claim path fails and refreshes it after recovery (WP-05)', async () => {
+    const kernel = new FakeKernel();
+    let claims = 0;
+    const original = kernel.claimNextStep.bind(kernel);
+    kernel.claimNextStep = async (request) => {
+      claims += 1;
+      if (claims === 1) throw new Error('claim authority unavailable');
+      return original(request);
+    };
+    kernel.addRun('run-liveness', 'tenant-a', [{ id: 'liveness-step', kind: 'agent' }]);
+    const health: boolean[] = [];
+    const service = new WorkerService(
+      definition,
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      kernel,
+      { execute: async () => ({ ok: true }) },
+      {
+        leaseTtlMs: 1_000,
+        workerHeartbeatMs: 60_000,
+        pollIntervalMs: 10,
+        onClaimLoopHealth: (healthy) => health.push(healthy),
+      },
+    );
+    const ac = new AbortController();
+    const running = service.run(ac.signal);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    ac.abort();
+    await running;
+    assert.equal(health[0], false, 'a failed claim must clear readiness');
+    assert.equal(health[health.length - 1], true, 'a recovered claim must refresh readiness');
+  });
+
+  const leasePathScenarios: Array<{
+    label: string;
+    runId: string;
+    stepId: string;
+    breakKernel: (kernel: FakeKernel) => void;
+    execute: StepExecutor['execute'];
+  }> = [
+    {
+      label: 'heartbeat_rejected',
+      runId: 'run-hb-rejected',
+      stepId: 'hb-rejected-step',
+      breakKernel: (kernel) => {
+        kernel.heartbeatStep = async () => {
+          throw new Error('heartbeat rpc unavailable');
+        };
+      },
+      execute: async (_step, context) => {
+        await abortable(context.signal);
+        return {};
+      },
+    },
+    {
+      label: 'heartbeat_null',
+      runId: 'run-hb-null',
+      stepId: 'hb-null-step',
+      breakKernel: (kernel) => {
+        kernel.heartbeatStep = async () => null;
+      },
+      execute: async (_step, context) => {
+        await abortable(context.signal);
+        return {};
+      },
+    },
+    {
+      label: 'complete_rejected',
+      runId: 'run-complete-rejected',
+      stepId: 'complete-rejected-step',
+      breakKernel: (kernel) => {
+        kernel.completeStep = async () => null;
+      },
+      execute: async () => ({ ok: true }),
+    },
+    {
+      label: 'fail_rejected',
+      runId: 'run-fail-rejected',
+      stepId: 'fail-rejected-step',
+      breakKernel: (kernel) => {
+        kernel.failStep = async () => null;
+      },
+      execute: async () => {
+        throw new WorkerExecutionError('executor failed', {
+          code: 'EXECUTOR_FAILED',
+          retryable: false,
+        });
+      },
+    },
+  ];
+
+  for (const scenario of leasePathScenarios) {
+    it(`reports a ${scenario.label} post-claim kernel failure instead of aborting silently (WP-10)`, async () => {
+      const kernel = new FakeKernel();
+      scenario.breakKernel(kernel);
+      kernel.addRun(scenario.runId, 'tenant-a', [{ id: scenario.stepId, kind: 'agent' }]);
+      const logs = leasePathFailures();
+      const service = new WorkerService(
+        definition,
+        identity,
+        auth,
+        new InMemoryWorkerRegistry(),
+        kernel,
+        { execute: scenario.execute },
+        { leaseTtlMs: 300, workerHeartbeatMs: 60_000 },
+      );
+      try {
+        await service.start();
+        assert.equal(await service.pollOnce(), true);
+        await service.waitForIdle();
+      } finally {
+        logs.off();
+        await service.stop();
+      }
+      assert.equal(
+        logs.entries[0]?.failurePath,
+        scenario.label,
+        'lease-path failure must be logged with its path',
+      );
+      assert.equal(
+        getGlobalMetrics().getLatest('worker.step.lease_path_failures')?.labels.failure_path,
+        scenario.label,
+        'lease-path failure must be visible as a metric',
+      );
+    });
+  }
+
+  it('releases owned resources from stop() even after a failed start (WP-11)', async () => {
+    let disposed = 0;
+    const service = new WorkerService(
+      { ...definition, capabilities: ['agent', 'tool'] },
+      identity,
+      auth,
+      new InMemoryWorkerRegistry(),
+      new FakeKernel(),
+      { execute: async () => ({}) },
+      {
+        onDispose: async () => {
+          disposed += 1;
+        },
+      },
+    );
+    await assert.rejects(service.start(), /not authorized/);
+    await service.stop();
+    assert.equal(disposed, 1, 'stop() must release the verified pool owned by the service');
+    await service.stop();
+    assert.equal(disposed, 1, 'release must happen exactly once');
   });
 });

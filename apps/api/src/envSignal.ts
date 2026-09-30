@@ -43,11 +43,11 @@
  * Returns true if the current process is running in a production context.
  * Use this for any production-only side-effects (warn, gate, log).
  */
-export function isProductionEnv(): boolean {
+export function isProductionEnv(environment: NodeJS.ProcessEnv = process.env): boolean {
   return (
-    process.env.NODE_ENV === 'production' ||
-    process.env.COMMANDER_ENV === 'production' ||
-    process.env.COMMANDER_ENV === 'prod'
+    environment.NODE_ENV === 'production' ||
+    environment.COMMANDER_ENV === 'production' ||
+    environment.COMMANDER_ENV === 'prod'
   );
 }
 

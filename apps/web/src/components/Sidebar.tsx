@@ -24,6 +24,8 @@ import {
   Key,
   Briefcase,
   Activity,
+  SquareActivity,
+  ClipboardCheck,
 } from 'lucide-react';
 import type { AuthUser } from '../api';
 import { t } from '../i18n';
@@ -34,6 +36,7 @@ const NAV_ITEMS = [
   { to: '/agents', icon: Users, label: t('nav.agents') },
   { to: '/missions', icon: Kanban, label: t('nav.missions') },
   { to: '/execution', icon: ScrollText, label: t('nav.execution') },
+  { to: '/actions', icon: SquareActivity, label: 'Actions' },
   { to: '/memory', icon: BookOpen, label: t('nav.memory') },
   { to: '/governance', icon: ShieldCheck, label: t('nav.governance') },
   { to: '/workflows', icon: Workflow, label: t('nav.workflows') },
@@ -41,6 +44,7 @@ const NAV_ITEMS = [
   { to: '/dlq', icon: AlertTriangle, label: t('nav.dlq') },
   { to: '/security', icon: Fingerprint, label: t('nav.security') },
   { to: '/slo', icon: Activity, label: t('nav.slo') },
+  { to: '/research', icon: ClipboardCheck, label: t('nav.research') },
   { to: '/audit', icon: ClipboardList, label: t('nav.audit') },
   { to: '/knowledge', icon: Library, label: t('nav.knowledge') },
   { to: '/eval', icon: FlaskConical, label: 'Eval' },
@@ -68,7 +72,7 @@ export function Sidebar({ currentUser, onLogout }: SidebarProps) {
         </div>
         <div>
           <div className="sidebar-title">Commander</div>
-          <div className="sidebar-ver">v0 · War Room</div>
+          <div className="sidebar-ver">v0.2 · alpha · non-production</div>
         </div>
       </div>
 
@@ -114,7 +118,7 @@ export function Sidebar({ currentUser, onLogout }: SidebarProps) {
         ) : (
           <>
             <div className="sidebar-status" />
-            <span>All systems nominal</span>
+            <span>Alpha preview · data source unverified</span>
           </>
         )}
       </div>

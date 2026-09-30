@@ -56,12 +56,16 @@ import {
   createVerifiedPostgresPool,
   type CapabilityAuthority,
 } from '@commander/kernel';
+import { ACTION_GATEWAY_POLICY_ID, evaluateActionGatewayPolicy } from '@commander/contracts';
+import {
+  ActionAdapterRegistry,
+  parseKubernetesDeploymentDestination,
+} from '@commander/action-adapters';
+import {
+  createActionAdapterEffectExecutor,
+  createProductionAdapterRegistry,
+} from './actionAdapterExecutor.js';
 import { InMemoryTicketAdapter } from './ticketAdapter.js';
-import { evaluateManifestGatewayEffect, findAdapterManifest } from '@commander/contracts';
-
-// Lazy import to avoid circular dependency at module load time
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type Pool = { connect(): Promise<any>; end(): Promise<void> };
 
 /** Thrown when a worker is not scoped to an explicit, non-empty tenant list. */
 export const WORKER_TENANT_SCOPE_REQUIRED = 'WORKER_TENANT_SCOPE_REQUIRED';
@@ -73,17 +77,18 @@ export const OWNER_DATABASE_ROLE_REJECTED = 'OWNER_DATABASE_ROLE_REJECTED';
 export const CAPABILITY_DURABLE_STORES_REQUIRED = 'CAPABILITY_DURABLE_STORES_REQUIRED';
 
 export const EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV = 'COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM';
-
 export const EVIDENCE_SIGNING_KEY_ID_ENV = 'COMMANDER_EVIDENCE_SIGNING_KEY_ID';
+export const EVIDENCE_REPOSITORY_REQUIRED = 'EVIDENCE_REPOSITORY_REQUIRED';
 
 export function createWorkerEvidenceSigner(
   env: NodeJS.ProcessEnv = process.env,
-): ConfiguredEvidenceSigner | undefined {
+): ConfiguredEvidenceSigner | null {
   const privateKeyPem = env[EVIDENCE_SIGNING_PRIVATE_KEY_PEM_ENV]?.trim() ?? '';
   const keyId = env[EVIDENCE_SIGNING_KEY_ID_ENV]?.trim() ?? '';
+  const required = env.NODE_ENV === 'production';
   if (!privateKeyPem || !keyId) {
-    if (env.NODE_ENV === 'production') throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
-    return undefined;
+    if (required) throw new Error('EVIDENCE_SIGNING_KEY_REQUIRED');
+    return null;
   }
   return createEvidenceSigner({ privateKeyPem, keyId });
 }
@@ -218,22 +223,33 @@ export function productionCapabilityBrokerOptions(
   replay: CapabilityAuthority['replayForTenant'];
   revocations: CapabilityAuthority['revocations'];
   requireDurableCapabilityStores: true;
+  requireOperationsReadiness: true;
 } {
   return {
     audience: capability.audience,
     requireRequestBinding: true,
     localWorkerId,
     requireDurableCapabilityStores: true,
+    requireOperationsReadiness: true,
     replay: (tenantId: string) => capability.replayForTenant(tenantId),
     revocations: capability.revocations,
     evidenceSigner,
   };
 }
 
-export async function createWorkerService(): Promise<WorkerService> {
+/** WP-05: hooks the entrypoint supplies to the worker it loads. */
+export interface WorkerBootstrapOptions {
+  /** Claim-loop liveness signal (readiness) forwarded to WorkerService. */
+  onClaimLoopHealth?: (healthy: boolean) => void;
+}
+
+export async function createWorkerService(
+  options: WorkerBootstrapOptions = {},
+): Promise<WorkerService> {
   // Fail-closed BEFORE sandbox readiness, DB connect, registration, or polling:
   // a worker without an explicit tenant scope must not start.
   const { tenantIds, schedulerMode } = resolveWorkerTenantScope(process.env);
+  const evidenceSigner = createWorkerEvidenceSigner(process.env);
 
   await createProductionWorkerSandboxReadiness().assertReady();
 
@@ -281,73 +297,92 @@ export async function createWorkerService(): Promise<WorkerService> {
   };
 
   // ── Connect to PostgreSQL ──
-  const pool = createVerifiedPostgresPool({ connectionString: dbUrl, max: maxConcurrency + 5 });
-
-  // Post-connect owner-role gate (current_user) before kernel/broker/poll.
-  {
-    const client = await pool.connect();
-    try {
-      const identityRows = (await client.query('SELECT current_user::text AS role_name')) as {
-        rows: Array<{ role_name?: string }>;
-      };
-      assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
-    } finally {
-      client.release();
-    }
-  }
-
-  // ── Create kernel repository adapter ──
-  // Lazy dynamic import to avoid circular dependency at module load time.
-  // Workers always connect with schedulerMode:false (commander_worker role, no
-  // BYPASSRLS) and carry an explicit tenant scope on every write. Tenant
-  // configuration never grants database authority; scheduler mode is reserved
-  // for the kernel-ops entrypoint.
-  const { PostgresKernelRepository } = (await import('@commander/kernel')) as unknown as {
-    PostgresKernelRepository: new (pool: any, options?: { schedulerMode?: boolean }) => any;
-  };
-  const kernel = new PostgresKernelRepository(pool, { schedulerMode });
-
-  // ── Create registry ──
-  const registry = new PostgresWorkerRegistry(pool);
-
-  // ── Create authenticator ──
-  const authenticator = new ApiKeyWorkerAuthenticator({
-    validTokens: new Set([authToken]),
-    defaultTenantIds: tenantIds,
-    defaultCapabilities: capabilities,
+  const pool = createVerifiedPostgresPool({
+    connectionString: dbUrl,
+    max: maxConcurrency + 5,
   });
 
-  // ── Create shared Effect Broker for external side effects ──
-  // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
-  const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(kernel, workerId);
-
-  // ── Create step executor based on worker kind ──
-  const executor = await createExecutorForKind(
-    workerKind,
-    capabilities,
-    effectBroker,
-    capabilityIssuer,
-  );
-
-  // ── Build worker service ──
-  const service = new WorkerService(
-    definition,
-    identity,
-    authenticator,
-    registry,
-    kernel,
-    executor,
+  try {
+    // Post-connect owner-role gate (current_user) before kernel/broker/poll.
     {
-      leaseTtlMs: parseInt(process.env.COMMANDER_WORKER_LEASE_TTL_MS ?? '30000', 10),
-      workerHeartbeatMs: parseInt(process.env.COMMANDER_WORKER_HEARTBEAT_MS ?? '10000', 10),
-      pollIntervalMs: parseInt(process.env.COMMANDER_WORKER_POLL_MS ?? '250', 10),
-      sandboxReadiness: createProductionWorkerSandboxReadiness(),
-      // Generation is only known after registry.register — bind into broker affinity.
-      onRegistered: (worker) => effectBroker.bindLocalWorkerGeneration(worker.generation),
-    },
-  );
+      const client = await pool.connect();
+      try {
+        const identityRows = (await client.query('SELECT current_user::text AS role_name')) as {
+          rows: Array<{ role_name?: string }>;
+        };
+        assertNonOwnerDatabaseRole(identityRows.rows[0]?.role_name ?? '');
+      } finally {
+        client.release();
+      }
+    }
 
-  return service;
+    // ── Create kernel repository adapter ──
+    // Lazy dynamic import to avoid circular dependency at module load time.
+    // Workers always connect with schedulerMode:false (commander_worker role, no
+    // BYPASSRLS) and carry an explicit tenant scope on every write. Tenant
+    // configuration never grants database authority; scheduler mode is reserved
+    // for the kernel-ops entrypoint.
+    const { PostgresKernelRepository } = (await import('@commander/kernel')) as unknown as {
+      PostgresKernelRepository: new (pool: any, options?: { schedulerMode?: boolean }) => any;
+    };
+    const kernel = new PostgresKernelRepository(pool, { schedulerMode });
+
+    // ── Create registry ──
+    const registry = new PostgresWorkerRegistry(pool);
+
+    // ── Create authenticator ──
+    const authenticator = new ApiKeyWorkerAuthenticator({
+      validTokens: new Set([authToken]),
+      defaultTenantIds: tenantIds,
+      defaultCapabilities: capabilities,
+    });
+
+    // ── Create shared Effect Broker for external side effects ──
+    // Task 3 factory — never CapabilityTokenIssuer.generate() for production authority.
+    const { broker: effectBroker, issuer: capabilityIssuer } = createEffectBroker(
+      kernel,
+      workerId,
+      process.env,
+      evidenceSigner,
+    );
+
+    // ── Create step executor based on worker kind ──
+    const executor = await createExecutorForKind(
+      workerKind,
+      capabilities,
+      effectBroker,
+      capabilityIssuer,
+    );
+
+    // ── Build worker service ──
+    const service = new WorkerService(
+      definition,
+      identity,
+      authenticator,
+      registry,
+      kernel,
+      executor,
+      {
+        leaseTtlMs: parseInt(process.env.COMMANDER_WORKER_LEASE_TTL_MS ?? '30000', 10),
+        workerHeartbeatMs: parseInt(process.env.COMMANDER_WORKER_HEARTBEAT_MS ?? '10000', 10),
+        pollIntervalMs: parseInt(process.env.COMMANDER_WORKER_POLL_MS ?? '250', 10),
+        sandboxReadiness: createProductionWorkerSandboxReadiness(),
+        // WP-05: readiness follows the claim loop, not a one-shot startup latch.
+        onClaimLoopHealth: options.onClaimLoopHealth,
+        // WP-11: the verified pool belongs to the service lifecycle; stop() releases it.
+        onDispose: () => pool.end(),
+        // Generation is only known after registry.register — bind into broker affinity.
+        onRegistered: (worker) => effectBroker.bindLocalWorkerGeneration(worker.generation),
+      },
+    );
+
+    return service;
+  } catch (error) {
+    // WP-11: a failure after the pool was created must not leak its connections —
+    // the service never exists to dispose them.
+    await pool.end();
+    throw error;
+  }
 }
 
 /**
@@ -390,15 +425,17 @@ function denyActionGateway(reason: string) {
     effect: 'deny' as const,
     decisionId: 'action-gateway-deny-default',
     reason,
-    policySnapshotId: 'action-gateway-mvp-v1',
+    policySnapshotId: ACTION_GATEWAY_POLICY_ID,
   };
 }
 
 /**
- * Mirrors apps/api `evaluateAction` for policySnapshotId `action-gateway-mvp-v1`.
- * Worker re-runs this so a sealed metadata.decision alone cannot authorize effects.
+ * Worker re-runs the shared policy so a sealed metadata.decision alone cannot authorize effects.
  */
-export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
+export function evaluateActionGatewayMvpV1(
+  envelope: Record<string, unknown>,
+  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
+): {
   effect: 'allow' | 'deny' | 'require_approval';
   decisionId: string;
   reason: string;
@@ -407,58 +444,52 @@ export function evaluateActionGatewayMvpV1(envelope: Record<string, unknown>): {
   const effectType = envelope.effectType;
   const tool = envelope.tool;
   const destination = envelope.destination;
+  const adapter = typeof effectType === 'string' ? actionAdapters.resolve(effectType) : null;
   if (
-    typeof effectType === 'string' &&
-    typeof tool === 'string' &&
+    adapter &&
+    (effectType === adapter.descriptor.effectType ||
+      effectType === adapter.descriptor.compensationEffectType) &&
+    tool === adapter.descriptor.toolName &&
     typeof destination === 'string'
   ) {
-    const manifest = findAdapterManifest({ effectType, toolName: tool, destination });
-    if (manifest && evaluateManifestGatewayEffect(manifest, destination) === 'require_approval') {
-      return {
-        effect: 'require_approval',
-        decisionId: 'action-gateway-require_approval',
-        reason: `The registered ${manifest.adapterId} destination requires a human decision.`,
-        policySnapshotId: 'action-gateway-mvp-v1',
-      };
+    try {
+      if (adapter.descriptor.adapterId === 'kubernetes.deployment.rollback') {
+        parseKubernetesDeploymentDestination(destination);
+      }
+      const { effect, decisionId, reason, policySnapshotId } = evaluateActionGatewayPolicy({
+        effectType,
+        tool,
+        destination,
+      });
+      return { effect, decisionId, reason, policySnapshotId };
+    } catch {
+      // Invalid Kubernetes destinations remain deny-by-default.
     }
   }
-  const isCreate = effectType === 'demo.ticket.create' && tool === 'ticket.create';
-  const isCompensation =
-    effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate';
-  if (!isCreate && !isCompensation) {
+  const isDemo =
+    (effectType === 'demo.ticket.create' && tool === 'ticket.create') ||
+    (effectType === 'compensate.demo.ticket.create' && tool === 'ticket.compensate');
+  if (!isDemo || typeof destination !== 'string') {
     return {
       effect: 'deny',
       decisionId: 'action-gateway-deny',
-      reason: `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
-      policySnapshotId: 'action-gateway-mvp-v1',
+      reason: isDemo
+        ? `Destination '${String(destination)}' is not registered by the Action Gateway.`
+        : `Effect type '${String(effectType)}' is not registered by the Action Gateway.`,
+      policySnapshotId: ACTION_GATEWAY_POLICY_ID,
     };
   }
-  if (destination === 'demo://tickets') {
-    return {
-      effect: 'allow',
-      decisionId: 'action-gateway-allow',
-      reason: 'The registered demo ticket destination is allowed.',
-      policySnapshotId: 'action-gateway-mvp-v1',
-    };
-  }
-  if (destination === 'demo://tickets/approval') {
-    return {
-      effect: 'require_approval',
-      decisionId: 'action-gateway-require_approval',
-      reason: 'The approval demo destination requires a human decision.',
-      policySnapshotId: 'action-gateway-mvp-v1',
-    };
-  }
-  return {
-    effect: 'deny',
-    decisionId: 'action-gateway-deny',
-    reason: `Destination '${String(destination)}' is not registered by the Action Gateway.`,
-    policySnapshotId: 'action-gateway-mvp-v1',
-  };
+  const { effect, decisionId, reason, policySnapshotId } = evaluateActionGatewayPolicy({
+    effectType,
+    tool,
+    destination,
+  });
+  return { effect, decisionId, reason, policySnapshotId };
 }
 
 export function createWorkerPolicyEvaluator(
   kernelOrEnv: ActionGatewayPolicyKernel | NodeJS.ProcessEnv = process.env,
+  actionAdapters: ActionAdapterRegistry = ActionAdapterRegistry.empty(),
 ): PolicyEvaluator {
   const kernel = isActionGatewayPolicyKernel(kernelOrEnv) ? kernelOrEnv : null;
   return {
@@ -586,22 +617,27 @@ export function createWorkerPolicyEvaluator(
         }
         // Defense in depth: re-evaluate mvp-v1 against the bound envelope so a
         // forged or post-create-mutated metadata.decision cannot authorize work.
-        if (metadata.policySnapshotId === 'action-gateway-mvp-v1') {
-          const fresh = evaluateActionGatewayMvpV1(actionEnvelope);
+        let revalidatedDecisionId: string | null = null;
+        if (metadata.policySnapshotId === ACTION_GATEWAY_POLICY_ID) {
+          const fresh = evaluateActionGatewayMvpV1(actionEnvelope, actionAdapters);
           if (
             fresh.effect !== actionDecision.effect ||
             fresh.decisionId !== actionDecision.decisionId
           ) {
             return denyActionGateway('ACTION_GATEWAY_DECISION_REVALIDATION_FAILED');
           }
+          revalidatedDecisionId = fresh.decisionId;
         }
         if (actionDecision.effect === 'allow') {
-          if (actionDecision.decisionId !== 'action-gateway-allow') {
+          if (
+            actionDecision.decisionId !== 'action-gateway-allow' &&
+            actionDecision.decisionId !== revalidatedDecisionId
+          ) {
             return denyActionGateway('ACTION_GATEWAY_DECISION_INVALID');
           }
           return {
             effect: 'allow' as const,
-            decisionId: actionDecision.decisionId,
+            decisionId: String(actionDecision.decisionId),
             reason: actionDecision.reason,
             policySnapshotId: String(metadata.policySnapshotId),
           };
@@ -610,7 +646,8 @@ export function createWorkerPolicyEvaluator(
           return denyActionGateway('ACTION_GATEWAY_POLICY_DENIED');
         }
         if (
-          actionDecision.decisionId !== 'action-gateway-require_approval' ||
+          (actionDecision.decisionId !== 'action-gateway-require_approval' &&
+            actionDecision.decisionId !== revalidatedDecisionId) ||
           typeof metadata.interactionId !== 'string'
         ) {
           return denyActionGateway('ACTION_GATEWAY_APPROVAL_MISSING');
@@ -660,11 +697,15 @@ export function withDefaultLlmAllowlist(
   _env: NodeJS.ProcessEnv = process.env,
 ): EffectKernelPort {
   return {
+    getOperationsReadiness: kernel.getOperationsReadiness?.bind(kernel),
     admitEffect: (input) => kernel.admitEffect(input),
     completeEffect: (effectId, tenantId, lease, response, actor) =>
       kernel.completeEffect(effectId, tenantId, lease, response, actor),
     completeEffectWithEvidence: kernel.completeEffectWithEvidence?.bind(kernel),
+    failEffectWithEvidence: kernel.failEffectWithEvidence?.bind(kernel),
     markEffectCompletionUnknown: kernel.markEffectCompletionUnknown?.bind(kernel),
+    listEffectsForRun: kernel.listEffectsForRun?.bind(kernel),
+    listEvents: kernel.listEvents?.bind(kernel),
     incrementQuota: kernel.incrementQuota?.bind(kernel),
     getQuota: kernel.getQuota?.bind(kernel),
     isActionAllowed: async (tenantId, action) => {
@@ -674,7 +715,10 @@ export function withDefaultLlmAllowlist(
   };
 }
 
-export function createWorkerEffectExecutor(tickets = new InMemoryTicketAdapter()): EffectExecutor {
+export function createWorkerEffectExecutor(
+  tickets = new InMemoryTicketAdapter(),
+  actionAdapterExecutor?: EffectExecutor,
+): EffectExecutor {
   return {
     execute: async (input) => {
       if (input.type.startsWith('llm.')) {
@@ -745,6 +789,9 @@ export function createWorkerEffectExecutor(tickets = new InMemoryTicketAdapter()
           status: ticket.status,
         };
       }
+      if (actionAdapterExecutor) {
+        return actionAdapterExecutor.execute(input);
+      }
       throw new Error(`UNREGISTERED_EFFECT_TYPE: ${input.type}`);
     },
   };
@@ -761,6 +808,7 @@ export function createEffectBroker(
   kernel: AllowlistKernel & KernelRepository,
   localWorkerId: string,
   env: NodeJS.ProcessEnv = process.env,
+  evidenceSigner: ConfiguredEvidenceSigner | null = null,
 ): {
   broker: EffectBroker;
   issuer: CapabilityTokenIssuer;
@@ -768,11 +816,15 @@ export function createEffectBroker(
 } {
   const capability = createCapabilityAuthority(env, kernel);
   assertDurableCapabilityStores(capability, kernel);
+  const signer = evidenceSigner ?? createWorkerEvidenceSigner(env);
 
-  const policy = createWorkerPolicyEvaluator(kernel);
+  const actionAdapters = createProductionAdapterRegistry(undefined, env);
+  const policy = createWorkerPolicyEvaluator(kernel, actionAdapters);
   const effectKernel = withDefaultLlmAllowlist(kernel);
-  const executor = createWorkerEffectExecutor();
-  const evidenceSigner = createWorkerEvidenceSigner(env);
+  const executor = createWorkerEffectExecutor(
+    undefined,
+    createActionAdapterEffectExecutor(actionAdapters),
+  );
 
   // Console audit sink. Production should forward to a durable audit store.
   const audit: AuditSink = {
@@ -790,24 +842,33 @@ export function createEffectBroker(
     },
   };
 
-  const brokerOptions = productionCapabilityBrokerOptions(
-    capability,
-    localWorkerId,
-    evidenceSigner,
-  );
+  const brokerOptions = productionCapabilityBrokerOptions(capability, localWorkerId);
+  let evidenceOptions: Pick<EffectBrokerOptions, 'evidenceSigner' | 'requireEvidencePersistence'> =
+    {};
+  if (signer) {
+    if (
+      !effectKernel.completeEffectWithEvidence ||
+      !effectKernel.failEffectWithEvidence ||
+      !effectKernel.listEffectsForRun ||
+      !effectKernel.listEvents
+    ) {
+      throw new Error(EVIDENCE_REPOSITORY_REQUIRED);
+    }
+    evidenceOptions = {
+      evidenceSigner: signer,
+      requireEvidencePersistence: true,
+    };
+  }
 
   // WS2 §4: request binding is mandatory. The EffectBroker constructor
   // enforces this in production (throws REQUEST_BINDING_DISABLED_IN_PROD).
   // Verifier already embeds durable tenant-scoped replay + revocations;
   // options still carry non-optional store handles from the factory.
-  const broker = new EffectBroker(
-    capability.verifier,
-    policy,
-    effectKernel,
-    executor,
-    audit,
-    brokerOptions,
-  );
+  const broker = new EffectBroker(capability.verifier, policy, effectKernel, executor, audit, {
+    ...brokerOptions,
+    ...evidenceOptions,
+    idempotencyKeyPolicy: 'derive',
+  });
   return { broker, issuer: capability.issuer, capability };
 }
 

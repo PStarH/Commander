@@ -8,6 +8,7 @@ import type { ExecutionTrace, TraceEvent } from '../../../src/runtime/types';
 
 function llm(spanId: string, ts: string, output: unknown): TraceEvent {
   return {
+    id: spanId,
     spanId,
     parentSpanId: undefined,
     traceId: 't1',
@@ -16,12 +17,13 @@ function llm(spanId: string, ts: string, output: unknown): TraceEvent {
     type: 'llm_call',
     timestamp: ts,
     durationMs: 100,
-    data: { output, modelInfo: { provider: 'openai', model: 'gpt-4o' } },
+    data: { output, modelInfo: { provider: 'openai', model: 'gpt-4o', tier: 'standard' } },
   };
 }
 
-function tool(spanId: string, parent: string, ts: string, name: string): TraceEvent {
+function tool(spanId: string, parent: string | undefined, ts: string, name: string): TraceEvent {
   return {
+    id: spanId,
     spanId,
     parentSpanId: parent,
     traceId: 't1',

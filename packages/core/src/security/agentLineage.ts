@@ -35,6 +35,9 @@ import { getCurrentTenantId } from '../runtime/tenantContext';
 import { getMetricsCollector } from '../runtime/metricsCollector';
 import { createTenantAwareSingleton } from '../runtime/tenantAwareSingleton';
 import { recordSinkFailure } from '../observability/sinkFailureCounter';
+import { createRequire } from 'node:module';
+
+const nodeRequire = createRequire(import.meta.url);
 
 // ============================================================================
 // Public types
@@ -315,7 +318,7 @@ export class AgentLineage {
       // Cascade-revoke capability token if one was issued
       if (node.capabilityTokenJti) {
         try {
-          const { getCapabilityTokenIssuer } = require('./capabilityToken');
+          const { getCapabilityTokenIssuer } = nodeRequire('./capabilityToken');
           getCapabilityTokenIssuer().revoke(
             node.capabilityTokenJti,
             `lineage_tree_revoke: ${reason}`,
@@ -342,6 +345,21 @@ export class AgentLineage {
       }
     }
 
+    return count;
+  }
+
+  /**
+   * Resolve a runtime agent identifier to its lineage instance(s) and revoke
+   * each tree. Security alerts carry the agent id, not necessarily the opaque
+   * lineage instance id; treating the id as if it were already a token/instance
+   * made the response callback a log-only no-op.
+   */
+  revokeByAgentId(agentId: string, reason: string): number {
+    const roots = Array.from(this.nodes.values())
+      .filter((node) => node.agentId === agentId && !node.revokedAt)
+      .map((node) => node.instanceId);
+    let count = 0;
+    for (const instanceId of roots) count += this.revokeTree(instanceId, reason);
     return count;
   }
 

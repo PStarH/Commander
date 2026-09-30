@@ -108,11 +108,13 @@ import { ToolCallRetryLoopDetector } from './tool/toolCallRetryLoopDetector';
 import { ToolCallSecurityGate } from './tool/toolCallSecurityGate';
 import { TenantContextResolver } from './tenant/tenantContextResolver';
 import { ReflexionGenerator } from './reflexionGenerator';
+import { compileSchema } from './toolCallValidator';
 import { getGlobalLogger } from '../logging';
 import { getDataRetentionJanitor } from '../storage/dataRetention';
 import { getCostEstimator } from './costEstimator';
 import { ExecutionContext, taskTypeToCategory } from './executionContext';
 import { detectTaskType } from './taskAnalyzer';
+
 // TokenSentinel and CostGuard imports removed — both superseded by
 // UnifiedCostAuthority (UCA). The legacy classes remain as @deprecated
 // thin shells for backward compatibility but are no longer invoked
@@ -144,6 +146,8 @@ export class AgentRuntime implements AgentRuntimeInterface {
   private memory: import('../threeLayerMemory').ThreeLayerMemory | null = null;
   private traceStore: PersistentTraceStore;
   private checkpointer: StateCheckpointer;
+  /** Startup zombie-run recovery scan; awaited before any run is admitted. */
+  private recoverySettled: Promise<import('./serviceInitializer').RecoverySettlement>;
   private dlq: DeadLetterQueue;
   private leaseManager: LeaseManager;
   private reflexionGenerator: ReflexionGenerator = new ReflexionGenerator();
@@ -265,6 +269,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
         getRunHandle: () => this.runContext.runHandle,
         getLedgerCtx: () => this.runContext.ledgerCtx,
         getActiveRuns: () => new Set(this.runLifecycle?.getActiveRuns() ?? []),
+        isRunPaused: (runId) => this.checkpointingPhase?.isPaused(runId) ?? false,
         getPromotedTools: () => this.runContext.promotedTools as Set<string>,
         generateActionId: () => this.generateActionId(),
       },
@@ -273,6 +278,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
 
     // Promote all initialized services to instance fields (preserves the
     // existing AgentRuntimeInterface surface while shrinking the god object).
+    this.recoverySettled = services.recoverySettled;
     this.compactor = services.compactor;
     this.slidingWindow = services.slidingWindow;
     this.reliabilityEngine = services.reliabilityEngine;
@@ -371,6 +377,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getConfig: () => this.config,
       getGovernor: () => this.runContext.governor,
       getRouter: () => this.router,
+      getSmartRouter: () => this.smartRouter,
       getTools: () => this.tools,
       setPromotedTools: (tools: Set<string>) => {
         this.runContext.setPromotedTools(tools);
@@ -411,6 +418,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
       getSlidingWindow: () => this.runContext.slidingWindow,
       getMemory: () => this.memory,
       getCompactor: () => this.compactor,
+      isRunPaused: (runId) => this.checkpointingPhase?.isPaused(runId) ?? false,
       normalizeToolCall: (tc) => normalizeToolCall(tc),
       applyPreToolCallGates: (
         tc,
@@ -702,10 +710,12 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
     if (!tool.compiledSchema && def.inputSchema) {
       try {
-        const { compileSchema } = require('./toolCallValidator');
         tool.compiledSchema = compileSchema(def.inputSchema);
-      } catch {
-        /* best-effort */
+      } catch (err) {
+        getGlobalLogger().warn('AgentRuntime', 'Failed to compile tool input schema', {
+          toolName: name,
+          error: (err as Error)?.message,
+        });
       }
     }
     this.tools.set(name, tool);
@@ -823,6 +833,10 @@ export class AgentRuntime implements AgentRuntimeInterface {
    * Enforces maxConcurrency via semaphore (GAP-07).
    */
   async execute(ctx: AgentExecutionContext): Promise<AgentExecutionResult> {
+    // Fail closed: do not admit work until the startup recovery scan has
+    // settled. Admitting a run while leftover EXECUTING runs are still being
+    // fenced/compensated would let a reclaimed run race the scan.
+    await this.assertRecoverySettled();
     let tenantId = getGlobalTenantProvider().getCurrentTenantId() ?? ctx.tenantId ?? undefined;
     let tenantCfg = tenantId ? this.tenantProvider.getTenantConfig(tenantId) : undefined;
 
@@ -907,23 +921,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
     }
 
     try {
-      init = await this.runInitializer.initialize(ctx);
+      init = await runWithTenant(tenantId, () => this.runInitializer.initialize(ctx));
       tenantId = init.tenantId;
       tenantCfg = init.tenantCfg;
       this.runContext.setRunHandle(init.runHandle);
 
       let execResult: AgentExecutionResult | undefined;
       try {
-        execResult = await runWithTenant(
-          getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
-          async () => {
-            const setup = await this.preLoopSetup.prepare(ctx, init);
-            if ('status' in setup) {
-              return setup;
-            }
-            return await this.agentLoopOrchestrator.run(ctx, init, setup);
-          },
-        );
+        execResult = await runWithTenant(tenantId, async () => {
+          const setup = await this.preLoopSetup.prepare(ctx, init);
+          if ('status' in setup) {
+            return setup;
+          }
+          return await this.agentLoopOrchestrator.run(ctx, init, setup);
+        });
 
         // GAP-08: Call scheduler abortRun for failed runs — triggers compensation
         // for any recorded compensable actions and releases the scheduler-level lease.
@@ -936,7 +947,7 @@ export class AgentRuntime implements AgentRuntimeInterface {
               runId: init.runId,
               leaseToken: handle.leaseToken,
               fencingEpoch: handle.fencingEpoch,
-              tenantId: getGlobalTenantProvider().getCurrentTenantId() ?? undefined,
+              tenantId,
               reason: execResult.error ?? 'execution failed',
             });
           } catch (e) {
@@ -959,17 +970,19 @@ export class AgentRuntime implements AgentRuntimeInterface {
         // Cleanup is delegated to FinallyCleanupHandler (circuit breaker release,
         // run lifecycle, tenant/lane/concurrency slot release, tracer completion,
         // SLO check, OTel export, SOP auto-export, store flush, tenant restore).
-        await this.finallyCleanupHandler.cleanup({
-          runId: init.runId,
-          ctx,
-          circuitReleased: init.circuitReleased,
-          tenantCfg,
-          tenantId,
-          currentLane: init.currentLane,
-          startTime: init.startTime,
-          execResult,
-          tenantOverrides,
-        });
+        await runWithTenant(tenantId, () =>
+          this.finallyCleanupHandler.cleanup({
+            runId: init.runId,
+            ctx,
+            circuitReleased: init.circuitReleased,
+            tenantCfg,
+            tenantId,
+            currentLane: init.currentLane,
+            startTime: init.startTime,
+            execResult,
+            tenantOverrides,
+          }),
+        );
       }
     } finally {
       this.runContext.exit();
@@ -1167,6 +1180,9 @@ export class AgentRuntime implements AgentRuntimeInterface {
    *  Returns null if the checkpoint is not found or the lease was lost.
    */
   async resume(runId: string, tenantId?: string): Promise<RunRecoveryResult | null> {
+    // Same fail-closed gate as execute(): resuming is exactly the operation that
+    // must not race the startup zombie scan.
+    await this.assertRecoverySettled();
     const result = await this.checkpointingPhase.resume(runId, tenantId);
     if (result && result.status === 'recovered') {
       getGlobalLogger().info('AgentRuntime', 'Run recovered', {
@@ -1176,6 +1192,20 @@ export class AgentRuntime implements AgentRuntimeInterface {
       });
     }
     return result;
+  }
+
+  /**
+   * Await the startup recovery scan and fail closed if it did not succeed.
+   * A failed scan means leftover runs from a previous process are in an unknown
+   * state; admitting or resuming runs then risks double execution.
+   */
+  private async assertRecoverySettled(): Promise<void> {
+    const settlement = await this.recoverySettled;
+    if (!settlement.ok) {
+      throw new Error(
+        `Startup recovery scan failed; refusing to admit runs: ${settlement.error.message}`,
+      );
+    }
   }
 
   /** List all runs that have recoverable checkpoints (non-terminal phases). */

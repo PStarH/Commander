@@ -206,6 +206,11 @@ export class ModelPerformanceStore {
     return this.loadedRecords.length + this.pendingRecords.length;
   }
 
+  /** Directory this store persists outcomes to (tenant-qualified when bound). */
+  getBaseDir(): string {
+    return this.config.baseDir;
+  }
+
   // --------------------------------------------------------------------------
   // Private
   // --------------------------------------------------------------------------
@@ -241,12 +246,46 @@ export class ModelPerformanceStore {
 // ============================================================================
 
 import { createTenantAwareSingleton } from './tenantAwareSingleton';
+import { tenantBucketOrThrow, tenantPathSegment } from './tenantContext';
 
-const storeSingleton = createTenantAwareSingleton(() => new ModelPerformanceStore(), {});
+/**
+ * RCH-07 / IP-01: `createTenantAwareSingleton` partitions the *instances* per
+ * tenant, but a zero-argument factory cannot tell which tenant is being
+ * constructed, so every tenant's store resolved to the same on-disk directory
+ * and samples crossed the tenant boundary on disk. Unlike IntentLog and
+ * FileChangeTracker this class has no tenant parameter, so the accessor resolves
+ * the tenant and the factory derives the directory from it, mirroring
+ * `deadLetterQueueSingleton`.
+ *
+ * Returns `undefined` for the implicit `__default__` bucket so the legacy
+ * single-tenant default (the relative `.commander_samples`) is preserved
+ * verbatim.
+ */
+let constructingTenantId: string | undefined;
+
+function resolveBaseDir(tenantId: string | undefined): string | undefined {
+  if (!tenantId || tenantId === '__default__') return undefined;
+  return path.join(process.cwd(), '.commander_samples', tenantPathSegment(tenantId));
+}
+
+const storeSingleton = createTenantAwareSingleton(
+  () => {
+    const baseDir = resolveBaseDir(constructingTenantId);
+    return new ModelPerformanceStore(baseDir ? { baseDir } : undefined);
+  },
+  // Clear the per-instance auto-flush timer when a tenant instance is reset or evicted.
+  { dispose: (store) => store.dispose() },
+);
 
 /** Get the global ModelPerformanceStore (single-tenant) or tenant-scoped (multi-tenant). */
-export function getModelPerformanceStore(): ModelPerformanceStore {
-  return storeSingleton.get();
+export function getModelPerformanceStore(tenantId?: string): ModelPerformanceStore {
+  const resolvedTenantId = tenantId || tenantBucketOrThrow();
+  constructingTenantId = resolvedTenantId;
+  try {
+    return storeSingleton.getForTenant(resolvedTenantId);
+  } finally {
+    constructingTenantId = undefined;
+  }
 }
 
 /** Reset the model performance store singleton (for test isolation). */

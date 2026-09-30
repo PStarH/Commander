@@ -3,110 +3,47 @@
  * Kept separate so cell-smoke and compensation-e2e do not import each other.
  */
 
-import { createPrivateKey, generateKeyPairSync } from 'node:crypto';
+import { createPublicKey, generateKeyPairSync } from 'node:crypto';
 import { execSync } from 'node:child_process';
+import {
+  generateCellDatabaseTlsMaterials,
+  KERNEL_TLS_COMPOSE_FILE,
+} from './kernel-database-tls.js';
 
 export const CELL_E2E_TENANT = 'cell-smoke-tenant';
 
-/** Ephemeral Ed25519 materials for cell worker/adapter authority (fail-closed compose). */
-export function generateCellCapabilityMaterials(): {
-  COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: string;
-  COMMANDER_CAPABILITY_KEY_ID: string;
-  COMMANDER_CAPABILITY_JWKS_JSON: string;
-} {
-  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
-  const pem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-  const jwk = publicKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
-  const keyId = `cell-${Date.now().toString(36)}`;
-  return {
-    COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: pem,
-    COMMANDER_CAPABILITY_KEY_ID: keyId,
-    COMMANDER_CAPABILITY_JWKS_JSON: JSON.stringify({
-      keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
-    }),
-  };
-}
-
-export interface CellEvidenceSigningMaterials {
-  COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: string;
-  COMMANDER_EVIDENCE_SIGNING_KEY_ID: string;
-  COMMANDER_EVIDENCE_JWKS_JSON: string;
-}
-
-/**
- * Build cell-only evidence signing materials and its matching public JWKS.
- * CI may provide the private key and key ID; derive the public key from that
- * same private key so compose verification cannot silently use a different key.
- */
-export function generateCellEvidenceSigningMaterials(
-  privateKeyPem = process.env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM,
-  keyId = process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID,
-): CellEvidenceSigningMaterials {
-  let privateKey: ReturnType<typeof createPrivateKey>;
-  let resolvedPrivateKeyPem = privateKeyPem;
-  let resolvedKeyId = keyId;
-
-  if (privateKeyPem && keyId) {
-    privateKey = createPrivateKey(privateKeyPem);
-  } else {
-    const generated = generateKeyPairSync('ed25519');
-    privateKey = generated.privateKey;
-    resolvedPrivateKeyPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
-    resolvedKeyId = keyId ?? `cell-evidence-${Date.now().toString(36)}`;
-  }
-
-  const jwk = privateKey.export({ format: 'jwk' }) as {
-    kty: string;
-    crv: string;
-    x: string;
-  };
-  if (!resolvedPrivateKeyPem || !resolvedKeyId) {
-    throw new Error('cell evidence signing materials are incomplete');
-  }
-
-  return {
-    COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: resolvedPrivateKeyPem,
-    COMMANDER_EVIDENCE_SIGNING_KEY_ID: resolvedKeyId,
-    COMMANDER_EVIDENCE_JWKS_JSON: JSON.stringify({
-      keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: resolvedKeyId }],
-    }),
-  };
-}
-
-const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
-const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
-
-export const COMPOSE_CONFIG_ENV: Record<string, string> = {
-  POSTGRES_PASSWORD: 'ci-cell-smoke',
-  COMMANDER_API_KEY: 'ci-cell-smoke-api-key',
-  COMMANDER_MASTER_KEY: 'ci-cell-smoke-master-key-32chars!!',
-  JWT_SECRET: 'ci-cell-smoke-jwt-secret',
-  // API legacy HMAC only — not worker/adapter authority.
-  COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
-  COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',
-  COMMANDER_WORKER_AUTH_TOKEN: 'ci-cell-smoke-worker-token',
-  COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
-  COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
-  ...CELL_CAPABILITY_MATERIALS,
-  ...CELL_EVIDENCE_SIGNING_MATERIALS,
-};
-
 /** GID of docker.sock as seen inside a container (Colima often uses 991). */
-export function resolveDockerGid(): string {
-  if (process.env.DOCKER_GID && /^\d+$/.test(process.env.DOCKER_GID)) {
-    return process.env.DOCKER_GID;
+export function resolveDockerGid(
+  options: {
+    env?: NodeJS.ProcessEnv;
+    platform?: NodeJS.Platform;
+    execute?: (command: string) => string;
+  } = {},
+): string {
+  const env = options.env ?? process.env;
+  const platform = options.platform ?? process.platform;
+  const execute =
+    options.execute ??
+    ((command: string) =>
+      execSync(command, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }).trim());
+  if (env.DOCKER_GID && /^\d+$/.test(env.DOCKER_GID)) {
+    return env.DOCKER_GID;
   }
   try {
-    const out = execSync(
+    const out = execute(
       'docker run --rm -v /var/run/docker.sock:/var/run/docker.sock alpine stat -c %g /var/run/docker.sock',
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).trim();
     if (/^\d+$/.test(out)) return out;
   } catch {
     /* fall through */
   }
+  const statCommand =
+    platform === 'darwin' ? 'stat -f %g /var/run/docker.sock' : 'stat -c %g /var/run/docker.sock';
   try {
-    const out = execSync('stat -c %g /var/run/docker.sock', { encoding: 'utf-8' }).trim();
+    const out = execute(statCommand).trim();
     if (/^\d+$/.test(out)) return out;
   } catch {
     /* fall through */
@@ -114,8 +51,109 @@ export function resolveDockerGid(): string {
   return '0';
 }
 
-/** In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG). */
-const CELL_POSTGRES_URL = `postgres://commander:${COMPOSE_CONFIG_ENV.POSTGRES_PASSWORD}@postgres:5432/commander`;
+/** Ephemeral Ed25519 materials for cell worker/adapter authority (fail-closed compose). */
+export function generateCellCapabilityMaterials(): {
+  COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: string;
+  COMMANDER_CAPABILITY_KEY_ID: string;
+  COMMANDER_CAPABILITY_JWKS_JSON: string;
+} {
+  const pem = process.env.COMMANDER_CAPABILITY_PRIVATE_KEY_PEM?.trim();
+  const keyId =
+    process.env.COMMANDER_CAPABILITY_KEY_ID?.trim() ?? `cell-${Date.now().toString(36)}`;
+  if (pem) {
+    const pub = createPublicKey(pem);
+    const jwk = pub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
+    return {
+      COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: pem,
+      COMMANDER_CAPABILITY_KEY_ID: keyId,
+      COMMANDER_CAPABILITY_JWKS_JSON:
+        process.env.COMMANDER_CAPABILITY_JWKS_JSON?.trim() ??
+        JSON.stringify({
+          keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+        }),
+    };
+  }
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const generatedPem = privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
+  const jwk = publicKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
+  return {
+    COMMANDER_CAPABILITY_PRIVATE_KEY_PEM: generatedPem,
+    COMMANDER_CAPABILITY_KEY_ID: keyId,
+    COMMANDER_CAPABILITY_JWKS_JSON: JSON.stringify({
+      keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+    }),
+  };
+}
+
+/** Ephemeral Ed25519 material for the worker's retained-evidence signer. */
+export function generateCellEvidenceSigningMaterials(): {
+  COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: string;
+  COMMANDER_EVIDENCE_SIGNING_KEY_ID: string;
+  COMMANDER_EVIDENCE_JWKS_JSON: string;
+} {
+  const pem = process.env.COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM?.trim();
+  const keyId =
+    process.env.COMMANDER_EVIDENCE_SIGNING_KEY_ID?.trim() ??
+    `cell-evidence-${Date.now().toString(36)}`;
+  if (pem) {
+    const pub = createPublicKey(pem);
+    const jwk = pub.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
+    return {
+      COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: pem,
+      COMMANDER_EVIDENCE_SIGNING_KEY_ID: keyId,
+      COMMANDER_EVIDENCE_JWKS_JSON:
+        process.env.COMMANDER_EVIDENCE_JWKS_JSON?.trim() ??
+        JSON.stringify({
+          keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+        }),
+    };
+  }
+  const { privateKey, publicKey } = generateKeyPairSync('ed25519');
+  const jwk = publicKey.export({ format: 'jwk' }) as { kty: string; crv: string; x: string };
+  return {
+    COMMANDER_EVIDENCE_SIGNING_PRIVATE_KEY_PEM: privateKey
+      .export({ type: 'pkcs8', format: 'pem' })
+      .toString(),
+    COMMANDER_EVIDENCE_SIGNING_KEY_ID: keyId,
+    COMMANDER_EVIDENCE_JWKS_JSON: JSON.stringify({
+      keys: [{ kty: jwk.kty, crv: jwk.crv, x: jwk.x, kid: keyId }],
+    }),
+  };
+}
+
+const CELL_CAPABILITY_MATERIALS = generateCellCapabilityMaterials();
+const CELL_EVIDENCE_SIGNING_MATERIALS = generateCellEvidenceSigningMaterials();
+const CELL_DATABASE_TLS_MATERIALS = generateCellDatabaseTlsMaterials();
+
+export const COMPOSE_CONFIG_ENV: Record<string, string> = {
+  POSTGRES_PASSWORD: 'ci-cell-smoke',
+  COMMANDER_API_KEY: process.env.COMMANDER_API_KEY ?? 'ci-cell-smoke-api-key',
+  COMMANDER_MASTER_KEY: 'ci-cell-smoke-master-key-32chars!!',
+  JWT_SECRET: 'ci-cell-smoke-jwt-secret-at-least-32-characters',
+  ADMIN_PASSWORD: 'ci-cell-smoke-admin-password',
+  // API legacy HMAC only — not worker/adapter authority.
+  COMMANDER_CAPABILITY_TOKEN_KEY: 'ci-cell-smoke-capability-key',
+  COMMANDER_INTEGRITY_KEY: 'ci-cell-smoke-integrity-key',
+  COMMANDER_AUDIT_CHAIN_KEY: 'ci-cell-smoke-audit-chain-key-32chars!!',
+  COMMANDER_WORKER_AUTH_TOKEN: 'ci-cell-smoke-worker-token',
+  COMMANDER_WORKER_TENANTS: CELL_E2E_TENANT,
+  COMMANDER_WORKER_ALLOWED_TENANTS: CELL_E2E_TENANT,
+  ...CELL_CAPABILITY_MATERIALS,
+  ...CELL_EVIDENCE_SIGNING_MATERIALS,
+  ...CELL_DATABASE_TLS_MATERIALS,
+};
+
+/**
+ * In-compose Postgres DSN — must override any host DATABASE_URL (e.g. :5433 test PG).
+ *
+ * Role and transport are both fail-closed:
+ *  - `commander_app` (bench password from deploy/docker/postgres-init.bench.sql).
+ *    `validateAuthDatabaseUrl` rejects every other role, so a superuser DSN
+ *    aborts startup with AUTH_DATABASE_ROLE_INVALID.
+ *  - `sslmode=verify-full`, the only mode `createVerifiedPostgresPool` accepts.
+ */
+const CELL_POSTGRES_URL =
+  'postgres://commander_app:commander_app@postgres:5432/commander?sslmode=verify-full';
 
 export const CELL_COMPOSE_ENV: Record<string, string> = {
   ...COMPOSE_CONFIG_ENV,
@@ -133,8 +171,7 @@ export const CELL_COMPOSE_ENV: Record<string, string> = {
   DOCKER_GID: resolveDockerGid(),
 };
 
-export const COMPOSE_CMD =
-  'docker compose -f docker-compose.yml -f docker-compose.cell.yml --profile cell';
+export const COMPOSE_CMD = `docker compose -f docker-compose.yml -f docker-compose.cell.yml -f ${KERNEL_TLS_COMPOSE_FILE} --profile cell`;
 
 function composeExec(script: string, service: string): boolean {
   try {
@@ -167,13 +204,16 @@ export function ensureCellSandboxImage(): void {
   execSync('docker pull node:22-slim', { stdio: 'pipe' });
 }
 
-export function tryComposeCellUp(): { ok: boolean; error?: string } {
+export function tryComposeCellUp(
+  composeCommand = COMPOSE_CMD,
+  fixtureEnv: Record<string, string> = {},
+): { ok: boolean; error?: string } {
   // CELL_COMPOSE_ENV must win over host DATABASE_URL (local :5433 probes).
-  const env = { ...process.env, ...CELL_COMPOSE_ENV };
+  const env = { ...process.env, ...CELL_COMPOSE_ENV, ...fixtureEnv };
   try {
     ensureCellSandboxImage();
     try {
-      execSync(`${COMPOSE_CMD} down -v --remove-orphans`, {
+      execSync(`${composeCommand} down -v --remove-orphans`, {
         cwd: process.cwd(),
         env,
         stdio: 'pipe',
@@ -192,7 +232,7 @@ export function tryComposeCellUp(): { ok: boolean; error?: string } {
     } catch {
       /* ignore */
     }
-    execSync(`${COMPOSE_CMD} up -d --build`, {
+    execSync(`${composeCommand} up -d --build`, {
       cwd: process.cwd(),
       env,
       stdio: 'pipe',

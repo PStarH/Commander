@@ -5,7 +5,6 @@ import * as path from 'path';
 import {
   createDriver,
   createDriverSoft,
-  probeSqlite,
   probePostgres,
   PostgresDriver,
   InMemoryDriver,
@@ -16,6 +15,7 @@ import {
   type TableSchema,
   type ColumnSpec,
 } from '../../src/storage';
+import { sqliteDurabilityGate } from './sqliteTestGate';
 
 interface Probe {
   id: string;
@@ -98,12 +98,17 @@ async function runScenario(driver: PersistentDriver): Promise<void> {
   expect(t.get('will_rollback')).toBeNull();
 }
 
+// Functional probe (open/create/write/read/close), not just a module-load check.
+// Throws when COMMANDER_REQUIRE_SQLITE_TESTS is set and the binding is unusable,
+// so a release-gate run cannot pass by skipping the durability case below.
+const sqliteAvailable = sqliteDurabilityGate().available;
+
 describe('PersistentDriver — cross-driver equivalence', () => {
   it('InMemoryDriver satisfies the contract', async () => {
     await runScenario(new InMemoryDriver());
   });
 
-  it.skipIf(!probeSqlite().available)('SqliteDriver satisfies the contract', async () => {
+  it.skipIf(!sqliteAvailable)('SqliteDriver satisfies the contract', async () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'eq-sqlite-'));
     let driver: SqliteDriver | undefined;
     try {

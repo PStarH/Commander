@@ -10,7 +10,7 @@
  * What actually ENFORCES the P0 north star (do not confuse with this probe):
  *   - packages/kernel postgres.integration.test.ts — workerGeneration fencing
  *   - packages/worker-plane e2e/gateway-kernel-worker.e2e.test.ts — reclaim + zombie complete rejected
- *   - pnpm p0:full-loop + .github/workflows/p0-kernel-e2e.yml — Gateway dist → worker → SUCCEEDED
+ *   - pnpm p0:full-loop:tls + .github/workflows/p0-kernel-e2e.yml — Gateway dist → worker → SUCCEEDED
  *
  * Usage:
  *   pnpm p0:kernel-e2e
@@ -66,10 +66,31 @@ async function http(
   return { status: res.status, json, text };
 }
 
+const SAFE_LOG_KEYS = new Set([
+  'status',
+  'state',
+  'lastState',
+  'timeoutMs',
+  'hasApiKey',
+  'REQUIRE_TERMINAL',
+]);
+
 function log(step: string, detail?: unknown): void {
-  const suffix =
-    detail === undefined ? '' : ` ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`;
-  console.log(`[p0-kernel-e2e] ${step}${suffix}`);
+  const parts: string[] = [];
+  if (detail && typeof detail === 'object') {
+    for (const [key, value] of Object.entries(detail as Record<string, unknown>)) {
+      if (!SAFE_LOG_KEYS.has(key)) continue;
+      if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') {
+        continue;
+      }
+      parts.push(
+        `${key}=${String(value)
+          .replace(/[\r\n]/g, ' ')
+          .slice(0, 80)}`,
+      );
+    }
+  }
+  console.log(`[p0-kernel-e2e] ${step}${parts.length > 0 ? ` ${parts.join(' ')}` : ''}`);
 }
 
 async function main(): Promise<void> {
@@ -150,7 +171,7 @@ async function main(): Promise<void> {
 
   log('TIMEOUT waiting for terminal state', { lastState, timeoutMs: TIMEOUT_MS });
   log(
-    'NOT OBSERVED HERE: terminal state (see packages/kernel + worker-plane e2e and pnpm p0:full-loop for fencing/reclaim proof)',
+    'NOT OBSERVED HERE: terminal state (see packages/kernel + worker-plane e2e and pnpm p0:full-loop:tls for fencing/reclaim proof)',
   );
   if (REQUIRE_TERMINAL) {
     process.exit(3);

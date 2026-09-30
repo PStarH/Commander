@@ -69,8 +69,6 @@ export interface CompensationMetadata {
   tags: string[];
   /** True if the handler itself is idempotent on retry. */
   idempotent: boolean;
-  /** Optional planner hint: which arg field names carry the resource identifier. */
-  resourceKeyFields?: string[];
 }
 
 // ============================================================================

@@ -1,6 +1,11 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Shield, Save, AlertTriangle, RotateCcw, Check } from 'lucide-react';
-import { fetchOIDCSettings, updateOIDCSettings, type OIDCSettingsPayload } from '../api';
+import {
+  fetchOIDCSettings,
+  updateOIDCSettings,
+  type OIDCConfig,
+  type OIDCSettingsPayload,
+} from '../api';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Card } from '../components/ui/Card';
@@ -9,20 +14,67 @@ const DEFAULT_ROLES = {
   admin: ['admin'],
   operator: ['operator', 'developer'],
   roleClaim: 'roles',
+  tenantClaim: 'tenant_id',
 };
 
-const EMPTY_FORM: OIDCSettingsPayload = {
+/**
+ * Editable form shape: every field is a present string so inputs stay
+ * controlled. `defaultTenantId` is the empty string when no fallback tenant is
+ * configured, and is omitted from the payload in that case.
+ */
+export interface OIDCSettingsForm {
+  enabled: boolean;
+  issuer: string;
+  clientId: string;
+  roleClaim: string;
+  adminRoles: string[];
+  operatorRoles: string[];
+  tenantClaim: string;
+  defaultTenantId: string;
+  redirectUri: string;
+}
+
+/**
+ * Map a loaded configuration onto the form. Loaded values are carried over
+ * verbatim — explicitly EMPTY role arrays mean "no role maps here" and must not
+ * be repopulated with defaults, or a GET/unchanged-PUT round-trip rewrites the
+ * saved configuration.
+ */
+export function oidcConfigToForm(config: OIDCConfig, webOrigin: string): OIDCSettingsForm {
+  return {
+    enabled: config.enabled,
+    issuer: config.issuer ?? '',
+    clientId: config.clientId ?? '',
+    roleClaim: config.roleClaim || DEFAULT_ROLES.roleClaim,
+    adminRoles: config.adminRoles ?? [...DEFAULT_ROLES.admin],
+    operatorRoles: config.operatorRoles ?? [...DEFAULT_ROLES.operator],
+    tenantClaim: config.tenantClaim || DEFAULT_ROLES.tenantClaim,
+    defaultTenantId: config.defaultTenantId ?? '',
+    redirectUri: config.redirectUri ?? `${webOrigin}/login`,
+  };
+}
+
+/** Build the save payload, dropping an unset default tenant instead of sending ''. */
+export function oidcFormToPayload(form: OIDCSettingsForm): OIDCSettingsPayload {
+  const { defaultTenantId, ...rest } = form;
+  const trimmed = defaultTenantId.trim();
+  return trimmed ? { ...rest, defaultTenantId: trimmed } : rest;
+}
+
+const EMPTY_FORM: OIDCSettingsForm = {
   enabled: false,
   issuer: '',
   clientId: '',
   roleClaim: DEFAULT_ROLES.roleClaim,
   adminRoles: [...DEFAULT_ROLES.admin],
   operatorRoles: [...DEFAULT_ROLES.operator],
+  tenantClaim: DEFAULT_ROLES.tenantClaim,
+  defaultTenantId: '',
   redirectUri: `${window.location.origin}/login`,
 };
 
 export function OIDCSettingsPage() {
-  const [form, setForm] = useState<OIDCSettingsPayload>(EMPTY_FORM);
+  const [form, setForm] = useState<OIDCSettingsForm>(EMPTY_FORM);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -33,17 +85,7 @@ export function OIDCSettingsPage() {
     setError(null);
     try {
       const config = await fetchOIDCSettings();
-      setForm({
-        enabled: config.enabled,
-        issuer: config.issuer ?? '',
-        clientId: config.clientId ?? '',
-        roleClaim: config.roleClaim || DEFAULT_ROLES.roleClaim,
-        adminRoles: config.adminRoles?.length ? config.adminRoles : [...DEFAULT_ROLES.admin],
-        operatorRoles: config.operatorRoles?.length
-          ? config.operatorRoles
-          : [...DEFAULT_ROLES.operator],
-        redirectUri: config.redirectUri ?? `${window.location.origin}/login`,
-      });
+      setForm(oidcConfigToForm(config, window.location.origin));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load OIDC settings');
     } finally {
@@ -55,10 +97,7 @@ export function OIDCSettingsPage() {
     loadSettings();
   }, []);
 
-  function updateField<K extends keyof OIDCSettingsPayload>(
-    field: K,
-    value: OIDCSettingsPayload[K],
-  ) {
+  function updateField<K extends keyof OIDCSettingsForm>(field: K, value: OIDCSettingsForm[K]) {
     setForm((f) => ({ ...f, [field]: value }));
     setSaved(false);
   }
@@ -77,7 +116,7 @@ export function OIDCSettingsPage() {
     setError(null);
     setSaved(false);
     try {
-      await updateOIDCSettings(form);
+      await updateOIDCSettings(oidcFormToPayload(form));
       setSaved(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save OIDC settings');
@@ -198,6 +237,35 @@ export function OIDCSettingsPage() {
               />
               <span className="field-hint">
                 The ID token claim containing the user&apos;s role list.
+              </span>
+            </div>
+
+            <div className="form-row">
+              <label htmlFor="oidc-tenant-claim">Tenant Claim</label>
+              <Input
+                id="oidc-tenant-claim"
+                type="text"
+                value={form.tenantClaim}
+                onChange={(e) => updateField('tenantClaim', e.target.value)}
+                placeholder="tenant_id"
+                required
+              />
+              <span className="field-hint">
+                The ID token claim containing the user&apos;s tenant identifier.
+              </span>
+            </div>
+
+            <div className="form-row">
+              <label htmlFor="oidc-default-tenant-id">Default Tenant ID</label>
+              <Input
+                id="oidc-default-tenant-id"
+                type="text"
+                value={form.defaultTenantId}
+                onChange={(e) => updateField('defaultTenantId', e.target.value)}
+                placeholder="leave empty unless tokens omit the tenant claim"
+              />
+              <span className="field-hint">
+                Fallback tenant used when the ID token carries no tenant claim.
               </span>
             </div>
 

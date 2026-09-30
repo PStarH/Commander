@@ -4,7 +4,14 @@ import {
 } from '@commander/contracts';
 import { AdapterExecutionError } from '@commander/effect-broker';
 import type { EffectRemoteOutcome } from '@commander/effect-broker';
-import { assertOkResponse, adapterFetch, readJsonResponse, type FetchFn } from '../http.js';
+import {
+  assertOkResponse,
+  adapterFetch,
+  readJsonResponse,
+  requireArrayResponse,
+  requireObjectResponse,
+  type FetchFn,
+} from '../http.js';
 import type {
   ActionAdapter,
   AdapterCompensateInput,
@@ -21,8 +28,20 @@ interface ServiceNowIncident {
   correlation_id: string;
 }
 
-interface ServiceNowListResponse {
-  result: ServiceNowIncident[];
+function requireIncident(value: unknown, label: string): ServiceNowIncident {
+  const record = requireObjectResponse<Record<string, unknown>>(value, label);
+  if (
+    typeof record.sys_id !== 'string' ||
+    typeof record.number !== 'string' ||
+    typeof record.state !== 'string'
+  ) {
+    throw new AdapterExecutionError(`${label} returned an incomplete incident body`, {
+      code: 'ADAPTER_RESPONSE_BODY_INVALID',
+      commitState: 'UNKNOWN',
+      retryMode: 'QUERY_FIRST',
+    });
+  }
+  return record as unknown as ServiceNowIncident;
 }
 
 export interface ServiceNowIncidentCreateAdapterOptions {
@@ -63,13 +82,22 @@ export function createServiceNowIncidentCreateAdapter(
       signal: input.signal,
     });
     if (response.status === 404) {
-      return { status: 'UNKNOWN' };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     }
     await assertOkResponse(response, 'ServiceNow get incident');
-    const payload = await readJsonResponse<{ result: ServiceNowIncident }>(response);
-    const incident = payload.result;
+    const payload = requireObjectResponse<{ result: unknown }>(
+      await readJsonResponse(response),
+      'ServiceNow get incident',
+    );
+    const incident = requireIncident(payload.result, 'ServiceNow get incident');
     return {
-      status: 'COMPLETED',
+      status: 'APPLIED',
       response: {
         sysId: incident.sys_id,
         number: incident.number,
@@ -100,22 +128,42 @@ export function createServiceNowIncidentCreateAdapter(
       signal: input.signal,
     });
     await assertOkResponse(response, 'ServiceNow query incident');
-    const payload = await readJsonResponse<ServiceNowListResponse>(response);
-    const incidents = payload.result ?? [];
+    const payload = requireObjectResponse<{ result?: unknown }>(
+      await readJsonResponse(response),
+      'ServiceNow query incident',
+    );
+    const incidents = requireArrayResponse(payload.result ?? [], 'ServiceNow query incident').map(
+      (entry) => requireIncident(entry, 'ServiceNow query incident'),
+    );
     if (incidents.length === 0) {
-      return { incidents, outcome: { status: 'UNKNOWN' } };
+      return {
+        incidents,
+        outcome: {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        },
+      };
     }
     if (incidents.length > 1) {
       return {
         incidents,
-        outcome: { status: 'UNKNOWN' },
+        outcome: {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        },
       };
     }
     const incident = incidents[0]!;
     return {
       incidents,
       outcome: {
-        status: 'COMPLETED',
+        status: 'APPLIED',
         response: {
           sysId: incident.sys_id,
           number: incident.number,
@@ -175,15 +223,26 @@ export function createServiceNowIncidentCreateAdapter(
         signal: input.signal,
       });
       await assertOkResponse(response, 'ServiceNow create incident');
-      const payload = await readJsonResponse<{ result: ServiceNowIncident }>(response);
-      const incident = payload.result;
+      const payload = requireObjectResponse<{ result: unknown }>(
+        await readJsonResponse(response),
+        'ServiceNow create incident',
+      );
+      const incident = requireIncident(payload.result, 'ServiceNow create incident');
       return { sysId: incident.sys_id, number: incident.number, state: incident.state };
     },
 
     async queryOutcome(input: AdapterQueryInput): Promise<EffectRemoteOutcome> {
       const correlationId = servicenowCorrelationId(input.tenantId, input.idempotencyKey);
       const result = await queryByCorrelation(input, correlationId);
-      return result.outcome ?? { status: 'UNKNOWN' };
+      return (
+        result.outcome ?? {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        }
+      );
     },
 
     async compensate(input: AdapterCompensateInput): Promise<Record<string, unknown>> {
@@ -225,35 +284,60 @@ export function createServiceNowIncidentCreateAdapter(
         signal: input.signal,
       });
       await assertOkResponse(response, 'ServiceNow compensate incident');
-      const payload = await readJsonResponse<{ result: ServiceNowIncident }>(response);
-      const incident = payload.result;
+      const payload = requireObjectResponse<{ result: unknown }>(
+        await readJsonResponse(response),
+        'ServiceNow compensate incident',
+      );
+      const incident = requireIncident(payload.result, 'ServiceNow compensate incident');
       return { sysId: incident.sys_id, state: incident.state };
     },
 
     async queryCompensationOutcome(
       input: AdapterQueryInput & { compensationResponse?: Record<string, unknown> },
     ): Promise<EffectRemoteOutcome> {
+      // The kernel's governed compensation request nests the forward receipt at
+      // request.forwardResponse and the registry passes that request through
+      // unchanged; compensationResponse is only an optional direct-call extra.
+      // Reading only the top level made every reconciliation return UNKNOWN.
+      const forward = input.request.forwardResponse;
+      const forwardSysId =
+        forward !== null && typeof forward === 'object' && !Array.isArray(forward)
+          ? (forward as Record<string, unknown>).sysId
+          : undefined;
       const sysId = String(
         input.compensationResponse?.sysId ??
+          forwardSysId ??
           input.request.sysId ??
           input.request.forwardSysId ??
           '',
       );
       if (!sysId) {
-        return { status: 'UNKNOWN' };
+        return {
+          status: 'UNKNOWN',
+          error: {
+            code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+            message: 'Remote outcome is not yet provable',
+          },
+        };
       }
       const outcome = await queryBySysId(input, sysId);
-      if (outcome.status !== 'COMPLETED') {
+      if (outcome.status !== 'APPLIED') {
         return outcome;
       }
       const targetState = String(input.request.expectedState ?? '7');
       if (outcome.response?.state === targetState) {
         return {
-          status: 'COMPLETED',
+          status: 'APPLIED',
           response: { sysId: outcome.response.sysId, state: outcome.response.state },
         };
       }
-      return { status: 'UNKNOWN' };
+      return {
+        status: 'UNKNOWN',
+        error: {
+          code: 'RECONCILE_OUTCOME_NOT_YET_VISIBLE',
+          message: 'Remote outcome is not yet provable',
+        },
+      };
     },
   };
 }

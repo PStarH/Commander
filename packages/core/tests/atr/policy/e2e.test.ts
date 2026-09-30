@@ -10,8 +10,8 @@
  *   1. beginRun → schedule → commit succeeds for an allow path
  *   2. beginRun → schedule → deny → abortRun → compensation runs
  *   3. Policy decision is recorded in audit log
- *   4. Cache works across iterations
- *   5. Fencing epoch bump invalidates cache
+ *   4. A repeated evaluation is re-derived (no authorization cache)
+ *   5. A fencing epoch bump is re-evaluated, not replayed
  */
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
@@ -205,7 +205,9 @@ describe('E2E: agent + GitHub adapter + PolicyHook', () => {
     assert.equal(events[0].context?.runId, handle.runId);
   });
 
-  it('cache: second evaluate with same input returns cached decision', () => {
+  // AP-02: the authorization-result cache was deleted, so an identical second
+  // evaluation must be a fresh engine decision, not a replayed one.
+  it('freshness: second evaluate with same input is re-derived', () => {
     const handle = stack.scheduler.beginRun({
       runId: 'e2e-cache',
       goal: 'cache test',
@@ -229,11 +231,11 @@ describe('E2E: agent + GitHub adapter + PolicyHook', () => {
     };
     const d1 = policy.evaluate(buildPolicyInput(args));
     const d2 = policy.evaluate(buildPolicyInput(args));
-    assert.equal(d1.decisionId, d2.decisionId);
-    assert.equal(d2.cached, true);
+    assert.notEqual(d1.decisionId, d2.decisionId);
+    assert.equal(d2.cached, false);
   });
 
-  it('fencing epoch bump invalidates cache', () => {
+  it('fencing epoch bump is re-evaluated, not served from a cache', () => {
     const handle1 = stack.scheduler.beginRun({
       runId: 'e2e-fence-1',
       goal: 'fence 1',
@@ -255,8 +257,7 @@ describe('E2E: agent + GitHub adapter + PolicyHook', () => {
       args: { repo: 'o/r', number: 1 },
       stepNumber: 1,
     });
-    policy.evaluate(input1);
-    const before = policy.getStats();
+    const first = policy.evaluate(input1);
     const newEpoch = handle1.fencingEpoch + 1;
     const handle2 = { ...handle1, runId: 'e2e-fence-2', fencingEpoch: newEpoch };
     const input2 = {
@@ -266,8 +267,6 @@ describe('E2E: agent + GitHub adapter + PolicyHook', () => {
     };
     const d = policy.evaluate(input2);
     assert.equal(d.cached, false);
-    const after = policy.getStats();
-    assert.ok(after.cacheSize >= 1);
-    void before;
+    assert.notEqual(d.decisionId, first.decisionId);
   });
 });

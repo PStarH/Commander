@@ -3,6 +3,10 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 
 const cellCompose = readFileSync(new URL('../docker-compose.cell.yml', import.meta.url), 'utf8');
+const kernelTlsCompose = readFileSync(
+  new URL('../docker-compose.kernel-tls.yml', import.meta.url),
+  'utf8',
+);
 const ciWorkflow = readFileSync(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8');
 const p0Workflow = readFileSync(
   new URL('../.github/workflows/p0-kernel-e2e.yml', import.meta.url),
@@ -67,7 +71,13 @@ describe('cell PostgreSQL TLS configuration', () => {
   for (const consumer of tlsConsumers) {
     it(`${consumer} uses verify-full with the fixture CA and pinned server SPKI`, () => {
       const service = serviceBlock(consumer);
-      assert.match(service, /postgres:\/\/[^\s]+\?sslmode=verify-full/);
+      const dsnSource = consumer === 'adapter-ops' ? kernelTlsCompose : service;
+      assert.match(
+        dsnSource,
+        consumer === 'adapter-ops'
+          ? /postgres:\/\/commander_adapter_ops:[^\s]+\?sslmode=verify-full/
+          : /postgres:\/\/[^\s]+\?sslmode=verify-full/,
+      );
       assert.match(
         service,
         /COMMANDER_DATABASE_TLS_CA_FILE=\/run\/commander\/postgres-tls\/ca\.crt/,

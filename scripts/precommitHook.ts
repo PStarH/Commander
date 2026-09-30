@@ -31,9 +31,9 @@
 
 import { reportSilentFailure } from '../packages/core/src/silentFailureReporter';
 import { execFileSync } from 'node:child_process';
+import { createRequire } from 'node:module';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { formattingBaseline } from './scannerFormattingBaseline.js';
 import {
   enumerateHighWarnings,
   evaluateIndexedWarnings,
@@ -72,8 +72,8 @@ const SCANNER_MODULE_PATH = path.join(
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 function getStagedFiles(): { source: 'git' | 'argv'; files: string[] } {
-  // CI replay: caller passes files via argv.
-  if (process.env.CORE_PRECOMMIT_HOOK === '1' && process.env.GIT_DIR === undefined) {
+  // CI replay explicitly supplies files. Ordinary Git hooks may omit GIT_DIR.
+  if (process.env.CORE_PRECOMMIT_HOOK === '1' && process.argv.length > 2) {
     return { source: 'argv', files: process.argv.slice(2).filter(Boolean) };
   }
   // Git-side invocation: read every staged path that can introduce content.
@@ -120,6 +120,13 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
       name,
       content,
       tools: [],
+      // Pre-scan heuristics must stay enabled. They are the only producer of
+      // the high-severity findings the HEAD baseline in precommitScannerPolicy
+      // exists to compare against; skipping them left enumerateHighWarnings
+      // with no input at all, so a staged process-execution call was admitted.
+      // scanSkillContent already drops its skill-markdown-only backtick
+      // pattern for .ts/.tsx/.js/.cjs/.mjs filenames, which is the narrow
+      // source-file carve-out.
     });
     const blocked = r.warnings.some(
       (w) =>
@@ -155,6 +162,57 @@ async function scanContent(name: string, content: string): Promise<ScanLike> {
 
 // ── Main ─────────────────────────────────────────────────────────────────
 
+// ── Merge-aware baseline helpers ─────────────────────────────────────────
+
+/**
+ * Revisions whose warnings count as pre-existing for this commit. On a merge
+ * commit the result descends from both parents, so findings present in either
+ * parent are inherited rather than introduced. Reads MERGE_HEAD only when it
+ * exists; any failure falls back to HEAD-only baselining. CI argv replay has
+ * no git context and gets an empty baseline (scan everything).
+ */
+export function collectBaselineRevisions(repoRoot: string): string[] {
+  try {
+    const mergeHead = execFileSync('git', ['rev-parse', '--verify', 'MERGE_HEAD'], {
+      cwd: repoRoot,
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return mergeHead ? ['HEAD', mergeHead] : ['HEAD'];
+  } catch {
+    return ['HEAD'];
+  }
+}
+
+/**
+ * Warnings inherited from the baseline revisions: the union of high-severity
+ * findings present in any parent. evaluateIndexedWarnings compares per-
+ * fingerprint counts between staged and baseline, so duplicating entries from
+ * both parents keeps inherited warnings inherited even when the same finding
+ * exists on both sides.
+ */
+export async function collectBaselineWarnings(
+  rel: string,
+  revisions: string[],
+): Promise<ScannerWarning[]> {
+  const warnings: ScannerWarning[] = [];
+  for (const revision of revisions) {
+    const content = readGitBlob(REPO_ROOT, revision, rel);
+    if (content === undefined) continue;
+    const result = await scanContent(rel, content);
+    warnings.push(
+      ...result.warnings.filter(
+        (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
+      ),
+      ...(await enumerateHighWarnings(
+        content,
+        async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
+      )),
+    );
+  }
+  return warnings;
+}
+
 async function runScannerGate(): Promise<void> {
   const staged = getStagedFiles();
   const scannable = staged.files.filter((f) => SCANNABLE_EXT.test(f));
@@ -185,12 +243,6 @@ async function runScannerGate(): Promise<void> {
       continue;
     }
     const stagedResult = await scanContent(rel, content);
-    const headContent = await formattingBaseline(
-      rel,
-      staged.source === 'git' ? readGitBlob(REPO_ROOT, 'HEAD', rel) : undefined,
-      content,
-    );
-    const headResult = headContent === undefined ? undefined : await scanContent(rel, headContent);
     const stagedWarnings = [
       ...stagedResult.warnings.filter(
         (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
@@ -201,17 +253,9 @@ async function runScannerGate(): Promise<void> {
       )),
     ] as ScannerWarning[];
     const headWarnings =
-      headContent === undefined || headResult === undefined
-        ? []
-        : [
-            ...headResult.warnings.filter(
-              (warning) => warning.severity !== 'high' || warning.category.startsWith('malware.'),
-            ),
-            ...(await enumerateHighWarnings(
-              headContent,
-              async (candidate) => (await scanContent(rel, candidate)).warnings as ScannerWarning[],
-            )),
-          ];
+      staged.source === 'git'
+        ? await collectBaselineWarnings(rel, collectBaselineRevisions(REPO_ROOT))
+        : [];
     const policy = evaluateIndexedWarnings(stagedWarnings, headWarnings as ScannerWarning[]);
     for (const warning of policy.inherited) {
       console.log(
@@ -286,6 +330,33 @@ const D25_PATTERNS: readonly D25PatternDef[] = [
     prefix: 'xox*-',
     regex: /\bxox[abprs]-[A-Za-z0-9-]{16,}/g,
     exampleEnvVar: 'SLACK_BOT_TOKEN',
+  },
+  {
+    // The prefix that actually leaked into the public branches. Its absence from
+    // this list was why the local gate stayed green while the CI gate (see
+    // packages/core/tests/security/d25-api-key-grep.test.ts) already had the rule.
+    id: 'mimo-tp',
+    prefix: 'tp-',
+    regex: /\btp-[a-z0-9]{20,}/g,
+    exampleEnvVar: 'MIMO_API_KEY',
+  },
+  {
+    id: 'huggingface-hf',
+    prefix: 'hf_',
+    regex: /\bhf_[A-Za-z0-9]{20,}/g,
+    exampleEnvVar: 'HUGGINGFACE_TOKEN',
+  },
+  {
+    id: 'google-aiza',
+    prefix: 'AIza',
+    regex: /\bAIza[0-9A-Za-z_-]{30,}/g,
+    exampleEnvVar: 'GOOGLE_API_KEY',
+  },
+  {
+    id: 'stripe-live',
+    prefix: 'sk_live_',
+    regex: /\bsk_live_[A-Za-z0-9]{16,}/g,
+    exampleEnvVar: 'STRIPE_SECRET_KEY',
   },
 ];
 
@@ -370,30 +441,47 @@ function runExecPolicySmoke(): void {
   // packages/core as cwd so vitest resolves its config and the test
   // file path is relative to the package root.
   const vitestCwd = path.join(REPO_ROOT, 'packages', 'core');
-  // Resolve the local vitest binary explicitly. `npx vitest` re-resolves
-  // the package from a nested node_modules/.pnpm path that does not exist
-  // in pnpm workspaces (worktree + CI argv-replay), so the smoke test
-  // would always fail with MODULE_NOT_FOUND even though the binary works.
-  const vitestBin = [
-    path.join(vitestCwd, 'node_modules', '.bin', 'vitest'),
-    path.join(REPO_ROOT, 'node_modules', '.bin', 'vitest'),
-  ].find((p) => {
-    try {
-      fs.accessSync(p, fs.constants.X_OK);
-      return true;
-    } catch {
-      return false;
-    }
-  });
-  if (!vitestBin) {
-    throw new Error('precommit ExecPolicy smoke failed — vitest binary not found');
-  }
+  const vitestArgs = ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'];
+  const execOptions = {
+    cwd: vitestCwd,
+    stdio: 'inherit' as const,
+    env: { ...process.env, NODE_ENV: 'test' },
+  };
+
+  // 1. Preferred: `pnpm exec`. The workspace package manager is the intended
+  //    resolver, and `npx` must never be used — it resolved tsx to a doubled
+  //    path in this workspace (see module-a-ci.test.ts, and the same reasoning
+  //    in packages/core/scripts/run-node-tests.mjs).
   try {
-    execFileSync(vitestBin, ['run', EXECPOLICY_TEST_FILE, '--no-cache', '--reporter=default'], {
-      cwd: vitestCwd,
-      stdio: 'inherit',
-      env: { ...process.env, NODE_ENV: 'test' },
-    });
+    execFileSync('pnpm', ['exec', 'vitest', ...vitestArgs], execOptions);
+    console.log('[D3 hook] ExecPolicy smoke green ✅');
+    return;
+  } catch (err) {
+    if ((err as { code?: string }).code !== 'ENOENT') {
+      reportSilentFailure(err, 'precommitHook:335');
+      throw new Error('precommit ExecPolicy smoke failed — see vitest output above');
+    }
+    // ENOENT means `pnpm` could not be executed at all — not that the smoke
+    // found a problem. Falling through keeps the gate honest: it must never
+    // report a policy regression it did not observe.
+  }
+
+  // 2. Fallback: the workspace's own vitest CLI, run with `process.execPath`.
+  //    Valid regardless of how the repo was installed.
+  let vitestCli: string;
+  try {
+    const coreRequire = createRequire(path.join(vitestCwd, 'package.json'));
+    vitestCli = path.join(path.dirname(coreRequire.resolve('vitest/package.json')), 'vitest.mjs');
+  } catch (err) {
+    reportSilentFailure(err, 'precommitHook:vitest-resolve');
+    throw new Error(
+      'precommit ExecPolicy smoke could not run — neither `pnpm` nor the workspace vitest ' +
+        'CLI is executable. Run `pnpm install`.',
+    );
+  }
+
+  try {
+    execFileSync(process.execPath, [vitestCli, ...vitestArgs], execOptions);
     console.log('[D3 hook] ExecPolicy smoke green ✅');
   } catch (err) {
     reportSilentFailure(err, 'precommitHook:335');

@@ -41,6 +41,10 @@ coverage/
 coverage-core/
 
 # CI / Git metadata
+.internal/
+.worktrees/
+.superpowers/
+.omo/
 .github/
 .git/
 .gitignore

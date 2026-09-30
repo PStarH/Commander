@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { EnvAdapterCredentialProvider } from './types.js';
+import { EnvAdapterCredentialProvider, parseKubernetesDeploymentDestination } from './types.js';
 
 describe('EnvAdapterCredentialProvider', () => {
   it('requires cell tenant id at construction', () => {
@@ -18,16 +18,95 @@ describe('EnvAdapterCredentialProvider', () => {
     );
   });
 
-  it('returns github token for matching tenant without logging value', async () => {
+  it('returns github token for matching tenant without logging value', async (t) => {
     const previous = process.env.GITHUB_TOKEN;
     process.env.GITHUB_TOKEN = 'gh-secret-token';
+    // The title claims a logging property; assert it instead of only checking the value.
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((method) =>
+      t.mock.method(console, method),
+    );
     try {
-      const provider = new EnvAdapterCredentialProvider({ cellTenantId: 'tenant-a' });
+      const provider = new EnvAdapterCredentialProvider({
+        cellTenantId: 'tenant-a',
+        githubRepositories: ['octo/repo'],
+      });
       const token = await provider.getGitHubToken('tenant-a', 'github://octo/repo/pulls');
       assert.equal(token, 'gh-secret-token');
+      const logged = spies.flatMap((spy) =>
+        spy.mock.calls.map((call) => JSON.stringify(call.arguments)),
+      );
+      assert.equal(
+        logged.some((line) => line.includes('gh-secret-token')),
+        false,
+        'the credential value must never reach the console',
+      );
     } finally {
       if (previous === undefined) delete process.env.GITHUB_TOKEN;
       else process.env.GITHUB_TOKEN = previous;
+    }
+  });
+
+  it('scopes github tokens to the registered repositories', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: { GITHUB_TOKEN: 'gh-cell-wide-token' },
+      githubRepositories: ['octo/repo'],
+    });
+    assert.equal(
+      await provider.getGitHubToken('tenant-a', 'github://octo/repo/pulls'),
+      'gh-cell-wide-token',
+    );
+    await assert.rejects(
+      () => provider.getGitHubToken('tenant-a', 'github://attacker-org/attacker-repo/pulls'),
+      /GitHub repository is not authorized: attacker-org\/attacker-repo/,
+    );
+  });
+
+  it('denies github tokens when no repository allowlist is configured', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: { GITHUB_TOKEN: 'gh-cell-wide-token' },
+    });
+    await assert.rejects(
+      () => provider.getGitHubToken('tenant-a', 'github://octo/repo/pulls'),
+      /GitHub repository is not authorized/,
+    );
+  });
+
+  it('reads the github repository allowlist from the injected environment', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: {
+        GITHUB_TOKEN: 'gh-cell-wide-token',
+        COMMANDER_GITHUB_REPOSITORIES: 'octo/repo, other/repo',
+      },
+    });
+    assert.equal(
+      await provider.getGitHubToken('tenant-a', 'github://other/repo/pulls'),
+      'gh-cell-wide-token',
+    );
+    await assert.rejects(
+      () => provider.getGitHubToken('tenant-a', 'github://third/repo/pulls'),
+      /GitHub repository is not authorized/,
+    );
+  });
+
+  it('rejects malformed and duplicate github repository registrations', () => {
+    for (const githubRepositories of [
+      ['octo'],
+      ['octo/repo/extra'],
+      [''],
+      ['octo/repo', 'octo/repo'],
+    ]) {
+      assert.throws(
+        () =>
+          new EnvAdapterCredentialProvider({
+            cellTenantId: 'tenant-a',
+            environment: {},
+            githubRepositories,
+          }),
+        /GitHub repository credential registration/,
+      );
     }
   });
 
@@ -65,36 +144,78 @@ describe('EnvAdapterCredentialProvider', () => {
     }
   });
 
-  it('returns Kubernetes credentials only for the configured cluster', async () => {
-    const previous = {
-      cluster: process.env.COMMANDER_KUBERNETES_CLUSTER,
-      server: process.env.COMMANDER_KUBERNETES_SERVER,
-      token: process.env.COMMANDER_KUBERNETES_TOKEN,
-    };
-    process.env.COMMANDER_KUBERNETES_CLUSTER = 'cluster-a';
-    process.env.COMMANDER_KUBERNETES_SERVER = 'https://kube.example';
-    process.env.COMMANDER_KUBERNETES_TOKEN = 'token';
+  it('parses strict Kubernetes deployment destinations', () => {
+    assert.deepEqual(parseKubernetesDeploymentDestination('k8s://kind/commander/deployments/api'), {
+      cluster: 'kind',
+      namespace: 'commander',
+      name: 'api',
+    });
+    assert.throws(
+      () => parseKubernetesDeploymentDestination('k8s://kind/other%2Ftenant/deployments/api'),
+      /Invalid Kubernetes deployment destination/,
+    );
+    assert.throws(
+      () => parseKubernetesDeploymentDestination('k8s://Kind/commander/deployments/api'),
+      /Invalid Kubernetes deployment destination/,
+    );
+  });
+
+  it('isolates Kubernetes tokens by tenant and registered cluster', async () => {
+    const previous = process.env.KIND_BEARER_TOKEN;
+    process.env.KIND_BEARER_TOKEN = 'kind-secret-token';
     try {
-      const provider = new EnvAdapterCredentialProvider({ cellTenantId: 'tenant-a' });
-      const credentials = await provider.getKubernetesCredentials!(
-        'tenant-a',
-        'k8s://cluster-a/team-a/deployments/api',
-      );
-      assert.deepEqual(credentials, {
-        cluster: 'cluster-a',
-        server: 'https://kube.example',
-        token: 'token',
+      const provider = new EnvAdapterCredentialProvider({
+        cellTenantId: 'tenant-a',
+        kubernetesClusters: {
+          kind: {
+            server: 'https://127.0.0.1:6443',
+            tokenEnv: 'KIND_BEARER_TOKEN',
+            namespaces: ['commander'],
+          },
+        },
       });
+      assert.equal(await provider.getToken('tenant-a', 'kind', 'commander'), 'kind-secret-token');
+      assert.equal(
+        provider.getServer('tenant-a', 'kind', 'commander').href,
+        'https://127.0.0.1:6443/',
+      );
       await assert.rejects(
-        () =>
-          provider.getKubernetesCredentials!('tenant-a', 'k8s://cluster-b/team-a/deployments/api'),
-        /Kubernetes cluster mismatch/,
+        () => provider.getToken('tenant-b', 'kind', 'commander'),
+        /Tenant credential isolation/,
+      );
+      await assert.rejects(
+        () => provider.getToken('tenant-a', 'other', 'commander'),
+        /Kubernetes cluster is not registered/,
+      );
+      await assert.rejects(
+        () => provider.getToken('tenant-a', 'kind', 'other'),
+        /Kubernetes namespace is not authorized/,
+      );
+      assert.throws(
+        () => provider.getServer('tenant-a', 'kind', 'other'),
+        /Kubernetes namespace is not authorized/,
       );
     } finally {
-      for (const [key, value] of Object.entries(previous)) {
-        if (value === undefined) delete process.env[`COMMANDER_KUBERNETES_${key.toUpperCase()}`];
-        else process.env[`COMMANDER_KUBERNETES_${key.toUpperCase()}`] = value;
-      }
+      if (previous === undefined) delete process.env.KIND_BEARER_TOKEN;
+      else process.env.KIND_BEARER_TOKEN = previous;
     }
+  });
+
+  it('uses the explicitly injected environment for Kubernetes tokens', async () => {
+    const provider = new EnvAdapterCredentialProvider({
+      cellTenantId: 'tenant-a',
+      environment: {
+        COMMANDER_KIND_TOKEN: 'injected-kind-token',
+      },
+      kubernetesClusters: {
+        kind: {
+          server: 'https://127.0.0.1:6443',
+          tokenEnv: 'COMMANDER_KIND_TOKEN',
+          namespaces: ['commander'],
+        },
+      },
+    });
+
+    assert.equal(await provider.getToken('tenant-a', 'kind', 'commander'), 'injected-kind-token');
   });
 });

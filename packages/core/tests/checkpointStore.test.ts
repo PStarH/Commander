@@ -8,6 +8,12 @@ import {
   type CheckpointSnapshot,
   type CheckpointRecord,
 } from '../src/runtime/checkpointStore';
+import {
+  CheckpointManager,
+  getCheckpointManager,
+  resetCheckpointManager,
+} from '../src/runtime/checkpointManager';
+import { CheckpointRewindTool, CheckpointSaveTool } from '../src/tools/checkpointTool';
 
 const makeSnapshot = ({
   checkpoint: cpOverrides,
@@ -334,5 +340,71 @@ describe('CheckpointStore — file tracking', () => {
     const snap = store.getSnapshot('cp-files');
     expect(snap!.filesRead).toEqual(['a.js', 'b.js', 'c.js']);
     expect(snap!.filesModified).toEqual(['d.js']);
+  });
+});
+
+describe('CheckpointManager — run-scoped snapshot reads (TOOL-C06)', () => {
+  let store: CheckpointStore;
+
+  beforeEach(() => {
+    store = new CheckpointStore({ filePath: ':memory:' });
+  });
+
+  afterEach(() => {
+    store.close();
+    resetCheckpointStores();
+  });
+
+  it("does not expose another run's snapshot through get()", () => {
+    store.save(
+      makeSnapshot({
+        checkpoint: { id: 'cp-run-a', runId: 'run-a', stepNumber: 1 },
+        messages: [{ role: 'user', content: 'run-a secret' }],
+      }),
+    );
+    const manager = new CheckpointManager(20, { store, runId: 'run-b' });
+
+    expect(manager.get('cp-run-a')).toBeUndefined();
+  });
+
+  it("does not rewind another run's checkpoint from the store", () => {
+    store.save(
+      makeSnapshot({
+        checkpoint: { id: 'cp-run-a2', runId: 'run-a', stepNumber: 1 },
+        messages: [{ role: 'user', content: 'run-a secret' }],
+      }),
+    );
+    const manager = new CheckpointManager(20, { store, runId: 'run-b' });
+
+    expect(manager.rewind('cp-run-a2')).toBeNull();
+    // The other run's persisted checkpoint must remain intact.
+    expect(store.getSnapshot('cp-run-a2')).not.toBeNull();
+  });
+
+  it("still reads its own run's snapshot by id", () => {
+    store.save(makeSnapshot({ checkpoint: { id: 'cp-run-b', runId: 'run-b', stepNumber: 1 } }));
+    const manager = new CheckpointManager(20, { store, runId: 'run-b' });
+
+    expect(manager.get('cp-run-b')?.id).toBe('cp-run-b');
+  });
+});
+
+describe('CheckpointRewindTool — applies restored messages (TOOL-C06)', () => {
+  afterEach(() => {
+    resetCheckpointManager();
+  });
+
+  it('returns the restored messages so they reach the next request', async () => {
+    resetCheckpointManager();
+    await new CheckpointSaveTool().execute({
+      label: 'before refactor',
+      messages: [{ role: 'user', content: 'RESTORE-MARKER-42' }],
+      stepNumber: 3,
+    });
+    const checkpointId = getCheckpointManager().list()[0].id;
+
+    const result = await new CheckpointRewindTool().execute({ checkpointId });
+
+    expect(result).toContain('RESTORE-MARKER-42');
   });
 });
