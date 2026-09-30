@@ -213,7 +213,7 @@ jobs:
         if: success()
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/wal-baseline-${{ needs.bench-wal-regress.outputs.today }}
+          branch: bench/wal-baseline
           delete-branch: true
           title: 'ci(wal-bench): baseline ${{ needs.bench-wal-regress.outputs.today }} — ${{ needs.bench-wal-regress.outputs.metric_rowsPerSec }} rows/sec, p99=${{ needs.bench-wal-regress.outputs.metric_p99Us }}µs'
           commit-message: |
