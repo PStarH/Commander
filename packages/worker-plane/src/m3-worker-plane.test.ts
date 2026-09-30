@@ -15,6 +15,16 @@ import type {
   WorkerDefinition,
   WorkerIdentity,
 } from './types.js';
+import { getCapabilityTokenIssuer } from '@commander/core';
+
+function localCapabilityToken(toolName: string, aud = 'tenant-a'): string {
+  return getCapabilityTokenIssuer().issue({
+    sub: 'worker-1',
+    aud,
+    tools: [toolName],
+    ttlSeconds: 300,
+  });
+}
 
 // ── Helpers ──
 
@@ -36,7 +46,7 @@ function createMockWorker(): WorkerRecord {
 }
 
 function createMockStep(overrides?: Partial<ClaimedStep>): ClaimedStep {
-  return {
+  return withLocalToken({
     id: 'step-1',
     runId: 'run-1',
     tenantId: 'tenant-a',
@@ -51,7 +61,25 @@ function createMockStep(overrides?: Partial<ClaimedStep>): ClaimedStep {
       expiresAt: new Date(Date.now() + 30000).toISOString(),
     },
     ...overrides,
+  });
+}
+
+function withLocalToken(step: ClaimedStep): ClaimedStep {
+  const input = step.input as {
+    toolName?: string;
+    capabilityToken?: string;
+    hasExternalEffects?: boolean;
   };
+  if (
+    input &&
+    typeof input.toolName === 'string' &&
+    input.toolName.length > 0 &&
+    !input.capabilityToken &&
+    !input.hasExternalEffects
+  ) {
+    input.capabilityToken = localCapabilityToken(input.toolName, step.tenantId || 'tenant-a');
+  }
+  return step;
 }
 
 const ac = new AbortController();
@@ -280,6 +308,20 @@ describe('ToolStepExecutor', () => {
     await assert.rejects(
       () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
       (err: WorkerExecutionError) => err.options.code === 'INVALID_INPUT',
+    );
+  });
+
+  it('rejects a local tool when capabilityToken is missing', async () => {
+    const executor = new ToolStepExecutor({
+      get: () => ({
+        execute: async () => ({ echo: 'hello' }),
+      }),
+    });
+    const step = createMockStep();
+    delete (step.input as { capabilityToken?: string }).capabilityToken;
+    await assert.rejects(
+      () => executor.execute(step, { signal: ac.signal, worker: createMockWorker() }),
+      (err: WorkerExecutionError) => err.options.code === 'EFFECT_AUTHORIZATION_REQUIRED',
     );
   });
 

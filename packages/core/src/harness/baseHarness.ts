@@ -16,6 +16,67 @@ import type { AgentExecutionResult } from '../runtime/types';
 import { SteerQueueImpl } from './harnessInfrastructure';
 import { getGlobalLogger } from '../logging';
 import { generateId } from '../runtime/runtimeHelpers';
+import { getEnterpriseSecurityGateway } from '../security/enterpriseSecurityGateway';
+import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '../security/capabilityToken';
+
+export async function authorizeHarnessTool(input: {
+  tenantId?: string;
+  runId?: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  availableTools: string[];
+}): Promise<void> {
+  const pre = getEnterpriseSecurityGateway().preToolCheck({
+    tenantId: input.tenantId,
+    runId: input.runId,
+    toolName: input.toolName,
+    source: 'harness',
+    input: JSON.stringify(input.args ?? {}).slice(0, 10000),
+  });
+  if (!pre.allowed) {
+    throw new Error(`Security gateway blocked tool ${input.toolName}: ${pre.reason ?? 'policy'}`);
+  }
+  const toolNames = input.availableTools.filter((name) => name.length > 0);
+  if (!toolNames.includes(input.toolName)) {
+    throw new Error(`CAPABILITY_TOKEN_REJECTED: ${input.toolName} is not in the run tool scope`);
+  }
+  const aud = input.tenantId && input.tenantId.length > 0 ? input.tenantId : '*';
+  const token = getCapabilityTokenIssuer().issue({
+    sub: 'harness',
+    aud,
+    tools: toolNames,
+    ttlSeconds: 60,
+  });
+  const verdict = getCapabilityTokenVerifier().verify(token, {
+    tool: input.toolName,
+    args: input.args ?? {},
+    consumeReplay: false,
+    aud,
+  });
+  if (!verdict.ok) {
+    throw new Error(`CAPABILITY_TOKEN_REJECTED: ${verdict.reason ?? 'rejected'}`);
+  }
+}
+
+export function screenHarnessToolOutput(input: {
+  tenantId?: string;
+  runId?: string;
+  toolName: string;
+  output: string;
+}): string {
+  const post = getEnterpriseSecurityGateway().postToolCheck({
+    tenantId: input.tenantId,
+    runId: input.runId,
+    toolName: input.toolName,
+    output: input.output.slice(0, 10000),
+  });
+  if (!post.allowed) {
+    throw new Error(
+      `Security gateway blocked tool output ${input.toolName}: ${post.reason ?? 'policy'}`,
+    );
+  }
+  return post.sanitizedOutput ?? input.output;
+}
 
 export abstract class BaseHarness {
   abstract readonly name: string;

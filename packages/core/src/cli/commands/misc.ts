@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { spawn } from 'node:child_process';
+import { execFile, type ExecFileOptions } from 'node:child_process';
 import {
   executeReview,
   formatReviewOutput,
@@ -27,22 +27,33 @@ export async function cmdGui() {
   );
   console.log(`  ${$.dim}Web:${$.reset}  http://localhost:5173\n`);
 
-  const api = spawn('npx', ['tsx', 'src/index.ts'], {
-    cwd: apiDir,
-    stdio: 'inherit',
-    env: { ...process.env, PORT: '4000' },
-  });
+  const bin = path.join(process.cwd(), 'node_modules', '.bin');
+  const api = execFile(
+    path.join(bin, 'tsx'),
+    ['src/index.ts'],
+    {
+      cwd: apiDir,
+      stdio: 'inherit',
+      env: { ...process.env, PORT: '4000' },
+    } as ExecFileOptions,
+    () => {},
+  );
 
-  const web = spawn('npx', ['vite', '--port', '5173'], {
-    cwd: webDir,
-    stdio: 'inherit',
-  });
+  const web = execFile(
+    path.join(bin, 'vite'),
+    ['--port', '5173'],
+    {
+      cwd: webDir,
+      stdio: 'inherit',
+    } as ExecFileOptions,
+    () => {},
+  );
 
   setTimeout(() => {
     const url = 'http://localhost:5173';
     const cmd =
       process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start' : 'xdg-open';
-    spawn(cmd, [url], { stdio: 'ignore', detached: true }).unref();
+    execFile(cmd, [url], { stdio: 'ignore' } as ExecFileOptions, () => {}).unref();
   }, 3000);
 
   const cleanup = () => {

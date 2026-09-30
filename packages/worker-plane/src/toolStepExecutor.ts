@@ -30,6 +30,7 @@ import {
   requireStepWorkloadBinding,
 } from './stepWorkloadIdentity.js';
 import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
+import { getCapabilityTokenVerifier } from '@commander/core/security';
 
 export interface ToolStepInput {
   /** Tool name (e.g., "http.get", "git.push"). */
@@ -202,6 +203,27 @@ export class ToolStepExecutor implements StepExecutor {
     if (!handler) {
       throw new WorkerExecutionError("Tool '" + input.toolName + "' not found in registry", {
         code: 'TOOL_NOT_FOUND',
+        retryable: false,
+      });
+    }
+
+    const capabilityToken = input.capabilityToken;
+    if (!capabilityToken) {
+      throw new WorkerExecutionError('Local tool execution requires capabilityToken', {
+        code: 'EFFECT_AUTHORIZATION_REQUIRED',
+        retryable: false,
+      });
+    }
+    const expectedAud = step.tenantId && step.tenantId.length > 0 ? step.tenantId : '*';
+    const verdict = getCapabilityTokenVerifier().verify(capabilityToken, {
+      tool: input.toolName,
+      args: input.args ?? {},
+      consumeReplay: false,
+      aud: expectedAud,
+    });
+    if (!verdict.ok) {
+      throw new WorkerExecutionError(`CAPABILITY_TOKEN_REJECTED: ${verdict.reason ?? 'rejected'}`, {
+        code: 'EFFECT_AUTHORIZATION_REQUIRED',
         retryable: false,
       });
     }
