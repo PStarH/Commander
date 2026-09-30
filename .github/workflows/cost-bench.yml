@@ -224,7 +224,7 @@ jobs:
         if: success()
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/cost-prediction-baseline-${{ needs.bench-cost-regress.outputs.today }}
+          branch: bench/cost-prediction-baseline
           delete-branch: true
           title: 'ci(cost-bench): baseline ${{ needs.bench-cost-regress.outputs.today }} - MAE=${{ needs.bench-cost-regress.outputs.metric_mae }}%, P95=${{ needs.bench-cost-regress.outputs.metric_p95 }}%'
           commit-message: |

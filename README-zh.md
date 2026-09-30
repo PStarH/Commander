@@ -5,6 +5,8 @@
 <h1 align="center">Commander</h1>
 <p align="center"><strong>本地智能体运行时与行动治理网关 · Alpha</strong></p>
 
+> **说明：** 本译文未随最新版本更新。当前定位（面向 Coding / DevOps 智能体的审批与恢复，GitHub 试点）、证据和限制以 [英文 README](README.md) 为准。
+
 > **Alpha 提示：** Commander 目前是 alpha，尚未达到生产就绪标准。输出、基准、POC
 > 场景和仪表盘数据都可能是开发或演示信号；未经自行审查，不要用于无人值守的生产工作负载或敏感数据。
 
@@ -298,7 +300,7 @@ docker compose -f docker-compose.yml -f docker-compose.v2.yml --profile v2 up -d
 
 - [PRIVACY.md](PRIVACY.md)：provider 外发、trace/memory/audit 保存、保留与删除边界。
 - 普通 bug 请提交 [GitHub Issues](https://github.com/PStarH/Commander/issues)，先脱敏 prompt、日志、配置、PII 和密钥。
-- 问题讨论和建议请使用 [GitHub Discussions](https://github.com/PStarH/Commander/discussions)。
+- 问题讨论和建议请提交 [GitHub issue](https://github.com/PStarH/Commander/issues)。
 - 安全漏洞请按 [SECURITY.md](SECURITY.md) 私下报告，不要开公开 issue。
 
 ## 许可证

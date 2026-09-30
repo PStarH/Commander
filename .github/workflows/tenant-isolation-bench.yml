@@ -219,7 +219,7 @@ jobs:
         if: success()
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/tenant-isolation-baseline-${{ needs.bench-tenant-isolation-regress.outputs.today }}
+          branch: bench/tenant-isolation-baseline
           delete-branch: true
           title: 'ci(tenant-isolation-bench): baseline ${{ needs.bench-tenant-isolation-regress.outputs.today }} - leaks=${{ needs.bench-tenant-isolation-regress.outputs.metric_leakCount }}/${{ needs.bench-tenant-isolation-regress.outputs.metric_totalCases }}'
           commit-message: |

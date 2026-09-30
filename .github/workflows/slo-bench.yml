@@ -195,7 +195,7 @@ jobs:
         if: success()
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/slo-baseline-${{ needs.bench-slo-regress.outputs.today }}
+          branch: bench/slo-baseline
           delete-branch: true
           title: 'ci(slo-bench): baseline ${{ needs.bench-slo-regress.outputs.today }} - failed=${{ needs.bench-slo-regress.outputs.metric_failed }}/${{ needs.bench-slo-regress.outputs.metric_total }}'
           commit-message: |
