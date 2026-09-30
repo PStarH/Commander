@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CapabilityTokenIssuer } from '@commander/effect-broker';
+import { getCapabilityTokenIssuer } from '@commander/core';
 import { ConnectorStepExecutor } from './connectorStepExecutor.js';
 import {
   isCatalogAuthorizedLocalOnly,
@@ -250,7 +251,17 @@ describe('L3-03b forged localOnly bypass closed (production)', () => {
         catalog,
       );
       const step = createMockStep({
-        input: { toolName: 'echo', args: { message: 'ok' }, localOnly: true },
+        input: {
+          toolName: 'echo',
+          args: { message: 'ok' },
+          localOnly: true,
+          capabilityToken: getCapabilityTokenIssuer().issue({
+            sub: 'worker-1',
+            aud: 'tenant-a',
+            tools: ['echo'],
+            ttlSeconds: 300,
+          }),
+        },
       });
       const result = await executor.execute(step, {
         signal: ac.signal,
@@ -391,7 +402,17 @@ describe('L3-03b dev compatibility', () => {
           DENY_ALL_TOOL_EFFECT_CATALOG,
         );
         const step = createMockStep({
-          input: { toolName: 'echo', args: { message: 'dev' }, localOnly: true },
+          input: {
+            toolName: 'echo',
+            args: { message: 'dev' },
+            localOnly: true,
+            capabilityToken: getCapabilityTokenIssuer().issue({
+              sub: 'worker-1',
+              aud: 'tenant-a',
+              tools: ['echo'],
+              ttlSeconds: 300,
+            }),
+          },
         });
         const result = await executor.execute(step, {
           signal: ac.signal,

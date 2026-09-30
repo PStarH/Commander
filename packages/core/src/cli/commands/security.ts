@@ -2,7 +2,7 @@
  * commander security <subcommand> [args] — Adversarial / compliance test batteries.
  *
  * Wires the standalone security CLI scripts (which live under `src/security/`
- * and are designed to be run directly via `npx tsx`) into the top-level
+ * and are designed to be run with the installed `tsx` binary) into the top-level
  * `commander` CLI as `commander security <sub>` subcommands.
  *
  * Each underlying script is self-executing (it calls `main()` at module
@@ -22,14 +22,14 @@
  * Runner resolution:
  *   - If a compiled `.js` exists next to the source, run it with `node`
  *     (production install, no `tsx` required).
- *   - Otherwise fall back to `npx tsx <script>.ts` (dev checkout).
+ *   - Otherwise fall back to the installed `tsx` binary (dev checkout).
  *
  * The scripts can still be run standalone, e.g.:
- *   npx tsx packages/core/src/security/runComplianceAudit.ts
- *   npx tsx packages/core/src/security/runRedTeamBattery.ts --rounds 3
+ *   node_modules/.bin/tsx packages/core/src/security/runComplianceAudit.ts
+ *   node_modules/.bin/tsx packages/core/src/security/runRedTeamBattery.ts --rounds 3
  */
 
-import { spawn } from 'child_process';
+import { execFile, type ExecFileOptions } from 'node:child_process';
 import { existsSync } from 'fs';
 import path from 'path';
 import { $, section, bullet } from '../util';
@@ -74,8 +74,12 @@ function printSecurityHelp(): void {
     `${$.cyan}unknown-adversarial${$.reset} Unknown-attack adversarial test (unknownAdversarialTest)`,
   );
   console.log(`\n  ${$.bold}Standalone usage (equivalent):${$.reset}`);
-  bullet(`${$.dim}npx tsx packages/core/src/security/runRedTeamBattery.ts [args]${$.reset}`);
-  bullet(`${$.dim}npx tsx packages/core/src/security/runComplianceAudit.ts [args]${$.reset}`);
+  bullet(
+    `${$.dim}node_modules/.bin/tsx packages/core/src/security/runRedTeamBattery.ts [args]${$.reset}`,
+  );
+  bullet(
+    `${$.dim}node_modules/.bin/tsx packages/core/src/security/runComplianceAudit.ts [args]${$.reset}`,
+  );
   console.log(
     `\n  ${$.dim}Pass --help to a subcommand to see its own flags, e.g. ` +
       `commander security redteam --help${$.reset}\n`,
@@ -118,27 +122,35 @@ export async function cmdSecurity(args: string[]): Promise<void> {
   const passThroughArgs = args.slice(1);
 
   // Build the child argv. For `.js` we use the running node directly; for
-  // `.ts` we use `npx tsx` so the TypeScript source executes.
-  const childCmd = resolved.useTsx ? 'npx' : process.execPath;
-  const childArgs = resolved.useTsx
-    ? ['tsx', resolved.path, ...passThroughArgs]
-    : [resolved.path, ...passThroughArgs];
+  // `.ts` we use the installed tsx binary so the TypeScript source executes.
+  const childCmd = resolved.useTsx
+    ? path.join(process.cwd(), 'node_modules', '.bin', 'tsx')
+    : process.execPath;
+  const childArgs = [resolved.path, ...passThroughArgs];
 
   try {
     const exitCode = await new Promise<number>((resolve, reject) => {
-      const child = spawn(childCmd, childArgs, {
-        stdio: 'inherit',
-        env: { ...process.env },
-      });
-      child.on('error', reject);
-      child.on('exit', (code) => resolve(code ?? 0));
+      execFile(
+        childCmd,
+        childArgs,
+        { stdio: 'inherit', env: { ...process.env } } as ExecFileOptions,
+        (err) => {
+          if (!err) {
+            resolve(0);
+            return;
+          }
+          const code = (err as NodeJS.ErrnoException).code;
+          if (typeof code === 'number') resolve(code);
+          else reject(err);
+        },
+      );
     });
     if (exitCode !== 0) process.exitCode = exitCode;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.log(
       `\n  ${$.red}✗${$.reset} Failed to run ${$.bold}${subcommand}${$.reset}: ${msg}\n` +
-        `  Tip: run standalone with ${$.dim}npx tsx packages/core/src/security/${scriptName}${$.reset}\n`,
+        `  Tip: run standalone with ${$.dim}node_modules/.bin/tsx packages/core/src/security/${scriptName}${$.reset}\n`,
     );
     process.exitCode = 1;
   }

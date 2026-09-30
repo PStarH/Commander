@@ -618,7 +618,7 @@ export type {
   DLPStats,
 } from './dataLossPrevention';
 
-// BillExplosionGuard — 不可绕过的账单爆炸防护系统，五层硬性成本上限
+// BillExplosionGuard — 未接线参考实现。线上成本上限是 UnifiedCostAuthority。
 export {
   BillExplosionGuard,
   getBillExplosionGuard,
