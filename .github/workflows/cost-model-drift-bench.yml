@@ -192,7 +192,7 @@ jobs:
         if: success()
         uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
-          branch: bench/cost-model-drift-baseline-${{ needs.bench-cost-model-drift-regress.outputs.today }}
+          branch: bench/cost-model-drift-baseline
           delete-branch: true
           title: 'ci(cost-model-drift-bench): baseline ${{ needs.bench-cost-model-drift-regress.outputs.today }} - maxDriftPct=${{ needs.bench-cost-model-drift-regress.outputs.metric_maxDriftPct }}'
           commit-message: |
