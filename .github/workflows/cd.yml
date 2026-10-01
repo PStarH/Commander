@@ -189,7 +189,7 @@ jobs:
   verify-manifest:
     name: Verify candidate manifest
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 60
     needs: [build-candidate]
     permissions:
       contents: read
@@ -228,9 +228,12 @@ jobs:
           set -euo pipefail
           MANIFEST="$RUNNER_TEMP/candidate-manifest.json"
           EXPECTED_HASH="$(cat "$RUNNER_TEMP/manifest-hash.txt")"
-          # 1. Manifest authenticity + candidate + complete digest map.
-          pnpm exec tsx scripts/cd-manifest-verify.ts manifest \
-            --path "$MANIFEST" --expected-hash "$EXPECTED_HASH" --candidate "$CANDIDATE"
+          # 1. Manifest authenticity + candidate. The full verification (digest map and
+          #    required checks) runs in step 5, after the checks have been recorded.
+          ACTUAL_HASH="$(node -e "const c=require('node:crypto'),f=require('node:fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync(process.argv[1])).digest('hex'))" "$MANIFEST")"
+          [ "$ACTUAL_HASH" = "$EXPECTED_HASH" ] || { echo "::error::manifest hash mismatch: $ACTUAL_HASH != $EXPECTED_HASH"; exit 1; }
+          MANIFEST_SHA="$(node -e "process.stdout.write(String(require(process.argv[1]).candidate.sha))" "$MANIFEST")"
+          [ "$MANIFEST_SHA" = "$CANDIDATE" ] || { echo "::error::manifest candidate $MANIFEST_SHA is not $CANDIDATE"; exit 1; }
           # 2. Lockfile hash must be the candidate's own lockfile, re-read from the candidate tree.
           LOCKFILE_HASH="$(node -e "const c=require('node:crypto'),f=require('node:fs');process.stdout.write(c.createHash('sha256').update(f.readFileSync('pnpm-lock.yaml')).digest('hex'))")"
           MANIFEST_LOCK="$(node -e "process.stdout.write(require(process.argv[1]).lockfile.sha256)" "$MANIFEST")"
@@ -244,23 +247,38 @@ jobs:
           import { execFileSync } from 'node:child_process';
           import { readFileSync, writeFileSync } from 'node:fs';
           const candidate = process.env.CANDIDATE;
-          const runs = JSON.parse(
-            execFileSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/actions/runs?head_sha=${candidate}&per_page=100`], { encoding: 'utf8' }),
-          ).workflow_runs ?? [];
-          const executed = new Map();
-          for (const run of runs) {
-            if (!run.id) continue;
-            const jobs = JSON.parse(
-              execFileSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${run.id}/jobs?per_page=100`], { encoding: 'utf8' }),
-            ).jobs ?? [];
-            for (const job of jobs) executed.set(job.name, job.conclusion);
-          }
           const manifestPath = `${process.env.RUNNER_TEMP}/candidate-manifest.json`;
           const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+          // Required check ids are ci.yml job ids; the Actions API reports job display names.
+          const JOB_NAMES = {
+            quality: 'Quality Gates (ubuntu-latest, Node 22)',
+            'kernel-postgres-integration': 'Kernel PostgreSQL Integration',
+            'l4-b-deploy-gates': 'L4-B Deploy Gates',
+          };
+          // CI starts on the same push, so wait until every required job has completed.
+          const deadline = Date.now() + 50 * 60 * 1000;
+          let executed = new Map();
+          for (;;) {
+            const runs = JSON.parse(
+              execFileSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/actions/runs?head_sha=${candidate}&per_page=100`], { encoding: 'utf8' }),
+            ).workflow_runs ?? [];
+            executed = new Map();
+            for (const run of runs) {
+              if (!run.id || run.path !== '.github/workflows/ci.yml') continue;
+              const jobs = JSON.parse(
+                execFileSync('gh', ['api', `repos/${process.env.GITHUB_REPOSITORY}/actions/runs/${run.id}/jobs?per_page=100`], { encoding: 'utf8' }),
+              ).jobs ?? [];
+              for (const job of jobs) if (job.status === 'completed') executed.set(job.name, job.conclusion);
+            }
+            const pending = (manifest.requiredChecks ?? []).filter((id) => !executed.has(JOB_NAMES[id] ?? id));
+            if (pending.length === 0 || Date.now() > deadline) break;
+            console.log(`waiting for required checks: ${pending.join(', ')}`);
+            await new Promise((r) => setTimeout(r, 30000));
+          }
           const checks = {};
           const unresolved = [];
           for (const name of manifest.requiredChecks ?? []) {
-            const conclusion = executed.get(name);
+            const conclusion = executed.get(JOB_NAMES[name] ?? name);
             checks[name] = {
               status: conclusion === undefined ? 'not-executed' : conclusion,
               executed: conclusion !== undefined,
