@@ -12,6 +12,7 @@
  */
 
 import { reportSilentFailure } from '../silentFailureReporter';
+import { authorizeHarnessTool, screenHarnessToolOutput } from '../harness/baseHarness';
 import type { ToolCall, ToolResult, Tool, AgentExecutionContext } from './types';
 import {
   formatAbortTimeoutAdviceLines,
@@ -449,10 +450,41 @@ export class ToolOrchestrator {
               }
         ) as AgentExecutionContext;
 
-        const execPromise = tool.execute(toolCall.arguments, execCtx).finally(() => {
-          settled = true;
-          if (abortCoopWindow) settledInCoopWindow = true;
-        });
+        try {
+          await authorizeHarnessTool({
+            tenantId: context.tenantId,
+            runId: context.runId,
+            toolName: toolCall.name,
+            args: (toolCall.arguments ?? {}) as Record<string, unknown>,
+            availableTools: [...tools.keys()],
+          });
+        } catch (err) {
+          const errorMsg = err instanceof Error ? err.message : String(err);
+          return {
+            result: {
+              toolCallId: toolCall.id,
+              name: toolCall.name,
+              output: errorMsg,
+              error: errorMsg,
+              durationMs: Date.now() - startTime,
+            },
+            retries,
+          };
+        }
+        const execPromise = Promise.resolve(tool.execute(toolCall.arguments, execCtx))
+          .then((output) => {
+            const text = typeof output === 'string' ? output : JSON.stringify(output);
+            return screenHarnessToolOutput({
+              tenantId: context.tenantId,
+              runId: context.runId,
+              toolName: toolCall.name,
+              output: text,
+            });
+          })
+          .finally(() => {
+            settled = true;
+            if (abortCoopWindow) settledInCoopWindow = true;
+          });
         // Abandoned non-cooperative work must not surface as unhandledRejection.
         void execPromise.then(
           () => undefined,

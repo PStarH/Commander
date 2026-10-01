@@ -10,6 +10,7 @@
 import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMProvider } from './types';
 import { getGlobalLogger } from '../logging';
+import { requireLlmPreCheck } from '../security/enterpriseSecurityGateway';
 
 /**
  * Extract a JSON object from an LLM response string.
@@ -104,6 +105,12 @@ export async function callLLMJSON<T>(
   opts?: { temperature?: number; maxTokens?: number },
 ): Promise<{ data: T; tokens: number } | null> {
   try {
+    requireLlmPreCheck({
+      model,
+      estimatedTokens: opts?.maxTokens ?? 2048,
+      source: 'llm-json-extractor',
+      input: `${systemPrompt}\n${userMessage}`.slice(0, 4000),
+    });
     const response = await provider.call({
       model,
       messages: [

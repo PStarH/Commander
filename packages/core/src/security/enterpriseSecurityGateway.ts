@@ -8,7 +8,7 @@
  *   2. 认证 → API Key 验证 + 时序安全比较
  *   3. 速率限制 → 全局令牌桶 + 分层 IP 限制
  *   4. 输入扫描 → 内容注入检测 + 输入验证
- *   5. 成本预检 → 账单爆炸防护（调用前预估）
+ *   5. 成本预检 → UnifiedCostAuthority（调用前预估）
  *   6. 请求处理 → 业务逻辑执行
  *   7. 输出扫描 → DLP 数据泄露防护 + 成本记录
  *
@@ -1067,4 +1067,12 @@ export function getEnterpriseSecurityGateway(
  */
 export function resetEnterpriseSecurityGateway(): void {
   gatewaySingleton.reset();
+}
+
+/** Fail closed when the gateway refuses an LLM call. */
+export function requireLlmPreCheck(params: PreLLMCheckParams): void {
+  const pre = getEnterpriseSecurityGateway().preLLMCheck(params);
+  if (!pre.allowed) {
+    throw new Error(`Security gateway blocked LLM call: ${pre.reason ?? 'policy'}`);
+  }
 }
