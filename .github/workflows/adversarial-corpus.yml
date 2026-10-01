@@ -58,7 +58,7 @@ jobs:
         run: pnpm install
 
       - name: Build core package
-        run: pnpm --filter @commander/core build
+        run: pnpm --filter @commander/core... build
 
       - name: Generate adversarial corpus
         id: generate
@@ -206,7 +206,7 @@ jobs:
           npx tsx /tmp/report-adversarial.ts
 
       - name: Upload corpus artifact
-        if: always()
+        if: steps.generate.outputs.skipped != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: adversarial-corpus-${{ github.run_id }}
@@ -215,7 +215,7 @@ jobs:
           if-no-files-found: error
 
       - name: Upload results artifact
-        if: always()
+        if: steps.generate.outputs.skipped != 'true'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: adversarial-results-${{ github.run_id }}
