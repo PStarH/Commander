@@ -109,7 +109,7 @@ All gates are fail-closed. "Mostly green" is not a pass.
 ### E0 source-demo lane (available before E1)
 
 The first-user E0 lifecycle is deliberately narrower than these launch gates.
-From a clean `codex/release-20260810` source checkout, using Node 22.x and pnpm
+From a clean `master` source checkout, using Node 22.x and pnpm
 9, run:
 
 ```bash
