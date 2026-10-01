@@ -14,10 +14,9 @@
 
 ### 1.1 架构评审 Final Verdict 的直接约束
 
-WS9 的章程来自架构评审 §8 工作流表：
+WS9 的章程来自 2026-07 架构评审 §8 工作流表。该评审稿不在本仓库中。
 
 > `| WS9 | arch/ws9-tenant-livefire-compliance | real-backend isolation proof | Med |`
-> — `.internal/docs/architecture-reviews/2026-07-15-project-olympus-architecture-council.md:414`
 
 Final Verdict 中本任务必须关闭的核心断言：
 
@@ -34,20 +33,20 @@ Final Verdict 中本任务必须关闭的核心断言：
 
 信任审计总判定：
 
-> `Overall verdict: BLOCK MERGE / NOT YET TRUSTWORTHY for production, financial, infrastructure, or confidential-data workloads.` — `.internal/docs/audits/2026-07-13-commander-enterprise-trust-audit.md:12`
+该历史审计未把当时的仓库视为可承载生产、金融、基础设施或机密数据的工作负载。审计稿不在本仓库中。
 
 ### 1.2 前序 WS 规格的接受状态与本 spec 的依赖
 
 | Spec | 路径 | 状态 | WS9 依赖关系 |
 |---|---|---|---|
-| WS0 | `.internal/spec/ws0-contracts-constitution.md` | ACCEPTED | 提供契约包边界，不直接依赖 |
-| WS1 | `.internal/spec/ws1-kernel-ops-durability.md` | ACCEPTED（但 `Acceptance status: Pending Phase 3 audit`，L6） | 依赖其 tenant-pause / lease / outbox 隔离契约（L287–332, L382–383）；WS9 为其 Phase 3 审计提供 live 证据 |
+| WS0 | 未随本仓库发布 | ACCEPTED | 提供契约包边界，不直接依赖 |
+| WS1 | 未随本仓库发布 | ACCEPTED（但 `Acceptance status: Pending Phase 3 audit`，L6） | 依赖其 tenant-pause / lease / outbox 隔离契约（L287–332, L382–383）；WS9 为其 Phase 3 审计提供 live 证据 |
 | WS2 | 未提交分支 `feat-effect-broker-monopoly` | 自标 ACCEPTED 被分支审计判为「超报」 | effect-broker 作为唯一跨租户 effect PEP，WS9 必须验证其 admit() 在生产运行时被调用且无旁路 |
 | WS3 | 未提交分支 `feat-freeze-enterprise-api-v1` | 验收测试 `ws3Acceptance.test.ts:31` 导入不存在的符号，判为不成立 | `/v1` gateway 收口，WS9 必须验证遗留 `/api/*` 不能绕过租户作用域 |
 | WS4 / WS5 | 无 spec | 不存在 | 仅 roadmap 条目，不构成依赖 |
-| WS6 | `.internal/spec/ws6-memory-store-unify.md` | DRAFT | 其 `memory_items` RLS 设计（§8 L245–265）是 WS9 数据隔离的对象之一；WS6 未落地前，WS9 对现有 memory store 做实弹测试并如实标注 |
+| WS6 | 未随本仓库发布 | DRAFT | 其 `memory_items` RLS 设计（§8 L245–265）是 WS9 数据隔离的对象之一；WS6 未落地前，WS9 对现有 memory store 做实弹测试并如实标注 |
 | WS7 | `spec/ws7-sandbox-failclosed.md` | Draft，待评审 | 提供执行隔离的 fail-closed 沙箱契约；WS9 验证其生产禁止项在真实 gVisor/Docker 下成立 |
-| WS8 | `.internal/spec/ws8-sku-honesty-dx.md` | DRAFT | 提供「simulated ≠ live/SOC 证据」的诚实规则；WS9 沿用其公开安全规则 |
+| WS8 | 未随本仓库发布 | DRAFT | 提供「simulated ≠ live/SOC 证据」的诚实规则；WS9 沿用其公开安全规则 |
 
 **结论**：WS9 不假设 WS2/WS3/WS6/WS7/WS8 已 ACCEPTED。对尚未落地的契约，WS9 以当前仓库真实状态为对象做实弹测试，并在就绪度矩阵中如实标注「依赖 spec 未 ACCEPTED」。
 
@@ -286,7 +285,7 @@ WS9 不签发 SOC 2 Type II 报告（需外部审计师 ≥3 个月观察期，E
 
 ## 8. 就绪度矩阵（ENTERPRISE_READINESS.md 更新规则）
 
-Phase 3 完成后，按以下规则更新 `ENTERPRISE_READINESS.md` 与 `.internal/docs/status/ENTERPRISE_READINESS.md`。**删除未验证声明，标注已验证能力，不新增未证据化的 ✅。**
+Phase 3 完成后，按以下规则更新 `ENTERPRISE_READINESS.md`。**删除未验证声明，标注已验证能力，不新增未证据化的 ✅。**
 
 | 现条目 | 现状 | WS9 后处置 | 依据 |
 |---|---|---|---|
@@ -365,7 +364,7 @@ day-over-day drift gate：今天 `verdict=FAIL` 或新增穿越用例即阻断 C
 - 运行全部实弹测试，**0 穿越为通过**；任何穿越即 `verdict=FAIL` 并阻断。
 - 验证密钥路径：Vault 路径外无密钥泄露；负向测试正确拒绝。
 - 验证 SIEM 审计签名：篡改日志导致签名校验失败；`verify()` 定时器告警。
-- 邀请外部安全审计人员对测试套件与方法论 review（review 记录入 `.internal/docs/audits/`）。
+- 邀请外部安全审计人员对测试套件与方法论 review。审查记录不进入本仓库。
 - 确认 ENTERPRISE_READINESS.md 中所有声明有对应自动化测试证据；按 §8 更新矩阵。
 - 逐条验收 §11 清单后，本文档标记 `ACCEPTED`。
 
