@@ -31,6 +31,10 @@ export function createGitHubFixture({
       send(401, { message: 'Bad credentials' });
       return;
     }
+    if (req.method === 'GET' && url.pathname === '/user') {
+      send(200, { login: 'octocat' });
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/__cell__/state') {
       send(200, {
         createCalls,
@@ -105,6 +109,7 @@ export function createGitHubFixture({
         base: { ref: body.base, repo: { full_name: `${owner}/${repo}` } },
         merged: false,
         merged_at: null,
+        user: { login: 'octocat' },
       };
       pulls.push(created);
       committedCreateStatus = 201;

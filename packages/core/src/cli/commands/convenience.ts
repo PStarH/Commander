@@ -12,6 +12,7 @@
  * 8. commander learn — Learn from codebase patterns
  */
 
+import * as path from 'node:path';
 import { reportSilentFailure } from '../../silentFailureReporter';
 import { $, warn } from '../util';
 import { createRequire } from 'node:module';
