@@ -22,4 +22,4 @@ By submitting a contribution (pull request, issue comment, code, documentation, 
 
 ## Questions
 
-For strategic, acquisition, or licensing inquiries, please contact: sampan090611@gmail.com
+For strategic, acquisition, or licensing inquiries, open a GitHub Discussion on this repository.

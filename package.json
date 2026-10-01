@@ -3,7 +3,7 @@
   "version": "0.2.0",
   "description": "Approval and recovery for Coding and DevOps agents, starting with GitHub pull requests.",
   "private": true,
-  "author": "PStarH <sampan090611@gmail.com>",
+  "author": "PStarH",
   "license": "MIT",
   "repository": {
     "type": "git",

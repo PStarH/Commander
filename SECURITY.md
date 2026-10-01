@@ -13,10 +13,11 @@ security vulnerability, please report it to us as described below.
 
 **Please do not report security vulnerabilities through public GitHub issues.**
 
-Instead, please report them via email to **sampan090611@gmail.com**.
+Instead, report them privately through
+[GitHub Security Advisories](https://github.com/PStarH/Commander/security/advisories/new).
 
 You should receive a response within 48 hours. If for some reason you do not,
-please follow up via email to ensure we received your original message.
+open a follow-up advisory so we can see the original report.
 
 To help us better understand the nature and scope of the issue, please include
 as much of the following information as possible:

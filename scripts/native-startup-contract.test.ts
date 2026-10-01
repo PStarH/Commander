@@ -266,7 +266,9 @@ describe('apps/api dev startup', () => {
     assert.match(dev, /--watch\b/, 'must keep the watch/reload behaviour');
     assert.match(dev, /src\/index\.ts/, 'must keep the same entry point');
     // Deliberate, non-fatal root .env load: absent file must not break `dev`.
-    assert.match(dev, /--env-file-if-exists=\.\.\/\.\.\/\.env/);
+    const envFlag = dev.match(/--env-file-if-exists=(\S+)/);
+    assert.ok(envFlag, 'must point --env-file-if-exists at the repo-root .env');
+    assert.equal(resolve(dirname(API_PACKAGE_JSON), envFlag[1]), join(REPO_ROOT, '.env'));
 
     // tsx comes from the workspace root; the API package must not re-declare it.
     const rootPkg = JSON.parse(readFileSync(ROOT_PACKAGE_JSON, 'utf8')) as {
