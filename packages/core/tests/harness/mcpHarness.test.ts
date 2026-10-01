@@ -465,7 +465,11 @@ describe('McpHarness', () => {
       const services = createMockServices(provider);
       (services.getTool as any)._impl = () => mockTool;
 
-      const params = createRunParams({ services, maxSteps: 5 });
+      const params = createRunParams({
+        services,
+        maxSteps: 5,
+        availableTools: ['file_write'],
+      });
       const result = await harness.runAttempt(params);
       assert.strictEqual(result.status, 'success');
       const errorSteps = result.steps.filter(
