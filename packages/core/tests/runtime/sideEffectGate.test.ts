@@ -39,6 +39,7 @@ import {
 import type { RunHandle } from '../../src/atr/scheduler';
 import { classifyToolEffect, isMutationTool } from '../../src/runtime/runtimeHelpers';
 import { ToolExecutionService } from '../../src/runtime/toolExecutionService';
+import { testCapabilityToken } from '../capabilityTokenFixture';
 import { trackExecutedMutation } from '../../src/runtime/toolExecutionHandler';
 import { ReversibilityGate } from '../../src/security/reversibilityGate';
 
@@ -179,6 +180,11 @@ describe('consolidated tool effect classification', () => {
           'run-effect',
           { id: `call-${name}-${String(args.action)}`, name, arguments: { ...args } },
           'agent-effect',
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          testCapabilityToken(),
         );
       } finally {
         resetSideEffectGate();
@@ -258,6 +264,11 @@ describe('consolidated tool effect classification', () => {
         arguments: { reportId: 'R-1' },
       },
       'agent-weak-metadata',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      testCapabilityToken(),
     );
 
     expect(result.error).toContain('REVERSIBILITY_GATE_BLOCKED');
@@ -330,6 +341,11 @@ describe('consolidated tool effect classification', () => {
         'run-paused-after-admission',
         { id: 'paused-call', name: 'customer_mutation', arguments: { id: 'C-1' } },
         'agent-paused-after-admission',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        testCapabilityToken(),
       );
       expect(result.error).toContain('OPERATOR_PAUSE');
       expect(execute).not.toHaveBeenCalled();

@@ -118,7 +118,7 @@ export class ExecuteScriptTool implements Tool {
 
     const script = String(args.script ?? '');
     const requestedTools = args.tools as string[] | undefined;
-    const timeout = Math.min(Number(args.timeout ?? 30), 120);
+    const timeout = Math.min(Math.max(Number(args.timeout ?? 30), 1), 120);
 
     if (!script.trim()) return 'Error: Script is required';
 
@@ -163,14 +163,27 @@ export class ExecuteScriptTool implements Tool {
     `;
 
     try {
-      // Use timeout via Promise.race
-      const executionPromise = this.runScript(wrappedScript, availableTools, safeConsole);
+      // Timeout disposes the isolate. Promise.race alone leaves vm/isolate work running.
+      const cancel: { dispose: () => void; disposed: boolean } = {
+        dispose: () => {
+          cancel.disposed = true;
+        },
+        disposed: false,
+      };
+      const executionPromise = this.runScript(
+        wrappedScript,
+        availableTools,
+        safeConsole,
+        timeout,
+        cancel,
+      );
 
       let timeoutTimer: ReturnType<typeof setTimeout>;
       await Promise.race([
         executionPromise.finally(() => clearTimeout(timeoutTimer)),
         new Promise<string>((_, reject) => {
           timeoutTimer = setTimeout(() => {
+            cancel.dispose();
             reject(new Error(`Script execution timed out after ${timeout}s`));
           }, timeout * 1000);
           timeoutTimer.unref();
@@ -209,7 +222,20 @@ export class ExecuteScriptTool implements Tool {
       warn: (...args: unknown[]) => void;
       error: (...args: unknown[]) => void;
     },
+    timeoutSec: number,
+    cancel: { dispose: () => void; disposed: boolean },
   ): Promise<void> {
+    const guardedTools: typeof tools = {};
+    for (const name of Object.keys(tools)) {
+      const fn = tools[name]!;
+      guardedTools[name] = async (args) => {
+        if (cancel.disposed) {
+          throw new Error('Script execution timed out');
+        }
+        return fn(args);
+      };
+    }
+    tools = guardedTools;
     // Security: Prefer isolated-vm (true V8 Isolate) over Node.js vm module.
     // Per Node.js docs: vm is NOT a security sandbox — prototype chain escapes
     // are possible. isolated-vm provides real heap isolation.
@@ -219,7 +245,7 @@ export class ExecuteScriptTool implements Tool {
 
     if (isolatedVm) {
       try {
-        await this.runScriptInIsolate(script, tools, console_);
+        await this.runScriptInIsolate(script, tools, console_, timeoutSec, cancel);
         return;
       } catch (err) {
         if (!allowVmFallback) {
@@ -249,7 +275,7 @@ export class ExecuteScriptTool implements Tool {
       );
     }
 
-    await this.runScriptInVm(script, tools, console_);
+    await this.runScriptInVm(script, tools, console_, timeoutSec, cancel);
   }
 
   /**
@@ -264,10 +290,28 @@ export class ExecuteScriptTool implements Tool {
       warn: (...args: unknown[]) => void;
       error: (...args: unknown[]) => void;
     },
+    timeoutSec: number,
+    cancel: { dispose: () => void; disposed: boolean },
   ): Promise<void> {
     const ivm = isolatedVm!;
     const isolate = new ivm.Isolate({ memoryLimit: 128 });
     const context = isolate.createContext();
+    let disposed = false;
+    const dispose = () => {
+      if (disposed) return;
+      disposed = true;
+      cancel.disposed = true;
+      try {
+        isolate.dispose();
+      } catch (err) {
+        reportSilentFailure(err, 'scriptTool:isolateDispose');
+      }
+    };
+    const previousDispose = cancel.dispose;
+    cancel.dispose = () => {
+      previousDispose();
+      dispose();
+    };
 
     try {
       // Inject console into the isolate
@@ -309,7 +353,7 @@ export class ExecuteScriptTool implements Tool {
       // Run the user script with timeout
       const compiledScript = isolate.compileScript(script);
       const result = await compiledScript.run(context, {
-        timeout: 120000,
+        timeout: Math.max(1, Math.floor(timeoutSec * 1000)),
         promise: true,
         copy: true,
       });
@@ -319,7 +363,7 @@ export class ExecuteScriptTool implements Tool {
         await result;
       }
     } finally {
-      isolate.dispose();
+      dispose();
     }
   }
 
@@ -336,6 +380,8 @@ export class ExecuteScriptTool implements Tool {
       warn: (...args: unknown[]) => void;
       error: (...args: unknown[]) => void;
     },
+    timeoutSec: number,
+    cancel: { dispose: () => void; disposed: boolean },
   ): Promise<void> {
     // SECURITY FIX: wrap all sandbox objects in Proxy to prevent prototype chain escape
     // Node.js vm module is NOT a security sandbox — this.constructor.constructor('return process')()
@@ -503,8 +549,11 @@ export class ExecuteScriptTool implements Tool {
     });
     const context = vm.createContext(sandbox, { name: 'script-sandbox' });
     const result = vm.runInNewContext(script, context, {
-      timeout: 120000,
+      timeout: Math.max(1, Math.floor(timeoutSec * 1000)),
     });
+    if (cancel.disposed) {
+      throw new Error('Script execution timed out');
+    }
 
     if (result && typeof (result as { then?: unknown }).then === 'function') {
       (await result) as Promise<unknown>;

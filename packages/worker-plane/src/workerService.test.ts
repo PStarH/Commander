@@ -1,6 +1,20 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { getGlobalLogger, getGlobalMetrics, resetControlPlane } from '@commander/core';
+import {
+  getCapabilityTokenIssuer,
+  getGlobalLogger,
+  getGlobalMetrics,
+  resetControlPlane,
+} from '@commander/core';
+
+function localToolToken(toolName: string): string {
+  return getCapabilityTokenIssuer().issue({
+    sub: 'worker-1',
+    aud: 'tenant-a',
+    tools: [toolName],
+    ttlSeconds: 300,
+  });
+}
 import { InMemoryWorkerRegistry } from './registry.js';
 import { WorkerService } from './workerService.js';
 import { WorkerExecutionError } from './types.js';
@@ -651,7 +665,12 @@ describe('worker plane', () => {
       {
         id: 'hang-tool',
         kind: 'tool',
-        input: { toolName: 'hang', args: {}, timeoutMs: 40 },
+        input: {
+          toolName: 'hang',
+          args: {},
+          timeoutMs: 40,
+          capabilityToken: localToolToken('hang'),
+        },
       },
     ]);
     const toolDef = {
@@ -703,7 +722,12 @@ describe('worker plane', () => {
       {
         id: 'abort-hang-tool',
         kind: 'tool',
-        input: { toolName: 'hang', args: {}, timeoutMs: 30_000 },
+        input: {
+          toolName: 'hang',
+          args: {},
+          timeoutMs: 30_000,
+          capabilityToken: localToolToken('hang'),
+        },
       },
     ]);
     const toolDef = {
@@ -757,7 +781,12 @@ describe('worker plane', () => {
       {
         id: 'stop-hang-tool',
         kind: 'tool',
-        input: { toolName: 'hang', args: {}, timeoutMs: 30_000 },
+        input: {
+          toolName: 'hang',
+          args: {},
+          timeoutMs: 30_000,
+          capabilityToken: localToolToken('hang'),
+        },
       },
     ]);
     const toolDef = {

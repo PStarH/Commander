@@ -164,7 +164,7 @@
     {
       "path": "packages/core/src/cli/commands/_shared.ts",
       "sourceSha256": "122d18a2c35284d7a973a9c49412146cc45e1e1e9f83b223a38b8ffb90145554",
-      "callersSha256": "7127d7b3990ab7274aa717e708d2c8ae05549462cbdd13d721d732c02421aa2d",
+      "callersSha256": "750ac3e98a8702a650e24778c48360926fcf62297c1f008c594c028e739421a0",
       "owner": "@commander/core",
       "reason": "Legacy local CLI runtime factory pending gateway client migration",
       "expiresAt": "2026-10-31",
@@ -224,7 +224,7 @@
     {
       "path": "packages/core/src/runtime/finallyCleanupHandler.ts",
       "sourceSha256": "ce568dc4cee9bb6a5bb06d9b7b200b9d741bd02ea5bb6c749063332037bf9bd3",
-      "callersSha256": "07453ed151885c79373119beccc92e36bbb435044aff644e3142cd8668ff6398",
+      "callersSha256": "f3bd3b6bba10103c8531d6ce50ee49a88ac2560e015c94beb14201b6b35df0fe",
       "owner": "@commander/core",
       "reason": "Legacy runtime cleanup mutation pending kernel lifecycle migration",
       "expiresAt": "2026-10-31",
@@ -254,7 +254,7 @@
     {
       "path": "packages/core/src/runtime/sideEffectGate.ts",
       "sourceSha256": "7442c3607e118daf0bf044e864c69fd0195bfbb43365363af64f60f2d54e0a60",
-      "callersSha256": "13a5164b40ef79e39d8db181951f4df9e7dbfddcc998b9309281fc0279bcb407",
+      "callersSha256": "37339545c4667a61b4e0a85c746b7b075b2f63e95c902aafaa7d2800744f7f32",
       "owner": "@commander/core",
       "reason": "Legacy side-effect approval mutation pending effect broker migration",
       "expiresAt": "2026-10-31",
