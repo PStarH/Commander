@@ -5,7 +5,9 @@
  * the actual cost by leveraging historical records, while a flat-rate baseline
  * with no memory misses the real per-model price.
  */
+import * as fs from 'node:fs';
 import * as os from 'node:os';
+import * as path from 'node:path';
 import { CostPredictor } from '../../../intelligence/costPredictor';
 import { calculateCostBreakdown } from '../../../telos/tokenSentinel';
 import type { BenchmarkModule, Task } from '../types';
@@ -145,7 +147,9 @@ export const costPredictorModule: BenchmarkModule = {
   }),
   treatmentFactory: () => {
     // Use a temp directory so the benchmark does not pollute the project tree.
-    const predictor = new CostPredictor(os.tmpdir());
+    const predictor = new CostPredictor(
+      fs.mkdtempSync(path.join(os.tmpdir(), 'commander-cost-predictor-')),
+    );
 
     // Pre-record a small historical window for each task profile so the
     // predictor has enough similar tasks to blend into its estimate.
