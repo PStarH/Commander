@@ -312,7 +312,7 @@ Be specific. Avoid generic advice like "try again" or "be more careful".`;
       throw new Error('No LLM provider configured');
     }
 
-    const model = resolveDefaultModel(this.llmProvider);
+    const model = resolveDefaultModel(this.llmProvider) || this.llmProvider.name;
     const request = {
       model,
       messages: [{ role: 'user' as const, content: prompt }],
