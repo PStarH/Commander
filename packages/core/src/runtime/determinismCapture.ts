@@ -137,11 +137,17 @@ export class DeterminismCapture {
       isReplay: true,
       getTimestamp: (step: number) => {
         const v = runCaptures.get(`timestamp:${step}`);
-        return typeof v === 'number' ? v : Date.now();
+        if (typeof v !== 'number') {
+          throw new Error(`REPLAY_TIMESTAMP_MISSING:${step}`);
+        }
+        return v;
       },
       getRandom: (step: number) => {
         const v = runCaptures.get(`random:${step}`);
-        return typeof v === 'number' ? v : Math.random();
+        if (typeof v !== 'number') {
+          throw new Error(`REPLAY_RANDOM_MISSING:${step}`);
+        }
+        return v;
       },
       getLLMResponse: (step: number) => runCaptures.get(`llmResponse:${step}`),
       getToolResponse: (step: number) => runCaptures.get(`toolResponse:${step}`),
