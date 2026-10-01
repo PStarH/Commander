@@ -76,6 +76,9 @@ export function createChaosMockFetch(counters: L4BChaosRemoteCounters) {
   return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
     const url = String(input);
     const method = init?.method ?? 'GET';
+    if (method === 'GET' && url === 'https://api.github.com/user') {
+      return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+    }
     if (method === 'GET' && url.includes('/pulls?')) {
       return new Response(JSON.stringify(pulls), { status: 200 });
     }
@@ -98,6 +101,7 @@ export function createChaosMockFetch(counters: L4BChaosRemoteCounters) {
         base: { ref: body.base, repo: { full_name: 'octo/repo' } },
         merged: false,
         merged_at: null,
+        user: { login: 'octocat' },
       };
       pulls.push(created);
       return new Response(JSON.stringify(created), { status: 201 });
