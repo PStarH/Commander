@@ -96,6 +96,14 @@ describe('DeterminismCapture', () => {
     expect(ctx!.getToolResponse(2)).toEqual({ output: 'tool-1' });
   });
 
+  it('replay throws when a timestamp or random value was not recorded', () => {
+    const capture = getGlobalDeterminismCapture();
+    capture.captureLLMResponse('run-missing', 1, { content: 'x' });
+    const ctx = capture.buildReplayContext('run-missing');
+    expect(() => ctx!.getTimestamp(1)).toThrow(/REPLAY_TIMESTAMP_MISSING/);
+    expect(() => ctx!.getRandom(1)).toThrow(/REPLAY_RANDOM_MISSING/);
+  });
+
   it('nextStep returns monotonically increasing step numbers', () => {
     const capture = getGlobalDeterminismCapture();
     expect(capture.nextStep('run-5')).toBe(1);
