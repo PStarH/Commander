@@ -32,7 +32,6 @@ const WRITE_COMMANDS = new Set([
   'reset',
   'rm',
   'mv',
-  'config',
 ]);
 const SAFE_COMMANDS = new Set([...READ_COMMANDS, ...WRITE_COMMANDS]);
 
@@ -164,11 +163,28 @@ export class GitTool implements Tool {
     // Harden transports regardless of subcommand: disable the ext helper entirely
     // and restrict file:// to user config. These tool-supplied flags precede the
     // subcommand and cannot be overridden by later user args.
+    // A repo-local config can still run a host command on the next git
+    // invocation (core.fsmonitor, core.sshCommand, an alias of this
+    // subcommand). These -c overrides apply before the repo config.
     const hardenedArgs = [
       '-c',
       'protocol.ext.allow=never',
       '-c',
       'protocol.file.allow=user',
+      '-c',
+      'core.fsmonitor=',
+      '-c',
+      'core.sshCommand=',
+      '-c',
+      'core.pager=',
+      '-c',
+      'core.editor=',
+      '-c',
+      'sequence.editor=',
+      '-c',
+      'diff.external=',
+      '-c',
+      `alias.${subcommand}=`,
       ...gitArgs,
     ];
     try {
