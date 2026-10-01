@@ -12,6 +12,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { getGlobalLogger } from './logging';
 import { ResourceGovernor } from './security/securityPrimitives';
+import { requireLlmPreCheck } from './security/enterpriseSecurityGateway';
 import { DEFAULT_LLM_TIMEOUT_MS, MAX_LLM_RESPONSE_BYTES } from './runtime/runtimeConstants';
 import type { LLMProvider } from './runtime/types';
 import {
@@ -700,6 +701,12 @@ async function invokeReviewProvider(prompt: string, providerInfo: ProviderInfo):
     });
   }
 
+  requireLlmPreCheck({
+    model: llmRequest.model,
+    estimatedTokens: llmRequest.maxTokens,
+    source: 'review-agent',
+    input: prompt.slice(0, 4000),
+  });
   const controller = new AbortController();
   const governed = await ResourceGovernor.govern(
     () => provider.call({ ...llmRequest, signal: controller.signal }),

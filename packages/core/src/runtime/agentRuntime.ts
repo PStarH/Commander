@@ -1112,6 +1112,17 @@ export class AgentRuntime implements AgentRuntimeInterface {
       };
     }
 
+    if (allowedTools && !allowedTools.includes(toolCall.name)) {
+      const errorMsg = `TOOL_NOT_ALLOWED: "${toolCall.name}" is not in the allowed tools list for this agent. Allowed: ${allowedTools.join(', ')}`;
+      return {
+        toolCallId: toolCall.id,
+        name: toolCall.name,
+        output: errorMsg,
+        error: errorMsg,
+        durationMs: 0,
+      };
+    }
+
     const result = await this.toolExecutionService.execute(
       runId,
       toolCall,

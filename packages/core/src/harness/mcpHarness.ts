@@ -36,7 +36,8 @@ import { getGlobalLogger } from '../logging';
 import { generateId } from '../runtime/runtimeHelpers';
 import { sanitizeIfNeeded } from '../security/outputSanitizer';
 import { scanToolOutputForInjection } from '../contentScanner';
-import { BaseHarness } from './baseHarness';
+import { authorizeHarnessTool, BaseHarness, screenHarnessToolOutput } from './baseHarness';
+import { requireLlmPreCheck } from '../security/enterpriseSecurityGateway';
 
 export const MCP_HARNESS_CAPABILITIES: HarnessCapabilities = {
   supportsSubAgents: false,
@@ -209,6 +210,14 @@ export class McpHarness extends BaseHarness {
       // Call the provider.
       let response: LLMResponse;
       try {
+        requireLlmPreCheck({
+          model: finalRequest.model,
+          estimatedTokens: finalRequest.maxTokens ?? 1024,
+          source: 'mcp-harness',
+          input: JSON.stringify(finalRequest.messages).slice(0, 4000),
+          tenantId: params.tenantId,
+          runId,
+        });
         response = await provider.call(finalRequest);
       } catch (err) {
         const errorMsg = (err as Error).message;
@@ -404,7 +413,20 @@ export class McpHarness extends BaseHarness {
         let toolOutput = '';
         let toolError: string | undefined;
         try {
-          toolOutput = await tool.execute(tc.arguments);
+          await authorizeHarnessTool({
+            tenantId: params.tenantId,
+            runId,
+            toolName: tc.name,
+            args: tc.arguments,
+            availableTools: params.availableTools,
+          });
+          const raw = await tool.execute(tc.arguments);
+          toolOutput = screenHarnessToolOutput({
+            tenantId: params.tenantId,
+            runId,
+            toolName: tc.name,
+            output: typeof raw === 'string' ? raw : JSON.stringify(raw),
+          });
         } catch (err) {
           toolError = (err as Error).message;
           toolOutput = toolError;

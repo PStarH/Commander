@@ -210,15 +210,9 @@ export const DEFAULT_APPROVAL_POLICIES: ApprovalPolicy[] = [
   },
   {
     pattern: 'python_execute',
-    level: 'semi_auto',
+    level: 'manual',
     riskLevel: 'high',
-    description: 'Python code execution',
-    autoApproveIf: {
-      // python_execute treats timeout as seconds (capped at 120). 10000
-      // compared that number as if it were milliseconds, so every legal
-      // timeout auto-approved.
-      argsMatch: { timeout: { $lte: 10 } },
-    },
+    description: 'Python code execution requires manual approval',
   },
   {
     pattern: 'file_write',
@@ -266,15 +260,11 @@ export const DEFAULT_APPROVAL_POLICIES: ApprovalPolicy[] = [
     riskLevel: 'low',
     description: 'Memory operations are safe',
   },
-  // 代理工具 — 半自动
   {
     pattern: 'agent',
-    level: 'semi_auto',
+    level: 'manual',
     riskLevel: 'high',
-    description: 'Sub-agent spawning requires approval',
-    autoApproveIf: {
-      argsMatch: { tools: { $length: { $lte: 5 } } },
-    },
+    description: 'Sub-agent spawning requires manual approval',
   },
   // Git 操作 — 根据类型分级
   {
@@ -669,7 +659,7 @@ export class ToolApproval {
     }
 
     const argRisk = assessArgRisk(args, policy.argRiskRules, policy.argWhitelist);
-    const escalatedByArgRisk = riskPriorityCompare(argRisk.riskLevel, 'high') > 0;
+    const escalatedByArgRisk = riskPriorityCompare(argRisk.riskLevel, 'high') >= 0;
 
     let effectiveLevel = policy.level;
     if (escalatedByArgRisk && effectiveLevel !== 'manual') {
