@@ -17,6 +17,7 @@ import type { ToolCall } from '../runtime/types';
 import type { HarnessServices } from './harnessTypes';
 import { getGlobalLogger } from '../logging';
 import { extractDecisionObject } from './decisionJson';
+import { requireLlmPreCheck } from '../security/enterpriseSecurityGateway';
 
 export interface GuardianConfig {
   enabled: boolean;
@@ -106,6 +107,12 @@ export class GuardianService {
         };
       }
 
+      requireLlmPreCheck({
+        model: this.config.model,
+        estimatedTokens: this.config.maxTokens,
+        source: 'guardian-service',
+        input: guardianPrompt.slice(0, 4000),
+      });
       const response = await provider.call({
         model: this.config.model,
         messages: [{ role: 'system', content: guardianPrompt }],

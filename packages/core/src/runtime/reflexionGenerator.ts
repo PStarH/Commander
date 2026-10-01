@@ -17,6 +17,7 @@ import { reportSilentFailure } from '../silentFailureReporter';
 import type { LLMProvider } from './types';
 import type { ErrorClass } from './llmRetry';
 import { getGlobalLogger } from '../logging';
+import { requireLlmPreCheck } from '../security/enterpriseSecurityGateway';
 
 export interface ReflexionContext {
   /** Original user goal this action is part of. */
@@ -311,7 +312,7 @@ Be specific. Avoid generic advice like "try again" or "be more careful".`;
       throw new Error('No LLM provider configured');
     }
 
-    const model = resolveDefaultModel(this.llmProvider);
+    const model = resolveDefaultModel(this.llmProvider) || this.llmProvider.name;
     const request = {
       model,
       messages: [{ role: 'user' as const, content: prompt }],
@@ -329,6 +330,12 @@ Be specific. Avoid generic advice like "try again" or "be more careful".`;
     });
 
     try {
+      requireLlmPreCheck({
+        model,
+        estimatedTokens: this.options.maxReflexionTokens,
+        source: 'reflexion-generator',
+        input: prompt.slice(0, 4000),
+      });
       const response = await Promise.race([this.llmProvider.call(request), timeoutPromise]);
       return response.content || '';
     } finally {

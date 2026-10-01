@@ -28,6 +28,7 @@ import {
   getStepWorkloadBinding,
   mintStepCapabilityToken,
   requireStepWorkloadBinding,
+  verifyLocalToolCapabilityToken,
 } from './stepWorkloadIdentity.js';
 import { awaitWithAbortTimeout } from './awaitWithAbortTimeout.js';
 
@@ -202,6 +203,27 @@ export class ToolStepExecutor implements StepExecutor {
     if (!handler) {
       throw new WorkerExecutionError("Tool '" + input.toolName + "' not found in registry", {
         code: 'TOOL_NOT_FOUND',
+        retryable: false,
+      });
+    }
+
+    const capabilityToken = input.capabilityToken;
+    if (!capabilityToken) {
+      throw new WorkerExecutionError('Local tool execution requires capabilityToken', {
+        code: 'EFFECT_AUTHORIZATION_REQUIRED',
+        retryable: false,
+      });
+    }
+    const expectedAud = step.tenantId && step.tenantId.length > 0 ? step.tenantId : '*';
+    const verdict = verifyLocalToolCapabilityToken({
+      token: capabilityToken,
+      toolName: input.toolName,
+      args: input.args ?? {},
+      aud: expectedAud,
+    });
+    if (!verdict.ok) {
+      throw new WorkerExecutionError(`CAPABILITY_TOKEN_REJECTED: ${verdict.reason ?? 'rejected'}`, {
+        code: 'EFFECT_AUTHORIZATION_REQUIRED',
         retryable: false,
       });
     }

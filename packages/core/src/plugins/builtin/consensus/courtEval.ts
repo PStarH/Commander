@@ -24,6 +24,25 @@
 import type { LLMProvider, LLMRequest, LLMResponse } from '../../../runtime/types';
 import { reportSilentFailure } from '../../../silentFailureReporter';
 
+type LlmGate = (params: {
+  model: string;
+  estimatedTokens: number;
+  source: string;
+  input?: string;
+}) => void;
+
+let llmGate: LlmGate | undefined;
+
+async function loadLlmGate(): Promise<LlmGate> {
+  if (!llmGate) {
+    const mod = (await import(
+      '..' + '/' + '..' + '/' + '..' + '/security/enterpriseSecurityGateway'
+    )) as { requireLlmPreCheck: LlmGate };
+    llmGate = mod.requireLlmPreCheck;
+  }
+  return llmGate;
+}
+
 // ── Types ────────────────────────────────────────────────────────────────────
 
 export type CourtRole = 'grader' | 'critic' | 'defender';
@@ -418,6 +437,12 @@ export class CourtEvalEngine {
       maxTokens: 1024,
       temperature: 0.3,
     };
+    (await loadLlmGate())({
+      model,
+      estimatedTokens: request.maxTokens ?? 1024,
+      source: 'court-eval',
+      input: prompt.slice(0, 4000),
+    });
     const response: LLMResponse = await provider.call(request);
     return response.content ?? '';
   }

@@ -6,6 +6,7 @@
  */
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import { getCapabilityTokenIssuer, getCapabilityTokenVerifier } from '@commander/core/security';
 import {
   canonicalRequestHash,
   isClassAEffectType,
@@ -116,4 +117,30 @@ export function mintStepCapabilityToken(input: {
         ? { actionDigest: input.actionDigest }
         : {}),
   });
+}
+
+/** HMAC tool token for the local registry path. Issued by the core singleton. */
+export function issueLocalToolCapabilityToken(input: { toolName: string; aud: string }): string {
+  return getCapabilityTokenIssuer().issue({
+    sub: 'worker-1',
+    aud: input.aud,
+    tools: [input.toolName],
+    ttlSeconds: 300,
+  });
+}
+
+/** Fail closed: a local tool runs only when this token authorizes that tool and tenant. */
+export function verifyLocalToolCapabilityToken(input: {
+  token: string;
+  toolName: string;
+  args: Record<string, unknown>;
+  aud: string;
+}): { ok: boolean; reason?: string } {
+  const verdict = getCapabilityTokenVerifier().verify(input.token, {
+    tool: input.toolName,
+    args: input.args,
+    consumeReplay: false,
+    aud: input.aud,
+  });
+  return verdict.ok ? { ok: true } : { ok: false, reason: verdict.reason };
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ToolOrchestrator } from '../../src/runtime/toolOrchestrator';
 import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+import { testCapabilityToken } from '../capabilityTokenFixture';
 
 process.env.COMMANDER_ATR_MEMORY = '1';
 
@@ -851,6 +852,11 @@ describe('dual-path abort/timeout advice (TES + Orchestrator)', () => {
       'run-abort',
       { id: 'call-abort', name: 'probe', arguments: {} },
       'agent-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      testCapabilityToken(),
     );
 
     expect(executeCount).toBe(1);
@@ -913,6 +919,11 @@ describe('dual-path abort/timeout advice (TES + Orchestrator)', () => {
       'run-timeout',
       { id: 'call-timeout', name: 'slow', arguments: {} },
       'agent-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      testCapabilityToken(),
     );
 
     expect(executeCount).toBe(1);
