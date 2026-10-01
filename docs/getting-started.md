@@ -26,8 +26,7 @@ Console。
 ## 1. 克隆与安装
 
 ```bash
-git clone --branch codex/release-20260810 --single-branch \
-  https://github.com/PStarH/Commander.git
+git clone https://github.com/PStarH/Commander.git
 cd Commander
 corepack enable
 pnpm install --frozen-lockfile
