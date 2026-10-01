@@ -40,6 +40,7 @@ import {
   type SideEffectRequest,
 } from '../../src/runtime/sideEffectGate';
 import { ToolExecutionService } from '../../src/runtime/toolExecutionService';
+import { testCapabilityToken } from '../capabilityTokenFixture';
 
 type ToolMessage = { tool_call_id: string; content: string };
 
@@ -225,6 +226,11 @@ describe('RUN-02 — security denial provenance is bound to the call', () => {
         'run-policy-denied',
         { id: 'call-policy', name: 'file_write', arguments: { action: 'write' } },
         'agent-policy-denied',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        testCapabilityToken(),
       );
     } finally {
       resetSideEffectGate();

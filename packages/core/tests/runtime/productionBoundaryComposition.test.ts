@@ -29,6 +29,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ToolExecutionService } from '../../src/runtime/toolExecutionService';
 import { getSideEffectGate, resetSideEffectGate } from '../../src/runtime/sideEffectGate';
 import { installAlwaysAdmitGate } from '../helpers/runtimeUnitFixture';
+import { testCapabilityToken } from '../capabilityTokenFixture';
 
 /** Build a ToolExecutionService whose tool body records its invocations. */
 function makeService(toolName: string, execute: () => Promise<string>) {
@@ -108,7 +109,16 @@ describe('production boundary composition: gate → ToolExecutionService', () =>
     const execute = vi.fn(async () => 'MUST NOT RUN');
     const { service } = makeService('file', execute);
 
-    const result = await service.execute('run-boundary-1', CALL, 'agent-boundary-1');
+    const result = await service.execute(
+      'run-boundary-1',
+      CALL,
+      'agent-boundary-1',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      testCapabilityToken(),
+    );
 
     // 0 tool-body invocations: the effect never happened.
     expect(execute).not.toHaveBeenCalled();
@@ -123,7 +133,16 @@ describe('production boundary composition: gate → ToolExecutionService', () =>
       const execute = vi.fn(async () => 'ran');
       const { service } = makeService('file', execute);
 
-      const result = await service.execute('run-boundary-2', CALL, 'agent-boundary-2');
+      const result = await service.execute(
+        'run-boundary-2',
+        CALL,
+        'agent-boundary-2',
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        testCapabilityToken(),
+      );
 
       // 1 tool-body invocation: the grant is what lets the effect through.
       expect(execute).toHaveBeenCalledTimes(1);
@@ -140,7 +159,16 @@ describe('production boundary composition: gate → ToolExecutionService', () =>
 
     const execute = vi.fn(async () => 'MUST NOT RUN');
     const { service } = makeService('file', execute);
-    const result = await service.execute('run-boundary-3', CALL, 'agent-boundary-3');
+    const result = await service.execute(
+      'run-boundary-3',
+      CALL,
+      'agent-boundary-3',
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      testCapabilityToken(),
+    );
 
     expect(execute).not.toHaveBeenCalled();
     expect(result.error).toMatch(/SIDE_EFFECT_GATE: NO_RUN_HANDLE/);

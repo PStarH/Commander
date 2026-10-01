@@ -99,64 +99,63 @@ export class ToolExecutionService {
     const bus = getMessageBus();
     const startTime = Date.now();
     try {
-      // Capability-token verification: if a token is supplied, it must authorize
-      // this exact tool and argument shape. Invalid tokens are rejected.
+      // Capability-token verification: a token is required and must authorize
+      // this exact tool and argument shape. Missing or invalid tokens are rejected.
       //
       // Dual verification: Biscuit tokens (Ed25519, 'bsc_' prefix) are verified
       // via the BiscuitCapabilityAdapter; HMAC tokens are verified via the
       // existing CapabilityTokenIssuer. This allows incremental migration
       // to Ed25519 signatures without breaking existing token issuers.
-      if (capabilityToken) {
-        try {
-          let verdict: { ok: boolean; reason?: string; detail?: string; jti?: string };
+      if (!capabilityToken) {
+        const errorMsg = 'CAPABILITY_TOKEN_REQUIRED: tool execution requires a capability token';
+        bus.publish('tool.blocked', agentId, {
+          runId,
+          toolName: toolCall.name,
+          reason: 'capability_token_required',
+          detail: errorMsg,
+        });
+        return {
+          toolCallId: toolCall.id,
+          name: toolCall.name,
+          output: errorMsg,
+          error: errorMsg,
+          durationMs: 0,
+        };
+      }
+      try {
+        let verdict: { ok: boolean; reason?: string; detail?: string; jti?: string };
 
-          // CAP-02: always bind verify audience (HMAC + Biscuit same semantics).
-          // Concrete tenantId rejects wildcard aud='*'; missing/empty tenantId
-          // uses '*' so a stolen tenant-scoped token cannot authorize unbound
-          // execute (fail-closed for multi-tenant leakage into single-tenant path).
-          const expectedAud = tenantId && tenantId.length > 0 ? tenantId : '*';
-          if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
-            // Biscuit (Ed25519) verification
-            const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(expectedAud);
-            verdict = biscuitVerifier.verify(capabilityToken, {
-              tool: toolCall.name,
-              args: toolCall.arguments as Record<string, unknown>,
-            });
-          } else {
-            // HMAC verification (legacy). Worker/runtime only holds the verifier,
-            // never the issuer/signing key.
-            // Run-scoped tokens are reused across N tools in one execute(); do not
-            // consume (jti,nonce) or concurrent tool batches get replay_detected.
-            const verifier = getCapabilityTokenVerifier();
-            verdict = verifier.verify(capabilityToken, {
-              tool: toolCall.name,
-              args: toolCall.arguments as Record<string, unknown>,
-              consumeReplay: false,
-              aud: expectedAud,
-            });
-          }
-          if (!verdict.ok) {
-            const errorMsg = `CAPABILITY_TOKEN_REJECTED: ${verdict.reason}${verdict.detail ? ` (${verdict.detail})` : ''}`;
-            bus.publish('tool.blocked', agentId, {
-              runId,
-              toolName: toolCall.name,
-              reason: 'capability_token_rejected',
-              detail: errorMsg,
-            });
-            return {
-              toolCallId: toolCall.id,
-              name: toolCall.name,
-              output: errorMsg,
-              error: errorMsg,
-              durationMs: 0,
-            };
-          }
-        } catch (err) {
-          const errorMsg = `CAPABILITY_TOKEN_ERROR: ${err instanceof Error ? err.message : String(err)}`;
+        // CAP-02: always bind verify audience (HMAC + Biscuit same semantics).
+        // Concrete tenantId rejects wildcard aud='*'; missing/empty tenantId
+        // uses '*' so a stolen tenant-scoped token cannot authorize unbound
+        // execute (fail-closed for multi-tenant leakage into single-tenant path).
+        const expectedAud = tenantId && tenantId.length > 0 ? tenantId : '*';
+        if (BiscuitCapabilityAdapter.isBiscuitToken(capabilityToken)) {
+          // Biscuit (Ed25519) verification
+          const biscuitVerifier = getGlobalBiscuitCapabilityAdapter().createVerifier(expectedAud);
+          verdict = biscuitVerifier.verify(capabilityToken, {
+            tool: toolCall.name,
+            args: toolCall.arguments as Record<string, unknown>,
+          });
+        } else {
+          // HMAC verification (legacy). Worker/runtime only holds the verifier,
+          // never the issuer/signing key.
+          // Run-scoped tokens are reused across N tools in one execute(); do not
+          // consume (jti,nonce) or concurrent tool batches get replay_detected.
+          const verifier = getCapabilityTokenVerifier();
+          verdict = verifier.verify(capabilityToken, {
+            tool: toolCall.name,
+            args: toolCall.arguments as Record<string, unknown>,
+            consumeReplay: false,
+            aud: expectedAud,
+          });
+        }
+        if (!verdict.ok) {
+          const errorMsg = `CAPABILITY_TOKEN_REJECTED: ${verdict.reason}${verdict.detail ? ` (${verdict.detail})` : ''}`;
           bus.publish('tool.blocked', agentId, {
             runId,
             toolName: toolCall.name,
-            reason: 'capability_token_error',
+            reason: 'capability_token_rejected',
             detail: errorMsg,
           });
           return {
@@ -167,6 +166,21 @@ export class ToolExecutionService {
             durationMs: 0,
           };
         }
+      } catch (err) {
+        const errorMsg = `CAPABILITY_TOKEN_ERROR: ${err instanceof Error ? err.message : String(err)}`;
+        bus.publish('tool.blocked', agentId, {
+          runId,
+          toolName: toolCall.name,
+          reason: 'capability_token_error',
+          detail: errorMsg,
+        });
+        return {
+          toolCallId: toolCall.id,
+          name: toolCall.name,
+          output: errorMsg,
+          error: errorMsg,
+          durationMs: 0,
+        };
       }
 
       if (toolCall.name.startsWith('chaos_')) {
@@ -687,8 +701,7 @@ export class ToolExecutionService {
 
       // Runtime Guardian LLM review — semantic tool call analysis.
       // This complements GuardianAgent's rule-based checks with LLM understanding,
-      // catching dangerous commands that don't match regex patterns (e.g.,
-      // "curl ... | bash", "python -c 'import os; os.system(...)'").
+      // catching dangerous commands that do not match the regex patterns.
       // Only runs when a provider is available; fails open on errors.
       if (isRuntimeGuardianAvailable()) {
         try {
