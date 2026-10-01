@@ -33,6 +33,7 @@ interface MockPull {
   base: { ref: string; repo: { full_name: string } };
   merged: boolean;
   merged_at: string | null;
+  user?: { login: string };
 }
 
 function testCredentials(): AdapterCredentialProvider {
@@ -139,6 +140,9 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
     const backend = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = String(input);
       const method = init?.method ?? 'GET';
+      if (method === 'GET' && url === 'https://api.github.com/user') {
+        return new Response(JSON.stringify({ login: 'octocat' }), { status: 200 });
+      }
       if (method === 'GET' && url.includes('/pulls?')) {
         return new Response(JSON.stringify(pulls), { status: 200 });
       }
@@ -160,6 +164,7 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
           base: { ref: body.base, repo: { full_name: 'octo/repo' } },
           merged: false,
           merged_at: null,
+          user: { login: 'octocat' },
         };
         pulls.push(created);
         return new Response(JSON.stringify(created), { status: 201 });
@@ -204,7 +209,7 @@ describe('GitHub response-cut recovery (runs by default, no live egress)', () =>
     assert.equal(outcome.response?.prNumber, 1);
     assert.equal(createCount, 1, 'recovery must not issue a second create');
     assert.equal(
-      pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey)),
+      pulls[0]!.body.includes(githubPrBodyMarker(tenantId, idempotencyKey, 'gh-test-token')),
       true,
       'the committed body must carry the idempotency marker',
     );
