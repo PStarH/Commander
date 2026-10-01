@@ -64,18 +64,22 @@ export function screenHarnessToolOutput(input: {
   toolName: string;
   output: string;
 }): string {
+  const sample = input.output.length > 10000 ? input.output.slice(0, 10000) : input.output;
   const post = getEnterpriseSecurityGateway().postToolCheck({
     tenantId: input.tenantId,
     runId: input.runId,
     toolName: input.toolName,
-    output: input.output.slice(0, 10000),
+    output: sample,
   });
   if (!post.allowed) {
     throw new Error(
       `Security gateway blocked tool output ${input.toolName}: ${post.reason ?? 'policy'}`,
     );
   }
-  return post.sanitizedOutput ?? input.output;
+  if (post.sanitizedOutput !== undefined && post.sanitizedOutput !== sample) {
+    return post.sanitizedOutput;
+  }
+  return input.output;
 }
 
 export abstract class BaseHarness {
