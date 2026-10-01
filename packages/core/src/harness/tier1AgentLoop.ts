@@ -28,6 +28,7 @@ import { getGlobalLogger } from '../logging';
 import { generateId, now } from '../runtime/runtimeHelpers';
 import { scanToolOutputForInjection } from '../contentScanner';
 import { ToolOrchestrator, type ToolExecutionPlan } from '../runtime/toolOrchestrator';
+import { requireLlmPreCheck } from '../security/enterpriseSecurityGateway';
 
 // ============================================================================
 // Types
@@ -167,6 +168,14 @@ export class Tier1AgentLoop {
         emit({ type: 'llm_request', request, runId, timestamp: Date.now() });
         let response: LLMResponse | null = null;
         try {
+          requireLlmPreCheck({
+            model: request.model,
+            estimatedTokens: request.maxTokens ?? 1024,
+            source: 'tier1-agent-loop',
+            input: JSON.stringify(request.messages).slice(0, 4000),
+            tenantId: params.tenantId,
+            runId,
+          });
           response = await provider.call(request);
         } catch (err) {
           lastError = err instanceof Error ? err.message : String(err);
