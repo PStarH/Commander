@@ -349,7 +349,7 @@ function wrapPluginAsScript(
   })()`;
 }
 
-function buildSubprocessCommand(req: SandboxedToolRequest): string {
+export function buildSubprocessCommand(req: SandboxedToolRequest): string {
   // Build a shell command that invokes the plugin tool.
   // In a real deployment, this would be:
   //   node /path/to/plugin-host.js --plugin <id> --tool <name> --args <json>
@@ -365,6 +365,12 @@ function buildSubprocessCommand(req: SandboxedToolRequest): string {
       'ISOLATION_UNAVAILABLE',
     );
   }
-  const argsJson = JSON.stringify(req.args).replace(/'/g, "'\\''");
-  return `echo '{"plugin":"${req.pluginId}","tool":"${req.toolName}","args":'${argsJson}'}'`;
+  // The payload must be one single-quoted shell word. An unquoted argument
+  // is parsed by the shell and can run a command substitution.
+  const payload = JSON.stringify({
+    plugin: req.pluginId,
+    tool: req.toolName,
+    args: req.args,
+  });
+  return `echo '${payload.replace(/'/g, `'\\''`)}'`;
 }
