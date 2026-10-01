@@ -224,7 +224,7 @@
     {
       "path": "packages/core/src/runtime/finallyCleanupHandler.ts",
       "sourceSha256": "ce568dc4cee9bb6a5bb06d9b7b200b9d741bd02ea5bb6c749063332037bf9bd3",
-      "callersSha256": "07453ed151885c79373119beccc92e36bbb435044aff644e3142cd8668ff6398",
+      "callersSha256": "f3bd3b6bba10103c8531d6ce50ee49a88ac2560e015c94beb14201b6b35df0fe",
       "owner": "@commander/core",
       "reason": "Legacy runtime cleanup mutation pending kernel lifecycle migration",
       "expiresAt": "2026-10-31",

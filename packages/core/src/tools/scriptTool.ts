@@ -118,7 +118,7 @@ export class ExecuteScriptTool implements Tool {
 
     const script = String(args.script ?? '');
     const requestedTools = args.tools as string[] | undefined;
-    const timeout = Math.min(Number(args.timeout ?? 30), 120);
+    const timeout = Math.min(Math.max(Number(args.timeout ?? 30), 1), 120);
 
     if (!script.trim()) return 'Error: Script is required';
 
