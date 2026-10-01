@@ -156,7 +156,11 @@ export class VerificationTool implements Tool {
   private async runLint(cwd: string, fix: boolean): Promise<CheckResult> {
     const fixFlag = fix ? ' --fix' : '';
     if (await this.hasTool(cwd, 'node_modules/.bin/eslint')) {
-      return this.runCommand(`npx eslint .${fixFlag} --format compact 2>&1 || true`, cwd, 'ESLint');
+      return this.runCommand(
+        `node_modules/.bin/eslint .${fixFlag} --format compact 2>&1 || true`,
+        cwd,
+        'ESLint',
+      );
     }
     return {
       name: 'ESLint',
@@ -170,7 +174,7 @@ export class VerificationTool implements Tool {
 
   private async runTypeCheck(cwd: string): Promise<CheckResult> {
     if (await this.hasFile(cwd, 'tsconfig.json')) {
-      return this.runCommand('npx tsc --noEmit 2>&1 || true', cwd, 'TypeScript');
+      return this.runCommand('node_modules/.bin/tsc --noEmit 2>&1 || true', cwd, 'TypeScript');
     }
     return {
       name: 'TypeScript',
@@ -199,11 +203,11 @@ export class VerificationTool implements Tool {
 
     if (await this.hasTool(cwd, 'node_modules/.bin/vitest')) {
       // SECURITY FIX: use execFileSync with argv array instead of shell interpolation
-      const args = ['vitest', 'run'];
+      const args = ['run'];
       if (sanitizedPattern) args.push(sanitizedPattern);
       try {
         const { execFileSync } = nodeRequire('child_process');
-        const stdout = execFileSync('npx', args, {
+        const stdout = execFileSync(path.join(cwd, 'node_modules', '.bin', 'vitest'), args, {
           cwd,
           timeout: 120000,
           encoding: 'utf-8',
@@ -233,11 +237,11 @@ export class VerificationTool implements Tool {
       }
     }
     if (await this.hasTool(cwd, 'node_modules/.bin/jest')) {
-      const args = ['jest'];
+      const args: string[] = [];
       if (sanitizedPattern) args.push(sanitizedPattern);
       try {
         const { execFileSync } = nodeRequire('child_process');
-        const stdout = execFileSync('npx', args, {
+        const stdout = execFileSync(path.join(cwd, 'node_modules', '.bin', 'jest'), args, {
           cwd,
           timeout: 120000,
           encoding: 'utf-8',
@@ -278,7 +282,7 @@ export class VerificationTool implements Tool {
 
   private async runBuild(cwd: string): Promise<CheckResult> {
     if (await this.hasFile(cwd, 'package.json')) {
-      return this.runCommand('npx tsc --noEmit 2>&1 || true', cwd, 'Build check');
+      return this.runCommand('node_modules/.bin/tsc --noEmit 2>&1 || true', cwd, 'Build check');
     }
     return {
       name: 'Build',
