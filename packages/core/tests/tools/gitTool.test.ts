@@ -3,6 +3,7 @@
  */
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert';
+import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -88,6 +89,38 @@ describe('GitTool — workdir containment', () => {
     } finally {
       fs.unlinkSync(linkPath);
       fs.rmSync(outside, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('GitTool — host command config', () => {
+  let tool: GitTool;
+
+  beforeEach(() => {
+    tool = new GitTool();
+  });
+
+  it('rejects git config, including writes outside the workdir', async () => {
+    const result = await tool.execute({ command: 'config --file /tmp/pwned.ini core.foo bar' });
+    assert.match(result, /not in the allowed commands list/);
+  });
+
+  it('does not run a repository fsmonitor command', async () => {
+    const root = getSafeRoot();
+    const dir = fs.mkdtempSync(path.join(root, '.gittool-fsmonitor-'));
+    const marker = path.join(os.tmpdir(), `gittool-fsmonitor-${process.pid}`);
+    const rel = path.relative(root, dir);
+    try {
+      execFileSync('git', ['init'], { cwd: dir });
+      execFileSync('git', ['config', 'user.email', 't@t'], { cwd: dir });
+      execFileSync('git', ['config', 'user.name', 't'], { cwd: dir });
+      execFileSync('git', ['config', 'core.fsmonitor', `touch ${marker}`], { cwd: dir });
+      fs.writeFileSync(path.join(dir, 'a.txt'), 'a');
+      const result = await tool.execute({ command: 'status', workdir: rel });
+      assert.equal(fs.existsSync(marker), false, result);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+      fs.rmSync(marker, { force: true });
     }
   });
 });
