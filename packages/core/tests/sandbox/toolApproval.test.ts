@@ -96,7 +96,7 @@ describe('ToolApproval', () => {
       approval = createApproval(false);
       const result = await approval.requestApproval('python_execute', {
         code: 'print(1)',
-        timeout: 5000,
+        timeout: 5,
       });
       assert.strictEqual(result.approved, false);
       assert.ok(lastRequest);
@@ -106,7 +106,7 @@ describe('ToolApproval', () => {
       approval = createApproval(true);
       const result = await approval.requestApproval('python_execute', {
         code: 'print(1)',
-        timeout: 30000,
+        timeout: 30,
       });
       assert.strictEqual(result.approved, true);
       assert.ok(lastRequest);
