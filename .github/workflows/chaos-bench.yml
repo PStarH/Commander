@@ -22,8 +22,10 @@ name: Chaos Bench Regression
 # Triggers:
 #   - workflow_dispatch: maxCases override (0 = all cases; the chaos-255 day
 #     is 200 synthetic + 55 mutation = ~310 cases, exposed via this input).
-#   - schedule: 07:45 UTC daily. Distinct slot after memory-poisoning-bench
-#     (07:30) and before gaia-bench (08:00).
+#   - schedule is off. index.ts imports ./loader.js, ./scorer.js, ./reporter.js,
+#     ./harness/executionHarness.js and ./realworld/*, and those files are not
+#     in the tree. A daily run cannot write a baseline. Turn the cron back on
+#     only after those modules exist.
 #
 # Outputs:
 #   - docs/baselines/chaos-runner.<UTC-today>.json  (committed artifact)
@@ -44,8 +46,6 @@ on:
         description: Pass-rate regression threshold (percent rel., default 10)
         required: false
         default: '10'
-  schedule:
-    - cron: 45 7 * * *
 jobs:
   bench-chaos-regress:
     name: Chaos Regression
