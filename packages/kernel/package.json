@@ -28,7 +28,7 @@
   ],
   "scripts": {
     "prebuild": "pnpm --filter @commander/postgres-runtime build && pnpm --filter @commander/effect-broker build",
-    "build": "tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist",
+    "build": "tsc -p tsconfig.json && node .././../scripts/fix-esm-imports.mjs dist",
     "typecheck": "tsc --noEmit",
     "typecheck:test": "tsc -p tsconfig.test.json",
     "pretest": "pnpm --filter @commander/postgres-runtime build && pnpm --filter @commander/effect-broker build",
@@ -52,7 +52,7 @@
     "recovery",
     "multi-agent"
   ],
-  "author": "PStarH <sampan090611@gmail.com>",
+  "author": "PStarH",
   "license": "MIT",
   "repository": {
     "type": "git",
