@@ -128,11 +128,36 @@ function requirePull(value: unknown): Record<string, unknown> {
   return pull;
 }
 
+function pullAuthorLogin(pull: Record<string, unknown>): string | undefined {
+  const login = object(pull.user)?.login;
+  return typeof login === 'string' && login.length > 0 ? login : undefined;
+}
+
+function sameGitHubLogin(actual: string | undefined, expected: string): boolean {
+  return typeof actual === 'string' && actual.toLowerCase() === expected.toLowerCase();
+}
+
 function receiptFor(
   pull: Record<string, unknown>,
   destination: string,
   key: string,
+  actorLogin: string,
 ): GitHubCreateReceipt {
+  const author = pullAuthorLogin(pull);
+  if (!author) {
+    throw failure(
+      'GITHUB_ACTOR_UNKNOWN',
+      'Cannot prove the pull request was opened by the credential user',
+      true,
+    );
+  }
+  if (!sameGitHubLogin(author, actorLogin)) {
+    throw failure(
+      'GITHUB_ACTOR_MISMATCH',
+      'Pull request was not opened by the credential user',
+      true,
+    );
+  }
   const { owner, repo } = parseGitHubDestination(destination);
   const repository = `${owner}/${repo}`.toLowerCase();
   const head = object(pull.head);
@@ -224,8 +249,10 @@ function verifyCompensationPull(
   pull: Record<string, unknown>,
   forward: GitHubCreateReceipt,
   tenantId: string,
+  token: string,
+  actorLogin: string,
 ): GitHubCreateReceipt {
-  const observed = receiptFor(pull, forward.destination, forward.idempotencyKey);
+  const observed = receiptFor(pull, forward.destination, forward.idempotencyKey, actorLogin);
   if (
     observed.prNumber !== forward.prNumber ||
     observed.head !== forward.head ||
@@ -238,7 +265,7 @@ function verifyCompensationPull(
   }
   if (
     typeof pull.body !== 'string' ||
-    !pull.body.includes(githubPrBodyMarker(tenantId, forward.idempotencyKey))
+    !pull.body.includes(githubPrBodyMarker(tenantId, forward.idempotencyKey, token))
   ) {
     throw failure('GITHUB_COMPENSATE_MARKER_MISMATCH', 'Compensation refused: PR marker mismatch');
   }
@@ -294,12 +321,23 @@ export function createGitHubPullRequestCreateAdapter(
     return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls`;
   }
 
+  async function credentialLogin(token: string, signal: AbortSignal): Promise<string> {
+    const response = await request('https://api.github.com/user', token, signal);
+    const body = object(await readJsonResponse(response));
+    const login = body && typeof body.login === 'string' ? body.login : '';
+    if (!login) {
+      throw failure('GITHUB_ACTOR_UNKNOWN', 'GitHub credential user login is missing', true);
+    }
+    return login;
+  }
+
   async function listByMarker(
     destination: string,
     token: string,
     signal: AbortSignal,
     marker: string,
     args: GitHubCreateArgs,
+    actorLogin: string,
   ): Promise<Record<string, unknown>[]> {
     // The broker/ledger binds the key to the immutable approved request. Scope
     // lookup to its branches so unrelated repository history cannot starve it.
@@ -324,7 +362,12 @@ export function createGitHubPullRequestCreateAdapter(
       );
       signal.throwIfAborted();
       candidates.push(
-        ...pulls.filter((pull) => typeof pull.body === 'string' && pull.body.includes(marker)),
+        ...pulls.filter(
+          (pull) =>
+            typeof pull.body === 'string' &&
+            pull.body.includes(marker) &&
+            sameGitHubLogin(pullAuthorLogin(pull), actorLogin),
+        ),
       );
       const link = response.headers.get('link');
       if (!link) return candidates;
@@ -390,10 +433,18 @@ export function createGitHubPullRequestCreateAdapter(
       const signal = operationSignal(input.signal);
       const args = parseArgs(input.args);
       const endpoint = pullsUrl(input.destination);
-      const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
-      const body = markedBody(args, marker);
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
-      const existing = await listByMarker(input.destination, token, signal, marker, args);
+      const actorLogin = await credentialLogin(token, signal);
+      const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey, token);
+      const body = markedBody(args, marker);
+      const existing = await listByMarker(
+        input.destination,
+        token,
+        signal,
+        marker,
+        args,
+        actorLogin,
+      );
       if (existing.length > 1)
         throw failure('GITHUB_MULTI_MARKER', 'Multiple PRs matched the marker', true);
       if (existing.length === 1) {
@@ -402,9 +453,10 @@ export function createGitHubPullRequestCreateAdapter(
           throw failure(
             'GITHUB_IDEMPOTENCY_CONFLICT',
             'GitHub idempotency key was reused with a different pull-request request',
+            true,
           );
         }
-        return receiptFor(pull, input.destination, input.idempotencyKey);
+        return receiptFor(pull, input.destination, input.idempotencyKey, actorLogin);
       }
       const response = await request(endpoint, token, signal, 'POST', { ...args, body });
       const created = requirePull(await readJsonResponse(response));
@@ -415,23 +467,31 @@ export function createGitHubPullRequestCreateAdapter(
           'Created PR does not match the approved request',
           true,
         );
-      return receiptFor(created, input.destination, input.idempotencyKey);
+      return receiptFor(created, input.destination, input.idempotencyKey, actorLogin);
     },
 
     async queryOutcome(input) {
       const signal = operationSignal(input.signal);
       try {
         const args = parseArgs(input.request.args);
-        const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey);
         const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
-        const pulls = await listByMarker(input.destination, token, signal, marker, args);
+        const actorLogin = await credentialLogin(token, signal);
+        const marker = githubPrBodyMarker(input.tenantId, input.idempotencyKey, token);
+        const pulls = await listByMarker(
+          input.destination,
+          token,
+          signal,
+          marker,
+          args,
+          actorLogin,
+        );
         if (pulls.length !== 1) return unknownOutcome();
         const pull = pulls[0]!;
         if (!matchesRequest(pull, args, markedBody(args, marker)))
           return unknownOutcome('GITHUB_IDEMPOTENCY_CONFLICT');
         return {
           status: 'APPLIED',
-          response: receiptFor(pull, input.destination, input.idempotencyKey),
+          response: receiptFor(pull, input.destination, input.idempotencyKey, actorLogin),
         };
       } catch (error) {
         return queryFailure(error, signal);
@@ -442,8 +502,9 @@ export function createGitHubPullRequestCreateAdapter(
       const signal = operationSignal(input.signal);
       const forward = parseForwardReceipt(input.forwardResponse, input.destination);
       const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+      const actorLogin = await credentialLogin(token, signal);
       const existing = await getPull(input.destination, forward.prNumber, token, signal);
-      const observed = verifyCompensationPull(existing, forward, input.tenantId);
+      const observed = verifyCompensationPull(existing, forward, input.tenantId, token, actorLogin);
       if (observed.state === 'closed') return observed;
       const patched = await request(
         `${pullsUrl(input.destination)}/${forward.prNumber}`,
@@ -457,7 +518,7 @@ export function createGitHubPullRequestCreateAdapter(
       try {
         await patched.body?.cancel();
         const closed = await getPull(input.destination, forward.prNumber, token, signal);
-        const receipt = verifyCompensationPull(closed, forward, input.tenantId);
+        const receipt = verifyCompensationPull(closed, forward, input.tenantId, token, actorLogin);
         if (receipt.state !== 'closed')
           throw failure('GITHUB_COMPENSATE_NOT_CLOSED', 'PR is still open', true);
         return receipt;
@@ -475,8 +536,9 @@ export function createGitHubPullRequestCreateAdapter(
       try {
         const forward = parseForwardReceipt(input.request.forwardResponse, input.destination);
         const token = await options.credentials.getGitHubToken(input.tenantId, input.destination);
+        const actorLogin = await credentialLogin(token, signal);
         const pull = await getPull(input.destination, forward.prNumber, token, signal);
-        const receipt = verifyCompensationPull(pull, forward, input.tenantId);
+        const receipt = verifyCompensationPull(pull, forward, input.tenantId, token, actorLogin);
         return receipt.state === 'closed'
           ? { status: 'APPLIED', response: receipt }
           : unknownOutcome();

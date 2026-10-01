@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
+import { createHash, createHmac } from 'node:crypto';
 import { describe, it } from 'node:test';
 import {
   commanderActionMarker,
@@ -168,6 +168,15 @@ describe('actionAdapters contracts', () => {
   it('commanderActionMarker is stable sha256 of tenant and idempotency key', () => {
     const expected = createHash('sha256').update('tenant-a\0idem-1').digest('hex');
     assert.equal(commanderActionMarker('tenant-a', 'idem-1'), expected);
+  });
+
+  it('commanderActionMarker uses hmac when a credential secret is supplied', () => {
+    const expected = createHmac('sha256', 'gh-test-token').update('tenant-a\0idem-1').digest('hex');
+    assert.equal(commanderActionMarker('tenant-a', 'idem-1', 'gh-test-token'), expected);
+    assert.notEqual(
+      commanderActionMarker('tenant-a', 'idem-1', 'gh-test-token'),
+      commanderActionMarker('tenant-a', 'idem-1'),
+    );
   });
 
   it('githubPrBodyMarker wraps commander marker in HTML comment', () => {
