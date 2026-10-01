@@ -128,8 +128,9 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
   console.log(`\n  ${$.cyan}${$.bold}Commander Fix${$.reset} — Auto-Fix Errors\n`);
 
   try {
-    const { execFileSync } = await import('child_process');
-    const bin = (name: string) => path.join(process.cwd(), 'node_modules', '.bin', name);
+    const { execFileSync } = await import('node:child_process');
+    const { join } = await import('node:path');
+    const bin = (name: string) => join(process.cwd(), 'node_modules', '.bin', name);
 
     // Run ESLint fix
     console.log(`  ${$.bold}Running ESLint fix...${$.reset}`);
@@ -147,14 +148,10 @@ export async function cmdFix(flags: Record<string, string>): Promise<void> {
     // Run Prettier fix
     console.log(`  ${$.bold}Running Prettier fix...${$.reset}`);
     try {
-      execFileSync(
-        bin('prettier'),
-        ['--write', 'packages/core/src/**/*.ts', 'apps/api/src/**/*.ts'],
-        {
-          encoding: 'utf-8',
-          stdio: 'pipe',
-        },
-      );
+      execFileSync(bin('prettier'), ['--write', 'packages/core/src', 'apps/api/src'], {
+        encoding: 'utf-8',
+        stdio: 'pipe',
+      });
       console.log(`  ${$.green}✓${$.reset} Prettier formatting applied`);
     } catch (err) {
       reportSilentFailure(err, 'convenience:150');

@@ -92,23 +92,24 @@ describe('ToolApproval', () => {
   // ── Semi-auto approval tools ───────────────────────────────────────────────
 
   describe('semi-auto approval tools', () => {
-    it('auto-approves python_execute with timeout <= 10000', async () => {
+    it('requires manual approval for python_execute', async () => {
+      approval = createApproval(false);
       const result = await approval.requestApproval('python_execute', {
         code: 'print(1)',
         timeout: 5000,
       });
-      assert.strictEqual(result.approved, true);
-      assert.ok(result.reason.includes('conditions met'));
+      assert.strictEqual(result.approved, false);
+      assert.ok(lastRequest);
     });
 
-    it('does not auto-approve python_execute with timeout > 10000', async () => {
-      approval = createApproval(false);
+    it('requires manual approval for python_execute regardless of timeout', async () => {
+      approval = createApproval(true);
       const result = await approval.requestApproval('python_execute', {
         code: 'print(1)',
         timeout: 30000,
       });
-      assert.strictEqual(result.approved, false);
-      assert.ok(lastRequest); // Callback was called
+      assert.strictEqual(result.approved, true);
+      assert.ok(lastRequest);
     });
 
     it('auto-approves file_write to non-system paths', async () => {

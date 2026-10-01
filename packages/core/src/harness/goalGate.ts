@@ -18,6 +18,7 @@
  */
 
 import { extractDecisionObject } from './decisionJson';
+import { requireLlmPreCheck } from '../security/enterpriseSecurityGateway';
 export interface GoalGateConfig {
   enabled: boolean;
   judgeModel: string;
@@ -113,6 +114,12 @@ Respond with JSON:
         return this.unverified(`Judge provider "${this.config.judgeProvider}" not available`);
       }
 
+      requireLlmPreCheck({
+        model: this.config.judgeModel,
+        estimatedTokens: this.config.maxTokens,
+        source: 'goal-gate',
+        input: judgePrompt.slice(0, 4000),
+      });
       const response = await provider.call({
         model: this.config.judgeModel,
         messages: [{ role: 'system', content: judgePrompt }],

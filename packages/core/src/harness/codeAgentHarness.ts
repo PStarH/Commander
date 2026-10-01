@@ -30,7 +30,8 @@ import type {
 } from '../runtime/types';
 import { getGlobalLogger } from '../logging';
 import { now } from '../runtime/runtimeHelpers';
-import { BaseHarness } from './baseHarness';
+import { authorizeHarnessTool, BaseHarness, screenHarnessToolOutput } from './baseHarness';
+import { requireLlmPreCheck } from '../security/enterpriseSecurityGateway';
 import { extractDecisionObject } from './decisionJson';
 
 // ============================================================================
@@ -290,6 +291,14 @@ export class CodeAgentHarness extends BaseHarness {
 
           this.emitEvent({ type: 'llm_request', request, runId, timestamp: Date.now() });
           try {
+            requireLlmPreCheck({
+              model: request.model,
+              estimatedTokens: request.maxTokens ?? 1024,
+              source: 'code-agent-harness',
+              input: JSON.stringify(request.messages).slice(0, 4000),
+              tenantId,
+              runId,
+            });
             response = await provider.call(request);
           } catch (err) {
             lastError = String(err);
@@ -709,6 +718,13 @@ Respond with a JSON object:
         };
       }
 
+      requireLlmPreCheck({
+        model: this.guardianConfig.model,
+        estimatedTokens: this.guardianConfig.maxTokens,
+        source: 'code-agent-guardian',
+        input: guardianPrompt.slice(0, 4000),
+        tenantId: _tenantId,
+      });
       const guardianResponse = await guardianProvider.call({
         model: this.guardianConfig.model,
         messages: guardianMessages,
@@ -807,12 +823,26 @@ Respond with a JSON object:
       let toolResult: ToolResult;
 
       try {
-        const output = await tool.execute(tc.arguments);
+        await authorizeHarnessTool({
+          tenantId,
+          runId,
+          toolName: tc.name,
+          args: tc.arguments,
+          availableTools,
+        });
+        const raw = await tool.execute(tc.arguments);
+        const text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+        const output = screenHarnessToolOutput({
+          tenantId,
+          runId,
+          toolName: tc.name,
+          output: text,
+        });
         const durationMs = Date.now() - toolStart;
         toolResult = {
           toolCallId: tc.id,
           name: tc.name,
-          output: typeof output === 'string' ? output : JSON.stringify(output),
+          output,
           durationMs,
         };
       } catch (err) {

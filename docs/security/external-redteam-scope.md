@@ -20,17 +20,17 @@ Commander runs a tiered defense strategy:
 
 ## In Scope
 
-| Attack class               | Target surface                              | Bounty tier |
-|----------------------------|---------------------------------------------|-------------|
-| Cross-tenant data leak     | Memory, MCP, audit log, billing, plugin     | Critical    |
-| Sandbox escape (plugin)    | `buildSandboxedLoadContext`, prototype chain | Critical   |
-| Prompt injection in tool output | Any MCP tool returning external content | High        |
-| Capability drift in plugin | Manifest vs runtime calls                   | High        |
-| Memory poisoning           | HNSW index, episodic memory write path      | High        |
-| Supply chain               | `pluginDependencies` resolution path        | High        |
-| Audit log bypass           | `auditMiddleware`, `auditChainLedger`       | High        |
-| Cost authority bypass      | `unifiedCostAuthority`, `BillExplosionGuard` | High        |
-| New attack class           | Novel category not in the automated battery | Triage      |
+| Attack class                    | Target surface                               | Bounty tier |
+| ------------------------------- | -------------------------------------------- | ----------- |
+| Cross-tenant data leak          | Memory, MCP, audit log, billing, plugin      | Critical    |
+| Sandbox escape (plugin)         | `buildSandboxedLoadContext`, prototype chain | Critical    |
+| Prompt injection in tool output | Any MCP tool returning external content      | High        |
+| Capability drift in plugin      | Manifest vs runtime calls                    | High        |
+| Memory poisoning                | HNSW index, episodic memory write path       | High        |
+| Supply chain                    | `pluginDependencies` resolution path         | High        |
+| Audit log bypass                | `auditMiddleware`, `auditChainLedger`        | High        |
+| Cost authority bypass           | `unifiedCostAuthority`                       | High        |
+| New attack class                | Novel category not in the automated battery  | Triage      |
 
 ## Out of Scope
 
