@@ -173,7 +173,7 @@
     "test:acceptance:build-metadata": "pnpm --filter @praetor/adapter-ops --filter @praetor/kernel --filter @praetor/api --filter @praetor/mcp-server build && pnpm exec node --import tsx --test scripts/openai-agents-mcp-build-metadata.test.ts",
     "test:registration": "node scripts/test-registration.mjs --verify",
     "demo:github": "pnpm exec tsx scripts/github-action-demo.ts",
-    "test:github:offline": "pnpm exec node --import tsx --test packages/action-adapters/src/github/pullRequestCreate.test.ts packages/action-adapters/src/registry.test.ts packages/action-adapters/src/live/githubResponseCut.test.ts scripts/github-action-demo.test.ts scripts/github-launch-ci.test.ts scripts/github-cell-recovery.test.ts",
+    "test:github:offline": "pnpm --filter @praetor/contracts build && pnpm exec node --import tsx --test packages/action-adapters/src/github/pullRequestCreate.test.ts packages/action-adapters/src/registry.test.ts packages/action-adapters/src/live/githubResponseCut.test.ts scripts/github-action-demo.test.ts scripts/github-launch-ci.test.ts scripts/github-cell-recovery.test.ts",
     "typecheck:github": "pnpm exec tsc --noEmit --strict --skipLibCheck --target ES2022 --module ESNext --moduleResolution Bundler --esModuleInterop --allowImportingTsExtensions scripts/github-action-demo.ts scripts/github-action-demo.test.ts scripts/github-launch-ci.test.ts scripts/github-cell-recovery.ts scripts/github-cell-recovery.test.ts"
   },
   "devDependencies": {
