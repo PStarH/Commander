@@ -9,16 +9,34 @@
 <h1 align="center">Praetor</h1>
 <p align="center"><strong>The Secure Approval &amp; Recovery Plane for Autonomous AI Agents</strong></p>
 <p align="center">
-  <em>Prevent duplicate mutations · Recover from dropped network responses · Enforce cryptographic human approvals</em>
+  <em>Exact request approval · Query uncertain outcomes · Verify signed evidence</em>
 </p>
 
-> **Status: Alpha.** Praetor is an open-source distributed execution control plane and pilot framework. It isolates unprivileged AI agent reasoning from production write targets, providing preflight idempotency, two-phase human gates, and PostgreSQL WAL crash resilience. See the [GitHub pilot boundary](docs/pilot/github/README.md) and [ENTERPRISE_READINESS.md](ENTERPRISE_READINESS.md).
+> **Status: Alpha.** Our mission is to make agents worthy of enterprise trust. Praetor is an open-source execution control plane and pilot framework, starting with a bounded GitHub pull-request pilot. Recovery depends on adapter-specific evidence and deployment configuration; no universal exactly-once or production-readiness guarantee is implied. See the [GitHub pilot boundary](docs/pilot/github/README.md) and [current readiness](ENTERPRISE_READINESS.md).
 
 <p align="center">
   <a href="#quick-start"><img src="https://img.shields.io/badge/⚡_TRY_NOW-000?style=for-the-badge" /></a>
   <a href="#the-distributed-systems-problem-for-ai-agents"><img src="https://img.shields.io/badge/🛡️_WHY_PRAETOR-000?style=for-the-badge" /></a>
   <a href="https://pstarh.github.io/praetor-docs/"><img src="https://img.shields.io/badge/📖_DOCS-000?style=for-the-badge" /></a>
 </p>
+
+---
+
+## Watch Praetor
+
+Three films: the mission we are pursuing, the mechanisms we can demonstrate, and a recorded experiment against a real API.
+
+[![Watch the brand film — Make agents worthy of enterprise trust, 29 seconds](docs/assets/films/brand.jpg)](https://pstarh.github.io/praetor-docs/films.html#brand)
+
+**[The mission · 0:29](https://pstarh.github.io/praetor-docs/films.html#brand)** — Making agents worthy of enterprise trust is a long-term goal. Praetor is still alpha.
+
+| The engineering · 1:58 | The live API experiment · 0:38 |
+| --- | --- |
+| [![Watch the technical explainer](docs/assets/films/explainer.jpg)](https://pstarh.github.io/praetor-docs/films.html#explainer) | [![Watch the GitHub PR recovery experiment](docs/assets/films/case-study.jpg)](https://pstarh.github.io/praetor-docs/films.html#case-study) |
+| Exact authority, stale-worker fencing, uncertain outcomes, and signature integrity. **Mechanism illustrations supported by component tests**, including in-memory repositories and mocked HTTP. | Animated reconstruction of a **real GitHub API CI experiment**. Response loss and worker termination are injected; no LLM participates. Not a production incident. |
+| [Watch the explainer](https://pstarh.github.io/praetor-docs/films.html#explainer) · [Verification scope](https://pstarh.github.io/praetor-docs/films.html#verification) | [Watch the experiment](https://pstarh.github.io/praetor-docs/films.html#case-study) · [Original CI evidence](https://github.com/PStarH/Praetor/actions/runs/36653246066) |
+
+[Watch all three films with captions and transcripts →](https://pstarh.github.io/praetor-docs/films.html)
 
 ---
 
@@ -46,10 +64,10 @@
    │  └─────────────────────────┘ └──────────────────────┘  │
    │  ┌─────────────────────────┐ ┌──────────────────────┐  │
    │  │ Durable Postgres Kernel │ │ Tamper-Evident Audit │  │
-   │  │ (Crash-safe step lease) │ │ (Ed25519 Signed JWS) │  │
+   │  │ (Crash-safe step lease) │ │ (Ed25519 signatures) │  │
    │  └─────────────────────────┘ └──────────────────────┘  │
    └──────────────────────────┬─────────────────────────────┘
-                              │ 2. Governed Write & Auto-Compensation
+                              │ 2. Governed Write & Authorized Compensation
                               ▼
    ┌────────────────────────────────────────────────────────┐
    │       External Infrastructure & Version Control        │
@@ -68,10 +86,10 @@ Retrying blindly creates duplicate PRs, double transactions, or corrupted state.
 | Challenge                                                       | Naive Agent Execution                                                 | Praetor Governed Action                                                                    |
 | --------------------------------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | **Response Loss** (e.g. 504 Gateway Timeout during PR creation) | Re-plans or retries blindly → **Duplicate PRs & mutations**           | **Preflight Query-Before-Retry**: Checks remote outcome by action identity before retry    |
-| **Worker Crash Mid-Task**                                       | State lost or restarted from zero with orphaned external side effects | **Durable PostgreSQL Kernel**: Step lease reclaims; new worker resumes safely              |
-| **Credential Exposure**                                         | Agent process directly holds write API keys / GitHub tokens           | **Strict Boundary**: Agent only has _propose_ authority; write tokens stay in worker plane |
+| **Worker Crash Mid-Task**                                       | State lost or restarted from zero with orphaned external side effects | **Durable PostgreSQL Kernel**: Step lease reclaims; effect-bearing work waits for reconciliation              |
+| **Credential Exposure**                                         | Agent process directly holds write API keys / GitHub tokens           | **Strict Boundary**: In the configured pilot, agents propose; adapter credentials stay worker-side |
 | **Human Sign-Off**                                              | Text-based prompt or unverified button                                | **Cryptographic Binding**: Approval locks immutable request digest & policy snapshot       |
-| **Audit & Forensics**                                           | Ephemeral console text                                                | **Ed25519 Evidence**: JWS signed receipts for independent verification                     |
+| **Audit & Forensics**                                           | Ephemeral console text                                                | **Ed25519 Evidence**: Signed evidence verifiable with the trusted public key                     |
 | **Rollback / Undo**                                             | Ad-hoc scripts or impossible                                          | **Governed Compensation**: Requires separate authorization binding and dedicated receipt   |
 
 Read the in-depth essay: [Why retrying an AI agent's external action is unsafe](docs/content/why-retrying-ai-agent-external-actions-is-unsafe.md).

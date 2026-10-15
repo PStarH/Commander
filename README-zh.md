@@ -22,6 +22,24 @@
 
 ---
 
+## 观看 Praetor 演示短片
+
+三部短片：我们的使命、核心工程机制展示，以及针对真实 API 的故障注入实测。
+
+[![观看品牌短片 — 让智能体真正值得企业信任，29秒](docs/assets/films/brand.jpg)](https://pstarh.github.io/praetor-docs/films.html#brand)
+
+**[使命宣言 · 0:29](https://pstarh.github.io/praetor-docs/films.html#brand)** — 让智能体获得企业级信任是一项长期目标，Praetor 当前处于 Alpha 阶段。
+
+| 工程原理解析 · 1:58 | 真实 GitHub API 故障演练 · 0:38 |
+| --- | --- |
+| [![观看技术原理解析](docs/assets/films/explainer.jpg)](https://pstarh.github.io/praetor-docs/films.html#explainer) | [![观看 GitHub PR 恢复实测演练](docs/assets/films/case-study.jpg)](https://pstarh.github.io/praetor-docs/films.html#case-study) |
+| 精确授权、陈旧 Worker 隔离、不确定性结果查证与签名完整性。**基于真实组件测试的机制图解**，涵盖内存级数据契约与模拟网络。 | **真实 GitHub API CI 实验**的动态重构。真实注入了响应截断与 Worker 进程杀死；无大模型参与，非生产事故。 |
+| [观看原理解析](https://pstarh.github.io/praetor-docs/films.html#explainer) · [验证范围](https://pstarh.github.io/praetor-docs/films.html#verification) | [观看故障演练](https://pstarh.github.io/praetor-docs/films.html#case-study) · [原始 CI 证据](https://github.com/PStarH/Praetor/actions/runs/36653246066) |
+
+[观看三部短片（含字幕与逐字稿）→](https://pstarh.github.io/praetor-docs/films.html)
+
+---
+
 ## AI 智能体面临的分布式系统挑战
 
 <p align="center">
