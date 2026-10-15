@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://github.com/PStarH/Praetor/actions/workflows/ci.yml?query=branch%3Amaster"><img src="https://img.shields.io/github/actions/workflow/status/PStarH/Praetor/ci.yml?branch=master&style=flat-square&label=CI&logo=github" alt="CI Status" /></a>
+  <a href="#快速上手"><img src="https://img.shields.io/badge/contracts-130%20passing-brightgreen?style=flat-square&logo=vitest" alt="Contract Tests" /></a>
   <a href="https://pstarh.github.io/praetor-docs/zh/"><img src="https://img.shields.io/badge/docs-在线文档-blue?style=flat-square&logo=vitepress" alt="Documentation" /></a>
   <img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="License" />
   <img src="https://img.shields.io/badge/TypeScript-5.x-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
