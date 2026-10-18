@@ -127,7 +127,7 @@ describe('L3-05 §4.1 — SDK and /v1 share kernel run semantics', () => {
 
   it('v1GatewayEndpoints uses contracts RunState helpers', () => {
     const src = readApiSrc('src/v1GatewayEndpoints.ts');
-    assert.match(src, /from\s+['"]@commander\/contracts['"]/);
+    assert.match(src, /from\s+['"]@praetor\/contracts['"]/);
     assert.match(src, /isTerminalRunState/);
   });
 
@@ -283,7 +283,7 @@ describe('L3-05 §4.2 — CLI history semantics (honest PARTIAL)', () => {
       'utf8',
     );
     assert.match(atr, /EXECUTING|COMMITTED|VERIFYING/);
-    assert.doesNotMatch(atr, /from\s+['"]@commander\/contracts['"]/);
+    assert.doesNotMatch(atr, /from\s+['"]@praetor\/contracts['"]/);
     for (const kernelState of ['RUNNING', 'SUCCEEDED'] as const) {
       assert.ok(RUN_STATES.includes(kernelState));
     }

@@ -275,7 +275,10 @@ export function getProviderOverride(): string | undefined {
   return process.env.COMMANDER_PROVIDER || getSettings().provider;
 }
 
-export function getEffectiveModel(preferredModel?: string, preferredProvider?: ProviderType): string {
+export function getEffectiveModel(
+  preferredModel?: string,
+  preferredProvider?: ProviderType,
+): string {
   if (preferredModel) return preferredModel;
   const provider = detectProvider(preferredProvider);
   const override = getModelOverride();

@@ -1,6 +1,6 @@
 ---
 name: Feature request
-about: Suggest an idea for Commander
+about: Suggest an idea for Praetor
 title: '[FEATURE] '
 labels: enhancement
 assignees: ''
@@ -20,7 +20,7 @@ A clear and concise description of any alternative solutions or features you've 
 
 ## Impact
 
-Describe how this feature would benefit Commander users. Who would use it and how?
+Describe how this feature would benefit Praetor users. Who would use it and how?
 
 ## Additional context
 
