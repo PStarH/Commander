@@ -24,15 +24,15 @@ WORKDIR /app
 
 # ---- Stage 2: Dependencies ----
 FROM base AS deps
-# Copy workspace manifests. apps/web only depends on @commander/contracts from
+# Copy workspace manifests. apps/web only depends on @praetor/contracts from
 # the workspace; pnpm still needs every manifest in the closure to resolve links.
 COPY pnpm-lock.yaml pnpm-workspace.yaml package.json ./
 COPY packages/contracts/package.json ./packages/contracts/package.json
 COPY apps/web/package.json ./apps/web/package.json
 
 RUN pnpm install --frozen-lockfile \
-    --filter @commander/contracts \
-    --filter @commander/web
+    --filter @praetor/contracts \
+    --filter @praetor/web
 
 # ---- Stage 3: Build ----
 FROM base AS build
