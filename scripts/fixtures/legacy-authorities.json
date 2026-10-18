@@ -73,7 +73,7 @@
     },
     {
       "path": "apps/api/src/projectEndpoints.ts",
-      "sourceSha256": "0ef0a855d5837e8436629a2887a5a366d44906931dedbdbe0b76e7e485c27d48",
+      "sourceSha256": "f39ea5a95291292108775f6926765d853f9c017e17c9954e8ef436bee72e1ca3",
       "callersSha256": "4f7896b064c0237ee7b4fafc66ddee46a4b8f1d754b18243b01a43cc8a48d76e",
       "owner": "@praetor/api",
       "reason": "Legacy mission and approval store mutations pending kernel migration",
@@ -83,7 +83,7 @@
     },
     {
       "path": "apps/api/src/sagaEndpoints.ts",
-      "sourceSha256": "584e2ea705092742ab537eaad7799d09a5a1414214df384912388614a9131874",
+      "sourceSha256": "63411092a9cab976d47c38af8d35c5382c5ea4885215a46616cef9b0d1244056",
       "callersSha256": "cd9fc73e1e1f55964faf4f611478e6136d5ab1bebe7af19363d75bf13caee623",
       "owner": "@praetor/api",
       "reason": "Legacy saga run controls pending gateway migration",
@@ -104,7 +104,7 @@
     {
       "path": "apps/api/src/store.ts",
       "sourceSha256": "ed3f51bae7077419134524975ec2e79d280bc52b38fa90a1fb06247cf6555ece",
-      "callersSha256": "75659fefb7bc04fd102c5f6b1002d196cc8e32b3f187a756c53dc5e30adab9c9",
+      "callersSha256": "f4ffc4638ff403bd426a715fe3b2b3b9e45cfe30ca9c5000b65c9bdce922166e",
       "owner": "@praetor/api",
       "reason": "Legacy WarRoom write store pending kernel projection migration",
       "expiresAt": "2026-10-31",
@@ -164,7 +164,7 @@
     {
       "path": "packages/core/src/cli/commands/_shared.ts",
       "sourceSha256": "36d3e68b4725fcf337248aac1ae4a0c180901f9efcc77343e79ca6dea2142690",
-      "callersSha256": "5b1a81058675a99acdf623256cf2eef372ff22257bf1580e89f7a770be3955de",
+      "callersSha256": "be7f73cb8d940b71335b5f137e6e9d3b3458f209d85410a7f1b50fa8ff53b9a8",
       "owner": "@praetor/core",
       "reason": "Legacy local CLI runtime factory pending gateway client migration",
       "expiresAt": "2026-10-31",
