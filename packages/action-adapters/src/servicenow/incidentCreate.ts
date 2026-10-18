@@ -1,7 +1,4 @@
-import {
-  servicenowCorrelationId,
-  SERVICENOW_INCIDENT_CREATE_DESCRIPTOR,
-} from '@praetor/contracts';
+import { servicenowCorrelationId, SERVICENOW_INCIDENT_CREATE_DESCRIPTOR } from '@praetor/contracts';
 import { AdapterExecutionError } from '@praetor/effect-broker';
 import type { EffectRemoteOutcome } from '@praetor/effect-broker';
 import {

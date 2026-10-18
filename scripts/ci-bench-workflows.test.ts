@@ -41,6 +41,16 @@ test('rebuilds and probes the SQLite binding before SLO and GAIA benches', () =>
   }
 });
 
+test('memory-poisoning bench uploads the baseline artifact its PR job downloads', () => {
+  const { source } = workflow('memory-poisoning-bench.yml');
+  const upload = source.indexOf('name: memory-poisoning-baseline-${{ steps.dates.outputs.today }}');
+  const download = source.indexOf(
+    'name: memory-poisoning-baseline-${{ needs.bench-memory-poisoning-regress.outputs.today }}',
+  );
+  assert.ok(source.includes('uses: actions/upload-artifact@'), 'must upload the baseline');
+  assert.ok(upload >= 0 && download > upload, 'download name must match the uploaded artifact');
+});
+
 test('GAIA and memory-poisoning benches build postgres-runtime before loading dist', () => {
   for (const [file, benchStep] of [
     ['gaia-bench.yml', 'Run GAIA bench'],
