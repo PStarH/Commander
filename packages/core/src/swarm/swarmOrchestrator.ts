@@ -158,10 +158,14 @@ export class SwarmOrchestrator {
   constructor(provider: LLMProvider, config?: Partial<SwarmConfig>, depth = 0) {
     this.provider = provider;
     this.config = { ...DEFAULT_SWARM_CONFIG, ...config };
+    const looseProvider = provider as unknown as {
+      defaultModel?: string;
+      config?: { defaultModel?: string };
+    };
     this.model =
       this.config.model ??
-      (provider as any).defaultModel ??
-      (provider as any).config?.defaultModel ??
+      looseProvider.defaultModel ??
+      looseProvider.config?.defaultModel ??
       'gpt-4o-mini';
     this.config.model = this.model;
     this.fusionEngine = new FusionEngine();
@@ -503,7 +507,9 @@ export class SwarmOrchestrator {
           .flatMap((n) => n.critique!.findings ?? []);
         if (childFindings.length > 0) {
           node.critique = {
-            passed: !childFindings.some((f) => f && (f.severity === 'critical' || f.severity === 'high')),
+            passed: !childFindings.some(
+              (f) => f && (f.severity === 'critical' || f.severity === 'high'),
+            ),
             findings: childFindings.slice(0, 20),
             summary: `${childFindings.length} finding(s) from child manager`,
           };

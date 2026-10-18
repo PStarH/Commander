@@ -43,9 +43,6 @@ export function getDirname(metaUrl?: string): string {
       // Ignore URL parsing error and fall through
     }
   }
-  if (typeof __dirname !== 'undefined' && __dirname) {
-    return __dirname;
-  }
   return process.cwd();
 }
 

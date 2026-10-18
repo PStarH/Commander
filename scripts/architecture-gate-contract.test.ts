@@ -71,9 +71,7 @@ function runGate(source: string): { status: number; output: string } {
 
 describe('LM-18: architecture gate resolves real module specifiers', () => {
   it('fails on an exact forbidden import', () => {
-    const { status, output } = runGate(
-      `import { x } from '@praetor/core';\nexport const y = x;\n`,
-    );
+    const { status, output } = runGate(`import { x } from '@praetor/core';\nexport const y = x;\n`);
     assert.equal(status, 1, output);
     assert.match(output, /imports forbidden @(commander|praetor)\/core modules/);
   });

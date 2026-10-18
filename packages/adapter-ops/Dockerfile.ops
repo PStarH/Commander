@@ -11,17 +11,17 @@ COPY packages/effect-broker/package.json ./packages/effect-broker/package.json
 COPY packages/kernel/package.json ./packages/kernel/package.json
 COPY packages/action-adapters/package.json ./packages/action-adapters/package.json
 COPY packages/adapter-ops/package.json ./packages/adapter-ops/package.json
-# @commander/postgres-runtime is required transitively: @commander/kernel declares
+# @praetor/postgres-runtime is required transitively: @praetor/kernel declares
 # it as a workspace dependency and imports it at runtime (repositoryFactory,
 # migrationGate, disasterRecovery). Omitting it breaks the workspace link and the
 # adapter-ops image fails at runtime with MODULE_NOT_FOUND.
 RUN pnpm install --frozen-lockfile \
-    --filter @commander/contracts \
-    --filter @commander/postgres-runtime \
-    --filter @commander/effect-broker \
-    --filter @commander/kernel \
-    --filter @commander/action-adapters \
-    --filter @commander/adapter-ops
+    --filter @praetor/contracts \
+    --filter @praetor/postgres-runtime \
+    --filter @praetor/effect-broker \
+    --filter @praetor/kernel \
+    --filter @praetor/action-adapters \
+    --filter @praetor/adapter-ops
 
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules

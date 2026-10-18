@@ -8,7 +8,7 @@ assignees: ''
 
 ## Incident Anchor Overview
 
-A concise summary of the real-world failure mode or production incident you want Commander to simulate.
+A concise summary of the real-world failure mode or production incident you want Praetor to simulate.
 
 ## Source Inspiration / Reference
 

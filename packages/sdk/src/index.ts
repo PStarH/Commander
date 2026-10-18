@@ -132,4 +132,3 @@ export {
   verifyActionEvidence,
 } from './v1/client';
 export type { GatewayClientOptions, GatewayRun } from './v1/client';
-
