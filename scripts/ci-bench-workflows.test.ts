@@ -41,6 +41,19 @@ test('rebuilds and probes the SQLite binding before SLO and GAIA benches', () =>
   }
 });
 
+test('GAIA and memory-poisoning benches build postgres-runtime before loading dist', () => {
+  for (const [file, benchStep] of [
+    ['gaia-bench.yml', 'Run GAIA bench'],
+    ['memory-poisoning-bench.yml', 'Run memory-poisoning bench'],
+  ]) {
+    const { source } = workflow(file);
+    const build = source.indexOf('pnpm --filter @praetor/postgres-runtime build');
+    const bench = source.indexOf(benchStep);
+    assert.ok(build >= 0, file + ' must build @praetor/postgres-runtime');
+    assert.ok(build < bench, file + ' must build postgres-runtime before the bench');
+  }
+});
+
 test('baseline PR workflows use explicit write permissions without persisted checkout credentials', () => {
   for (const file of [
     'wal-bench.yml',
@@ -58,6 +71,23 @@ test('baseline PR workflows use explicit write permissions without persisted che
       { actions: 'read', contents: 'write', 'pull-requests': 'write' },
       file,
     );
+    const jobs = value.jobs as Record<
+      string,
+      {
+        permissions?: Record<string, string>;
+        steps?: Array<{ uses?: string; with?: Record<string, unknown> }>;
+      }
+    >;
+    const baseline = jobs['open-baseline-pr'];
+    assert.ok(baseline, file + ' must open the baseline PR in its own job');
+    assert.equal(baseline.permissions?.actions, 'read', file);
+    assert.equal(baseline.permissions?.contents, 'write', file);
+    assert.equal(baseline.permissions?.['pull-requests'], 'write', file);
+    const checkouts = (baseline.steps ?? []).filter((step) =>
+      step.uses?.startsWith('actions/checkout@'),
+    );
+    assert.equal(checkouts.length, 1, file);
+    assert.equal(checkouts[0]?.with?.['persist-credentials'], false, file);
     assert.match(
       source,
       /uses: actions\/checkout@(?:v[46]|[0-9a-f]{40} # v[46])\n\s+with:\n(?:\s+#[^\n]*\n)*\s+persist-credentials: false/m,

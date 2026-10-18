@@ -70,6 +70,8 @@ jobs:
           YESTERDAY=$(node -e "const d=new Date();d.setUTCDate(d.getUTCDate()-1);console.log(d.toISOString().slice(0,10))")
           echo "today=$TODAY"        >> "$GITHUB_OUTPUT"
           echo "yesterday=$YESTERDAY" >> "$GITHUB_OUTPUT"
+      - name: Build workspace packages the bench loads from dist
+        run: pnpm --filter @praetor/postgres-runtime build
       - name: Run memory-poisoning bench (captures today baseline)
         run: pnpm bench:memory-poisoning
       - name: Verify today's baseline JSON exists
@@ -179,11 +181,13 @@ jobs:
     needs:
       - bench-memory-poisoning-regress
     permissions:
-      contents: read
+      actions: read
+      contents: write
       pull-requests: write
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
+          persist-credentials: false
           fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
