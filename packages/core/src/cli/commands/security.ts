@@ -135,7 +135,10 @@ export async function cmdSecurity(args: string[]): Promise<void> {
     });
   } catch (err: unknown) {
     const errorWithStatus = err as { status?: number; code?: number };
-    const exitCode = typeof errorWithStatus.status === 'number' ? errorWithStatus.status : (errorWithStatus.code ?? 1);
+    const exitCode =
+      typeof errorWithStatus.status === 'number'
+        ? errorWithStatus.status
+        : (errorWithStatus.code ?? 1);
     process.exitCode = exitCode;
     if (typeof exitCode !== 'number' || exitCode === 0) {
       // Child printed output

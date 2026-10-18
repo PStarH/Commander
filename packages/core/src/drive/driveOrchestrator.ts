@@ -72,10 +72,14 @@ export class DriveOrchestrator {
     this.provider = provider;
     this.runtime = runtime ?? null;
     this.config = { ...DEFAULT_DRIVE_CONFIG, ...config };
+    const looseProvider = provider as unknown as {
+      defaultModel?: string;
+      config?: { defaultModel?: string };
+    };
     this.model =
       this.config.model ??
-      (provider as any).defaultModel ??
-      (provider as any).config?.defaultModel ??
+      looseProvider.defaultModel ??
+      looseProvider.config?.defaultModel ??
       'gpt-4o-mini';
     this.config.model = this.model;
     this.resetState('', 0);

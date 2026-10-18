@@ -21,3 +21,8 @@ docs/api/
 .commander*/
 deploy/helm/commander/templates/*.yaml
 .github/workflows/markdownlint.yml
+
+# These fixtures embed scanner signatures. Formatting them changes the staged
+# evidence, and the pre-commit gate rejects that as a new malware finding.
+packages/core/src/security/hardAdversarialTest.ts
+packages/core/src/security/unknownAdversarialTest.ts
