@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Create a report to help us improve Commander
+about: Create a report to help us improve Praetor
 title: '[BUG] '
 labels: bug
 assignees: ''
@@ -32,7 +32,7 @@ Paste any relevant log output, stack traces, or error messages.
 
 ## Environment
 
-- Commander version: [e.g. 0.2.0]
+- Praetor version: [e.g. 0.2.0]
 - OS: [e.g. Ubuntu 22.04, macOS 14]
 - Node.js version: [e.g. 22.x]
 - LLM provider: [e.g. OpenAI, Anthropic]

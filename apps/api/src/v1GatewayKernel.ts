@@ -390,7 +390,9 @@ export function getKernelDatabaseUrl(env: NodeJS.ProcessEnv = process.env): stri
 }
 
 export function isPraetorKernelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env.PRAETOR_KERNEL_ENABLED ?? env.COMMANDER_KERNEL_ENABLED ?? '').trim().toLowerCase();
+  const raw = (env.PRAETOR_KERNEL_ENABLED ?? env.COMMANDER_KERNEL_ENABLED ?? '')
+    .trim()
+    .toLowerCase();
   if (raw === '0' || raw === 'false' || raw === 'off' || raw === 'no') return false;
   if (raw === '1' || raw === 'true' || raw === 'on' || raw === 'yes') return true;
   if (env.NODE_ENV === 'production') return true;
@@ -399,7 +401,9 @@ export function isPraetorKernelEnabled(env: NodeJS.ProcessEnv = process.env): bo
 }
 
 export function isPraetorKernelExplicitlyDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const raw = (env.PRAETOR_KERNEL_ENABLED ?? env.COMMANDER_KERNEL_ENABLED ?? '').trim().toLowerCase();
+  const raw = (env.PRAETOR_KERNEL_ENABLED ?? env.COMMANDER_KERNEL_ENABLED ?? '')
+    .trim()
+    .toLowerCase();
   return raw === '0' || raw === 'false' || raw === 'off' || raw === 'no';
 }
 
