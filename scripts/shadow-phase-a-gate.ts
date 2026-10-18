@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 const MAX_CHILD_OUTPUT_BYTES = 16 * 1024;
 const TOTAL_SUITES = 13;
-const PACKAGE_NAME = 'commander-shadow-plane';
+const PACKAGE_NAME = 'praetor-shadow-plane';
 
 /**
  * Repository root, derived from this module's own URL.
