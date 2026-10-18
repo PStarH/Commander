@@ -1,10 +1,6 @@
 import { KernelStepExecutor, createAgentRuntimeFactory } from '@praetor/core';
 import type { StepExecutor, ClaimedStep, WorkerLease } from './types.js';
-import type {
-  AgentRuntimeFactoryOptions,
-  AgentRuntimeInterface,
-  LLMProvider,
-} from '@praetor/core';
+import type { AgentRuntimeFactoryOptions, AgentRuntimeInterface, LLMProvider } from '@praetor/core';
 import type { CapabilityTokenIssuer, EffectBroker } from '@praetor/effect-broker';
 import {
   createLlmEffectAuth,

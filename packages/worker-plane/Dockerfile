@@ -40,18 +40,18 @@ COPY packages/worker-plane/package.json ./packages/worker-plane/package.json
 
 # Install only the workspace packages required by the worker service and their
 # transitive dependencies.
-# @commander/postgres-runtime is a direct dependency of worker-plane (imported by
-# bootstrap.ts, the worker entrypoint) and of @commander/kernel. Omitting it
+# @praetor/postgres-runtime is a direct dependency of worker-plane (imported by
+# bootstrap.ts, the worker entrypoint) and of @praetor/kernel. Omitting it
 # breaks the workspace link, so pnpm install and the runtime both fail.
 RUN pnpm install --frozen-lockfile \
-    --filter @commander/contracts \
-    --filter @commander/plugin-sdk \
-    --filter @commander/core \
-    --filter @commander/postgres-runtime \
-    --filter @commander/kernel \
-    --filter @commander/effect-broker \
-    --filter @commander/action-adapters \
-    --filter @commander/worker-plane
+    --filter @praetor/contracts \
+    --filter @praetor/plugin-sdk \
+    --filter @praetor/core \
+    --filter @praetor/postgres-runtime \
+    --filter @praetor/kernel \
+    --filter @praetor/effect-broker \
+    --filter @praetor/action-adapters \
+    --filter @praetor/worker-plane
 
 # ---- Stage 3: Build ----
 FROM base AS build
@@ -81,10 +81,10 @@ COPY packages/worker-plane ./packages/worker-plane
 # fix-esm-imports adds the `.js` extensions that Node.js ESM requires.
 RUN cd packages/contracts && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/plugin-sdk && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
-# `packages/core` typechecks against @commander/postgres-runtime declarations,
+# `packages/core` typechecks against @praetor/postgres-runtime declarations,
 # so that package must emit its dist first. apps/api/Dockerfile already ordered
 # it this way; having it after core made `pnpm exec tsc --noEmit` fail with
-# TS2307 "Cannot find module '@commander/postgres-runtime'".
+# TS2307 "Cannot find module '@praetor/postgres-runtime'".
 RUN cd packages/postgres-runtime && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/core && pnpm exec tsc --noEmit && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist
 RUN cd packages/effect-broker && pnpm exec tsc -p tsconfig.json && node ../../scripts/fix-esm-imports.mjs dist

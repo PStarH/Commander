@@ -1,7 +1,7 @@
 {
   "name": "@praetor/kernel",
   "version": "0.2.0",
-  "description": "Commander execution kernel — shared durable runs, leases, idempotency, outbox, and recovery (Architecture V2)",
+  "description": "Praetor execution kernel — shared durable runs, leases, idempotency, outbox, and recovery (Architecture V2)",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",

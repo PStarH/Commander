@@ -2752,7 +2752,7 @@ describe('helm-lifecycle-kind helpers', () => {
     assert.ok(build < harness, 'workspace runtime dependencies must build before the harness');
     assert.match(
       kindJob,
-      /pnpm --filter @commander\/postgres-runtime build\n          pnpm --filter @commander\/contracts build\n          pnpm --filter @commander\/plugin-sdk build\n          pnpm --filter @commander\/effect-broker build\n          pnpm --filter @commander\/kernel build\n          pnpm --filter @commander\/action-adapters build\n          pnpm --filter @commander\/core build\n          pnpm --filter @commander\/worker-plane build/,
+      /pnpm --filter @praetor\/postgres-runtime build\n          pnpm --filter @praetor\/contracts build\n          pnpm --filter @praetor\/plugin-sdk build\n          pnpm --filter @praetor\/effect-broker build\n          pnpm --filter @praetor\/kernel build\n          pnpm --filter @praetor\/action-adapters build\n          pnpm --filter @praetor\/core build\n          pnpm --filter @praetor\/worker-plane build/,
     );
   });
 

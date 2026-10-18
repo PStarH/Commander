@@ -116,7 +116,7 @@ describe('Architecture V2 invariants', () => {
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard/);
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm arch:guard:test/);
     assert.match(read('.github/workflows/ci.yml'), /run: pnpm contract:check/);
-    assert.match(read('.github/workflows/ci.yml'), /pnpm --filter @commander\/contracts test/);
+    assert.match(read('.github/workflows/ci.yml'), /pnpm --filter @praetor\/contracts test/);
     assert.match(
       read('.github/workflows/ci.yml'),
       /Architecture V2 invariant gates[\s\S]*run: pnpm test:arch/,
@@ -144,9 +144,9 @@ describe('Architecture V2 invariants', () => {
     const controlPlane = read('packages/core/src/controlPlane/index.ts');
     const policyTypes = read('packages/core/src/atr/policy/types.ts');
     const pluginSandbox = read('packages/core/src/plugins/pluginSandbox.ts');
-    assert.match(controlPlane, /from ['"]@commander\/contracts['"]/);
-    assert.match(policyTypes, /from ['"]@commander\/contracts['"]/);
-    assert.match(pluginSandbox, /from ['"]@commander\/contracts['"]/);
+    assert.match(controlPlane, /from ['"]@praetor\/contracts['"]/);
+    assert.match(policyTypes, /from ['"]@praetor\/contracts['"]/);
+    assert.match(pluginSandbox, /from ['"]@praetor\/contracts['"]/);
     assert.doesNotMatch(controlPlane, /export interface WorkloadIdentity/);
     assert.doesNotMatch(policyTypes, /export type PolicyEffect\s*=/);
     assert.doesNotMatch(pluginSandbox, /export type PluginSandboxMode\s*=/);
