@@ -47,10 +47,14 @@ export class GoalOrchestrator {
   constructor(provider: LLMProvider, config?: Partial<GoalConfig>) {
     this.provider = provider;
     this.config = { ...DEFAULT_GOAL_CONFIG, ...config };
+    const looseProvider = provider as unknown as {
+      defaultModel?: string;
+      config?: { defaultModel?: string };
+    };
     this.model =
       config?.model ??
-      (provider as any).defaultModel ??
-      (provider as any).config?.defaultModel ??
+      looseProvider.defaultModel ??
+      looseProvider.config?.defaultModel ??
       this.config.model ??
       DEFAULT_GOAL_CONFIG.model!;
     this.config.model = this.model;

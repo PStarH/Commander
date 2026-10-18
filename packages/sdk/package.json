@@ -1,7 +1,7 @@
 {
   "name": "@praetor/sdk",
   "version": "0.2.0",
-  "description": "Commander Agent SDK — embed multi-agent orchestration in your own applications",
+  "description": "Praetor Agent SDK — embed multi-agent orchestration in your own applications",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",

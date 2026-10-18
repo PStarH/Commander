@@ -40,13 +40,13 @@ COPY apps/api/package.json ./apps/api/package.json
 # transitive dependencies. The root devDependencies (typescript, tsx, etc.)
 # are installed because they are required to build.
 RUN pnpm install --frozen-lockfile \
-    --filter @commander/contracts \
-    --filter @commander/plugin-sdk \
-    --filter @commander/core \
-    --filter @commander/kernel \
-    --filter @commander/effect-broker \
-    --filter @commander/postgres-runtime \
-    --filter @commander/api
+    --filter @praetor/contracts \
+    --filter @praetor/plugin-sdk \
+    --filter @praetor/core \
+    --filter @praetor/kernel \
+    --filter @praetor/effect-broker \
+    --filter @praetor/postgres-runtime \
+    --filter @praetor/api
 
 # ---- Stage 3: Build ----
 FROM base AS build
