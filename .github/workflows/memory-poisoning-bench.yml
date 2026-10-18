@@ -169,6 +169,14 @@ jobs:
         run: |
           SUMMARY="$RUNNER_TEMP/memory-poisoning-regress-summary.md"
           if [ -s "$SUMMARY" ]; then cat "$SUMMARY" >> "$GITHUB_STEP_SUMMARY"; else exit 2; fi
+      - name: Upload today's baseline as artifact
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: memory-poisoning-baseline-${{ steps.dates.outputs.today }}
+          path: docs/baselines/memory-poisoning.${{ steps.dates.outputs.today }}.json
+          retention-days: 90
+          if-no-files-found: error
     outputs:
       today: ${{ steps.dates.outputs.today }}
       metric_leakCount: ${{ steps.metrics.outputs.leakCount }}

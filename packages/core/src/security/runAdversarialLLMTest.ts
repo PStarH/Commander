@@ -171,7 +171,9 @@ async function main(): Promise<void> {
     provider = new StepFunProvider({ apiKey: process.env.STEPFUN_API_KEY });
     modelName = 'step-3.7-flash';
   } else {
-    console.error('No LLM provider available. Configure AGNES_API_KEY, STEPFUN_API_KEY, or other provider.');
+    console.error(
+      'No LLM provider available. Configure AGNES_API_KEY, STEPFUN_API_KEY, or other provider.',
+    );
     process.exit(1);
   }
 
@@ -195,7 +197,12 @@ async function main(): Promise<void> {
       process.stdout.write(`  Round ${round}/${args.rounds} — generating payload... `);
 
       try {
-        const payload = await generateAdversarialPayload(provider, category, previousAttempts, modelName);
+        const payload = await generateAdversarialPayload(
+          provider,
+          category,
+          previousAttempts,
+          modelName,
+        );
         process.stdout.write(`[${payload.length} chars] testing... `);
 
         const scenario = buildScenario(category, payload, round);

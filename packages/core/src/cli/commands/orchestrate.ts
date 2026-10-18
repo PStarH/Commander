@@ -241,7 +241,8 @@ export async function cmdSwarm(task: string, flags: Record<string, string>) {
 }
 
 export async function cmdDrive(task: string, flags: Record<string, string>) {
-  const forcedProvider = (flags.provider || flags['--provider'])?.toLowerCase() as ProviderType | undefined;
+  const forcedProvider = (flags.provider || flags['--provider'])?.toLowerCase() as
+    ProviderType | undefined;
   const provider = detectProvider(forcedProvider);
   const runtime = createRuntime(forcedProvider);
   if (!runtime || !provider) {
