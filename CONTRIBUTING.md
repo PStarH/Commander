@@ -1,6 +1,6 @@
-# Contributing to Commander
+# Contributing to Praetor
 
-Thank you for your interest in Commander.
+Thank you for your interest in Praetor.
 
 ## License & Contribution Terms
 

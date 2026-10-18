@@ -311,4 +311,3 @@ export class CommanderGatewayError extends Error {
 
 export const PraetorGatewayClient = CommanderGatewayClient;
 export const PraetorGatewayError = CommanderGatewayError;
-
