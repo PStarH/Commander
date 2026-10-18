@@ -10,7 +10,9 @@ const require = getRequire(import.meta.url);
 
 const DEFAULT_STATE_DIR = fs.existsSync(path.resolve(process.cwd(), '.praetor'))
   ? '.praetor'
-  : (fs.existsSync(path.resolve(process.cwd(), '.commander')) ? '.commander' : '.praetor');
+  : fs.existsSync(path.resolve(process.cwd(), '.commander'))
+    ? '.commander'
+    : '.praetor';
 const DEFAULT_DB_PATH = path.resolve(process.cwd(), DEFAULT_STATE_DIR, 'api_state.db');
 
 export type ApiStoreBackend = 'sqlite' | 'memory' | 'postgres';
