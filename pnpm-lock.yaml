@@ -127,8 +127,8 @@ importers:
         specifier: '>=13.0.1'
         version: 14.0.0
       zod:
-        specifier: ^3.25.76
-        version: 3.25.76
+        specifier: ^4.6.6
+        version: 4.6.6
     optionalDependencies:
       better-sqlite3:
         specifier: ^12.11.1
@@ -215,10 +215,10 @@ importers:
     dependencies:
       '@openai/agents':
         specifier: 0.14.3
-        version: 0.14.3(ws@8.21.3)(zod@4.4.3)
+        version: 0.14.3(ws@8.21.3)(zod@4.6.6)
       zod:
         specifier: ^4.0.0
-        version: 4.4.3
+        version: 4.6.6
     devDependencies:
       '@types/node':
         specifier: ^26.1.1
@@ -3046,11 +3046,8 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@3.25.76:
-    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
-
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.6.6:
+    resolution: {integrity: sha512-4UmzQUF5fxvfcYHlbjBmejU+w+hbDnWFx4aS8kBx7nPBHcO2SqPbpAG8snbdg+Xse4pRefR98hgjFgIMCI/UhA==}
 
   zustand@4.5.7:
     resolution: {integrity: sha512-CHOUy7mu3lbD6o6LJLfllpjkzhHXSBlX8B9+qPddUsIfeF5S/UZ5q0kmCsnRqT1UHFQZchNFDDzMbQsuesHWlw==}
@@ -3384,7 +3381,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@modelcontextprotocol/sdk@1.31.0(zod@4.4.3)':
+  '@modelcontextprotocol/sdk@1.31.0(zod@4.6.6)':
     dependencies:
       '@hono/node-server': 2.1.0(hono@4.13.8)
       ajv: 8.20.0
@@ -3401,8 +3398,8 @@ snapshots:
       json-schema-typed: 8.0.2
       pkce-challenge: 5.0.1
       raw-body: 3.0.2
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
+      zod: 4.6.6
+      zod-to-json-schema: 3.25.2(zod@4.6.6)
     transitivePeerDependencies:
       - supports-color
     optional: true
@@ -3416,13 +3413,13 @@ snapshots:
 
   '@noble/hashes@1.4.0': {}
 
-  '@openai/agents-core@0.14.3(ws@8.21.3)(zod@4.4.3)':
+  '@openai/agents-core@0.14.3(ws@8.21.3)(zod@4.6.6)':
     dependencies:
       debug: 4.4.3
-      openai: 6.49.0(ws@8.21.3)(zod@4.4.3)
+      openai: 6.49.0(ws@8.21.3)(zod@4.6.6)
     optionalDependencies:
-      '@modelcontextprotocol/sdk': 1.31.0(zod@4.4.3)
-      zod: 4.4.3
+      '@modelcontextprotocol/sdk': 1.31.0(zod@4.6.6)
+      zod: 4.6.6
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@cfworker/json-schema'
@@ -3431,12 +3428,12 @@ snapshots:
       - supports-color
       - ws
 
-  '@openai/agents-openai@0.14.3(ws@8.21.3)(zod@4.4.3)':
+  '@openai/agents-openai@0.14.3(ws@8.21.3)(zod@4.6.6)':
     dependencies:
-      '@openai/agents-core': 0.14.3(ws@8.21.3)(zod@4.4.3)
+      '@openai/agents-core': 0.14.3(ws@8.21.3)(zod@4.6.6)
       debug: 4.4.3
-      openai: 6.49.0(ws@8.21.3)(zod@4.4.3)
-      zod: 4.4.3
+      openai: 6.49.0(ws@8.21.3)(zod@4.6.6)
+      zod: 4.6.6
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@cfworker/json-schema'
@@ -3445,13 +3442,13 @@ snapshots:
       - supports-color
       - ws
 
-  '@openai/agents-realtime@0.14.3(zod@4.4.3)':
+  '@openai/agents-realtime@0.14.3(zod@4.6.6)':
     dependencies:
-      '@openai/agents-core': 0.14.3(ws@8.21.3)(zod@4.4.3)
+      '@openai/agents-core': 0.14.3(ws@8.21.3)(zod@4.6.6)
       '@types/ws': 8.18.1
       debug: 4.4.3
       ws: 8.21.3
-      zod: 4.4.3
+      zod: 4.6.6
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@cfworker/json-schema'
@@ -3461,14 +3458,14 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  '@openai/agents@0.14.3(ws@8.21.3)(zod@4.4.3)':
+  '@openai/agents@0.14.3(ws@8.21.3)(zod@4.6.6)':
     dependencies:
-      '@openai/agents-core': 0.14.3(ws@8.21.3)(zod@4.4.3)
-      '@openai/agents-openai': 0.14.3(ws@8.21.3)(zod@4.4.3)
-      '@openai/agents-realtime': 0.14.3(zod@4.4.3)
+      '@openai/agents-core': 0.14.3(ws@8.21.3)(zod@4.6.6)
+      '@openai/agents-openai': 0.14.3(ws@8.21.3)(zod@4.6.6)
+      '@openai/agents-realtime': 0.14.3(zod@4.6.6)
       debug: 4.4.3
-      openai: 6.49.0(ws@8.21.3)(zod@4.4.3)
-      zod: 4.4.3
+      openai: 6.49.0(ws@8.21.3)(zod@4.6.6)
+      zod: 4.6.6
     transitivePeerDependencies:
       - '@aws-sdk/credential-provider-node'
       - '@cfworker/json-schema'
@@ -4955,10 +4952,10 @@ snapshots:
     dependencies:
       wrappy: 1.0.2
 
-  openai@6.49.0(ws@8.21.3)(zod@4.4.3):
+  openai@6.49.0(ws@8.21.3)(zod@4.6.6):
     optionalDependencies:
       ws: 8.21.3
-      zod: 4.4.3
+      zod: 4.6.6
 
   optionator@0.9.4:
     dependencies:
@@ -5629,14 +5626,12 @@ snapshots:
 
   yocto-queue@0.1.0: {}
 
-  zod-to-json-schema@3.25.2(zod@4.4.3):
+  zod-to-json-schema@3.25.2(zod@4.6.6):
     dependencies:
-      zod: 4.4.3
+      zod: 4.6.6
     optional: true
 
-  zod@3.25.76: {}
-
-  zod@4.4.3: {}
+  zod@4.6.6: {}
 
   zustand@4.5.7(@types/react@19.2.17)(immer@11.1.8)(react@19.2.7):
     dependencies:
